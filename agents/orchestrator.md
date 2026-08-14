@@ -73,21 +73,32 @@ navigator in a terminal of its own:
 scripts/run-implementer Cyclops
 ```
 
-That script owns the loop. It starts a fresh `claude` session per bead, waits for it to exit, re-reads
-its flags, and starts another — so "one bead per process" is a property of how they run rather than a
-rule an agent has to keep, and no implementer's context grows across beads.
+Each session takes **one** bead. When it is merged and closed the implementer writes `done` to
+`.claude/implementers/<name>.state.json`, and whoever is supervising — the Emacs fleet view, or that
+script — ends the session and starts a fresh one. So "one bead per session" is a property of how
+they run rather than a rule an agent has to keep, and no implementer's context grows across beads.
 
-This is why they are not subagents any more. A subagent has no next turn: when it emits its final
-text the call returns and the session is gone, so every asynchronous wait the harness offers is a
-promise to a process that has ended. Cyclops armed one against a review, ended its turn, and left the
-bead claimed and two comments unanswered. A top-level session can simply block and wait.
+An implementer cannot end itself: it is an interactive session, so its process outlives its turn and
+sits waiting for input. That is deliberate — it is what lets it be talked to and answered — and it
+is why something outside it does the ending.
 
-**You cannot talk to an implementer, and there is no point trying.** It runs with `--print`, and a
-print-mode session appears in neither `claude agents --json` nor `ListAgents` — so `SendMessage` has
-no name to address. This was measured, after an earlier version of this file claimed the opposite on
-the strength of an interactive session behaving differently.
+This is also why they are not subagents. A subagent has no next turn: when it emits its final text
+the call returns and the session is gone, so every asynchronous wait the harness offers is a promise
+to a process that has ended. Cyclops armed one against a review, ended its turn, and left the bead
+claimed and two comments unanswered. A top-level session can simply block and wait.
 
-So the flags are your only control, and a log is your only view — **when there is one**:
+**You can talk to an implementer now, but rarely should.** They are interactive sessions, so they
+appear in `ListAgents` and `SendMessage` reaches them. Weigh it before you do: an implementer is
+mid-bead with a claim, a worktree and a lease, and a message from you costs it a turn and some
+context. Reserve it for something it needs to know and cannot find out — main moving under it, a
+release cut, another agent taking its ports. Never to ask how it is getting on: the state file
+answers that for free.
+
+A question it asks the *navigator* is not yours to answer. It shows as `asking` in the fleet view,
+the navigator answers it, and a timeout hands the bead back if they do not. Answering on their
+behalf is deciding something the split exists to keep out of an agent's hands.
+
+The flags remain your control surface, and a log is your other view — **when there is one**:
 
 ```bash
 tail -n 40 .claude/implementers/<name>.log     # what that implementer is doing, as JSON events
@@ -117,6 +128,9 @@ touch .claude/implementers/<name>.stop    # finish the current bead, then leave 
 Neither flag is read mid-bead, and that is deliberate: an implementer taken down in flight strands a
 claim, a worktree and an open PR. Say so plainly when you report it — removing a go flag does not
 stop anything now, it stops the *next* bead, which may be an hour of CI and review away.
+
+Nor is either flag read by the implementer itself. The supervisor reads them at the one moment an
+implementer reports `done`, which is the only moment at which nothing is in flight.
 
 **"Start Storm" means `touch .claude/implementers/Storm.go`.** So does "kick off Storm", "spin up
 Storm", "put Storm to work", "get Storm going", and every other way of saying it. The navigator is
@@ -590,9 +604,11 @@ instead of every sweep — never what you believe the state to be.
 Answer from the tools:
 
 - `pgrep` for who is running and `claude agents --json` for Xavier — see *Who is actually running*.
-- `ls .claude/implementers/*.log` and `tail` the one you care about — this is the only way to see
-  what an implementer is doing. It will **not** appear in `claude agents --json` or `ListAgents`;
-  those list interactive and background sessions, and an implementer is neither.
+- `cat .claude/implementers/<name>.state.json` for what an implementer is doing — its state, its
+  bead, and since when. That is the cheap answer and usually the whole answer.
+- `ls .claude/implementers/*.log` and `tail` the one you care about, when you need more than the
+  state file says. Implementers are interactive sessions now, so they do appear in `ListAgents` —
+  but reading their state file costs them nothing and messaging them costs them a turn.
 - `ls .claude/implementers/` for which flags are set — a `.go` with no session behind it means a
   terminal the navigator has not started, and is worth saying out loud.
 - `bd list --status in_progress` for what is claimed, and by whom — but the assignee name alone does

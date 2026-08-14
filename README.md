@@ -21,7 +21,7 @@ git submodule update --remote --merge .claude/cerebro
 Claude code customization discovery expects direct entries under:
 
 - `.claude/skills/<skill-name>/SKILL.md`
-- `.claude/agents/*.agent.md`
+- `.claude/agents/*.md`
 
 This repository ships a helper script that creates/updates symlinks for all of them.
 
@@ -37,8 +37,7 @@ What it does:
 - Creates `../../.claude/skills/` and `../../.claude/agents/` if they do not exist.
 - Scans `.claude/cerebro/skills/*` for folders that contain `SKILL.md`.
 - Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/plan-bead -> .claude/cerebro/skills/plan-bead`).
-- Scans `.claude/cerebro/agents/*.agent.md` and creates/updates symlinks in `.claude/agents/`.
-- Scans `.claude/cerebro/instructions/*.instructions.md` and creates/updates symlinks in `.claude/instructions/`.
+- Scans `.claude/cerebro/agents/*.md` and creates/updates symlinks in `.claude/agents/`.
 - Removes the old aggregate symlink `.claude/skills/cerebro` if present.
 
 Run it whenever:
@@ -48,18 +47,24 @@ Run it whenever:
 
 ### Optional: Run Sync Automatically On Submodule Pointer Changes
 
-This repository includes git hooks in `.githooks/` that run the sync script automatically after merge/pull and checkout when the `.claude/cerebro` gitlink changes.
+This repository ships git hooks in `githooks/` that run the sync script automatically after merge/pull and checkout when the `.claude/cerebro` gitlink changes.
 
-Enable once per clone from the consumer repository root:
+Enable once per clone, from anywhere inside the consumer repository:
 
 ```bash
-.githooks/install.sh
+.claude/cerebro/githooks/install.sh
 ```
 
 What it configures:
 
-- `core.hooksPath=.githooks`
+- `core.hooksPath=.claude/cerebro/githooks`
 - `post-merge` hook: syncs when `.claude/cerebro` changed between `ORIG_HEAD` and `HEAD`.
-- `post-checkout` hook: syncs when `.claude/cerebro` changed between old and new refs.
+- `post-checkout` hook: syncs when `.claude/cerebro` changed between old and new refs, and only on a branch checkout.
+
+Both hooks are silent when the gitlink did not move.
+
+**`core.hooksPath` is repository-wide**: it replaces `.git/hooks` rather than adding to it, so any hooks
+already there stop running. The installer refuses to overwrite a `core.hooksPath` that points somewhere
+else, and warns if `.git/hooks` holds non-sample hooks — in either case, merge them by hand instead.
 
 The script uses fixed locations relative to itself and does not support source/destination override variables.

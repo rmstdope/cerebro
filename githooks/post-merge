@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Sync cerebro's symlinks when a merge or pull moved the .claude/cerebro gitlink.
+set -euo pipefail
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$HOOK_DIR/sync-if-changed.sh" ORIG_HEAD HEAD

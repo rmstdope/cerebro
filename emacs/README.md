@@ -65,6 +65,23 @@ Sorted by priority then id, so P0 reads first and the order does not shuffle und
 section names its own count, because the rows are what gets capped — `cerebro-beads-per-section`,
 eight by default, keeps an unbounded backlog from pushing the first two sections off the bottom.
 
+Re-prioritising is what the panel is for as much as reading it:
+
+| Key       | Does                                                            |
+|-----------|-----------------------------------------------------------------|
+| `0`–`4`   | set the marked bead's priority outright (0 is most urgent)      |
+| `+` / `-` | one step more / less urgent, clamped at P0 and P4               |
+| `u`       | put back the last priority this panel changed — one step        |
+
+The change is immediate, with no confirmation, which is the point during a triage pass — the echo
+area says `ah-3cs: P1 -> P0` and the row re-sorts under the mark. `u` exists because that is also
+how a mis-keyed digit behaves; it is one step rather than a stack, so a second `u` says there is
+nothing to undo instead of quietly redoing the change. Setting the priority a bead already has
+writes nothing and records no undo.
+
+Digits are `digit-argument` elsewhere in Emacs; this buffer spends them on priorities, there being
+nothing here a numeric prefix would have been for.
+
 It reads like the agent list: one bead is marked, `n`/`p` (or the arrow keys) step between them, and
 navigation skips the section headers, blank lines and `(none)` rows. `RET` shows the marked bead in
 the detail window on the right — `bd show`'s own rendering, read-only, in one reused buffer rather

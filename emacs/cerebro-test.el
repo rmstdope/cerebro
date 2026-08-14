@@ -1209,5 +1209,98 @@ timer render from another window, so this is the normal path, not an edge."
           (should (string-match-p "could not" (downcase (buffer-string)))))
         (kill-buffer cerebro-bead-buffer-name)))))
 
+;; ---------------------------------------------------------------------------
+;; Re-prioritising the marked bead
+
+(defmacro cerebro-test--with-bd (calls &rest body)
+  "Run BODY with `bd update' recorded into CALLS instead of run, succeeding."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'cerebro--bd-set-priority)
+              (lambda (_root id priority) (push (cons id priority) ,calls) t))
+             ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+     ,@body))
+
+(ert-deftest cerebro-test/bead-rows-carry-their-priority ()
+  "The row knows its own priority, so `+' does not have to re-parse the text."
+  (cerebro-test--with-panel buffer
+    (should (equal (cerebro--priority-at-point) 1))))
+
+(ert-deftest cerebro-test/nudging-clamps-at-both-ends ()
+  "P0 is as urgent as it goes and P4 is the backlog floor."
+  (should (= (cerebro--nudged-priority 1 -1) 0))
+  (should (= (cerebro--nudged-priority 0 -1) 0))
+  (should (= (cerebro--nudged-priority 3 1) 4))
+  (should (= (cerebro--nudged-priority 4 1) 4)))
+
+(ert-deftest cerebro-test/setting-a-priority-asks-bd-and-redraws ()
+  (cerebro-test--with-panel buffer
+    (let (calls)
+      (cerebro-test--with-bd calls
+        (cerebro-beads-set-priority 0)
+        (should (equal calls '(("ah-c1" . 0))))
+        ;; The mark stays on the bead it was on, wherever the redraw puts it.
+        (should (equal (cerebro--bead-at-point) "ah-c1"))))))
+
+(ert-deftest cerebro-test/setting-the-priority-it-already-has-does-nothing ()
+  "No write, no undo entry: a keypress that changes nothing must not look
+like one that did."
+  (cerebro-test--with-panel buffer
+    (let (calls)
+      (cerebro-test--with-bd calls
+        (cerebro-beads-set-priority 1)          ; ah-c1 is already P1
+        (should (null calls))
+        (should (null cerebro--last-priority-change))))))
+
+(ert-deftest cerebro-test/priority-on-a-header-line-is-refused ()
+  (cerebro-test--with-panel buffer
+    (goto-char (point-min))
+    (should-error (cerebro-beads-set-priority 0) :type 'user-error)))
+
+(ert-deftest cerebro-test/a-failed-update-is-not-silent-and-is-not-undoable ()
+  "bd can refuse - a lock, a closed bead - and the panel must not claim it worked."
+  (cerebro-test--with-panel buffer
+    (cl-letf (((symbol-function 'cerebro--bd-set-priority) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+      (should-error (cerebro-beads-set-priority 0) :type 'user-error)
+      (should (null cerebro--last-priority-change)))))
+
+(ert-deftest cerebro-test/undo-puts-the-priority-back-once ()
+  "One step, because a mis-key is the case it exists for."
+  (cerebro-test--with-panel buffer
+    (let (calls)
+      (cerebro-test--with-bd calls
+        (cerebro-beads-set-priority 4)
+        (should (equal cerebro--last-priority-change '("ah-c1" . 1)))
+        (cerebro-beads-undo-priority)
+        (should (equal (car calls) '("ah-c1" . 1)))
+        ;; Spent: a second undo has nothing to put back.
+        (should (null cerebro--last-priority-change))
+        (should-error (cerebro-beads-undo-priority) :type 'user-error)))))
+
+(ert-deftest cerebro-test/priority-keys-are-bound ()
+  "Each digit sets its own number.
+
+The bindings are closures made in a loop, which is the classic way to end up
+with five keys that all set the last value - `commandp' alone would not have
+noticed."
+  (let (asked)
+    (cl-letf (((symbol-function 'cerebro-beads-set-priority)
+               (lambda (priority) (push priority asked))))
+      (dolist (digit '("0" "1" "2" "3" "4"))
+        (let ((command (lookup-key cerebro-beads-mode-map digit)))
+          (should (commandp command))
+          (call-interactively command))))
+    (should (equal (reverse asked) '(0 1 2 3 4))))
+  (should (eq (lookup-key cerebro-beads-mode-map "+") #'cerebro-beads-raise))
+  (should (eq (lookup-key cerebro-beads-mode-map "-") #'cerebro-beads-lower))
+  (should (eq (lookup-key cerebro-beads-mode-map "u") #'cerebro-beads-undo-priority)))
+
+(ert-deftest cerebro-test/nudging-moves-one-step-from-where-the-bead-is ()
+  (cerebro-test--with-panel buffer
+    (let (calls)
+      (cerebro-test--with-bd calls
+        (cerebro-beads-raise)                   ; ah-c1 is P1, raise is more urgent
+        (should (equal (car calls) '("ah-c1" . 0)))))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

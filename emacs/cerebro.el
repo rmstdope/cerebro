@@ -283,7 +283,7 @@ a row and break the column the eye follows down the panel."
     ;; The row carries its own id, so navigation and the mark are about beads
     ;; rather than about line numbers - which the next refresh would move.
     (propertize (concat prefix (cerebro--truncate (or (alist-get 'title bead) "") room))
-                'cerebro-bead id)))
+                'cerebro-bead id 'cerebro-priority priority)))
 
 (defun cerebro--bead-section (title beads width max)
   "Lines for one section: TITLE with its count, then up to MAX of BEADS.
@@ -762,6 +762,25 @@ columns of bead however wide it is."
             (buffer-string))))
     (error nil)))
 
+(defconst cerebro-priority-floor 4
+  "The least urgent priority `bd' takes; 0 is the most urgent.")
+
+(defun cerebro--nudged-priority (priority delta)
+  "PRIORITY moved by DELTA, clamped to the range `bd' accepts.
+
+Clamped rather than wrapped: holding `+' should stop at the backlog floor,
+not roll a bead round to P0."
+  (min cerebro-priority-floor (max 0 (+ priority delta))))
+
+(defun cerebro--bd-set-priority (repo-root id priority)
+  "Set ID's priority to PRIORITY in REPO-ROOT.  Non-nil if `bd' accepted it."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((default-directory (file-name-as-directory repo-root)))
+          (zerop (call-process "bd" nil t nil "update" id
+                               "--priority" (number-to-string priority)))))
+    (error nil)))
+
 (defun cerebro--gather-beads (repo-root)
   "The three lists the panel shows, as (CLAIMED PLANNED UNPLANNED).
 
@@ -832,6 +851,67 @@ buffer per bead would leave a drift of them behind a morning's browsing."
         ;; somewhere rather than doing nothing visible.
         (display-buffer buffer))
       buffer)))
+
+(defvar-local cerebro--last-priority-change nil
+  "The last priority this panel changed, as (ID . PREVIOUS-PRIORITY).
+
+One step, because the case it exists for is a mis-keyed digit: the change is
+immediate and the only notice is a line in the echo area.")
+
+(defun cerebro--priority-at-point ()
+  "The priority of the bead on this line, or nil if it is not a bead."
+  (get-text-property (line-beginning-position) 'cerebro-priority))
+
+(defun cerebro--set-priority (id from to)
+  "Ask `bd' to move ID from FROM to TO, then redraw and say what happened."
+  (unless (cerebro--bd-set-priority (cerebro--repo-root) id to)
+    (user-error "cerebro: bd would not set %s to P%d" id to))
+  (setq cerebro--last-priority-change (cons id from))
+  (cerebro--beads-render (current-buffer))
+  (message "%s: P%s -> P%d" id (if from (number-to-string from) "?") to))
+
+(defun cerebro-beads-set-priority (priority)
+  "Set the marked bead's priority to PRIORITY, one of 0 to 4."
+  (interactive)
+  (let ((id (cerebro--bead-at-point))
+        (current (cerebro--priority-at-point)))
+    (unless id
+      (user-error "cerebro: no bead on this line"))
+    (if (equal current priority)
+        ;; Not a failure, but not a change either - and a keypress that did
+        ;; nothing must not leave an undo entry claiming it did.
+        (message "%s is already P%d" id priority)
+      (cerebro--set-priority id current priority))))
+
+(defun cerebro-beads-raise ()
+  "Make the marked bead one step more urgent (`+')."
+  (interactive)
+  (let ((current (cerebro--priority-at-point)))
+    (unless current (user-error "cerebro: no bead on this line"))
+    (cerebro-beads-set-priority (cerebro--nudged-priority current -1))))
+
+(defun cerebro-beads-lower ()
+  "Make the marked bead one step less urgent (`-')."
+  (interactive)
+  (let ((current (cerebro--priority-at-point)))
+    (unless current (user-error "cerebro: no bead on this line"))
+    (cerebro-beads-set-priority (cerebro--nudged-priority current 1))))
+
+(defun cerebro-beads-undo-priority ()
+  "Put back the priority this panel last changed (`u')."
+  (interactive)
+  (let ((change cerebro--last-priority-change))
+    (unless change
+      (user-error "cerebro: no priority change to undo"))
+    (let ((id (car change))
+          (previous (cdr change)))
+      (unless (cerebro--bd-set-priority (cerebro--repo-root) id previous)
+        (user-error "cerebro: bd would not put %s back to P%s" id previous))
+      ;; Spent: one step back, not a stack, so a second `u' has nothing to do
+      ;; rather than quietly redoing the change.
+      (setq cerebro--last-priority-change nil)
+      (cerebro--beads-render (current-buffer))
+      (message "%s: back to P%s" id previous))))
 
 (defun cerebro--panel-width (buffer)
   "Columns to render BUFFER's panel into.
@@ -945,6 +1025,15 @@ nobody can see."
     (define-key map (kbd "<down>") #'cerebro-beads-next)
     (define-key map (kbd "<up>") #'cerebro-beads-previous)
     (define-key map (kbd "RET") #'cerebro-beads-show)
+    ;; Digits set the priority outright, which takes them from
+    ;; `digit-argument' in this buffer - there is nothing here a numeric
+    ;; prefix would have been for.
+    (dotimes (priority (1+ cerebro-priority-floor))
+      (define-key map (number-to-string priority)
+                  (lambda () (interactive) (cerebro-beads-set-priority priority))))
+    (define-key map "+" #'cerebro-beads-raise)
+    (define-key map "-" #'cerebro-beads-lower)
+    (define-key map "u" #'cerebro-beads-undo-priority)
     map)
   "Keymap for `cerebro-beads-mode'.")
 

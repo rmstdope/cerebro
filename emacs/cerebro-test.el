@@ -657,5 +657,64 @@ directory, where there is no longer anything by that name."
   (should (equal (cerebro--script "run-planner") ".claude/cerebro/scripts/run-planner"))
   (should (string-prefix-p ".claude/cerebro/scripts/" (cerebro--script "run-implementer"))))
 
+;; ---------------------------------------------------------------------------
+;; Reading the list at a glance
+
+(defun cerebro-test--faces-at (string index)
+  "The face property at INDEX of STRING, always as a list."
+  (let ((face (get-text-property index 'face string)))
+    (if (listp face) face (list face))))
+
+(ert-deftest cerebro-test/idle-glyph-is-yellow ()
+  "Idle is not the same kind of nothing as dead.
+
+An idle implementer has a session up and no bead - something the navigator
+may want to act on - so it reads as yellow rather than as the grey that
+means there is nobody there at all."
+  (should (memq 'warning (cerebro-test--faces-at (cerebro--glyph 'idle) 0)))
+  ;; Still distinguishable from the states either side of it.
+  (should (memq 'success (cerebro-test--faces-at (cerebro--glyph 'working) 0)))
+  (should (memq 'shadow (cerebro-test--faces-at (cerebro--glyph 'dead) 0))))
+
+(ert-deftest cerebro-test/asking-agent-is-bold-across-its-columns ()
+  "An agent waiting on an answer has to be findable in a list of eighteen.
+
+The glyph alone is one character in the corner of the eye; bolding the name,
+the role and the state makes the row itself the signal."
+  (let* ((agent (cerebro-test--supervised 'asking nil "2026-08-14T09:00:00Z"))
+         (row (nth 1 (cerebro--entry agent cerebro-test--now))))
+    (dolist (column '(0 1 2))
+      (let ((text (aref row column)))
+        (should (memq 'bold (cerebro-test--faces-at text (1- (length text)))))))))
+
+(ert-deftest cerebro-test/asking-row-keeps-its-glyph-colour ()
+  "Bolding the name must not repaint the glyph it sits next to."
+  (let* ((agent (cerebro-test--supervised 'asking nil "2026-08-14T09:00:00Z"))
+         (agent-col (aref (nth 1 (cerebro--entry agent cerebro-test--now)) 0)))
+    (should (memq 'warning (cerebro-test--faces-at agent-col 0)))))
+
+(ert-deftest cerebro-test/a-row-nobody-is-waiting-on-is-not-bold ()
+  "Bold has to mean something, so only `asking' gets it."
+  (dolist (state '(working idle done dead))
+    (let* ((agent (cerebro-test--supervised state nil "2026-08-14T09:00:00Z"))
+           (row (nth 1 (cerebro--entry agent cerebro-test--now))))
+      (dolist (column '(0 1 2))
+        (let ((text (aref row column)))
+          (should-not (memq 'bold (cerebro-test--faces-at text (1- (length text))))))))))
+
+(ert-deftest cerebro-test/tab-switches-window ()
+  "TAB moves between the list and the detail window, as `C-x o' does."
+  (should (eq (lookup-key cerebro-mode-map (kbd "TAB")) #'cerebro-other-window))
+  (should (eq (lookup-key cerebro-mode-map (kbd "<tab>")) #'cerebro-other-window)))
+
+(ert-deftest cerebro-test/other-window-moves-the-selection ()
+  (cerebro-test--with-layout list-buffer detail-window
+    (let ((list-window (selected-window)))
+      (cerebro-other-window)
+      (should (eq (selected-window) detail-window))
+      ;; And back, so one key cycles rather than stranding the navigator.
+      (cerebro-other-window)
+      (should (eq (selected-window) list-window)))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

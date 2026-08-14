@@ -9,10 +9,9 @@ an Emacs fleet viewer. It is consumed by other repositories as a git submodule a
 whose `scripts/sync-symlinks.sh` symlinks the skills and agents into the consumer's discovery paths.
 
 Almost nothing here executes in this repository. The agents and skills describe a workflow that runs
-in a *consumer* repo (they were extracted from `atlantis-hud` and still name it throughout), and they
-refer to launcher scripts — `scripts/run-planner`, `scripts/run-orchestrator`, `scripts/run-user-feedback`,
-`scripts/run-implementer`, `scripts/prune-worktrees.sh` — that live in the consumer repo, **not here**.
-Do not go looking for them in this tree, and do not assume a change here is testable by running it.
+in a *consumer* repo (they were extracted from `atlantis-hud` and still name it throughout), and the
+launchers in `scripts/` only make sense from a consumer root, where this repo is mounted at
+`.claude/cerebro`. So a change here is generally not testable by running it in this tree.
 
 ## Commands
 
@@ -91,9 +90,9 @@ becomes untestable.
 Two data sources it depends on, both owned by the consumer repo:
 
 - `.claude/implementers/<name>.state.json` — `{state: "idle"|"working", bead, since, pid}`, written by
-  `scripts/run-implementer` at each transition. `cerebro--state-file-path` mirrors `statePath` in the
+  `.claude/cerebro/scripts/run-implementer` at each transition. `cerebro--state-file-path` mirrors `statePath` in the
   consumer's `runImplementer.ts`; the two must stay in step.
-- `scripts/run-implementer --roster` — the implementer names.
+- `.claude/cerebro/scripts/run-implementer --roster` — the implementer names.
 
 Interactive agents have no state file: liveness is inferred by scanning system process args for
 `--name <Name>`, which is why the launchers must pass it.
@@ -107,6 +106,13 @@ Interactive agents have no state file: liveness is inferred by scanning system p
   the script here (it will refuse: there is no `.claude/` above this tree).
 - `githooks/install.sh` sets `core.hooksPath`, which is repository-wide and replaces `.git/hooks`
   entirely. It refuses rather than clobbering a `core.hooksPath` already pointing elsewhere.
+- **`.claude/cerebro/scripts/` is a hard-coded path in two places that must agree**:
+  `cerebro--script-directory` in `cerebro.el`, and every doc that tells someone what to type. The
+  launchers themselves take no view — they are `exec claude …` and work from anywhere — so a wrong
+  path here fails at `s` in the fleet view, not at the script.
+- The launchers start **one interactive session** each. Nothing loops, nothing polls a flag, nothing
+  writes a state file: the agent writes its own state, and `cerebro--supervise` owns the cadence.
+  Adding a loop back to a launcher would put two supervisors on one session.
 - Emacs backup files (`*.el~`, `*.md~`, `*.sh~`) are committed alongside the originals; ignore them
   and never edit them.
 

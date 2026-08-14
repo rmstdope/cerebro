@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# Runs the orchestrator, in a terminal of its own.
+#
+#     scripts/run-orchestrator
+#
+# One session, called Cerebro, and interactive — like `run-planner` and unlike `run-implementer`.
+# There is no loop and no flag around it: Cerebro is the thing that *writes* the flags, and it takes
+# its instructions from the navigator sitting in front of it.
+#
+# It owns no work. It sweeps the worktrees and the claims, watches that a planner and at least two
+# implementers are up, reports what has shipped, and puts implementers to work by touching
+# `.claude/implementers/<name>.go`. It starts nothing itself — every session is a terminal the
+# navigator opens.
+#
+# The prompt below is the only injection, and it asks for the startup sequence in
+# `.claude/agents/orchestrator.md` rather than restating it: a second copy here would drift from the
+# first the next time either changes.
+
+set -euo pipefail
+
+# Fable at medium effort, deliberately. Cerebro sweeps, counts and reports - it reads tools and
+# relays what they say, and none of that needs a larger model or heavier reasoning. The agent file
+# says the same; naming both here too means a terminal started from a different session still gets
+# them.
+#
+# `--model`/`--effort` come before "$@", so `scripts/run-orchestrator --model opus` still overrides
+# them for a one-off without editing this file.
+exec claude \
+  --agent orchestrator \
+  --name Cerebro \
+  --model fable \
+  --effort medium \
+  --permission-mode auto \
+  "$@" \
+  "You are Cerebro. Follow your instructions, starting with the startup sequence: sweep the
+worktrees, sweep the claims, count the fleet, and read both the queue and today's deliveries. Then
+greet me with what you swept, who is up, what is waiting and what has shipped today. Put nobody to
+work until I ask."

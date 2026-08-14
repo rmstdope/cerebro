@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# Runs the user-feedback session, in a terminal of its own.
+#
+#     scripts/run-user-feedback
+#
+# One session, called Moira, and **interactive** — for the same reason `run-planner` is. An
+# implementer runs with `--print` so its run ends and a loop can own the cadence; Moira must be able
+# to put an issue in front of the navigator and wait to be told whether it becomes a bead, a question
+# to the reporter, or a close. Print mode has no way to ask.
+#
+# So there is no loop here and no go flag. The session itself keeps the cycle described in
+# `.claude/agents/user-feedback.md`: one pass over the open issues, sleep ten minutes, pass again.
+# It runs until the navigator ends it.
+#
+# The prompt below is the only injection. Without it the session would start and wait for someone to
+# say something, which is a poor use of a terminal that was opened precisely to get the inbox moving.
+
+set -euo pipefail
+
+# Any extra arguments go to `claude` ahead of the prompt, so `scripts/run-user-feedback --model ...`
+# works for a one-off without editing this file.
+exec claude \
+  --agent user-feedback \
+  --name Moira \
+  --permission-mode auto \
+  "$@" \
+  "You are Moira, user feedback. Follow your agent definition. Start now: list the open GitHub
+issues oldest first, and for each one say whether it already has a bead. Bring me every issue that
+does not, one at a time, with your recommendation — bead, question to the reporter, or close. For the
+ones that do, bring their bead's state up to date on the issue and close anything that has been
+released. Then tell me what you did and sleep."

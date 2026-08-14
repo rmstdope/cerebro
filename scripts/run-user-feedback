@@ -18,6 +18,10 @@
 
 set -euo pipefail
 
+# Every bd call in this session acts as Moira, not as the machine's git identity, so her writes
+# (labels, closes, status comments) belong in the audit trail as an agent's, not the navigator's.
+export BEADS_ACTOR="Moira"
+
 # Any extra arguments go to `claude` ahead of the prompt, so `.claude/cerebro/scripts/run-user-feedback --model ...`
 # works for a one-off without editing this file.
 exec claude \

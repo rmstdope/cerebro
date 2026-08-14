@@ -1022,5 +1022,113 @@ session, which is the case the navigator actually hits, was not."
               (should (eq (key-binding (kbd "C-c TAB")) #'cerebro-send-tab)))))
       (when (get-buffer session-name) (kill-buffer session-name)))))
 
+;; ---------------------------------------------------------------------------
+;; Navigating the bead panel
+
+(defmacro cerebro-test--with-panel (buffer &rest body)
+  "Render a panel of known beads into BUFFER and run BODY there."
+  (declare (indent 1))
+  `(let ((,buffer (get-buffer-create "*cerebro-test-beads*")))
+     (unwind-protect
+         (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                   ((symbol-function 'cerebro--gather-beads)
+                    (lambda (_root)
+                      (list (list (cerebro-test--bead "ah-c1" 1 "claimed one"))
+                            (list (cerebro-test--bead "ah-p1" 0 "planned one"))
+                            (list (cerebro-test--bead "ah-u1" 1 "unplanned one")
+                                  (cerebro-test--bead "ah-u2" 2 "unplanned two"))))))
+           (with-current-buffer ,buffer
+             (cerebro-beads-mode)
+             (cerebro--beads-render ,buffer)
+             ,@body))
+       (kill-buffer ,buffer))))
+
+(ert-deftest cerebro-test/bead-rows-carry-their-id ()
+  "The row knows which bead it is, so navigation and selection are about
+beads rather than about line numbers."
+  (cerebro-test--with-panel buffer
+    (goto-char (point-min))
+    (should (null (cerebro--bead-at-point)))     ; the "Claimed 1" header
+    (forward-line 1)
+    (should (equal (cerebro--bead-at-point) "ah-c1"))))
+
+(ert-deftest cerebro-test/navigation-skips-everything-that-is-not-a-bead ()
+  "Headers, blank lines and \"(none)\" are scenery: `n' steps over them."
+  (cerebro-test--with-panel buffer
+    (goto-char (point-min))
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-c1"))
+    (cerebro-beads-next)
+    ;; Straight across the blank line and the "Planned, unclaimed" header.
+    (should (equal (cerebro--bead-at-point) "ah-p1"))
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-u1"))
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-u2"))))
+
+(ert-deftest cerebro-test/navigation-stops-at-the-ends ()
+  "No wrap: a list that jumps to the top when you hold `n' hides its own end."
+  (cerebro-test--with-panel buffer
+    ;; Down to the last bead, then keep pressing.
+    (dotimes (_ 6) (cerebro-beads-next))
+    (should (equal (cerebro--bead-at-point) "ah-u2"))
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-u2"))
+    ;; And back up past the top.
+    (dotimes (_ 6) (cerebro-beads-previous))
+    (should (equal (cerebro--bead-at-point) "ah-c1"))
+    (cerebro-beads-previous)
+    (should (equal (cerebro--bead-at-point) "ah-c1"))))
+
+(ert-deftest cerebro-test/a-bead-is-marked-from-the-first-render ()
+  "Point starts on a bead rather than on the header above it."
+  (cerebro-test--with-panel buffer
+    (should (equal (cerebro--bead-at-point) "ah-c1"))
+    (should hl-line-mode)))
+
+(ert-deftest cerebro-test/the-selected-bead-survives-a-refresh ()
+  "The panel redraws on a timer; the selection has to follow the bead.
+
+Restoring by buffer position would move the mark to whatever row happened to
+land on that line when the queue changed underneath."
+  (cerebro-test--with-panel buffer
+    ;; The render already marked the first bead, so one step reaches ah-p1.
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-p1"))
+    ;; A bead lands above it and the rows all shift down one.
+    (cl-letf (((symbol-function 'cerebro--gather-beads)
+               (lambda (_root)
+                 (list (list (cerebro-test--bead "ah-c0" 0 "new claim")
+                             (cerebro-test--bead "ah-c1" 1 "claimed one"))
+                       (list (cerebro-test--bead "ah-p1" 0 "planned one"))
+                       nil))))
+      (cerebro--beads-render buffer)
+      (should (equal (cerebro--bead-at-point) "ah-p1")))))
+
+(ert-deftest cerebro-test/a-vanished-bead-does-not-strand-the-mark ()
+  "Merged and closed while selected: fall back to the first row, not to nowhere."
+  (cerebro-test--with-panel buffer
+    (should (equal (cerebro--bead-at-point) "ah-c1"))
+    (cl-letf (((symbol-function 'cerebro--gather-beads)
+               (lambda (_root) (list nil nil (list (cerebro-test--bead "ah-u1" 1 "left"))))))
+      (cerebro--beads-render buffer)
+      (should (equal (cerebro--bead-at-point) "ah-u1")))))
+
+(ert-deftest cerebro-test/beads-keymap-navigates ()
+  (should (eq (lookup-key cerebro-beads-mode-map "n") #'cerebro-beads-next))
+  (should (eq (lookup-key cerebro-beads-mode-map "p") #'cerebro-beads-previous))
+  (should (eq (lookup-key cerebro-beads-mode-map (kbd "<down>")) #'cerebro-beads-next))
+  (should (eq (lookup-key cerebro-beads-mode-map (kbd "<up>")) #'cerebro-beads-previous)))
+
+(ert-deftest cerebro-test/panel-width-does-not-borrow-another-window ()
+  "`window-width' with no window means the SELECTED window.
+
+The panel refreshes on a timer, so that would lay it out to the width of
+whatever the navigator was standing in - usually the detail window."
+  (let ((buffer (generate-new-buffer " *cerebro-test-width*")))
+    (unwind-protect
+        (should (= (cerebro--panel-width buffer) cerebro-list-width))
+      (kill-buffer buffer))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

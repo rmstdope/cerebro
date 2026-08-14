@@ -36,6 +36,20 @@
   :group 'tools
   :prefix "cerebro-")
 
+(defconst cerebro-list-width 62
+  "Columns for the left column of the layout.
+
+The agent table is 14+13+18+10+6 plus padding, so anything narrower cuts the
+elapsed-time column off the right edge - it was 45 for a while, and the
+column was simply invisible. The bead panel underneath inherits this width
+and wants every one of them for its titles.")
+
+(defconst cerebro-list-height 20
+  "Lines given to the agent list before the bead panel starts.
+
+Eighteen agents and a header, so the list never scrolls and the panel gets
+whatever the frame has left.")
+
 ;;; The interactive roster
 
 (defconst cerebro-interactive-agents
@@ -264,7 +278,10 @@ a row and break the column the eye follows down the panel."
          ;; says nothing about who is working on it - and the agent list
          ;; directly above already answers that for every implementer.
          (room (max 8 (- width (length prefix)))))
-    (concat prefix (cerebro--truncate (or (alist-get 'title bead) "") room))))
+    ;; The row carries its own id, so navigation and the mark are about beads
+    ;; rather than about line numbers - which the next refresh would move.
+    (propertize (concat prefix (cerebro--truncate (or (alist-get 'title bead) "") room))
+                'cerebro-bead id)))
 
 (defun cerebro--bead-section (title beads width max)
   "Lines for one section: TITLE with its count, then up to MAX of BEADS.
@@ -747,19 +764,84 @@ than work, so it would sit in the panel as something nobody can pick up."
    (cerebro--bd-json repo-root "list" "--status" "open" "--exclude-label" "planned"
                      "--exclude-type" "epic" "--json")))
 
+(defun cerebro--panel-width (buffer)
+  "Columns to render BUFFER's panel into.
+
+Its own window when it has one, and the width the layout gives it otherwise.
+`window-width' with no window falls back to the *selected* one, which during
+a timer refresh is wherever the navigator happens to be standing - so the
+panel would be laid out to the width of the detail window."
+  (let ((window (get-buffer-window buffer)))
+    (max 30 (if window (window-width window) cerebro-list-width))))
+
+(defun cerebro--bead-at-point ()
+  "The id of the bead on this line, or nil on a header, blank or \"(none)\"."
+  (get-text-property (line-beginning-position) 'cerebro-bead))
+
+(defun cerebro--goto-bead (id)
+  "Put point on the row for ID, and return non-nil if it is there."
+  (goto-char (point-min))
+  (let (found)
+    (while (and (not found) (not (eobp)))
+      (if (equal (cerebro--bead-at-point) id)
+          (setq found t)
+        (forward-line 1)))
+    found))
+
+(defun cerebro--goto-first-bead ()
+  "Put point on the first bead row, if the panel has one."
+  (goto-char (point-min))
+  (while (and (not (eobp)) (null (cerebro--bead-at-point)))
+    (forward-line 1))
+  (when (eobp) (goto-char (point-min))))
+
+(defun cerebro--move-bead (direction)
+  "Move point one bead row in DIRECTION, 1 forward or -1 back.
+
+Stops at the ends rather than wrapping: a list that jumps back to the top
+when the navigator holds the key down hides where it finishes."
+  (let ((start (point))
+        (found nil))
+    (forward-line direction)
+    (while (and (not found)
+                (if (> direction 0) (not (eobp)) (not (bobp))))
+      (if (cerebro--bead-at-point)
+          (setq found t)
+        (forward-line direction)))
+    ;; The last line has no newline, so `forward-line' can land on a bead row
+    ;; at `eobp'; take it, and otherwise go back where we started.
+    (unless (or found (cerebro--bead-at-point))
+      (goto-char start))
+    (beginning-of-line)))
+
+(defun cerebro-beads-next ()
+  "Move to the next bead (`n'), stepping over headers and blank lines."
+  (interactive)
+  (cerebro--move-bead 1))
+
+(defun cerebro-beads-previous ()
+  "Move to the previous bead (`p')."
+  (interactive)
+  (cerebro--move-bead -1))
+
 (defun cerebro--beads-render (buffer)
   "Redraw BUFFER's panel from `bd'."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (let* ((width (max 30 (window-width (get-buffer-window buffer))))
+      (let* ((width (cerebro--panel-width buffer))
              (beads (cerebro--gather-beads (cerebro--repo-root)))
              (lines (cerebro--bead-panel (nth 0 beads) (nth 1 beads) (nth 2 beads)
                                           width cerebro-beads-per-section))
              (inhibit-read-only t)
-             (point-was (point)))
+             ;; By id, not by position: the panel redraws every thirty seconds
+             ;; and a bead landing above the selected one would otherwise slide
+             ;; the mark onto whatever row took its line.
+             (selected (cerebro--bead-at-point)))
         (erase-buffer)
         (insert (string-join lines "\n"))
-        (goto-char (min point-was (point-max)))))))
+        (unless (and selected (cerebro--goto-bead selected))
+          ;; Selected bead merged, closed, or claimed away while it was marked.
+          (cerebro--goto-first-bead))))))
 
 (defun cerebro--beads-revert (&rest _)
   "Refresh the panel, for `g' and for the timer."
@@ -782,13 +864,22 @@ nobody can see."
     (set-keymap-parent map special-mode-map)
     (define-key map (kbd "TAB") #'cerebro-other-window)
     (define-key map (kbd "<tab>") #'cerebro-other-window)
+    (define-key map "n" #'cerebro-beads-next)
+    (define-key map "p" #'cerebro-beads-previous)
+    (define-key map (kbd "<down>") #'cerebro-beads-next)
+    (define-key map (kbd "<up>") #'cerebro-beads-previous)
     map)
   "Keymap for `cerebro-beads-mode'.")
 
 (define-derived-mode cerebro-beads-mode special-mode "Cerebro Beads"
   "What the fleet could be working on: claimed, planned, and unplanned."
   (setq-local revert-buffer-function #'cerebro--beads-revert)
-  (setq truncate-lines t))
+  (setq truncate-lines t)
+  ;; The mark has to stay visible when the navigator is in another window -
+  ;; the cursor itself is only drawn in the selected one, and the whole point
+  ;; is to see which bead is picked while looking at the agents.
+  (setq-local hl-line-sticky-flag t)
+  (hl-line-mode 1))
 
 (defun cerebro--beads-buffer (repo-root)
   "The panel buffer, created and started if it does not exist."
@@ -863,20 +954,6 @@ ids and return - since it runs after every command in the list buffer."
         (setq cerebro--last-shown id)
         (let ((agent (cerebro--find-agent id)))
           (when agent (cerebro--show-detail agent)))))))
-
-(defconst cerebro-list-width 62
-  "Columns for the left column of the layout.
-
-The agent table is 14+13+18+10+6 plus padding, so anything narrower cuts the
-elapsed-time column off the right edge - it was 45 for a while, and the
-column was simply invisible. The bead panel underneath inherits this width
-and wants every one of them for its titles.")
-
-(defconst cerebro-list-height 20
-  "Lines given to the agent list before the bead panel starts.
-
-Eighteen agents and a header, so the list never scrolls and the panel gets
-whatever the frame has left.")
 
 (defun cerebro--setup-layout ()
   "Ensure the list/beads/detail window layout exists for the current buffer."

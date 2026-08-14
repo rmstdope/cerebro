@@ -65,6 +65,14 @@ Sorted by priority then id, so P0 reads first and the order does not shuffle und
 section names its own count, because the rows are what gets capped — `cerebro-beads-per-section`,
 eight by default, keeps an unbounded backlog from pushing the first two sections off the bottom.
 
+It reads like the agent list: one bead is marked, `n`/`p` (or the arrow keys) step between them, and
+navigation skips the section headers, blank lines and `(none)` rows. The mark is `hl-line`, sticky,
+so the picked bead stays visible while you are working in another window.
+
+The mark follows the *bead*, not the line: the panel redraws on a timer, and restoring by position
+would slide the mark onto whatever row took that line when the queue changed. If the marked bead is
+merged, closed or claimed away, the mark falls back to the first row rather than to nothing.
+
 It refreshes every `cerebro-beads-refresh-seconds` (30) and on `g`, rather than on the agent list's
 five-second tick: a refresh is three `bd` subprocesses, and beads move on human timescales. If `bd`
 cannot answer — absent, unconfigured, mid-write — the panel goes quiet rather than taking the fleet

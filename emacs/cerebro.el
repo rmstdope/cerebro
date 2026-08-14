@@ -327,27 +327,50 @@ live buffers) falls back to the placeholder rather than erroring."
 (defvar vterm-shell)
 (declare-function vterm "vterm" (&optional buffer-name))
 
-(defun cerebro--display-in-detail (spawn)
-  "Call SPAWN, a function returning a buffer, showing it in the detail window.
+(defun cerebro--spawn-into-detail (buffer-name spawn)
+  "Run SPAWN and put the buffer it makes, named BUFFER-NAME, in the detail window.
 
 SPAWN displays its own buffer - `vterm' uses `pop-to-buffer-same-window',
 which would take the *selected* window, and that is the list window when
 `s' is pressed there, leaving the navigator unable to see the fleet.
-`display-buffer-overriding-action' redirects that into the detail window
-instead; it beats every other action, including same-window ones.
+`display-buffer-overriding-action' redirects that; it beats every other
+action, including same-window ones and `display-buffer-alist'.
+
+Because it beats everything, it is scoped three ways:
+
+- **To BUFFER-NAME.** `vterm-mode' runs *after* the session is displayed,
+  so a `display-warning' from it - or the module-compile log on a first
+  run - would otherwise be forced into the detail window on top of the
+  session it just placed.  Anything else returns nil and takes its normal
+  course.
+- **Never onto the selected window.** If the detail window is gone, or
+  refuses the buffer, the fallback pops up a window rather than falling
+  through to the selected one, which is the list.
+- **Errors do not escape.** `set-window-buffer' signals on a window
+  dedicated to another buffer, and that signal would escape
+  `vterm--internal' between its `generate-new-buffer' and its
+  `vterm-mode', stranding a live process-less session buffer.  The next
+  start then makes `*fleet: <name>*<2>', which
+  `cerebro--owned-buffer-agent-name' does not match, so that agent would
+  be invisible to the fleet list for ever.
 
 `save-selected-window' keeps point in the list, so starting several agents
 in a row does not leave the navigator typing into the last one's session.
 It restores the current buffer too, which `cerebro-start' relies on: its
 `revert-buffer' must refresh the fleet list, not the new session."
   (let* ((window cerebro--detail-window)
+         ;; A (FUNCTIONS . ALIST) action; the alist is empty.
          (display-buffer-overriding-action
-          (if (window-live-p window)
-              ;; A (FUNCTIONS . ALIST) action; the alist is empty.
-              (list (lambda (buffer _alist)
-                      (set-window-buffer window buffer)
-                      window))
-            display-buffer-overriding-action)))
+          (list (lambda (buffer alist)
+                  (when (equal (buffer-name buffer) buffer-name)
+                    (or (and (window-live-p window)
+                             (condition-case nil
+                                 (progn
+                                   (display-buffer-record-window 'reuse window buffer)
+                                   (set-window-buffer window buffer)
+                                   window)
+                               (error nil)))
+                        (display-buffer-pop-up-window buffer alist)))))))
     (save-selected-window (funcall spawn))))
 
 (defun cerebro--launch (agent)
@@ -355,16 +378,21 @@ It restores the current buffer too, which `cerebro-start' relies on: its
 
 `vterm-shell' is let-bound rather than set globally, so the navigator's
 ordinary vterm shells are unaffected.  The session goes into the detail
-window via `cerebro--display-in-detail' - note that binding
-`default-directory' only works while the fleet buffer stays current, which
-is why nothing here selects another window."
+window via `cerebro--spawn-into-detail'.
+
+The let-bound `default-directory' reaches the session by inheritance rather
+than by anything staying selected: `vterm--internal' calls
+`generate-new-buffer' while the fleet buffer is still current, and the new
+buffer takes its `default-directory' from there.  Only then does it display
+the buffer and run `vterm-mode'."
   (unless (require 'vterm nil t)
     (user-error "cerebro needs vterm for live sessions - install emacs-libvterm"))
   (let* ((default-directory (cerebro--repo-root))
          (cmd (cerebro--launch-command agent))
          (vterm-shell (if (stringp cmd) cmd (mapconcat #'shell-quote-argument cmd " ")))
-         (buffer (cerebro--display-in-detail
-                  (lambda () (vterm (cerebro--session-buffer-name agent))))))
+         (session-name (cerebro--session-buffer-name agent))
+         (buffer (cerebro--spawn-into-detail
+                  session-name (lambda () (vterm session-name)))))
     ;; The navigator's quit guard: confirm before Emacs or a buffer kill
     ;; takes a live agent down.  vterm's own kill behaviour is tuned for
     ;; disposable shells and does not set this on its own.

@@ -65,9 +65,20 @@ start another one
 Implementers are named after X-Men — Cyclops, Storm, Wolverine, Rogue, and on down the roster — so
 that a fleet of them can be talked about without anyone counting session hashes.
 
-Each implementer it spawns takes a planned bead, creates its own git worktree, works through the plan
-test-first, opens a PR, answers the Copilot review, waits for CI, merges, cleans up, and takes the
-next bead. They run on Sonnet, each with its own context, and they keep going until told to stop.
+Each implementer takes a planned bead, creates its own git worktree, works through the plan
+test-first, opens a PR, answers the Copilot review, waits for CI, merges and cleans up. Then it
+reports itself `done` and **that session ends**: a fresh one starts in its place for the next bead.
+They run on Sonnet, each with its own context, and the fleet keeps replacing them until told to
+stop.
+
+The replacement is the point. One bead fills a session with a plan, a diff, a review and three CI
+runs, and nothing can clear that from the inside — so instead of clearing it, the session is thrown
+away and a clean one takes the next bead.
+
+They are interactive sessions, so you can watch one work and type to it. If it hits a question only
+you can answer it will ask, and show as `asking` in the fleet view. Answer it and it carries on. If
+you are away, it is told to give up after fifteen minutes and hands the bead to your queue instead —
+so a fleet left alone overnight drains the queue rather than sitting blocked on you.
 
 **Two or three is a sensible number on one machine.** More is not faster: the browser test suites
 take a machine-wide lock and run one at a time, and every merge makes every other open PR stale, so
@@ -76,10 +87,14 @@ once, and then do as it is told.
 
 ### What "take one down" means
 
-It means *finish*, not *stop now*. The orchestrator writes a stop flag; the implementer sees it only
-between beads — after the one it is on is merged and closed — and then leaves the loop. So a builder
-that has just claimed something will be a while yet. That is deliberate: killing one mid-bead leaves
-a claimed bead, a worktree and an open PR for you to unpick by hand.
+It means *finish*, not *stop now*. The orchestrator writes a stop flag; it is read at the one moment
+the implementer reports itself done — bead merged, closed, worktree gone — and no fresh session
+starts in its place. So a builder that has just claimed something will be a while yet. That is
+deliberate: killing one mid-bead leaves a claimed bead, a worktree and an open PR for you to unpick
+by hand.
+
+The implementer never reads the flag itself, and cannot end itself either. It says it is done; the
+supervisor decides whether a replacement starts.
 
 If you genuinely want one gone this second, say so and the orchestrator will stop it — and then you
 have that cleanup to do.

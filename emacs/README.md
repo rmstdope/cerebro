@@ -12,6 +12,23 @@ agent shown there. An agent running outside Emacs is shown and marked but not vi
 placeholder says so. This needs **vterm** (`emacs-libvterm`); without it the list still works, and
 `s`/`RET` signal a clear error instead of failing obscurely.
 
+## Supervising the implementers
+
+Implementers are interactive sessions that take one bead each, so they cannot end themselves. The
+same five-second poll that refreshes the list acts on what each one reports in
+`.claude/implementers/<name>.state.json`:
+
+- **`done`** — the bead is merged, closed and cleaned up. The session is ended and a fresh one
+  started for the next bead, which is how a session's context stays one bead deep.
+- **`done` with `.claude/implementers/<name>.stop` present** — ended, and no replacement. That is
+  what "stop an implementer" means: it finishes what it is on, and then does not come back.
+- **`asking`** — blocked on a question only the navigator can answer. Answer it in the detail
+  window. After `cerebro-answer-timeout` (900s) with no answer, the session is told to hand the
+  bead to the `human` queue and finish, once, so a fleet left alone does not sit blocked.
+
+Only implementers Emacs itself started are supervised: one running in somebody's own terminal is
+theirs to end, and a dead one stays dead rather than fighting your own `k`.
+
 Run the tests with:
 
 ```bash

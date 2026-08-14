@@ -31,6 +31,11 @@
 (require 'seq)
 (require 'subr-x)
 
+(defgroup cerebro nil
+  "The fleet view: what every agent is doing, and starting or stopping them."
+  :group 'tools
+  :prefix "cerebro-")
+
 ;;; The interactive roster
 
 (defconst cerebro-interactive-agents
@@ -81,7 +86,16 @@ predicate on a pid; OWNED the names Emacs itself started."
         (make-cerebro-agent :name name :role "implementer" :kind 'implementer
                                     :state 'dead :bead nil :since nil :external nil)
       (let* ((raw-state (alist-get 'state parsed))
-             (state (if (equal raw-state "working") 'working 'idle))
+             (state (cond ((equal raw-state "working") 'working)
+                          ;; The bead is merged and closed and the session has
+                          ;; nothing left to do; `cerebro--supervise' replaces
+                          ;; it, because an interactive session cannot end
+                          ;; itself the way a --print one did.
+                          ((equal raw-state "done") 'done)
+                          ;; Blocked on a question only the navigator can
+                          ;; answer, with a bead still in flight.
+                          ((equal raw-state "asking") 'asking)
+                          (t 'idle)))
              (bead (alist-get 'bead parsed))
              (since (alist-get 'since parsed))
              (external (not (member name owned))))
@@ -109,24 +123,35 @@ Emacs itself started (always empty until ah-vcf.3)."
   "The single-character glyph for STATE, propertized."
   (cond
    ((memq state '(working up)) (propertize "●" 'face 'success))   ; ●
+   ;; Waiting on the navigator: the one state that is asking for something.
+   ((eq state 'asking) (propertize "?" 'face 'warning))           ; ?
+   ((eq state 'done) (propertize "◍" 'face 'success))             ; ◍
    ((eq state 'idle) (propertize "◌" 'face 'shadow))              ; ◌
    (t (propertize "○" 'face 'shadow))))                           ; ○
+
+(defun cerebro--seconds-since (since now)
+  "Seconds from SINCE (an ISO-8601 string, or nil) to NOW, or nil.
+
+Nil rather than zero when SINCE is absent or unparseable, so a caller can
+tell \"no time has passed\" from \"the file did not say\" - a torn state
+file must not read as a deadline that has expired."
+  (when since
+    (condition-case nil
+        (max 0 (floor (float-time
+                       (time-subtract now (encode-time (iso8601-parse since))))))
+      (error nil))))
 
 (defun cerebro--elapsed (since now)
   "How long ago SINCE (an ISO-8601 string, or nil) was, relative to NOW.
 
 Renders as \"12m\", \"1h03\" or \"2d\".  Nil-safe: a nil SINCE, or one that
 fails to parse, renders as the empty string."
-  (if (null since)
-      ""
-    (condition-case nil
-        (let* ((since-time (encode-time (iso8601-parse since)))
-               (diff (max 0 (floor (float-time (time-subtract now since-time))))))
-          (cond
-           ((< diff 3600) (format "%dm" (/ diff 60)))
-           ((< diff 86400) (format "%dh%02d" (/ diff 3600) (/ (mod diff 3600) 60)))
-           (t (format "%dd" (/ diff 86400)))))
-      (error ""))))
+  (let ((diff (cerebro--seconds-since since now)))
+    (cond
+     ((null diff) "")
+     ((< diff 3600) (format "%dm" (/ diff 60)))
+     ((< diff 86400) (format "%dh%02d" (/ diff 3600) (/ (mod diff 3600) 60)))
+     (t (format "%dd" (/ diff 86400))))))
 
 (defun cerebro--entry (agent now)
   "AGENT as a `tabulated-list-entries' element, evaluated at NOW."
@@ -141,6 +166,50 @@ fails to parse, renders as the empty string."
          (for-col (if external "" (cerebro--elapsed (cerebro-agent-since agent) now))))
     (list (cerebro-agent-name agent)
           (vector agent-col role-col state-col bead-col for-col))))
+
+;;; Supervising the implementers
+
+(defcustom cerebro-answer-timeout 900
+  "Seconds an implementer may wait on the navigator before it is told to give up.
+
+An interactive implementer may put a question to the navigator, but it may
+not wait for ever: a fleet blocked on unanswered questions drains no queue,
+and the navigator is often away.  Past this, `cerebro--supervise' tells it
+to hand the bead to the `human' queue and finish - a complete run rather
+than an abandoned one."
+  :type 'integer
+  :group 'cerebro)
+
+(defun cerebro--supervise-action (agent stop-flag-p now)
+  "What the fleet poll should do about AGENT at NOW, or nil for nothing.
+
+STOP-FLAG-P is whether `.claude/implementers/<name>.stop' exists.  The
+answers are:
+
+`restart' - AGENT finished its bead.  An interactive session cannot end
+            itself the way a `--print' one did, so Emacs ends it and starts
+            a fresh one, which is what keeps a session to one bead and its
+            context free of every bead before it.
+`retire'  - AGENT finished its bead and a stop flag says do not start
+            another.  Note the flag is only ever read here, with the bead
+            already merged and closed: taking an implementer down in flight
+            strands a claim, a worktree and an open PR, so a stop means
+            *finish*, not *stop now*.
+`nudge'   - AGENT has waited past `cerebro-answer-timeout' for an answer.
+
+Only an implementer Emacs itself started is supervised.  One running in
+somebody's own terminal is theirs to end, and a dead one stays dead -
+restarting it would fight the navigator's own `k'."
+  (when (and (eq (cerebro-agent-kind agent) 'implementer)
+             (not (cerebro-agent-external agent)))
+    (pcase (cerebro-agent-state agent)
+      ('done (if stop-flag-p 'retire 'restart))
+      ('asking
+       (let ((waited (cerebro--seconds-since (cerebro-agent-since agent) now)))
+         ;; A stop flag makes no difference: the bead is still in flight, so
+         ;; the question still needs an answer or a hand-back.
+         (and waited (>= waited cerebro-answer-timeout) 'nudge)))
+      (_ nil))))
 
 ;;; ah-vcf.3: the pure start/kill/launch decisions
 
@@ -326,6 +395,8 @@ live buffers) falls back to the placeholder rather than erroring."
 ;; actually loaded.
 (defvar vterm-shell)
 (declare-function vterm "vterm" (&optional buffer-name))
+(declare-function vterm-send-string "vterm" (string &optional paste-p))
+(declare-function vterm-send-return "vterm" ())
 
 (defun cerebro--spawn-into-detail (buffer-name spawn)
   "Run SPAWN and put the buffer it makes, named BUFFER-NAME, in the detail window.
@@ -403,6 +474,76 @@ the buffer and run `vterm-mode'."
                (cerebro-agent-name agent)))
     buffer))
 
+;;; Acting on the supervision decisions
+
+(defvar-local cerebro--nudged nil
+  "Names already told to give up on the question they are asking.
+
+The poll runs every five seconds; without this the nudge would be typed
+into the session on every tick, burying the agent's own output and
+resetting what it was told.  A name leaves this set as soon as it is no
+longer asking, so its next question is nudgeable again.")
+
+(defun cerebro--stop-flag-path (repo-root name)
+  "Where NAME's stop flag lives, as `orchestrator.md' documents it."
+  (expand-file-name (format ".claude/implementers/%s.stop" name) repo-root))
+
+(defun cerebro--stop-flag-p (repo-root name)
+  "Whether a stop flag is set for NAME."
+  (file-exists-p (cerebro--stop-flag-path repo-root name)))
+
+(defconst cerebro--nudge-message
+  (concat "[cerebro] Nobody answered within the timeout. Do not keep waiting: "
+          "put the question and everything you have found into the bead, "
+          "label it `human', release your claim, and finish the run - "
+          "the hand-back in the implement-bead skill.")
+  "What an implementer is told when its question goes unanswered.
+
+It names the hand-back rather than describing it, so the skill stays the
+one place that says how a bead is handed back.")
+
+(defun cerebro--nudge (agent)
+  "Type `cerebro--nudge-message' into AGENT's session."
+  (let ((buffer (get-buffer (cerebro--session-buffer-name agent))))
+    (when (and buffer (fboundp 'vterm-send-string))
+      (with-current-buffer buffer
+        (vterm-send-string cerebro--nudge-message)
+        (vterm-send-return)))))
+
+(defun cerebro--end-session (agent)
+  "Kill AGENT's session buffer, without asking and without refreshing.
+
+The query-on-exit flag guards an *accidental* kill; this one is the poll
+acting on a bead the agent itself reported finished."
+  (let ((buffer (get-buffer (cerebro--session-buffer-name agent))))
+    (when buffer
+      (let ((proc (get-buffer-process buffer)))
+        (when proc (set-process-query-on-exit-flag proc nil)))
+      (kill-buffer buffer))))
+
+(defun cerebro--supervise (agents repo-root now)
+  "Act on what `cerebro--supervise-action' says about each of AGENTS.
+
+Errors are demoted: this runs from a timer, and one agent whose session
+cannot be replaced must not stop the fleet view refreshing or take the
+other agents down with it."
+  (dolist (agent agents)
+    (let ((name (cerebro-agent-name agent)))
+      (unless (eq (cerebro-agent-state agent) 'asking)
+        (setq cerebro--nudged (delete name cerebro--nudged)))
+      (with-demoted-errors "cerebro: %S"
+        (pcase (cerebro--supervise-action agent (cerebro--stop-flag-p repo-root name) now)
+          ;; Kill before launching: two sessions for one name would make
+          ;; vterm call the second `*fleet: <name>*<2>', which
+          ;; `cerebro--owned-buffer-agent-name' does not match, leaving it
+          ;; invisible to the list for ever.
+          ('restart (cerebro--end-session agent)
+                    (cerebro--launch agent))
+          ('retire (cerebro--end-session agent))
+          ('nudge (unless (member name cerebro--nudged)
+                    (push name cerebro--nudged)
+                    (cerebro--nudge agent))))))))
+
 ;;; The buffer
 
 (defconst cerebro-buffer-name "*cerebro*")
@@ -440,10 +581,14 @@ the buffer and run `vterm-mode'."
     (setq cerebro--timer nil)))
 
 (defun cerebro--tick (buffer)
-  "Refresh BUFFER if it is still alive; called every 5s while it lives."
+  "Refresh BUFFER if it is still alive; called every 5s while it lives.
+
+The refresh comes first: `cerebro--supervise' acts on what the revert just
+derived, so it never decides from a state file read five seconds ago."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (revert-buffer))))
+      (revert-buffer)
+      (cerebro--supervise cerebro--agents (cerebro--repo-root) (current-time)))))
 
 (defun cerebro--follow ()
   "Show the selected agent's detail whenever the list selection changes.

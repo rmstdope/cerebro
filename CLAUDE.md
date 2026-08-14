@@ -43,8 +43,9 @@ Four roles, each an agent definition in `agents/` backed by a skill in `skills/`
 - **Cerebro** (`orchestrator`, Fable/medium) — starts and stops implementers on request, sweeps
   worktrees/claims/epics, reports. **Starts nothing on its own.**
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in
-  its own git worktree, PR, answer the Copilot review, merge, close, exit. The launcher loops, not
-  the session.
+  its own git worktree, PR, answer the Copilot review, merge, close, report `done`. Interactive, so
+  it cannot end itself — the Emacs fleet view ends it and starts a fresh session, which is what keeps
+  a session's context one bead deep.
 - **Moira** (`user-feedback`, Sonnet) — owns GitHub issues: acknowledges, triages into beads, keeps
   the issue's status comments in step with its bead.
 
@@ -59,9 +60,14 @@ it documents the observed behaviour and costs the roles were tuned against.
 
 These are load-bearing; changing them changes how the fleet behaves in every consumer repo.
 
-- **Wait by blocking inside a tool call, never by ending a turn.** Top-level implementer sessions run
-  under `--print`; `Monitor` and background `Bash` promise a re-invocation that never arrives, which
-  has stranded a claimed bead, an open PR and unanswered review comments.
+- **Wait by blocking inside a tool call, never by ending a turn.** `Monitor` and background `Bash`
+  promise a re-invocation that nothing delivers; this stranded a claimed bead, an open PR and
+  unanswered review comments. Implementers are interactive now, so an ended turn no longer kills the
+  process — it just sits there until a human types something, which is not better.
+- **The state file is the contract.** `.claude/implementers/<name>.state.json` carries
+  `idle`/`working`/`asking`/`done`; the implementer writes it, `cerebro.el` acts on it. Changing
+  either side's vocabulary breaks supervision silently — `cerebro--derive-implementer` maps unknown
+  states to `idle`, which reads as "fine" rather than as an error.
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.

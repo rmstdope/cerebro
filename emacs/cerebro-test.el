@@ -446,5 +446,160 @@ does not match - so that session is invisible to the fleet list for ever."
                               session-name)))))
       (when (get-buffer session-name) (kill-buffer session-name)))))
 
+;; ---------------------------------------------------------------------------
+;; Interactive implementers: one bead per session, and who ends it
+
+(ert-deftest cerebro-test/derive-implementer-done-and-asking-states ()
+  "The state file gained two states when implementers became interactive."
+  (let* ((states '(("Cyclops" . ((state . "done") (bead . "ah-f9c")
+                                  (since . "2026-08-14T09:00:00Z") (pid . 42)))
+                   ("Storm" . ((state . "asking") (bead . "ah-a1b")
+                                (since . "2026-08-14T09:00:00Z") (pid . 43)))))
+         (agents (cerebro--derive '("Cyclops" "Storm") nil states
+                                          #'cerebro-test--always-alive nil
+                                          '("Cyclops" "Storm"))))
+    (should (eq (cerebro-agent-state (nth 0 agents)) 'done))
+    (should (eq (cerebro-agent-state (nth 1 agents)) 'asking))
+    ;; The bead stays visible in both - it is what the navigator needs to see.
+    (should (equal (cerebro-agent-bead (nth 1 agents)) "ah-a1b"))))
+
+(defun cerebro-test--supervised (state &optional external since)
+  (make-cerebro-agent :name "Cyclops" :role "implementer" :kind 'implementer
+                              :state state :bead "ah-f9c" :since since
+                              :external external))
+
+(defconst cerebro-test--now (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))
+
+(ert-deftest cerebro-test/supervise-restarts-a-finished-implementer ()
+  "One bead per session: a finished session is replaced, not reused.
+
+This is the whole reason the sessions are short - a fresh one starts with a
+clean context instead of the residue of every bead before it."
+  (should (eq (cerebro--supervise-action (cerebro-test--supervised 'done) nil
+                                                  cerebro-test--now)
+              'restart)))
+
+(ert-deftest cerebro-test/supervise-retires-a-finished-implementer-under-stop ()
+  "A stop flag lets the bead finish and then takes the terminal down.
+
+The flag is read here, between beads, and never mid-bead: an implementer
+killed in flight strands a claim, a worktree and an open PR."
+  (should (eq (cerebro--supervise-action (cerebro-test--supervised 'done) t
+                                                  cerebro-test--now)
+              'retire)))
+
+(ert-deftest cerebro-test/supervise-leaves-a-working-implementer-alone ()
+  (dolist (state '(working idle asking))
+    (should (null (cerebro--supervise-action
+                   (cerebro-test--supervised state nil "2026-08-14T09:29:00Z")
+                   t cerebro-test--now)))))
+
+(ert-deftest cerebro-test/supervise-never-touches-a-terminal-emacs-does-not-own ()
+  "An implementer started outside Emacs belongs to whoever started it."
+  (should (null (cerebro--supervise-action (cerebro-test--supervised 'done t) nil
+                                                    cerebro-test--now))))
+
+(ert-deftest cerebro-test/supervise-leaves-a-dead-implementer-dead ()
+  "Restarting a dead one would fight the navigator's own `k'."
+  (should (null (cerebro--supervise-action (cerebro-test--supervised 'dead) nil
+                                                    cerebro-test--now))))
+
+(ert-deftest cerebro-test/supervise-nudges-a-question-nobody-answered ()
+  "Asking is allowed; waiting for ever is not.
+
+The navigator may be away, and a fleet all blocked on unanswered questions
+drains no queue.  Past the timeout the session is told to hand the bead to
+the `human' queue and finish, which is a complete run rather than an
+abandoned one."
+  (let ((cerebro-answer-timeout 900))
+    ;; 14 minutes in: still the navigator's to answer.
+    (should (null (cerebro--supervise-action
+                   (cerebro-test--supervised 'asking nil "2026-08-14T09:16:00Z")
+                   nil cerebro-test--now)))
+    ;; 16 minutes in: past the timeout.
+    (should (eq (cerebro--supervise-action
+                 (cerebro-test--supervised 'asking nil "2026-08-14T09:14:00Z")
+                 nil cerebro-test--now)
+                'nudge))))
+
+(ert-deftest cerebro-test/supervise-nudge-does-not-depend-on-the-stop-flag ()
+  "A stopped implementer still has a bead in flight, so it still gets an answer."
+  (let ((cerebro-answer-timeout 900))
+    (should (eq (cerebro--supervise-action
+                 (cerebro-test--supervised 'asking nil "2026-08-14T09:00:00Z")
+                 t cerebro-test--now)
+                'nudge))))
+
+(ert-deftest cerebro-test/supervise-unparseable-since-does-not-nudge ()
+  "A torn state file must not spray instructions into a working session."
+  (should (null (cerebro--supervise-action
+                 (cerebro-test--supervised 'asking nil "not-a-timestamp")
+                 nil cerebro-test--now)))
+  (should (null (cerebro--supervise-action
+                 (cerebro-test--supervised 'asking nil nil)
+                 nil cerebro-test--now))))
+
+(ert-deftest cerebro-test/entry-shows-the-new-states ()
+  (dolist (state '(done asking))
+    (let* ((agent (cerebro-test--supervised state nil "2026-08-14T09:00:00Z"))
+           (row (nth 1 (cerebro--entry agent cerebro-test--now))))
+      (should (equal (aref row 2) (symbol-name state)))
+      (should (equal (aref row 3) "ah-f9c")))))
+
+(ert-deftest cerebro-test/supervise-acts-once-per-question ()
+  "The poll runs every 5s; the nudge must not be sprayed into the session.
+
+Repeating it every tick would bury the agent's own output and keep resetting
+what it was told, which is worse than not telling it at all."
+  (let ((nudged nil)
+        (agent (cerebro-test--supervised 'asking nil "2026-08-14T09:00:00Z"))
+        (cerebro-answer-timeout 900))
+    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
+              ((symbol-function 'cerebro--nudge)
+               (lambda (a) (push (cerebro-agent-name a) nudged))))
+      (with-temp-buffer
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (should (equal nudged '("Cyclops")))
+        ;; Once it answers and moves on, a later question is nudgeable again.
+        (cerebro--supervise (list (cerebro-test--supervised 'working))
+                                    "/fake/repo" cerebro-test--now)
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (should (equal nudged '("Cyclops" "Cyclops")))))))
+
+(ert-deftest cerebro-test/supervise-restart-kills-then-launches ()
+  "Restart is a kill and a fresh launch, in that order.
+
+Launching first would leave two sessions for one name, and vterm would call
+the second `*fleet: Cyclops*<2>' - a name `cerebro--owned-buffer-agent-name'
+does not match, so it would be invisible to the list for ever."
+  (let ((calls nil)
+        (agent (cerebro-test--supervised 'done)))
+    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
+              ((symbol-function 'cerebro--end-session)
+               (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
+              ((symbol-function 'cerebro--launch)
+               (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls))))
+      (with-temp-buffer
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (should (equal (reverse calls) '((kill . "Cyclops") (launch . "Cyclops"))))))))
+
+(ert-deftest cerebro-test/supervise-retire-kills-without-launching ()
+  "A stop flag means this name does not come back until the navigator says so."
+  (let ((calls nil)
+        (agent (cerebro-test--supervised 'done)))
+    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) t))
+              ((symbol-function 'cerebro--end-session)
+               (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
+              ((symbol-function 'cerebro--launch)
+               (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls))))
+      (with-temp-buffer
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (should (equal calls '((kill . "Cyclops"))))))))
+
+(ert-deftest cerebro-test/stop-flag-path-is-the-documented-one ()
+  (should (equal (cerebro--stop-flag-path "/repo" "Cyclops")
+                  "/repo/.claude/implementers/Cyclops.stop")))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

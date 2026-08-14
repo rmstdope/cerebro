@@ -37,8 +37,10 @@ Five roles, each an agent definition in `agents/` backed by a skill in `skills/`
   agent could build unattended. Decides architecture itself; takes every user-facing decision to the
   human ("the navigator"). Keeps four planned beads ahead of the builders.
 - **Cerebro** (`orchestrator`, Fable/medium) — stops implementers on request by writing their stop
-  flag; it cannot start one, since that means starting a session. Sweeps worktrees/claims/epics and
-  reports. **Starts nothing on its own.**
+  flag; it cannot start one, since that means starting a session. **Starts nothing on its own.** The
+  worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
+  (`ah-4ao`; see `docs/cerebro-jobs.md`); what is left for a Cerebro session is release cutting,
+  diagnosing a stuck implementer, and anything needing a forced reassignment.
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in
   its own git worktree, PR, answer the Copilot review, merge, close, report `done`. Interactive, so
   it cannot end itself — the Emacs fleet view ends it and starts a fresh session, which is what keeps
@@ -83,14 +85,24 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 ## emacs/cerebro.el
 
 `M-x cerebro` lists the fleet (Xavier, Cerebro, Moira, Psylocke + fourteen implementers) with state,
-current bead and elapsed time; `s` starts, `k` kills, `RET` focuses the detail window. Emacs 28+, no
+current bead and elapsed time; `s` starts, `k` kills, `f` tells an implementer to finish (writes its
+stop flag; the bead in flight is unaffected), `RET` focuses the detail window. Emacs 28+, no
 dependencies except optional **vterm** for live sessions.
 
+Under the list, the bead panel (`RET`, `n`/`p`, digits and `+`/`-`/`u` to reprioritise) also shows a
+**Sweeps** section: the claims and epics sweeps `agents/orchestrator.md` describes, run every ten
+minutes by `scripts/sweep-claims.sh` and `scripts/sweep-epics.sh` (read-only; they gather facts and
+mutate nothing), turned into findings by pure decision functions, and hidden entirely when there is
+nothing to report. `x` on a finding shows the exact `bd close`/`bd reclaim` it maps to and runs it
+only on confirmation. Worktree pruning (`prune-worktrees.sh --watch`) starts automatically alongside
+the fleet buffer and needs no confirmation - see `docs/cerebro-jobs.md` for why.
+
 The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebro--entry`,
-`cerebro--*-action`, `cerebro--launch-command`) and a small set of **impure readers** at the bottom
-(`cerebro--roster`, `cerebro--read-state-file`, `cerebro--system-args`, `cerebro--owned`). The tests
-only exercise the pure half, passing state in as plain data. Keep new logic on the pure side or it
-becomes untestable.
+`cerebro--*-action`, `cerebro--launch-command`, `cerebro--claim-finding`, `cerebro--epic-finding`,
+`cerebro--finding-command`) and a small set of **impure readers** at the bottom (`cerebro--roster`,
+`cerebro--read-state-file`, `cerebro--system-args`, `cerebro--owned`, `cerebro--gather-sweeps`). The
+tests only exercise the pure half, passing state in as plain data. Keep new logic on the pure side or
+it becomes untestable.
 
 Two data sources it depends on, both under `.claude/implementers/` in the consumer repo:
 

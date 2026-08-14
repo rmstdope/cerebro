@@ -31,7 +31,7 @@ Sync symlinks into a consumer repo (run from that repo, not this one):
 
 ## The agent fleet these files describe
 
-Four roles, each an agent definition in `agents/` backed by a skill in `skills/`:
+Five roles, each an agent definition in `agents/` backed by a skill in `skills/`:
 
 - **Xavier** (`planner`, Fable/high) — loads `plan-bead`. Turns unplanned beads into plans a Sonnet
   agent could build unattended. Decides architecture itself; takes every user-facing decision to the
@@ -45,6 +45,10 @@ Four roles, each an agent definition in `agents/` backed by a skill in `skills/`
   a session's context one bead deep.
 - **Moira** (`user-feedback`, Sonnet) — owns GitHub issues: acknowledges, triages into beads, keeps
   the issue's status comments in step with its bead.
+- **Psylocke** (`verifier`, Sonnet) — loads no separate skill; her whole job lives in
+  `agents/verifier.md`. Walks beads merged since her last pass, judges which touched the application,
+  prepares each verification before ever asking for the navigator's time, then briefs, launches and
+  records their verdict. A failed verdict reopens the bead at P0 and sends it back to the fleet.
 
 `skills/beads-workflow/SKILL.md` is the shared substrate all of them read: work is tracked in **beads**
 (`bd`), not GitHub issues; GitHub issues are the external inbox only. The planner/builder handover is
@@ -71,12 +75,16 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **Agents never decide anything a user sees**, never take work off another agent (except the
   documented crashed-agent recovery), and never act outside a planned bead.
 - Each agent announces its own name in its first message — the human watches several sessions at once.
+- **Closed is not terminal.** A failed verification reopens a bead at P0, and every role above
+  describes what it does when one comes back — Psylocke reopens it, Xavier amends the plan if the
+  plan was wrong, an implementer picks it up like any other P0, and Moira tells the reporter it was
+  taken back. A change to any one of those has to keep the others consistent with it.
 
 ## emacs/cerebro.el
 
-`M-x cerebro` lists the fleet (Xavier, Cerebro, Moira + fifteen implementers) with state, current bead
-and elapsed time; `s` starts, `k` kills, `RET` focuses the detail window. Emacs 28+, no dependencies
-except optional **vterm** for live sessions.
+`M-x cerebro` lists the fleet (Xavier, Cerebro, Moira, Psylocke + fourteen implementers) with state,
+current bead and elapsed time; `s` starts, `k` kills, `RET` focuses the detail window. Emacs 28+, no
+dependencies except optional **vterm** for live sessions.
 
 The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebro--entry`,
 `cerebro--*-action`, `cerebro--launch-command`) and a small set of **impure readers** at the bottom

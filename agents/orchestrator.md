@@ -166,7 +166,7 @@ already running:
 
 ```
 Cyclops · Storm · Wolverine · Rogue · Gambit · Nightcrawler · Colossus
-Iceman · Beast · Jubilee · Psylocke · Bishop · Phoenix · Mystique · Magneto
+Iceman · Beast · Jubilee · Bishop · Phoenix · Mystique · Magneto
 ```
 
 **The list is a fence, not a suggestion.** `.claude/cerebro/scripts/run-implementer` refuses anything that is not on
@@ -177,8 +177,8 @@ and prints the roster.
 That is enforced because you work from this list. An off-roster implementer would hold a bead, open
 PRs and be invisible to every question asked about the fleet, since you would never look for it.
 
-Run out of names — which needs fifteen implementers at once and will not happen — and say so rather
-than inventing a sixteenth.
+Run out of names — which needs fourteen implementers at once and will not happen — and say so rather
+than inventing a fifteenth.
 
 **Two or three on one machine is sensible; more is not faster.** The browser suites take a
 machine-wide lock and run one at a time, and every merge makes every other open PR stale, so each
@@ -275,6 +275,13 @@ happened here:
   implementation. Read the subjects, not just the count: ah-52b and ah-f8u each had one while both
   were still `planned` and unbuilt. Discount them —
   `... --oneline | grep -v "docs(<id>): mockup"` — and if nothing else is left, the bead is not done.
+
+**A bead carrying `verification:failed` is never sweep-closed.** Psylocke's failed verdict reopens a
+bead whose *old* commits are already on `origin/main` — that is what a reopen is — so the
+`git log --grep "(<id>):"` test above matches every time and proves nothing about whether the rework
+has landed. Check the labels before closing anything: `bd show <id> --json | jq -r '.labels'` (or the
+array from the sweep query itself), and if `verification:failed` is there, report it as a reopened
+bead being rebuilt rather than closing it.
 
 And read the assignee before anything else: a bead the navigator is holding — parked mid-thought, or
 being worked by hand — is `in_progress` under a human name, and none of this applies to it. Only
@@ -397,6 +404,12 @@ it is the same test by hand: `bd children <parent> --json`, all `closed`, close 
 **Report every epic you closed**, with the same reasoning as a claim: it means an implementer did
 not finish its own tidying, and the navigator wants to know. A pass that found none stays silent.
 
+**Psylocke reopens a closed parent chain when a failed verification reopens a child** (see
+`agents/verifier.md`), and the implementer that eventually re-closes that child re-closes the parent
+on its way out, the same as any other bead (see `implement-bead`). Neither of those fights this sweep
+— the "all children closed, nothing closed in the last ten minutes" test above already leaves a
+parent alone for as long as one child is genuinely open, reopened or not.
+
 ## Staying alive between questions
 
 You are not purely reactive. Between navigator questions, keep a background timer running so the
@@ -512,6 +525,20 @@ number mean something.
 Report as a line, not a table: *"today 26, this week 32, 12 since v0.5.3"*. If a window is zero, say
 so plainly rather than omitting it.
 
+**Name what is merged but unverified.** Closed, application-touching, and carrying neither
+`verification:passed` nor `verification:not-needed` — Psylocke has not yet had a person confirm it
+does what it claims:
+
+```bash
+bd list --status closed --exclude-type epic --json | jq -r '.[]
+  | select(([.labels[]? | select(. == "verification:passed" or . == "verification:not-needed")] | length) == 0)
+  | .id'
+```
+
+List them alongside the delivery counts. **This does not gate anything** — verification is the
+navigator's information, not a release blocker (see *Cutting a release*) — but a fleet that ships
+without ever mentioning what nobody has looked at defeats the point of having Psylocke at all.
+
 ## Cutting a release
 
 **When the navigator asks for a major, minor or maintenance release, you cut it.** This is the one
@@ -521,6 +548,11 @@ schedule, no threshold of shipped beads, and no such thing as a release you thou
 Your job is two steps — **make sure main is clean and current, then run the script**. Everything
 else, including the version arithmetic and the quality gate, belongs to `scripts/release.ts`, and
 duplicating its checks here only means two things to keep in step.
+
+**List what is merged but unverified before you cut anything** — the same query as *What has been
+delivered* — and let the navigator decide with that in front of them. Verification does not gate the
+release; naming what has not been checked is what makes that an informed choice rather than a blind
+one.
 
 If they said "cut a release" without saying which, ask — the three bumps are not interchangeable and
 the answer is one question:

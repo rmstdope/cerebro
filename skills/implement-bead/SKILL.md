@@ -143,6 +143,7 @@ machine that wrote it.
 past the green run:
 
 ```bash
+mkdir -p docs/retrospectives          # the first finding in a fresh checkout creates it
 git add docs/retrospectives/<bead id>.md
 git commit -m "docs(<bead id>): retrospective — <the one-line symptom>"
 git push
@@ -157,7 +158,9 @@ cycle is paid only when something was genuinely learned.
 ### The format
 
 **Create `docs/retrospectives/README.md` with this exact content if it does not exist**, so the
-format is documented where the files are rather than only here:
+format is documented where the files are rather than only here. `mkdir -p docs/retrospectives`
+first: yours may be the first finding this checkout has ever had, and `>` into a directory that is
+not there fails.
 
 ```markdown
 # Retrospectives
@@ -197,7 +200,7 @@ finding on its third sighting is the strongest evidence the fleet produces that 
 fixing rather than tolerating:
 
 ```bash
-ls docs/retrospectives/ && grep -rl "<a word from your symptom>" docs/retrospectives/
+grep -rl "<a word from your symptom>" docs/retrospectives/ 2>/dev/null || echo "nothing like it yet"
 ```
 
 A complete example:

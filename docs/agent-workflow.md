@@ -120,7 +120,7 @@ An implementer that hit something unexpected writes it up before it merges, as
 that went to plan leaves no file — so everything in that directory cost somebody time:
 
 ```bash
-ls docs/retrospectives/
+ls docs/retrospectives/ 2>/dev/null || echo "nothing recorded yet"
 ```
 
 Each file says what happened, why if the agent established it, what it cost, and the specific change

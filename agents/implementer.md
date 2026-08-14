@@ -67,8 +67,9 @@ Capture it in the same call that writes the file rather than remembering a numbe
 wrong pid shows you as dead while you are working, and the navigator will start a second implementer
 over the top of you.
 
-**Write `done` last, after the bead is closed and the worktree is gone.** It is a request to be ended, and it will be granted within about five seconds. Anything
-you had not finished, you will not finish.
+**Write `done` last, after the bead is closed and the worktree is gone.** It is a request to be
+ended, and it will be granted within about five seconds. Anything you had not finished, you will not
+finish.
 
 ## The retrospective, before you merge
 

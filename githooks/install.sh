@@ -24,10 +24,23 @@ if [[ -n "$EXISTING" && "$EXISTING" != "$HOOKS_PATH" ]]; then
   exit 1
 fi
 
-if [[ -d "$REPO_ROOT/.git/hooks" ]] \
-  && compgen -G "$REPO_ROOT/.git/hooks/*" >/dev/null 2>&1 \
-  && ! compgen -G "$REPO_ROOT/.git/hooks/*.sample" >/dev/null 2>&1; then
-  echo "Note: .git/hooks contains hooks that will stop running once core.hooksPath is set."
+# The stock .git/hooks is full of *.sample files, which never run - so the
+# question is whether any NON-sample hook is there. Asking "are there files but
+# no samples" misses the common case of a real hook sitting beside the samples.
+HOOKS_DIR="$(git -C "$REPO_ROOT" rev-parse --git-path hooks)"
+[[ "$HOOKS_DIR" = /* ]] || HOOKS_DIR="$REPO_ROOT/$HOOKS_DIR"
+
+existing_hooks=()
+if [[ -d "$HOOKS_DIR" ]]; then
+  for hook in "$HOOKS_DIR"/*; do
+    [[ -f "$hook" && "$hook" != *.sample ]] || continue
+    existing_hooks+=("$(basename "$hook")")
+  done
+fi
+
+if ((${#existing_hooks[@]})); then
+  echo "Note: $HOOKS_DIR contains ${existing_hooks[*]}" >&2
+  echo "These stop running once core.hooksPath is set. Merge them into $HOOK_DIR if you need them." >&2
 fi
 
 git -C "$REPO_ROOT" config core.hooksPath "$HOOKS_PATH"

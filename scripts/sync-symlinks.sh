@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# An empty skills/ or agents/ would otherwise leave the loops below iterating
+# once over the literal "*". The -f guards already skip it, so this is about
+# saying so rather than relying on them.
+shopt -s nullglob
 
 # Sync Claude Code customization symlinks from .claude/cerebro into .claude.
 # Run from anywhere inside the consumer repo.

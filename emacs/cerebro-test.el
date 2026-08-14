@@ -1,7 +1,10 @@
 ;;; cerebro-test.el --- Tests for cerebro.el -*- lexical-binding: t; -*-
 
-;; Run with: pnpm run test:fleet
-;; (emacs --batch -L tools/emacs -l cerebro-test -f ert-run-tests-batch-and-exit)
+;; Run from the repository root with:
+;;   emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit
+;; One test:
+;;   emacs --batch -L emacs -l cerebro-test \
+;;     --eval '(ert-run-tests-batch-and-exit "<name-or-regexp>")'
 
 (require 'ert)
 (require 'cerebro)
@@ -600,6 +603,50 @@ does not match, so it would be invisible to the list for ever."
 (ert-deftest cerebro-test/stop-flag-path-is-the-documented-one ()
   (should (equal (cerebro--stop-flag-path "/repo" "Cyclops")
                   "/repo/.claude/implementers/Cyclops.stop")))
+
+;; ---------------------------------------------------------------------------
+;; A session Emacs owns is alive, whatever the state file says yet
+
+(ert-deftest cerebro-test/derive-owned-implementer-without-a-state-file-is-idle ()
+  "A just-launched implementer has a session before it has a state file.
+
+Reporting it dead there is not cosmetic: `cerebro--start-action' tests
+aliveness *before* it tests ownership, so `s' would launch a second session
+for the same name - and vterm would call it `*fleet: Cyclops*<2>', a name
+`cerebro--owned-buffer-agent-name' does not match, invisible to the list for
+ever."
+  (let* ((agents (cerebro--derive '("Cyclops") nil '(("Cyclops" . nil))
+                                           #'cerebro-test--never-alive nil '("Cyclops")))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'idle))
+    (should-not (cerebro-agent-external agent))
+    (should (eq (cerebro--start-action agent '("Cyclops")) 'already-up))))
+
+(ert-deftest cerebro-test/derive-owned-implementer-ignores-a-stale-state-file ()
+  "The same race, one restart later: the file is the *previous* session's.
+
+Its pid is gone and its bead is finished, so trusting it would show a bead
+nobody is working on.  `cerebro--owned' already requires a live process, so
+ownership is the better evidence."
+  (let* ((states '(("Cyclops" . ((state . "working") (bead . "ah-old")
+                                  (since . "2026-08-14T09:00:00Z") (pid . 4242)))))
+         (agents (cerebro--derive '("Cyclops") nil states
+                                           #'cerebro-test--never-alive nil '("Cyclops")))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'idle))
+    (should (null (cerebro-agent-bead agent)))))
+
+(ert-deftest cerebro-test/derive-unowned-implementer-without-a-session-is-dead ()
+  "Ownership is what rescues it - absent that, a missing or stale file is death."
+  (let ((no-file (car (cerebro--derive '("Rogue") nil '(("Rogue" . nil))
+                                                #'cerebro-test--never-alive nil nil)))
+        (stale (car (cerebro--derive
+                     '("Rogue") nil
+                     '(("Rogue" . ((state . "working") (bead . "ah-old")
+                                    (since . "2026-08-14T09:00:00Z") (pid . 4242))))
+                     #'cerebro-test--never-alive nil nil))))
+    (should (eq (cerebro-agent-state no-file) 'dead))
+    (should (eq (cerebro-agent-state stale) 'dead))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

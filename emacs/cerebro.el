@@ -81,10 +81,24 @@ STATES is an alist of (NAME . parsed-state-json-or-nil); PID-ALIVE-P a
 predicate on a pid; OWNED the names Emacs itself started."
   (let* ((parsed (cdr (assoc name states)))
          (pid (and parsed (alist-get 'pid parsed)))
-         (alive (and pid (funcall pid-alive-p pid))))
-    (if (not alive)
-        (make-cerebro-agent :name name :role "implementer" :kind 'implementer
-                                    :state 'dead :bead nil :since nil :external nil)
+         (alive (and pid (funcall pid-alive-p pid)))
+         (owned-p (and (member name owned) t)))
+    (cond
+     ;; A session Emacs started is alive whatever the file says: `cerebro--owned'
+     ;; already requires a live process, and the file lags it twice over - a
+     ;; fresh session has not written one yet, and after a restart the file on
+     ;; disk is still the *previous* session's, with a dead pid and a finished
+     ;; bead. Reporting dead here is not cosmetic: `cerebro--start-action' tests
+     ;; aliveness before ownership, so `s' would start a second session for the
+     ;; same name, and vterm would call it `*fleet: <name>*<2>' - a name
+     ;; `cerebro--owned-buffer-agent-name' does not match, invisible for ever.
+     ((and (not alive) owned-p)
+      (make-cerebro-agent :name name :role "implementer" :kind 'implementer
+                                  :state 'idle :bead nil :since nil :external nil))
+     ((not alive)
+      (make-cerebro-agent :name name :role "implementer" :kind 'implementer
+                                  :state 'dead :bead nil :since nil :external nil))
+     (t
       (let* ((raw-state (alist-get 'state parsed))
              (state (cond ((equal raw-state "working") 'working)
                           ;; The bead is merged and closed and the session has
@@ -98,9 +112,10 @@ predicate on a pid; OWNED the names Emacs itself started."
                           (t 'idle)))
              (bead (alist-get 'bead parsed))
              (since (alist-get 'since parsed))
-             (external (not (member name owned))))
+             (external (not owned-p)))
         (make-cerebro-agent :name name :role "implementer" :kind 'implementer
-                                    :state state :bead bead :since since :external external)))))
+                                    :state state :bead bead :since since
+                                    :external external))))))
 
 (defun cerebro--derive (roster interactive-agents states pid-alive-p args owned)
   "Return the fleet as a list of `cerebro-agent', interactive first.
@@ -110,7 +125,7 @@ INTERACTIVE-AGENTS is an alist of (NAME . ROLE), normally
 `cerebro-interactive-agents'.  STATES is an alist of (NAME .
 parsed-state-json-or-nil).  PID-ALIVE-P is a predicate on a pid.  ARGS is the
 system process args list.  OWNED is the set of agent names whose sessions
-Emacs itself started (always empty until ah-vcf.3)."
+Emacs itself started."
   (append
    (mapcar (lambda (entry) (cerebro--derive-interactive entry args owned))
            interactive-agents)

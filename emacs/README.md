@@ -32,5 +32,5 @@ theirs to end, and a dead one stays dead rather than fighting your own `k`.
 Run the tests with:
 
 ```bash
-emacs --batch -L tools/emacs -l cerebro-test -f ert-run-tests-batch-and-exit
+emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit
 ```

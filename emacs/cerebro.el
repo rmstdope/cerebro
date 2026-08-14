@@ -310,28 +310,22 @@ still has to say how much work is really in it."
      (when (> hidden 0)
        (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
 
-(defun cerebro--bead-panel (claimed planned unplanned merged verified other width max)
+(defun cerebro--bead-panel (claimed planned unplanned merged width max)
   "The whole panel as a list of lines.
 
-The order work moves in: being built, ready to pick up, not planned yet,
-merged and waiting on Psylocke, and verified.
+The order work moves in, and it stops where the fleet's part in it does:
+being built, ready to pick up, not planned yet, and merged but not yet
+verified - which is Psylocke's queue.
 
-\"Merged, unverified\" is her queue rather than everything that ever merged -
-a bead marked `verification:not-needed' is in neither of the last two, which
-is why the count means something. It was seventy such beads in atlantis-hud
-the day this was written, and a Merged section carrying them would have
-shown a number that never fell."
+Verified work is not here. Neither is anything nobody can pick up. See
+`cerebro--partition-beads' for what that leaves out and why."
   (append (cerebro--bead-section "Claimed" claimed width max) (list "")
           (cerebro--bead-section "Planned, unclaimed" planned width max) (list "")
           (cerebro--bead-section "Unplanned" unplanned width max) (list "")
+          ;; Newest first: priority says nothing about finished work, so what
+          ;; this answers is what just landed and still wants checking.
           (cerebro--bead-section "Merged, unverified" merged width max
-                                 #'cerebro--sort-recent) (list "")
-          (cerebro--bead-section "Verified" verified width max
-                                 #'cerebro--sort-recent) (list "")
-          ;; Last because it is the section nobody acts on directly - and
-          ;; present because a bead nobody can see is worse than one nobody
-          ;; wants.
-          (cerebro--bead-section "Other" other width max)))
+                                 #'cerebro--sort-recent)))
 
 ;;; Supervising the implementers
 
@@ -817,44 +811,44 @@ thread, and \"nothing left to do\" here.")
            (cerebro--bead-labels bead)))
 
 (defun cerebro--partition-beads (beads)
-  "Split BEADS into the six lists the panel shows.
+  "Split BEADS into the four lists the panel shows.
 
-\(CLAIMED PLANNED UNPLANNED MERGED VERIFIED OTHER), and every bead lands in
-exactly one of them.
+\(CLAIMED PLANNED UNPLANNED MERGED), where merged means merged and not yet
+verified.  Not every bead lands in one, deliberately: verified work is
+finished, epics are parents rather than work, bd's own `event' records are
+bookkeeping, and blocked or deferred beads cannot be picked up.  A panel is
+a list of what to do about something, so what there is nothing to do about
+is left out.
 
-That is why this partitions one list rather than running a query per
-section. bd has five statuses - open, in_progress, blocked, deferred,
-closed - and asking about three of them left blocked and deferred beads
-existing nowhere at all, with epics excluded outright on top of that.
-
-Other is load-bearing rather than tidy: it holds epics, which are parents
-rather than work; blocked and deferred beads, which the fleet cannot pick
-up; and anything a future bd invents. A bead these rules do not recognise
-becomes visible instead of invisible."
-  (let (claimed planned unplanned merged verified other)
+It still partitions one list rather than running a query per section, which
+is what keeps those exclusions in one readable place instead of spread
+across five `bd' invocations - an `event' in particular carries the very
+labels these rules key on, and would otherwise arrive looking like merged
+work."
+  (let (claimed planned unplanned merged)
     (dolist (bead beads)
       (let ((status (alist-get 'status bead)))
         (cond
-         ;; Not work: an epic is a parent with children, and an `event' is
-         ;; bd's own audit record of a state change ("State change:
-         ;; verification -> passed"). Neither is something anybody picks up,
-         ;; and an event carries the very labels the sections key on - three
-         ;; of them were sitting at the top of Verified, one per verification
-         ;; ever recorded. They go to Other rather than being filtered away,
-         ;; so the panel still accounts for every bead in the database.
-         ((member (alist-get 'issue_type bead) '("epic" "event")) (push bead other))
+         ;; Not work, and so not shown: an epic is a parent with children, and
+         ;; an `event' is bd's own audit record of a state change ("State
+         ;; change: verification -> passed"). An event carries the very labels
+         ;; these rules key on, so without this three of them appeared as
+         ;; merged work - one per verification ever recorded.
+         ((member (alist-get 'issue_type bead) '("epic" "event")) nil)
          ((equal status "in_progress") (push bead claimed))
          ((equal status "open")
           (if (member "planned" (cerebro--bead-labels bead))
               (push bead planned)
             (push bead unplanned)))
          ((equal status "closed")
-          (if (cerebro--settled-p bead)
-              (push bead verified)
-            (push bead merged)))
-         (t (push bead other)))))
+          ;; Settled means nothing further is wanted from anybody - verified
+          ;; by a person, or ruled out of scope. Finished, so not here.
+          (unless (cerebro--settled-p bead) (push bead merged)))
+         ;; Blocked, deferred, or a status from a future bd: real beads, but
+         ;; nothing the fleet can pick up today.
+         (t nil))))
     (list (nreverse claimed) (nreverse planned) (nreverse unplanned)
-          (nreverse merged) (nreverse verified) (nreverse other))))
+          (nreverse merged))))
 
 (defconst cerebro-priority-floor 4
   "The least urgent priority `bd' takes; 0 is the most urgent.")

@@ -47,14 +47,16 @@ your theme.
 
 ## The bead panel
 
-Under the agent list, in a window of its own, `*cerebro-beads*` answers the three questions the
-navigator asks about the queue, in the order they are asked:
+Under the agent list, in a window of its own, `*cerebro-beads*` answers the questions the navigator
+asks about the queue, in the order they are asked:
 
 ```
 Claimed 1
   ah-13o  P1 Resizable split between the unit and orders panes
+
 Planned, unclaimed 0
   (none)
+
 Unplanned 4
   ah-3cs  P1 Config option for fixed unit-in-hex pane size
   ah-4ao  P2 Drive the implementer fleet from the Emacs agent…
@@ -62,31 +64,21 @@ Unplanned 4
 
 Merged, unverified 0
   (none)
-
-Verified 1
-  ah-13o  P1 Resizable split between the unit and orders pane…
 ```
 
-**Every bead in the database lands in exactly one section.** The panel makes one `bd` call for all
-five statuses and partitions the result, rather than running a query per section — which is what
-makes that a property rather than a hope. bd has `open`, `in_progress`, `blocked`, `deferred` and
-`closed`; asking about three of them left blocked and deferred beads existing nowhere, with epics
-excluded outright on top.
+The panel shows work the fleet can act on, and stops there. **Merged, unverified** is what has landed
+and still wants checking — Psylocke's queue — sorted newest first, since priority says nothing about
+finished work.
 
-`Other` is the catch-all and it earns its place: epics (parents, not work), blocked and deferred
-beads, bd's own `event` records of state changes, and anything a future bd invents. A bead these
-rules do not recognise becomes visible instead of invisible.
+Quite deliberately, not every bead appears. Verified work is finished; a bead marked
+`verification:passed` or `verification:not-needed` is settled either way. Epics are parents rather
+than work. bd's own `event` records are its bookkeeping — and they carry the very labels these rules
+key on, so without excluding them "State change: verification → passed" arrives looking like merged
+work. Blocked and deferred beads cannot be picked up. A panel is a list of what to do about
+something, so what there is nothing to do about is left out.
 
-The last two work sections sort newest first rather than by priority — a merged P3 is no less done
-than a merged P0. **Merged, unverified is what still wants checking**; **Verified is `passed` *or*
-`not-needed`** — different reasons, same consequence for a queue.
-
-> Note this is deliberately *not* how `agents/user-feedback.md` talks to a reporter, where a
-> `not-needed` bead never shows VERIFIED because nobody confirmed anything. The word means "a person
-> checked it" on an issue thread and "nothing left to do" here.
-
-Nothing here knows about releases: Moira decides that from whether a commit is in a release tag,
-which is not in bd, so shipped work stays in Verified rather than leaving the panel.
+One `bd` call fetches every status and the panel partitions it, which keeps those exclusions in one
+readable place rather than spread across five invocations.
 
 A failed verdict reopens a bead into the unclaimed pile at P0, where it is an ordinary open bead —
 which is the point. The row carries a `↻` so that pile can still say which work came back rather

@@ -135,6 +135,22 @@ Emacs itself started."
 
 ;;; Formatting
 
+(defface cerebro-idle
+  '((default :weight normal)
+    ;; Yellow that survives its background: pure yellow disappears on a light
+    ;; one, so that case gets the darker goldenrod.
+    (((class color) (background dark))  :foreground "gold")
+    (((class color) (background light)) :foreground "goldenrod")
+    (t :inherit warning))
+  "The idle glyph: a filled dot, yellow, beside the green one for working.
+
+Not the stock `warning' face, which Emacs defines as `:foreground
+\"DarkOrange\" :weight bold' on any colour display.  That was two wrongs at
+once here - orange where yellow was asked for, and bold, which this view
+reserves for an agent waiting on an answer.  Customize this one face if gold
+does not read against your theme."
+  :group 'cerebro)
+
 (defun cerebro--glyph (state)
   "The single-character glyph for STATE, propertized."
   (cond
@@ -145,7 +161,13 @@ Emacs itself started."
    ;; Yellow, not grey: an idle agent has a session up and no bead, which is
    ;; something the navigator may want to act on. Dead is the grey one - there
    ;; is nobody there at all - and the two must not read alike.
-   ((eq state 'idle) (propertize "◌" 'face 'warning))             ; ◌
+   ;;
+   ;; A filled dot, and the same one `working' uses. It was U+25CC DOTTED
+   ;; CIRCLE, which is the same picture as dead's U+25CB WHITE CIRCLE at
+   ;; terminal sizes - so the yellow was applied and simply lost the argument
+   ;; with the shape. Only colour separates idle from working now, which the
+   ;; State column beside it spells out in words anyway.
+   ((eq state 'idle) (propertize "●" 'face 'cerebro-idle))        ; ●
    (t (propertize "○" 'face 'shadow))))                           ; ○
 
 (defun cerebro--seconds-since (since now)

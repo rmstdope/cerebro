@@ -27,13 +27,19 @@ The glyph carries the state and the weight carries the urgency:
 | Row                | Means                                                          |
 |--------------------|----------------------------------------------------------------|
 | green `●`          | working, or an interactive agent that is up                     |
-| yellow `◌`         | idle — a session is up with no bead, which may want a nudge     |
+| yellow `●`         | idle — a session is up with no bead, which may want a nudge     |
 | yellow `?`, **bold** | asking: it needs an answer from you, and the whole row says so |
 | green `◍`          | done, and about to be replaced by a fresh session               |
 | grey `○`           | dead — nobody is there                                          |
 
 Bold is only ever "this row wants you", so it stays worth noticing: idle and dead share the quiet
 weight, and only a question earns the loud one.
+
+Idle and working are the same dot and differ only in colour, which is what the State column beside
+them spells out in words. The yellow is the `cerebro-idle` face — its own face rather than the stock
+`warning`, which Emacs defines as DarkOrange **and bold**: orange where yellow was wanted, and bold
+where bold is supposed to mean something else. Customize that one face if gold does not read against
+your theme.
 
 ## The bead panel
 

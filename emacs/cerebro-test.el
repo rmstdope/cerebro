@@ -691,10 +691,37 @@ directory, where there is no longer anything by that name."
 An idle implementer has a session up and no bead - something the navigator
 may want to act on - so it reads as yellow rather than as the grey that
 means there is nobody there at all."
-  (should (memq 'warning (cerebro-test--faces-at (cerebro--glyph 'idle) 0)))
+  (should (memq 'cerebro-idle (cerebro-test--faces-at (cerebro--glyph 'idle) 0)))
   ;; Still distinguishable from the states either side of it.
   (should (memq 'success (cerebro-test--faces-at (cerebro--glyph 'working) 0)))
   (should (memq 'shadow (cerebro-test--faces-at (cerebro--glyph 'dead) 0))))
+
+(ert-deftest cerebro-test/idle-face-is-actually-yellow-and-not-bold ()
+  "`warning\=' is DarkOrange and bold, which is two wrongs at once.
+
+Emacs defines `warning\=' as `:foreground \"DarkOrange\" :weight bold\' on any
+colour display - so the idle dot was orange rather than yellow, and bold,
+which is the weight this view reserves for an agent that wants an answer.
+`cerebro-idle\=' is a plain yellow instead, and customizable in one place for
+a theme where gold does not read."
+  (let ((spec (format "%S" (get 'cerebro-idle 'face-defface-spec))))
+    (should (string-match-p "gold\\|yellow" (downcase spec)))
+    (should-not (string-match-p "bold" (downcase spec)))))
+
+(ert-deftest cerebro-test/idle-is-a-filled-dot-not-a-ring ()
+  "The colour was right and the shape defeated it.
+
+Idle was U+25CC DOTTED CIRCLE and dead is U+25CB WHITE CIRCLE: two hollow
+rings that are the same picture at terminal sizes, so a yellow one read as
+\"an empty circle, just like the dead\" however yellow it was. Idle is a
+filled dot now - the thing that was actually asked for - and only the colour
+separates it from working, which is what the State column spells out anyway."
+  (let ((idle (substring-no-properties (cerebro--glyph 'idle)))
+        (dead (substring-no-properties (cerebro--glyph 'dead)))
+        (working (substring-no-properties (cerebro--glyph 'working))))
+    (should (equal idle "●"))
+    (should (equal idle working))
+    (should-not (equal idle dead))))
 
 (ert-deftest cerebro-test/asking-agent-is-bold-across-its-columns ()
   "An agent waiting on an answer has to be findable in a list of eighteen.

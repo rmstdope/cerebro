@@ -80,6 +80,11 @@ if [[ -z "$on_roster" ]]; then
   exit 2
 fi
 
+# Every bd call in this session acts as this implementer, not as the machine's git identity.
+# Distinct actors are what make a second claim on a held bead fail instead of aliasing into the
+# first (bd's --actor default chain: $BEADS_ACTOR, git user.name, $USER).
+export BEADS_ACTOR="$on_roster"
+
 exec claude \
   --agent implementer \
   --name "$name" \

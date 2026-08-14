@@ -292,15 +292,16 @@ alone (see `beads-workflow`): Xavier marks what it is planning with the `plannin
 lease, Moira claims nothing at all, and you claim nothing either. So `in_progress` narrows to two
 possibilities rather than four — which is what makes the lease check below decisive.
 
-**But the assignee name is not proof of who holds a claim, and cannot be read alone.** Every claim
-made from this machine is stamped with the local git identity, whether a human or an agent claimed
-it — `bd unclaim` and `bd update --claim` do not distinguish. `assignee: Henrik Kurelid` can mean the
-navigator is genuinely holding the bead, or it can mean an implementer claimed it, ran for a while,
-and died hours ago, leaving the claim stamped with the same name it would have had either way. A
-claim by a session that should not have claimed at all reads exactly the same, which is the other
-reason claiming is now the implementer's alone. Two of the navigator's own beads were found this way on 2026-08-14 — `ah-r2e` and `ah-52b`, both
-`in_progress` under a human name, both with leases expired and last heartbeat ten hours gone, neither
-held by any process in `ListAgents` or `pgrep`.
+**The assignee name now tells you who claimed a bead — but only for a claim made from a launched
+session.** Each launcher (`run-implementer` and the four role launchers, see ah-rnz) exports
+`BEADS_ACTOR=<agent name>` before starting its session, so a claim made from one is stamped with the
+roster name that made it: `assignee: Cyclops` means Cyclops's session claimed it, full stop.
+`assignee: Henrik Kurelid` (or any name off the roster) now specifically means a claim made by hand,
+outside a launched session — still check the lease before touching it, since a claim from before this
+change, or from a stale session started off the old launchers, predates the naming and carries none
+of this guarantee. Two of the navigator's own beads were found stale this way on 2026-08-14 —
+`ah-r2e` and `ah-52b`, both `in_progress` under a human name, both with leases expired and last
+heartbeat ten hours gone, neither held by any process in `ListAgents` or `pgrep`.
 
 So a human-looking assignee is not license to skip a bead in the sweep — check the lease before
 deciding it is off-limits:
@@ -659,11 +660,12 @@ Answer from the tools:
   costs them a turn, so reach for it rarely.
 - `ls .claude/implementers/` for which stop flags are set — one with no session behind it means a
   terminal the navigator has not started, and is worth saying out loud.
-- `bd list --status in_progress` for what is claimed, and by whom — but the assignee name alone does
-  not tell you whether the claim is live. Check each one's lease (`bd show <id>`, look for "Lease:
-  expires expired"); an expired lease with nobody live behind it in `ListAgents`/`pgrep` is a stale
-  claim worth surfacing even when the assignee reads as the navigator's own name — see *Beads that
-  finished without being closed*.
+- `bd list --status in_progress` for what is claimed, and by whom — a roster name in `assignee` means
+  a launched session claimed it and the name says which one, but that still does not say whether the
+  claim is live. Check each one's lease (`bd show <id>`, look for "Lease: expires expired"); an
+  expired lease with nobody live behind it in `ListAgents`/`pgrep` is a stale claim worth surfacing
+  even when the assignee reads as the navigator's own name — see *Beads that finished without being
+  closed*.
 - `bd ready --label planned ...` for how much work is left to pick up, **and** `bd list --status
   open --label planned ...` for how much is planned but blocked behind something in flight — see
   *Where the work is*. One number without the other misreports the queue.

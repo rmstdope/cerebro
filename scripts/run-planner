@@ -18,6 +18,11 @@
 
 set -euo pipefail
 
+# Every bd call in this session acts as Xavier, not as the machine's git identity, so his writes
+# (the `planning` label, priorities, plans) belong in the audit trail as an agent's, not the
+# navigator's.
+export BEADS_ACTOR="Xavier"
+
 # Fable at high effort, deliberately - matching the agent file, and naming both here too means a
 # terminal started from a different session still gets them.
 #

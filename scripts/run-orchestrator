@@ -21,6 +21,11 @@
 
 set -euo pipefail
 
+# Every bd call in this session acts as Cerebro, not as the machine's git identity. Cerebro claims
+# nothing, but its writes (labels, closes, reopens) belong in the audit trail as an agent's, not the
+# navigator's.
+export BEADS_ACTOR="Cerebro"
+
 # Fable at medium effort, deliberately. Cerebro sweeps, counts and reports - it reads tools and
 # relays what they say, and none of that needs a larger model or heavier reasoning. The agent file
 # says the same; naming both here too means a terminal started from a different session still gets

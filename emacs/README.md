@@ -13,8 +13,12 @@ from the list:
 | `s`   | starts a dead agent, into an Emacs-owned `vterm` buffer running its launcher |
 | `k`   | kills a live one, confirming harder mid-bead                                |
 | `RET` | selects the detail window, to type to the agent shown there                 |
-| `TAB` | switches window, exactly as `C-x o` does — press it again to come back      |
+| `TAB` | next window: list → beads → detail → list. Works from all three             |
 | `n`/`p` | next/previous row                                                        |
+
+`TAB` is bound in the session buffers too, which means taking it off vterm — done with a minor mode
+(`cerebro-session-mode`) so it applies only to the buffers the fleet view created, never to the
+navigator's own vterms. `C-c TAB` sends a real tab on to the agent when one is wanted.
 
 An agent running outside Emacs is shown and marked but not viewable — a placeholder says so. This
 needs **vterm** (`emacs-libvterm`); without it the list still works, and `s`/`RET` signal a clear

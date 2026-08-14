@@ -511,7 +511,11 @@ scheme with a live process - no registry to go stale."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (cerebro--placeholder agent)))
-      (setq buffer-read-only t))
+      (setq buffer-read-only t)
+      ;; It sits in the detail window like a session does, so TAB has to keep
+      ;; working from it - otherwise the key dies on exactly the agents that
+      ;; are not running.
+      (cerebro-session-mode 1))
     buffer))
 
 (defun cerebro--show-detail (agent)
@@ -610,6 +614,9 @@ the buffer and run `vterm-mode'."
     ;; disposable shells and does not set this on its own.
     (let ((proc (get-buffer-process buffer)))
       (when proc (set-process-query-on-exit-flag proc t)))
+    ;; TAB cycles out of here rather than reaching the shell; `C-c TAB' sends
+    ;; a real one when the agent wants it.
+    (with-current-buffer buffer (cerebro-session-mode 1))
     (when (eq (cerebro-agent-kind agent) 'implementer)
       ;; What was started, not what it will do: whether it claims straight away
       ;; is the launcher's behaviour, and an older `run-implementer'
@@ -769,6 +776,14 @@ nobody can see."
       (with-demoted-errors "cerebro: %S" (cerebro--beads-render buffer))
     (cancel-function-timers #'cerebro--beads-tick)
     (setq cerebro--beads-timer nil)))
+
+(defvar cerebro-beads-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map special-mode-map)
+    (define-key map (kbd "TAB") #'cerebro-other-window)
+    (define-key map (kbd "<tab>") #'cerebro-other-window)
+    map)
+  "Keymap for `cerebro-beads-mode'.")
 
 (define-derived-mode cerebro-beads-mode special-mode "Cerebro Beads"
   "What the fleet could be working on: claimed, planned, and unplanned."
@@ -939,10 +954,42 @@ cleared first rather than prompting a second time for the same kill."
 (defun cerebro-other-window ()
   "Move to the next window (`TAB'), exactly as `C-x o' does.
 
-With the fleet layout that is the detail window, and pressing it again comes
-back - one key to cycle rather than a key out and a chord back."
+The layout cycles list -> beads -> detail -> list, so one key reaches every
+window of it and comes back round rather than stopping at the right-hand
+edge.  Bound in all three, which for the detail window means taking TAB off
+vterm - see `cerebro-session-mode'."
   (interactive)
   (other-window 1))
+
+(defun cerebro-send-tab ()
+  "Send a real tab to the agent in this session (`C-c TAB').
+
+`cerebro-session-mode' takes TAB for window cycling, and an agent still
+needs to receive one occasionally - a shell completion, a TUI that uses it."
+  (interactive)
+  (if (fboundp 'vterm-send-tab)
+      (vterm-send-tab)
+    (user-error "cerebro: no live vterm session here to send a tab to")))
+
+(defvar cerebro-session-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "TAB") #'cerebro-other-window)
+    (define-key map (kbd "<tab>") #'cerebro-other-window)
+    (define-key map (kbd "C-c TAB") #'cerebro-send-tab)
+    map)
+  "Keymap for `cerebro-session-mode'.")
+
+(define-minor-mode cerebro-session-mode
+  "Make TAB cycle windows in a fleet-owned session buffer.
+
+vterm binds TAB in `vterm-mode-map', its own major-mode map, so a plain
+major-mode binding could not win.  A minor mode outranks it and stays
+confined to the buffers the fleet view created: editing `vterm-mode-map'
+would have taken TAB from every vterm the navigator has, fleet or not.
+
+`C-c TAB' sends a real tab on to the agent."
+  :lighter " Fleet"
+  :keymap cerebro-session-mode-map)
 
 (defun cerebro-focus-detail ()
   "Select the detail window (`RET'), to type to the agent shown there."

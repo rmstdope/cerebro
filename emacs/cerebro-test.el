@@ -924,5 +924,103 @@ bd every thirty seconds for a buffer nobody could see."
       (cerebro--beads-tick dead)
       (should (eq cancelled #'cerebro--beads-tick)))))
 
+;; ---------------------------------------------------------------------------
+;; TAB cycles from wherever the navigator is
+
+(ert-deftest cerebro-test/tab-is-bound-in-every-window-of-the-layout ()
+  "One key, three windows. Bound where the navigator might be standing."
+  (dolist (map (list cerebro-mode-map cerebro-beads-mode-map cerebro-session-mode-map))
+    (should (eq (lookup-key map (kbd "TAB")) #'cerebro-other-window))
+    (should (eq (lookup-key map (kbd "<tab>")) #'cerebro-other-window))))
+
+(ert-deftest cerebro-test/tab-cycles-list-beads-detail-and-round ()
+  "The order the navigator reads in, and back to the top rather than stopping."
+  (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+            ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil))))
+    (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
+      (unwind-protect
+          (save-window-excursion
+            (delete-other-windows)
+            (set-window-buffer (selected-window) fleet)
+            ;; The window variables are buffer-local to the fleet buffer, so
+            ;; they have to be read before cycling moves the current buffer
+            ;; out from under them.
+            (let (list-window beads-window detail-window)
+              (with-current-buffer fleet
+                (cerebro--setup-layout)
+                (setq list-window cerebro--list-window
+                      beads-window cerebro--beads-window
+                      detail-window cerebro--detail-window))
+              (select-window list-window)
+              (cerebro-other-window)
+              (should (eq (selected-window) beads-window))
+              (cerebro-other-window)
+              (should (eq (selected-window) detail-window))
+              ;; Round, not stuck at the right-hand edge.
+              (cerebro-other-window)
+              (should (eq (selected-window) list-window))))
+        (when (get-buffer cerebro-beads-buffer-name)
+          (kill-buffer cerebro-beads-buffer-name))
+        (kill-buffer fleet)))))
+
+(ert-deftest cerebro-test/session-buffers-take-tab-back-from-vterm ()
+  "vterm binds TAB in its own major-mode map, so this has to outrank it.
+
+A minor mode does; editing `vterm-mode-map' would have taken TAB from every
+vterm the navigator has, fleet or not."
+  (let ((buffer (generate-new-buffer " *cerebro-test-session*")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (cerebro-session-mode 1)
+          ;; `minor-mode-map-alist' is keyed by the mode, and the binding it
+          ;; produces is what actually matters.
+          (should (memq 'cerebro-session-mode (mapcar #'car minor-mode-map-alist)))
+          (should (eq (key-binding (kbd "TAB")) #'cerebro-other-window)))
+      (kill-buffer buffer))))
+
+(ert-deftest cerebro-test/a-real-tab-can-still-reach-the-agent ()
+  "Taking TAB from a live session has to leave a way to send one."
+  (should (eq (lookup-key cerebro-session-mode-map (kbd "C-c TAB")) #'cerebro-send-tab)))
+
+(ert-deftest cerebro-test/placeholder-buffers-cycle-too ()
+  "A dead agent's placeholder sits in the same window and must not trap TAB."
+  (let* ((agent (cerebro-test--agent "Rogue" "implementer" 'implementer 'dead))
+         (buffer (cerebro--placeholder-buffer agent)))
+    (unwind-protect
+        (with-current-buffer buffer
+          (should cerebro-session-mode))
+      (kill-buffer buffer))))
+
+(ert-deftest cerebro-test/a-launched-session-cycles-with-tab ()
+  "The rightmost window is where TAB was reported dead, so enter through launch.
+
+Removing the `cerebro-session-mode' call in `cerebro--launch' failed no test
+at all before this one existed - the placeholder was covered and the live
+session, which is the case the navigator actually hits, was not."
+  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+         (session-name (cerebro--session-buffer-name agent))
+         (orig-require (symbol-function 'require)))
+    (unwind-protect
+        (cerebro-test--with-layout list-buffer detail-window
+          (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                    ((symbol-function 'require)
+                     (lambda (feature &rest args)
+                       (or (eq feature 'vterm) (apply orig-require feature args))))
+                    ((symbol-function 'vterm)
+                     (lambda (name)
+                       (let ((buffer (get-buffer-create name)))
+                         ;; vterm owns TAB in its major-mode map; stand in for that.
+                         (with-current-buffer buffer
+                           (use-local-map (let ((m (make-sparse-keymap)))
+                                            (define-key m (kbd "TAB") #'ignore)
+                                            m)))
+                         (cerebro-test--spawn-like-vterm buffer)))))
+            (cerebro--launch agent)
+            (with-current-buffer session-name
+              (should cerebro-session-mode)
+              (should (eq (key-binding (kbd "TAB")) #'cerebro-other-window))
+              (should (eq (key-binding (kbd "C-c TAB")) #'cerebro-send-tab)))))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

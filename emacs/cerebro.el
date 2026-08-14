@@ -15,9 +15,9 @@
 ;;
 ;; Data sources:
 ;;   - an implementer's status file, `.claude/implementers/<name>.state.json',
-;;     written by `scripts/run-implementer' at every state transition (see
+;;     written by the implementer itself at every state transition (see
 ;;     ah-vcf.1): { state: "idle"|"working", bead, since, pid }.
-;;   - `scripts/run-implementer --roster', the fifteen implementer names.
+;;   - the launcher's `--roster', the fifteen implementer names.
 ;;   - the interactive three (Xavier, Cerebro, Moira) have no such file; their
 ;;     liveness comes from scanning system processes for the `--name <Name>'
 ;;     argument their launchers pass.
@@ -228,11 +228,23 @@ restarting it would fight the navigator's own `k'."
 
 ;;; ah-vcf.3: the pure start/kill/launch decisions
 
+(defconst cerebro--script-directory ".claude/cerebro/scripts"
+  "Where the launchers live, relative to the consumer repository root.
+
+Cerebro is consumed as a submodule mounted at `.claude/cerebro\', and the
+launchers moved there with the agents and skills they start.  A bare
+\"scripts/run-planner\" would resolve to the consumer\'s own scripts
+directory, which no longer has one.")
+
+(defun cerebro--script (name)
+  "The path to launcher NAME, relative to the repository root."
+  (concat cerebro--script-directory "/" name))
+
 (defconst cerebro--role-launch-commands
-  '(("planner" . "scripts/run-planner")
-    ("orchestrator" . "scripts/run-orchestrator")
-    ("feedback" . "scripts/run-user-feedback"))
-  "Launch command for each interactive role.")
+  '(("planner" . "run-planner")
+    ("orchestrator" . "run-orchestrator")
+    ("feedback" . "run-user-feedback"))
+  "Launcher script name for each interactive role.")
 
 (defun cerebro--launch-command (agent)
   "The command that launches AGENT.
@@ -241,10 +253,11 @@ A string for an interactive agent; a (COMMAND NAME) list for an
 implementer, since its name is an argument rather than part of the
 command name."
   (if (eq (cerebro-agent-kind agent) 'implementer)
-      (list "scripts/run-implementer" (cerebro-agent-name agent))
-    (or (cdr (assoc (cerebro-agent-role agent) cerebro--role-launch-commands))
-        (error "cerebro: no launch command for role %s"
-               (cerebro-agent-role agent)))))
+      (list (cerebro--script "run-implementer") (cerebro-agent-name agent))
+    (let ((script (cdr (assoc (cerebro-agent-role agent) cerebro--role-launch-commands))))
+      (unless script
+        (error "cerebro: no launch command for role %s" (cerebro-agent-role agent)))
+      (cerebro--script script))))
 
 (defun cerebro--session-buffer-name (agent)
   "The vterm buffer name that holds AGENT's live session."
@@ -303,12 +316,12 @@ harder confirm), `external' (refuse - not ours to stop) or `dead'
   "The roster, once read; buffer-local so a revert does not re-shell out.")
 
 (defun cerebro--roster (repo-root)
-  "The fifteen implementer names, via \"scripts/run-implementer --roster\"."
+  "The fifteen implementer names, via the launcher's --roster."
   (or cerebro--roster-cache
       (setq cerebro--roster-cache
             (cerebro--parse-roster
              (with-temp-buffer
-               (call-process (expand-file-name "scripts/run-implementer" repo-root)
+               (call-process (expand-file-name (cerebro--script "run-implementer") repo-root)
                               nil t nil "--roster")
                (buffer-string))))))
 
@@ -486,7 +499,7 @@ the buffer and run `vterm-mode'."
       (when proc (set-process-query-on-exit-flag proc t)))
     (when (eq (cerebro-agent-kind agent) 'implementer)
       ;; What was started, not what it will do: whether it claims straight away
-      ;; is the launcher's behaviour, and an older `scripts/run-implementer'
+      ;; is the launcher's behaviour, and an older `run-implementer'
       ;; still waits on the retired `.go' flag first.  Promising a claim here
       ;; would make that look like a fault in the fleet view.
       (message "%s started - watch its state in the list"

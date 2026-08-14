@@ -427,7 +427,7 @@ git -C <repo> worktree prune
 
 `--force`, because `worktree remove` refuses a tree holding untracked files, and a stray saved copy
 of a mockup is enough to trigger that. The two commands are separate rather than chained so a failure
-in the first does not skip the second. Cerebro's `scripts/prune-worktrees.sh` sweep is the net under
+in the first does not skip the second. Cerebro's `.claude/cerebro/scripts/prune-worktrees.sh` sweep is the net under
 this, not a substitute for it — it waits half an hour and only removes what is provably safe.
 
 **Check `pwd` before every git command.** A shell keeps its directory between commands, so one `cd`

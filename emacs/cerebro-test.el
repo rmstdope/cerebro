@@ -186,18 +186,18 @@
 (ert-deftest cerebro-test/launch-command-each-interactive-launcher ()
   (should (equal (cerebro--launch-command
                    (cerebro-test--agent "Xavier" "planner" 'interactive 'dead))
-                  "scripts/run-planner"))
+                  ".claude/cerebro/scripts/run-planner"))
   (should (equal (cerebro--launch-command
                    (cerebro-test--agent "Cerebro" "orchestrator" 'interactive 'dead))
-                  "scripts/run-orchestrator"))
+                  ".claude/cerebro/scripts/run-orchestrator"))
   (should (equal (cerebro--launch-command
                    (cerebro-test--agent "Moira" "feedback" 'interactive 'dead))
-                  "scripts/run-user-feedback")))
+                  ".claude/cerebro/scripts/run-user-feedback")))
 
 (ert-deftest cerebro-test/launch-command-implementer-takes-its-name ()
   (should (equal (cerebro--launch-command
                    (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
-                  '("scripts/run-implementer" "Cyclops"))))
+                  '(".claude/cerebro/scripts/run-implementer" "Cyclops"))))
 
 (ert-deftest cerebro-test/session-buffer-name-shape ()
   (should (equal (cerebro--session-buffer-name
@@ -647,6 +647,15 @@ ownership is the better evidence."
                      #'cerebro-test--never-alive nil nil))))
     (should (eq (cerebro-agent-state no-file) 'dead))
     (should (eq (cerebro-agent-state stale) 'dead))))
+
+(ert-deftest cerebro-test/launcher-path-is-inside-the-submodule ()
+  "The launchers live in cerebro, which a consumer mounts at .claude/cerebro.
+
+They used to live in the consumer's own scripts/, which is why the paths
+here changed - a bare `scripts/run-planner' resolves to the consumer's
+directory, where there is no longer anything by that name."
+  (should (equal (cerebro--script "run-planner") ".claude/cerebro/scripts/run-planner"))
+  (should (string-prefix-p ".claude/cerebro/scripts/" (cerebro--script "run-implementer"))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

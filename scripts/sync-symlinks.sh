@@ -54,6 +54,21 @@ sync_links() {
     item_name="$(basename "$item_path")"
     target="$dest_dir/$item_name"
 
+    # `ln -sfn` into an existing *directory* does not replace it - it creates the link INSIDE it,
+    # so `.claude/skills/plan-bead/plan-bead` appears and `.claude/skills/plan-bead/SKILL.md`
+    # stays whatever was there before. Claude Code then keeps loading the old skill and the sync
+    # looks like it worked. Caught in atlantis-hud, where three skills had silently not migrated.
+    #
+    # Refusing rather than deleting: that directory is either a pre-migration copy (yours to
+    # remove, and `git rm -r` keeps the history) or a skill of the consumer's own that happens to
+    # share a name - and this script cannot tell which, so it must not guess with `rm -rf`.
+    if [[ -d "$target" && ! -L "$target" ]]; then
+      echo "Refusing to link over the directory $target" >&2
+      echo "  It is a real directory, not a symlink, so linking would nest inside it." >&2
+      echo "  Remove it (git rm -r '$target') and run this again." >&2
+      exit 1
+    fi
+
     ln -sfn "$item_path" "$target"
     updated=$((updated + 1))
   done

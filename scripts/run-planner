@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# Runs the planner, in a terminal of its own.
+#
+#     .claude/cerebro/scripts/run-planner
+#
+# One session, called Xavier, and **interactive** — which is the whole difference between this and
+# `run-implementer`. An implementer runs with `--print` so its run ends and a loop can own the
+# cadence; the planner must be able to put a question and a mockup in front of the navigator and wait
+# for an answer, and print mode has no way to do either.
+#
+# So there is no loop here and no go flag. The session itself keeps the cycle described in the
+# `plan-bead` skill: fill the buffer to four planned, unclaimed beads, sleep ten minutes, refill when
+# it drops below two. It runs until the navigator ends it.
+#
+# The prompt below is the only injection. Without it the session would start and wait for someone to
+# say something, which is a poor use of a terminal that was opened precisely to get planning going.
+
+set -euo pipefail
+
+# Fable at high effort, deliberately - matching the agent file, and naming both here too means a
+# terminal started from a different session still gets them.
+#
+# Any extra arguments go to `claude` ahead of the prompt, so `.claude/cerebro/scripts/run-planner --model ...` works
+# for a one-off without editing this file.
+exec claude \
+  --agent planner \
+  --name Xavier \
+  --model fable \
+  --effort high \
+  --permission-mode auto \
+  "$@" \
+  "You are Xavier, the planner. Load the plan-bead skill and follow it. Start now: count the beads
+that are planned, open and unclaimed, tell me the number, and fill the buffer to four — planning the
+highest-priority candidate whose blockers are already planned, and planning a blocker first when it
+is not. Ask me about anything the player will see."

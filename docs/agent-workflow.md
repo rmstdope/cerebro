@@ -56,7 +56,7 @@ The orchestrator is always called **Cerebro** — it finds the mutants and point
 
 It starts nothing on its own, and it cannot start an implementer for you at all — starting one means
 starting a session, which only you can do: press `s` on that name in the Emacs fleet view, or run
-`scripts/run-implementer <name>` in a terminal. Cerebro sweeps away any worktrees left behind by a
+`.claude/cerebro/scripts/run-implementer <name>` in a terminal. Cerebro sweeps away any worktrees left behind by a
 previous run, greets you, tells you what the queue looks like, and waits. Then you talk to it in
 whatever words you like:
 
@@ -123,8 +123,8 @@ Cerebro sweeps them: once when it starts, then every ten minutes. You can run th
 at any time:
 
 ```bash
-scripts/prune-worktrees.sh --dry-run   # say what would go
-scripts/prune-worktrees.sh             # actually go
+.claude/cerebro/scripts/prune-worktrees.sh --dry-run   # say what would go
+.claude/cerebro/scripts/prune-worktrees.sh             # actually go
 ```
 
 It only removes a worktree when **nothing can be lost from it**: the tree is clean, the work is

@@ -12,7 +12,7 @@ from the list:
 |-------|----------------------------------------------------------------------------|
 | `s`   | starts a dead agent, into an Emacs-owned `vterm` buffer running its launcher |
 | `k`   | kills a live one, confirming harder mid-bead                                |
-| `RET` | selects the detail window, to type to the agent shown there                 |
+| `RET` | in the agent list: selects the detail window, to type to the agent shown there. In the bead panel: shows the marked bead there |
 | `TAB` | next window: list → beads → detail → list. Works from all three             |
 | `n`/`p` | next/previous row                                                        |
 
@@ -66,7 +66,10 @@ section names its own count, because the rows are what gets capped — `cerebro-
 eight by default, keeps an unbounded backlog from pushing the first two sections off the bottom.
 
 It reads like the agent list: one bead is marked, `n`/`p` (or the arrow keys) step between them, and
-navigation skips the section headers, blank lines and `(none)` rows. The mark is `hl-line`, sticky,
+navigation skips the section headers, blank lines and `(none)` rows. `RET` shows the marked bead in
+the detail window on the right — `bd show`'s own rendering, read-only, in one reused buffer rather
+than a drift of them. A bead `bd` cannot show says which one and why instead of leaving an empty
+buffer, which would read as a key that did nothing. The mark is `hl-line`, sticky,
 so the picked bead stays visible while you are working in another window.
 
 The mark follows the *bead*, not the line: the panel redraws on a timer, and restoring by position

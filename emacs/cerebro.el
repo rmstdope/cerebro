@@ -36,6 +36,8 @@
   :group 'tools
   :prefix "cerebro-")
 
+(defconst cerebro-buffer-name "*cerebro*")
+
 (defconst cerebro-list-width 62
   "Columns for the left column of the layout.
 
@@ -746,6 +748,20 @@ fleet view down with it."
                                :null-object nil :false-object nil))))
     (error nil)))
 
+(defun cerebro--bd-text (repo-root id)
+  "The output of `bd show ID' run in REPO-ROOT, or nil if it failed.
+
+Text rather than `--json': this goes in front of the navigator, and `bd's
+own rendering already lays a bead out to be read.  It wraps at eighty
+columns off a tty and ignores COLUMNS, so the detail window gets eighty
+columns of bead however wide it is."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((default-directory (file-name-as-directory repo-root)))
+          (when (zerop (call-process "bd" nil t nil "show" id))
+            (buffer-string))))
+    (error nil)))
+
 (defun cerebro--gather-beads (repo-root)
   "The three lists the panel shows, as (CLAIMED PLANNED UNPLANNED).
 
@@ -763,6 +779,59 @@ than work, so it would sit in the panel as something nobody can pick up."
                      "--exclude-type" "epic" "--json")
    (cerebro--bd-json repo-root "list" "--status" "open" "--exclude-label" "planned"
                      "--exclude-type" "epic" "--json")))
+
+(defun cerebro--layout-detail-window ()
+  "The layout's detail window, or nil.
+
+`cerebro--detail-window' is buffer-local to the fleet buffer, and the panel
+is a different buffer - so this reads it from there rather than keeping a
+second copy that could disagree with the first."
+  (let ((fleet (get-buffer cerebro-buffer-name)))
+    (when fleet
+      (let ((window (buffer-local-value 'cerebro--detail-window fleet)))
+        (and (window-live-p window) window)))))
+
+(defconst cerebro-bead-buffer-name "*cerebro-bead*")
+
+(defvar cerebro-bead-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map special-mode-map)
+    (define-key map (kbd "TAB") #'cerebro-other-window)
+    (define-key map (kbd "<tab>") #'cerebro-other-window)
+    map)
+  "Keymap for `cerebro-bead-mode'.")
+
+(define-derived-mode cerebro-bead-mode special-mode "Cerebro Bead"
+  "One bead, as `bd show' renders it.")
+
+(defun cerebro-beads-show ()
+  "Show the marked bead in the detail window (`RET').
+
+One buffer, reused: the navigator is reading one bead at a time, and a
+buffer per bead would leave a drift of them behind a morning's browsing."
+  (interactive)
+  (let ((id (cerebro--bead-at-point)))
+    (unless id
+      (user-error "cerebro: no bead on this line"))
+    (let ((text (cerebro--bd-text (cerebro--repo-root) id))
+          (buffer (get-buffer-create cerebro-bead-buffer-name))
+          (window (cerebro--layout-detail-window)))
+      (with-current-buffer buffer
+        (unless (derived-mode-p 'cerebro-bead-mode) (cerebro-bead-mode))
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          ;; Say which bead could not be shown rather than leaving an empty
+          ;; buffer, which reads as a key that did nothing.
+          (insert (or text (format "%s: could not be shown.\n\nbd show %s failed - it may have been closed, or bd may be unavailable here.\n"
+                                   id id))))
+        (setq buffer-read-only t)
+        (goto-char (point-min)))
+      (if window
+          (set-window-buffer window buffer)
+        ;; No layout - `M-x cerebro-beads-show' from a stray panel. Put it
+        ;; somewhere rather than doing nothing visible.
+        (display-buffer buffer))
+      buffer)))
 
 (defun cerebro--panel-width (buffer)
   "Columns to render BUFFER's panel into.
@@ -875,6 +944,7 @@ nobody can see."
     (define-key map "p" #'cerebro-beads-previous)
     (define-key map (kbd "<down>") #'cerebro-beads-next)
     (define-key map (kbd "<up>") #'cerebro-beads-previous)
+    (define-key map (kbd "RET") #'cerebro-beads-show)
     map)
   "Keymap for `cerebro-beads-mode'.")
 
@@ -906,7 +976,6 @@ nobody can see."
 
 ;;; The buffer
 
-(defconst cerebro-buffer-name "*cerebro*")
 
 (defvar cerebro--timer nil
   "The buffer-local auto-refresh timer, or nil.")

@@ -1159,5 +1159,55 @@ timer render from another window, so this is the normal path, not an edge."
         (kill-buffer buffer)
         (kill-buffer elsewhere)))))
 
+;; ---------------------------------------------------------------------------
+;; RET on a bead shows it in the detail window
+
+(ert-deftest cerebro-test/ret-is-bound-in-the-panel ()
+  (should (eq (lookup-key cerebro-beads-mode-map (kbd "RET")) #'cerebro-beads-show)))
+
+(ert-deftest cerebro-test/bead-detail-window-cycles-with-tab ()
+  "It sits in the detail window, so TAB has to keep working from it."
+  (should (eq (lookup-key cerebro-bead-mode-map (kbd "TAB")) #'cerebro-other-window))
+  (should (eq (lookup-key cerebro-bead-mode-map (kbd "<tab>")) #'cerebro-other-window)))
+
+(ert-deftest cerebro-test/ret-on-a-header-says-so-rather-than-guessing ()
+  "The panel has more scenery than beads; RET on it must not show something else."
+  (cerebro-test--with-panel buffer
+    (goto-char (point-min))                       ; the "Claimed 1" header
+    (should-error (cerebro-beads-show) :type 'user-error)))
+
+(ert-deftest cerebro-test/ret-shows-the-bead-in-the-detail-window ()
+  (cerebro-test--with-panel panel
+    (let ((shown nil)
+          (detail (selected-window)))
+      (cl-letf (((symbol-function 'cerebro--bd-text)
+                 (lambda (_root id) (setq shown id) (format "○ %s · a bead\n\nDESCRIPTION\n" id)))
+                ((symbol-function 'cerebro--layout-detail-window) (lambda () detail)))
+        (should (equal (cerebro--bead-at-point) "ah-c1"))
+        (cerebro-beads-show)
+        ;; Asked bd about the marked bead, and nothing else.
+        (should (equal shown "ah-c1"))
+        (let ((buffer (get-buffer cerebro-bead-buffer-name)))
+          (should buffer)
+          (should (eq (window-buffer detail) buffer))
+          (with-current-buffer buffer
+            (should (string-match-p "ah-c1" (buffer-string)))
+            (should (derived-mode-p 'cerebro-bead-mode))
+            ;; Read-only: this is a view of a bead, not a way to edit one.
+            (should buffer-read-only))
+          (kill-buffer buffer))))))
+
+(ert-deftest cerebro-test/a-bead-that-bd-cannot-show-says-so ()
+  "Silence would read as a broken key rather than as a missing bead."
+  (cerebro-test--with-panel panel
+    (let ((detail (selected-window)))
+      (cl-letf (((symbol-function 'cerebro--bd-text) (lambda (_root _id) nil))
+                ((symbol-function 'cerebro--layout-detail-window) (lambda () detail)))
+        (cerebro-beads-show)
+        (with-current-buffer cerebro-bead-buffer-name
+          (should (string-match-p "ah-c1" (buffer-string)))
+          (should (string-match-p "could not" (downcase (buffer-string)))))
+        (kill-buffer cerebro-bead-buffer-name)))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

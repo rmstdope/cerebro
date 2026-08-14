@@ -36,6 +36,22 @@
   :group 'tools
   :prefix "cerebro-")
 
+(defconst cerebro-buffer-name "*cerebro*")
+
+(defconst cerebro-list-width 62
+  "Columns for the left column of the layout.
+
+The agent table is 14+13+18+10+6 plus padding, so anything narrower cuts the
+elapsed-time column off the right edge - it was 45 for a while, and the
+column was simply invisible. The bead panel underneath inherits this width
+and wants every one of them for its titles.")
+
+(defconst cerebro-list-height 20
+  "Lines given to the agent list before the bead panel starts.
+
+Eighteen agents and a header, so the list never scrolls and the panel gets
+whatever the frame has left.")
+
 ;;; The interactive roster
 
 (defconst cerebro-interactive-agents
@@ -135,6 +151,22 @@ Emacs itself started."
 
 ;;; Formatting
 
+(defface cerebro-idle
+  '((default :weight normal)
+    ;; Yellow that survives its background: pure yellow disappears on a light
+    ;; one, so that case gets the darker goldenrod.
+    (((class color) (background dark))  :foreground "gold")
+    (((class color) (background light)) :foreground "goldenrod")
+    (t :inherit warning))
+  "The idle glyph: a filled dot, yellow, beside the green one for working.
+
+Not the stock `warning' face, which Emacs defines as `:foreground
+\"DarkOrange\" :weight bold' on any colour display.  That was two wrongs at
+once here - orange where yellow was asked for, and bold, which this view
+reserves for an agent waiting on an answer.  Customize this one face if gold
+does not read against your theme."
+  :group 'cerebro)
+
 (defun cerebro--glyph (state)
   "The single-character glyph for STATE, propertized."
   (cond
@@ -145,7 +177,13 @@ Emacs itself started."
    ;; Yellow, not grey: an idle agent has a session up and no bead, which is
    ;; something the navigator may want to act on. Dead is the grey one - there
    ;; is nobody there at all - and the two must not read alike.
-   ((eq state 'idle) (propertize "◌" 'face 'warning))             ; ◌
+   ;;
+   ;; A filled dot, and the same one `working' uses. It was U+25CC DOTTED
+   ;; CIRCLE, which is the same picture as dead's U+25CB WHITE CIRCLE at
+   ;; terminal sizes - so the yellow was applied and simply lost the argument
+   ;; with the shape. Only colour separates idle from working now, which the
+   ;; State column beside it spells out in words anyway.
+   ((eq state 'idle) (propertize "●" 'face 'cerebro-idle))        ; ●
    (t (propertize "○" 'face 'shadow))))                           ; ○
 
 (defun cerebro--seconds-since (since now)
@@ -198,6 +236,96 @@ fails to parse, renders as the empty string."
          (for-col (if external "" (cerebro--elapsed (cerebro-agent-since agent) now))))
     (list (cerebro-agent-name agent)
           (vector agent-col role-col state-col bead-col for-col))))
+
+;;; The bead panel
+
+(defcustom cerebro-beads-per-section 8
+  "How many beads each section of the panel shows before it says \"+N more\".
+
+The panel sits under an eighteen-row agent list in one window, and an
+unplanned backlog is unbounded - without a cap the first two sections, which
+are the ones worth reading, get pushed off the bottom by the third."
+  :type 'integer
+  :group 'cerebro)
+
+(defun cerebro--truncate (text width)
+  "TEXT cut to WIDTH, ending in an ellipsis when something was removed."
+  (if (<= (length text) width)
+      text
+    (concat (substring text 0 (max 0 (1- width))) "…")))
+
+(defun cerebro--sort-beads (beads)
+  "BEADS by priority, then by id, so P0 reads first and ties do not shuffle.
+
+A stable order matters more than the particular one: the panel redraws on a
+timer, and a list that reorders under the navigator's eyes is unreadable."
+  (sort (copy-sequence beads)
+        (lambda (a b)
+          (let ((pa (or (alist-get 'priority a) 9))
+                (pb (or (alist-get 'priority b) 9)))
+            (if (= pa pb)
+                (string< (or (alist-get 'id a) "") (or (alist-get 'id b) ""))
+              (< pa pb))))))
+
+(defun cerebro--bead-line (bead width)
+  "One line for BEAD, fitted to WIDTH.
+
+Truncated rather than wrapped: a wrapped title would put a second line under
+a row and break the column the eye follows down the panel."
+  (let* ((id (or (alist-get 'id bead) "?"))
+         (priority (alist-get 'priority bead))
+         ;; A failed verdict reopens a bead into the unclaimed pile, where it
+         ;; is an ordinary open bead - which is the point. The mark is the one
+         ;; thing that pile cannot otherwise say: this came back rather than
+         ;; arrived. Two columns either way, so the ids stay in line.
+         (reopened (member "verification:failed" (alist-get 'labels bead)))
+         (prefix (format "%s%-7s P%s " (if reopened "↻ " "  ")
+                         id (if priority (number-to-string priority) "?")))
+         ;; Deliberately no owner column.  `bd's `owner' is the address of
+         ;; whoever *filed* the bead and is set on every one of them, so it
+         ;; says nothing about who is working on it - and the agent list
+         ;; directly above already answers that for every implementer.
+         (room (max 8 (- width (length prefix)))))
+    ;; The row carries its own id, so navigation and the mark are about beads
+    ;; rather than about line numbers - which the next refresh would move.
+    (propertize (concat prefix (cerebro--truncate (or (alist-get 'title bead) "") room))
+                'cerebro-bead id 'cerebro-priority priority)))
+
+(defun cerebro--bead-section (title beads width max &optional sort)
+  "Lines for one section: TITLE with its count, then up to MAX of BEADS.
+
+SORT is the ordering function, `cerebro--sort-beads' by default.
+
+The count is on the header rather than implied by the rows, because the rows
+are the part that gets capped - and a section whose remainder is hidden
+still has to say how much work is really in it."
+  (let* ((sorted (funcall (or sort #'cerebro--sort-beads) beads))
+         (shown (seq-take sorted max))
+         (hidden (- (length sorted) (length shown))))
+    (append
+     (list (propertize (format "%s %d" title (length sorted)) 'face 'bold))
+     (if (null sorted)
+         (list (propertize "  (none)" 'face 'shadow))
+       (mapcar (lambda (bead) (cerebro--bead-line bead width)) shown))
+     (when (> hidden 0)
+       (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
+
+(defun cerebro--bead-panel (claimed planned unplanned merged width max)
+  "The whole panel as a list of lines.
+
+The order work moves in, and it stops where the fleet's part in it does:
+being built, ready to pick up, not planned yet, and merged but not yet
+verified - which is Psylocke's queue.
+
+Verified work is not here. Neither is anything nobody can pick up. See
+`cerebro--partition-beads' for what that leaves out and why."
+  (append (cerebro--bead-section "Claimed" claimed width max) (list "")
+          (cerebro--bead-section "Planned, unclaimed" planned width max) (list "")
+          (cerebro--bead-section "Unplanned" unplanned width max) (list "")
+          ;; Newest first: priority says nothing about finished work, so what
+          ;; this answers is what just landed and still wants checking.
+          (cerebro--bead-section "Merged, unverified" merged width max
+                                 #'cerebro--sort-recent)))
 
 ;;; Supervising the implementers
 
@@ -400,6 +528,8 @@ scheme with a live process - no registry to go stale."
   "The list window of this fleet buffer's layout.")
 (defvar-local cerebro--detail-window nil
   "The detail window of this fleet buffer's layout.")
+(defvar-local cerebro--beads-window nil
+  "The bead panel window, under the list.")
 (defvar-local cerebro--agents nil
   "The agents shown by the last revert, for lookup by name.")
 (defvar-local cerebro--last-shown nil
@@ -416,7 +546,11 @@ scheme with a live process - no registry to go stale."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (cerebro--placeholder agent)))
-      (setq buffer-read-only t))
+      (setq buffer-read-only t)
+      ;; It sits in the detail window like a session does, so TAB has to keep
+      ;; working from it - otherwise the key dies on exactly the agents that
+      ;; are not running.
+      (cerebro-session-mode 1))
     buffer))
 
 (defun cerebro--show-detail (agent)
@@ -515,6 +649,9 @@ the buffer and run `vterm-mode'."
     ;; disposable shells and does not set this on its own.
     (let ((proc (get-buffer-process buffer)))
       (when proc (set-process-query-on-exit-flag proc t)))
+    ;; TAB cycles out of here rather than reaching the shell; `C-c TAB' sends
+    ;; a real one when the agent wants it.
+    (with-current-buffer buffer (cerebro-session-mode 1))
     (when (eq (cerebro-agent-kind agent) 'implementer)
       ;; What was started, not what it will do: whether it claims straight away
       ;; is the launcher's behaviour, and an older `run-implementer'
@@ -594,9 +731,427 @@ other agents down with it."
                     (push name cerebro--nudged)
                     (cerebro--nudge agent))))))))
 
+;;; Reading the beads
+
+(defconst cerebro-beads-buffer-name "*cerebro-beads*")
+
+(defvar cerebro-beads-refresh-seconds 30
+  "How often the bead panel re-runs `bd'.
+
+Slower than the five-second agent tick on purpose. Beads move on human
+timescales - a claim, a plan, a merge are minutes apart - and each refresh
+is three subprocesses, so a five-second cadence would buy nothing but load.
+`g' refreshes on demand.")
+
+(defvar cerebro--beads-timer nil
+  "The bead panel's refresh timer, or nil.")
+;; Global, not buffer-local: the tick has to be able to cancel itself once the
+;; buffer is gone, and a buffer-local value dies with the buffer that held it -
+;; leaving a timer firing every thirty seconds with nothing to read it from.
+
+(defun cerebro--bd-json (repo-root &rest args)
+  "Run `bd' with ARGS in REPO-ROOT and return the parsed JSON, or nil.
+
+Never signals. `bd' may be absent, unconfigured, or mid-write, and a panel
+that cannot answer must degrade to saying nothing rather than taking the
+fleet view down with it."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((default-directory (file-name-as-directory repo-root)))
+          (when (zerop (apply #'call-process "bd" nil t nil args))
+            (json-parse-string (buffer-string)
+                               :object-type 'alist :array-type 'list
+                               :null-object nil :false-object nil))))
+    (error nil)))
+
+(defun cerebro--bd-text (repo-root id)
+  "The output of `bd show ID' run in REPO-ROOT, or nil if it failed.
+
+Text rather than `--json': this goes in front of the navigator, and `bd's
+own rendering already lays a bead out to be read.  It wraps at eighty
+columns off a tty and ignores COLUMNS, so the detail window gets eighty
+columns of bead however wide it is."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((default-directory (file-name-as-directory repo-root)))
+          (when (zerop (call-process "bd" nil t nil "show" id))
+            (buffer-string))))
+    (error nil)))
+
+(defun cerebro--sort-recent (beads)
+  "BEADS newest first, by `updated_at'.
+
+Finished work does not sort by priority - a merged P3 is no less done than a
+merged P0 - so these sections answer \"what just happened\" instead."
+  (sort (copy-sequence beads)
+        (lambda (a b)
+          (string> (or (alist-get 'updated_at a) "")
+                   (or (alist-get 'updated_at b) "")))))
+
+(defconst cerebro-verification-settled '("verification:passed" "verification:not-needed")
+  "Labels meaning a merged bead needs nothing further from anybody.
+
+`verification:passed' is a human having checked it; `not-needed' is the
+navigator having ruled it out of scope - the cutoff for work predating the
+role. Different reasons, same consequence for a queue, so the panel groups
+them under Verified.
+
+Note this is deliberately NOT how `agents/user-feedback.md' talks to a
+reporter: there a `not-needed' bead never shows VERIFIED, because nobody
+confirmed anything. The word means \"a person checked it\" on an issue
+thread, and \"nothing left to do\" here.")
+
+(defun cerebro--bead-labels (bead)
+  "The labels on BEAD, as a list of strings."
+  (alist-get 'labels bead))
+
+(defun cerebro--settled-p (bead)
+  "Whether BEAD carries a label that closes the verification question."
+  (cl-some (lambda (label) (member label cerebro-verification-settled))
+           (cerebro--bead-labels bead)))
+
+(defun cerebro--partition-beads (beads)
+  "Split BEADS into the four lists the panel shows.
+
+\(CLAIMED PLANNED UNPLANNED MERGED), where merged means merged and not yet
+verified.  Not every bead lands in one, deliberately: verified work is
+finished, epics are parents rather than work, bd's own `event' records are
+bookkeeping, and blocked or deferred beads cannot be picked up.  A panel is
+a list of what to do about something, so what there is nothing to do about
+is left out.
+
+It still partitions one list rather than running a query per section, which
+is what keeps those exclusions in one readable place instead of spread
+across five `bd' invocations - an `event' in particular carries the very
+labels these rules key on, and would otherwise arrive looking like merged
+work."
+  (let (claimed planned unplanned merged)
+    (dolist (bead beads)
+      (let ((status (alist-get 'status bead)))
+        (cond
+         ;; Not work, and so not shown: an epic is a parent with children, and
+         ;; an `event' is bd's own audit record of a state change ("State
+         ;; change: verification -> passed"). An event carries the very labels
+         ;; these rules key on, so without this three of them appeared as
+         ;; merged work - one per verification ever recorded.
+         ((member (alist-get 'issue_type bead) '("epic" "event")) nil)
+         ((equal status "in_progress") (push bead claimed))
+         ((equal status "open")
+          (if (member "planned" (cerebro--bead-labels bead))
+              (push bead planned)
+            (push bead unplanned)))
+         ((equal status "closed")
+          ;; Settled means nothing further is wanted from anybody - verified
+          ;; by a person, or ruled out of scope. Finished, so not here.
+          (unless (cerebro--settled-p bead) (push bead merged)))
+         ;; Blocked, deferred, or a status from a future bd: real beads, but
+         ;; nothing the fleet can pick up today.
+         (t nil))))
+    (list (nreverse claimed) (nreverse planned) (nreverse unplanned)
+          (nreverse merged))))
+
+(defconst cerebro-priority-floor 4
+  "The least urgent priority `bd' takes; 0 is the most urgent.")
+
+(defun cerebro--nudged-priority (priority delta)
+  "PRIORITY moved by DELTA, clamped to the range `bd' accepts.
+
+Clamped rather than wrapped: holding `+' should stop at the backlog floor,
+not roll a bead round to P0."
+  (min cerebro-priority-floor (max 0 (+ priority delta))))
+
+(defun cerebro--bd-set-priority (repo-root id priority)
+  "Set ID's priority to PRIORITY in REPO-ROOT.  Non-nil if `bd' accepted it."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((default-directory (file-name-as-directory repo-root)))
+          (zerop (call-process "bd" nil t nil "update" id
+                               "--priority" (number-to-string priority)))))
+    (error nil)))
+
+(defun cerebro--gather-beads (repo-root)
+  "The six lists the panel shows, from one `bd' call.
+
+Every status by name, and no `--exclude-type': the partition can only be
+complete if the list it partitions is.  One call also costs less than the
+five it replaced, and cannot show a half-updated database the way five
+sequential calls could.
+
+An earlier version filtered the open lists by the `owner' field and showed
+an empty panel every time: `owner' is the address of whoever *filed* the
+bead and is set on all of them, claimed or not."
+  (cerebro--partition-beads
+   (cerebro--bd-json repo-root "list"
+                     "--status" "open,in_progress,blocked,deferred,closed"
+                     "--json")))
+
+
+(defun cerebro--layout-detail-window ()
+  "The layout's detail window, or nil.
+
+`cerebro--detail-window' is buffer-local to the fleet buffer, and the panel
+is a different buffer - so this reads it from there rather than keeping a
+second copy that could disagree with the first."
+  (let ((fleet (get-buffer cerebro-buffer-name)))
+    (when fleet
+      (let ((window (buffer-local-value 'cerebro--detail-window fleet)))
+        (and (window-live-p window) window)))))
+
+(defconst cerebro-bead-buffer-name "*cerebro-bead*")
+
+(defvar cerebro-bead-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map special-mode-map)
+    (define-key map (kbd "TAB") #'cerebro-other-window)
+    (define-key map (kbd "<tab>") #'cerebro-other-window)
+    map)
+  "Keymap for `cerebro-bead-mode'.")
+
+(define-derived-mode cerebro-bead-mode special-mode "Cerebro Bead"
+  "One bead, as `bd show' renders it.")
+
+(defun cerebro-beads-show ()
+  "Show the marked bead in the detail window (`RET').
+
+One buffer, reused: the navigator is reading one bead at a time, and a
+buffer per bead would leave a drift of them behind a morning's browsing."
+  (interactive)
+  (let ((id (cerebro--bead-at-point)))
+    (unless id
+      (user-error "cerebro: no bead on this line"))
+    (let ((text (cerebro--bd-text (cerebro--repo-root) id))
+          (buffer (get-buffer-create cerebro-bead-buffer-name))
+          (window (cerebro--layout-detail-window)))
+      (with-current-buffer buffer
+        (unless (derived-mode-p 'cerebro-bead-mode) (cerebro-bead-mode))
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          ;; Say which bead could not be shown rather than leaving an empty
+          ;; buffer, which reads as a key that did nothing.
+          (insert (or text (format "%s: could not be shown.\n\nbd show %s failed - it may have been closed, or bd may be unavailable here.\n"
+                                   id id))))
+        (setq buffer-read-only t)
+        (goto-char (point-min)))
+      (if window
+          (set-window-buffer window buffer)
+        ;; No layout - `M-x cerebro-beads-show' from a stray panel. Put it
+        ;; somewhere rather than doing nothing visible.
+        (display-buffer buffer))
+      buffer)))
+
+(defvar-local cerebro--last-priority-change nil
+  "The last priority this panel changed, as (ID . PREVIOUS-PRIORITY).
+
+One step, because the case it exists for is a mis-keyed digit: the change is
+immediate and the only notice is a line in the echo area.")
+
+(defun cerebro--priority-at-point ()
+  "The priority of the bead on this line, or nil if it is not a bead."
+  (get-text-property (line-beginning-position) 'cerebro-priority))
+
+(defun cerebro--set-priority (id from to)
+  "Ask `bd' to move ID from FROM to TO, then redraw and say what happened."
+  (unless (cerebro--bd-set-priority (cerebro--repo-root) id to)
+    (user-error "cerebro: bd would not set %s to P%d" id to))
+  (setq cerebro--last-priority-change (cons id from))
+  (cerebro--beads-render (current-buffer))
+  (message "%s: P%s -> P%d" id (if from (number-to-string from) "?") to))
+
+(defun cerebro-beads-set-priority (priority)
+  "Set the marked bead's priority to PRIORITY, one of 0 to 4."
+  (interactive)
+  (let ((id (cerebro--bead-at-point))
+        (current (cerebro--priority-at-point)))
+    (unless id
+      (user-error "cerebro: no bead on this line"))
+    (if (equal current priority)
+        ;; Not a failure, but not a change either - and a keypress that did
+        ;; nothing must not leave an undo entry claiming it did.
+        (message "%s is already P%d" id priority)
+      (cerebro--set-priority id current priority))))
+
+(defun cerebro-beads-raise ()
+  "Make the marked bead one step more urgent (`+')."
+  (interactive)
+  (let ((current (cerebro--priority-at-point)))
+    (unless current (user-error "cerebro: no bead on this line"))
+    (cerebro-beads-set-priority (cerebro--nudged-priority current -1))))
+
+(defun cerebro-beads-lower ()
+  "Make the marked bead one step less urgent (`-')."
+  (interactive)
+  (let ((current (cerebro--priority-at-point)))
+    (unless current (user-error "cerebro: no bead on this line"))
+    (cerebro-beads-set-priority (cerebro--nudged-priority current 1))))
+
+(defun cerebro-beads-undo-priority ()
+  "Put back the priority this panel last changed (`u')."
+  (interactive)
+  (let ((change cerebro--last-priority-change))
+    (unless change
+      (user-error "cerebro: no priority change to undo"))
+    (let ((id (car change))
+          (previous (cdr change)))
+      (unless (cerebro--bd-set-priority (cerebro--repo-root) id previous)
+        (user-error "cerebro: bd would not put %s back to P%s" id previous))
+      ;; Spent: one step back, not a stack, so a second `u' has nothing to do
+      ;; rather than quietly redoing the change.
+      (setq cerebro--last-priority-change nil)
+      (cerebro--beads-render (current-buffer))
+      (message "%s: back to P%s" id previous))))
+
+(defun cerebro--panel-width (buffer)
+  "Columns to render BUFFER's panel into.
+
+Its own window when it has one, and the width the layout gives it otherwise.
+`window-width' with no window falls back to the *selected* one, which during
+a timer refresh is wherever the navigator happens to be standing - so the
+panel would be laid out to the width of the detail window."
+  (let ((window (get-buffer-window buffer)))
+    (max 30 (if window (window-width window) cerebro-list-width))))
+
+(defun cerebro--bead-at-point ()
+  "The id of the bead on this line, or nil on a header, blank or \"(none)\"."
+  (get-text-property (line-beginning-position) 'cerebro-bead))
+
+(defun cerebro--goto-bead (id)
+  "Put point on the row for ID, and return non-nil if it is there."
+  (goto-char (point-min))
+  (let (found)
+    (while (and (not found) (not (eobp)))
+      (if (equal (cerebro--bead-at-point) id)
+          (setq found t)
+        (forward-line 1)))
+    found))
+
+(defun cerebro--goto-first-bead ()
+  "Put point on the first bead row, if the panel has one."
+  (goto-char (point-min))
+  (while (and (not (eobp)) (null (cerebro--bead-at-point)))
+    (forward-line 1))
+  (when (eobp) (goto-char (point-min))))
+
+(defun cerebro--move-bead (direction)
+  "Move point one bead row in DIRECTION, 1 forward or -1 back.
+
+Stops at the ends rather than wrapping: a list that jumps back to the top
+when the navigator holds the key down hides where it finishes."
+  (let ((start (point))
+        (found nil))
+    (forward-line direction)
+    (while (and (not found)
+                (if (> direction 0) (not (eobp)) (not (bobp))))
+      (if (cerebro--bead-at-point)
+          (setq found t)
+        (forward-line direction)))
+    ;; The last line has no newline, so `forward-line' can land on a bead row
+    ;; at `eobp'; take it, and otherwise go back where we started.
+    (unless (or found (cerebro--bead-at-point))
+      (goto-char start))
+    (beginning-of-line)))
+
+(defun cerebro-beads-next ()
+  "Move to the next bead (`n'), stepping over headers and blank lines."
+  (interactive)
+  (cerebro--move-bead 1))
+
+(defun cerebro-beads-previous ()
+  "Move to the previous bead (`p')."
+  (interactive)
+  (cerebro--move-bead -1))
+
+(defun cerebro--beads-render (buffer)
+  "Redraw BUFFER's panel from `bd'."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let* ((width (cerebro--panel-width buffer))
+             (beads (cerebro--gather-beads (cerebro--repo-root)))
+             (lines (apply #'cerebro--bead-panel
+                           (append beads (list width cerebro-beads-per-section))))
+             (inhibit-read-only t)
+             ;; By id, not by position: the panel redraws every thirty seconds
+             ;; and a bead landing above the selected one would otherwise slide
+             ;; the mark onto whatever row took its line.
+             (selected (cerebro--bead-at-point)))
+        (erase-buffer)
+        (insert (string-join lines "\n"))
+        (unless (and selected (cerebro--goto-bead selected))
+          ;; Selected bead merged, closed, or claimed away while it was marked.
+          (cerebro--goto-first-bead))
+        ;; A window keeps its own point when its buffer is not the selected
+        ;; one, so moving the buffer's point above is not enough: the mark
+        ;; would stay on line 1 - the "Claimed 0" header - while the buffer
+        ;; believed it was on a bead. Both the layout and the timer render
+        ;; from another window, so this is the normal path rather than an edge.
+        (dolist (window (get-buffer-window-list buffer nil t))
+          (set-window-point window (point)))))))
+
+(defun cerebro--beads-revert (&rest _)
+  "Refresh the panel, for `g' and for the timer."
+  (cerebro--beads-render (current-buffer)))
+
+(defun cerebro--beads-tick (buffer)
+  "Refresh BUFFER while it lives; called every `cerebro-beads-refresh-seconds'.
+
+Once BUFFER is gone the timer cancels itself by function rather than by the
+variable that holds it: killing the panel is the ordinary way to stop it,
+and a timer left running would go on shelling out to `bd' for a buffer
+nobody can see."
+  (if (buffer-live-p buffer)
+      (with-demoted-errors "cerebro: %S" (cerebro--beads-render buffer))
+    (cancel-function-timers #'cerebro--beads-tick)
+    (setq cerebro--beads-timer nil)))
+
+(defvar cerebro-beads-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map special-mode-map)
+    (define-key map (kbd "TAB") #'cerebro-other-window)
+    (define-key map (kbd "<tab>") #'cerebro-other-window)
+    (define-key map "n" #'cerebro-beads-next)
+    (define-key map "p" #'cerebro-beads-previous)
+    (define-key map (kbd "<down>") #'cerebro-beads-next)
+    (define-key map (kbd "<up>") #'cerebro-beads-previous)
+    (define-key map (kbd "RET") #'cerebro-beads-show)
+    ;; Digits set the priority outright, which takes them from
+    ;; `digit-argument' in this buffer - there is nothing here a numeric
+    ;; prefix would have been for.
+    (dotimes (priority (1+ cerebro-priority-floor))
+      (define-key map (number-to-string priority)
+                  (lambda () (interactive) (cerebro-beads-set-priority priority))))
+    (define-key map "+" #'cerebro-beads-raise)
+    (define-key map "-" #'cerebro-beads-lower)
+    (define-key map "u" #'cerebro-beads-undo-priority)
+    map)
+  "Keymap for `cerebro-beads-mode'.")
+
+(define-derived-mode cerebro-beads-mode special-mode "Cerebro Beads"
+  "What the fleet could be working on: claimed, planned, and unplanned."
+  (setq-local revert-buffer-function #'cerebro--beads-revert)
+  (setq truncate-lines t)
+  ;; The mark has to stay visible when the navigator is in another window -
+  ;; the cursor itself is only drawn in the selected one, and the whole point
+  ;; is to see which bead is picked while looking at the agents.
+  (setq-local hl-line-sticky-flag t)
+  (hl-line-mode 1))
+
+(defun cerebro--beads-buffer (repo-root)
+  "The panel buffer, created and started if it does not exist."
+  (let ((buffer (get-buffer-create cerebro-beads-buffer-name)))
+    (with-current-buffer buffer
+      (unless (derived-mode-p 'cerebro-beads-mode)
+        (cerebro-beads-mode))
+      ;; `bd' is answered relative to the repository, and this buffer is not
+      ;; visiting a file, so it would otherwise inherit whatever directory
+      ;; the navigator happened to be in.
+      (setq default-directory (file-name-as-directory repo-root))
+      (unless (timerp cerebro--beads-timer)
+        (setq cerebro--beads-timer
+              (run-at-time cerebro-beads-refresh-seconds cerebro-beads-refresh-seconds
+                           #'cerebro--beads-tick buffer))))
+    buffer))
+
 ;;; The buffer
 
-(defconst cerebro-buffer-name "*cerebro*")
 
 (defvar cerebro--timer nil
   "The buffer-local auto-refresh timer, or nil.")
@@ -653,19 +1208,25 @@ ids and return - since it runs after every command in the list buffer."
           (when agent (cerebro--show-detail agent)))))))
 
 (defun cerebro--setup-layout ()
-  "Ensure the list/detail window layout exists for the current buffer."
+  "Ensure the list/beads/detail window layout exists for the current buffer."
   (unless (and cerebro--list-window (window-live-p cerebro--list-window))
     (delete-other-windows)
     (setq cerebro--list-window (selected-window))
     (setq cerebro--detail-window
           (split-window cerebro--list-window nil 'right))
-    (let ((width (- 45 (window-width cerebro--list-window))))
-      ;; A narrow frame/terminal can make 45 columns unsatisfiable;
-      ;; `window-resize' signals in that case, and the list/detail split
-      ;; above must still stand rather than leaving the buffer
+    (let ((width (- cerebro-list-width (window-width cerebro--list-window))))
+      ;; A narrow frame/terminal can make the width or the split unsatisfiable;
+      ;; `window-resize' and `split-window' signal in that case, and the
+      ;; layout so far must still stand rather than leaving the buffer
       ;; half-initialized.
       (when (/= width 0)
-        (ignore-errors (window-resize cerebro--list-window width t))))))
+        (ignore-errors (window-resize cerebro--list-window width t))))
+    (setq cerebro--beads-window
+          (ignore-errors (split-window cerebro--list-window cerebro-list-height 'below)))
+    (when (window-live-p cerebro--beads-window)
+      (set-window-buffer cerebro--beads-window
+                         (cerebro--beads-buffer (cerebro--repo-root)))
+      (cerebro--beads-render (get-buffer cerebro-beads-buffer-name)))))
 
 (defun cerebro-start ()
   "Start the agent at point (`s')."
@@ -722,10 +1283,42 @@ cleared first rather than prompting a second time for the same kill."
 (defun cerebro-other-window ()
   "Move to the next window (`TAB'), exactly as `C-x o' does.
 
-With the fleet layout that is the detail window, and pressing it again comes
-back - one key to cycle rather than a key out and a chord back."
+The layout cycles list -> beads -> detail -> list, so one key reaches every
+window of it and comes back round rather than stopping at the right-hand
+edge.  Bound in all three, which for the detail window means taking TAB off
+vterm - see `cerebro-session-mode'."
   (interactive)
   (other-window 1))
+
+(defun cerebro-send-tab ()
+  "Send a real tab to the agent in this session (`C-c TAB').
+
+`cerebro-session-mode' takes TAB for window cycling, and an agent still
+needs to receive one occasionally - a shell completion, a TUI that uses it."
+  (interactive)
+  (if (fboundp 'vterm-send-tab)
+      (vterm-send-tab)
+    (user-error "cerebro: no live vterm session here to send a tab to")))
+
+(defvar cerebro-session-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "TAB") #'cerebro-other-window)
+    (define-key map (kbd "<tab>") #'cerebro-other-window)
+    (define-key map (kbd "C-c TAB") #'cerebro-send-tab)
+    map)
+  "Keymap for `cerebro-session-mode'.")
+
+(define-minor-mode cerebro-session-mode
+  "Make TAB cycle windows in a fleet-owned session buffer.
+
+vterm binds TAB in `vterm-mode-map', its own major-mode map, so a plain
+major-mode binding could not win.  A minor mode outranks it and stays
+confined to the buffers the fleet view created: editing `vterm-mode-map'
+would have taken TAB from every vterm the navigator has, fleet or not.
+
+`C-c TAB' sends a real tab on to the agent."
+  :lighter " Fleet"
+  :keymap cerebro-session-mode-map)
 
 (defun cerebro-focus-detail ()
   "Select the detail window (`RET'), to type to the agent shown there."

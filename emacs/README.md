@@ -67,11 +67,26 @@ Verified 1
   ah-13o  P1 Resizable split between the unit and orders pane…
 ```
 
-The last two are about finished work, so they sort newest first rather than by priority — a merged
-P3 is no less done than a merged P0. **Merged, unverified is Psylocke's queue**, not everything that
-ever merged: closed, minus what she passed and minus `verification:not-needed`. That distinction is
-what makes the count mean something — atlantis-hud had seventy `not-needed` beads the day this was
-written, and a Merged section carrying them would show a number that never falls.
+**Every bead in the database lands in exactly one section.** The panel makes one `bd` call for all
+five statuses and partitions the result, rather than running a query per section — which is what
+makes that a property rather than a hope. bd has `open`, `in_progress`, `blocked`, `deferred` and
+`closed`; asking about three of them left blocked and deferred beads existing nowhere, with epics
+excluded outright on top.
+
+`Other` is the catch-all and it earns its place: epics (parents, not work), blocked and deferred
+beads, bd's own `event` records of state changes, and anything a future bd invents. A bead these
+rules do not recognise becomes visible instead of invisible.
+
+The last two work sections sort newest first rather than by priority — a merged P3 is no less done
+than a merged P0. **Merged, unverified is what still wants checking**; **Verified is `passed` *or*
+`not-needed`** — different reasons, same consequence for a queue.
+
+> Note this is deliberately *not* how `agents/user-feedback.md` talks to a reporter, where a
+> `not-needed` bead never shows VERIFIED because nobody confirmed anything. The word means "a person
+> checked it" on an issue thread and "nothing left to do" here.
+
+Nothing here knows about releases: Moira decides that from whether a commit is in a release tag,
+which is not in bd, so shipped work stays in Verified rather than leaving the panel.
 
 A failed verdict reopens a bead into the unclaimed pile at P0, where it is an ordinary open bead —
 which is the point. The row carries a `↻` so that pile can still say which work came back rather

@@ -833,7 +833,7 @@ test."
          (merged (list (cerebro-test--bead "ah-m1" 2 "just landed")))
          (verified (list (cerebro-test--bead "ah-v1" 2 "checked")))
          (text (string-join
-                (cerebro--bead-panel claimed nil unplanned merged verified 62 8) "\n"))
+                (cerebro--bead-panel claimed nil unplanned merged verified nil 62 8) "\n"))
          (at (lambda (s) (string-match (regexp-quote s) text))))
     ;; Each bead under the heading it belongs to, not merely present somewhere.
     (should (< (funcall at "Claimed") (funcall at "ah-13o")))
@@ -841,19 +841,6 @@ test."
     (should (< (funcall at "Unplanned") (funcall at "ah-7s7")))
     (should (< (funcall at "Merged, unverified") (funcall at "ah-m1")))
     (should (< (funcall at "Verified") (funcall at "ah-v1")))))
-
-(ert-deftest cerebro-test/unclaimed-is-a-status-not-a-field ()
-  "Claimed is `--status in_progress', unclaimed is `--status open'.
-
-bd keeps the two disjoint, so the panel asks for each directly and filters
-nothing on top.  Pinned because the obvious-looking alternative — filtering
-the open lists by `owner' — silently shows an empty panel for ever."
-  (let ((asked nil))
-    (cl-letf (((symbol-function 'cerebro--bd-json)
-               (lambda (_root &rest args) (push args asked) nil)))
-      (cerebro--gather-beads "/repo")
-      (should (cl-some (lambda (args) (member "in_progress" args)) asked))
-      (should (= 2 (length (seq-filter (lambda (args) (member "open" args)) asked)))))))
 
 (ert-deftest cerebro-test/bd-json-is-quiet-when-bd-cannot-answer ()
   "A panel that cannot read must not take the fleet view down with it.
@@ -866,35 +853,11 @@ navigator actually steers by, and it has to keep refreshing regardless."
              (lambda (&rest _) (insert "this is not json") 0)))
     (should (null (cerebro--bd-json "/repo" "list" "--json")))))
 
-(ert-deftest cerebro-test/gather-beads-asks-three-questions ()
-  "Claimed, then planned-and-unclaimed, then unplanned-and-unclaimed."
-  (let ((asked nil))
-    (cl-letf (((symbol-function 'cerebro--bd-json)
-               (lambda (_root &rest args)
-                 (push args asked)
-                 (cond ((member "in_progress" args)
-                        (list '((id . "ah-a") (owner . "Cyclops"))))
-                       ;; `--exclude-label planned' also contains "planned",
-                       ;; so the exclusion has to be ruled out first - a
-                       ;; double that cannot tell them apart tests nothing.
-                       ((member "--exclude-label" args)
-                        (list '((id . "ah-d"))))
-                       ((member "planned" args)
-                        (list '((id . "ah-c"))))
-                       (t nil)))))
-      (let ((beads (cerebro--gather-beads "/repo")))
-        (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 0 beads)) '("ah-a")))
-        (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 1 beads)) '("ah-c")))
-        (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 2 beads)) '("ah-d"))))
-      ;; Epics are work nobody can pick up - they must not reach the panel.
-      (should (cl-every (lambda (args) (member "epic" args))
-                        (seq-filter (lambda (args) (member "open" args)) asked))))))
-
 (ert-deftest cerebro-test/layout-puts-the-panel-under-the-list ()
   (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
     (unwind-protect
         (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
-                  ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil))))
+                  ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil nil nil nil))))
           (save-window-excursion
             (delete-other-windows)
             (set-window-buffer (selected-window) fleet)
@@ -943,7 +906,7 @@ bd every thirty seconds for a buffer nobody could see."
 (ert-deftest cerebro-test/tab-cycles-list-beads-detail-and-round ()
   "The order the navigator reads in, and back to the top rather than stopping."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
-            ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil))))
+            ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil nil nil nil))))
     (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
       (unwind-protect
           (save-window-excursion
@@ -1043,7 +1006,8 @@ session, which is the case the navigator actually hits, was not."
                       (list (list (cerebro-test--bead "ah-c1" 1 "claimed one"))
                             (list (cerebro-test--bead "ah-p1" 0 "planned one"))
                             (list (cerebro-test--bead "ah-u1" 1 "unplanned one")
-                                  (cerebro-test--bead "ah-u2" 2 "unplanned two"))))))
+                                  (cerebro-test--bead "ah-u2" 2 "unplanned two"))
+                            nil nil nil))))
            (with-current-buffer ,buffer
              (cerebro-beads-mode)
              (cerebro--beads-render ,buffer)
@@ -1108,7 +1072,7 @@ land on that line when the queue changed underneath."
                  (list (list (cerebro-test--bead "ah-c0" 0 "new claim")
                              (cerebro-test--bead "ah-c1" 1 "claimed one"))
                        (list (cerebro-test--bead "ah-p1" 0 "planned one"))
-                       nil))))
+                       nil nil nil nil))))
       (cerebro--beads-render buffer)
       (should (equal (cerebro--bead-at-point) "ah-p1")))))
 
@@ -1117,7 +1081,8 @@ land on that line when the queue changed underneath."
   (cerebro-test--with-panel buffer
     (should (equal (cerebro--bead-at-point) "ah-c1"))
     (cl-letf (((symbol-function 'cerebro--gather-beads)
-               (lambda (_root) (list nil nil (list (cerebro-test--bead "ah-u1" 1 "left"))))))
+               (lambda (_root)
+                 (list nil nil (list (cerebro-test--bead "ah-u1" 1 "left")) nil nil nil))))
       (cerebro--beads-render buffer)
       (should (equal (cerebro--bead-at-point) "ah-u1")))))
 
@@ -1147,7 +1112,8 @@ timer render from another window, so this is the normal path, not an edge."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
             ((symbol-function 'cerebro--gather-beads)
              (lambda (_root)
-               (list nil nil (list (cerebro-test--bead "ah-u1" 1 "first real bead"))))))
+               (list nil nil (list (cerebro-test--bead "ah-u1" 1 "first real bead"))
+                     nil nil nil))))
     (let ((buffer (get-buffer-create "*cerebro-test-window-point*"))
           (elsewhere (generate-new-buffer " *cerebro-test-elsewhere*")))
       (unwind-protect
@@ -1315,34 +1281,15 @@ noticed."
 (defun cerebro-test--closed (id title labels updated)
   `((id . ,id) (priority . 2) (title . ,title) (labels . ,labels) (updated_at . ,updated)))
 
-(ert-deftest cerebro-test/gather-asks-about-merged-and-verified ()
-  "Merged means closed and still waiting on Psylocke; verified means she passed it.
-
-Disjoint on purpose. `verification:not-needed' - the historical cutoff, 70
-beads in atlantis-hud - belongs to neither, or Merged would carry a number
-that never falls and never means anything."
-  (let ((asked nil))
-    (cl-letf (((symbol-function 'cerebro--bd-json)
-               (lambda (_root &rest args) (push args asked) nil)))
-      (cerebro--gather-beads "/repo")
-      (let ((closed (seq-filter (lambda (args) (member "closed" args)) asked)))
-        (should (= 2 (length closed)))
-        ;; The unverified pile excludes what passed and what never needed it.
-        (should (cl-some (lambda (args)
-                           (and (member "--exclude-label" args)
-                                (cl-some (lambda (a) (string-match-p "verification:passed" a)) args)
-                                (cl-some (lambda (a) (string-match-p "verification:not-needed" a)) args)))
-                         closed))
-        (should (cl-some (lambda (args) (member "verification:passed" args)) closed))))))
-
-(ert-deftest cerebro-test/panel-has-five-sections-in-lifecycle-order ()
-  "Claimed, planned, unplanned, merged, verified - the way work moves."
-  (let* ((text (string-join (cerebro--bead-panel nil nil nil nil nil 62 8) "\n"))
+(ert-deftest cerebro-test/panel-sections-follow-the-lifecycle ()
+  "Claimed, planned, unplanned, merged, verified, other - the way work moves."
+  (let* ((text (string-join (cerebro--bead-panel nil nil nil nil nil nil 62 8) "\n"))
          (at (lambda (s) (string-match (regexp-quote s) text))))
     (should (< (funcall at "Claimed") (funcall at "Planned, unclaimed")))
     (should (< (funcall at "Planned, unclaimed") (funcall at "Unplanned")))
     (should (< (funcall at "Unplanned") (funcall at "Merged, unverified")))
-    (should (< (funcall at "Merged, unverified") (funcall at "Verified")))))
+    (should (< (funcall at "Merged, unverified") (funcall at "Verified")))
+    (should (< (funcall at "Verified") (funcall at "Other")))))
 
 (ert-deftest cerebro-test/closed-beads-sort-newest-first ()
   "Priority says nothing about finished work; recency says what just happened."
@@ -1369,6 +1316,84 @@ work that came back."
     (should-not (string-match-p "↻" fresh))
     ;; Still the same width, so the column does not shift under one row.
     (should (= (length reopened) (length fresh)))))
+
+;; ---------------------------------------------------------------------------
+;; Every bead lands somewhere
+
+(defun cerebro-test--any (id status &optional labels type)
+  `((id . ,id) (status . ,status) (priority . 2) (title . ,id)
+    (labels . ,labels) (issue_type . ,(or type "task"))
+    (updated_at . "2026-08-14T09:00:00Z")))
+
+(defconst cerebro-test--every-shape
+  (list (cerebro-test--any "in-progress" "in_progress")
+        (cerebro-test--any "open-planned" "open" '("planned"))
+        (cerebro-test--any "open-loose" "open")
+        (cerebro-test--any "closed-bare" "closed")
+        (cerebro-test--any "closed-failed" "closed" '("verification:failed"))
+        (cerebro-test--any "closed-passed" "closed" '("verification:passed"))
+        (cerebro-test--any "closed-not-needed" "closed" '("verification:not-needed"))
+        (cerebro-test--any "blocked" "blocked")
+        (cerebro-test--any "deferred" "deferred")
+        (cerebro-test--any "epic" "open" nil "epic")
+        ;; bd's own audit record of a state change, and it carries the label
+        ;; of the change it records - so it lands in Verified unless the type
+        ;; is checked first.
+        (cerebro-test--any "event" "closed" '("verification:passed") "event")
+        (cerebro-test--any "from-the-future" "sideways"))
+  "One bead of every shape bd can produce, plus a status it cannot.")
+
+(ert-deftest cerebro-test/every-bead-lands-in-exactly-one-section ()
+  "The property that matters: nothing is invisible.
+
+bd has five statuses - open, in_progress, blocked, deferred, closed - and
+the panel used to ask about three of them, so a blocked or deferred bead
+existed nowhere. Epics were excluded outright. Partitioning one list rather
+than running five queries makes coverage structural: a bead the rules do not
+recognise, including a status from a future bd, falls into Other instead of
+falling out."
+  (let* ((buckets (cerebro--partition-beads cerebro-test--every-shape))
+         (all (apply #'append buckets))
+         (ids (mapcar (lambda (b) (alist-get 'id b)) all)))
+    (should (= (length ids) (length cerebro-test--every-shape)))   ; none lost
+    (should (= (length ids) (length (delete-dups (copy-sequence ids)))))  ; none twice
+    (should (equal (sort (copy-sequence ids) #'string<)
+                    (sort (mapcar (lambda (b) (alist-get 'id b)) cerebro-test--every-shape)
+                          #'string<)))))
+
+(ert-deftest cerebro-test/each-shape-lands-where-it-belongs ()
+  (let* ((buckets (cerebro--partition-beads cerebro-test--every-shape))
+         (ids (lambda (n) (mapcar (lambda (b) (alist-get 'id b)) (nth n buckets)))))
+    (should (equal (funcall ids 0) '("in-progress")))
+    (should (equal (funcall ids 1) '("open-planned")))
+    (should (equal (funcall ids 2) '("open-loose")))
+    ;; Merged is what still wants verifying: bare, or failed and rebuilt.
+    (should (equal (sort (funcall ids 3) #'string<) '("closed-bare" "closed-failed")))
+    ;; Verified is passed AND not-needed - nothing further to do about either.
+    (should (equal (sort (funcall ids 4) #'string<)
+                    '("closed-not-needed" "closed-passed")))
+    ;; Everything the fleet cannot pick up, and anything unrecognised.
+    (should (equal (sort (funcall ids 5) #'string<)
+                    '("blocked" "deferred" "epic" "event" "from-the-future")))))
+
+(ert-deftest cerebro-test/one-query-covers-every-status ()
+  "Five statuses in one call: the partition can only be complete if the
+list it partitions is."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'cerebro--bd-json)
+               (lambda (_root &rest args) (push args asked) nil)))
+      (cerebro--gather-beads "/repo")
+      (should (= 1 (length asked)))
+      (let ((args (car asked)))
+        (dolist (status '("open" "in_progress" "blocked" "deferred" "closed"))
+          (should (cl-some (lambda (a) (string-match-p status a)) args)))
+        ;; No type exclusion: an epic has to land in Other, not vanish.
+        (should-not (member "--exclude-type" args))))))
+
+(ert-deftest cerebro-test/other-is-the-last-section ()
+  (let* ((text (string-join (cerebro--bead-panel nil nil nil nil nil nil 62 8) "\n"))
+         (at (lambda (s) (string-match (regexp-quote s) text))))
+    (should (< (funcall at "Verified") (funcall at "Other")))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

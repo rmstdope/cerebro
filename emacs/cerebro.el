@@ -310,7 +310,7 @@ still has to say how much work is really in it."
      (when (> hidden 0)
        (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
 
-(defun cerebro--bead-panel (claimed planned unplanned merged verified width max)
+(defun cerebro--bead-panel (claimed planned unplanned merged verified other width max)
   "The whole panel as a list of lines.
 
 The order work moves in: being built, ready to pick up, not planned yet,
@@ -327,7 +327,11 @@ shown a number that never fell."
           (cerebro--bead-section "Merged, unverified" merged width max
                                  #'cerebro--sort-recent) (list "")
           (cerebro--bead-section "Verified" verified width max
-                                 #'cerebro--sort-recent)))
+                                 #'cerebro--sort-recent) (list "")
+          ;; Last because it is the section nobody acts on directly - and
+          ;; present because a bead nobody can see is worse than one nobody
+          ;; wants.
+          (cerebro--bead-section "Other" other width max)))
 
 ;;; Supervising the implementers
 
@@ -790,6 +794,68 @@ merged P0 - so these sections answer \"what just happened\" instead."
           (string> (or (alist-get 'updated_at a) "")
                    (or (alist-get 'updated_at b) "")))))
 
+(defconst cerebro-verification-settled '("verification:passed" "verification:not-needed")
+  "Labels meaning a merged bead needs nothing further from anybody.
+
+`verification:passed' is a human having checked it; `not-needed' is the
+navigator having ruled it out of scope - the cutoff for work predating the
+role. Different reasons, same consequence for a queue, so the panel groups
+them under Verified.
+
+Note this is deliberately NOT how `agents/user-feedback.md' talks to a
+reporter: there a `not-needed' bead never shows VERIFIED, because nobody
+confirmed anything. The word means \"a person checked it\" on an issue
+thread, and \"nothing left to do\" here.")
+
+(defun cerebro--bead-labels (bead)
+  "The labels on BEAD, as a list of strings."
+  (alist-get 'labels bead))
+
+(defun cerebro--settled-p (bead)
+  "Whether BEAD carries a label that closes the verification question."
+  (cl-some (lambda (label) (member label cerebro-verification-settled))
+           (cerebro--bead-labels bead)))
+
+(defun cerebro--partition-beads (beads)
+  "Split BEADS into the six lists the panel shows.
+
+\(CLAIMED PLANNED UNPLANNED MERGED VERIFIED OTHER), and every bead lands in
+exactly one of them.
+
+That is why this partitions one list rather than running a query per
+section. bd has five statuses - open, in_progress, blocked, deferred,
+closed - and asking about three of them left blocked and deferred beads
+existing nowhere at all, with epics excluded outright on top of that.
+
+Other is load-bearing rather than tidy: it holds epics, which are parents
+rather than work; blocked and deferred beads, which the fleet cannot pick
+up; and anything a future bd invents. A bead these rules do not recognise
+becomes visible instead of invisible."
+  (let (claimed planned unplanned merged verified other)
+    (dolist (bead beads)
+      (let ((status (alist-get 'status bead)))
+        (cond
+         ;; Not work: an epic is a parent with children, and an `event' is
+         ;; bd's own audit record of a state change ("State change:
+         ;; verification -> passed"). Neither is something anybody picks up,
+         ;; and an event carries the very labels the sections key on - three
+         ;; of them were sitting at the top of Verified, one per verification
+         ;; ever recorded. They go to Other rather than being filtered away,
+         ;; so the panel still accounts for every bead in the database.
+         ((member (alist-get 'issue_type bead) '("epic" "event")) (push bead other))
+         ((equal status "in_progress") (push bead claimed))
+         ((equal status "open")
+          (if (member "planned" (cerebro--bead-labels bead))
+              (push bead planned)
+            (push bead unplanned)))
+         ((equal status "closed")
+          (if (cerebro--settled-p bead)
+              (push bead verified)
+            (push bead merged)))
+         (t (push bead other)))))
+    (list (nreverse claimed) (nreverse planned) (nreverse unplanned)
+          (nreverse merged) (nreverse verified) (nreverse other))))
+
 (defconst cerebro-priority-floor 4
   "The least urgent priority `bd' takes; 0 is the most urgent.")
 
@@ -810,30 +876,21 @@ not roll a bead round to P0."
     (error nil)))
 
 (defun cerebro--gather-beads (repo-root)
-  "The five lists the panel shows, as (CLAIMED PLANNED UNPLANNED MERGED VERIFIED).
+  "The six lists the panel shows, from one `bd' call.
 
-Claimed is `--status in_progress' and unclaimed is `--status open'.  The two
-are disjoint in `bd', so nothing filters on top of them.  An earlier version
-filtered the open lists by the `owner' field and showed an empty panel every
-time: `owner' is the address of whoever *filed* the bead and is set on all
-of them, claimed or not.
+Every status by name, and no `--exclude-type': the partition can only be
+complete if the list it partitions is.  One call also costs less than the
+five it replaced, and cannot show a half-updated database the way five
+sequential calls could.
 
-Epics are excluded from the open lists: a split parent has children rather
-than work, so it would sit in the panel as something nobody can pick up."
-  (list
-   (cerebro--bd-json repo-root "list" "--status" "in_progress" "--json")
-   (cerebro--bd-json repo-root "list" "--status" "open" "--label" "planned"
-                     "--exclude-type" "epic" "--json")
-   (cerebro--bd-json repo-root "list" "--status" "open" "--exclude-label" "planned"
-                     "--exclude-type" "epic" "--json")
-   ;; Psylocke's queue, not everything that ever merged: closed, minus what
-   ;; she passed and what was ruled out of scope by the cutoff. Filtered by bd
-   ;; rather than here, so seventy finished beads never cross the pipe.
-   (cerebro--bd-json repo-root "list" "--status" "closed"
-                     "--exclude-label" "verification:passed,verification:not-needed"
-                     "--json")
-   (cerebro--bd-json repo-root "list" "--status" "closed"
-                     "--label" "verification:passed" "--json")))
+An earlier version filtered the open lists by the `owner' field and showed
+an empty panel every time: `owner' is the address of whoever *filed* the
+bead and is set on all of them, claimed or not."
+  (cerebro--partition-beads
+   (cerebro--bd-json repo-root "list"
+                     "--status" "open,in_progress,blocked,deferred,closed"
+                     "--json")))
+
 
 (defun cerebro--layout-detail-window ()
   "The layout's detail window, or nil.
@@ -1015,9 +1072,8 @@ when the navigator holds the key down hides where it finishes."
     (with-current-buffer buffer
       (let* ((width (cerebro--panel-width buffer))
              (beads (cerebro--gather-beads (cerebro--repo-root)))
-             (lines (cerebro--bead-panel (nth 0 beads) (nth 1 beads) (nth 2 beads)
-                                          (nth 3 beads) (nth 4 beads)
-                                          width cerebro-beads-per-section))
+             (lines (apply #'cerebro--bead-panel
+                           (append beads (list width cerebro-beads-per-section))))
              (inhibit-read-only t)
              ;; By id, not by position: the panel redraws every thirty seconds
              ;; and a bead landing above the selected one would otherwise slide

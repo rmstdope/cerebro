@@ -691,10 +691,37 @@ directory, where there is no longer anything by that name."
 An idle implementer has a session up and no bead - something the navigator
 may want to act on - so it reads as yellow rather than as the grey that
 means there is nobody there at all."
-  (should (memq 'warning (cerebro-test--faces-at (cerebro--glyph 'idle) 0)))
+  (should (memq 'cerebro-idle (cerebro-test--faces-at (cerebro--glyph 'idle) 0)))
   ;; Still distinguishable from the states either side of it.
   (should (memq 'success (cerebro-test--faces-at (cerebro--glyph 'working) 0)))
   (should (memq 'shadow (cerebro-test--faces-at (cerebro--glyph 'dead) 0))))
+
+(ert-deftest cerebro-test/idle-face-is-actually-yellow-and-not-bold ()
+  "`warning\=' is DarkOrange and bold, which is two wrongs at once.
+
+Emacs defines `warning\=' as `:foreground \"DarkOrange\" :weight bold\' on any
+colour display - so the idle dot was orange rather than yellow, and bold,
+which is the weight this view reserves for an agent that wants an answer.
+`cerebro-idle\=' is a plain yellow instead, and customizable in one place for
+a theme where gold does not read."
+  (let ((spec (format "%S" (get 'cerebro-idle 'face-defface-spec))))
+    (should (string-match-p "gold\\|yellow" (downcase spec)))
+    (should-not (string-match-p "bold" (downcase spec)))))
+
+(ert-deftest cerebro-test/idle-is-a-filled-dot-not-a-ring ()
+  "The colour was right and the shape defeated it.
+
+Idle was U+25CC DOTTED CIRCLE and dead is U+25CB WHITE CIRCLE: two hollow
+rings that are the same picture at terminal sizes, so a yellow one read as
+\"an empty circle, just like the dead\" however yellow it was. Idle is a
+filled dot now - the thing that was actually asked for - and only the colour
+separates it from working, which is what the State column spells out anyway."
+  (let ((idle (substring-no-properties (cerebro--glyph 'idle)))
+        (dead (substring-no-properties (cerebro--glyph 'dead)))
+        (working (substring-no-properties (cerebro--glyph 'working))))
+    (should (equal idle "●"))
+    (should (equal idle working))
+    (should-not (equal idle dead))))
 
 (ert-deftest cerebro-test/asking-agent-is-bold-across-its-columns ()
   "An agent waiting on an answer has to be findable in a list of eighteen.
@@ -735,6 +762,633 @@ the role and the state makes the row itself the signal."
       ;; And back, so one key cycles rather than stranding the navigator.
       (cerebro-other-window)
       (should (eq (selected-window) list-window)))))
+
+;; ---------------------------------------------------------------------------
+;; The bead panel
+
+(defun cerebro-test--bead (id priority title &optional owner)
+  `((id . ,id) (priority . ,priority) (title . ,title) (owner . ,owner)))
+
+(ert-deftest cerebro-test/bead-line-fits-the-width ()
+  "A line never exceeds the panel width, however long the title."
+  (let* ((bead (cerebro-test--bead "ah-7s7" 1
+                                            "Psylocke, the verification session: prove merged work does what it claimed"))
+         (line (cerebro--bead-line bead 62)))
+    (should (<= (length line) 62))
+    (should (string-match-p "ah-7s7" line))
+    (should (string-match-p "P1" line))
+    ;; Truncated rather than wrapped: a wrapped row would break the column.
+    (should (string-suffix-p "…" line))))
+
+(ert-deftest cerebro-test/bead-line-keeps-a-short-title-whole ()
+  (let ((line (cerebro--bead-line (cerebro-test--bead "ah-t70" 0 "Fix release tagging") 62)))
+    (should (string-match-p "Fix release tagging" line))
+    (should-not (string-match-p "…" line))))
+
+(ert-deftest cerebro-test/bead-line-never-shows-the-owner ()
+  "bd's `owner' is who FILED the bead, not who is working on it.
+
+It is set on every bead, so an owner column would print the same address on
+every row — and the first version of this panel also filtered the unclaimed
+lists by it, which emptied them completely.  That was caught by rendering
+against the real database rather than here, which is why the guard is now a
+test."
+  (let ((line (cerebro--bead-line
+               (cerebro-test--bead "ah-13o" 1 "Resizable split" "henrik@kurelid.se") 62)))
+    (should-not (string-match-p "henrik" line))
+    (should (string-match-p "Resizable split" line))))
+
+(ert-deftest cerebro-test/beads-sort-by-priority-then-id ()
+  "P0 first: the panel is read top-down when deciding what matters."
+  (let* ((beads (list (cerebro-test--bead "ah-b" 2 "two")
+                      (cerebro-test--bead "ah-c" 0 "zero")
+                      (cerebro-test--bead "ah-a" 2 "two again")))
+         (sorted (cerebro--sort-beads beads)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) sorted)
+                    '("ah-c" "ah-a" "ah-b")))))
+
+(ert-deftest cerebro-test/bead-section-counts-in-its-header ()
+  "The count is the part that is read when the rows are folded off the bottom."
+  (let ((lines (cerebro--bead-section "Claimed" (list (cerebro-test--bead "ah-a" 1 "one")) 62 8)))
+    (should (string-match-p "\\`Claimed 1" (car lines)))))
+
+(ert-deftest cerebro-test/bead-section-says-so-when-empty ()
+  "An empty section still prints: a missing heading reads as a broken panel."
+  (let ((lines (cerebro--bead-section "Planned, unclaimed" nil 62 8)))
+    (should (string-match-p "\\`Planned, unclaimed 0" (car lines)))
+    (should (string-match-p "none" (nth 1 lines)))))
+
+(ert-deftest cerebro-test/bead-section-caps-and-says-how-many-it-hid ()
+  "Twenty unplanned beads must not push the other sections off the window."
+  (let* ((beads (mapcar (lambda (n) (cerebro-test--bead (format "ah-%02d" n) 2 "t")) (number-sequence 1 12)))
+         (lines (cerebro--bead-section "Unplanned" beads 62 8)))
+    (should (string-match-p "\\`Unplanned 12" (car lines)))
+    ;; header + 8 beads + the overflow line
+    (should (= (length lines) 10))
+    (should (string-match-p "4 more" (car (last lines))))))
+
+(ert-deftest cerebro-test/bead-panel-puts-each-list-in-its-own-section ()
+  (let* ((claimed (list (cerebro-test--bead "ah-13o" 1 "held" "Cyclops")))
+         (unplanned (list (cerebro-test--bead "ah-7s7" 1 "loose")))
+         (merged (list (cerebro-test--bead "ah-m1" 2 "just landed")))
+         (text (string-join
+                (cerebro--bead-panel claimed nil unplanned merged 62 8) "\n"))
+         (at (lambda (s) (string-match (regexp-quote s) text))))
+    ;; Each bead under the heading it belongs to, not merely present somewhere.
+    (should (< (funcall at "Claimed") (funcall at "ah-13o")))
+    (should (< (funcall at "ah-13o") (funcall at "Planned, unclaimed")))
+    (should (< (funcall at "Unplanned") (funcall at "ah-7s7")))
+    (should (< (funcall at "Merged, unverified") (funcall at "ah-m1")))))
+
+(ert-deftest cerebro-test/bd-json-is-quiet-when-bd-cannot-answer ()
+  "A panel that cannot read must not take the fleet view down with it.
+
+`bd' may be absent, unconfigured or mid-write; the agent list is what the
+navigator actually steers by, and it has to keep refreshing regardless."
+  (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 127)))
+    (should (null (cerebro--bd-json "/repo" "list" "--json"))))
+  (cl-letf (((symbol-function 'call-process)
+             (lambda (&rest _) (insert "this is not json") 0)))
+    (should (null (cerebro--bd-json "/repo" "list" "--json")))))
+
+(ert-deftest cerebro-test/layout-puts-the-panel-under-the-list ()
+  (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                  ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil nil))))
+          (save-window-excursion
+            (delete-other-windows)
+            (set-window-buffer (selected-window) fleet)
+            (with-current-buffer fleet
+              (cerebro--setup-layout)
+              (should (window-live-p cerebro--beads-window))
+              (should (equal (buffer-name (window-buffer cerebro--beads-window))
+                              cerebro-beads-buffer-name))
+              ;; Under the list, not beside it.
+              (should (= (window-left-column cerebro--beads-window)
+                          (window-left-column cerebro--list-window)))
+              (should (> (window-top-line cerebro--beads-window)
+                          (window-top-line cerebro--list-window)))
+              ;; And the detail window still stands to the right of both.
+              (should (> (window-left-column cerebro--detail-window)
+                          (window-left-column cerebro--list-window))))))
+      (when (get-buffer cerebro-beads-buffer-name)
+        (with-current-buffer cerebro-beads-buffer-name
+          (when (timerp cerebro--beads-timer) (cancel-timer cerebro--beads-timer)))
+        (kill-buffer cerebro-beads-buffer-name))
+      (kill-buffer fleet))))
+
+(ert-deftest cerebro-test/beads-tick-stops-itself-when-the-panel-is-gone ()
+  "Killing the panel is the ordinary way to stop it refreshing.
+
+The timer used to be cancelled through a buffer-local variable, which dies
+with the buffer holding it - so the tick would have gone on shelling out to
+bd every thirty seconds for a buffer nobody could see."
+  (let ((dead (generate-new-buffer " *cerebro-test-dead*"))
+        (cancelled nil))
+    (kill-buffer dead)
+    (cl-letf (((symbol-function 'cancel-function-timers)
+               (lambda (f) (setq cancelled f))))
+      (cerebro--beads-tick dead)
+      (should (eq cancelled #'cerebro--beads-tick)))))
+
+;; ---------------------------------------------------------------------------
+;; TAB cycles from wherever the navigator is
+
+(ert-deftest cerebro-test/tab-is-bound-in-every-window-of-the-layout ()
+  "One key, three windows. Bound where the navigator might be standing."
+  (dolist (map (list cerebro-mode-map cerebro-beads-mode-map cerebro-session-mode-map))
+    (should (eq (lookup-key map (kbd "TAB")) #'cerebro-other-window))
+    (should (eq (lookup-key map (kbd "<tab>")) #'cerebro-other-window))))
+
+(ert-deftest cerebro-test/tab-cycles-list-beads-detail-and-round ()
+  "The order the navigator reads in, and back to the top rather than stopping."
+  (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+            ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil nil))))
+    (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
+      (unwind-protect
+          (save-window-excursion
+            (delete-other-windows)
+            (set-window-buffer (selected-window) fleet)
+            ;; The window variables are buffer-local to the fleet buffer, so
+            ;; they have to be read before cycling moves the current buffer
+            ;; out from under them.
+            (let (list-window beads-window detail-window)
+              (with-current-buffer fleet
+                (cerebro--setup-layout)
+                (setq list-window cerebro--list-window
+                      beads-window cerebro--beads-window
+                      detail-window cerebro--detail-window))
+              (select-window list-window)
+              (cerebro-other-window)
+              (should (eq (selected-window) beads-window))
+              (cerebro-other-window)
+              (should (eq (selected-window) detail-window))
+              ;; Round, not stuck at the right-hand edge.
+              (cerebro-other-window)
+              (should (eq (selected-window) list-window))))
+        (when (get-buffer cerebro-beads-buffer-name)
+          (kill-buffer cerebro-beads-buffer-name))
+        (kill-buffer fleet)))))
+
+(ert-deftest cerebro-test/session-buffers-take-tab-back-from-vterm ()
+  "vterm binds TAB in its own major-mode map, so this has to outrank it.
+
+A minor mode does; editing `vterm-mode-map' would have taken TAB from every
+vterm the navigator has, fleet or not."
+  (let ((buffer (generate-new-buffer " *cerebro-test-session*")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (cerebro-session-mode 1)
+          ;; `minor-mode-map-alist' is keyed by the mode, and the binding it
+          ;; produces is what actually matters.
+          (should (memq 'cerebro-session-mode (mapcar #'car minor-mode-map-alist)))
+          (should (eq (key-binding (kbd "TAB")) #'cerebro-other-window)))
+      (kill-buffer buffer))))
+
+(ert-deftest cerebro-test/a-real-tab-can-still-reach-the-agent ()
+  "Taking TAB from a live session has to leave a way to send one."
+  (should (eq (lookup-key cerebro-session-mode-map (kbd "C-c TAB")) #'cerebro-send-tab)))
+
+(ert-deftest cerebro-test/placeholder-buffers-cycle-too ()
+  "A dead agent's placeholder sits in the same window and must not trap TAB."
+  (let* ((agent (cerebro-test--agent "Rogue" "implementer" 'implementer 'dead))
+         (buffer (cerebro--placeholder-buffer agent)))
+    (unwind-protect
+        (with-current-buffer buffer
+          (should cerebro-session-mode))
+      (kill-buffer buffer))))
+
+(ert-deftest cerebro-test/a-launched-session-cycles-with-tab ()
+  "The rightmost window is where TAB was reported dead, so enter through launch.
+
+Removing the `cerebro-session-mode' call in `cerebro--launch' failed no test
+at all before this one existed - the placeholder was covered and the live
+session, which is the case the navigator actually hits, was not."
+  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+         (session-name (cerebro--session-buffer-name agent))
+         (orig-require (symbol-function 'require)))
+    (unwind-protect
+        (cerebro-test--with-layout list-buffer detail-window
+          (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                    ((symbol-function 'require)
+                     (lambda (feature &rest args)
+                       (or (eq feature 'vterm) (apply orig-require feature args))))
+                    ((symbol-function 'vterm)
+                     (lambda (name)
+                       (let ((buffer (get-buffer-create name)))
+                         ;; vterm owns TAB in its major-mode map; stand in for that.
+                         (with-current-buffer buffer
+                           (use-local-map (let ((m (make-sparse-keymap)))
+                                            (define-key m (kbd "TAB") #'ignore)
+                                            m)))
+                         (cerebro-test--spawn-like-vterm buffer)))))
+            (cerebro--launch agent)
+            (with-current-buffer session-name
+              (should cerebro-session-mode)
+              (should (eq (key-binding (kbd "TAB")) #'cerebro-other-window))
+              (should (eq (key-binding (kbd "C-c TAB")) #'cerebro-send-tab)))))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
+;; ---------------------------------------------------------------------------
+;; Navigating the bead panel
+
+(defmacro cerebro-test--with-panel (buffer &rest body)
+  "Render a panel of known beads into BUFFER and run BODY there."
+  (declare (indent 1))
+  `(let ((,buffer (get-buffer-create "*cerebro-test-beads*")))
+     (unwind-protect
+         (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                   ((symbol-function 'cerebro--gather-beads)
+                    (lambda (_root)
+                      (list (list (cerebro-test--bead "ah-c1" 1 "claimed one"))
+                            (list (cerebro-test--bead "ah-p1" 0 "planned one"))
+                            (list (cerebro-test--bead "ah-u1" 1 "unplanned one")
+                                  (cerebro-test--bead "ah-u2" 2 "unplanned two"))
+                            nil))))
+           (with-current-buffer ,buffer
+             (cerebro-beads-mode)
+             (cerebro--beads-render ,buffer)
+             ,@body))
+       (kill-buffer ,buffer))))
+
+(ert-deftest cerebro-test/bead-rows-carry-their-id ()
+  "The row knows which bead it is, so navigation and selection are about
+beads rather than about line numbers."
+  (cerebro-test--with-panel buffer
+    (goto-char (point-min))
+    (should (null (cerebro--bead-at-point)))     ; the "Claimed 1" header
+    (forward-line 1)
+    (should (equal (cerebro--bead-at-point) "ah-c1"))))
+
+(ert-deftest cerebro-test/navigation-skips-everything-that-is-not-a-bead ()
+  "Headers, blank lines and \"(none)\" are scenery: `n' steps over them."
+  (cerebro-test--with-panel buffer
+    (goto-char (point-min))
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-c1"))
+    (cerebro-beads-next)
+    ;; Straight across the blank line and the "Planned, unclaimed" header.
+    (should (equal (cerebro--bead-at-point) "ah-p1"))
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-u1"))
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-u2"))))
+
+(ert-deftest cerebro-test/navigation-stops-at-the-ends ()
+  "No wrap: a list that jumps to the top when you hold `n' hides its own end."
+  (cerebro-test--with-panel buffer
+    ;; Down to the last bead, then keep pressing.
+    (dotimes (_ 6) (cerebro-beads-next))
+    (should (equal (cerebro--bead-at-point) "ah-u2"))
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-u2"))
+    ;; And back up past the top.
+    (dotimes (_ 6) (cerebro-beads-previous))
+    (should (equal (cerebro--bead-at-point) "ah-c1"))
+    (cerebro-beads-previous)
+    (should (equal (cerebro--bead-at-point) "ah-c1"))))
+
+(ert-deftest cerebro-test/a-bead-is-marked-from-the-first-render ()
+  "Point starts on a bead rather than on the header above it."
+  (cerebro-test--with-panel buffer
+    (should (equal (cerebro--bead-at-point) "ah-c1"))
+    (should hl-line-mode)))
+
+(ert-deftest cerebro-test/the-selected-bead-survives-a-refresh ()
+  "The panel redraws on a timer; the selection has to follow the bead.
+
+Restoring by buffer position would move the mark to whatever row happened to
+land on that line when the queue changed underneath."
+  (cerebro-test--with-panel buffer
+    ;; The render already marked the first bead, so one step reaches ah-p1.
+    (cerebro-beads-next)
+    (should (equal (cerebro--bead-at-point) "ah-p1"))
+    ;; A bead lands above it and the rows all shift down one.
+    (cl-letf (((symbol-function 'cerebro--gather-beads)
+               (lambda (_root)
+                 (list (list (cerebro-test--bead "ah-c0" 0 "new claim")
+                             (cerebro-test--bead "ah-c1" 1 "claimed one"))
+                       (list (cerebro-test--bead "ah-p1" 0 "planned one"))
+                       nil nil))))
+      (cerebro--beads-render buffer)
+      (should (equal (cerebro--bead-at-point) "ah-p1")))))
+
+(ert-deftest cerebro-test/a-vanished-bead-does-not-strand-the-mark ()
+  "Merged and closed while selected: fall back to the first row, not to nowhere."
+  (cerebro-test--with-panel buffer
+    (should (equal (cerebro--bead-at-point) "ah-c1"))
+    (cl-letf (((symbol-function 'cerebro--gather-beads)
+               (lambda (_root)
+                 (list nil nil (list (cerebro-test--bead "ah-u1" 1 "left")) nil))))
+      (cerebro--beads-render buffer)
+      (should (equal (cerebro--bead-at-point) "ah-u1")))))
+
+(ert-deftest cerebro-test/beads-keymap-navigates ()
+  (should (eq (lookup-key cerebro-beads-mode-map "n") #'cerebro-beads-next))
+  (should (eq (lookup-key cerebro-beads-mode-map "p") #'cerebro-beads-previous))
+  (should (eq (lookup-key cerebro-beads-mode-map (kbd "<down>")) #'cerebro-beads-next))
+  (should (eq (lookup-key cerebro-beads-mode-map (kbd "<up>")) #'cerebro-beads-previous)))
+
+(ert-deftest cerebro-test/panel-width-does-not-borrow-another-window ()
+  "`window-width' with no window means the SELECTED window.
+
+The panel refreshes on a timer, so that would lay it out to the width of
+whatever the navigator was standing in - usually the detail window."
+  (let ((buffer (generate-new-buffer " *cerebro-test-width*")))
+    (unwind-protect
+        (should (= (cerebro--panel-width buffer) cerebro-list-width))
+      (kill-buffer buffer))))
+
+(ert-deftest cerebro-test/the-mark-lands-in-the-window-not-just-the-buffer ()
+  "A window keeps its own point when its buffer is not the selected one.
+
+`goto-char' in `with-current-buffer' moves the buffer's point; the window
+showing it kept pointing at line 1, so with an empty Claimed section the
+navigator saw the mark sitting on \"Claimed 0\". Both the layout and the
+timer render from another window, so this is the normal path, not an edge."
+  (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+            ((symbol-function 'cerebro--gather-beads)
+             (lambda (_root)
+               (list nil nil (list (cerebro-test--bead "ah-u1" 1 "first real bead")) nil))))
+    (let ((buffer (get-buffer-create "*cerebro-test-window-point*"))
+          (elsewhere (generate-new-buffer " *cerebro-test-elsewhere*")))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer buffer (cerebro-beads-mode))
+            (delete-other-windows)
+            (set-window-buffer (selected-window) elsewhere)
+            (let ((window (split-window (selected-window) nil 'below)))
+              (set-window-buffer window buffer)
+              ;; Rendered from the other window, exactly as the timer does.
+              (cerebro--beads-render buffer)
+              (with-current-buffer buffer
+                (save-excursion
+                  (goto-char (window-point window))
+                  (should (equal (cerebro--bead-at-point) "ah-u1"))))))
+        (kill-buffer buffer)
+        (kill-buffer elsewhere)))))
+
+;; ---------------------------------------------------------------------------
+;; RET on a bead shows it in the detail window
+
+(ert-deftest cerebro-test/ret-is-bound-in-the-panel ()
+  (should (eq (lookup-key cerebro-beads-mode-map (kbd "RET")) #'cerebro-beads-show)))
+
+(ert-deftest cerebro-test/bead-detail-window-cycles-with-tab ()
+  "It sits in the detail window, so TAB has to keep working from it."
+  (should (eq (lookup-key cerebro-bead-mode-map (kbd "TAB")) #'cerebro-other-window))
+  (should (eq (lookup-key cerebro-bead-mode-map (kbd "<tab>")) #'cerebro-other-window)))
+
+(ert-deftest cerebro-test/ret-on-a-header-says-so-rather-than-guessing ()
+  "The panel has more scenery than beads; RET on it must not show something else."
+  (cerebro-test--with-panel buffer
+    (goto-char (point-min))                       ; the "Claimed 1" header
+    (should-error (cerebro-beads-show) :type 'user-error)))
+
+(ert-deftest cerebro-test/ret-shows-the-bead-in-the-detail-window ()
+  (cerebro-test--with-panel panel
+    (let ((shown nil)
+          (detail (selected-window)))
+      (cl-letf (((symbol-function 'cerebro--bd-text)
+                 (lambda (_root id) (setq shown id) (format "○ %s · a bead\n\nDESCRIPTION\n" id)))
+                ((symbol-function 'cerebro--layout-detail-window) (lambda () detail)))
+        (should (equal (cerebro--bead-at-point) "ah-c1"))
+        (cerebro-beads-show)
+        ;; Asked bd about the marked bead, and nothing else.
+        (should (equal shown "ah-c1"))
+        (let ((buffer (get-buffer cerebro-bead-buffer-name)))
+          (should buffer)
+          (should (eq (window-buffer detail) buffer))
+          (with-current-buffer buffer
+            (should (string-match-p "ah-c1" (buffer-string)))
+            (should (derived-mode-p 'cerebro-bead-mode))
+            ;; Read-only: this is a view of a bead, not a way to edit one.
+            (should buffer-read-only))
+          (kill-buffer buffer))))))
+
+(ert-deftest cerebro-test/a-bead-that-bd-cannot-show-says-so ()
+  "Silence would read as a broken key rather than as a missing bead."
+  (cerebro-test--with-panel panel
+    (let ((detail (selected-window)))
+      (cl-letf (((symbol-function 'cerebro--bd-text) (lambda (_root _id) nil))
+                ((symbol-function 'cerebro--layout-detail-window) (lambda () detail)))
+        (cerebro-beads-show)
+        (with-current-buffer cerebro-bead-buffer-name
+          (should (string-match-p "ah-c1" (buffer-string)))
+          (should (string-match-p "could not" (downcase (buffer-string)))))
+        (kill-buffer cerebro-bead-buffer-name)))))
+
+;; ---------------------------------------------------------------------------
+;; Re-prioritising the marked bead
+
+(defmacro cerebro-test--with-bd (calls &rest body)
+  "Run BODY with `bd update' recorded into CALLS instead of run, succeeding."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'cerebro--bd-set-priority)
+              (lambda (_root id priority) (push (cons id priority) ,calls) t))
+             ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+     ,@body))
+
+(ert-deftest cerebro-test/bead-rows-carry-their-priority ()
+  "The row knows its own priority, so `+' does not have to re-parse the text."
+  (cerebro-test--with-panel buffer
+    (should (equal (cerebro--priority-at-point) 1))))
+
+(ert-deftest cerebro-test/nudging-clamps-at-both-ends ()
+  "P0 is as urgent as it goes and P4 is the backlog floor."
+  (should (= (cerebro--nudged-priority 1 -1) 0))
+  (should (= (cerebro--nudged-priority 0 -1) 0))
+  (should (= (cerebro--nudged-priority 3 1) 4))
+  (should (= (cerebro--nudged-priority 4 1) 4)))
+
+(ert-deftest cerebro-test/setting-a-priority-asks-bd-and-redraws ()
+  (cerebro-test--with-panel buffer
+    (let (calls)
+      (cerebro-test--with-bd calls
+        (cerebro-beads-set-priority 0)
+        (should (equal calls '(("ah-c1" . 0))))
+        ;; The mark stays on the bead it was on, wherever the redraw puts it.
+        (should (equal (cerebro--bead-at-point) "ah-c1"))))))
+
+(ert-deftest cerebro-test/setting-the-priority-it-already-has-does-nothing ()
+  "No write, no undo entry: a keypress that changes nothing must not look
+like one that did."
+  (cerebro-test--with-panel buffer
+    (let (calls)
+      (cerebro-test--with-bd calls
+        (cerebro-beads-set-priority 1)          ; ah-c1 is already P1
+        (should (null calls))
+        (should (null cerebro--last-priority-change))))))
+
+(ert-deftest cerebro-test/priority-on-a-header-line-is-refused ()
+  (cerebro-test--with-panel buffer
+    (goto-char (point-min))
+    (should-error (cerebro-beads-set-priority 0) :type 'user-error)))
+
+(ert-deftest cerebro-test/a-failed-update-is-not-silent-and-is-not-undoable ()
+  "bd can refuse - a lock, a closed bead - and the panel must not claim it worked."
+  (cerebro-test--with-panel buffer
+    (cl-letf (((symbol-function 'cerebro--bd-set-priority) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+      (should-error (cerebro-beads-set-priority 0) :type 'user-error)
+      (should (null cerebro--last-priority-change)))))
+
+(ert-deftest cerebro-test/undo-puts-the-priority-back-once ()
+  "One step, because a mis-key is the case it exists for."
+  (cerebro-test--with-panel buffer
+    (let (calls)
+      (cerebro-test--with-bd calls
+        (cerebro-beads-set-priority 4)
+        (should (equal cerebro--last-priority-change '("ah-c1" . 1)))
+        (cerebro-beads-undo-priority)
+        (should (equal (car calls) '("ah-c1" . 1)))
+        ;; Spent: a second undo has nothing to put back.
+        (should (null cerebro--last-priority-change))
+        (should-error (cerebro-beads-undo-priority) :type 'user-error)))))
+
+(ert-deftest cerebro-test/priority-keys-are-bound ()
+  "Each digit sets its own number.
+
+The bindings are closures made in a loop, which is the classic way to end up
+with five keys that all set the last value - `commandp' alone would not have
+noticed."
+  (let (asked)
+    (cl-letf (((symbol-function 'cerebro-beads-set-priority)
+               (lambda (priority) (push priority asked))))
+      (dolist (digit '("0" "1" "2" "3" "4"))
+        (let ((command (lookup-key cerebro-beads-mode-map digit)))
+          (should (commandp command))
+          (call-interactively command))))
+    (should (equal (reverse asked) '(0 1 2 3 4))))
+  (should (eq (lookup-key cerebro-beads-mode-map "+") #'cerebro-beads-raise))
+  (should (eq (lookup-key cerebro-beads-mode-map "-") #'cerebro-beads-lower))
+  (should (eq (lookup-key cerebro-beads-mode-map "u") #'cerebro-beads-undo-priority)))
+
+(ert-deftest cerebro-test/nudging-moves-one-step-from-where-the-bead-is ()
+  (cerebro-test--with-panel buffer
+    (let (calls)
+      (cerebro-test--with-bd calls
+        (cerebro-beads-raise)                   ; ah-c1 is P1, raise is more urgent
+        (should (equal (car calls) '("ah-c1" . 0)))))))
+
+;; ---------------------------------------------------------------------------
+;; What merged, and what has been verified
+
+(defun cerebro-test--closed (id title labels updated)
+  `((id . ,id) (priority . 2) (title . ,title) (labels . ,labels) (updated_at . ,updated)))
+
+(ert-deftest cerebro-test/panel-sections-follow-the-lifecycle ()
+  "Claimed, planned, unplanned, merged - as far as the panel follows work."
+  (let* ((text (string-join (cerebro--bead-panel nil nil nil nil 62 8) "\n"))
+         (at (lambda (s) (string-match (regexp-quote s) text))))
+    (should (< (funcall at "Claimed") (funcall at "Planned, unclaimed")))
+    (should (< (funcall at "Planned, unclaimed") (funcall at "Unplanned")))
+    (should (< (funcall at "Unplanned") (funcall at "Merged, unverified")))))
+
+(ert-deftest cerebro-test/the-panel-stops-at-merged ()
+  "The panel shows work the fleet can act on, and drops the rest.
+
+Not everything needs a home here: verified work is finished, epics are
+parents rather than work, bd's `event' records are its own bookkeeping, and
+blocked or deferred beads cannot be picked up.  They are left out rather
+than filed somewhere nobody reads."
+  (let ((text (string-join
+               (apply #'cerebro--bead-panel
+                      (append (cerebro--partition-beads cerebro-test--every-shape)
+                              (list 62 8)))
+               "\n")))
+    ;; Case-sensitively: "Merged, unverified" contains "verified", and
+    ;; `string-match-p' folds case by default.
+    (let ((case-fold-search nil))
+      (should-not (string-match-p "Verified" text))
+      (should-not (string-match-p "Other" text)))
+    (dolist (id '("closed-passed" "closed-not-needed" "epic" "event"
+                  "blocked" "deferred" "from-the-future"))
+      (should-not (string-match-p (regexp-quote id) text)))
+    ;; What the panel is for is still all there.
+    (dolist (id '("in-progress" "open-planned" "open-loose" "closed-bare"))
+      (should (string-match-p (regexp-quote id) text)))))
+
+(ert-deftest cerebro-test/closed-beads-sort-newest-first ()
+  "Priority says nothing about finished work; recency says what just happened."
+  (let* ((beads (list (cerebro-test--closed "ah-old" "older" nil "2026-08-01T09:00:00Z")
+                      (cerebro-test--closed "ah-new" "newer" nil "2026-08-14T09:00:00Z")))
+         (sorted (cerebro--sort-recent beads)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) sorted) '("ah-new" "ah-old")))))
+
+(ert-deftest cerebro-test/a-reopened-bead-is-marked-where-it-lands ()
+  "A failed verdict sends a bead back to the unclaimed pile at P0.
+
+It is an ordinary open bead there - which is the point - but the row says it
+has been round once, because that is the difference between new work and
+work that came back."
+  (let ((reopened (cerebro--bead-line
+                   `((id . "ah-t65") (priority . 0) (title . "same title")
+                     (labels . ("verification:failed")))
+                   62))
+        ;; Same id length and same title, so any difference in width is the
+        ;; marker and not the text.
+        (fresh (cerebro--bead-line
+                '((id . "ah-t70") (priority . 0) (title . "same title")) 62)))
+    (should (string-match-p "↻" reopened))
+    (should-not (string-match-p "↻" fresh))
+    ;; Still the same width, so the column does not shift under one row.
+    (should (= (length reopened) (length fresh)))))
+
+;; ---------------------------------------------------------------------------
+;; Every bead lands somewhere
+
+(defun cerebro-test--any (id status &optional labels type)
+  `((id . ,id) (status . ,status) (priority . 2) (title . ,id)
+    (labels . ,labels) (issue_type . ,(or type "task"))
+    (updated_at . "2026-08-14T09:00:00Z")))
+
+(defconst cerebro-test--every-shape
+  (list (cerebro-test--any "in-progress" "in_progress")
+        (cerebro-test--any "open-planned" "open" '("planned"))
+        (cerebro-test--any "open-loose" "open")
+        (cerebro-test--any "closed-bare" "closed")
+        (cerebro-test--any "closed-failed" "closed" '("verification:failed"))
+        (cerebro-test--any "closed-passed" "closed" '("verification:passed"))
+        (cerebro-test--any "closed-not-needed" "closed" '("verification:not-needed"))
+        (cerebro-test--any "blocked" "blocked")
+        (cerebro-test--any "deferred" "deferred")
+        (cerebro-test--any "epic" "open" nil "epic")
+        ;; bd's own audit record of a state change, and it carries the label
+        ;; of the change it records - so it lands in Verified unless the type
+        ;; is checked first.
+        (cerebro-test--any "event" "closed" '("verification:passed") "event")
+        (cerebro-test--any "from-the-future" "sideways"))
+  "One bead of every shape bd can produce, plus a status it cannot.")
+
+(ert-deftest cerebro-test/each-shape-lands-where-it-belongs ()
+  "Four buckets, and everything else deliberately in none of them."
+  (let* ((buckets (cerebro--partition-beads cerebro-test--every-shape))
+         (ids (lambda (n) (mapcar (lambda (b) (alist-get 'id b)) (nth n buckets)))))
+    (should (= 4 (length buckets)))
+    (should (equal (funcall ids 0) '("in-progress")))
+    (should (equal (funcall ids 1) '("open-planned")))
+    (should (equal (funcall ids 2) '("open-loose")))
+    ;; Merged is what still wants verifying: bare, or failed and rebuilt.
+    (should (equal (sort (funcall ids 3) #'string<) '("closed-bare" "closed-failed")))
+    ;; And nothing else got in anywhere: verified work, epics, bd's own event
+    ;; records, blocked, deferred, and a status from a future bd.
+    (should (= 5 (length (apply #'append buckets))))))
+
+(ert-deftest cerebro-test/one-query-covers-every-status ()
+  "Five statuses in one call: the partition can only be complete if the
+list it partitions is."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'cerebro--bd-json)
+               (lambda (_root &rest args) (push args asked) nil)))
+      (cerebro--gather-beads "/repo")
+      (should (= 1 (length asked)))
+      (let ((args (car asked)))
+        (dolist (status '("open" "in_progress" "blocked" "deferred" "closed"))
+          (should (cl-some (lambda (a) (string-match-p status a)) args)))
+        ;; No type exclusion: an epic has to land in Other, not vanish.
+        (should-not (member "--exclude-type" args))))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

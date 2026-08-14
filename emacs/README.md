@@ -35,6 +35,34 @@ The glyph carries the state and the weight carries the urgency:
 Bold is only ever "this row wants you", so it stays worth noticing: idle and dead share the quiet
 weight, and only a question earns the loud one.
 
+## The bead panel
+
+Under the agent list, in a window of its own, `*cerebro-beads*` answers the three questions the
+navigator asks about the queue, in the order they are asked:
+
+```
+Claimed 1
+  ah-13o  P1 Resizable split between the unit and orders panes
+Planned, unclaimed 0
+  (none)
+Unplanned 5
+  ah-3cs  P1 Config option for fixed unit-in-hex pane size
+  ah-7s7  P1 Psylocke, the verification session: prove merged…
+  +3 more
+```
+
+Sorted by priority then id, so P0 reads first and the order does not shuffle under a redraw. Each
+section names its own count, because the rows are what gets capped — `cerebro-beads-per-section`,
+eight by default, keeps an unbounded backlog from pushing the first two sections off the bottom.
+
+It refreshes every `cerebro-beads-refresh-seconds` (30) and on `g`, rather than on the agent list's
+five-second tick: a refresh is three `bd` subprocesses, and beads move on human timescales. If `bd`
+cannot answer — absent, unconfigured, mid-write — the panel goes quiet rather than taking the fleet
+view down with it.
+
+There is deliberately no owner column. `bd`'s `owner` is whoever *filed* the bead and is set on
+every one of them; who is *working* on a bead is what the agent list directly above already says.
+
 ## Supervising the implementers
 
 Implementers are interactive sessions that take one bead each, so they cannot end themselves. The

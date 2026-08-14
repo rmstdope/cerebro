@@ -199,6 +199,77 @@ fails to parse, renders as the empty string."
     (list (cerebro-agent-name agent)
           (vector agent-col role-col state-col bead-col for-col))))
 
+;;; The bead panel
+
+(defcustom cerebro-beads-per-section 8
+  "How many beads each section of the panel shows before it says \"+N more\".
+
+The panel sits under an eighteen-row agent list in one window, and an
+unplanned backlog is unbounded - without a cap the first two sections, which
+are the ones worth reading, get pushed off the bottom by the third."
+  :type 'integer
+  :group 'cerebro)
+
+(defun cerebro--truncate (text width)
+  "TEXT cut to WIDTH, ending in an ellipsis when something was removed."
+  (if (<= (length text) width)
+      text
+    (concat (substring text 0 (max 0 (1- width))) "…")))
+
+(defun cerebro--sort-beads (beads)
+  "BEADS by priority, then by id, so P0 reads first and ties do not shuffle.
+
+A stable order matters more than the particular one: the panel redraws on a
+timer, and a list that reorders under the navigator's eyes is unreadable."
+  (sort (copy-sequence beads)
+        (lambda (a b)
+          (let ((pa (or (alist-get 'priority a) 9))
+                (pb (or (alist-get 'priority b) 9)))
+            (if (= pa pb)
+                (string< (or (alist-get 'id a) "") (or (alist-get 'id b) ""))
+              (< pa pb))))))
+
+(defun cerebro--bead-line (bead width)
+  "One line for BEAD, fitted to WIDTH.
+
+Truncated rather than wrapped: a wrapped title would put a second line under
+a row and break the column the eye follows down the panel."
+  (let* ((id (or (alist-get 'id bead) "?"))
+         (priority (alist-get 'priority bead))
+         (prefix (format "  %-7s P%s " id (if priority (number-to-string priority) "?")))
+         ;; Deliberately no owner column.  `bd's `owner' is the address of
+         ;; whoever *filed* the bead and is set on every one of them, so it
+         ;; says nothing about who is working on it - and the agent list
+         ;; directly above already answers that for every implementer.
+         (room (max 8 (- width (length prefix)))))
+    (concat prefix (cerebro--truncate (or (alist-get 'title bead) "") room))))
+
+(defun cerebro--bead-section (title beads width max)
+  "Lines for one section: TITLE with its count, then up to MAX of BEADS.
+
+The count is on the header rather than implied by the rows, because the rows
+are the part that gets capped - and a section whose remainder is hidden
+still has to say how much work is really in it."
+  (let* ((sorted (cerebro--sort-beads beads))
+         (shown (seq-take sorted max))
+         (hidden (- (length sorted) (length shown))))
+    (append
+     (list (propertize (format "%s %d" title (length sorted)) 'face 'bold))
+     (if (null sorted)
+         (list (propertize "  (none)" 'face 'shadow))
+       (mapcar (lambda (bead) (cerebro--bead-line bead width)) shown))
+     (when (> hidden 0)
+       (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
+
+(defun cerebro--bead-panel (claimed planned unplanned width max)
+  "The whole panel as a list of lines.
+
+In the order the navigator asks the questions: what is being worked on, what
+could be picked up next, and what has not been planned yet."
+  (append (cerebro--bead-section "Claimed" claimed width max) (list "")
+          (cerebro--bead-section "Planned, unclaimed" planned width max) (list "")
+          (cerebro--bead-section "Unplanned" unplanned width max)))
+
 ;;; Supervising the implementers
 
 (defcustom cerebro-answer-timeout 900
@@ -400,6 +471,8 @@ scheme with a live process - no registry to go stale."
   "The list window of this fleet buffer's layout.")
 (defvar-local cerebro--detail-window nil
   "The detail window of this fleet buffer's layout.")
+(defvar-local cerebro--beads-window nil
+  "The bead panel window, under the list.")
 (defvar-local cerebro--agents nil
   "The agents shown by the last revert, for lookup by name.")
 (defvar-local cerebro--last-shown nil
@@ -594,6 +667,108 @@ other agents down with it."
                     (push name cerebro--nudged)
                     (cerebro--nudge agent))))))))
 
+;;; Reading the beads
+
+(defconst cerebro-beads-buffer-name "*cerebro-beads*")
+
+(defvar cerebro-beads-refresh-seconds 30
+  "How often the bead panel re-runs `bd'.
+
+Slower than the five-second agent tick on purpose. Beads move on human
+timescales - a claim, a plan, a merge are minutes apart - and each refresh
+is three subprocesses, so a five-second cadence would buy nothing but load.
+`g' refreshes on demand.")
+
+(defvar cerebro--beads-timer nil
+  "The bead panel's refresh timer, or nil.")
+;; Global, not buffer-local: the tick has to be able to cancel itself once the
+;; buffer is gone, and a buffer-local value dies with the buffer that held it -
+;; leaving a timer firing every thirty seconds with nothing to read it from.
+
+(defun cerebro--bd-json (repo-root &rest args)
+  "Run `bd' with ARGS in REPO-ROOT and return the parsed JSON, or nil.
+
+Never signals. `bd' may be absent, unconfigured, or mid-write, and a panel
+that cannot answer must degrade to saying nothing rather than taking the
+fleet view down with it."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((default-directory (file-name-as-directory repo-root)))
+          (when (zerop (apply #'call-process "bd" nil t nil args))
+            (json-parse-string (buffer-string)
+                               :object-type 'alist :array-type 'list
+                               :null-object nil :false-object nil))))
+    (error nil)))
+
+(defun cerebro--gather-beads (repo-root)
+  "The three lists the panel shows, as (CLAIMED PLANNED UNPLANNED).
+
+Claimed is `--status in_progress' and unclaimed is `--status open'.  The two
+are disjoint in `bd', so nothing filters on top of them.  An earlier version
+filtered the open lists by the `owner' field and showed an empty panel every
+time: `owner' is the address of whoever *filed* the bead and is set on all
+of them, claimed or not.
+
+Epics are excluded from the open lists: a split parent has children rather
+than work, so it would sit in the panel as something nobody can pick up."
+  (list
+   (cerebro--bd-json repo-root "list" "--status" "in_progress" "--json")
+   (cerebro--bd-json repo-root "list" "--status" "open" "--label" "planned"
+                     "--exclude-type" "epic" "--json")
+   (cerebro--bd-json repo-root "list" "--status" "open" "--exclude-label" "planned"
+                     "--exclude-type" "epic" "--json")))
+
+(defun cerebro--beads-render (buffer)
+  "Redraw BUFFER's panel from `bd'."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let* ((width (max 30 (window-width (get-buffer-window buffer))))
+             (beads (cerebro--gather-beads (cerebro--repo-root)))
+             (lines (cerebro--bead-panel (nth 0 beads) (nth 1 beads) (nth 2 beads)
+                                          width cerebro-beads-per-section))
+             (inhibit-read-only t)
+             (point-was (point)))
+        (erase-buffer)
+        (insert (string-join lines "\n"))
+        (goto-char (min point-was (point-max)))))))
+
+(defun cerebro--beads-revert (&rest _)
+  "Refresh the panel, for `g' and for the timer."
+  (cerebro--beads-render (current-buffer)))
+
+(defun cerebro--beads-tick (buffer)
+  "Refresh BUFFER while it lives; called every `cerebro-beads-refresh-seconds'.
+
+Once BUFFER is gone the timer cancels itself by function rather than by the
+variable that holds it: killing the panel is the ordinary way to stop it,
+and a timer left running would go on shelling out to `bd' for a buffer
+nobody can see."
+  (if (buffer-live-p buffer)
+      (with-demoted-errors "cerebro: %S" (cerebro--beads-render buffer))
+    (cancel-function-timers #'cerebro--beads-tick)
+    (setq cerebro--beads-timer nil)))
+
+(define-derived-mode cerebro-beads-mode special-mode "Cerebro Beads"
+  "What the fleet could be working on: claimed, planned, and unplanned."
+  (setq-local revert-buffer-function #'cerebro--beads-revert)
+  (setq truncate-lines t))
+
+(defun cerebro--beads-buffer (repo-root)
+  "The panel buffer, created and started if it does not exist."
+  (let ((buffer (get-buffer-create cerebro-beads-buffer-name)))
+    (with-current-buffer buffer
+      (unless (derived-mode-p 'cerebro-beads-mode)
+        (cerebro-beads-mode))
+      ;; `bd' is answered relative to the repository, and this buffer is not
+      ;; visiting a file, so it would otherwise inherit whatever directory
+      ;; the navigator happened to be in.
+      (setq default-directory (file-name-as-directory repo-root))
+      (unless (timerp cerebro--beads-timer)
+        (setq cerebro--beads-timer
+              (run-at-time cerebro-beads-refresh-seconds cerebro-beads-refresh-seconds
+                           #'cerebro--beads-tick buffer))))
+    buffer))
+
 ;;; The buffer
 
 (defconst cerebro-buffer-name "*cerebro*")
@@ -652,20 +827,40 @@ ids and return - since it runs after every command in the list buffer."
         (let ((agent (cerebro--find-agent id)))
           (when agent (cerebro--show-detail agent)))))))
 
+(defconst cerebro-list-width 62
+  "Columns for the left column of the layout.
+
+The agent table is 14+13+18+10+6 plus padding, so anything narrower cuts the
+elapsed-time column off the right edge - it was 45 for a while, and the
+column was simply invisible. The bead panel underneath inherits this width
+and wants every one of them for its titles.")
+
+(defconst cerebro-list-height 20
+  "Lines given to the agent list before the bead panel starts.
+
+Eighteen agents and a header, so the list never scrolls and the panel gets
+whatever the frame has left.")
+
 (defun cerebro--setup-layout ()
-  "Ensure the list/detail window layout exists for the current buffer."
+  "Ensure the list/beads/detail window layout exists for the current buffer."
   (unless (and cerebro--list-window (window-live-p cerebro--list-window))
     (delete-other-windows)
     (setq cerebro--list-window (selected-window))
     (setq cerebro--detail-window
           (split-window cerebro--list-window nil 'right))
-    (let ((width (- 45 (window-width cerebro--list-window))))
-      ;; A narrow frame/terminal can make 45 columns unsatisfiable;
-      ;; `window-resize' signals in that case, and the list/detail split
-      ;; above must still stand rather than leaving the buffer
+    (let ((width (- cerebro-list-width (window-width cerebro--list-window))))
+      ;; A narrow frame/terminal can make the width or the split unsatisfiable;
+      ;; `window-resize' and `split-window' signal in that case, and the
+      ;; layout so far must still stand rather than leaving the buffer
       ;; half-initialized.
       (when (/= width 0)
-        (ignore-errors (window-resize cerebro--list-window width t))))))
+        (ignore-errors (window-resize cerebro--list-window width t))))
+    (setq cerebro--beads-window
+          (ignore-errors (split-window cerebro--list-window cerebro-list-height 'below)))
+    (when (window-live-p cerebro--beads-window)
+      (set-window-buffer cerebro--beads-window
+                         (cerebro--beads-buffer (cerebro--repo-root)))
+      (cerebro--beads-render (get-buffer cerebro-beads-buffer-name)))))
 
 (defun cerebro-start ()
   "Start the agent at point (`s')."

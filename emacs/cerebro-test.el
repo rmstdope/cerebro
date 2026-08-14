@@ -736,5 +736,166 @@ the role and the state makes the row itself the signal."
       (cerebro-other-window)
       (should (eq (selected-window) list-window)))))
 
+;; ---------------------------------------------------------------------------
+;; The bead panel
+
+(defun cerebro-test--bead (id priority title &optional owner)
+  `((id . ,id) (priority . ,priority) (title . ,title) (owner . ,owner)))
+
+(ert-deftest cerebro-test/bead-line-fits-the-width ()
+  "A line never exceeds the panel width, however long the title."
+  (let* ((bead (cerebro-test--bead "ah-7s7" 1
+                                            "Psylocke, the verification session: prove merged work does what it claimed"))
+         (line (cerebro--bead-line bead 62)))
+    (should (<= (length line) 62))
+    (should (string-match-p "ah-7s7" line))
+    (should (string-match-p "P1" line))
+    ;; Truncated rather than wrapped: a wrapped row would break the column.
+    (should (string-suffix-p "…" line))))
+
+(ert-deftest cerebro-test/bead-line-keeps-a-short-title-whole ()
+  (let ((line (cerebro--bead-line (cerebro-test--bead "ah-t70" 0 "Fix release tagging") 62)))
+    (should (string-match-p "Fix release tagging" line))
+    (should-not (string-match-p "…" line))))
+
+(ert-deftest cerebro-test/bead-line-never-shows-the-owner ()
+  "bd's `owner' is who FILED the bead, not who is working on it.
+
+It is set on every bead, so an owner column would print the same address on
+every row — and the first version of this panel also filtered the unclaimed
+lists by it, which emptied them completely.  That was caught by rendering
+against the real database rather than here, which is why the guard is now a
+test."
+  (let ((line (cerebro--bead-line
+               (cerebro-test--bead "ah-13o" 1 "Resizable split" "henrik@kurelid.se") 62)))
+    (should-not (string-match-p "henrik" line))
+    (should (string-match-p "Resizable split" line))))
+
+(ert-deftest cerebro-test/beads-sort-by-priority-then-id ()
+  "P0 first: the panel is read top-down when deciding what matters."
+  (let* ((beads (list (cerebro-test--bead "ah-b" 2 "two")
+                      (cerebro-test--bead "ah-c" 0 "zero")
+                      (cerebro-test--bead "ah-a" 2 "two again")))
+         (sorted (cerebro--sort-beads beads)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) sorted)
+                    '("ah-c" "ah-a" "ah-b")))))
+
+(ert-deftest cerebro-test/bead-section-counts-in-its-header ()
+  "The count is the part that is read when the rows are folded off the bottom."
+  (let ((lines (cerebro--bead-section "Claimed" (list (cerebro-test--bead "ah-a" 1 "one")) 62 8)))
+    (should (string-match-p "\\`Claimed 1" (car lines)))))
+
+(ert-deftest cerebro-test/bead-section-says-so-when-empty ()
+  "An empty section still prints: a missing heading reads as a broken panel."
+  (let ((lines (cerebro--bead-section "Planned, unclaimed" nil 62 8)))
+    (should (string-match-p "\\`Planned, unclaimed 0" (car lines)))
+    (should (string-match-p "none" (nth 1 lines)))))
+
+(ert-deftest cerebro-test/bead-section-caps-and-says-how-many-it-hid ()
+  "Twenty unplanned beads must not push the other sections off the window."
+  (let* ((beads (mapcar (lambda (n) (cerebro-test--bead (format "ah-%02d" n) 2 "t")) (number-sequence 1 12)))
+         (lines (cerebro--bead-section "Unplanned" beads 62 8)))
+    (should (string-match-p "\\`Unplanned 12" (car lines)))
+    ;; header + 8 beads + the overflow line
+    (should (= (length lines) 10))
+    (should (string-match-p "4 more" (car (last lines))))))
+
+(ert-deftest cerebro-test/bead-panel-is-the-three-sections-in-order ()
+  (let* ((claimed (list (cerebro-test--bead "ah-13o" 1 "held" "Cyclops")))
+         (unplanned (list (cerebro-test--bead "ah-7s7" 1 "loose")))
+         (text (string-join (cerebro--bead-panel claimed nil unplanned 62 8) "\n"))
+         (at (lambda (s) (string-match (regexp-quote s) text))))
+    (should (< (funcall at "Claimed") (funcall at "Planned, unclaimed")))
+    (should (< (funcall at "Planned, unclaimed") (funcall at "Unplanned")))))
+
+(ert-deftest cerebro-test/unclaimed-is-a-status-not-a-field ()
+  "Claimed is `--status in_progress', unclaimed is `--status open'.
+
+bd keeps the two disjoint, so the panel asks for each directly and filters
+nothing on top.  Pinned because the obvious-looking alternative — filtering
+the open lists by `owner' — silently shows an empty panel for ever."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'cerebro--bd-json)
+               (lambda (_root &rest args) (push args asked) nil)))
+      (cerebro--gather-beads "/repo")
+      (should (cl-some (lambda (args) (member "in_progress" args)) asked))
+      (should (= 2 (length (seq-filter (lambda (args) (member "open" args)) asked)))))))
+
+(ert-deftest cerebro-test/bd-json-is-quiet-when-bd-cannot-answer ()
+  "A panel that cannot read must not take the fleet view down with it.
+
+`bd' may be absent, unconfigured or mid-write; the agent list is what the
+navigator actually steers by, and it has to keep refreshing regardless."
+  (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 127)))
+    (should (null (cerebro--bd-json "/repo" "list" "--json"))))
+  (cl-letf (((symbol-function 'call-process)
+             (lambda (&rest _) (insert "this is not json") 0)))
+    (should (null (cerebro--bd-json "/repo" "list" "--json")))))
+
+(ert-deftest cerebro-test/gather-beads-asks-three-questions ()
+  "Claimed, then planned-and-unclaimed, then unplanned-and-unclaimed."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'cerebro--bd-json)
+               (lambda (_root &rest args)
+                 (push args asked)
+                 (cond ((member "in_progress" args)
+                        (list '((id . "ah-a") (owner . "Cyclops"))))
+                       ;; `--exclude-label planned' also contains "planned",
+                       ;; so the exclusion has to be ruled out first - a
+                       ;; double that cannot tell them apart tests nothing.
+                       ((member "--exclude-label" args)
+                        (list '((id . "ah-d"))))
+                       ((member "planned" args)
+                        (list '((id . "ah-c"))))
+                       (t nil)))))
+      (let ((beads (cerebro--gather-beads "/repo")))
+        (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 0 beads)) '("ah-a")))
+        (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 1 beads)) '("ah-c")))
+        (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 2 beads)) '("ah-d"))))
+      ;; Epics are work nobody can pick up - they must not reach the panel.
+      (should (cl-every (lambda (args) (member "epic" args))
+                        (seq-filter (lambda (args) (member "open" args)) asked))))))
+
+(ert-deftest cerebro-test/layout-puts-the-panel-under-the-list ()
+  (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                  ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil))))
+          (save-window-excursion
+            (delete-other-windows)
+            (set-window-buffer (selected-window) fleet)
+            (with-current-buffer fleet
+              (cerebro--setup-layout)
+              (should (window-live-p cerebro--beads-window))
+              (should (equal (buffer-name (window-buffer cerebro--beads-window))
+                              cerebro-beads-buffer-name))
+              ;; Under the list, not beside it.
+              (should (= (window-left-column cerebro--beads-window)
+                          (window-left-column cerebro--list-window)))
+              (should (> (window-top-line cerebro--beads-window)
+                          (window-top-line cerebro--list-window)))
+              ;; And the detail window still stands to the right of both.
+              (should (> (window-left-column cerebro--detail-window)
+                          (window-left-column cerebro--list-window))))))
+      (when (get-buffer cerebro-beads-buffer-name)
+        (with-current-buffer cerebro-beads-buffer-name
+          (when (timerp cerebro--beads-timer) (cancel-timer cerebro--beads-timer)))
+        (kill-buffer cerebro-beads-buffer-name))
+      (kill-buffer fleet))))
+
+(ert-deftest cerebro-test/beads-tick-stops-itself-when-the-panel-is-gone ()
+  "Killing the panel is the ordinary way to stop it refreshing.
+
+The timer used to be cancelled through a buffer-local variable, which dies
+with the buffer holding it - so the tick would have gone on shelling out to
+bd every thirty seconds for a buffer nobody could see."
+  (let ((dead (generate-new-buffer " *cerebro-test-dead*"))
+        (cancelled nil))
+    (kill-buffer dead)
+    (cl-letf (((symbol-function 'cancel-function-timers)
+               (lambda (f) (setq cancelled f))))
+      (cerebro--beads-tick dead)
+      (should (eq cancelled #'cerebro--beads-tick)))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

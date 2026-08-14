@@ -3,7 +3,7 @@
 # Runs one implementer, in a terminal of its own.
 #
 #     .claude/cerebro/scripts/run-implementer Cyclops
-#     .claude/cerebro/scripts/run-implementer --roster    # the fifteen names, one per line
+#     .claude/cerebro/scripts/run-implementer --roster    # the fourteen names, one per line
 #
 # The name must be an X-Man from the roster below, spelt exactly as it appears there. Anything else
 # exits 2: an unknown name prints the roster, and one that is merely miscased is told how it is
@@ -36,7 +36,7 @@ set -euo pipefail
 ROSTER=(
   Cyclops Storm Wolverine Rogue Gambit
   Nightcrawler Colossus Iceman Beast Jubilee
-  Psylocke Bishop Phoenix Mystique Magneto
+  Bishop Phoenix Mystique Magneto
 )
 
 # `cerebro.el' reads this to build the fleet list, so it prints the names and nothing else.

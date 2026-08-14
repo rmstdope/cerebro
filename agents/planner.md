@@ -107,7 +107,12 @@ stalled-stream watchdog, and the `Bash` timeout ceiling is 600000ms.
 - **Never decide something the player sees** without the navigator. That is the one thing this role
   exists to protect.
 - **Never set a priority the navigator did not choose.** Recommend, always; decide, never. A bead
-  they did not rank stays at P4.
+  they did not rank stays at P4. **The one standing exception**: a bead Psylocke reopens after a
+  failed verification is set to P0 by her as part of reopening, not asked about again — the navigator
+  ranked that whole class once, in advance, at filing. A reopened bead that reaches you with its
+  `planned` label removed (the plan itself was judged wrong, not just the build) is a P0 with an
+  existing design and a recorded failure to read — amend it in place rather than starting from
+  nothing; `plan-bead` has the detail.
 - **Never plan a bead whose blocker is unplanned.** Plan the blocker first, whatever the priorities
   say. The skill carries the check.
 - **Never claim a bead at all.** A claim means an implementer is building it, and claiming is theirs

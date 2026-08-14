@@ -25,6 +25,12 @@ write it or mention it as a reason for anything. Note that your launcher may sti
 version that waits on it before it ever starts you — that happens before you exist, so there is
 nothing you can do about it and nothing to report beyond what you observe.
 
+**A reopened bead is picked up exactly like any other.** Psylocke's failed verdict reopens a bead at
+P0 and, when the plan itself was judged wrong, sends it back through Xavier first — either way it
+lands back in `bd ready` as an open, `planned`, P0 bead, indistinguishable from new work at the
+moment you claim it. The `implement-bead` skill has what changes about *how* you build one once you
+notice it is reopened.
+
 ## One bead, then you are done
 
 You take **one** bead. When it is merged and closed you write `done` to your state file and stop —

@@ -5,9 +5,9 @@
 ;;; Commentary:
 
 ;; `M-x cerebro' opens a buffer listing every agent the fleet can have -
-;; Xavier, Cerebro, Moira and the fifteen implementers - each with a state
-;; glyph, role, state, and (for a working implementer) the bead it is on and
-;; for how long.  It refreshes itself every 5 seconds.
+;; Xavier, Cerebro, Moira, Psylocke and the fourteen implementers - each with
+;; a state glyph, role, state, and (for a working implementer) the bead it is
+;; on and for how long.  It refreshes itself every 5 seconds.
 ;;
 ;; This is the list half of the fleet view (ah-vcf.2).  The live detail
 ;; window, and starting/killing agents, are ah-vcf.3 - RET, s and k are
@@ -17,10 +17,10 @@
 ;;   - an implementer's status file, `.claude/implementers/<name>.state.json',
 ;;     written by the implementer itself at every state transition (see
 ;;     ah-vcf.1): { state: "idle"|"working", bead, since, pid }.
-;;   - the launcher's `--roster', the fifteen implementer names.
-;;   - the interactive three (Xavier, Cerebro, Moira) have no such file; their
-;;     liveness comes from scanning system processes for the `--name <Name>'
-;;     argument their launchers pass.
+;;   - the launcher's `--roster', the fourteen implementer names.
+;;   - the interactive four (Xavier, Cerebro, Moira, Psylocke) have no such
+;;     file; their liveness comes from scanning system processes for the
+;;     `--name <Name>' argument their launchers pass.
 
 ;;; Code:
 
@@ -41,8 +41,9 @@
 (defconst cerebro-interactive-agents
   '(("Xavier" . "planner")
     ("Cerebro" . "orchestrator")
-    ("Moira" . "feedback"))
-  "The three interactive agents, mirroring their launchers.")
+    ("Moira" . "feedback")
+    ("Psylocke" . "verifier"))
+  "The four interactive agents, mirroring their launchers.")
 
 ;;; The pure core
 
@@ -259,7 +260,8 @@ directory, which no longer has one.")
 (defconst cerebro--role-launch-commands
   '(("planner" . "run-planner")
     ("orchestrator" . "run-orchestrator")
-    ("feedback" . "run-user-feedback"))
+    ("feedback" . "run-user-feedback")
+    ("verifier" . "run-psylocke"))
   "Launcher script name for each interactive role.")
 
 (defun cerebro--launch-command (agent)
@@ -332,7 +334,7 @@ harder confirm), `external' (refuse - not ours to stop) or `dead'
   "The roster, once read; buffer-local so a revert does not re-shell out.")
 
 (defun cerebro--roster (repo-root)
-  "The fifteen implementer names, via the launcher's --roster."
+  "The fourteen implementer names, via the launcher's --roster."
   (or cerebro--roster-cache
       (setq cerebro--roster-cache
             (cerebro--parse-roster

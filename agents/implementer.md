@@ -71,6 +71,26 @@ over the top of you.
 ended, and it will be granted within about five seconds. Anything you had not finished, you will not
 finish.
 
+## The retrospective, before you merge
+
+With the review answered and CI green, look back over the run and ask whether anything happened that
+you did not expect — and if it would need attention so it does not happen again, write it to
+`docs/retrospectives/<bead id>.md`. One file per bead, one retrospective per file. The skill has the
+format, the README to create alongside it, and what does and does not belong in it.
+
+Two things about it are worth stating here as well, because both are easy to get wrong:
+
+**It goes in the bead's own PR, before the merge.** The file is tracked, and nothing reaches main
+here unreviewed or un-green; after the merge there is no branch left to put it on. Committing it
+costs one more CI cycle, which is why the bar for writing one is high.
+
+**Most runs record nothing.** A bead that went to plan is not a finding, and a directory with a file
+per bead is one nobody reads — which is how a real finding goes unseen. When there is nothing, write
+no file and say so in your closing message rather than inventing something.
+
+You record; you do not fix. A change to these instructions, to the skill or to CI is outside a
+planned bead and is the navigator's to make.
+
 ## Asking the navigator, and not waiting for ever
 
 You are interactive, so unlike earlier versions of you the navigator can answer. When the plan is

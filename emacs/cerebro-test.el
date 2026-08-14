@@ -1436,14 +1436,16 @@ list it partitions is."
 
 ;; `cerebro--claim-finding' works from `sweep-claims.sh's JSON, parsed the way
 ;; `cerebro--bd-json' would: an alist with symbol keys.
-(defun cerebro-test--claim-candidate (id assignee &optional on-main age verification-failed docs-only)
+(defun cerebro-test--claim-candidate (id assignee &optional on-main age verification-failed
+                                                    docs-only lease-age)
   ;; Booleans as `cerebro--bd-json' parses them: `:false-object nil', so JSON
   ;; false and absent both read as plain nil, same as everywhere else here.
   `((id . ,id) (assignee . ,assignee) (title . "a bead")
     (verification_failed . ,verification-failed)
     (on_main . ,on-main)
     (commit_age_min . ,age)
-    (docs_only . ,docs-only)))
+    (docs_only . ,docs-only)
+    (lease_age_min . ,lease-age)))
 
 (ert-deftest cerebro-test/claim-finding-leaves-verification-failed ()
   "Psylocke's reopen puts the old commit back on main every time - that
@@ -1474,9 +1476,23 @@ ten minutes is one still mid-cleanup, not a dead one."
 
 (ert-deftest cerebro-test/claim-finding-reclaims-dead-not-on-main ()
   (should (equal (cerebro--claim-finding
-                  (cerebro-test--claim-candidate "ah-x1" "Cyclops" nil nil)
+                  (cerebro-test--claim-candidate "ah-x1" "Cyclops" nil nil nil nil 30)
                   nil (current-time))
                  '(reclaim "ah-x1"))))
+
+(ert-deftest cerebro-test/claim-finding-leaves-a-lease-not-yet-stale ()
+  "`assignee' not being on the roster is not evidence of anything by
+itself - \"Henrik Kurelid\" is a live claim held by hand exactly as often
+as it is a crashed session, and only the lease tells the two apart. A bead
+this function has just claimed, whose own session sets no `BEADS_ACTOR',
+must not be offered for reclaim the moment its assignee reads as a human
+name - which is the bug this test was written to catch."
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Henrik Kurelid" nil nil nil nil 3)
+                 nil (current-time))))
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Henrik Kurelid" nil nil nil nil nil)
+                 nil (current-time)))))
 
 (defun cerebro-test--epic-candidate (id minutes)
   `((id . ,id) (title . "an epic") (minutes_since_last_child_closed . ,minutes)))
@@ -1505,6 +1521,47 @@ happy path."
                  '("bd" "close" "ah-e1")))
   (should (null (cerebro--finding-command nil "/repo")))
   (should-error (cerebro--finding-command '(unknown-shape "ah-x1") "/repo")))
+
+;; ---------------------------------------------------------------------------
+;; ah-4ao increment 4: showing sweep findings and acting on them, confirmed
+
+(ert-deftest cerebro-test/sweep-section-renders-findings ()
+  (let ((lines (cerebro--sweep-section
+                (list (cons "close ah-x1 — delivered by Cyclops, on main 25m" '(close "ah-x1" "r"))
+                      (cons "reclaim ah-x2 — Storm gone, not on main" '(reclaim "ah-x2"))))))
+    (should (string-match-p "\\`Sweeps\\'" (substring-no-properties (car lines))))
+    (should (= 3 (length lines)))
+    (should (string-match-p "close ah-x1" (nth 1 lines)))
+    (should (string-match-p "reclaim ah-x2" (nth 2 lines)))
+    ;; Each line carries its own finding, the way a bead row carries its id -
+    ;; `x' acts on what point is standing on, not on a re-parse of the text.
+    (should (equal (get-text-property 0 'cerebro-finding (nth 1 lines)) '(close "ah-x1" "r")))))
+
+(ert-deftest cerebro-test/sweep-section-hidden-when-empty ()
+  "Unlike the bead sections, which say \"(none)\", an empty Sweeps section
+says nothing at all - that is the ordinary state of every render but one."
+  (should (null (cerebro--sweep-section nil))))
+
+(ert-deftest cerebro-test/sweep-act-runs-nothing-without-confirmation ()
+  "The confirmation gate is the one thing standing between a sweep finding
+and a destructive `bd' call; this pins that nothing reaches the runner
+without it saying yes."
+  (let ((ran nil))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--run-sweep-command)
+               (lambda (&rest args) (push args ran) t))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+              ((symbol-function 'cerebro--finding-at-point)
+               (lambda () '(close "ah-x1" "delivered"))))
+      (cerebro-sweep-act)
+      (should (null ran)))))
+
+(ert-deftest cerebro-test/sweep-act-with-no-finding-at-point-is-refused ()
+  (cl-letf (((symbol-function 'cerebro--finding-at-point) (lambda () nil)))
+    (should-error (cerebro-sweep-act) :type 'user-error)))
+
+(ert-deftest cerebro-test/sweep-act-key-is-bound ()
+  (should (eq (lookup-key cerebro-beads-mode-map "x") #'cerebro-sweep-act)))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

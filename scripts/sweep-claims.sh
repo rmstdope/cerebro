@@ -28,6 +28,17 @@
 #   commit_age_min         minutes since that commit, or null if `on_main` is false
 #   docs_only              a `docs(<id>): mockup` commit matched and nothing else did - the bead is
 #                          not delivered, only planned.
+#   lease_age_min          minutes since `lease_expires_at`, negative while the lease still holds -
+#                          the number `bd reclaim --id <id> --older-than 10m` itself would act on.
+#                          A bead whose assignee never held a lease (predates leases, or a schema
+#                          this script does not recognise) reports null here rather than a guess.
+#
+# `lease_age_min` exists because `assignee' alone cannot tell a dead implementer from a live claim
+# held by hand or by a session this script's roster does not know about: "Henrik Kurelid" (or any
+# name off the roster) is not a `pid'-tracked session and never will be, but the bead can be very
+# much in flight under it. `agents/orchestrator.md's own rule is "an expired lease with no live
+# agent behind it" - not "an unfamiliar name" - and the elisp guard keys on this field, not on
+# `assignee' membership, for exactly that reason.
 
 set -uo pipefail
 
@@ -56,9 +67,18 @@ if ! git -C "$repo_root" fetch --quiet origin main 2>/dev/null; then
   exit 1
 fi
 
+# ISO-8601 UTC ("2026-08-14T23:43:39Z") to a Unix timestamp. GNU date takes `-d`; BSD/macOS date
+# has no such flag and wants `-j -f` with an explicit format instead - try GNU first and fall back
+# rather than branching on `uname`, which would miss a GNU coreutils install on macOS.
+iso_to_epoch() {
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
+}
+
 if ! bd_output="$(bd -C "$repo_root" list --status in_progress --json 2>/dev/null)" || [[ -z "$bd_output" ]]; then
   bd_output="[]"
 fi
+
+now_epoch="$(date -u +%s)"
 
 entries=()
 while IFS= read -r bead; do
@@ -67,6 +87,15 @@ while IFS= read -r bead; do
   assignee="$(jq -r '.assignee // ""' <<<"$bead")"
   title="$(jq -r '.title // ""' <<<"$bead")"
   verification_failed="$(jq -c 'any(.labels[]?; . == "verification:failed")' <<<"$bead")"
+
+  lease_expires_at="$(jq -r '.lease_expires_at // empty' <<<"$bead")"
+  lease_age_min=null
+  if [[ -n "$lease_expires_at" ]]; then
+    lease_epoch="$(iso_to_epoch "$lease_expires_at" || true)"
+    if [[ -n "$lease_epoch" ]]; then
+      lease_age_min=$(( (now_epoch - lease_epoch) / 60 ))
+    fi
+  fi
 
   # The colon and parens matter: bare "$id" also matches "$id.8", a child of this bead.
   match_commits="$(git -C "$repo_root" log origin/main --grep "($id):" -F --oneline 2>/dev/null || true)"
@@ -95,9 +124,11 @@ while IFS= read -r bead; do
     --argjson on_main "$on_main" \
     --argjson docs_only "$docs_only" \
     --argjson commit_age_min "$commit_age_min" \
+    --argjson lease_age_min "$lease_age_min" \
     '{id: $id, assignee: $assignee, title: $title,
       verification_failed: $verification_failed, on_main: $on_main,
-      commit_age_min: $commit_age_min, docs_only: $docs_only}')"
+      commit_age_min: $commit_age_min, docs_only: $docs_only,
+      lease_age_min: $lease_age_min}')"
   entries+=("$entry")
 done < <(jq -c '.[]' <<<"$bd_output")
 

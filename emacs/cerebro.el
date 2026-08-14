@@ -274,7 +274,13 @@ Truncated rather than wrapped: a wrapped title would put a second line under
 a row and break the column the eye follows down the panel."
   (let* ((id (or (alist-get 'id bead) "?"))
          (priority (alist-get 'priority bead))
-         (prefix (format "  %-7s P%s " id (if priority (number-to-string priority) "?")))
+         ;; A failed verdict reopens a bead into the unclaimed pile, where it
+         ;; is an ordinary open bead - which is the point. The mark is the one
+         ;; thing that pile cannot otherwise say: this came back rather than
+         ;; arrived. Two columns either way, so the ids stay in line.
+         (reopened (member "verification:failed" (alist-get 'labels bead)))
+         (prefix (format "%s%-7s P%s " (if reopened "↻ " "  ")
+                         id (if priority (number-to-string priority) "?")))
          ;; Deliberately no owner column.  `bd's `owner' is the address of
          ;; whoever *filed* the bead and is set on every one of them, so it
          ;; says nothing about who is working on it - and the agent list
@@ -285,13 +291,15 @@ a row and break the column the eye follows down the panel."
     (propertize (concat prefix (cerebro--truncate (or (alist-get 'title bead) "") room))
                 'cerebro-bead id 'cerebro-priority priority)))
 
-(defun cerebro--bead-section (title beads width max)
+(defun cerebro--bead-section (title beads width max &optional sort)
   "Lines for one section: TITLE with its count, then up to MAX of BEADS.
+
+SORT is the ordering function, `cerebro--sort-beads' by default.
 
 The count is on the header rather than implied by the rows, because the rows
 are the part that gets capped - and a section whose remainder is hidden
 still has to say how much work is really in it."
-  (let* ((sorted (cerebro--sort-beads beads))
+  (let* ((sorted (funcall (or sort #'cerebro--sort-beads) beads))
          (shown (seq-take sorted max))
          (hidden (- (length sorted) (length shown))))
     (append
@@ -302,14 +310,24 @@ still has to say how much work is really in it."
      (when (> hidden 0)
        (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
 
-(defun cerebro--bead-panel (claimed planned unplanned width max)
+(defun cerebro--bead-panel (claimed planned unplanned merged verified width max)
   "The whole panel as a list of lines.
 
-In the order the navigator asks the questions: what is being worked on, what
-could be picked up next, and what has not been planned yet."
+The order work moves in: being built, ready to pick up, not planned yet,
+merged and waiting on Psylocke, and verified.
+
+\"Merged, unverified\" is her queue rather than everything that ever merged -
+a bead marked `verification:not-needed' is in neither of the last two, which
+is why the count means something. It was seventy such beads in atlantis-hud
+the day this was written, and a Merged section carrying them would have
+shown a number that never fell."
   (append (cerebro--bead-section "Claimed" claimed width max) (list "")
           (cerebro--bead-section "Planned, unclaimed" planned width max) (list "")
-          (cerebro--bead-section "Unplanned" unplanned width max)))
+          (cerebro--bead-section "Unplanned" unplanned width max) (list "")
+          (cerebro--bead-section "Merged, unverified" merged width max
+                                 #'cerebro--sort-recent) (list "")
+          (cerebro--bead-section "Verified" verified width max
+                                 #'cerebro--sort-recent)))
 
 ;;; Supervising the implementers
 
@@ -762,6 +780,16 @@ columns of bead however wide it is."
             (buffer-string))))
     (error nil)))
 
+(defun cerebro--sort-recent (beads)
+  "BEADS newest first, by `updated_at'.
+
+Finished work does not sort by priority - a merged P3 is no less done than a
+merged P0 - so these sections answer \"what just happened\" instead."
+  (sort (copy-sequence beads)
+        (lambda (a b)
+          (string> (or (alist-get 'updated_at a) "")
+                   (or (alist-get 'updated_at b) "")))))
+
 (defconst cerebro-priority-floor 4
   "The least urgent priority `bd' takes; 0 is the most urgent.")
 
@@ -782,7 +810,7 @@ not roll a bead round to P0."
     (error nil)))
 
 (defun cerebro--gather-beads (repo-root)
-  "The three lists the panel shows, as (CLAIMED PLANNED UNPLANNED).
+  "The five lists the panel shows, as (CLAIMED PLANNED UNPLANNED MERGED VERIFIED).
 
 Claimed is `--status in_progress' and unclaimed is `--status open'.  The two
 are disjoint in `bd', so nothing filters on top of them.  An earlier version
@@ -797,7 +825,15 @@ than work, so it would sit in the panel as something nobody can pick up."
    (cerebro--bd-json repo-root "list" "--status" "open" "--label" "planned"
                      "--exclude-type" "epic" "--json")
    (cerebro--bd-json repo-root "list" "--status" "open" "--exclude-label" "planned"
-                     "--exclude-type" "epic" "--json")))
+                     "--exclude-type" "epic" "--json")
+   ;; Psylocke's queue, not everything that ever merged: closed, minus what
+   ;; she passed and what was ruled out of scope by the cutoff. Filtered by bd
+   ;; rather than here, so seventy finished beads never cross the pipe.
+   (cerebro--bd-json repo-root "list" "--status" "closed"
+                     "--exclude-label" "verification:passed,verification:not-needed"
+                     "--json")
+   (cerebro--bd-json repo-root "list" "--status" "closed"
+                     "--label" "verification:passed" "--json")))
 
 (defun cerebro--layout-detail-window ()
   "The layout's detail window, or nil.
@@ -980,6 +1016,7 @@ when the navigator holds the key down hides where it finishes."
       (let* ((width (cerebro--panel-width buffer))
              (beads (cerebro--gather-beads (cerebro--repo-root)))
              (lines (cerebro--bead-panel (nth 0 beads) (nth 1 beads) (nth 2 beads)
+                                          (nth 3 beads) (nth 4 beads)
                                           width cerebro-beads-per-section))
              (inhibit-read-only t)
              ;; By id, not by position: the panel redraws every thirty seconds

@@ -827,13 +827,20 @@ test."
     (should (= (length lines) 10))
     (should (string-match-p "4 more" (car (last lines))))))
 
-(ert-deftest cerebro-test/bead-panel-is-the-three-sections-in-order ()
+(ert-deftest cerebro-test/bead-panel-puts-each-list-in-its-own-section ()
   (let* ((claimed (list (cerebro-test--bead "ah-13o" 1 "held" "Cyclops")))
          (unplanned (list (cerebro-test--bead "ah-7s7" 1 "loose")))
-         (text (string-join (cerebro--bead-panel claimed nil unplanned 62 8) "\n"))
+         (merged (list (cerebro-test--bead "ah-m1" 2 "just landed")))
+         (verified (list (cerebro-test--bead "ah-v1" 2 "checked")))
+         (text (string-join
+                (cerebro--bead-panel claimed nil unplanned merged verified 62 8) "\n"))
          (at (lambda (s) (string-match (regexp-quote s) text))))
-    (should (< (funcall at "Claimed") (funcall at "Planned, unclaimed")))
-    (should (< (funcall at "Planned, unclaimed") (funcall at "Unplanned")))))
+    ;; Each bead under the heading it belongs to, not merely present somewhere.
+    (should (< (funcall at "Claimed") (funcall at "ah-13o")))
+    (should (< (funcall at "ah-13o") (funcall at "Planned, unclaimed")))
+    (should (< (funcall at "Unplanned") (funcall at "ah-7s7")))
+    (should (< (funcall at "Merged, unverified") (funcall at "ah-m1")))
+    (should (< (funcall at "Verified") (funcall at "ah-v1")))))
 
 (ert-deftest cerebro-test/unclaimed-is-a-status-not-a-field ()
   "Claimed is `--status in_progress', unclaimed is `--status open'.
@@ -1301,6 +1308,67 @@ noticed."
       (cerebro-test--with-bd calls
         (cerebro-beads-raise)                   ; ah-c1 is P1, raise is more urgent
         (should (equal (car calls) '("ah-c1" . 0)))))))
+
+;; ---------------------------------------------------------------------------
+;; What merged, and what has been verified
+
+(defun cerebro-test--closed (id title labels updated)
+  `((id . ,id) (priority . 2) (title . ,title) (labels . ,labels) (updated_at . ,updated)))
+
+(ert-deftest cerebro-test/gather-asks-about-merged-and-verified ()
+  "Merged means closed and still waiting on Psylocke; verified means she passed it.
+
+Disjoint on purpose. `verification:not-needed' - the historical cutoff, 70
+beads in atlantis-hud - belongs to neither, or Merged would carry a number
+that never falls and never means anything."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'cerebro--bd-json)
+               (lambda (_root &rest args) (push args asked) nil)))
+      (cerebro--gather-beads "/repo")
+      (let ((closed (seq-filter (lambda (args) (member "closed" args)) asked)))
+        (should (= 2 (length closed)))
+        ;; The unverified pile excludes what passed and what never needed it.
+        (should (cl-some (lambda (args)
+                           (and (member "--exclude-label" args)
+                                (cl-some (lambda (a) (string-match-p "verification:passed" a)) args)
+                                (cl-some (lambda (a) (string-match-p "verification:not-needed" a)) args)))
+                         closed))
+        (should (cl-some (lambda (args) (member "verification:passed" args)) closed))))))
+
+(ert-deftest cerebro-test/panel-has-five-sections-in-lifecycle-order ()
+  "Claimed, planned, unplanned, merged, verified - the way work moves."
+  (let* ((text (string-join (cerebro--bead-panel nil nil nil nil nil 62 8) "\n"))
+         (at (lambda (s) (string-match (regexp-quote s) text))))
+    (should (< (funcall at "Claimed") (funcall at "Planned, unclaimed")))
+    (should (< (funcall at "Planned, unclaimed") (funcall at "Unplanned")))
+    (should (< (funcall at "Unplanned") (funcall at "Merged, unverified")))
+    (should (< (funcall at "Merged, unverified") (funcall at "Verified")))))
+
+(ert-deftest cerebro-test/closed-beads-sort-newest-first ()
+  "Priority says nothing about finished work; recency says what just happened."
+  (let* ((beads (list (cerebro-test--closed "ah-old" "older" nil "2026-08-01T09:00:00Z")
+                      (cerebro-test--closed "ah-new" "newer" nil "2026-08-14T09:00:00Z")))
+         (sorted (cerebro--sort-recent beads)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) sorted) '("ah-new" "ah-old")))))
+
+(ert-deftest cerebro-test/a-reopened-bead-is-marked-where-it-lands ()
+  "A failed verdict sends a bead back to the unclaimed pile at P0.
+
+It is an ordinary open bead there - which is the point - but the row says it
+has been round once, because that is the difference between new work and
+work that came back."
+  (let ((reopened (cerebro--bead-line
+                   `((id . "ah-t65") (priority . 0) (title . "same title")
+                     (labels . ("verification:failed")))
+                   62))
+        ;; Same id length and same title, so any difference in width is the
+        ;; marker and not the text.
+        (fresh (cerebro--bead-line
+                '((id . "ah-t70") (priority . 0) (title . "same title")) 62)))
+    (should (string-match-p "↻" reopened))
+    (should-not (string-match-p "↻" fresh))
+    ;; Still the same width, so the column does not shift under one row.
+    (should (= (length reopened) (length fresh)))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

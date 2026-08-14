@@ -55,13 +55,35 @@ Claimed 1
   ah-13o  P1 Resizable split between the unit and orders panes
 Planned, unclaimed 0
   (none)
-Unplanned 5
+Unplanned 4
   ah-3cs  P1 Config option for fixed unit-in-hex pane size
-  ah-7s7  P1 Psylocke, the verification session: prove merged…
-  +3 more
+  ah-4ao  P2 Drive the implementer fleet from the Emacs agent…
+  +2 more
+
+Merged, unverified 0
+  (none)
+
+Verified 1
+  ah-13o  P1 Resizable split between the unit and orders pane…
 ```
 
-Sorted by priority then id, so P0 reads first and the order does not shuffle under a redraw. Each
+The last two are about finished work, so they sort newest first rather than by priority — a merged
+P3 is no less done than a merged P0. **Merged, unverified is Psylocke's queue**, not everything that
+ever merged: closed, minus what she passed and minus `verification:not-needed`. That distinction is
+what makes the count mean something — atlantis-hud had seventy `not-needed` beads the day this was
+written, and a Merged section carrying them would show a number that never falls.
+
+A failed verdict reopens a bead into the unclaimed pile at P0, where it is an ordinary open bead —
+which is the point. The row carries a `↻` so that pile can still say which work came back rather
+than arrived:
+
+```
+↻ ah-t65  P0 came back from a failed verdict
+  ah-t70  P0 never left
+```
+
+The open sections are sorted by priority then id, so P0 reads first and the order does not shuffle
+under a redraw. Each
 section names its own count, because the rows are what gets capped — `cerebro-beads-per-section`,
 eight by default, keeps an unbounded backlog from pushing the first two sections off the bottom.
 

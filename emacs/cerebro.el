@@ -841,7 +841,14 @@ when the navigator holds the key down hides where it finishes."
         (insert (string-join lines "\n"))
         (unless (and selected (cerebro--goto-bead selected))
           ;; Selected bead merged, closed, or claimed away while it was marked.
-          (cerebro--goto-first-bead))))))
+          (cerebro--goto-first-bead))
+        ;; A window keeps its own point when its buffer is not the selected
+        ;; one, so moving the buffer's point above is not enough: the mark
+        ;; would stay on line 1 - the "Claimed 0" header - while the buffer
+        ;; believed it was on a bead. Both the layout and the timer render
+        ;; from another window, so this is the normal path rather than an edge.
+        (dolist (window (get-buffer-window-list buffer nil t))
+          (set-window-point window (point)))))))
 
 (defun cerebro--beads-revert (&rest _)
   "Refresh the panel, for `g' and for the timer."

@@ -1130,5 +1130,34 @@ whatever the navigator was standing in - usually the detail window."
         (should (= (cerebro--panel-width buffer) cerebro-list-width))
       (kill-buffer buffer))))
 
+(ert-deftest cerebro-test/the-mark-lands-in-the-window-not-just-the-buffer ()
+  "A window keeps its own point when its buffer is not the selected one.
+
+`goto-char' in `with-current-buffer' moves the buffer's point; the window
+showing it kept pointing at line 1, so with an empty Claimed section the
+navigator saw the mark sitting on \"Claimed 0\". Both the layout and the
+timer render from another window, so this is the normal path, not an edge."
+  (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+            ((symbol-function 'cerebro--gather-beads)
+             (lambda (_root)
+               (list nil nil (list (cerebro-test--bead "ah-u1" 1 "first real bead"))))))
+    (let ((buffer (get-buffer-create "*cerebro-test-window-point*"))
+          (elsewhere (generate-new-buffer " *cerebro-test-elsewhere*")))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer buffer (cerebro-beads-mode))
+            (delete-other-windows)
+            (set-window-buffer (selected-window) elsewhere)
+            (let ((window (split-window (selected-window) nil 'below)))
+              (set-window-buffer window buffer)
+              ;; Rendered from the other window, exactly as the timer does.
+              (cerebro--beads-render buffer)
+              (with-current-buffer buffer
+                (save-excursion
+                  (goto-char (window-point window))
+                  (should (equal (cerebro--bead-at-point) "ah-u1"))))))
+        (kill-buffer buffer)
+        (kill-buffer elsewhere)))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

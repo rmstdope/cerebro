@@ -6,11 +6,34 @@ showing every agent — Xavier, Cerebro, Moira and the fifteen implementers — 
 a working implementer the bead it is on and for how long.
 
 It supports a live detail window that follows the list selection, and starting/killing agents
-from the list: `s` starts a dead agent (into an Emacs-owned `vterm` buffer running its launcher),
-`k` kills a live one (confirming harder mid-bead), `RET` selects the detail window to type to the
-agent shown there. An agent running outside Emacs is shown and marked but not viewable — a
-placeholder says so. This needs **vterm** (`emacs-libvterm`); without it the list still works, and
-`s`/`RET` signal a clear error instead of failing obscurely.
+from the list:
+
+| Key   | Does                                                                       |
+|-------|----------------------------------------------------------------------------|
+| `s`   | starts a dead agent, into an Emacs-owned `vterm` buffer running its launcher |
+| `k`   | kills a live one, confirming harder mid-bead                                |
+| `RET` | selects the detail window, to type to the agent shown there                 |
+| `TAB` | switches window, exactly as `C-x o` does — press it again to come back      |
+| `n`/`p` | next/previous row                                                        |
+
+An agent running outside Emacs is shown and marked but not viewable — a placeholder says so. This
+needs **vterm** (`emacs-libvterm`); without it the list still works, and `s`/`RET` signal a clear
+error instead of failing obscurely.
+
+## Reading a row
+
+The glyph carries the state and the weight carries the urgency:
+
+| Row                | Means                                                          |
+|--------------------|----------------------------------------------------------------|
+| green `●`          | working, or an interactive agent that is up                     |
+| yellow `◌`         | idle — a session is up with no bead, which may want a nudge     |
+| yellow `?`, **bold** | asking: it needs an answer from you, and the whole row says so |
+| green `◍`          | done, and about to be replaced by a fresh session               |
+| grey `○`           | dead — nobody is there                                          |
+
+Bold is only ever "this row wants you", so it stays worth noticing: idle and dead share the quiet
+weight, and only a question earns the loud one.
 
 ## Supervising the implementers
 

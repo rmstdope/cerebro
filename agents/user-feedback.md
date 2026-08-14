@@ -31,8 +31,14 @@ That comes before everything else and applies to every open issue, whatever stat
 **Then** ask the only question that decides which half of this file applies:
 
 ```bash
-bd list --external-ref gh-<number> --json          # is there a bead for this issue?
+bd list --external-ref gh-<number> --all --json    # is there a bead for this issue?
 ```
+
+**`--all` is load-bearing.** `bd list` defaults to open beads only, so a bead that is already closed —
+merged, or merged and released — silently reads back as "no bead", and an issue that is fully tracked
+gets triaged again from scratch. Without `--all` this failure is invisible in the common case, since
+most beads you check *are* still open; it only bites on exactly the issues where getting it wrong
+matters most; a closed one.
 
 Empty means it is new: triage it with the navigator (*A new issue*). Non-empty means it is already
 tracked: report where the work has got to (*An issue that has a bead*).

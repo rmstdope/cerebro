@@ -314,7 +314,7 @@ What changes is not the process, only what you read first. Before the plan, read
 shipped and what the navigator saw fail:
 
 ```bash
-git log origin/main --grep "(<id>):" --oneline    # the original PR(s)
+git log origin/main --grep "(<id>):" -F --oneline    # the original PR(s)
 ```
 
 and the failure itself, in the bead's notes. The plan (amended in place by Xavier, per `plan-bead`)

@@ -65,7 +65,7 @@ of what pass you are on — safe to restart from nothing at any time.
 For each id in the work list, find what it touched:
 
 ```bash
-git log origin/main --grep "(<id>):" --oneline
+git log origin/main --grep "(<id>):" -F --oneline
 git show --stat --format= <sha>
 ```
 

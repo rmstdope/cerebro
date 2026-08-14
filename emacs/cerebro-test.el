@@ -1431,5 +1431,80 @@ list it partitions is."
         ;; No type exclusion: an epic has to land in Other, not vanish.
         (should-not (member "--exclude-type" args))))))
 
+;; ---------------------------------------------------------------------------
+;; ah-4ao increment 3: turning a sweep's facts into a decision
+
+;; `cerebro--claim-finding' works from `sweep-claims.sh's JSON, parsed the way
+;; `cerebro--bd-json' would: an alist with symbol keys.
+(defun cerebro-test--claim-candidate (id assignee &optional on-main age verification-failed docs-only)
+  ;; Booleans as `cerebro--bd-json' parses them: `:false-object nil', so JSON
+  ;; false and absent both read as plain nil, same as everywhere else here.
+  `((id . ,id) (assignee . ,assignee) (title . "a bead")
+    (verification_failed . ,verification-failed)
+    (on_main . ,on-main)
+    (commit_age_min . ,age)
+    (docs_only . ,docs-only)))
+
+(ert-deftest cerebro-test/claim-finding-leaves-verification-failed ()
+  "Psylocke's reopen puts the old commit back on main every time - that
+proves nothing about whether the rework has landed, so this bead is never
+sweep-closed regardless of what else is true of it."
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 30 t)
+                 nil (current-time)))))
+
+(ert-deftest cerebro-test/claim-finding-leaves-live-implementer ()
+  "A name that is still running keeps its bead, however old the merge looks."
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 30)
+                 '("Cyclops") (current-time)))))
+
+(ert-deftest cerebro-test/claim-finding-leaves-fresh-commit ()
+  "An implementer closes within seconds of merging; anything fresher than
+ten minutes is one still mid-cleanup, not a dead one."
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 3)
+                 nil (current-time)))))
+
+(ert-deftest cerebro-test/claim-finding-closes-delivered-dead-and-old ()
+  (should (equal (cerebro--claim-finding
+                  (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 30)
+                  nil (current-time))
+                 '(close "ah-x1" "Delivered in PR; closed by the fleet view, Cyclops did not"))))
+
+(ert-deftest cerebro-test/claim-finding-reclaims-dead-not-on-main ()
+  (should (equal (cerebro--claim-finding
+                  (cerebro-test--claim-candidate "ah-x1" "Cyclops" nil nil)
+                  nil (current-time))
+                 '(reclaim "ah-x1"))))
+
+(defun cerebro-test--epic-candidate (id minutes)
+  `((id . ,id) (title . "an epic") (minutes_since_last_child_closed . ,minutes)))
+
+(ert-deftest cerebro-test/epic-finding-waits-ten-minutes ()
+  "An implementer closes its parent within seconds of its last child; a
+close inside ten minutes is one still mid-cleanup."
+  (should (null (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" 3))))
+  (should (equal (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" 30))
+                 '(epic-close "ah-e1"))))
+
+(ert-deftest cerebro-test/epic-finding-nil-minutes-waits ()
+  "A close time the script could not parse is not evidence of anything -
+leave it rather than guess."
+  (should (null (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" nil)))))
+
+(ert-deftest cerebro-test/finding-command-covers-only-the-three-shapes ()
+  "This function is the complete list of destructive commands the fleet
+view can run - so its total output range has to be pinned, not just its
+happy path."
+  (should (equal (cerebro--finding-command '(close "ah-x1" "reason here") "/repo")
+                 '("bd" "close" "ah-x1" "--reason" "reason here")))
+  (should (equal (cerebro--finding-command '(reclaim "ah-x1") "/repo")
+                 '("bd" "reclaim" "--id" "ah-x1" "--older-than" "10m")))
+  (should (equal (cerebro--finding-command '(epic-close "ah-e1") "/repo")
+                 '("bd" "close" "ah-e1")))
+  (should (null (cerebro--finding-command nil "/repo")))
+  (should-error (cerebro--finding-command '(unknown-shape "ah-x1") "/repo")))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

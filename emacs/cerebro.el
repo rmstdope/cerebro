@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'let-alist)
 (require 'json)
 (require 'iso8601)
 (require 'tabulated-list)
@@ -465,6 +466,75 @@ have no bead to finish and no flag to write)."
         (format "%s is running outside Emacs - no live view. Use the terminal that started it."
                 name)
       (format "%s is not running. Press s to start it." name))))
+
+;;; Sweep findings (ah-4ao): turning `sweep-claims.sh'/`sweep-epics.sh' facts into a decision
+
+(defconst cerebro--sweep-stale-minutes 10
+  "Minutes past which a claim's delivery, or an epic's last child close, is
+old enough to act on rather than mid-cleanup.
+
+Matches `agents/orchestrator.md's own claims and epics sweeps: an
+implementer closes what it just finished within seconds, so anything
+fresher than this is an agent still tidying up, not one that is gone.")
+
+(defun cerebro--claim-finding (candidate live-names now)
+  "Pure. What the claims sweep should offer for CANDIDATE, or nil.
+
+CANDIDATE is one parsed object from `sweep-claims.sh --json'. LIVE-NAMES is
+the implementer names with a live session (from the state files the fleet
+view already gathers - `cerebro--gather-states'). NOW is unused by the
+guards themselves (which key on `commit_age_min', computed by the script at
+the moment it ran) but taken for symmetry with `cerebro--supervise-action'
+and so a future guard can use it without changing every caller.
+
+Returns nil (leave it alone - a live session still holds it, a
+`verification:failed' label makes `on_main' meaningless, or the commit is
+too fresh to be sure), (close ID REASON) when the work is on main, the
+commit is old enough, and nobody live holds the claim, or (reclaim ID) when
+nothing is on main and nobody live holds it either."
+  (ignore now)
+  (let-alist candidate
+    (cond
+     (.verification_failed nil)
+     ((member .assignee live-names) nil)
+     (.on_main
+      (if (and .commit_age_min (> .commit_age_min cerebro--sweep-stale-minutes))
+          (list 'close .id
+                (format "Delivered in PR; closed by the fleet view, %s did not" .assignee))
+        nil))
+     (t (list 'reclaim .id)))))
+
+(defun cerebro--epic-finding (candidate)
+  "Pure. What the epics sweep should offer for CANDIDATE, or nil.
+
+CANDIDATE is one parsed object from `sweep-epics.sh --json' - already
+known eligible (every child closed) by the script's own `bd epic status
+--eligible-only'. The only question left here is staleness: nil when
+`minutes_since_last_child_closed' is absent (nothing to act on) or under
+`cerebro--sweep-stale-minutes' (an implementer is still mid-cleanup),
+otherwise (epic-close ID)."
+  (let-alist candidate
+    (if (and .minutes_since_last_child_closed
+             (> .minutes_since_last_child_closed cerebro--sweep-stale-minutes))
+        (list 'epic-close .id)
+      nil)))
+
+(defun cerebro--finding-command (finding repo-root)
+  "The exact argv for FINDING, or nil for nil.
+
+This function is the complete list of destructive commands the fleet view
+can run - every other path to `bd close' or `bd reclaim' goes through a
+sweep finding built by `cerebro--claim-finding' or `cerebro--epic-finding'
+and then this. REPO-ROOT is accepted for symmetry with the rest of the
+sweep pipeline; the command itself carries no path, since it is run with
+`default-directory' already bound the way every other `bd' call here is."
+  (ignore repo-root)
+  (pcase finding
+    ('nil nil)
+    (`(close ,id ,reason) (list "bd" "close" id "--reason" reason))
+    (`(reclaim ,id) (list "bd" "reclaim" "--id" id "--older-than" "10m"))
+    (`(epic-close ,id) (list "bd" "close" id))
+    (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure
 

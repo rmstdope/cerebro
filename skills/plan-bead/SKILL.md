@@ -175,6 +175,24 @@ less:
 waiting to see it picked up; a line saying which P0 you are planning and that you have jumped the
 queue for it is how they learn the urgency landed.
 
+### A reopened bead is a P0 with a plan already
+
+A bead that reaches you carrying `verification:failed`, notes beginning "Verification failed", and a
+full existing `design` (with the interview record still in it) is not new work — it is one Psylocke
+sent back because a person tried the merged result and it did not hold. It reached you unplanned
+because the navigator judged the *plan* wrong, not just the build (a build-only failure never leaves
+`planned`, and never reaches you at all — see `agents/verifier.md`).
+
+Read the failure before touching the plan. **Amend the existing design in place; do not rewrite it.**
+Keep all eight headings and the interview record exactly as they are, and revise only the sections
+the failure actually touches — typically *Increments* or *Known traps*, sometimes *User-facing
+decisions* if what shipped genuinely did not match what was agreed. Note what the verification found
+under *Context*, so the next reader sees why this plan has a second pass. **Never re-open a
+user-facing question the navigator already answered**, unless the failure is about exactly that
+answer — a plan revision is not a second bite at decisions that were already made.
+
+Then re-add `planned` as usual, and go on to the buffer.
+
 ## You keep a buffer of four
 
 You are not here to plan one bead and leave. You keep the implementers fed, and the measure of that

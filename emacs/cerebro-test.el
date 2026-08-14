@@ -156,14 +156,34 @@
           (cerebro)
           (with-current-buffer cerebro-buffer-name
             (should (= (length tabulated-list-entries) 18))
-            (should (equal (length (delete-dups (mapcar #'car tabulated-list-entries))) 18))))
+            (should (equal (length (delete-dups (mapcar #'car tabulated-list-entries))) 18))
+            ;; Not just the count: every interactive agent and every roster
+            ;; name appears exactly once, with no overlap between the two -
+            ;; Psylocke moving from the roster to the interactive list must
+            ;; not let the row count hold by coincidence again.
+            (should (equal (sort (mapcar #'car tabulated-list-entries) #'string<)
+                            (sort (append (mapcar #'car cerebro-interactive-agents)
+                                          (mapcar #'car cerebro-roster-fixture))
+                                  #'string<)))))
       (when (get-buffer cerebro-buffer-name)
         (kill-buffer cerebro-buffer-name)))))
 
 (defconst cerebro-roster-fixture
   (mapcar (lambda (n) (cons n nil))
           '("Cyclops" "Storm" "Wolverine" "Rogue" "Gambit" "Nightcrawler" "Colossus"
-            "Iceman" "Beast" "Jubilee" "Psylocke" "Bishop" "Phoenix" "Mystique" "Magneto")))
+            "Iceman" "Beast" "Jubilee" "Bishop" "Phoenix" "Mystique" "Magneto")))
+
+;; ---------------------------------------------------------------------------
+;; ah-7s7: Psylocke joins the interactive roster
+
+(ert-deftest cerebro-test/interactive-roster-has-psylocke ()
+  (should (equal (assoc "Psylocke" cerebro-interactive-agents) '("Psylocke" . "verifier")))
+  (should (= (length cerebro-interactive-agents) 4)))
+
+(ert-deftest cerebro-test/launch-command-verifier ()
+  (should (equal (cerebro--launch-command
+                   (cerebro-test--agent "Psylocke" "verifier" 'interactive 'dead))
+                  ".claude/cerebro/scripts/run-psylocke")))
 
 ;; ---------------------------------------------------------------------------
 ;; Increment 4: roster parsing

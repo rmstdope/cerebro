@@ -303,6 +303,31 @@ without `bd unclaim` the bead stays `in_progress` under you after you have moved
 `bd ready` and stranded until its lease expires. Without the push, no other machine learns it was
 released. If a worktree exists by then, remove it too (see *Finishing*).
 
+### A reopened bead
+
+You can pick one of these up exactly like any other planned bead — it is open, `planned` and P0, and
+`bd ready` does not tell you it has a history. Recognise it from `bd show <id> --json`: a
+`verification:failed` label, notes beginning "Verification failed", and a closed-then-reopened
+history.
+
+What changes is not the process, only what you read first. Before the plan, read what actually
+shipped and what the navigator saw fail:
+
+```bash
+git log origin/main --grep "(<id>):" --oneline    # the original PR(s)
+```
+
+and the failure itself, in the bead's notes. The plan (amended in place by Xavier, per `plan-bead`)
+is what you build from as always; the failure notes tell you what "done" now has to mean. **Your
+scope is making the plan's promise true — the gap the navigator found — not rebuilding the bead from
+nothing.** Where the failure is testable at all, let your first failing test reproduce what they
+saw; that is the increment that matters most.
+
+On merge, close it exactly as usual — it keeps `verification:failed` through the close, and that is
+by design: it is what puts the bead back on Psylocke's list for a second look. The parent-close walk
+in *Finishing* needs nothing different either; Psylocke already reopened the parent chain when she
+reopened this bead, so closing the last open child closes it again the same way it always does.
+
 ## Workspace
 
 Check there is room before starting — a build that runs out of disk fails inside the linker with a

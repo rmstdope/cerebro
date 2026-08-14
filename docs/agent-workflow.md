@@ -159,6 +159,47 @@ It is told to re-read plans rather than recall them, and to tell you when it sta
 weight. When it does — or when its reports get woolly — take it down and start a fresh one. That is
 the cure, and it is why the fleet is yours to manage rather than automatic.
 
+## Starting a verifier
+
+Every step so far — plan, build, review, merge — is an agent judging its own work. Nothing checks
+that the merged result actually does what it was supposed to, until **Psylocke**:
+
+```bash
+.claude/cerebro/scripts/run-psylocke
+```
+
+One interactive session, like the planner and the orchestrator, and for the same reason: she has to
+put a running application in front of you and wait for your verdict, which a `--print` session cannot
+do. She walks beads closed since her last pass, works out on her own which ones touched anything a
+player could see — a change to `.claude/`, `docs/`, or CI is marked and skipped without ever bothering
+you — and for the rest, prepares everything she can before she asks for your time: what the bead
+claimed, which shell to launch (web or desktop), which fixture report to load, and what you should
+look for.
+
+**She only ever asks when she is ready to hand you something to run.** Say yes and she briefs you,
+launches the app and waits for one of three verdicts:
+
+- **Passed.** The bead is marked verified and that is the end of it.
+- **Passed, with a follow-up.** It works; something small about it is worth a look later. She files
+  that as an ordinary new bead — unranked, for the planner to triage with you next time round — and
+  still marks the original passed.
+- **Failed.** She reopens the bead **at P0**, records what you saw, and asks one more thing: was the
+  *plan* wrong, or was the *build* wrong? A build failure goes straight back to the implementers as
+  ordinary rework against the same design. A plan failure goes to the planner first, who reads what
+  you saw and revises the existing design rather than starting from nothing.
+
+If you are not free when she asks, the bead simply waits — nothing is blocked, and she offers it again
+next pass rather than escalating it to your queue.
+
+**A bead she cannot verify does not block anything.** An unverified bead never stops a release; when
+the orchestrator cuts one, it names whatever has not yet had a person look at it and leaves the
+decision to you. Verification is information, not a gate.
+
+**What it costs**: a verification is a few minutes of your time per bead, on top of whatever it took
+you to build one in the first place — starting the app, loading the report she names, and telling her
+what you saw. It runs on a ten-minute cycle like the other passive sessions, so it will sit quietly
+between beads rather than pestering you.
+
 ## Your queue
 
 Everything waiting on you, from every agent and every terminal, in one place:

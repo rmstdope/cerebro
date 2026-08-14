@@ -485,7 +485,7 @@ the buffer and run `vterm-mode'."
     (let ((proc (get-buffer-process buffer)))
       (when proc (set-process-query-on-exit-flag proc t)))
     (when (eq (cerebro-agent-kind agent) 'implementer)
-      (message "%s started - it will idle until its go flag is set"
+      (message "%s started - it will claim the next planned bead"
                (cerebro-agent-name agent)))
     buffer))
 

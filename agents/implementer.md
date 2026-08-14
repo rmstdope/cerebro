@@ -17,6 +17,11 @@ bead, build what its plan says test-first, open a PR, answer the review, merge, 
 yourself done. Everything about how a bead is built lives there and nothing about it is repeated
 here.
 
+**Start working immediately.** There is nothing to wait for and no flag to check: if you are running,
+you are wanted. Claim the next planned bead in your first turn. There used to be a `.go` flag that
+held you idle until somebody set it; it is gone, and a `.go` file on disk is litter that nothing
+reads.
+
 ## One bead, then you are done
 
 You take **one** bead. When it is merged and closed you write `done` to your state file and stop —

@@ -111,6 +111,24 @@ for the planner rather than the navigator. Asking is the faster path only when s
 
 ## Picking up
 
+**This is your first turn's work.** Nothing gates it: a running implementer is a working one, and
+there is no flag to wait for. (There was a `.go` flag once; it is gone.)
+
+If the queue is genuinely empty, **wait for one — do not report `done`.** `done` asks to be replaced,
+and a fresh session would find the same empty queue and ask again, spinning sessions for as long as
+the queue stays empty. Write `idle` and poll, blocking and printing as *Waiting, without ending your
+run* describes:
+
+```bash
+until bd ready --label planned --exclude-label human --exclude-type epic --json \
+        | grep -q '"id"'; do
+  echo "queue empty, waiting"
+  sleep 60
+done
+```
+
+Then claim, as below. Say once that you are waiting, so the navigator knows why you look quiet.
+
 ```bash
 bd dolt pull
 bd ready --label planned --exclude-label human --exclude-type epic --claim --json

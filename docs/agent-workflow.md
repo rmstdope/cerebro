@@ -52,15 +52,21 @@ claude --agent orchestrator --name Cerebro --permission-mode auto
 
 The orchestrator is always called **Cerebro** — it finds the mutants and points them at the work.
 
-It starts nothing on its own. It sweeps away any worktrees left behind by a previous run, greets you,
-tells you what the queue looks like, and waits. Then you talk to it in whatever words you like:
+It starts nothing on its own, and it cannot start an implementer for you at all — starting one means
+starting a session, which only you can do: press `s` on that name in the Emacs fleet view, or run
+`scripts/run-implementer <name>` in a terminal. Cerebro sweeps away any worktrees left behind by a
+previous run, greets you, tells you what the queue looks like, and waits. Then you talk to it in
+whatever words you like:
 
 ```
-start two implementers
 how are they doing?
+what is waiting on me?
 take Storm down
-start another one
 ```
+
+There is no flag that puts a running implementer to work, and there used to be. **A running
+implementer is a working one**: it claims the next planned bead as soon as it comes up. If you want
+another builder, start another session.
 
 Implementers are named after X-Men — Cyclops, Storm, Wolverine, Rogue, and on down the roster — so
 that a fleet of them can be talked about without anyone counting session hashes.

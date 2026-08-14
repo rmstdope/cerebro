@@ -113,6 +113,25 @@ Changed your mind before it noticed? Deleting the flag cancels the instruction:
 rm .claude/implementers/<name>.stop
 ```
 
+### What the builders learned
+
+An implementer that hit something unexpected writes it up before it merges, as
+`docs/retrospectives/<bead id>.md`, riding in on that bead's own PR. Only surprises go in — a bead
+that went to plan leaves no file — so everything in that directory cost somebody time:
+
+```bash
+ls docs/retrospectives/
+```
+
+Each file says what happened, why if the agent established it, what it cost, and the specific change
+that would prevent it. Agents record; they do not act on these — changing the rules, the skills or
+CI is yours. Read the *Seen before* line: a finding on its third bead is one the fleet keeps paying
+for.
+
+They are committed, so they survive the machine and the session that wrote them. That is why they
+live under `docs/` rather than beside the state files in `.claude/implementers/`, which is gitignored
+as live state.
+
 ### Leftover worktrees
 
 Builders work in `.claude/worktrees/<bead>` and remove the tree when they finish. One that crashes,

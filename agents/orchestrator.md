@@ -101,8 +101,16 @@ behalf is deciding something the split exists to keep out of an agent's hands.
 The stop flag is your one lever. For seeing what an implementer is doing, read its state file:
 
 ```bash
-cat .claude/implementers/<name>.state.json     # state, bead, and since when
+cat .claude/implementers/<name>.state.json           # state, bead, and since when
+ls docs/retrospectives/                             # one file per bead that went unexpectedly
 ```
+
+A retrospective is written by an implementer into its bead's own PR, and only when something went
+unexpectedly — most beads leave no file at all. **Say which ones are new since your last sweep**,
+because the session that wrote it is gone and the navigator has no other prompt to look. Each file's
+*Seen before* line names earlier beads with the same finding: a third sighting is the strongest
+signal the fleet produces that something needs fixing rather than tolerating, so say the count out
+loud. Acting on one is the navigator's call, not yours.
 
 **There are no `.log` files any more.** The launcher used to run `claude --print --output-format
 stream-json` and could tee that to one; an interactive session has no such stream, and its work

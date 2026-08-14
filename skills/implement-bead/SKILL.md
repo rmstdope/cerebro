@@ -87,14 +87,144 @@ whether a fresh session starts in your place. That is not your business, and you
 an implementer that saw a stop flag mid-bead and wound up early would strand exactly what the
 between-beads rule exists to protect.
 
-So: when your bead is merged, closed and cleaned up, write `done`, say what you did, and stop
-producing output. **Never write `done` before that point.** A bead abandoned in flight strands a
-claim, a worktree and an open PR for somebody to unpick by hand, which is exactly what
-one-bead-per-session is arranged to avoid.
+So: **do the retrospective below before you merge**, and when the bead is merged, closed and cleaned
+up, write `done`, say what you did, and stop producing output. **Never write `done` before that point.** A
+bead abandoned in flight strands a claim, a worktree and an open PR for somebody to unpick by hand,
+which is exactly what one-bead-per-session is arranged to avoid.
 
 The one exception is a bead you hand back — a missing plan section, a question only the navigator
 can answer. That is a complete run too: hand it back with the block below, clean up, write `done`,
 and finish.
+
+## The retrospective
+
+**When the review is answered and CI is green, before you merge**, look back over the run and ask
+one question: *did anything happen that I did not expect?*
+
+This is not optional. You are the only one who saw the run, your context is about to be thrown away
+by design, and whatever cost you an hour will cost the next session an hour too unless it is
+written down.
+
+**Why before the merge, when the run is not quite over.** It is a tracked file, and nothing reaches
+main here unreviewed or un-green — so it travels in the bead's own PR, and once that PR is merged
+there is no branch left to put it on. The last stretch of the run is the merge itself, which is the
+one part a retrospective written here cannot cover; if something goes wrong there, the next session
+will hit it too and record it then.
+
+### What is worth recording
+
+Something that **would need attention so it does not happen again**. Concretely: a step that failed
+for a reason the plan or these instructions did not prepare you for; a check that passed locally and
+failed in CI; a tool that behaved differently from how it is documented here; a rule you found
+yourself unable to follow as written; time lost to something that reads as avoidable in hindsight.
+
+**Not** worth recording, and actively harmful if you do: the bead going normally, a test failing
+during RED, a review comment you answered, anything already written in these instructions. A
+directory with a file per bead is one nobody reads, and then a real finding sits in it unseen.
+
+If nothing qualifies — which is the common case for a bead that went to plan — **write no file at
+all** and say so in your closing message: *"retrospective: nothing to record."* That is a complete
+retrospective, and it is how the navigator can tell you did one. A directory that only ever gains a
+file when something went wrong is one worth opening.
+
+### Where it goes
+
+`docs/retrospectives/<bead id>.md` — `docs/retrospectives/ah-t65.md` for bead `ah-t65`.
+
+**One retrospective per file, and one file per bead.** Never append to another bead's file and never
+rewrite one: they are the record of runs that are over. If your bead produced two findings, both go
+in your own file, as two sections of the one retrospective.
+
+It lives under `docs/` rather than beside your state file because it is knowledge rather than live
+state — `.claude/implementers/` is gitignored, so a retrospective there would never leave the
+machine that wrote it.
+
+**Committing it costs a CI cycle, and that is the intended trade.** Adding the file moves the head
+past the green run:
+
+```bash
+git add docs/retrospectives/<bead id>.md
+git commit -m "docs(<bead id>): retrospective — <the one-line symptom>"
+git push
+# then wait for CI again, per *Waiting, without ending your run*, and merge on green
+```
+
+You do **not** ask for another review: one Copilot review per bead, requested when the PR opens and
+never again, and a docs commit after it is exactly the kind of head movement that rule already
+accepts. This is also why the bar is high — most runs add nothing and merge straight away, so the
+cycle is paid only when something was genuinely learned.
+
+### The format
+
+**Create `docs/retrospectives/README.md` with this exact content if it does not exist**, so the
+format is documented where the files are rather than only here:
+
+```markdown
+# Retrospectives
+
+One file per bead, `<bead id>.md`, written by the implementer that built it — but only when
+something went unexpectedly. A bead that went to plan leaves no file, so everything in here is
+something that cost somebody time.
+
+Each file is one retrospective and is never edited afterwards: it is the record of a run that is
+over. A later bead that hits the same thing writes its own file and names this one under
+**Seen before**, which is how a recurring problem becomes visible as a count rather than a feeling.
+
+## Format
+
+    # <bead id> — retrospective
+
+    - **Implementer:** <name>
+    - **Date:** <YYYY-MM-DD>
+    - **PR:** #<n>
+
+    ## <one line: the symptom, not the cause>
+
+    **What happened.** What you observed, concretely, with the command or step that produced it.
+    **Why.** The cause if you established one; "not established" if you did not. Do not guess.
+    **Cost.** What it took: wall-clock, CI cycles, a bead handed back, a rebase.
+    **Prevent by.** The specific change that would stop it — a file and section, a step to add, a
+    check to run earlier. "Be careful" is not a prevention.
+    **Seen before.** Other bead ids whose file describes the same thing, or "none found".
+
+Two findings in one run are two `##` sections in that bead's one file.
+```
+
+### Writing it
+
+**Grep the directory before you write**, so *Seen before* is real rather than decorative — a
+finding on its third sighting is the strongest evidence the fleet produces that something needs
+fixing rather than tolerating:
+
+```bash
+ls docs/retrospectives/ && grep -rl "<a word from your symptom>" docs/retrospectives/
+```
+
+A complete example:
+
+```markdown
+# ah-t65 — retrospective
+
+- **Implementer:** Cyclops
+- **Date:** 2026-08-14
+- **PR:** #231
+
+## The browser suite passed locally and failed in CI
+
+**What happened.** `pnpm test:browser` was green on this machine three times. The same commit failed
+twice in CI on `smoke (web, 2, 2)`, both times on a timeout in the map-drag spec.
+**Why.** Not established. The CI runner is slower and the spec waits on a fixed 500ms, but I did not
+prove that is the cause.
+**Cost.** Two CI cycles and a rebase, about 50 minutes.
+**Prevent by.** The plan's *Validation* section should name which suite covers a map interaction, so
+it is run in CI-like conditions before the PR opens rather than after.
+**Seen before.** ah-t12 — same spec, same job.
+```
+
+Two rules for the writing itself. **Be specific enough to act on**: name the file, the command, the
+job, the section. A future reader has none of your context and cannot ask you. And **do not fix it
+here** — recording is your job; changing the rules, the skill or CI is outside a planned bead and
+belongs to the navigator, who reads these precisely so they can decide.
 
 ### Asking instead of handing back
 

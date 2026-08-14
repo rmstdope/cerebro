@@ -141,7 +141,10 @@ Emacs itself started."
    ;; Waiting on the navigator: the one state that is asking for something.
    ((eq state 'asking) (propertize "?" 'face 'warning))           ; ?
    ((eq state 'done) (propertize "◍" 'face 'success))             ; ◍
-   ((eq state 'idle) (propertize "◌" 'face 'shadow))              ; ◌
+   ;; Yellow, not grey: an idle agent has a session up and no bead, which is
+   ;; something the navigator may want to act on. Dead is the grey one - there
+   ;; is nobody there at all - and the two must not read alike.
+   ((eq state 'idle) (propertize "◌" 'face 'warning))             ; ◌
    (t (propertize "○" 'face 'shadow))))                           ; ○
 
 (defun cerebro--seconds-since (since now)
@@ -168,13 +171,26 @@ fails to parse, renders as the empty string."
      ((< diff 86400) (format "%dh%02d" (/ diff 3600) (/ (mod diff 3600) 60)))
      (t (format "%dd" (/ diff 86400))))))
 
+(defun cerebro--wants-attention-p (state)
+  "Whether STATE is one the navigator has to do something about."
+  (eq state 'asking))
+
+(defun cerebro--emphasize (text emphasize)
+  "TEXT in bold when EMPHASIZE, otherwise TEXT unchanged."
+  (if emphasize (propertize text 'face 'bold) text))
+
 (defun cerebro--entry (agent now)
   "AGENT as a `tabulated-list-entries' element, evaluated at NOW."
   (let* ((state (cerebro-agent-state agent))
          (external (cerebro-agent-external agent))
-         (agent-col (format "%s %s" (cerebro--glyph state) (cerebro-agent-name agent)))
-         (role-col (cerebro-agent-role agent))
-         (state-col (symbol-name state))
+         ;; A glyph is one character in the corner of the eye, and there are
+         ;; eighteen rows. Bolding the name, role and state makes the row
+         ;; itself the signal - so bold has to stay rare enough to mean it.
+         (attention (cerebro--wants-attention-p state))
+         (agent-col (format "%s %s" (cerebro--glyph state)
+                            (cerebro--emphasize (cerebro-agent-name agent) attention)))
+         (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
+         (state-col (cerebro--emphasize (symbol-name state) attention))
          (bead-col (cond (external "(external)")
                           ((cerebro-agent-bead agent))
                           (t "")))
@@ -701,6 +717,14 @@ cleared first rather than prompting a second time for the same kill."
                   (cerebro-agent-name agent)))
         ('dead (message "%s is not running" (cerebro-agent-name agent)))))))
 
+(defun cerebro-other-window ()
+  "Move to the next window (`TAB'), exactly as `C-x o' does.
+
+With the fleet layout that is the detail window, and pressing it again comes
+back - one key to cycle rather than a key out and a chord back."
+  (interactive)
+  (other-window 1))
+
 (defun cerebro-focus-detail ()
   "Select the detail window (`RET'), to type to the agent shown there."
   (interactive)
@@ -715,6 +739,10 @@ cleared first rather than prompting a second time for the same kill."
     (define-key map "n" #'next-line)
     (define-key map "p" #'previous-line)
     (define-key map (kbd "RET") #'cerebro-focus-detail)
+    ;; Both spellings: a terminal sends TAB, a GUI frame sends <tab>, and
+    ;; binding only one leaves the key dead in the other.
+    (define-key map (kbd "TAB") #'cerebro-other-window)
+    (define-key map (kbd "<tab>") #'cerebro-other-window)
     (define-key map "s" #'cerebro-start)
     (define-key map "k" #'cerebro-kill)
     map)

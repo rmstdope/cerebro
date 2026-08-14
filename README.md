@@ -16,6 +16,33 @@ When pulling updates later:
 git submodule update --remote --merge .claude/cerebro
 ```
 
+## Launchers
+
+Each agent is started by a script of its own, run from the consumer repository root:
+
+```bash
+.claude/cerebro/scripts/run-planner              # Xavier, on Fable at high effort
+.claude/cerebro/scripts/run-orchestrator         # Cerebro, on Fable at medium effort
+.claude/cerebro/scripts/run-user-feedback        # Moira
+.claude/cerebro/scripts/run-implementer Cyclops  # one implementer, named from a closed roster
+.claude/cerebro/scripts/run-implementer --roster # the fifteen names, one per line
+```
+
+All of them start **one interactive `claude` session** and nothing else — no loop, no flags, no
+files. That last point is a reversal worth knowing if you have used an older version: the
+implementer launcher used to run `claude --print` in a loop, one process per bead, for as long as a
+`.go` flag was set. That bought "one bead per session" for free and cost the ability to talk to an
+implementer at all.
+
+Now an implementer is interactive, so it can be answered — and because an interactive session never
+exits, the loop moved to something that can end one. The Emacs fleet view polls each implementer's
+state file, and when one reports `done` it ends that session and starts a fresh one, unless
+`.claude/implementers/<name>.stop` says not to. **The `.go` flag is retired**, along with the loop
+that read it: a running implementer is a working one.
+
+`scripts/prune-worktrees.sh` is the worktree sweep, run by Cerebro on a timer and by you whenever
+you like (`--dry-run` first).
+
 ## Sync Script (Skills and Agents)
 
 Claude code customization discovery expects direct entries under:

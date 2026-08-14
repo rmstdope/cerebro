@@ -9,10 +9,9 @@ an Emacs fleet viewer. It is consumed by other repositories as a git submodule a
 whose `scripts/sync-symlinks.sh` symlinks the skills and agents into the consumer's discovery paths.
 
 Almost nothing here executes in this repository. The agents and skills describe a workflow that runs
-in a *consumer* repo (they were extracted from `atlantis-hud` and still name it throughout), and they
-refer to launcher scripts — `scripts/run-planner`, `scripts/run-orchestrator`, `scripts/run-user-feedback`,
-`scripts/run-implementer`, `scripts/prune-worktrees.sh` — that live in the consumer repo, **not here**.
-Do not go looking for them in this tree, and do not assume a change here is testable by running it.
+in a *consumer* repo (they were extracted from `atlantis-hud` and still name it throughout), and the
+launchers in `scripts/` only make sense from a consumer root, where this repo is mounted at
+`.claude/cerebro`. So a change here is generally not testable by running it in this tree.
 
 ## Commands
 
@@ -23,9 +22,6 @@ emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit    # all 
 emacs --batch -L emacs -l cerebro-test \
   --eval '(ert-run-tests-batch-and-exit "cerebro-test/elapsed-minutes-hours-days")'   # one test (name or regexp)
 ```
-
-Note `emacs/README.md` gives the path as `tools/emacs` — that is the old path in the origin repo; use
-`-L emacs`.
 
 Sync symlinks into a consumer repo (run from that repo, not this one):
 
@@ -40,9 +36,9 @@ Four roles, each an agent definition in `agents/` backed by a skill in `skills/`
 - **Xavier** (`planner`, Fable/high) — loads `plan-bead`. Turns unplanned beads into plans a Sonnet
   agent could build unattended. Decides architecture itself; takes every user-facing decision to the
   human ("the navigator"). Keeps four planned beads ahead of the builders.
-- **Cerebro** (`orchestrator`, Fable/medium) — stops implementers on request (it cannot start one:
-  that means starting a session), sweeps
-  worktrees/claims/epics, reports. **Starts nothing on its own.**
+- **Cerebro** (`orchestrator`, Fable/medium) — stops implementers on request by writing their stop
+  flag; it cannot start one, since that means starting a session. Sweeps worktrees/claims/epics and
+  reports. **Starts nothing on its own.**
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in
   its own git worktree, PR, answer the Copilot review, merge, close, report `done`. Interactive, so
   it cannot end itself — the Emacs fleet view ends it and starts a fresh session, which is what keeps
@@ -88,12 +84,15 @@ The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebr
 only exercise the pure half, passing state in as plain data. Keep new logic on the pure side or it
 becomes untestable.
 
-Two data sources it depends on, both owned by the consumer repo:
+Two data sources it depends on, both under `.claude/implementers/` in the consumer repo:
 
-- `.claude/implementers/<name>.state.json` — `{state: "idle"|"working", bead, since, pid}`, written by
-  `scripts/run-implementer` at each transition. `cerebro--state-file-path` mirrors `statePath` in the
-  consumer's `runImplementer.ts`; the two must stay in step.
-- `scripts/run-implementer --roster` — the implementer names.
+- `<name>.state.json` — `{state: "idle"|"working"|"asking"|"done", bead, since, pid}`, written by the
+  **implementer itself** at each transition, per `agents/implementer.md`. The launcher used to write
+  it and no longer does: it `exec`s a session and cannot see it claim a bead. Whoever changes that
+  vocabulary must change `cerebro--derive-implementer` with it — unknown states map to `idle`, which
+  reads as "fine" rather than as an error.
+- `scripts/run-implementer --roster` — the implementer names, shelled out to from
+  `cerebro--roster`.
 
 Interactive agents have no state file: liveness is inferred by scanning system process args for
 `--name <Name>`, which is why the launchers must pass it.
@@ -107,6 +106,13 @@ Interactive agents have no state file: liveness is inferred by scanning system p
   the script here (it will refuse: there is no `.claude/` above this tree).
 - `githooks/install.sh` sets `core.hooksPath`, which is repository-wide and replaces `.git/hooks`
   entirely. It refuses rather than clobbering a `core.hooksPath` already pointing elsewhere.
+- **`.claude/cerebro/scripts/` is a hard-coded path in two places that must agree**:
+  `cerebro--script-directory` in `cerebro.el`, and every doc that tells someone what to type. The
+  launchers themselves take no view — they are `exec claude …` and work from anywhere — so a wrong
+  path here fails at `s` in the fleet view, not at the script.
+- The launchers start **one interactive session** each. Nothing loops, nothing polls a flag, nothing
+  writes a state file: the agent writes its own state, and `cerebro--supervise` owns the cadence.
+  Adding a loop back to a launcher would put two supervisors on one session.
 - Emacs backup files (`*.el~`, `*.md~`, `*.sh~`) are committed alongside the originals; ignore them
   and never edit them.
 

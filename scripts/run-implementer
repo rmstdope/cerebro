@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+#
+# Runs one implementer, in a terminal of its own.
+#
+#     .claude/cerebro/scripts/run-implementer Cyclops
+#     .claude/cerebro/scripts/run-implementer --roster    # the fifteen names, one per line
+#
+# The name must be an X-Man from the roster below, spelt exactly as it appears there. Anything else
+# exits 2: an unknown name prints the roster, and one that is merely miscased is told how it is
+# spelt instead, since the list is no help when you already picked the right mutant. The roster is
+# closed because Cerebro works from it: an implementer it never looks for would hold a bead and open
+# PRs unaccounted for.
+#
+# **This starts one interactive session and nothing else.** It does not loop, it reads no flags, and
+# it writes no files. That is a deliberate reversal of what it used to do, and the reasons are worth
+# knowing:
+#
+#   - It ran `claude --print`, which ends when the session stops producing output, and looped around
+#     that: one process per bead, relaunched while a `.go` flag was set. It bought "one bead per
+#     process" for free, and cost the ability to talk to an implementer at all - a --print session
+#     appears in neither `claude agents --json` nor `ListAgents`.
+#   - An interactive session can be answered, but never exits, so the loop had to move somewhere
+#     that can end a session: the Emacs fleet view. It polls each implementer's state file and, when
+#     one reports `done`, ends it and starts a fresh session - unless a `.stop` flag says otherwise.
+#   - The `.go` flag is retired with the loop that read it. A running implementer is a working one.
+#
+# So the supervisor owns the cadence and the flags, the agent owns its state file, and this script
+# owns exactly one thing: turning a name into a session.
+
+set -euo pipefail
+
+# A closed set, not a suggestion. Cerebro picks the next unused name from it and looks for running
+# implementers by it, so an off-roster name starts a real agent the orchestrator never accounts for.
+# Single words, all of them: the name goes into a file path and a `pgrep` pattern, and a space would
+# need quoting in both.
+ROSTER=(
+  Cyclops Storm Wolverine Rogue Gambit
+  Nightcrawler Colossus Iceman Beast Jubilee
+  Psylocke Bishop Phoenix Mystique Magneto
+)
+
+# `cerebro.el' reads this to build the fleet list, so it prints the names and nothing else.
+if [[ "${1:-}" == "--roster" ]]; then
+  printf '%s\n' "${ROSTER[@]}"
+  exit 0
+fi
+
+name="${1:-}"
+if [[ -z "$name" ]]; then
+  echo "usage: run-implementer <name> | --roster" >&2
+  printf '%s\n' "${ROSTER[@]}" >&2
+  exit 2
+fi
+shift
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+on_roster=""
+misspelt=""
+for candidate in "${ROSTER[@]}"; do
+  if [[ "$candidate" == "$name" ]]; then
+    on_roster="$candidate"
+    break
+  fi
+  # Case is checked separately so `storm` is told how it is spelt rather than told it does not
+  # exist. The canonical spelling matters: the name reaches a file path and a process listing, and
+  # two spellings of one implementer would have the flags and the fleet view disagreeing.
+  if [[ "$(lower "$candidate")" == "$(lower "$name")" ]]; then
+    misspelt="$candidate"
+  fi
+done
+
+if [[ -z "$on_roster" ]]; then
+  if [[ -n "$misspelt" ]]; then
+    echo "run-implementer: it is spelt $misspelt, not $name" >&2
+  else
+    echo "run-implementer: $name is not on the roster" >&2
+    printf '%s\n' "${ROSTER[@]}" >&2
+  fi
+  exit 2
+fi
+
+exec claude \
+  --agent implementer \
+  --name "$name" \
+  --permission-mode auto \
+  "$@" \
+  "You are implementer $name. Load the implement-bead skill and follow it. Start now — there is no
+flag to wait for: write your state file, claim the next planned bead, and take it through to merged
+and closed. If the queue is empty, wait for one rather than reporting done. One bead: when it is
+merged, closed and cleaned up, write done and stop, and a fresh session will take the next."

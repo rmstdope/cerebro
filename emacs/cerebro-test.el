@@ -1563,5 +1563,31 @@ without it saying yes."
 (ert-deftest cerebro-test/sweep-act-key-is-bound ()
   (should (eq (lookup-key cerebro-beads-mode-map "x") #'cerebro-sweep-act)))
 
+;; ---------------------------------------------------------------------------
+;; ah-4ao increment 5: the prune watcher moves from Cerebro to `M-x cerebro'
+
+(ert-deftest cerebro-test/prune-action-starts-when-absent ()
+  (should (eq (cerebro--prune-action nil) 'start)))
+
+(ert-deftest cerebro-test/prune-action-leaves-running-process ()
+  "Starting a second `--watch' would sweep in duplicate and race the first
+one's removals - not merely redundant, since `prune-worktrees.sh' talks to
+git."
+  (should (eq (cerebro--prune-action t) 'already-running)))
+
+(ert-deftest cerebro-test/ensure-prune-watcher-starts-a-process-once ()
+  (let ((started 0))
+    (cl-letf (((symbol-function 'cerebro--prune-process-live-p) (lambda () nil))
+              ((symbol-function 'cerebro--start-prune-process)
+               (lambda (_repo-root) (setq started (1+ started)))))
+      (cerebro--ensure-prune-watcher "/repo")
+      (should (= started 1))))
+  (let ((started 0))
+    (cl-letf (((symbol-function 'cerebro--prune-process-live-p) (lambda () t))
+              ((symbol-function 'cerebro--start-prune-process)
+               (lambda (_repo-root) (setq started (1+ started)))))
+      (cerebro--ensure-prune-watcher "/repo")
+      (should (= started 0)))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

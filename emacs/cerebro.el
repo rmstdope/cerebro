@@ -1457,6 +1457,65 @@ the section is not empty until the first ten minutes are up."
                     (cerebro--entry a now (cerebro--stop-flag-p repo-root (cerebro-agent-name a))))
                   agents))))
 
+;;; The prune watcher (ah-4ao): `prune-worktrees.sh --watch' moves here from Cerebro
+
+(defconst cerebro--prune-process-name " *cerebro-prune*"
+  "Name of the background `prune-worktrees.sh --watch' process and its
+output buffer. Leading space: an internal process, not something the
+navigator picks from the buffer list.")
+
+(defun cerebro--prune-action (process-live)
+  "Pure. `start' when no watcher is live, `already-running' otherwise.
+
+The script's own guards are the safety story - clean tree, work already on
+main, untouched for half an hour (see `prune-worktrees.sh') - this decides
+nothing about what gets removed, only whether a second `--watch' loop
+should be started alongside a first. It should not: two would sweep the
+same worktrees at once and race each other's `git worktree remove', not
+merely duplicate work."
+  (if process-live 'already-running 'start))
+
+(defun cerebro--prune-process-live-p ()
+  "Non-nil if the prune watcher process is already running."
+  (let ((process (get-process cerebro--prune-process-name)))
+    (and process (process-live-p process))))
+
+(defun cerebro--start-prune-process (repo-root)
+  "Start `prune-worktrees.sh --watch' in REPO-ROOT, output going nowhere
+the navigator has to look at - the script already says why it kept or
+removed each tree, and that is for troubleshooting, not the ordinary case.
+
+Never signals: `M-x cerebro' has to open even when the script is missing or
+unrunnable (a fresh checkout without `--recurse-submodules', for one), the
+same way `cerebro--bd-json' degrades rather than taking the buffer down."
+  (condition-case nil
+      (make-process
+       :name cerebro--prune-process-name
+       :buffer (get-buffer-create cerebro--prune-process-name)
+       :command (list (expand-file-name (cerebro--script "prune-worktrees.sh") repo-root) "--watch")
+       :noquery t)
+    (error nil)))
+
+(defun cerebro--ensure-prune-watcher (repo-root)
+  "Start the prune watcher in REPO-ROOT unless one is already running.
+
+Called from `M-x cerebro' on every open, not only the first - `--prune-action'
+is what makes a second call a no-op rather than a second `--watch' loop, the
+same way `cerebro--beads-buffer' guards its own timers."
+  (when (eq (cerebro--prune-action (cerebro--prune-process-live-p)) 'start)
+    (cerebro--start-prune-process repo-root)))
+
+(defun cerebro--kill-prune-watcher ()
+  "Stop the prune watcher, if running.
+
+Bound to the fleet buffer's own `kill-buffer-hook': the watcher exists to
+serve `M-x cerebro', and a `sleep 600' loop nobody can see it report is not
+something to leave running past the buffer that started it - unlike the
+sweep scripts here, `prune-worktrees.sh' talks to git and disk, not merely
+to `bd', so an orphaned loop is more than idle load."
+  (let ((process (get-process cerebro--prune-process-name)))
+    (when process (delete-process process))))
+
 (defun cerebro--cancel-timer ()
   "Stop this buffer's auto-refresh timer, if any."
   (when (timerp cerebro--timer)
@@ -1663,6 +1722,7 @@ would have taken TAB from every vterm the navigator has, fleet or not.
   (setq tabulated-list-sort-key nil)
   (add-hook 'tabulated-list-revert-hook #'cerebro--revert nil t)
   (add-hook 'kill-buffer-hook #'cerebro--cancel-timer nil t)
+  (add-hook 'kill-buffer-hook #'cerebro--kill-prune-watcher nil t)
   (add-hook 'post-command-hook #'cerebro--follow nil t)
   (tabulated-list-init-header))
 
@@ -1678,7 +1738,8 @@ would have taken TAB from every vterm the navigator has, fleet or not.
       (tabulated-list-print t)
       (cerebro--cancel-timer)
       (setq cerebro--timer
-            (run-with-timer 5 5 #'cerebro--tick buffer)))
+            (run-with-timer 5 5 #'cerebro--tick buffer))
+      (cerebro--ensure-prune-watcher (cerebro--repo-root)))
     ;; `pop-to-buffer' must run before `--setup-layout': layout claims
     ;; `selected-window' as the list window, which is only correct once that
     ;; window is actually showing this buffer.

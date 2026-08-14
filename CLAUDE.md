@@ -102,3 +102,8 @@ Interactive agents have no state file: liveness is inferred by scanning system p
   entirely. It refuses rather than clobbering a `core.hooksPath` already pointing elsewhere.
 - Emacs backup files (`*.el~`, `*.md~`, `*.sh~`) are committed alongside the originals; ignore them
   and never edit them.
+
+# Test driven development
+
+Develop the emacs elisp code using test driven development, but do not stop after each phase and ask for user approval.
+Instead, continue running until done and ready to commit.

@@ -218,8 +218,14 @@ fails to parse, renders as the empty string."
   "TEXT in bold when EMPHASIZE, otherwise TEXT unchanged."
   (if emphasize (propertize text 'face 'bold) text))
 
-(defun cerebro--entry (agent now)
-  "AGENT as a `tabulated-list-entries' element, evaluated at NOW."
+(defun cerebro--entry (agent now &optional flagged)
+  "AGENT as a `tabulated-list-entries' element, evaluated at NOW.
+
+FLAGGED, when non-nil, means a stop flag is set for AGENT: the state column
+gains a \" finishing\" suffix, so the navigator sees the flag took effect
+while the bead is still in flight rather than being told nothing happened.
+Flags are read between beads, never during one - see `cerebro-finish' - so
+this is the only place \"finishing\" is said."
   (let* ((state (cerebro-agent-state agent))
          (external (cerebro-agent-external agent))
          ;; A glyph is one character in the corner of the eye, and there are
@@ -229,7 +235,9 @@ fails to parse, renders as the empty string."
          (agent-col (format "%s %s" (cerebro--glyph state)
                             (cerebro--emphasize (cerebro-agent-name agent) attention)))
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
-         (state-col (cerebro--emphasize (symbol-name state) attention))
+         (state-col (cerebro--emphasize
+                     (concat (symbol-name state) (if flagged " finishing" ""))
+                     attention))
          (bead-col (cond (external "(external)")
                           ((cerebro-agent-bead agent))
                           (t "")))
@@ -437,6 +445,18 @@ harder confirm), `external' (refuse - not ours to stop) or `dead'
          (eq (cerebro-agent-state agent) 'working))
     'kill-working)
    (t 'kill)))
+
+(defun cerebro--finish-action (agent flag-set)
+  "What `f' should do for AGENT given FLAG-SET.
+
+One of `write' (implementer, no flag yet - tell it to finish), `offer-clear'
+\(flag already set - ask before removing it, which is the cheap way back to
+\"actually, keep going\") or `not-implementer' (the four interactive roles
+have no bead to finish and no flag to write)."
+  (cond
+   ((not (eq (cerebro-agent-kind agent) 'implementer)) 'not-implementer)
+   (flag-set 'offer-clear)
+   (t 'write)))
 
 (defun cerebro--placeholder (agent)
   "The detail-window text for AGENT when it has no live view."
@@ -1177,7 +1197,10 @@ nobody can see."
          (agents (cerebro--derive roster cerebro-interactive-agents states
                                           #'cerebro--pid-alive-p args owned)))
     (setq cerebro--agents agents)
-    (setq tabulated-list-entries (mapcar (lambda (a) (cerebro--entry a now)) agents))))
+    (setq tabulated-list-entries
+          (mapcar (lambda (a)
+                    (cerebro--entry a now (cerebro--stop-flag-p repo-root (cerebro-agent-name a))))
+                  agents))))
 
 (defun cerebro--cancel-timer ()
   "Stop this buffer's auto-refresh timer, if any."
@@ -1280,6 +1303,37 @@ cleared first rather than prompting a second time for the same kill."
                   (cerebro-agent-name agent)))
         ('dead (message "%s is not running" (cerebro-agent-name agent)))))))
 
+(defun cerebro--write-stop-flag (repo-root name)
+  "Create NAME's stop flag in REPO-ROOT, empty - only its existence is read."
+  (write-region "" nil (cerebro--stop-flag-path repo-root name)))
+
+(defun cerebro-finish ()
+  "Tell the implementer at point to finish (`f'): write its stop flag.
+
+The flag is read between beads, never during one (see `orchestrator.md'):
+the session completes the bead it is on, closes it, and only then stops -
+so this cannot end an implementer mid-bead, and does not try to. If a flag
+is already set, offers to clear it instead, which cancels the instruction
+cleanly."
+  (interactive)
+  (let ((agent (cerebro--agent-at-point)))
+    (when agent
+      (let* ((repo-root (cerebro--repo-root))
+             (name (cerebro-agent-name agent))
+             (flagged (cerebro--stop-flag-p repo-root name)))
+        (pcase (cerebro--finish-action agent flagged)
+          ('write
+           (cerebro--write-stop-flag repo-root name)
+           (revert-buffer)
+           (message "told %s to finish - it completes its current bead first" name))
+          ('offer-clear
+           (when (y-or-n-p (format "Stop flag already set for %s - clear it? " name))
+             (delete-file (cerebro--stop-flag-path repo-root name))
+             (revert-buffer)
+             (message "%s will keep going" name)))
+          ('not-implementer
+           (message "%s is not an implementer - nothing to finish" name)))))))
+
 (defun cerebro-other-window ()
   "Move to the next window (`TAB'), exactly as `C-x o' does.
 
@@ -1340,6 +1394,7 @@ would have taken TAB from every vterm the navigator has, fleet or not.
     (define-key map (kbd "<tab>") #'cerebro-other-window)
     (define-key map "s" #'cerebro-start)
     (define-key map "k" #'cerebro-kill)
+    (define-key map "f" #'cerebro-finish)
     map)
   "Keymap for `cerebro-mode'.")
 

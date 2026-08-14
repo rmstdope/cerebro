@@ -270,6 +270,47 @@
                           "Use the terminal that started it."))))
 
 ;; ---------------------------------------------------------------------------
+;; ah-4ao increment 1: telling an implementer to finish
+
+(ert-deftest cerebro-test/finish-action-writes-for-unflagged-implementer ()
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
+                                             nil "ah-f9c")
+                nil)
+              'write)))
+
+(ert-deftest cerebro-test/finish-action-offers-clear-when-flagged ()
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
+                                             nil "ah-f9c")
+                t)
+              'offer-clear)))
+
+(ert-deftest cerebro-test/finish-action-refuses-interactive-roles ()
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Xavier" "planner" 'interactive 'up)
+                nil)
+              'not-implementer)))
+
+(ert-deftest cerebro-test/entry-shows-finishing-when-flag-set ()
+  "The list says a stop flag took effect while the bead is still in flight -
+`f' does not stop anything, so the marker has to come from somewhere."
+  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
+                                             nil "ah-f9c"))
+         (now (current-time))
+         (flagged-state-col (aref (cadr (cerebro--entry agent now t)) 2))
+         (unflagged-state-col (aref (cadr (cerebro--entry agent now nil)) 2))
+         (default-state-col (aref (cadr (cerebro--entry agent now)) 2)))
+    (should (string-match-p "finishing" flagged-state-col))
+    (should-not (string-match-p "finishing" unflagged-state-col))
+    ;; The third argument is optional, and omitting it must read as unflagged -
+    ;; every existing caller of `cerebro--entry' predates this argument.
+    (should (equal unflagged-state-col default-state-col))))
+
+(ert-deftest cerebro-test/finish-key-is-bound ()
+  (should (eq (lookup-key cerebro-mode-map "f") #'cerebro-finish)))
+
+;; ---------------------------------------------------------------------------
 ;; ah-vcf.3 increment 2: owned sessions feed the list
 
 ;; The seam this bead fills: a non-empty OWNED turns an interactive agent

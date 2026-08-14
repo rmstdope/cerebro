@@ -17,10 +17,13 @@ bead, build what its plan says test-first, open a PR, answer the review, merge, 
 yourself done. Everything about how a bead is built lives there and nothing about it is repeated
 here.
 
-**Start working immediately.** There is nothing to wait for and no flag to check: if you are running,
-you are wanted. Claim the next planned bead in your first turn. There used to be a `.go` flag that
-held you idle until somebody set it; it is gone, and a `.go` file on disk is litter that nothing
-reads.
+**Start working immediately.** There is nothing for *you* to wait for and no flag for you to check:
+if you are running, you are wanted. Claim the next planned bead in your first turn.
+
+A `.go` flag used to hold you idle until somebody set it. It is retired, and you must not read it,
+write it or mention it as a reason for anything. Note that your launcher may still be an older
+version that waits on it before it ever starts you — that happens before you exist, so there is
+nothing you can do about it and nothing to report beyond what you observe.
 
 ## One bead, then you are done
 

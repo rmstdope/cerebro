@@ -145,9 +145,14 @@ lease is short, about five minutes, and a cycle is an hour; the exact TTL is bd'
 configurable here, so heartbeat on every boundary rather than on a timer.
 
 Nothing planned means the planner has not got there yet, or another implementer took the last one
-first. **Say so and finish, straight away** — do not wait around for work to appear. Idling is the
-launcher's job and it does it for free; a session idling on an empty queue is burning context to
-wait, and the launcher will start you again the moment there is something to take.
+first. **Wait for one, as *Picking up* describes** — a blocking, printing poll, and say once that
+you are waiting.
+
+That reverses what this said when a launcher looped: idling was its job then, and finishing
+immediately was free because it would start you again. It is not free now. Finishing means writing
+`done`, `done` asks to be replaced, and the replacement would find the same empty queue and ask
+again — a fresh session every few seconds for as long as the queue stayed empty. A blocking poll
+costs one line of output a minute.
 
 **Read the plan with `bd show <id> --json`.** The pretty renderer mangles it.
 

@@ -485,7 +485,11 @@ the buffer and run `vterm-mode'."
     (let ((proc (get-buffer-process buffer)))
       (when proc (set-process-query-on-exit-flag proc t)))
     (when (eq (cerebro-agent-kind agent) 'implementer)
-      (message "%s started - it will claim the next planned bead"
+      ;; What was started, not what it will do: whether it claims straight away
+      ;; is the launcher's behaviour, and an older `scripts/run-implementer'
+      ;; still waits on the retired `.go' flag first.  Promising a claim here
+      ;; would make that look like a fault in the fleet view.
+      (message "%s started - watch its state in the list"
                (cerebro-agent-name agent)))
     buffer))
 

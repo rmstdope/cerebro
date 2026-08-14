@@ -43,8 +43,10 @@ the queue keeps filling. It will not guess on your behalf.
 
 ## Starting builders
 
-Builders are run from an **orchestrator**: one interactive session, in its own terminal, that starts
-and stops them for you.
+**You** start builders — one session each, from the Emacs fleet view (`s`) or a terminal. What runs
+alongside them is an **orchestrator**: one interactive session, in its own terminal, that watches the
+fleet, reports on it, and stops builders for you. It cannot start one, because starting one means
+starting a session and it has no way to do that.
 
 ```
 claude --agent orchestrator --name Cerebro --permission-mode auto

@@ -2,7 +2,7 @@
 #
 # Runs the user-feedback session, in a terminal of its own.
 #
-#     scripts/run-user-feedback
+#     .claude/cerebro/scripts/run-user-feedback
 #
 # One session, called Moira, and **interactive** — for the same reason `run-planner` is. An
 # implementer runs with `--print` so its run ends and a loop can own the cadence; Moira must be able
@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-# Any extra arguments go to `claude` ahead of the prompt, so `scripts/run-user-feedback --model ...`
+# Any extra arguments go to `claude` ahead of the prompt, so `.claude/cerebro/scripts/run-user-feedback --model ...`
 # works for a one-off without editing this file.
 exec claude \
   --agent user-feedback \

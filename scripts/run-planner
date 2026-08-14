@@ -2,7 +2,7 @@
 #
 # Runs the planner, in a terminal of its own.
 #
-#     scripts/run-planner
+#     .claude/cerebro/scripts/run-planner
 #
 # One session, called Xavier, and **interactive** — which is the whole difference between this and
 # `run-implementer`. An implementer runs with `--print` so its run ends and a loop can own the
@@ -21,7 +21,7 @@ set -euo pipefail
 # Fable at high effort, deliberately - matching the agent file, and naming both here too means a
 # terminal started from a different session still gets them.
 #
-# Any extra arguments go to `claude` ahead of the prompt, so `scripts/run-planner --model ...` works
+# Any extra arguments go to `claude` ahead of the prompt, so `.claude/cerebro/scripts/run-planner --model ...` works
 # for a one-off without editing this file.
 exec claude \
   --agent planner \

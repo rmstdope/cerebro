@@ -2,16 +2,18 @@
 #
 # Runs the orchestrator, in a terminal of its own.
 #
-#     scripts/run-orchestrator
+#     .claude/cerebro/scripts/run-orchestrator
 #
 # One session, called Cerebro, and interactive — like `run-planner` and unlike `run-implementer`.
 # There is no loop and no flag around it: Cerebro is the thing that *writes* the flags, and it takes
 # its instructions from the navigator sitting in front of it.
 #
 # It owns no work. It sweeps the worktrees and the claims, watches that a planner and at least two
-# implementers are up, reports what has shipped, and puts implementers to work by touching
-# `.claude/implementers/<name>.go`. It starts nothing itself — every session is a terminal the
-# navigator opens.
+# implementers are up, reports what has shipped, and takes an implementer down by touching
+# `.claude/implementers/<name>.stop`. It cannot put one to work: starting an implementer means
+# starting a session, and every session is a terminal the navigator opens or a name they press `s`
+# on in the fleet view. (There was a `.go` flag for that once. It is retired: a running implementer
+# is a working one.)
 #
 # The prompt below is the only injection, and it asks for the startup sequence in
 # `.claude/agents/orchestrator.md` rather than restating it: a second copy here would drift from the
@@ -24,7 +26,7 @@ set -euo pipefail
 # says the same; naming both here too means a terminal started from a different session still gets
 # them.
 #
-# `--model`/`--effort` come before "$@", so `scripts/run-orchestrator --model opus` still overrides
+# `--model`/`--effort` come before "$@", so `.claude/cerebro/scripts/run-orchestrator --model opus` still overrides
 # them for a one-off without editing this file.
 exec claude \
   --agent orchestrator \

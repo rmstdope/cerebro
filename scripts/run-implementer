@@ -6,8 +6,10 @@
 #     .claude/cerebro/scripts/run-implementer --roster    # the fifteen names, one per line
 #
 # The name must be an X-Man from the roster below, spelt exactly as it appears there. Anything else
-# exits 2 and prints the list. The roster is closed because Cerebro works from it: an implementer it
-# never looks for would hold a bead and open PRs unaccounted for.
+# exits 2: an unknown name prints the roster, and one that is merely miscased is told how it is
+# spelt instead, since the list is no help when you already picked the right mutant. The roster is
+# closed because Cerebro works from it: an implementer it never looks for would hold a bead and open
+# PRs unaccounted for.
 #
 # **This starts one interactive session and nothing else.** It does not loop, it reads no flags, and
 # it writes no files. That is a deliberate reversal of what it used to do, and the reasons are worth

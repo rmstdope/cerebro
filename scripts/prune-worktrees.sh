@@ -9,9 +9,9 @@
 # list` gets long enough that nobody reads it, and a `main` checked out in an abandoned tree makes
 # the next agent's `git checkout main` fail for no visible reason.
 #
-#     scripts/prune-worktrees.sh              # one sweep, then exit
-#     scripts/prune-worktrees.sh --dry-run    # say what would go, remove nothing
-#     scripts/prune-worktrees.sh --watch      # sweep every ten minutes until killed
+#     .claude/cerebro/scripts/prune-worktrees.sh              # one sweep, then exit
+#     .claude/cerebro/scripts/prune-worktrees.sh --dry-run    # say what would go, remove nothing
+#     .claude/cerebro/scripts/prune-worktrees.sh --watch      # sweep every ten minutes until killed
 #
 # ## What counts as safe
 #
@@ -45,20 +45,35 @@ for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=true ;;
     --watch) watch=true ;;
-    *) echo "usage: scripts/prune-worktrees.sh [--dry-run] [--watch]" >&2; exit 2 ;;
+    *) echo "usage: .claude/cerebro/scripts/prune-worktrees.sh [--dry-run] [--watch]" >&2; exit 2 ;;
   esac
 done
 
 # The main checkout, asked of git rather than derived from this file's own path. Run from a worktree
 # — which is where an agent usually is — `dirname $0/..` is that worktree, not the repository, so
-# every path comparison below would miss and the sweep would silently find nothing. `--git-common-dir`
-# answers the main `.git` from anywhere, and the repository is one level above it. This is the same
+# every path comparison below would miss and the sweep would silently find nothing. This is the same
 # mistake ah-vek fixed in `scripts/cargoTargetDir.test.ts`, which is how it was recognised here.
-git_common_dir="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || {
-  echo "prune-worktrees: not in a git repository" >&2
-  exit 1
-}
-repo_root="$(dirname "$git_common_dir")"
+#
+# Two questions, because this script now lives in a submodule. Asking `--git-common-dir` from here
+# answers the *submodule's* git directory, so the repository would come out as
+# `<consumer>/.git/modules/.claude` and the sweep would again find nothing — measured, not feared.
+# `--show-superproject-working-tree` answers the consumer's working tree from inside a submodule and
+# nothing at all outside one, which is exactly the distinction needed.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+superproject="$(git -C "$script_dir" rev-parse --show-superproject-working-tree 2>/dev/null || true)"
+if [[ -n "$superproject" ]]; then
+  repo_root="$superproject"
+else
+  # Not a submodule: cerebro checked out on its own, or vendored as a plain directory. Then the
+  # enclosing repository is the one to sweep, and `--git-common-dir` answers the main `.git` from
+  # anywhere, worktrees included, with the repository one level above it.
+  git_common_dir="$(git -C "$script_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || {
+    echo "prune-worktrees: not in a git repository" >&2
+    exit 1
+  }
+  repo_root="$(dirname "$git_common_dir")"
+fi
 
 # Whether everything in this worktree is already on main.
 #

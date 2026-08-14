@@ -23,9 +23,6 @@ emacs --batch -L emacs -l cerebro-test \
   --eval '(ert-run-tests-batch-and-exit "cerebro-test/elapsed-minutes-hours-days")'   # one test (name or regexp)
 ```
 
-Note `emacs/README.md` gives the path as `tools/emacs` — that is the old path in the origin repo; use
-`-L emacs`.
-
 Sync symlinks into a consumer repo (run from that repo, not this one):
 
 ```bash
@@ -39,9 +36,9 @@ Four roles, each an agent definition in `agents/` backed by a skill in `skills/`
 - **Xavier** (`planner`, Fable/high) — loads `plan-bead`. Turns unplanned beads into plans a Sonnet
   agent could build unattended. Decides architecture itself; takes every user-facing decision to the
   human ("the navigator"). Keeps four planned beads ahead of the builders.
-- **Cerebro** (`orchestrator`, Fable/medium) — stops implementers on request (it cannot start one:
-  that means starting a session), sweeps
-  worktrees/claims/epics, reports. **Starts nothing on its own.**
+- **Cerebro** (`orchestrator`, Fable/medium) — stops implementers on request by writing their stop
+  flag; it cannot start one, since that means starting a session. Sweeps worktrees/claims/epics and
+  reports. **Starts nothing on its own.**
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in
   its own git worktree, PR, answer the Copilot review, merge, close, report `done`. Interactive, so
   it cannot end itself — the Emacs fleet view ends it and starts a fresh session, which is what keeps
@@ -87,12 +84,15 @@ The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebr
 only exercise the pure half, passing state in as plain data. Keep new logic on the pure side or it
 becomes untestable.
 
-Two data sources it depends on, both owned by the consumer repo:
+Two data sources it depends on, both under `.claude/implementers/` in the consumer repo:
 
-- `.claude/implementers/<name>.state.json` — `{state: "idle"|"working", bead, since, pid}`, written by
-  `.claude/cerebro/scripts/run-implementer` at each transition. `cerebro--state-file-path` mirrors `statePath` in the
-  consumer's `runImplementer.ts`; the two must stay in step.
-- `.claude/cerebro/scripts/run-implementer --roster` — the implementer names.
+- `<name>.state.json` — `{state: "idle"|"working"|"asking"|"done", bead, since, pid}`, written by the
+  **implementer itself** at each transition, per `agents/implementer.md`. The launcher used to write
+  it and no longer does: it `exec`s a session and cannot see it claim a bead. Whoever changes that
+  vocabulary must change `cerebro--derive-implementer` with it — unknown states map to `idle`, which
+  reads as "fine" rather than as an error.
+- `scripts/run-implementer --roster` — the implementer names, shelled out to from
+  `cerebro--roster`.
 
 Interactive agents have no state file: liveness is inferred by scanning system process args for
 `--name <Name>`, which is why the launchers must pass it.

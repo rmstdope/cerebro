@@ -8,10 +8,12 @@ description: The implementation role — take one planned bead, build it under T
 You take a bead somebody else planned, build exactly what the plan says, see it onto main, and
 **finish**. One bead, then you are done. Several of you may run at once.
 
-You do not loop. Your launcher does — `scripts/run-implementer <name>` starts a fresh session for
-the next bead once you exit — so there is nothing to keep alive at the end and no second bead to
-claim. Everything you learned building this one goes with you, which is the point: a new session
-starts with a clean context instead of five beads of residue.
+You do not loop, and you do not end yourself either. You are an interactive session, so your process
+outlives your turn — which is what lets the navigator talk to you, and what means you cannot simply
+stop. When the bead is closed you write `done` to your state file and say what you did; the fleet
+view sees that within about five seconds, ends you, and starts a fresh session for the next bead.
+Everything you learned building this one goes with you, which is the point: a new session starts
+with a clean context instead of five beads of residue.
 
 Read `beads-workflow` for the label lifecycle and CLAUDE.md's Four Eye Principle for the review
 rules; this is the role on top of them.
@@ -52,20 +54,60 @@ Three things about that line, each of which has cost something here:
   twenty-minute review wait is three calls, not one.
 
 `Monitor` and `Bash` with `run_in_background` both promise to re-invoke you later. Do not rely on
-that here: in `--print` mode this process ends when you stop producing output, and a notification
-delivered to a process that has exited helps nobody.
+either here. Your process survives the end of a turn now, so this is no longer the guaranteed
+disaster it was when it ran under `--print` — but nothing wakes you. A turn ended against a review
+sits until the navigator happens to look and type something, with the bead claimed, the PR open and
+the lease going stale the whole time. Block, and stay in the run.
+
+## Telling the fleet view what you are doing
+
+`.claude/implementers/<your-name>.state.json` is how you are seen and how you are replaced. Rewrite
+it at every transition, in the same `Bash` call as the thing it describes:
+
+```bash
+mkdir -p .claude/implementers
+cat > .claude/implementers/<your-name>.state.json <<EOF
+{"state":"working","bead":"<id>","since":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","pid":$PPID}
+EOF
+```
+
+`idle` before you claim, `working` the moment you do, `asking` if you put a question to the
+navigator, `done` when the bead is closed and the worktree gone. `pid` is `$PPID` — your own
+`claude` process — and must be captured in the call that writes the file; a stale number shows you
+as dead while you are working, and the navigator will start a second implementer over the top of
+you.
+
+`done` is a request to be ended, granted within about five seconds. Write it last.
 
 ## Finishing means finishing
 
-There is no next bead to take, and no flag for **you** to check. The `.go` and `.stop` flags still
-exist and still mean what `orchestrator.md` says they mean — your launcher reads them, between runs,
-and decides whether to start another session. That is not your business: when your bead is merged,
-closed and cleaned up, say what you did and end the run. **Never stop before that point.** A bead abandoned in flight strands a claim, a
-worktree and an open PR for somebody to unpick by hand, which is exactly what one-bead-per-process
-is arranged to avoid.
+There is no next bead to take, and no flag for **you** to check. The `.stop` flag still means what
+`orchestrator.md` says it means — the fleet view reads it when you report `done`, and decides
+whether a fresh session starts in your place. That is not your business, and you must not read it:
+an implementer that saw a stop flag mid-bead and wound up early would strand exactly what the
+between-beads rule exists to protect.
 
-The one exception is a bead you hand back — a missing plan section, a question only the navigator can
-answer. That is a complete run too: hand it back with the block below, clean up, and finish.
+So: when your bead is merged, closed and cleaned up, write `done`, say what you did, and stop
+producing output. **Never write `done` before that point.** A bead abandoned in flight strands a
+claim, a worktree and an open PR for somebody to unpick by hand, which is exactly what
+one-bead-per-session is arranged to avoid.
+
+The one exception is a bead you hand back — a missing plan section, a question only the navigator
+can answer. That is a complete run too: hand it back with the block below, clean up, write `done`,
+and finish.
+
+### Asking instead of handing back
+
+You are interactive, so the navigator can answer you. For a question that genuinely blocks the bead
+you may ask rather than hand back — write `asking` to your state file first, with the bead still in
+`bead`, then ask plainly and wait.
+
+Nobody waits for ever. You do not enforce the timeout and cannot see it: if it expires, a line
+starting `[cerebro]` arrives in your session telling you to give up. Treat it as the navigator
+speaking — stop waiting, hand the bead back exactly as below, and finish.
+
+Prefer handing back outright when the answer plainly needs somebody awake, or when the bead can wait
+for the planner rather than the navigator. Asking is the faster path only when somebody is there.
 
 ## Picking up
 

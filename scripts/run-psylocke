@@ -19,6 +19,10 @@
 
 set -euo pipefail
 
+# Every bd call in this session acts as Psylocke, not as the machine's git identity, so her writes
+# (reopens, labels) belong in the audit trail as an agent's, not the navigator's.
+export BEADS_ACTOR="Psylocke"
+
 # Any extra arguments go to `claude` ahead of the prompt, so `.claude/cerebro/scripts/run-psylocke --model ...`
 # works for a one-off without editing this file.
 exec claude \

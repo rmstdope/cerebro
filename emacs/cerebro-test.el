@@ -345,9 +345,9 @@ found it, but this must not depend on that."
 
 (ert-deftest cerebro-test/entry-finishing-marker-only-for-in-flight-states ()
   "A stop flag can be written for an implementer in any state - nothing
-stops `f' from being pressed on a dead or idle one - but \"dead finishing\"
-or \"idle finishing\" would describe a bead that is not actually in flight
-for the flag to be waiting on."
+stops `f' from being pressed on a dead or idle one - but \"dead ■\" or
+\"idle ■\" would describe a bead that is not actually in flight for the flag
+to be waiting on."
   (let ((now (current-time)))
     (dolist (state '(dead idle done))
       (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer state))

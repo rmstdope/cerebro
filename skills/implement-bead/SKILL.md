@@ -82,11 +82,11 @@ hand.
 |---|---|
 | *Picking up*, the empty-queue poll | `.claude/cerebro/scripts/agent-state <name> idle --pid $PPID` |
 | *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
-| *Building*, before `pnpm check` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
+| *Building*, before `pnpm run check:fast` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
 | *The review*, after `gh pr edit --add-reviewer @copilot` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
 | *The review*, once every comment is answered and resolved | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
 | *Red CI* | stays `ci` |
-| *Merging*, on `BEHIND`: rebase → local gate → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase gate ...`, then `... --phase ci ...` |
+| *Merging*, on `BEHIND`: catch up on GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
 | *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` — merge covers retro, merge, close, cleanup |
 | *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
 | *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/agent-state <name> done --bead <id> --pid $PPID` |
@@ -400,21 +400,25 @@ collision fails loudly rather than serving you somebody else's bundle — but it
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID
 ```
 
-Write it once, before you run `pnpm check` for the first time — the gate is the longest local wait,
-behind the machine-wide lock, and three implementers all sitting in `gate` tells the navigator the
-lock is the bottleneck.
+Write it once, before you run `pnpm run check:fast` for the first time — `gate` is still the word for
+this step even though there is no machine-wide lock behind it any more.
 
-Follow the plan's increments in order, each opening with its named failing test. Run **`pnpm check`**
-before the PR rather than assembling the steps yourself: it orders them cheap-to-dear and, crucially,
-puts `build:web` between `test:smoke` and `test:pwa`, which is the difference between a passing PWA
-run and twenty minutes spent "fixing" a service worker that was never broken.
+Follow the plan's increments in order, each opening with its named failing test. Run
+**`pnpm run check:fast`** before opening the PR — lint, typecheck, the touched packages' unit tests,
+`cargo fmt --check`, `cargo clippy`. It is not the browser suites: `test:smoke`, `build:web` and
+`test:pwa` duplicate what CI's parallel jobs are about to run anyway, and CI is what actually gates
+the merge, so running them locally by default only bought "catch it before the reviewer sees it" at
+a cost — a few minutes, serialized, behind a machine-wide lock — that stopped being worth it once the
+fleet ran several implementers at once. Run the full **`pnpm run check`** by choice when you suspect a
+smoke or PWA regression; expect the lock in that case, same as before.
 
-The browser suites inside it take a **machine-wide lock**, so with a peer running its own gate yours
-waits — quietly, and possibly for minutes. That is the lock working, not a hang. Do not go looking
-for something to kill.
-
-`test:native` is **not** in `pnpm check` and needs a Linux runner, so its first CI failure is
-something to diagnose rather than something you could have caught locally.
+`test:native` is **not** in `pnpm run check:fast` or `pnpm run check` and needs a Linux runner, and
+now runs in CI only when the diff touches a native-shaped path (the Rust core, its Tauri wrappers,
+the desktop shell, `packages/core-client/`, `tests/native/`, `wdio.conf.ts`, a workflow file, or
+`package.json`/`pnpm-lock.yaml`/`Cargo.toml`/`Cargo.lock`). With no local browser or native run by
+default, a red `smoke`, `pwa` or `native` job in CI is the *first* sign of that class of regression
+rather than a surprise — read it as the gate doing its job, not as something that slipped past a
+check that used to catch it locally.
 
 ## When the plan is wrong
 
@@ -501,7 +505,9 @@ Three fix attempts. Diagnose, fix, push — and read the failure before believin
 identical connection errors is infrastructure, not a defect.
 
 A suspected flake gets the job re-run instead, capped at two re-runs, and only after you have
-reproduced it locally once. Without that cap, "it was a flake" is an unbounded loop that ends with a
+reproduced it locally once — reproducing locally means running that suite directly
+(`pnpm run test:smoke`, `pnpm run test:pwa`, `pnpm run test:native` for the specific spec), not the
+whole `pnpm run check`. Without that cap, "it was a flake" is an unbounded loop that ends with a
 genuinely broken timing test merged.
 
 On exhaustion, leave the PR open, escalate, move on.
@@ -509,19 +515,39 @@ On exhaustion, leave the PR open, escalate, move on.
 ## Merging
 
 Expect `BEHIND` on most merges: with several agents, a PR that sat through one review round has
-usually been overtaken. **Rebase, re-run the local gate, and wait for CI again.** It costs a full
-cycle each time and that is the accepted price — a green gate on a stale tree is evidence about a
-tree that will never exist, and two agents changing the same function compatibly is exactly what
-this catches.
+usually been overtaken. **Catch the branch up on GitHub, and wait for CI again — no local re-gate.**
+It costs a full CI cycle each time and that is the accepted price — a green run on a stale tree is
+evidence about a tree that will never exist, and two agents changing the same function compatibly is
+exactly what this catches.
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID
-# rebase
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID
-# local gate
+gh api -X PUT "repos/<owner>/<repo>/pulls/<n>/update-branch"
+until [ "$(gh pr view <n> --json mergeStateStatus -q .mergeStateStatus)" != "BEHIND" ]; do
+  sleep 10
+done
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
-# wait for CI again
+# wait for CI on the new head
 ```
+
+`update-branch` merges main into the branch server-side rather than rebasing — fine here because
+every PR is squash-merged, so the branch's own history never reaches main. It returns 202 and the
+merge commit appears a moment later, hence the poll before waiting on CI. **No local gate runs in
+this path**: CI on the new head is the re-gate, the same as it is on a fresh push.
+
+A **422** from `update-branch` means a real conflict, not a routine BEHIND — fall back to resolving it
+locally:
+
+```bash
+git fetch origin main && git rebase origin/main   # resolve conflicts
+git push --force-with-lease
+# back to --phase ci, and wait for CI
+```
+
+An update (or a resolved rebase) that brings in commits touching nothing the bead's own diff touches
+can still leave nothing new to test beyond what CI already ran — if the resulting diff against main
+is empty, close the PR unmerged rather than merging a no-op (the ah-u3i retrospective's note about an
+empty bump PR after a rebase applies here too).
 
 ```bash
 gh pr merge <n> --squash --delete-branch
@@ -599,7 +625,8 @@ into it.
 ## Traps this repository has already paid for
 
 - **The PWA suite after the smoke suite.** Smoke rebuilds `apps/web/dist` with the service worker
-  disabled, so `test:pwa` straight afterwards fails with page timeouts and no worker. `pnpm check`
+  disabled, so `test:pwa` straight afterwards fails with page timeouts and no worker. `pnpm run
+  check` (the full run, chosen when a smoke/PWA regression is suspected — `check:fast` skips both)
   orders `build:web` before `test:pwa` for exactly this reason. Rebuild; do not "fix" the worker.
 - **A leftover preview server.** Without `CI=1`, Playwright reuses an existing server — including
   your own dying one from the previous run — and tests the bundle it is serving. That produced a

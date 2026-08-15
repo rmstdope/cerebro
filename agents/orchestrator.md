@@ -157,9 +157,14 @@ touch .claude/agents-state/<name>.stop    # finish the current bead, then do not
 
 It is never read mid-bead, and that is deliberate: an implementer taken down in flight strands a
 claim, a worktree and an open PR. Nor is it read by the implementer itself — the supervisor reads it
-at the one moment an implementer reports `done`, which is the only moment at which nothing is in
-flight. Say so plainly when you report it: writing that flag does not stop anything now, it stops the
-*next* bead, which may be an hour of CI and review away.
+when an implementer reports `done`, or when it is `idle` (between beads, with nothing in flight),
+which are the only two moments at which nothing is stranded by ending it. An idle implementer is
+ended at once, within about five seconds of the poll picking the flag up — say so when you set a
+flag on one. A working or asking one still finishes its current bead first: writing that flag does
+not stop anything now, it stops the *next* bead, which may be an hour of CI and review away. There
+is a narrow race here worth knowing about: an implementer between beads writes `idle`, claims its
+next bead, and only then writes `working` — a flag that lands in that gap can end a session holding a
+fresh claim. That claim is not lost: Cerebro's claims sweep reclaims a lease nobody heartbeats.
 
 **Implementers are named after X-Men.** Take them from this list, in order, skipping any that is
 already running:
@@ -204,12 +209,14 @@ touch .claude/agents-state/<name>.stop    # finish the current bead, then do not
 ```
 
 **"Stop Storm" means `touch .claude/agents-state/Storm.stop`.** So do "take down Storm", "quit
-Storm", "shut Storm down", "pull Storm off", and the rest. There is no softer flag to reach for any
-more: an implementer cannot be left running-but-idle, because running is working.
+Storm", "shut Storm down", "pull Storm off", and the rest. If Storm is between beads (`idle`) this
+ends it within about one poll, with nothing to strand; otherwise it finishes the bead it is on first.
 
-Changed their mind before the bead finished? `rm` the flag and nothing happens — it is only read at
-the moment the implementer reports `done`, so deleting it before then cancels the instruction
-entirely. Say that when you set one, because it is the cheap way back.
+Changed their mind before the bead finished? `rm` the flag and nothing happens — it is only read
+when the implementer reports `done` or is `idle`, so deleting it before either cancels the
+instruction entirely. Say that when you set one, because it is the cheap way back. Once the
+implementer is idle, though, be quick: the poll runs every five seconds, and a flag left in place
+ends the session before you get to change your mind.
 
 Once it has taken effect the flag is removed automatically (ah-kgc): by the fleet view when the
 implementer retires under it, and by `s` when the navigator starts that name again — `s` tells the

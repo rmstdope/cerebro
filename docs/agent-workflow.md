@@ -101,11 +101,13 @@ once, and then do as it is told.
 
 ### What "take one down" means
 
-It means *finish*, not *stop now*. The orchestrator writes a stop flag; it is read at the one moment
-the implementer reports itself done — bead merged, closed, worktree gone — and no fresh session
-starts in its place. So a builder that has just claimed something will be a while yet. That is
-deliberate: killing one mid-bead leaves a claimed bead, a worktree and an open PR for you to unpick
-by hand.
+It means *finish*, not *stop now* — for a builder mid-bead. The orchestrator writes a stop flag; for
+one that has claimed something it is read when the implementer reports itself done — bead merged,
+closed, worktree gone — and no fresh session starts in its place. So a builder that has just claimed
+something will be a while yet. That is deliberate: killing one mid-bead leaves a claimed bead, a
+worktree and an open PR for you to unpick by hand. An **idle** builder — between beads, nothing
+claimed — is the one exception: it stops at once, since there is nothing in flight to finish, so
+there is nothing to strand by ending it now.
 
 The implementer never reads the flag itself, and cannot end itself either. It says it is done; the
 supervisor decides whether a replacement starts.

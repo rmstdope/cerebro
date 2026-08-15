@@ -1792,13 +1792,18 @@ the time this runs."
 (defun cerebro--clear-stop-flag (repo-root name)
   "Remove NAME's stop flag in REPO-ROOT, if any.
 
-`cerebro--supervise' runs from a timer with demoted errors, so a bare
-`delete-file' on a flag already gone would throw and be swallowed
-silently - this is the one place that deletes a stop flag, guarded so
-retire, restart and `s' can all call it without checking first."
-  (let ((path (cerebro--stop-flag-path repo-root name)))
-    (when (file-exists-p path)
-      (delete-file path))))
+A pre-check with `file-exists-p' would leave a race - the flag can vanish
+between the check and the `delete-file' (another Emacs, a shell `rm', a
+second caller), which raises `file-missing' right where the check was
+meant to prevent it.  Deleting unconditionally and catching that signal
+closes the race instead of narrowing its window.  This is the one place
+that deletes a stop flag, so retire, restart and `s' can all call it
+without checking first - and, since `cerebro--supervise' runs from a timer
+with demoted errors, an uncaught `file-missing' here would otherwise be
+swallowed silently rather than simply doing nothing."
+  (condition-case nil
+      (delete-file (cerebro--stop-flag-path repo-root name))
+    (file-missing nil)))
 
 (defun cerebro-finish ()
   "Tell the implementer at point to finish (`f'): write its stop flag.

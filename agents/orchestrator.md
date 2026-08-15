@@ -223,6 +223,12 @@ closed*.
 
 ## Keeping the worktrees tidy
 
+**The fleet view runs this sweep for you now** (`ah-4ao`), automatically, on every `M-x cerebro` and
+without asking: `prune-worktrees.sh --watch` starts alongside the fleet buffer and stops when it is
+killed. Nothing here needs a Cerebro session's judgement — the script's guards are the whole safety
+story — so this section is read for background, not run by hand, unless you are troubleshooting a
+worktree the watcher left behind.
+
 Implementers build in `.claude/worktrees/<bead>` and are told to remove the tree on the way out. They
 do not always get there — a crash, a kill, a bead somebody else merged — and the leftovers are not
 merely untidy: an abandoned tree holding `main` makes the next agent's `git checkout main` fail for
@@ -247,6 +253,14 @@ Report a sweep only when it did something, or when the navigator asks. A janitor
 found nothing, every ten minutes, is noise.
 
 ## Beads that finished without being closed
+
+**The fleet view now detects these candidates for you** (`ah-4ao`): `sweep-claims.sh` gathers the
+same facts this section describes, every ten minutes, and the Sweeps section of the bead panel shows
+each one as a line — `x` on it runs the exact `bd close` or `bd reclaim` shown, only after you
+confirm. The guards below are exactly what `cerebro--claim-finding` in `emacs/cerebro.el` enforces,
+pinned by its own ERT cases; this prose is the specification they were built from, not a duplicate
+process. What is left for a Cerebro session is the judgement the fleet view does not attempt: a claim
+whose work is not on main, which is not a sweep-close at all (see below).
 
 A worktree is not the only thing a dead implementer leaves behind. An implementer closes its bead in
 the seconds after the merge, so a crash anywhere in that gap leaves the work delivered and the bead
@@ -364,6 +378,11 @@ the navigator's call: say what you found and leave it alone.
 
 ## Epics left open under closed children
 
+**The fleet view now detects these too** (`ah-4ao`), the same way and on the same ten-minute timer as
+the claims sweep above: `sweep-epics.sh` finds every eligible epic, the Sweeps section shows it once
+it is stale enough, and `x` runs the `bd close` shown, on confirmation. `cerebro--epic-finding`
+enforces the ten-minute-since-last-child guard below; this prose is what it was built from.
+
 The third thing a sweep looks for, and the cheapest. An epic is nothing but its children: when the
 last one closes there is no work left under it, and the implementer that closed that child is meant
 to close the epic too (see `implement-bead`). It is the same seconds-wide gap as the claim above —
@@ -413,6 +432,14 @@ parent alone for as long as one child is genuinely open, reopened or not.
 
 ## Staying alive between questions
 
+**Retired by `ah-4ao`.** The fleet view (`emacs/cerebro.el`) now runs the worktree, claims and epics
+sweeps itself, on its own timers, whether or not a Cerebro session is open — see
+`docs/cerebro-jobs.md`. A background timer fork existed to buy exactly that continuity from a
+session that cannot otherwise run anything between the navigator's messages; a timer in Emacs needs
+no subagent holding a `sleep` to get the same cadence, so there is nothing left for this section to
+do. Left below for the reasoning it recorded — the same guards it describes are now pure functions
+in `emacs/cerebro.el` with their own ERT cases — but do not spawn this fork from a fresh session.
+
 You are not purely reactive. Between navigator questions, keep a background timer running so the
 sweeps this file already describes — worktrees, claims, and fleet health — happen without the
 navigator having to ask or to trigger one as a side effect of a status question.
@@ -435,8 +462,8 @@ then run the sweep itself:
    not the assignee name; see the correction under *Beads that finished without being closed*.
 3. `bd epic status --eligible-only --json` for epics left open under closed children — see *Epics
    left open under closed children*.
-4. `pgrep -fl "runImplementer.ts"` for who is actually running, and `bd ready --label planned
-   --exclude-label human --exclude-type epic` for the queue.
+4. The `.claude/implementers/*.state.json` files for who is actually running (see *Who is actually
+   running*), and `bd ready --label planned --exclude-label human --exclude-type epic` for the queue.
 
 Have the fork report back only what it found — `noop`-equivalent silence in the prompt itself
 ("report only if something changed") so a clean sweep doesn't generate a message. When its
@@ -465,9 +492,16 @@ You cannot set a flag for somebody who is not there — it just sits in the dire
 fleet by looking, never by remembering what you set:
 
 ```bash
-pgrep -fl "runImplementer.ts" | sed -n 's/.*runImplementer\.ts \([A-Za-z0-9_-]*\).*/\1/p' | sort -u
+for f in .claude/implementers/*.state.json; do
+  name="$(basename "$f" .state.json)"
+  jq -r --arg name "$name" '"\($name): \(.state) \(.bead // "")"' "$f"
+done
 claude agents --json | jq -r '.[] | select(.name=="Xavier") | "Xavier \(.status)"'
 ```
+
+(`runImplementer.ts` and its `pgrep` are gone — `scripts/runImplementer.ts` was deleted in
+atlantis-hud `8049f17`, and the closed roster now lives in `scripts/run-implementer` and each
+implementer's own `.claude/implementers/<name>.state.json`, which the fleet view already reads.)
 
 The first names every implementer whose session is up — the list to skip when you pick a new X-Man
 name for the navigator to start, and the list to choose from when you set a stop flag. The second

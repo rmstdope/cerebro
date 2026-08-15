@@ -5,7 +5,7 @@
 ;;; Commentary:
 
 ;; `M-x cerebro' opens a buffer listing every agent the fleet can have -
-;; Xavier, Cerebro, Moira, Psylocke and the fourteen implementers - each with
+;; Xavier, Cerebro, Moira, Psylocke, Bishop and the thirteen implementers - each with
 ;; a state glyph, role, state, and (for a working implementer) the bead it is
 ;; on and for how long.  It refreshes itself every 5 seconds.
 ;;
@@ -17,9 +17,9 @@
 ;;   - an implementer's status file, `.claude/implementers/<name>.state.json',
 ;;     written by the implementer itself at every state transition (see
 ;;     ah-vcf.1): { state: "idle"|"working", bead, since, pid }.
-;;   - the launcher's `--roster', the fourteen implementer names.
-;;   - the interactive four (Xavier, Cerebro, Moira, Psylocke) have no such
-;;     file; their liveness comes from scanning system processes for the
+;;   - the launcher's `--roster', the thirteen implementer names.
+;;   - the interactive five (Xavier, Cerebro, Moira, Psylocke, Bishop) have no
+;;     such file; their liveness comes from scanning system processes for the
 ;;     `--name <Name>' argument their launchers pass.
 
 ;;; Code:
@@ -66,8 +66,9 @@ whatever the frame has left.")
   '(("Xavier" . "planner")
     ("Cerebro" . "orchestrator")
     ("Moira" . "feedback")
-    ("Psylocke" . "verifier"))
-  "The four interactive agents, mirroring their launchers.")
+    ("Psylocke" . "verifier")
+    ("Bishop" . "architect"))
+  "The five interactive agents, mirroring their launchers.")
 
 ;;; The pure core
 
@@ -610,7 +611,8 @@ directory, which no longer has one.")
   '(("planner" . "run-planner")
     ("orchestrator" . "run-orchestrator")
     ("feedback" . "run-user-feedback")
-    ("verifier" . "run-psylocke"))
+    ("verifier" . "run-psylocke")
+    ("architect" . "run-bishop"))
   "Launcher script name for each interactive role.")
 
 (defun cerebro--launch-command (agent)
@@ -671,7 +673,7 @@ harder confirm), `external' (refuse - not ours to stop) or `dead'
 
 One of `write' (implementer, no flag yet - tell it to finish), `offer-clear'
 \(flag already set - ask before removing it, which is the cheap way back to
-\"actually, keep going\") or `not-implementer' (the four interactive roles
+\"actually, keep going\") or `not-implementer' (the five interactive roles
 have no bead to finish and no flag to write)."
   (cond
    ((not (eq (cerebro-agent-kind agent) 'implementer)) 'not-implementer)
@@ -784,7 +786,7 @@ sweep pipeline; the command itself carries no path, since it is run with
   "The roster, once read; buffer-local so a revert does not re-shell out.")
 
 (defun cerebro--roster (repo-root)
-  "The fourteen implementer names, via the launcher's --roster."
+  "The thirteen implementer names, via the launcher's --roster."
   (or cerebro--roster-cache
       (setq cerebro--roster-cache
             (cerebro--parse-roster

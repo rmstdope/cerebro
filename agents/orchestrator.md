@@ -166,7 +166,7 @@ already running:
 
 ```
 Cyclops · Storm · Wolverine · Rogue · Gambit · Nightcrawler · Colossus
-Iceman · Beast · Jubilee · Bishop · Phoenix · Mystique · Magneto
+Iceman · Beast · Jubilee · Phoenix · Mystique · Magneto
 ```
 
 **The list is a fence, not a suggestion.** `.claude/cerebro/scripts/run-implementer` refuses anything that is not on
@@ -177,8 +177,15 @@ and prints the roster.
 That is enforced because you work from this list. An off-roster implementer would hold a bead, open
 PRs and be invisible to every question asked about the fleet, since you would never look for it.
 
-Run out of names — which needs fourteen implementers at once and will not happen — and say so rather
-than inventing a fifteenth.
+Run out of names — which needs thirteen implementers at once and will not happen — and say so rather
+than inventing an extra one.
+
+**Bishop is not on this list.** Bishop is the architect — an interactive agent, like Xavier, Moira
+and Psylocke, that you neither start nor stop: it has no state file and no stop flag, and the
+navigator starts it directly with `run-bishop` whenever they want another sweep. A `Refactoring:`
+bead turning up in the backlog is one Bishop filed; nothing else about your sweeps below changes —
+Bishop claims nothing, so it never appears in the claims sweep, and it holds no bead, so it never
+appears in the epics sweep either.
 
 **Two or three on one machine is sensible; more is not faster.** The browser suites take a
 machine-wide lock and run one at a time, and every merge makes every other open PR stale, so each
@@ -307,7 +314,7 @@ lease, Moira claims nothing at all, and you claim nothing either. So `in_progres
 possibilities rather than four — which is what makes the lease check below decisive.
 
 **The assignee name now tells you who claimed a bead — but only for a claim made from a launched
-session.** Each launcher (`run-implementer` and the four role launchers, see ah-rnz) exports
+session.** Each launcher (`run-implementer` and the five role launchers, see ah-rnz) exports
 `BEADS_ACTOR=<agent name>` before starting its session, so a claim made from one is stamped with the
 roster name that made it: `assignee: Cyclops` means Cyclops's session claimed it, full stop.
 `assignee: Henrik Kurelid` (or any name off the roster) now specifically means a claim made by hand,

@@ -219,19 +219,31 @@ reading once the row has caught the eye (see ah-axj)."
 (defconst cerebro-roster-fixture
   (mapcar (lambda (n) (cons n nil))
           '("Cyclops" "Storm" "Wolverine" "Rogue" "Gambit" "Nightcrawler" "Colossus"
-            "Iceman" "Beast" "Jubilee" "Bishop" "Phoenix" "Mystique" "Magneto")))
+            "Iceman" "Beast" "Jubilee" "Phoenix" "Mystique" "Magneto")))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-7s7: Psylocke joins the interactive roster
 
 (ert-deftest cerebro-test/interactive-roster-has-psylocke ()
   (should (equal (assoc "Psylocke" cerebro-interactive-agents) '("Psylocke" . "verifier")))
-  (should (= (length cerebro-interactive-agents) 4)))
+  (should (= (length cerebro-interactive-agents) 5)))
 
 (ert-deftest cerebro-test/launch-command-verifier ()
   (should (equal (cerebro--launch-command
                    (cerebro-test--agent "Psylocke" "verifier" 'interactive 'dead))
                   ".claude/cerebro/scripts/run-psylocke")))
+
+;; ---------------------------------------------------------------------------
+;; ah-3bl: Bishop leaves the implementer roster and becomes the architect
+
+(ert-deftest cerebro-test/interactive-roster-has-bishop ()
+  (should (equal (assoc "Bishop" cerebro-interactive-agents) '("Bishop" . "architect")))
+  (should (equal (car (car (last cerebro-interactive-agents))) "Bishop")))
+
+(ert-deftest cerebro-test/launch-command-architect ()
+  (should (equal (cerebro--launch-command
+                   (cerebro-test--agent "Bishop" "architect" 'interactive 'dead))
+                  ".claude/cerebro/scripts/run-bishop")))
 
 ;; ---------------------------------------------------------------------------
 ;; Increment 4: roster parsing
@@ -1914,7 +1926,7 @@ the new `'unknown\=' bucket alongside a typo."
 
 (ert-deftest cerebro-test/entry-unknown-state-shows-the-raw-word ()
   (let* ((now (current-time))
-         (agent (make-cerebro-agent :name "Bishop" :role "implementer" :kind 'implementer
+         (agent (make-cerebro-agent :name "Phoenix" :role "implementer" :kind 'implementer
                                             :state 'unknown :raw "finishing-up"))
          (row (cadr (cerebro--entry agent now)))
          (glyph (aref row 0)))
@@ -1974,8 +1986,8 @@ as already running rather than launching a second session over them (the
                '("Storm"))
               'kill-working))
   (should (eq (cerebro--kill-action
-               (cerebro-test--agent "Bishop" "implementer" 'implementer 'unknown)
-               '("Bishop"))
+               (cerebro-test--agent "Phoenix" "implementer" 'implementer 'unknown)
+               '("Phoenix"))
               'kill))
   (should (eq (cerebro--kill-action
                (cerebro-test--agent "Gambit" "implementer" 'implementer 'dead)
@@ -1984,7 +1996,7 @@ as already running rather than launching a second session over them (the
 
 (ert-deftest cerebro-test/supervise-ignores-an-unknown-state ()
   (let* ((now (current-time))
-         (agent (cerebro-test--agent "Bishop" "implementer" 'implementer 'unknown)))
+         (agent (cerebro-test--agent "Phoenix" "implementer" 'implementer 'unknown)))
     (should (null (cerebro--supervise-action agent nil now)))
     (should (null (cerebro--supervise-action agent t now)))))
 

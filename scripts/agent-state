@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
 #
-# Writes an agent's state file: .claude/agents-state/<name>.state.json. Currently used by
-# implementers only (see agents/implementer.md, skills/implement-bead/SKILL.md), but named and
-# placed for every role - it exists so the two timestamps below are handled by code rather than
-# remembered by an agent an hour into a bead.
+# Writes an agent's state file: .claude/agents-state/<name>.state.json. Written by every agent in
+# the fleet - the thirteen implementers and, since ah-2n3.2, the five interactive roles (Xavier,
+# Cerebro, Moira, Psylocke, Bishop) - so cerebro.el derives a row the same way for all of them; it
+# exists so the two timestamps below are handled by code rather than remembered by an agent an hour
+# into a bead.
 #
 #     .claude/cerebro/scripts/agent-state <name> <state> [--bead <id>] [--phase <phase>] --pid <pid>
 #
 # <state> is one of: idle working asking done - the only field cerebro--supervise-action reads.
+# `done` is an implementer's state alone: an interactive agent has no bead to finish and is never
+# replaced between beads, so this script refuses `done` from one of the five interactive names.
 # <phase>, only meaningful with `working` or `asking`, is one of:
-#   build gate review ci rebase merge
+#   build gate review ci rebase merge          (an implementer)
+#   triage plan                                (Xavier)
+#   prepare verify                             (Psylocke)
+#   sweep                                      (Moira)
+#   sweep release                              (Cerebro)
+#   daily weekly                               (Bishop)
+# The vocabulary is not checked per-role - any of the words above is accepted from any name, the
+# same trade cerebro.el's `cerebro--phases` makes: a wrong word in the State column is not worth a
+# per-role table in bash.
 # --pid is required and is never defaulted from this script's own parentage: pass the caller's
-# $PPID (the claude process), not $$ (this script's own shell) - a guessed pid shows an implementer
+# $PPID (the claude process), not $$ (this script's own shell) - a guessed pid shows an agent
 # as dead and starts a second session over it.
 #
 # `since` is the time of the last change of state or bead (unchanged meaning from before this
@@ -24,8 +35,14 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The five interactive agents, mirroring `cerebro-interactive-agents` in emacs/cerebro.el and the
+# `--name` each of their launchers (scripts/run-planner, run-orchestrator, run-user-feedback,
+# run-psylocke, run-bishop) passes - three copies of the same list, and all three must agree, since
+# a bash script cannot read the Elisp one at runtime.
+INTERACTIVE=(Xavier Cerebro Moira Psylocke Bishop)
+
 usage() {
-  echo "usage: agent-state <name> <idle|working|asking|done> [--bead <id>] [--phase <build|gate|review|ci|rebase|merge>] --pid <pid>" >&2
+  echo "usage: agent-state <name> <idle|working|asking|done> [--bead <id>] [--phase <build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly>] --pid <pid>" >&2
   exit 2
 }
 
@@ -52,21 +69,35 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# The roster is closed, and it is the same one run-implementer enforces - an off-roster name is a
-# file the fleet view never reads. Captured to a variable first, not piped straight into `grep -q`:
-# `-q` closes its stdin the moment it sees a match, and a match on Cyclops (the roster's first line)
-# would SIGPIPE run-implementer's still-writing printf, which `pipefail` then reports as a failure.
+# The name is either on the roster or one of the five interactive agents - an off-roster,
+# non-interactive name is a file the fleet view never reads. Captured to a variable first, not
+# piped straight into `grep -q`: `-q` closes its stdin the moment it sees a match, and a match on
+# Cyclops (the roster's first line) would SIGPIPE run-implementer's still-writing printf, which
+# `pipefail` then reports as a failure.
 roster="$("$script_dir/run-implementer" --roster)"
+is_interactive=""
+for candidate in "${INTERACTIVE[@]}"; do
+  if [[ "$candidate" == "$name" ]]; then
+    is_interactive=1
+    break
+  fi
+done
 # Fixed-string, whole-line match: `grep -qx` alone treats NAME as a regex, so a crafted name like
 # ".*" could match any roster line rather than being rejected. `-F` disables that, and `--` stops a
 # name that starts with `-` being read as an option.
-if ! grep -qFx -- "$name" <<<"$roster"; then
-  echo "agent-state: $name is not on the roster" >&2
+if [[ -z "$is_interactive" ]] && ! grep -qFx -- "$name" <<<"$roster"; then
+  echo "agent-state: $name is neither on the roster nor an interactive agent" >&2
   exit 2
 fi
 
 case "$state" in
-  idle|working|asking|done) ;;
+  idle|working|asking) ;;
+  done)
+    if [[ -n "$is_interactive" ]]; then
+      echo "agent-state: done is an implementer's state; an interactive agent writes idle when it has nothing to do" >&2
+      exit 2
+    fi
+    ;;
   *)
     echo "agent-state: unknown state '$state' (idle|working|asking|done)" >&2
     exit 2 ;;
@@ -74,9 +105,9 @@ esac
 
 if [[ -n "$phase" ]]; then
   case "$phase" in
-    build|gate|review|ci|rebase|merge) ;;
+    build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly) ;;
     *)
-      echo "agent-state: unknown phase '$phase' (build|gate|review|ci|rebase|merge)" >&2
+      echo "agent-state: unknown phase '$phase' (build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly)" >&2
       exit 2 ;;
   esac
   # A phase is only meaningful with a bead in flight - writing one into an idle or done file would

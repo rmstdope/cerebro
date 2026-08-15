@@ -100,6 +100,72 @@
                     '("Xavier" "Cerebro" "Moira" "Cyclops" "Storm")))))
 
 ;; ---------------------------------------------------------------------------
+;; ah-2n3.2: the interactive five write the same state file an implementer does
+
+(ert-deftest cerebro-test/derive-interactive-reads-a-live-state-file ()
+  (let* ((states '(("Psylocke" . ((state . "asking") (bead . "ah-xyz")
+                                   (since . "2026-08-15T09:00:00Z")
+                                   (phase . "verify")
+                                   (phase_since . "2026-08-15T09:10:00Z")
+                                   (pid . 555)))))
+         (agents (cerebro--derive nil '(("Psylocke" . "verifier")) states
+                                          #'cerebro-test--always-alive nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-kind agent) 'interactive))
+    (should (eq (cerebro-agent-state agent) 'asking))
+    (should (equal (cerebro-agent-bead agent) "ah-xyz"))
+    (should (equal (cerebro-agent-phase agent) "verify"))
+    (should (equal (cerebro-agent-phase-since agent) "2026-08-15T09:10:00Z"))))
+
+(ert-deftest cerebro-test/derive-interactive-falls-back-to-the-process-scan ()
+  ;; A state file exists but its pid is gone - a previous session's leftover,
+  ;; same as an implementer's stale file. The row must fall back to the
+  ;; process scan rather than reading the dead file's state.
+  (let* ((states '(("Xavier" . ((state . "working") (bead . nil)
+                                 (since . "2026-08-14T09:00:00Z") (pid . 9999)))))
+         (args '("claude --agent planner --name Xavier --print"))
+         (agents (cerebro--derive nil cerebro-test--interactive states
+                                          #'cerebro-test--never-alive args nil))
+         (xavier (car agents)))
+    (should (eq (cerebro-agent-state xavier) 'up))
+    (should (cerebro-agent-external xavier))))
+
+(ert-deftest cerebro-test/derive-interactive-without-a-file-is-unchanged ()
+  ;; No entry for the name in STATES at all: the three original branches -
+  ;; owned, in the process args, or absent - are exercised exactly as before
+  ;; ah-2n3.2, by `cerebro-test/derive-interactive-up-from-process-args',
+  ;; `cerebro-test/derive-interactive-up-when-owned' and
+  ;; `cerebro-test/derive-interactive-dead-when-absent' above.  This test
+  ;; only pins the empty-states-alist case explicitly, since a caller who
+  ;; forgets to gather interactive states must not silently show `dead'.
+  (let* ((agents (cerebro--derive nil cerebro-test--interactive '(("Xavier" . nil))
+                                          #'cerebro-test--never-alive nil '("Xavier")))
+         (xavier (car agents)))
+    (should (eq (cerebro-agent-state xavier) 'up))
+    (should-not (cerebro-agent-external xavier))))
+
+(ert-deftest cerebro-test/derive-interactive-treats-done-as-unknown ()
+  ;; `scripts/agent-state' refuses `done' from an interactive name, so a live
+  ;; file carrying it anyway is a bug, not a finished bead - it must not be
+  ;; handed to `cerebro--supervise-action' as a `done' implementer would be.
+  (let* ((states '(("Bishop" . ((state . "done") (bead . nil)
+                                 (since . "2026-08-15T09:00:00Z") (pid . 777)))))
+         (agents (cerebro--derive nil '(("Bishop" . "architect")) states
+                                          #'cerebro-test--always-alive nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'unknown))
+    (should (equal (cerebro-agent-raw agent) "done"))))
+
+(ert-deftest cerebro-test/supervise-ignores-an-asking-interactive-agent ()
+  ;; The `kind' guard in `cerebro--supervise-action' must keep excluding
+  ;; interactive agents once they can write `asking' too - nudging, retiring
+  ;; or restarting one is not this function's business, ever.
+  (let ((agent (make-cerebro-agent :name "Psylocke" :role "verifier" :kind 'interactive
+                                           :state 'asking :bead "ah-xyz"
+                                           :since "2020-01-01T00:00:00Z" :external nil)))
+    (should (null (cerebro--supervise-action agent nil (current-time))))))
+
+;; ---------------------------------------------------------------------------
 ;; Increment 2: formatting
 
 (ert-deftest cerebro-test/entry-working-implementer-shows-bead-and-elapsed ()

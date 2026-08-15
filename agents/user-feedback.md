@@ -23,6 +23,20 @@ bd dolt pull
 gh issue list --state open --json number,title,body,author,createdAt,labels --limit 100
 ```
 
+### Telling the fleet view what you are doing
+
+`.claude/agents-state/Moira.state.json` is how the fleet view sees you, exactly as an implementer's
+file is (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never by hand:
+
+| Moment | Call |
+|---|---|
+| A pass starts | `.claude/cerebro/scripts/agent-state Moira working --phase sweep --pid $PPID` |
+| Every triage question — *A new issue* and *A closed issue with an open bead* | `.claude/cerebro/scripts/agent-state Moira asking --phase sweep --pid $PPID`, and `working --phase sweep` again the moment the answer is in |
+| Before *Sleeping without dying* | `.claude/cerebro/scripts/agent-state Moira idle --pid $PPID` |
+
+`--pid` is `$PPID` — your own `claude` process. You never write `done`: you are not replaced between
+passes, so `idle` is the state between one pass and the next.
+
 Take them **oldest first** — a reporter who has waited longest is served first. For each one:
 
 **Acknowledge it if it has never been acknowledged** (*First, every issue gets an acknowledgement*).
@@ -56,6 +70,12 @@ which were triaged, which status comments you posted, which issues you closed, a
 whose bead is still open — and sleep.
 
 ### Sleeping without dying
+
+```bash
+.claude/cerebro/scripts/agent-state Moira idle --pid $PPID
+```
+
+Write it once, before the loop below.
 
 Ten minutes, in two five-minute halves that print as they go. A single ten-minute silent `Bash` call
 sits on the harness's 600-second stalled-stream watchdog, and the tool's own timeout ceiling is
@@ -161,6 +181,12 @@ own reading of it.
 Present it: the number, the title, who raised it and when, and the body — summarised if it is long,
 but never so summarised that the navigator is deciding on your paraphrase alone. Then say what you
 would do and why, in a sentence, and ask.
+
+```bash
+.claude/cerebro/scripts/agent-state Moira asking --phase sweep --pid $PPID
+```
+
+Write it before you ask, and `working --phase sweep --pid $PPID` again the moment the answer is in.
 
 Four answers, and you carry out whichever comes back:
 
@@ -413,7 +439,11 @@ comment, and where the bead has got to — and offer the three answers:
 ```bash
 gh issue view <n> --json closedAt,stateReason,comments --jq \
   '{closedAt, stateReason, last: (.comments | last | {author: .author.login, body: .body})}'
+.claude/cerebro/scripts/agent-state Moira asking --phase sweep --pid $PPID
 ```
+
+Write the state-file line before you ask, and `working --phase sweep --pid $PPID` again the moment
+the answer is in.
 
 **1. Reopen the issue.** The work is real and still wanted; the close was wrong. Reopen it and say
 why in the same breath, so the reporter is not left wondering what happened:

@@ -26,6 +26,24 @@ One pass over what has merged, then sleep, then another. Each pass:
 bd dolt pull
 ```
 
+### Telling the fleet view what you are doing
+
+`.claude/agents-state/Psylocke.state.json` is how the fleet view sees you, exactly as an
+implementer's file is — see `ah-2n3.2`. Write it at every transition, through
+`.claude/cerebro/scripts/agent-state`, never by hand:
+
+| Moment | Call |
+|---|---|
+| A pass starts | `.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID` |
+| A candidate is selected to prepare | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase prepare --pid $PPID` |
+| *Asking whether they are ready*, and again at *Taking the verdict* — both wait on the navigator | `.claude/cerebro/scripts/agent-state Psylocke asking --bead <id> --phase verify --pid $PPID` |
+| Between those two — the app is running and the briefing is given | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
+| Before *Sleeping without dying* | `.claude/cerebro/scripts/agent-state Psylocke idle --pid $PPID` |
+
+`--pid` is `$PPID` — your own `claude` process — captured in the same call that writes the file.
+You never write `done`: unlike an implementer you are not replaced between passes, so `idle` is the
+state between one pass and the next.
+
 ### The work list
 
 Closed beads that either carry no `verification:*` label at all, or carry `verification:failed`:
@@ -148,7 +166,11 @@ you can ahead of the question:
 
 ### Asking whether they are ready
 
-Not "here is a bead" — a prepared session waiting on a yes, via the question tool. If the navigator is
+```bash
+.claude/cerebro/scripts/agent-state Psylocke asking --bead <id> --phase verify --pid $PPID
+```
+
+Write it before you ask. Not "here is a bead" — a prepared session waiting on a yes, via the question tool. If the navigator is
 away or says later, the bead simply stays `verification:pending` (set it the moment you select a
 candidate) and is **re-offered at most once per pass**. Nothing is blocked and no `human` label is
 added — pending waits, it does not escalate.
@@ -160,13 +182,23 @@ bd dolt push
 
 ### Briefing and launching
 
-On yes, first say the sha you are about to build: "verifying `<id>` at `origin/main` `<short sha>`,
-fetched `<time>`" — then say what is being verified, how to tell success from failure, which fixture
-report(s) to load and where they live, then start the app.
+```bash
+.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID
+```
+
+Write it the moment the answer is yes — the app is about to run and the question tool is no longer
+what you are waiting on. On yes, first say the sha you are about to build: "verifying `<id>` at
+`origin/main` `<short sha>`, fetched `<time>`" — then say what is being verified, how to tell
+success from failure, which fixture report(s) to load and where they live, then start the app.
 
 ### Taking the verdict
 
-Three answers, and you carry out whichever comes back:
+```bash
+.claude/cerebro/scripts/agent-state Psylocke asking --bead <id> --phase verify --pid $PPID
+```
+
+Write it before you ask for the verdict — you are waiting on the navigator again, same bead, same
+phase. Three answers, and you carry out whichever comes back:
 
 **1. Passed.**
 
@@ -240,6 +272,13 @@ gives the mockup PR.
 
 ## Sleeping without dying
 
+```bash
+.claude/cerebro/scripts/agent-state Psylocke idle --pid $PPID
+```
+
+Write it once, before the loop below — a pass that found nothing to prepare, or one whose last
+candidate was just resolved, leaves you with nothing in flight.
+
 Ten minutes, in two five-minute halves that print as they go — copied verbatim from `plan-bead`'s
 "Sleeping without dying", because the reasoning is the same: a single ten-minute silent `Bash` call
 sits on the harness's 600-second stalled-stream watchdog, and the tool's own timeout ceiling is
@@ -269,9 +308,9 @@ touching among what did. Say so in one line and move on; do not go looking for s
   `REOPENED` — from the beads you label.
 - **Never blocks a release on verification.** An unverified bead does not gate a release; Cerebro
   names what is unverified when cutting one and the navigator decides.
-- **Never has a state file.** Liveness for an interactive agent is inferred from `--name Psylocke` in
-  its process args, the same as Xavier, Cerebro and Moira. Nothing under `.claude/agents-state/`
-  belongs to you.
+- **Never writes `done`.** That state is an implementer's alone — you have no bead of your own to
+  finish and are never replaced between passes. `idle` is what you write when a pass ends with
+  nothing left to prepare.
 - **Never verifies outside `.claude/worktrees/psylocke`.** Not the navigator's shared checkout, not
   a one-off clone — the reset-before-every-use worktree is what makes the sha you say provable.
 - **Never reuses a server she did not start this pass.** Anything already listening on the port is a

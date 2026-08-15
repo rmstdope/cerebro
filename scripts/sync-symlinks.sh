@@ -18,6 +18,22 @@ if [[ ! -d "$CLAUDE_ROOT" ]]; then
   exit 1
 fi
 
+# A standalone clone of this repository (e.g. ~/repos/cerebro) climbs the same three levels and
+# can land on the user's own ~/.claude, which exists — so the check above is not enough on its
+# own. Require that SOURCE_ROOT (.claude/cerebro) actually sits inside the CLAUDE_ROOT it found,
+# which is only true when this script is running as a consumer's submodule.
+if [[ "$SOURCE_ROOT" != "$CLAUDE_ROOT"/* ]]; then
+  echo "sync-symlinks.sh: must run from a consumer repo's .claude/cerebro (found $SOURCE_ROOT)" >&2
+  exit 1
+fi
+
+# Every link this script writes is RELATIVE, so the same link is correct in the main checkout, in
+# every worktree and on every machine — an absolute link would point at one worktree's path and be
+# wrong (or dirty the tree) everywhere else (ah-cuc). REL_SOURCE is not relative to $CLAUDE_ROOT
+# itself: it is relative to where a link actually lives, one level below $CLAUDE_ROOT
+# ($CLAUDE_ROOT/skills/<name>, $CLAUDE_ROOT/agents/<name>) — hence the leading "../" and no more.
+REL_SOURCE="../${SOURCE_ROOT#"$CLAUDE_ROOT/"}"
+
 # Ensure target subdirectories exist.
 mkdir -p "$CLAUDE_ROOT/skills" "$CLAUDE_ROOT/agents"
 
@@ -69,7 +85,7 @@ sync_links() {
       exit 1
     fi
 
-    ln -sfn "$item_path" "$target"
+    ln -sfn "$REL_SOURCE/$(basename "$source_dir")/$item_name" "$target"
     updated=$((updated + 1))
   done
 

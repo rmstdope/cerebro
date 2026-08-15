@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Sync cerebro's skill and agent links when this checkout is a consumer's .claude/cerebro;
+# do nothing at all otherwise (a standalone clone of cerebro has nothing to link into).
+# Every launcher runs this immediately before `exec claude` (ah-cuc), so an agent or skill a
+# submodule bump brought in is linked before the session that needs it starts. Quiet on
+# success; sync-symlinks.sh's own stderr comes through on failure, and the non-zero exit
+# aborts the launch under the launcher's `set -e`.
+set -euo pipefail
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+parent="$(cd "$script_dir/../.." && pwd -P)"                  # .claude, in a consumer
+[[ "$(basename "$parent")" == ".claude" ]] || exit 0
+consumer="$(cd "$parent/.." && pwd -P)"
+# git resolves symlinks in --show-toplevel (e.g. macOS /tmp -> /private/tmp), so $consumer must be
+# physically resolved (-P) too, or a symlinked path (common under mktemp) never matches.
+[[ "$(git -C "$consumer" rev-parse --show-toplevel 2>/dev/null)" == "$consumer" ]] || exit 0
+exec "$script_dir/sync-symlinks.sh" >/dev/null

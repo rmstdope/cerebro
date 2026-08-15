@@ -33,6 +33,9 @@ export BEADS_ACTOR="Cerebro"
 #
 # `--model`/`--effort` come before "$@", so `.claude/cerebro/scripts/run-orchestrator --model opus` still overrides
 # them for a one-off without editing this file.
+# ah-cuc: link whatever a submodule bump brought in, so `claude --agent <role>` finds it.
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ensure-symlinks"
+
 exec claude \
   --agent orchestrator \
   --name Cerebro \

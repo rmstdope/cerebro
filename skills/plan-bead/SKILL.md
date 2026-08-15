@@ -215,7 +215,7 @@ Cerebro, Moira, Psylocke — have no state file and never count.
 
 ```bash
 n=0
-for f in $(ls .claude/implementers/*.state.json 2>/dev/null); do
+for f in $(find .claude/implementers -maxdepth 1 -name '*.state.json' 2>/dev/null); do
   name="$(basename "$f" .state.json)"
   [ -e ".claude/implementers/$name.stop" ] && continue
   pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"

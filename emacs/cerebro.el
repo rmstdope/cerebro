@@ -16,7 +16,8 @@
 ;; Data sources:
 ;;   - an implementer's status file, `.claude/implementers/<name>.state.json',
 ;;     written by the implementer itself at every state transition (see
-;;     ah-vcf.1): { state: "idle"|"working", bead, since, pid }.
+;;     ah-vcf.1 and ah-u3i): { state: "idle"|"working"|"asking"|"done", phase,
+;;     bead, since, phase_since, pid }.
 ;;   - the launcher's `--roster', the thirteen implementer names.
 ;;   - the interactive five (Xavier, Cerebro, Moira, Psylocke, Bishop) have no
 ;;     such file; their liveness comes from scanning system processes for the

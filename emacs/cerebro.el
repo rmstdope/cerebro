@@ -1092,19 +1092,29 @@ failure to explain. Returns (CODE . LAST-LINE)."
        (string-match "\\`exited abnormally with code \\([0-9]+\\)" event)
        (cons (match-string 1 event) last-line)))
 
+(defconst cerebro--exit-tail-chars 4000
+  "How far back from the end of a dying session's buffer to look for its
+last line. A session that ran a while can hold megabytes of scrollback;
+only the very end can possibly hold the line printed just before it died,
+so `cerebro--note-exit' never reads more than this many characters of it.")
+
 (defun cerebro--note-exit (buffer event)
   "Record BUFFER's last line in `cerebro--last-exit' when EVENT is abnormal.
 
 The impure counterpart to `cerebro--exit-record' and
-`cerebro--last-nonblank-line': reads BUFFER's text, matches it against a
-session-buffer name to find the agent, and updates the global alist and the
-echo area. BUFFER can be nil - vterm's sentinel passes it after the buffer
-itself has already been killed (`k', retire, restart) - and any buffer whose
-name is not a session-buffer name is left alone."
+`cerebro--last-nonblank-line': reads the last `cerebro--exit-tail-chars' of
+BUFFER's text (never the whole buffer - see there), matches BUFFER's name
+against a session-buffer name to find the agent, and updates the global
+alist and the echo area. BUFFER can be nil - vterm's sentinel passes it
+after the buffer itself has already been killed (`k', retire, restart) -
+and any buffer whose name is not a session-buffer name is left alone."
   (let ((name (and (buffer-live-p buffer)
                     (cerebro--owned-buffer-agent-name (buffer-name buffer)))))
     (when name
-      (let* ((text (with-current-buffer buffer (buffer-substring-no-properties (point-min) (point-max))))
+      (let* ((text (with-current-buffer buffer
+                      (buffer-substring-no-properties
+                       (max (point-min) (- (point-max) cerebro--exit-tail-chars))
+                       (point-max))))
              (record (cerebro--exit-record event (cerebro--last-nonblank-line text))))
         (when record
           (setf (alist-get name cerebro--last-exit nil nil #'equal) (cdr record))

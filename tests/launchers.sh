@@ -173,8 +173,17 @@ echo "$out" | grep -q '^ARG:--agent$' \
 pass "a blocked sync aborts the launch before the stub is reached"
 
 # --- claude missing: the launcher refuses with one line naming it, never exec's (ah-bri) ---
+# A PATH of only `dirname` - the one external command a launcher needs before it even
+# reaches launch-preflight's own `claude` check - so this cannot pass on a machine that
+# happens to have `claude` installed under /usr/bin or /bin.
+no_claude_dir="$(mktemp -d)"
+trap 'rm -rf "$stub_dir" "$consumer_dir" "$no_claude_dir"' EXIT
+ln -s "$(command -v dirname)" "$no_claude_dir/dirname"
+# launch-preflight is exec'd directly (its own `#!/usr/bin/env bash' shebang), so `env'
+# needs to find `bash' under this PATH too, not only the shell invoking run-bishop below.
+ln -s "$(command -v bash)" "$no_claude_dir/bash"
 set +e
-out="$(PATH=/usr/bin:/bin bash "$repo_root/scripts/run-bishop" 2>&1)"
+out="$(PATH="$no_claude_dir" "$(command -v bash)" "$repo_root/scripts/run-bishop" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "run-bishop (claude missing): expected exit 2, got $status"
@@ -184,7 +193,7 @@ pass "run-bishop refuses with one line when claude is not on PATH"
 
 # --- submodule behind: the role's agent file never arrived, refused before any sync (ah-bri) ---
 consumer_dir2="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$consumer_dir" "$consumer_dir2"' EXIT
+trap 'rm -rf "$stub_dir" "$no_claude_dir" "$consumer_dir" "$consumer_dir2"' EXIT
 git init -q "$consumer_dir2"
 mkdir -p "$consumer_dir2/.claude"
 cp -R "$repo_root" "$consumer_dir2/.claude/cerebro"

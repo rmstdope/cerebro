@@ -12,8 +12,11 @@
 #   <role>  the --agent value the launcher is about to pass claude (architect, planner, ...)
 #   <name>  the display name for messages (Bishop, Cyclops, ...)
 #
-# Every failure exits 2 with one line on stderr naming what is wrong and the command
-# that fixes it - the same exit code run-implementer already uses for a usage error.
+# Every check this script owns - claude on PATH, the submodule carrying the role's agent
+# file - exits 2 with one line on stderr naming what is wrong and the command that fixes
+# it, the same exit code run-implementer already uses for a usage error. The sync it runs
+# afterwards is not one of those checks: a sync failure is sync-symlinks.sh's own to
+# report, so its exit status and stderr come through unchanged, whatever they are.
 set -euo pipefail
 
 role="${1:-}"

@@ -7,6 +7,8 @@ set -euo pipefail
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# --show-toplevel here, not scripts/consumer-root: a git hook runs with cwd already inside the
+# tree it fires in, so the enclosing tree IS --show-toplevel by definition (ah-e0w).
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "$REPO_ROOT" ]]; then
   echo "Not inside a git repository" >&2

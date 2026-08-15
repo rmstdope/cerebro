@@ -47,20 +47,15 @@ if [[ "${1:-}" != "--json" ]]; then
   exit 2
 fi
 
-# See prune-worktrees.sh for why this is two questions rather than one: asked from inside a
-# submodule, `--git-common-dir` answers the submodule's own git directory, not the consumer's.
+# The shared checkout every worktree of the repository has in common — see
+# scripts/consumer-root's header for the two roots and why a sweep needs the shared one, never the
+# enclosing tree a bead worktree's own submodule copy would otherwise answer.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-superproject="$(git -C "$script_dir" rev-parse --show-superproject-working-tree 2>/dev/null || true)"
-if [[ -n "$superproject" ]]; then
-  repo_root="$superproject"
-else
-  git_common_dir="$(git -C "$script_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || {
-    echo '{"error": "not in a git repository"}'
-    exit 1
-  }
-  repo_root="$(dirname "$git_common_dir")"
-fi
+repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
+  echo '{"error": "not in a git repository"}'
+  exit 1
+}
 
 if ! git -C "$repo_root" fetch --quiet origin main 2>/dev/null; then
   echo '{"error": "could not reach origin; refusing to guess whether a claim landed"}'

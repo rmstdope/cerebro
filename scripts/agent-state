@@ -129,11 +129,10 @@ if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-# The consumer root: .claude/cerebro/scripts is a load-bearing location (cerebro CLAUDE.md,
-# Gotchas), so it is derived the same way scripts/sync-symlinks.sh does it - never
-# `git rev-parse --show-toplevel`, which from a bead worktree is the worktree, not the shared
-# checkout.
-repo_root="$(cd "$script_dir/../../.." && pwd)"
+# The shared checkout every worktree of the repository has in common - never the enclosing tree,
+# which from a bead worktree's own submodule copy is the worktree itself, not the main checkout
+# the fleet view reads (ah-e0w). See scripts/consumer-root for the two roots and why they differ.
+repo_root="$("$script_dir/consumer-root" --shared)"
 out_dir="$repo_root/.claude/agents-state"
 mkdir -p "$out_dir"
 out_file="$out_dir/$name.state.json"

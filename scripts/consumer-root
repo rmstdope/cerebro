@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# The consumer repository root this copy of cerebro serves. Two answers, on purpose:
+#
+#   consumer-root            the enclosing working tree - the main checkout, or a bead worktree
+#                            when this copy is the worktree's own submodule. Right for anything
+#                            that acts on THIS tree: its symlinks, its agent files, its hooks.
+#   consumer-root --shared   the main working tree every worktree of the repository shares -
+#                            where the fleet view reads state files and stop flags and where the
+#                            sweeps look. Right for anything the fleet reads or that reasons about
+#                            the whole repository. From the main checkout both answers are equal.
+#
+# Exit 1 with a message when this checkout is not mounted at <consumer>/.claude/cerebro (a
+# standalone clone of cerebro has no consumer), or when --shared is asked outside a git tree.
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+enclosing="$(cd "$script_dir/../../.." 2>/dev/null && pwd -P)" || enclosing=""
+if [[ -z "$enclosing" || "$(cd "$enclosing/.claude/cerebro" 2>/dev/null && pwd -P)" != "$(cd "$script_dir/.." && pwd -P)" ]]; then
+  echo "consumer-root: $script_dir is not <consumer>/.claude/cerebro/scripts" >&2
+  exit 1
+fi
+case "${1:-}" in
+  "") printf '%s\n' "$enclosing" ;;
+  --shared)
+    # Asked from the consumer tree, never from inside the submodule: from here --git-common-dir
+    # would name the submodule's own git directory. From a linked worktree it names the main
+    # repository's .git, whose parent is the shared working tree.
+    common="$(git -C "$enclosing" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+      || { echo "consumer-root: $enclosing is not inside a git working tree" >&2; exit 1; }
+    printf '%s\n' "$(cd "$(dirname "$common")" && pwd -P)" ;;
+  *) echo "usage: consumer-root [--shared]" >&2; exit 2 ;;
+esac

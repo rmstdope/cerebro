@@ -36,6 +36,8 @@ cerebro_dir="$consumer/.claude/cerebro"
 mkdir -p "$cerebro_dir/scripts" "$cerebro_dir/skills/demo" "$cerebro_dir/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$cerebro_dir/scripts/sync-symlinks.sh"
 chmod +x "$cerebro_dir/scripts/sync-symlinks.sh"
+cp "$repo_root/scripts/consumer-root" "$cerebro_dir/scripts/consumer-root"
+chmod +x "$cerebro_dir/scripts/consumer-root"
 cat > "$cerebro_dir/skills/demo/SKILL.md" <<'EOF'
 # Demo skill
 EOF
@@ -77,6 +79,8 @@ outside="$work_dir/x/cerebro/scripts"
 mkdir -p "$outside" "$work_dir/.claude"   # a sibling .claude that must NOT be mistaken for a consumer's
 cp "$repo_root/scripts/sync-symlinks.sh" "$outside/sync-symlinks.sh"
 chmod +x "$outside/sync-symlinks.sh"
+cp "$repo_root/scripts/consumer-root" "$outside/consumer-root"
+chmod +x "$outside/consumer-root"
 
 set +e
 out="$("$outside/sync-symlinks.sh" 2>&1)"

@@ -140,11 +140,19 @@ when it does not — a session started by hand, outside this fleet, has no file 
 
 ## Gotchas
 
-- `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo, one directory level
-  above this submodule. Both resolve their paths from `${BASH_SOURCE[0]}`, so `.claude/cerebro/scripts`
-  and `.claude/cerebro/githooks` are load-bearing locations — moving either breaks the `../../..`
-  climb to the consumer root. To test a change, build a throwaway consumer repo rather than running
+- `scripts/consumer-root` is the one place "where is the consumer root" is answered (ah-e0w). Every
+  other script that needs it asks this one rather than deriving it itself — `consumer-root` (no
+  argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the
+  worktree's own submodule) and `consumer-root --shared` for the main working tree every worktree of
+  the repository shares, which is where the fleet view reads state files and where the sweeps look.
+  Both climb from `${BASH_SOURCE[0]}`, so `.claude/cerebro/scripts` stays a load-bearing location —
+  moving it breaks the climb. To test a change, build a throwaway consumer repo rather than running
   the script here (it will refuse: there is no `.claude/` above this tree).
+- `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
+  asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a
+  submodule-bump PR commit them (ah-cuc). The two git hooks ask git directly (`--show-toplevel`)
+  rather than `consumer-root`: a hook's cwd is already inside the tree it fires in, so the enclosing
+  tree is `--show-toplevel` by definition.
 - `githooks/install.sh` sets `core.hooksPath`, which is repository-wide and replaces `.git/hooks`
   entirely. It refuses rather than clobbering a `core.hooksPath` already pointing elsewhere.
 - `scripts/launch-preflight <role> <name>` runs before every launch. It refuses (exit 2, one line on

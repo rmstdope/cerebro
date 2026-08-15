@@ -11,6 +11,8 @@ OLD_REF="${1:-}"
 NEW_REF="${2:-}"
 SUBMODULE_PATH=".claude/cerebro"
 
+# --show-toplevel here, not scripts/consumer-root: a git hook runs with cwd already inside the
+# tree it fires in, so the enclosing tree IS --show-toplevel by definition (ah-e0w).
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [[ -n "$REPO_ROOT" ]] || exit 0
 cd "$REPO_ROOT"

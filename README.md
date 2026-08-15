@@ -68,6 +68,9 @@ Run from the consumer repository root:
 .claude/cerebro/scripts/sync-symlinks.sh
 ```
 
+It syncs the *enclosing* tree — run from a bead worktree's own submodule copy, it links that
+worktree's `.claude`, not the main checkout's (see `scripts/consumer-root`).
+
 What it does:
 
 - Verifies `../../.claude/` exists (relative to the script location) to confirm the script is being run in a consumer repository root, and exits with an error if it is missing.

@@ -1536,6 +1536,17 @@ to `bd', so an orphaned loop is more than idle load."
     (cancel-timer cerebro--timer)
     (setq cerebro--timer nil)))
 
+(defun cerebro--sync-list-windows ()
+  "Give every window showing the current buffer the buffer's own point.
+
+`tabulated-list-print' restores the buffer's point by id, but a window
+whose buffer is not selected keeps its own point - the timer almost
+always renders from the detail or beads window, so without this the
+list window's selection walks to the top on every refresh.  Mirrors the
+`set-window-point' loop in `cerebro--beads-render'."
+  (dolist (window (get-buffer-window-list (current-buffer) nil t))
+    (set-window-point window (point))))
+
 (defun cerebro--tick (buffer)
   "Refresh BUFFER if it is still alive; called every 5s while it lives.
 
@@ -1544,6 +1555,7 @@ derived, so it never decides from a state file read five seconds ago."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (revert-buffer)
+      (cerebro--sync-list-windows)
       (cerebro--supervise cerebro--agents (cerebro--repo-root) (current-time)))))
 
 (defun cerebro--follow ()

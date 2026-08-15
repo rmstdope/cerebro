@@ -32,7 +32,7 @@ new_fixture() {
   local tmp
   tmp="$(mktemp -d)"
   git init -q "$tmp"
-  git -C "$tmp" commit -q --allow-empty -m init
+  git -C "$tmp" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
   mkdir -p "$tmp/.claude/cerebro/scripts"
   ln -s "$repo_root/scripts/run-implementer" "$tmp/.claude/cerebro/scripts/run-implementer"
   ln -s "$repo_root/scripts/agent-state" "$tmp/.claude/cerebro/scripts/agent-state"

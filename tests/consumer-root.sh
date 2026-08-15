@@ -29,7 +29,7 @@ trap 'rm -rf "$work_dir"' EXIT
 consumer="$work_dir/repo"
 mkdir -p "$consumer/.claude/cerebro/scripts"
 git init -q "$consumer"
-git -C "$consumer" commit -q --allow-empty -m init
+git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
 ln -s "$repo_root/scripts/consumer-root" "$consumer/.claude/cerebro/scripts/consumer-root"
 
 plain_out="$("$consumer/.claude/cerebro/scripts/consumer-root")"

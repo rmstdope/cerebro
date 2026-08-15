@@ -141,13 +141,19 @@ Interactive agents have no state file: liveness is inferred by scanning system p
   the script here (it will refuse: there is no `.claude/` above this tree).
 - `githooks/install.sh` sets `core.hooksPath`, which is repository-wide and replaces `.git/hooks`
   entirely. It refuses rather than clobbering a `core.hooksPath` already pointing elsewhere.
+- `scripts/ensure-symlinks` is consumer-only, same as `sync-symlinks.sh` — it exits 0 without doing
+  anything unless it is sitting inside a consumer's `.claude/cerebro`. Every launcher calls it right
+  before `exec claude`, so a submodule bump is usable the moment something is started rather than
+  only after someone runs `sync-symlinks.sh` by hand (ah-cuc); this is what the git hooks in
+  `githooks/` would otherwise be for, and why they stay optional.
 - **`.claude/cerebro/scripts/` is a hard-coded path in two places that must agree**:
   `cerebro--script-directory` in `cerebro.el`, and every doc that tells someone what to type. The
   launchers themselves take no view — they are `exec claude …` and work from anywhere — so a wrong
   path here fails at `s` in the fleet view, not at the script.
 - The launchers start **one interactive session** each. Nothing loops, nothing polls a flag, nothing
   writes a state file: the agent writes its own state, and `cerebro--supervise` owns the cadence.
-  Adding a loop back to a launcher would put two supervisors on one session.
+  Adding a loop back to a launcher would put two supervisors on one session. The one file a launcher
+  does touch is the symlinks, via `scripts/ensure-symlinks`, right before it execs — see above.
 - Emacs backup files (`*.el~`, `*.md~`, `*.sh~`) are committed alongside the originals; ignore them
   and never edit them.
 - The state directory was `.claude/implementers/` until ah-2n3.1, and its writer was

@@ -12,8 +12,10 @@
 # PRs unaccounted for.
 #
 # **This starts one interactive session and nothing else.** It does not loop, it reads no flags, and
-# it writes no files. That is a deliberate reversal of what it used to do, and the reasons are worth
-# knowing:
+# it writes no files — the one exception is the skill and agent symlinks under .claude/, which
+# scripts/ensure-symlinks re-syncs right before exec, so a submodule bump is usable the moment
+# something is started rather than only after someone runs sync-symlinks.sh by hand (ah-cuc). That
+# is a deliberate reversal of what it used to do, and the reasons are worth knowing:
 #
 #   - It ran `claude --print`, which ends when the session stops producing output, and looped around
 #     that: one process per bead, relaunched while a `.go` flag was set. It bought "one bead per
@@ -88,6 +90,9 @@ fi
 # Distinct actors are what make a second claim on a held bead fail instead of aliasing into the
 # first (bd's --actor default chain: $BEADS_ACTOR, git user.name, $USER).
 export BEADS_ACTOR="$on_roster"
+
+# ah-cuc: link whatever a submodule bump brought in, so `claude --agent <role>` finds it.
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ensure-symlinks"
 
 exec claude \
   --agent implementer \

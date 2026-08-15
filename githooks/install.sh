@@ -21,6 +21,7 @@ HOOKS_PATH="${HOOK_DIR#"$REPO_ROOT"/}"
 if [[ -n "$EXISTING" && "$EXISTING" != "$HOOKS_PATH" ]]; then
   echo "core.hooksPath is already set to '$EXISTING'." >&2
   echo "Setting it to '$HOOKS_PATH' would disable those hooks. Merge them by hand instead." >&2
+  echo "Or skip the hooks: every launcher syncs the links itself before it starts a session (scripts/ensure-symlinks)." >&2
   exit 1
 fi
 

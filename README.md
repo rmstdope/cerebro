@@ -31,7 +31,10 @@ Each agent is started by a script of its own, run from the consumer repository r
 ```
 
 All of them start **one interactive `claude` session** and nothing else — no loop, no flags, no
-files. That last point is a reversal worth knowing if you have used an older version: the
+files of their own, other than re-syncing the skill and agent symlinks (`scripts/ensure-symlinks`)
+right before they exec, so a bumped submodule is usable the moment something is started rather than
+only after someone runs `sync-symlinks.sh` by hand (ah-cuc). That last point is a reversal worth
+knowing if you have used an older version: the
 implementer launcher used to run `claude --print` in a loop, one process per bead, for as long as a
 `.go` flag was set. That bought "one bead per session" for free and cost the ability to talk to an
 implementer at all.
@@ -46,6 +49,9 @@ that read it: a running implementer is a working one.
 you like (`--dry-run` first).
 
 ## Sync Script (Skills and Agents)
+
+You do not normally run this by hand: every launcher runs it before starting a session, so a bumped
+agent or skill is linked the first time something is started (ah-cuc).
 
 Claude code customization discovery expects direct entries under:
 
@@ -65,7 +71,7 @@ What it does:
 - Verifies `../../.claude/` exists (relative to the script location) to confirm the script is being run in a consumer repository root, and exits with an error if it is missing.
 - Creates `../../.claude/skills/` and `../../.claude/agents/` if they do not exist.
 - Scans `.claude/cerebro/skills/*` for folders that contain `SKILL.md`.
-- Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/plan-bead -> .claude/cerebro/skills/plan-bead`).
+- Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/plan-bead -> ../cerebro/skills/plan-bead`), relative rather than absolute, so the same link is correct in the main checkout, in every worktree and on every machine.
 - Scans `.claude/cerebro/agents/*.md` and creates/updates symlinks in `.claude/agents/`.
 - Removes the old aggregate symlink `.claude/skills/cerebro` if present.
 
@@ -95,5 +101,8 @@ Both hooks are silent when the gitlink did not move.
 **`core.hooksPath` is repository-wide**: it replaces `.git/hooks` rather than adding to it, so any hooks
 already there stop running. The installer refuses to overwrite a `core.hooksPath` that points somewhere
 else, and warns if `.git/hooks` holds non-sample hooks — in either case, merge them by hand instead.
+`githooks/` is optional and refused where `core.hooksPath` is already taken (as it is by beads in
+atlantis-hud) — that is fine, since every launcher syncs the links itself before starting a session
+regardless of whether the hooks are installed.
 
 The script uses fixed locations relative to itself and does not support source/destination override variables.

@@ -25,6 +25,9 @@ export BEADS_ACTOR="Psylocke"
 
 # Any extra arguments go to `claude` ahead of the prompt, so `.claude/cerebro/scripts/run-psylocke --model ...`
 # works for a one-off without editing this file.
+# ah-cuc: link whatever a submodule bump brought in, so `claude --agent <role>` finds it.
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ensure-symlinks"
+
 exec claude \
   --agent verifier \
   --name Psylocke \

@@ -42,6 +42,16 @@ run_launcher() {
   PATH="$stub_dir:$PATH" bash "$repo_root/scripts/$1" "${@:2}"
 }
 
+run_launcher_at() {
+  # Like run_launcher, but against a launcher living at an arbitrary scripts directory — used to
+  # prove a launcher syncs the symlinks of the consumer repo it is actually running from, not this
+  # checkout (ah-cuc).
+  local scripts_dir="$1"
+  local name="$2"
+  shift 2
+  PATH="$stub_dir:$PATH" bash "$scripts_dir/$name" "$@"
+}
+
 # --- run-implementer Cyclops: exports BEADS_ACTOR=Cyclops before exec'ing claude ---
 out="$(run_launcher run-implementer Cyclops)"
 echo "$out" | grep -q '^BEADS_ACTOR=Cyclops$' \
@@ -128,5 +138,38 @@ grep -qx 'model: fable' "$repo_root/agents/architect.md" \
 grep -qx 'effort: xhigh' "$repo_root/agents/architect.md" \
   || fail "agents/architect.md: expected a line 'effort: xhigh'"
 pass "agents/architect.md exists with model: fable and effort: xhigh"
+
+# --- a launcher syncs the consumer repo's links before starting a session (ah-cuc) ---
+consumer_dir="$(mktemp -d)"
+trap 'rm -rf "$stub_dir" "$consumer_dir"' EXIT
+git init -q "$consumer_dir"
+mkdir -p "$consumer_dir/.claude"
+cp -R "$repo_root" "$consumer_dir/.claude/cerebro"
+rm -rf "$consumer_dir/.claude/cerebro/.git"
+
+out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" run-bishop)"
+echo "$out" | grep -q '^ARG:--agent$' || fail "run-bishop (consumer): stub was not reached: $out"
+[[ -L "$consumer_dir/.claude/agents/architect.md" ]] \
+  || fail "run-bishop (consumer): expected .claude/agents/architect.md to be linked"
+[[ "$(readlink "$consumer_dir/.claude/agents/architect.md")" == "../cerebro/agents/architect.md" ]] \
+  || fail "run-bishop (consumer): expected a relative link to ../cerebro/agents/architect.md"
+pass "run-bishop links the consumer's agents before starting the session"
+
+# --- a sync failure aborts the launch: the stub is never reached ---
+# The first run above already symlinked .claude/skills/plan-bead; remove that link before
+# replacing it with a real directory, or `mkdir -p` on an existing symlink-to-directory is a
+# silent no-op and never creates the blocking condition this assertion needs.
+rm -f "$consumer_dir/.claude/skills/plan-bead"
+mkdir -p "$consumer_dir/.claude/skills/plan-bead"   # a real directory, not a symlink — the sync refuses
+set +e
+out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" run-bishop 2>&1)"
+status=$?
+set -e
+[[ $status -ne 0 ]] || fail "run-bishop (consumer, blocked sync): expected a non-zero exit"
+echo "$out" | grep -q "Refusing to link over the directory" \
+  || fail "run-bishop (consumer, blocked sync): expected the sync's own refusal message, got: $out"
+echo "$out" | grep -q '^ARG:--agent$' \
+  && fail "run-bishop (consumer, blocked sync): should never have reached the stub"
+pass "a blocked sync aborts the launch before the stub is reached"
 
 echo "all launcher tests passed"

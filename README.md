@@ -31,10 +31,12 @@ Each agent is started by a script of its own, run from the consumer repository r
 ```
 
 All of them start **one interactive `claude` session** and nothing else — no loop, no flags, no
-files of their own, other than re-syncing the skill and agent symlinks (`scripts/ensure-symlinks`)
-right before they exec, so a bumped submodule is usable the moment something is started rather than
-only after someone runs `sync-symlinks.sh` by hand (ah-cuc). That last point is a reversal worth
-knowing if you have used an older version: the
+files of their own, other than running `scripts/launch-preflight` right before they exec: it
+re-syncs the skill and agent symlinks, so a bumped submodule is usable the moment something is
+started rather than only after someone runs `sync-symlinks.sh` by hand (ah-cuc), and it refuses with
+one line — naming `claude` missing from `PATH`, or the submodule not yet carrying that role's agent
+file — rather than the session going `up` for a moment and then silently `dead` (ah-bri). That last
+point is a reversal worth knowing if you have used an older version: the
 implementer launcher used to run `claude --print` in a loop, one process per bead, for as long as a
 `.go` flag was set. That bought "one bead per session" for free and cost the ability to talk to an
 implementer at all.

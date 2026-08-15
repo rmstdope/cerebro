@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Checked, then synced, before every launch: `claude` is on PATH, this checkout is a
+# consumer's .claude/cerebro (sync and the submodule check are skipped otherwise - a
+# standalone clone has nothing to link into and no agent files of its own to check),
+# the submodule bump actually brought in this role's agent file, and the link it
+# produces resolves. Every launcher runs this immediately before `exec claude`
+# (ah-cuc), so a session that cannot start says why instead of exiting silently
+# (ah-bri) - `run-bishop` used to go `up` for half a second and then `dead` with
+# nothing to read anywhere when `agents/architect.md` was missing.
+#
+# usage: launch-preflight <role> <name>
+#   <role>  the --agent value the launcher is about to pass claude (architect, planner, ...)
+#   <name>  the display name for messages (Bishop, Cyclops, ...)
+#
+# Every failure exits 2 with one line on stderr naming what is wrong and the command
+# that fixes it - the same exit code run-implementer already uses for a usage error.
+set -euo pipefail
+
+role="${1:-}"
+name="${2:-}"
+if [[ -z "$role" || -z "$name" ]]; then
+  echo "usage: launch-preflight <role> <name>" >&2
+  exit 2
+fi
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "cerebro: claude is not on PATH - install Claude Code or fix PATH before starting $name" >&2
+  exit 2
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+parent="$(cd "$script_dir/../.." && pwd -P)"                  # .claude, in a consumer
+[[ "$(basename "$parent")" == ".claude" ]] || exit 0
+consumer="$(cd "$parent/.." && pwd -P)"
+# git resolves symlinks in --show-toplevel (e.g. macOS /tmp -> /private/tmp), so $consumer must be
+# physically resolved (-P) too, or a symlinked path (common under mktemp) never matches.
+[[ "$(git -C "$consumer" rev-parse --show-toplevel 2>/dev/null)" == "$consumer" ]] || exit 0
+
+if [[ ! -f "$parent/cerebro/agents/$role.md" ]]; then
+  echo "cerebro: .claude/cerebro/agents/$role.md is missing - the submodule is behind; run git submodule update --init --recursive and try again" >&2
+  exit 2
+fi
+
+"$script_dir/sync-symlinks.sh" >/dev/null
+
+# Defensive only: after a successful sync above, the link this checks for cannot be
+# missing unless the sync itself is broken - there is no test for this branch.
+if [[ ! -f "$parent/agents/$role.md" ]]; then
+  echo "cerebro: no agent definition at .claude/agents/$role.md - run .claude/cerebro/scripts/sync-symlinks.sh and try again" >&2
+  exit 2
+fi

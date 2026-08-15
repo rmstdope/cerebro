@@ -345,6 +345,67 @@ stale by definition."
                           "Use the terminal that started it."))))
 
 ;; ---------------------------------------------------------------------------
+;; ah-bri: a session that dies before it gets going keeps its last line readable
+
+(ert-deftest cerebro-test/exit-record-only-for-abnormal-exits ()
+  (should (equal (cerebro--exit-record "exited abnormally with code 2\n" "cerebro: x")
+                  (cons "2" "cerebro: x")))
+  (should (null (cerebro--exit-record "finished\n" "cerebro: x")))
+  (should (null (cerebro--exit-record "killed\n" "cerebro: x")))
+  (should (null (cerebro--exit-record "hangup\n" "cerebro: x")))
+  (should (null (cerebro--exit-record "exited abnormally with code 2\n" nil))))
+
+(ert-deftest cerebro-test/last-nonblank-line ()
+  (should (equal (cerebro--last-nonblank-line "a\nb  \n\n   \n") "b"))
+  (should (null (cerebro--last-nonblank-line "")))
+  (should (null (cerebro--last-nonblank-line "\n\n"))))
+
+(ert-deftest cerebro-test/placeholder-shows-the-last-exit-line ()
+  (let ((cerebro--last-exit '(("Bishop" . "cerebro: boom"))))
+    (should (equal (cerebro--placeholder
+                     (cerebro-test--agent "Bishop" "architect" 'implementer 'dead))
+                    (concat "Bishop is not running.\n"
+                            "Its last session ended with:\n"
+                            "  cerebro: boom\n"
+                            "Press s to start it.")))
+    (should (equal (cerebro--placeholder
+                     (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+                    "Cyclops is not running. Press s to start it."))
+    (should (equal (cerebro--placeholder
+                     (cerebro-test--agent "Xavier" "planner" 'interactive 'up t))
+                    (concat "Xavier is running outside Emacs - no live view. "
+                            "Use the terminal that started it.")))))
+
+(ert-deftest cerebro-test/note-exit-records-and-forgets ()
+  (let ((cerebro--last-exit nil))
+    (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
+      (let ((buf (generate-new-buffer "*fleet: Bishop*")))
+        (unwind-protect
+            (progn
+              (with-current-buffer buf
+                (insert "starting up...\ncerebro: boom\n\n"))
+              (cerebro--note-exit buf "exited abnormally with code 2\n")
+              (should (equal (alist-get "Bishop" cerebro--last-exit nil nil #'equal)
+                              "cerebro: boom")))
+          (kill-buffer buf)))
+      (let ((buf (generate-new-buffer "*fleet: Bishop*")))
+        (unwind-protect
+            (progn
+              (with-current-buffer buf
+                (insert "cerebro: boom\n"))
+              (setq cerebro--last-exit nil)
+              (cerebro--note-exit buf "finished\n")
+              (should (null cerebro--last-exit)))
+          (kill-buffer buf)))
+      (let ((buf (get-buffer-create "*scratch*")))
+        (setq cerebro--last-exit nil)
+        (cerebro--note-exit buf "exited abnormally with code 2\n")
+        (should (null cerebro--last-exit)))
+      (setq cerebro--last-exit nil)
+      (cerebro--note-exit nil "exited abnormally with code 2\n")
+      (should (null cerebro--last-exit)))))
+
+;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 1: telling an implementer to finish
 
 (ert-deftest cerebro-test/finish-action-writes-for-unflagged-implementer ()

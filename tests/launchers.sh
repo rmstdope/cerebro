@@ -172,4 +172,35 @@ echo "$out" | grep -q '^ARG:--agent$' \
   && fail "run-bishop (consumer, blocked sync): should never have reached the stub"
 pass "a blocked sync aborts the launch before the stub is reached"
 
+# --- claude missing: the launcher refuses with one line naming it, never exec's (ah-bri) ---
+set +e
+out="$(PATH=/usr/bin:/bin bash "$repo_root/scripts/run-bishop" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "run-bishop (claude missing): expected exit 2, got $status"
+echo "$out" | grep -q "claude is not on PATH" \
+  || fail "run-bishop (claude missing): expected the message to name claude is not on PATH, got: $out"
+pass "run-bishop refuses with one line when claude is not on PATH"
+
+# --- submodule behind: the role's agent file never arrived, refused before any sync (ah-bri) ---
+consumer_dir2="$(mktemp -d)"
+trap 'rm -rf "$stub_dir" "$consumer_dir" "$consumer_dir2"' EXIT
+git init -q "$consumer_dir2"
+mkdir -p "$consumer_dir2/.claude"
+cp -R "$repo_root" "$consumer_dir2/.claude/cerebro"
+rm -rf "$consumer_dir2/.claude/cerebro/.git"
+rm -f "$consumer_dir2/.claude/cerebro/agents/architect.md"
+set +e
+out="$(run_launcher_at "$consumer_dir2/.claude/cerebro/scripts" run-bishop 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "run-bishop (submodule behind): expected exit 2, got $status"
+echo "$out" | grep -q "the submodule is behind" \
+  || fail "run-bishop (submodule behind): expected the message to name the submodule as behind, got: $out"
+[[ ! -L "$consumer_dir2/.claude/agents/architect.md" ]] \
+  || fail "run-bishop (submodule behind): the sync should not have run before this check"
+echo "$out" | grep -q '^ARG:--agent$' \
+  && fail "run-bishop (submodule behind): should never have reached the stub"
+pass "run-bishop refuses when the submodule never brought its agent file in"
+
 echo "all launcher tests passed"

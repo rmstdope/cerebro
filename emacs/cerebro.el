@@ -711,13 +711,33 @@ once that bead is done)."
    ((eq (cerebro-agent-state agent) 'idle) 'stop-now)
    (t 'write)))
 
+(defvar cerebro--last-exit nil
+  "Alist of NAME -> the last non-blank line an abnormally-exited session
+printed, for every name whose session has died since Emacs started.
+
+Global, not buffer-local: `cerebro--note-exit' runs from vterm's process
+sentinel, which may not have the fleet buffer current, and the placeholder
+is built from whatever agent is being shown, not from any one buffer.
+Cleared for a name by `cerebro--launch' the moment a new session for it is
+started, so a stale line never survives past the run that produced it.")
+
 (defun cerebro--placeholder (agent)
-  "The detail-window text for AGENT when it has no live view."
-  (let ((name (cerebro-agent-name agent)))
-    (if (cerebro-agent-external agent)
-        (format "%s is running outside Emacs - no live view. Use the terminal that started it."
-                name)
-      (format "%s is not running. Press s to start it." name))))
+  "The detail-window text for AGENT when it has no live view.
+
+A dead agent with a recorded abnormal exit (`cerebro--last-exit') shows the
+last line its session printed, so a launcher that refuses - `claude'
+missing, an un-synced submodule - leaves something readable behind rather
+than the row going `up' for a moment and then silently `dead' (ah-bri)."
+  (let* ((name (cerebro-agent-name agent))
+         (last (alist-get name cerebro--last-exit nil nil #'equal)))
+    (cond
+     ((cerebro-agent-external agent)
+      (format "%s is running outside Emacs - no live view. Use the terminal that started it."
+              name))
+     (last
+      (format "%s is not running.\nIts last session ended with:\n  %s\nPress s to start it."
+              name last))
+     (t (format "%s is not running. Press s to start it." name)))))
 
 ;;; Sweep findings (ah-4ao): turning `sweep-claims.sh'/`sweep-epics.sh' facts into a decision
 
@@ -1013,9 +1033,19 @@ The let-bound `default-directory' reaches the session by inheritance rather
 than by anything staying selected: `vterm--internal' calls
 `generate-new-buffer' while the fleet buffer is still current, and the new
 buffer takes its `default-directory' from there.  Only then does it display
-the buffer and run `vterm-mode'."
+the buffer and run `vterm-mode'.
+
+Hooks `cerebro--note-exit' onto `vterm-exit-functions' - globally and
+idempotently, since vterm's sentinel (vterm.el) runs it with whatever buffer
+happens to be current, not necessarily this one, so a buffer-local hook
+would silently never fire (ah-bri). AGENT's name is cleared from
+`cerebro--last-exit' before spawning, so a fresh run starts with no stale
+line from the one before it."
   (unless (require 'vterm nil t)
     (user-error "cerebro needs vterm for live sessions - install emacs-libvterm"))
+  (add-hook 'vterm-exit-functions #'cerebro--note-exit)
+  (setq cerebro--last-exit
+        (assoc-delete-all (cerebro-agent-name agent) cerebro--last-exit))
   (let* ((default-directory (cerebro--repo-root))
          (cmd (cerebro--launch-command agent))
          (vterm-shell (if (stringp cmd) cmd (mapconcat #'shell-quote-argument cmd " ")))
@@ -1040,6 +1070,45 @@ the buffer and run `vterm-mode'."
       (message "%s started - watch its state in the list"
                (cerebro-agent-name agent)))
     buffer))
+
+;;; A session that dies before it gets going (ah-bri)
+
+(defun cerebro--last-nonblank-line (text)
+  "The last line of TEXT with anything but whitespace on it, trimmed; nil if none."
+  (let ((lines (delq nil (mapcar (lambda (line)
+                                    (let ((trimmed (string-trim line)))
+                                      (and (not (string-empty-p trimmed)) trimmed)))
+                                  (split-string text "\n")))))
+    (car (last lines))))
+
+(defun cerebro--exit-record (event last-line)
+  "What to remember about a session exit, or nil.
+
+EVENT is the sentinel string vterm hands `vterm-exit-functions'. Only an
+abnormal exit is worth remembering - `finished' is a clean quit, `killed'
+is `k' or the poll ending a session on purpose (ah-bri), and neither is a
+failure to explain. Returns (CODE . LAST-LINE)."
+  (and last-line
+       (string-match "\\`exited abnormally with code \\([0-9]+\\)" event)
+       (cons (match-string 1 event) last-line)))
+
+(defun cerebro--note-exit (buffer event)
+  "Record BUFFER's last line in `cerebro--last-exit' when EVENT is abnormal.
+
+The impure counterpart to `cerebro--exit-record' and
+`cerebro--last-nonblank-line': reads BUFFER's text, matches it against a
+session-buffer name to find the agent, and updates the global alist and the
+echo area. BUFFER can be nil - vterm's sentinel passes it after the buffer
+itself has already been killed (`k', retire, restart) - and any buffer whose
+name is not a session-buffer name is left alone."
+  (let ((name (and (buffer-live-p buffer)
+                    (cerebro--owned-buffer-agent-name (buffer-name buffer)))))
+    (when name
+      (let* ((text (with-current-buffer buffer (buffer-substring-no-properties (point-min) (point-max))))
+             (record (cerebro--exit-record event (cerebro--last-nonblank-line text))))
+        (when record
+          (setf (alist-get name cerebro--last-exit nil nil #'equal) (cdr record))
+          (message "%s exited (code %s): %s" name (car record) (cdr record)))))))
 
 ;;; Acting on the supervision decisions
 

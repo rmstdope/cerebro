@@ -88,6 +88,12 @@ you can answer it will ask, and show as `asking` in the fleet view. Answer it an
 you are away, it is told to give up after fifteen minutes and hands the bead to your queue instead —
 so a fleet left alone overnight drains the queue rather than sitting blocked on you.
 
+The fleet view's State column names the **phase** an implementer is actually in — `build`, `gate`
+(the local check suite, behind a machine-wide lock), `review`, `ci`, `rebase`, `merge` — rather than
+one undifferentiated `working` for however long the bead takes. The Bead/Phase column shows both
+timers side by side, time on the bead and time in the current phase, so three implementers all
+sitting in `review` says Copilot is slow and one stuck in `ci` for an hour says something is stuck.
+
 **Two or three is a sensible number on one machine.** More is not faster: the browser test suites
 take a machine-wide lock and run one at a time, and every merge makes every other open PR stale, so
 each of them pays for a rebase and a fresh CI run. The orchestrator will say so if you ask for more,

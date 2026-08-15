@@ -39,17 +39,20 @@
 
 (defconst cerebro-buffer-name "*cerebro*")
 
-(defconst cerebro-list-width 54
+(defconst cerebro-list-width 59
   "Columns for the left column of the layout.
 
-The agent table is 14+13+10+10+5 plus one column of padding = 53; this is 54
-so the table is strictly narrower than the window, which is what keeps
+The agent table is 14+13+10+10+10 plus one column of padding = 58; this is
+59 so the table is strictly narrower than the window, which is what keeps
 Emacs's `$' truncation marker off the right edge - a table exactly as wide
-as its window loses its last column to that marker (ah-lyc). It was 62
-before the State column's \" finishing\" suffix became a one-glyph \" ■\" and
-the Bead column stopped needing room for the word \"(external)\". The bead
-panel underneath inherits this width and, like the table, is narrower for
-it - its titles get less room than they used to, an accepted trade.")
+as its window loses its last column to that marker (ah-lyc). It was 54
+before the For column became Bead/Phase and widened 5 -> 10 to show time on
+the bead and time in the phase together (ah-u3i); 62 before that, before the
+State column's \" finishing\" suffix became a one-glyph \" ■\" and the Bead
+column stopped needing room for the word \"(external)\". The bead panel and
+detail window underneath inherit this width and, like the table, are
+narrower for it - their titles get less room than they used to, an accepted
+trade.")
 
 (defconst cerebro-list-height 20
   "Lines given to the agent list before the bead panel starts.
@@ -71,8 +74,11 @@ whatever the frame has left.")
 (cl-defstruct cerebro-agent
   "One row of the fleet list."
   name role kind                       ; kind: 'interactive | 'implementer
-  state                                ; 'up | 'working | 'idle | 'dead
-  bead since external)
+  state                                ; 'up | 'working | 'idle | 'dead | 'done | 'asking | 'unknown
+  bead since external
+  phase                                ; "build"|"gate"|"review"|"ci"|"rebase"|"merge" or nil
+  phase-since                          ; ISO-8601 string, or nil
+  raw)                                 ; the state file's `state' string verbatim, or nil
 
 (defun cerebro--name-in-args-p (name args)
   "Non-nil if some string in ARGS names NAME via a whole-word \"--name NAME\"."
@@ -131,13 +137,23 @@ predicate on a pid; OWNED the names Emacs itself started."
                           ;; Blocked on a question only the navigator can
                           ;; answer, with a bead still in flight.
                           ((equal raw-state "asking") 'asking)
-                          (t 'idle)))
+                          ((equal raw-state "idle") 'idle)
+                          ;; A raw state this list has never seen - a typo in
+                          ;; the skill, most likely.  A live process the view
+                          ;; does not understand is something the navigator
+                          ;; may want to look at, so this must not read as
+                          ;; `idle', which means "free, give it a bead".
+                          (t 'unknown)))
              (bead (alist-get 'bead parsed))
              (since (alist-get 'since parsed))
+             (phase (alist-get 'phase parsed))
+             (phase-since (alist-get 'phase_since parsed))
              (external (not owned-p)))
         (make-cerebro-agent :name name :role "implementer" :kind 'implementer
                                     :state state :bead bead :since since
-                                    :external external))))))
+                                    :external external
+                                    :phase phase :phase-since phase-since
+                                    :raw raw-state))))))
 
 (defun cerebro--derive (roster interactive-agents states pid-alive-p args owned)
   "Return the fleet as a list of `cerebro-agent', interactive first.
@@ -188,7 +204,10 @@ does not read against your theme."
    ;; terminal sizes - so the yellow was applied and simply lost the argument
    ;; with the shape. Only colour separates idle from working now, which the
    ;; State column beside it spells out in words anyway.
-   ((eq state 'idle) (propertize "●" 'face 'cerebro-idle))        ; ●
+   ;; `unknown' is a live session the view does not understand - the same
+   ;; yellow as `idle', for the same reason: something the navigator may want
+   ;; to look at. Grey (`dead') would say nobody is there, which is untrue.
+   ((memq state '(idle unknown)) (propertize "●" 'face 'cerebro-idle))  ; ●
    (t (propertize "○" 'face 'shadow))))                           ; ○
 
 (defun cerebro--seconds-since (since now)
@@ -219,6 +238,43 @@ fails to parse, renders as the empty string."
   "Whether STATE is one the navigator has to do something about."
   (eq state 'asking))
 
+(defconst cerebro--phases '("build" "gate" "review" "ci" "rebase" "merge")
+  "The phase vocabulary, in run order. Mirrors scripts/implementer-state.")
+
+(defun cerebro--in-flight-p (state)
+  "Whether STATE means a bead is still in flight under it."
+  (memq state '(working asking)))
+
+(defun cerebro--state-label (agent)
+  "The State column's text for AGENT, without the \" ■\" flag suffix.
+
+An `unknown' state shows its raw word, truncated to the column width -
+still worth reading rather than a lie like `idle' would be. A `working'
+agent with a phase shows the phase (`build\=', `review\=', ...); anything
+else shows the state's own name. `asking' always shows `asking\=', even with
+a phase set, because the bold row already says everything a phase word
+would add."
+  (let ((state (cerebro-agent-state agent)))
+    (cond
+     ((eq state 'unknown)
+      (truncate-string-to-width (or (cerebro-agent-raw agent) "unknown") 10 nil nil "…"))
+     ((and (eq state 'working) (cerebro-agent-phase agent))
+      (cerebro-agent-phase agent))
+     (t (symbol-name state)))))
+
+(defun cerebro--for-column (since phase-since now)
+  "The Bead/Phase column: time on the bead and time in the phase, at NOW.
+
+SINCE and PHASE-SINCE are ISO-8601 strings or nil. Renders as \"31m 12m\"
+when both are known, just the one figure when only one is, and the empty
+string when neither is."
+  (let ((bead-time (cerebro--elapsed since now))
+        (phase-time (cerebro--elapsed phase-since now)))
+    (cond
+     ((string-empty-p phase-time) bead-time)
+     ((string-empty-p bead-time) phase-time)
+     (t (concat bead-time " " phase-time)))))
+
 (defun cerebro--emphasize (text emphasize)
   "TEXT in bold when EMPHASIZE, otherwise TEXT unchanged."
   (if emphasize (propertize text 'face 'bold) text))
@@ -245,7 +301,7 @@ bead, e.g. \"ah-dzj.1.1.1.1\") truncates with an ellipsis rather than pushing
 the rest of the row right - see ah-lyc."
   (let* ((state (cerebro-agent-state agent))
          (external (cerebro-agent-external agent))
-         (in-flight (memq state '(working asking)))
+         (in-flight (cerebro--in-flight-p state))
          ;; A glyph is one character in the corner of the eye, and there are
          ;; eighteen rows. Bolding the whole row makes the row itself the
          ;; signal - so bold has to stay rare enough to mean it, which is why
@@ -255,7 +311,7 @@ the rest of the row right - see ah-lyc."
                             (cerebro--emphasize (cerebro-agent-name agent) attention)))
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
          (state-col (cerebro--emphasize
-                     (concat (symbol-name state) (if (and flagged in-flight) " ■" ""))
+                     (concat (cerebro--state-label agent) (if (and flagged in-flight) " ■" ""))
                      attention))
          (bead-col (cerebro--emphasize
                     (cond (external "—")
@@ -264,7 +320,9 @@ the rest of the row right - see ah-lyc."
                           (t ""))
                     attention))
          (for-col (cerebro--emphasize
-                   (if external "" (cerebro--elapsed (cerebro-agent-since agent) now))
+                   (if external ""
+                     (cerebro--for-column (cerebro-agent-since agent)
+                                           (cerebro-agent-phase-since agent) now))
                    attention)))
     (list (cerebro-agent-name agent)
           (vector agent-col role-col state-col bead-col for-col))))
@@ -573,8 +631,15 @@ command name."
   (format "*fleet: %s*" (cerebro-agent-name agent)))
 
 (defun cerebro--alive-p (agent)
-  "Non-nil if AGENT's state means a session is up (interactive or implementer)."
-  (memq (cerebro-agent-state agent) '(up working idle)))
+  "Non-nil if AGENT's state means a session is up (interactive or implementer).
+
+Alive is every state a session can be in except `dead' - including `asking'
+and `done' (which the fleet poll replaces within about five seconds) and
+`unknown' (a process is up; the view merely does not recognise what its
+state file says it is doing). Anything narrower than that reintroduces the
+`*fleet: <name>*<2>' bug: `s' on an `asking' or `done' implementer used to
+read as \"not alive\" and start a second session over the first."
+  (not (eq (cerebro-agent-state agent) 'dead)))
 
 (defun cerebro--start-action (agent owned)
   "What `s' should do for AGENT, given OWNED session names.
@@ -597,7 +662,7 @@ harder confirm), `external' (refuse - not ours to stop) or `dead'
    ((not (cerebro--alive-p agent)) 'dead)
    ((not (member (cerebro-agent-name agent) owned)) 'external)
    ((and (eq (cerebro-agent-kind agent) 'implementer)
-         (eq (cerebro-agent-state agent) 'working))
+         (cerebro--in-flight-p (cerebro-agent-state agent)))
     'kill-working)
    (t 'kill)))
 
@@ -1786,7 +1851,7 @@ would have taken TAB from every vterm the navigator has, fleet or not.
 
 \\{cerebro-mode-map}"
   (setq tabulated-list-format
-        [("Agent" 14 nil) ("Role" 13 nil) ("State" 10 nil) ("Bead" 10 nil) ("For" 5 nil)])
+        [("Agent" 14 nil) ("Role" 13 nil) ("State" 10 nil) ("Bead" 10 nil) ("Bead/Phase" 10 nil)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (add-hook 'tabulated-list-revert-hook #'cerebro--revert nil t)

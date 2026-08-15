@@ -62,20 +62,34 @@ the lease going stale the whole time. Block, and stay in the run.
 ## Telling the fleet view what you are doing
 
 `.claude/implementers/<your-name>.state.json` is how you are seen and how you are replaced. Rewrite
-it at every transition, in the same `Bash` call as the thing it describes:
+it at every transition, in the same `Bash` call as the thing it describes — through
+`scripts/implementer-state`, never by hand:
 
 ```bash
-mkdir -p .claude/implementers
-cat > .claude/implementers/<your-name>.state.json <<EOF
-{"state":"working","bead":"<id>","since":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","pid":$PPID}
-EOF
+.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase build --pid $PPID
 ```
 
 `idle` before you claim, `working` the moment you do, `asking` if you put a question to the
-navigator, `done` when the bead is closed and the worktree gone. `pid` is `$PPID` — your own
-`claude` process — and must be captured in the call that writes the file; a stale number shows you
-as dead while you are working, and the navigator will start a second implementer over the top of
-you.
+navigator, `done` when the bead is closed and the worktree gone. `working` and `asking` also take
+`--phase <build|gate|review|ci|rebase|merge>`, naming what the wait or the work actually is — see the
+table below for where each is written. `--pid` is `$PPID` — your own `claude` process — and must be
+captured in the call that writes the file; a stale number shows you as dead while you are working,
+and the navigator will start a second implementer over the top of you. The script keeps `since`
+across a phase-only change and stamps `phase_since` on a phase change — do not write the file by
+hand.
+
+| Where in this skill | Call |
+|---|---|
+| *Picking up*, the empty-queue poll | `implementer-state <name> idle --pid $PPID` |
+| *Picking up*, right after `bd ready … --claim` | `implementer-state <name> working --bead <id> --phase build --pid $PPID` |
+| *Building*, before `pnpm check` | `implementer-state <name> working --bead <id> --phase gate --pid $PPID` |
+| *The review*, after `gh pr edit --add-reviewer @copilot` | `… --phase review …` |
+| *The review*, once every comment is answered and resolved | `… --phase ci …` |
+| *Red CI* | stays `ci` |
+| *Merging*, on `BEHIND`: rebase → local gate → CI | `rebase`, then `gate`, then `ci` |
+| *The retrospective* opening line onward | `… --phase merge …` — merge covers retro, merge, close, cleanup |
+| *Asking instead of handing back* | `… asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
+| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `… done --bead <id> --pid $PPID` |
 
 `done` is a request to be ended, granted within about five seconds. Write it last.
 
@@ -97,6 +111,13 @@ can answer. That is a complete run too: hand it back with the block below, clean
 and finish.
 
 ## The retrospective
+
+```bash
+.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase merge --pid $PPID
+```
+
+Write it once, entering this section — `merge` covers the retrospective, the merge itself, closing
+the bead and cleaning up, so no more phase writes are needed until `done`.
 
 **When the review is answered and CI is green, before you merge**, look back over the run and ask
 one question: *did anything happen that I did not expect?*
@@ -233,7 +254,7 @@ belongs to the navigator, who reads these precisely so they can decide.
 
 You are interactive, so the navigator can answer you. For a question that genuinely blocks the bead
 you may ask rather than hand back — write `asking` to your state file first, with the bead still in
-`bead`, then ask plainly and wait.
+`bead` and the current phase passed again, then ask plainly and wait.
 
 Nobody waits for ever. You do not enforce the timeout and cannot see it: if it expires, a line
 starting `[cerebro]` arrives in your session telling you to give up. Treat it as the navigator
@@ -253,6 +274,7 @@ the queue stays empty. Write `idle` and poll, blocking and printing as *Waiting,
 run* describes:
 
 ```bash
+.claude/cerebro/scripts/implementer-state <name> idle --pid $PPID
 until bd ready --label planned --exclude-label human --exclude-type epic --json \
         | grep -q '"id"'; do
   echo "queue empty, waiting"
@@ -265,6 +287,7 @@ Then claim, as below. Say once that you are waiting, so the navigator knows why 
 ```bash
 bd dolt pull
 bd ready --label planned --exclude-label human --exclude-type epic --claim --json
+.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase build --pid $PPID
 bd dolt push                               # so other machines see the claim
 ```
 
@@ -298,7 +321,10 @@ bd unclaim <id>
 bd dolt push
 ```
 
-All three, and this is the **hand-back block** referred to throughout. `bd update` sets no status, so
+All three, and this is the **hand-back block** referred to throughout. After it, remove the worktree
+if one exists (see *Finishing*) and write `.claude/cerebro/scripts/implementer-state <name> done
+--bead <id> --pid $PPID` last, exactly as a merged bead does — a hand-back is a complete run too.
+`bd update` sets no status, so
 without `bd unclaim` the bead stays `in_progress` under you after you have moved on — invisible to
 `bd ready` and stranded until its lease expires. Without the push, no other machine learns it was
 released. If a worktree exists by then, remove it too (see *Finishing*).
@@ -370,6 +396,14 @@ collision fails loudly rather than serving you somebody else's bundle — but it
 
 ## Building
 
+```bash
+.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase gate --pid $PPID
+```
+
+Write it once, before you run `pnpm check` for the first time — the gate is the longest local wait,
+behind the machine-wide lock, and three implementers all sitting in `gate` tells the navigator the
+lock is the bottleneck.
+
 Follow the plan's increments in order, each opening with its named failing test. Run **`pnpm check`**
 before the PR rather than assembling the steps yourself: it orders them cheap-to-dear and, crucially,
 puts `build:web` between `test:smoke` and `test:pwa`, which is the difference between a passing PWA
@@ -395,6 +429,7 @@ them here is the failure mode this split exists to prevent.
 
 ```bash
 gh pr edit <n> --add-reviewer @copilot
+.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase review --pid $PPID
 ```
 
 That command runs once in the life of a PR. Not after you address the comments, not after a rebase,
@@ -447,6 +482,15 @@ millisecond after being taken, a refusal message that rounded itself into a cont
 release step that could strand a version bump — but they also raise things that are wrong or do not
 apply. Judge each one; a reasoned reply is a complete answer.
 
+Once every comment is answered and every thread resolved:
+
+```bash
+.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase ci --pid $PPID
+```
+
+and wait for CI as *Waiting, without ending your run* describes. *Red CI* below stays in this same
+`ci` phase — a fix-and-push does not change what you are waiting on.
+
 **No review within about twenty minutes**: leave the PR open, escalate the bead (the hand-back block above, worktree included), say so plainly, and take the next bead. Some PRs never get one. Merging anyway is not the
 answer, and neither is waiting forever. Do not re-request in the hope of shaking one loose — your one
 request has been spent, and a second would not arrive faster.
@@ -471,6 +515,15 @@ tree that will never exist, and two agents changing the same function compatibly
 this catches.
 
 ```bash
+.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase rebase --pid $PPID
+# rebase
+.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase gate --pid $PPID
+# local gate
+.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase ci --pid $PPID
+# wait for CI again
+```
+
+```bash
 gh pr merge <n> --squash --delete-branch
 ```
 
@@ -490,6 +543,7 @@ bd close <id> --reason "Delivered in PR #NN"
 git -C <repo> worktree remove --force .claude/worktrees/<id>
 git -C <repo> worktree prune
 bd dolt push
+.claude/cerebro/scripts/implementer-state <name> done --bead <id> --pid $PPID
 ```
 
 `--force`, because `worktree remove` refuses a tree holding untracked files and would otherwise abort

@@ -68,9 +68,12 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   unanswered review comments. Implementers are interactive now, so an ended turn no longer kills the
   process — it just sits there until a human types something, which is not better.
 - **The state file is the contract.** `.claude/implementers/<name>.state.json` carries
-  `idle`/`working`/`asking`/`done`; the implementer writes it, `cerebro.el` acts on it. Changing
-  either side's vocabulary breaks supervision silently — `cerebro--derive-implementer` maps unknown
-  states to `idle`, which reads as "fine" rather than as an error.
+  `idle`/`working`/`asking`/`done`; the implementer writes it, `cerebro.el` acts on it. Since ah-u3i
+  it also carries `phase` (`build`/`gate`/`review`/`ci`/`rebase`/`merge`, or null) and `phase_since`
+  — supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
+  phase vocabulary can only mislabel a column, never break the restart loop. An unrecognised `state`
+  string shows its raw word in yellow rather than reading as `idle`, which used to mean "fine" when
+  it meant "an error".
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
@@ -106,11 +109,14 @@ it becomes untestable.
 
 Two data sources it depends on, both under `.claude/implementers/` in the consumer repo:
 
-- `<name>.state.json` — `{state: "idle"|"working"|"asking"|"done", bead, since, pid}`, written by the
-  **implementer itself** at each transition, per `agents/implementer.md`. The launcher used to write
-  it and no longer does: it `exec`s a session and cannot see it claim a bead. Whoever changes that
-  vocabulary must change `cerebro--derive-implementer` with it — unknown states map to `idle`, which
-  reads as "fine" rather than as an error.
+- `<name>.state.json` — `{state: "idle"|"working"|"asking"|"done", phase, bead, since, phase_since,
+  pid}`, written by the **implementer itself** at each transition through `scripts/implementer-state`
+  (never by hand — see that script's header). The launcher used to write the file and no longer
+  does: it `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/
+  `review`/`ci`/`rebase`/`merge`, meaningful with `working` and `asking`; `since` is the last change
+  of `state` or `bead`, `phase_since` the last change of `phase`. Whoever changes the `state`
+  vocabulary must change `cerebro--derive-implementer` with it — an unrecognised `state` now maps to
+  `'unknown` and shows its raw word in yellow, not `idle`.
 - `scripts/run-implementer --roster` — the implementer names, shelled out to from
   `cerebro--roster`.
 

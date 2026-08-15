@@ -206,6 +206,13 @@ you to build one in the first place — starting the app, loading the report she
 what you saw. It runs on a ten-minute cycle like the other passive sessions, so it will sit quietly
 between beads rather than pestering you.
 
+She verifies in her own worktree, `.claude/worktrees/psylocke`, reset to `origin/main` immediately
+before every use — never the shared checkout, and never a build started before she fetched. She tells
+you the sha she is about to build before she ever asks you to look at anything, and if a port she
+needs is already serving something, she refuses to reuse it rather than risk verifying against a
+build that is not the one that merged. When a verification is later found to have judged the wrong
+build, she writes a retrospective of her own, the same way an implementer does.
+
 ## Starting the architect
 
 Nobody else in the fleet reads the *shape* of the code. Xavier plans one bead, an implementer builds

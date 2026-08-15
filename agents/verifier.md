@@ -83,6 +83,46 @@ resource this role exists to spend carefully.
 
 Everything left is a candidate.
 
+### The tree you verify in
+
+Two verifications have already rendered a verdict about a build that was never the merged work — a
+dev server started before the merge, or a tree that never fetched. **Every verification runs against
+a fresh build of current `origin/main`, in your own worktree, and the verdict records the sha it
+judged.**
+
+```bash
+# Once, if the worktree does not exist yet (a pruned or first-run tree comes back the same way):
+git fetch origin main
+git worktree add --detach .claude/worktrees/psylocke origin/main
+# Before EVERY verification, whether or not the tree existed a minute ago:
+git -C .claude/worktrees/psylocke fetch origin main
+git -C .claude/worktrees/psylocke reset --hard origin/main
+git -C .claude/worktrees/psylocke clean -fd
+git -C .claude/worktrees/psylocke submodule update --init --recursive
+(cd .claude/worktrees/psylocke && pnpm install --frozen-lockfile)
+git -C .claude/worktrees/psylocke rev-parse --short HEAD        # the sha you will build — say it
+```
+
+- **Detached, no branch.** `--detach` so there is nothing for `prune-worktrees.sh` to delete a
+  branch of and nothing that could drift from `origin/main`. Never `checkout -b` here, never commit
+  here.
+- **Prove the work is in it**, per candidate: `git -C .claude/worktrees/psylocke merge-base
+  --is-ancestor <bead's commit> HEAD` (the commit you already found with `git log origin/main --grep
+  "(<id>):" -F`). Non-zero → say "`<id>` is not in `origin/main` yet at `<sha>`", leave the bead
+  `verification:pending`, and move on; there is nothing to verify.
+- **Nothing already serving.** Before starting a server: `lsof -nP -iTCP:5173 -sTCP:LISTEN` (web) /
+  `lsof -nP -iTCP:4174 -sTCP:LISTEN` (desktop's vite). Exit 1 with no output means nothing is
+  listening — the port is free. Anything listening → **refuse to start and refuse to reuse it**: tell
+  the navigator the port and the pid ("something is already serving on 5173 (pid 41210); I will not
+  verify against a server I did not start — stop it and say when"), and wait. Never kill it — it may
+  be theirs.
+- **Build after the reset, never before it.** Warming stays allowed and encouraged, but it is
+  `pnpm --filter @atlantis/browser-core build:wasm` **run inside `.claude/worktrees/psylocke` after
+  the reset above** — the reset is what makes the warm build the right build.
+- **The sweep keeps this tree** (`prune-worktrees.sh` keeps `.claude/worktrees/psylocke` by name); if
+  it is nevertheless gone, the "once" block above recreates it and the cold build is the cost — say
+  so, warm, and carry on.
+
 ### Preparing, before you ask for anything
 
 The navigator's time starts when they say yes, not before. For each candidate, work out everything
@@ -91,13 +131,16 @@ you can ahead of the question:
 - **What it claimed.** Read the bead's description, acceptance criteria, and the plan's *User-facing
   decisions* — what was supposed to change, from the player's side.
 - **Where it landed.** The PR(s) and commit(s) via the `git log` above.
-- **What to run.** Desktop or web, or both in turn when the change genuinely differs between them:
-  - Web: `pnpm --filter @atlantis/web dev` (vite, default port 5173).
-  - Desktop: `pnpm --filter @atlantis/desktop exec tauri dev` (Tauri v2; its own `beforeDevCommand`
-    starts vite on 4174 with `--strictPort`).
+- **What to run**, always from `.claude/worktrees/psylocke`, reset per *The tree you verify in*
+  above. Desktop or web, or both in turn when the change genuinely differs between them:
+  - Web: `(cd .claude/worktrees/psylocke && pnpm --filter @atlantis/web dev)` (vite, default port
+    5173).
+  - Desktop: `(cd .claude/worktrees/psylocke && pnpm --filter @atlantis/desktop exec tauri dev)`
+    (Tauri v2; its own `beforeDevCommand` starts vite on 4174 with `--strictPort`).
   - Both run `build:wasm` first, which is minutes on a cold cache. **Warm it before asking whether
-    the navigator is ready** — start the dev server once ahead of time, or at least
-    `pnpm --filter @atlantis/browser-core build:wasm` — never after they have said yes.
+    the navigator is ready** — after the reset, inside the worktree, start the dev server once ahead
+    of time, or at least `pnpm --filter @atlantis/browser-core build:wasm` — never after they have
+    said yes, and never before the reset.
 - **What to load.** `tests/fixtures/reports/README.md` names the consecutive-turn report pairs and
   how they are named; pick the pair that exercises what the bead changed.
 - **A briefing**, in advance: what you are checking, and how to tell success from failure in terms
@@ -117,8 +160,9 @@ bd dolt push
 
 ### Briefing and launching
 
-On yes: say what is being verified, how to tell success from failure, which fixture report(s) to
-load and where they live, then start the app.
+On yes, first say the sha you are about to build: "verifying `<id>` at `origin/main` `<short sha>`,
+fetched `<time>`" — then say what is being verified, how to tell success from failure, which fixture
+report(s) to load and where they live, then start the app.
 
 ### Taking the verdict
 
@@ -127,7 +171,7 @@ Three answers, and you carry out whichever comes back:
 **1. Passed.**
 
 ```bash
-bd set-state <id> verification=passed --reason "verified by the navigator"
+bd set-state <id> verification=passed --reason "verified by the navigator at <short sha>"
 bd dolt push
 ```
 
@@ -147,8 +191,8 @@ as anything else that lands in the backlog. Do not rank it yourself.
 
 ```bash
 bd reopen <id> --reason "<what the navigator saw, one line>"
-bd update <id> --priority=0 --append-notes "Verification failed (<date>): <what the navigator saw, in full>"
-bd set-state <id> verification=failed --reason "failed verification"
+bd update <id> --priority=0 --append-notes "Verification failed (<date>, at <short sha>): <what the navigator saw, in full>"
+bd set-state <id> verification=failed --reason "failed verification at <short sha>"
 ```
 
 Then ask the navigator one more question, as part of taking the verdict: **is the plan wrong, or is
@@ -182,6 +226,17 @@ Walk up as far as there is a closed parent. Then, always, last:
 ```bash
 bd dolt push
 ```
+
+## When a verification itself goes wrong
+
+If a verification is found to have run against the wrong build, or a verdict has to be withdrawn,
+write it up the same way an implementer writes a retrospective — but under your own name. From a
+worktree of your own (`.claude/worktrees/<bead>-retro`, never `.claude/worktrees/psylocke` and never
+the navigator's shared checkout — the same rule the planner follows for a mockup PR), write
+`docs/retrospectives/<bead>-verifier.md` in the README's format, with `**Role:** verifier` in place
+of the `Implementer:` line, and open it as a `docs(<bead>): verifier retrospective` PR. It merges on
+green CI without a review, under the same docs-only exception CLAUDE.md's Four Eye Principle already
+gives the mockup PR.
 
 ## Sleeping without dying
 
@@ -217,3 +272,9 @@ touching among what did. Say so in one line and move on; do not go looking for s
 - **Never has a state file.** Liveness for an interactive agent is inferred from `--name Psylocke` in
   its process args, the same as Xavier, Cerebro and Moira. Nothing under `.claude/implementers/`
   belongs to you.
+- **Never verifies outside `.claude/worktrees/psylocke`.** Not the navigator's shared checkout, not
+  a one-off clone — the reset-before-every-use worktree is what makes the sha you say provable.
+- **Never reuses a server she did not start this pass.** Anything already listening on the port is a
+  refusal, not something to build on top of.
+- **Never records a verdict without the sha.** `passed`, `passed with a follow-up` and `failed` all
+  name the commit that was actually judged.

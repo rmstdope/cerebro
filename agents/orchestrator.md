@@ -577,11 +577,11 @@ The navigator will ask how much is getting done. Answer from the beads, in three
 # understands the other. The repository is developed on macOS and its CI is Linux, so write both.
 WEEK_AGO=$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d)
 
-bd list --status closed --closed-after "$(date +%Y-%m-%d)" --exclude-type epic --json   # today
-bd list --status closed --closed-after "$WEEK_AGO"         --exclude-type epic --json   # 7 days
+bd list --status closed --closed-after "$(date +%Y-%m-%d)" --exclude-type epic,event --json   # today
+bd list --status closed --closed-after "$WEEK_AGO"         --exclude-type epic,event --json   # 7 days
 bd list --status closed \
   --closed-after "$(git log -1 --format=%cI "$(git describe --tags --abbrev=0)")" \
-  --exclude-type epic --json                                                            # since release
+  --exclude-type epic,event --json                                                            # since release
 ```
 
 Count them, and name the beads for the day's window — a list of ids and titles is what makes the
@@ -589,6 +589,8 @@ number mean something.
 
 - **`--exclude-type epic`** because an epic closing is bookkeeping, not delivery: it closes when its
   last child does, and counting both reports the same work twice.
+- **and `event`**, which is bd's own audit record of a `set-state` — one closed, unlabelled bead per
+  verdict Psylocke records; counting them reports her bookkeeping as delivery.
 - **`--status closed` is required.** The default listing hides closed beads, so without it every
   window comes back empty and looks like a quiet day.
 - **The release window is the tag's commit date**, which `--closed-after` takes as RFC3339. Fetch
@@ -602,7 +604,7 @@ so plainly rather than omitting it.
 does what it claims:
 
 ```bash
-bd list --status closed --exclude-type epic --json | jq -r '.[]
+bd list --status closed --exclude-type epic,event --json | jq -r '.[]
   | select(([.labels[]? | select(. == "verification:passed" or . == "verification:not-needed")] | length) == 0)
   | .id'
 ```

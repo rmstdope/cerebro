@@ -116,7 +116,7 @@ have that cleanup to do.
 Changed your mind before it noticed? Deleting the flag cancels the instruction:
 
 ```bash
-rm .claude/implementers/<name>.stop
+rm .claude/agents-state/<name>.stop
 ```
 
 ### What the builders learned
@@ -135,7 +135,7 @@ CI is yours. Read the *Seen before* line: a finding on its third bead is one the
 for.
 
 They are committed, so they survive the machine and the session that wrote them. That is why they
-live under `docs/` rather than beside the state files in `.claude/implementers/`, which is gitignored
+live under `docs/` rather than beside the state files in `.claude/agents-state/`, which is gitignored
 as live state.
 
 ### Leftover worktrees

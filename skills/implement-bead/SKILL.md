@@ -61,12 +61,12 @@ the lease going stale the whole time. Block, and stay in the run.
 
 ## Telling the fleet view what you are doing
 
-`.claude/implementers/<your-name>.state.json` is how you are seen and how you are replaced. Rewrite
+`.claude/agents-state/<your-name>.state.json` is how you are seen and how you are replaced. Rewrite
 it at every transition, in the same `Bash` call as the thing it describes — through
-`scripts/implementer-state`, never by hand:
+`scripts/agent-state`, never by hand:
 
 ```bash
-.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase build --pid $PPID
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID
 ```
 
 `idle` before you claim, `working` the moment you do, `asking` if you put a question to the
@@ -80,16 +80,16 @@ hand.
 
 | Where in this skill | Call |
 |---|---|
-| *Picking up*, the empty-queue poll | `.claude/cerebro/scripts/implementer-state <name> idle --pid $PPID` |
-| *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase build --pid $PPID` |
-| *Building*, before `pnpm check` | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase gate --pid $PPID` |
-| *The review*, after `gh pr edit --add-reviewer @copilot` | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase review --pid $PPID` |
-| *The review*, once every comment is answered and resolved | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase ci --pid $PPID` |
+| *Picking up*, the empty-queue poll | `.claude/cerebro/scripts/agent-state <name> idle --pid $PPID` |
+| *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
+| *Building*, before `pnpm check` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
+| *The review*, after `gh pr edit --add-reviewer @copilot` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
+| *The review*, once every comment is answered and resolved | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
 | *Red CI* | stays `ci` |
-| *Merging*, on `BEHIND`: rebase → local gate → CI | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase gate ...`, then `... --phase ci ...` |
-| *The retrospective* opening line onward | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase merge --pid $PPID` — merge covers retro, merge, close, cleanup |
-| *Asking instead of handing back* | `.claude/cerebro/scripts/implementer-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
-| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/implementer-state <name> done --bead <id> --pid $PPID` |
+| *Merging*, on `BEHIND`: rebase → local gate → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase gate ...`, then `... --phase ci ...` |
+| *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` — merge covers retro, merge, close, cleanup |
+| *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
+| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/agent-state <name> done --bead <id> --pid $PPID` |
 
 `done` is a request to be ended, granted within about five seconds. Write it last.
 
@@ -113,7 +113,7 @@ and finish.
 ## The retrospective
 
 ```bash
-.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase merge --pid $PPID
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID
 ```
 
 Write it once, entering this section — `merge` covers the retrospective, the merge itself, closing
@@ -157,7 +157,7 @@ rewrite one: they are the record of runs that are over. If your bead produced tw
 in your own file, as two sections of the one retrospective.
 
 It lives under `docs/` rather than beside your state file because it is knowledge rather than live
-state — `.claude/implementers/` is gitignored, so a retrospective there would never leave the
+state — `.claude/agents-state/` is gitignored, so a retrospective there would never leave the
 machine that wrote it.
 
 **Committing it costs a CI cycle, and that is the intended trade.** Adding the file moves the head
@@ -274,7 +274,7 @@ the queue stays empty. Write `idle` and poll, blocking and printing as *Waiting,
 run* describes:
 
 ```bash
-.claude/cerebro/scripts/implementer-state <name> idle --pid $PPID
+.claude/cerebro/scripts/agent-state <name> idle --pid $PPID
 until bd ready --label planned --exclude-label human --exclude-type epic --json \
         | grep -q '"id"'; do
   echo "queue empty, waiting"
@@ -287,7 +287,7 @@ Then claim, as below. Say once that you are waiting, so the navigator knows why 
 ```bash
 bd dolt pull
 bd ready --label planned --exclude-label human --exclude-type epic --claim --json
-.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase build --pid $PPID
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID
 bd dolt push                               # so other machines see the claim
 ```
 
@@ -322,7 +322,7 @@ bd dolt push
 ```
 
 All three, and this is the **hand-back block** referred to throughout. After it, remove the worktree
-if one exists (see *Finishing*) and write `.claude/cerebro/scripts/implementer-state <name> done
+if one exists (see *Finishing*) and write `.claude/cerebro/scripts/agent-state <name> done
 --bead <id> --pid $PPID` last, exactly as a merged bead does — a hand-back is a complete run too.
 `bd update` sets no status, so
 without `bd unclaim` the bead stays `in_progress` under you after you have moved on — invisible to
@@ -397,7 +397,7 @@ collision fails loudly rather than serving you somebody else's bundle — but it
 ## Building
 
 ```bash
-.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase gate --pid $PPID
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID
 ```
 
 Write it once, before you run `pnpm check` for the first time — the gate is the longest local wait,
@@ -429,7 +429,7 @@ them here is the failure mode this split exists to prevent.
 
 ```bash
 gh pr edit <n> --add-reviewer @copilot
-.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase review --pid $PPID
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
 ```
 
 That command runs once in the life of a PR. Not after you address the comments, not after a rebase,
@@ -485,7 +485,7 @@ apply. Judge each one; a reasoned reply is a complete answer.
 Once every comment is answered and every thread resolved:
 
 ```bash
-.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase ci --pid $PPID
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
 ```
 
 and wait for CI as *Waiting, without ending your run* describes. *Red CI* below stays in this same
@@ -515,11 +515,11 @@ tree that will never exist, and two agents changing the same function compatibly
 this catches.
 
 ```bash
-.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase rebase --pid $PPID
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID
 # rebase
-.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase gate --pid $PPID
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID
 # local gate
-.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase ci --pid $PPID
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
 # wait for CI again
 ```
 
@@ -543,7 +543,7 @@ bd close <id> --reason "Delivered in PR #NN"
 git -C <repo> worktree remove --force .claude/worktrees/<id>
 git -C <repo> worktree prune
 bd dolt push
-.claude/cerebro/scripts/implementer-state <name> done --bead <id> --pid $PPID
+.claude/cerebro/scripts/agent-state <name> done --bead <id> --pid $PPID
 ```
 
 `--force`, because `worktree remove` refuses a tree holding untracked files and would otherwise abort

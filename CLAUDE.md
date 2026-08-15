@@ -73,7 +73,7 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   promise a re-invocation that nothing delivers; this stranded a claimed bead, an open PR and
   unanswered review comments. Implementers are interactive now, so an ended turn no longer kills the
   process — it just sits there until a human types something, which is not better.
-- **The state file is the contract.** `.claude/implementers/<name>.state.json` carries
+- **The state file is the contract.** `.claude/agents-state/<name>.state.json` carries
   `idle`/`working`/`asking`/`done`; the implementer writes it, `cerebro.el` acts on it. Since ah-u3i
   it also carries `phase` (`build`/`gate`/`review`/`ci`/`rebase`/`merge`, or null) and `phase_since`
   — supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
@@ -116,10 +116,10 @@ The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebr
 tests only exercise the pure half, passing state in as plain data. Keep new logic on the pure side or
 it becomes untestable.
 
-Two data sources it depends on, both under `.claude/implementers/` in the consumer repo:
+Two data sources it depends on, both under `.claude/agents-state/` in the consumer repo:
 
 - `<name>.state.json` — `{state: "idle"|"working"|"asking"|"done", phase, bead, since, phase_since,
-  pid}`, written by the **implementer itself** at each transition through `scripts/implementer-state`
+  pid}`, written by the **implementer itself** at each transition through `scripts/agent-state`
   (never by hand — see that script's header). The launcher used to write the file and no longer
   does: it `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/
   `review`/`ci`/`rebase`/`merge`, meaningful with `working` and `asking`; `since` is the last change
@@ -150,6 +150,9 @@ Interactive agents have no state file: liveness is inferred by scanning system p
   Adding a loop back to a launcher would put two supervisors on one session.
 - Emacs backup files (`*.el~`, `*.md~`, `*.sh~`) are committed alongside the originals; ignore them
   and never edit them.
+- The state directory was `.claude/implementers/` until ah-2n3.1, and its writer was
+  `scripts/implementer-state`; a shim at that old script name survives one release, `exec`ing
+  `scripts/agent-state` with a deprecation line on stderr.
 
 # Test driven development
 

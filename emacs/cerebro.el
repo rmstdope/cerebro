@@ -14,7 +14,7 @@
 ;; unbound here on purpose.
 ;;
 ;; Data sources:
-;;   - an implementer's status file, `.claude/implementers/<name>.state.json',
+;;   - an implementer's status file, `.claude/agents-state/<name>.state.json',
 ;;     written by the implementer itself at every state transition (see
 ;;     ah-vcf.1 and ah-u3i): { state: "idle"|"working"|"asking"|"done", phase,
 ;;     bead, since, phase_since, pid }.
@@ -241,7 +241,7 @@ fails to parse, renders as the empty string."
   (eq state 'asking))
 
 (defconst cerebro--phases '("build" "gate" "review" "ci" "rebase" "merge")
-  "The phase vocabulary, in run order. Mirrors scripts/implementer-state.")
+  "The phase vocabulary, in run order. Mirrors scripts/agent-state.")
 
 (defun cerebro--in-flight-p (state)
   "Whether STATE means a bead is still in flight under it."
@@ -566,7 +566,7 @@ than an abandoned one."
 (defun cerebro--supervise-action (agent stop-flag-p now)
   "What the fleet poll should do about AGENT at NOW, or nil for nothing.
 
-STOP-FLAG-P is whether `.claude/implementers/<name>.stop' exists.  The
+STOP-FLAG-P is whether `.claude/agents-state/<name>.stop' exists.  The
 answers are:
 
 `restart' - AGENT finished its bead.  An interactive session cannot end
@@ -774,9 +774,13 @@ sweep pipeline; the command itself carries no path, since it is run with
 ;;; Impure readers - each trivially small so everything above stays pure
 
 (defun cerebro--repo-root ()
-  "The repository root above `default-directory', or an error."
-  (or (locate-dominating-file default-directory ".claude/implementers")
-      (error "cerebro: no .claude/implementers found above %s" default-directory)))
+  "The repository root above `default-directory', or an error.
+Located by `.claude/cerebro' (the submodule mount, present in every
+consumer from clone time) rather than by `.claude/agents-state', which
+may not exist yet on a fresh machine - `agent-state' and
+`cerebro--write-stop-flag' both create it on first write."
+  (or (locate-dominating-file default-directory ".claude/cerebro")
+      (error "cerebro: no .claude/cerebro found above %s" default-directory)))
 
 (defun cerebro--parse-roster (output)
   "Turn OUTPUT (one implementer name per line) into a list of names."
@@ -798,7 +802,7 @@ sweep pipeline; the command itself carries no path, since it is run with
 
 (defun cerebro--state-file-path (repo-root name)
   "Where NAME's status file lives, mirroring `statePath' in runImplementer.ts."
-  (expand-file-name (format ".claude/implementers/%s.state.json" name) repo-root))
+  (expand-file-name (format ".claude/agents-state/%s.state.json" name) repo-root))
 
 (defun cerebro--read-state-file (path)
   "The parsed contents of PATH, or nil if it is absent, unreadable or torn."
@@ -1019,7 +1023,7 @@ longer asking, so its next question is nudgeable again.")
 
 (defun cerebro--stop-flag-path (repo-root name)
   "Where NAME's stop flag lives, as `orchestrator.md' documents it."
-  (expand-file-name (format ".claude/implementers/%s.stop" name) repo-root))
+  (expand-file-name (format ".claude/agents-state/%s.stop" name) repo-root))
 
 (defun cerebro--stop-flag-p (repo-root name)
   "Whether a stop flag is set for NAME."
@@ -1753,9 +1757,10 @@ cleared first rather than prompting a second time for the same kill."
   "Create NAME's stop flag in REPO-ROOT, empty - only its existence is read.
 
 `make-directory' first, `:parents' t, mirroring the documented
-\"mkdir -p .claude/implementers && touch ...\" flow (`orchestrator.md') -
-in practice `.claude/implementers' already exists whenever
-`cerebro--repo-root' has found it, but costs nothing to not depend on that."
+\"mkdir -p .claude/agents-state && touch ...\" flow (`orchestrator.md') - since
+ah-2n3.1, `cerebro--repo-root' is located by `.claude/cerebro' rather than by
+this directory, so `.claude/agents-state' is no longer guaranteed to exist by
+the time this runs."
   (let ((path (cerebro--stop-flag-path repo-root name)))
     (make-directory (file-name-directory path) t)
     (write-region "" nil path)))

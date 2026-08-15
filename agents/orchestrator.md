@@ -74,7 +74,7 @@ navigator in a terminal of its own:
 ```
 
 Each session takes **one** bead. When it is merged and closed the implementer writes `done` to
-`.claude/implementers/<name>.state.json`, and whoever is supervising — the Emacs fleet view, or that
+`.claude/agents-state/<name>.state.json`, and whoever is supervising — the Emacs fleet view, or that
 script — ends the session and starts a fresh one. So "one bead per session" is a property of how
 they run rather than a rule an agent has to keep, and no implementer's context grows across beads.
 
@@ -101,7 +101,7 @@ behalf is deciding something the split exists to keep out of an agent's hands.
 The stop flag is your one lever. For seeing what an implementer is doing, read its state file:
 
 ```bash
-cat .claude/implementers/<name>.state.json           # state, bead, and since when
+cat .claude/agents-state/<name>.state.json           # state, bead, and since when
 ls docs/retrospectives/ 2>/dev/null                  # one file per bead that went unexpectedly
 ```
 
@@ -151,8 +151,8 @@ Then check whether it actually came up (see *Who is actually running*) rather th
 The one file you write is the stop flag:
 
 ```bash
-mkdir -p .claude/implementers
-touch .claude/implementers/<name>.stop    # finish the current bead, then do not come back
+mkdir -p .claude/agents-state
+touch .claude/agents-state/<name>.stop    # finish the current bead, then do not come back
 ```
 
 It is never read mid-bead, and that is deliberate: an implementer taken down in flight strands a
@@ -200,10 +200,10 @@ Taking one down means **telling it to finish**, not killing it. One way, now tha
 implementer is by definition a working one:
 
 ```bash
-touch .claude/implementers/<name>.stop    # finish the current bead, then do not come back
+touch .claude/agents-state/<name>.stop    # finish the current bead, then do not come back
 ```
 
-**"Stop Storm" means `touch .claude/implementers/Storm.stop`.** So do "take down Storm", "quit
+**"Stop Storm" means `touch .claude/agents-state/Storm.stop`.** So do "take down Storm", "quit
 Storm", "shut Storm down", "pull Storm off", and the rest. There is no softer flag to reach for any
 more: an implementer cannot be left running-but-idle, because running is working.
 
@@ -469,7 +469,7 @@ then run the sweep itself:
    not the assignee name; see the correction under *Beads that finished without being closed*.
 3. `bd epic status --eligible-only --json` for epics left open under closed children — see *Epics
    left open under closed children*.
-4. The `.claude/implementers/*.state.json` files for who is actually running (see *Who is actually
+4. The `.claude/agents-state/*.state.json` files for who is actually running (see *Who is actually
    running*), and `bd ready --label planned --exclude-label human --exclude-type epic` for the queue.
 
 Have the fork report back only what it found — `noop`-equivalent silence in the prompt itself
@@ -499,7 +499,7 @@ You cannot set a flag for somebody who is not there — it just sits in the dire
 fleet by looking, never by remembering what you set:
 
 ```bash
-for f in .claude/implementers/*.state.json; do
+for f in .claude/agents-state/*.state.json; do
   name="$(basename "$f" .state.json)"
   jq -r --arg name "$name" '"\($name): \(.state)\(if .phase then " (" + .phase + ")" else "" end) \(.bead // "")"' "$f"
 done
@@ -508,7 +508,7 @@ claude agents --json | jq -r '.[] | select(.name=="Xavier") | "Xavier \(.status)
 
 (`runImplementer.ts` and its `pgrep` are gone — `scripts/runImplementer.ts` was deleted in
 atlantis-hud `8049f17`, and the closed roster now lives in `scripts/run-implementer` and each
-implementer's own `.claude/implementers/<name>.state.json`, which the fleet view already reads.)
+implementer's own `.claude/agents-state/<name>.state.json`, which the fleet view already reads.)
 
 The first names every implementer whose session is up — the list to skip when you pick a new X-Man
 name for the navigator to start, and the list to choose from when you set a stop flag. The second
@@ -694,12 +694,12 @@ instead of every sweep — never what you believe the state to be.
 Answer from the tools:
 
 - `pgrep` for who is running and `claude agents --json` for Xavier — see *Who is actually running*.
-- `cat .claude/implementers/<name>.state.json` for what an implementer is doing — its state, its
+- `cat .claude/agents-state/<name>.state.json` for what an implementer is doing — its state, its
   bead, and since when. That is the cheap answer and usually the whole answer.
 - `ListAgents` when you need more than the state file says: implementers are interactive sessions
   now, so they are reachable — but reading their state file costs them nothing and messaging them
   costs them a turn, so reach for it rarely.
-- `ls .claude/implementers/` for which stop flags are set — one with no session behind it means a
+- `ls .claude/agents-state/` for which stop flags are set — one with no session behind it means a
   terminal the navigator has not started, and is worth saying out loud.
 - `bd list --status in_progress` for what is claimed, and by whom — a roster name in `assignee` means
   a launched session claimed it and the name says which one, but that still does not say whether the

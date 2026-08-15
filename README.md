@@ -25,8 +25,9 @@ Each agent is started by a script of its own, run from the consumer repository r
 .claude/cerebro/scripts/run-orchestrator         # Cerebro, on Fable at medium effort
 .claude/cerebro/scripts/run-user-feedback        # Moira
 .claude/cerebro/scripts/run-psylocke             # Psylocke, the verifier
+.claude/cerebro/scripts/run-bishop               # Bishop, the architect, one sweep per session
 .claude/cerebro/scripts/run-implementer Cyclops  # one implementer, named from a closed roster
-.claude/cerebro/scripts/run-implementer --roster # the fourteen names, one per line
+.claude/cerebro/scripts/run-implementer --roster # the thirteen names, one per line
 ```
 
 All of them start **one interactive `claude` session** and nothing else — no loop, no flags, no

@@ -2,7 +2,7 @@
 
 An Emacs 28+ package that lists the cerebro agent fleet: `M-x cerebro` (after adding
 this directory to `load-path` and `(require 'cerebro)`) opens a self-refreshing buffer
-showing every agent — Xavier, Cerebro, Moira, Psylocke and the fourteen implementers — with its
+showing every agent — Xavier, Cerebro, Moira, Psylocke, Bishop and the thirteen implementers — with its
 state, and for a working implementer the bead it is on and for how long.
 
 It supports a live detail window that follows the list selection, and starting/killing agents

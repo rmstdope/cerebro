@@ -206,6 +206,35 @@ you to build one in the first place — starting the app, loading the report she
 what you saw. It runs on a ten-minute cycle like the other passive sessions, so it will sit quietly
 between beads rather than pestering you.
 
+## Starting the architect
+
+Nobody else in the fleet reads the *shape* of the code. Xavier plans one bead, an implementer builds
+one bead, Copilot reviews that one diff, Psylocke checks that one merged bead does what it claimed —
+and across fifty merges nobody asks whether the codebase got harder to change along the way.
+**Bishop** is that reader:
+
+```bash
+.claude/cerebro/scripts/run-bishop
+```
+
+Unlike every other interactive session here, Bishop does **one sweep and stops** — it works out for
+itself whether this is a daily sweep (what merged since its last one) or a weekly one (the whole
+codebase), reads accordingly, and then ends its own turn once it has reported. There is no loop to
+end and no flag to set: when it says the sweep is finished, end the session with `k` in the fleet
+view, same as any other agent you are done with.
+
+Start it whenever you want a read — each morning is a reasonable habit, or any time you want to know
+whether recent work left something worth revisiting. It costs you nothing until triage: what it finds
+becomes an ordinary `Refactoring:`-titled bead at P4, unranked, for Xavier to bring to you like
+anything else in the backlog. Bishop never fixes anything itself, and it only files a finding that
+names a cost already being paid today — a defect fixed twice in the same place, a change that had to
+touch several files, a retrospective that names a structural reason something cost time — never a bare
+principle or a "could be cleaner."
+
+Its watermark (the last commit it read, and the date of its last weekly sweep) lives in bd memory
+rather than in the checkout, so it survives a lost or replaced machine: `bd recall bishop-watermark`
+shows you where it last left off, and losing a checkout loses nothing.
+
 ## Your queue
 
 Everything waiting on you, from every agent and every terminal, in one place:

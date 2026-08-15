@@ -1647,8 +1647,8 @@ but a window whose buffer is not the selected one keeps its own point -
 so once a detail window takes the selection (as TAB does in the real
 fleet view), the list window's own point is left stale across the next
 refresh.  `cerebro--sync-list-windows' pushes the buffer's restored point
-out to every window showing it, mirroring `cerebro--beads-render''s
-tail."
+out to every window showing it, mirroring the same loop already at the
+tail of `cerebro--beads-render'."
   (let ((list-buffer (generate-new-buffer " *cerebro-test-fleet-list*"))
         (other-buffer (generate-new-buffer " *cerebro-test-other*")))
     (unwind-protect

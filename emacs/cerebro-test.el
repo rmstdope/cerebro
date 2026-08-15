@@ -270,6 +270,73 @@
                           "Use the terminal that started it."))))
 
 ;; ---------------------------------------------------------------------------
+;; ah-4ao increment 1: telling an implementer to finish
+
+(ert-deftest cerebro-test/finish-action-writes-for-unflagged-implementer ()
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
+                                             nil "ah-f9c")
+                nil)
+              'write)))
+
+(ert-deftest cerebro-test/finish-action-offers-clear-when-flagged ()
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
+                                             nil "ah-f9c")
+                t)
+              'offer-clear)))
+
+(ert-deftest cerebro-test/finish-action-refuses-interactive-roles ()
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Xavier" "planner" 'interactive 'up)
+                nil)
+              'not-implementer)))
+
+(ert-deftest cerebro-test/entry-shows-finishing-when-flag-set ()
+  "The list says a stop flag took effect while the bead is still in flight -
+`f' does not stop anything, so the marker has to come from somewhere."
+  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
+                                             nil "ah-f9c"))
+         (now (current-time))
+         (flagged-state-col (aref (cadr (cerebro--entry agent now t)) 2))
+         (unflagged-state-col (aref (cadr (cerebro--entry agent now nil)) 2))
+         (default-state-col (aref (cadr (cerebro--entry agent now)) 2)))
+    (should (string-match-p "finishing" flagged-state-col))
+    (should-not (string-match-p "finishing" unflagged-state-col))
+    ;; The third argument is optional, and omitting it must read as unflagged -
+    ;; every existing caller of `cerebro--entry' predates this argument.
+    (should (equal unflagged-state-col default-state-col))))
+
+(ert-deftest cerebro-test/finish-key-is-bound ()
+  (should (eq (lookup-key cerebro-mode-map "f") #'cerebro-finish)))
+
+(ert-deftest cerebro-test/write-stop-flag-creates-a-missing-directory ()
+  "`.claude/implementers' exists in practice whenever `cerebro--repo-root'
+found it, but this must not depend on that."
+  (let ((root (make-temp-file "cerebro-test-" t)))
+    (unwind-protect
+        (progn
+          (cerebro--write-stop-flag root "Wolverine")
+          (should (file-exists-p (cerebro--stop-flag-path root "Wolverine"))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/entry-finishing-marker-only-for-in-flight-states ()
+  "A stop flag can be written for an implementer in any state - nothing
+stops `f' from being pressed on a dead or idle one - but \"dead finishing\"
+or \"idle finishing\" would describe a bead that is not actually in flight
+for the flag to be waiting on."
+  (let ((now (current-time)))
+    (dolist (state '(dead idle done))
+      (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer state))
+             (state-col (aref (cadr (cerebro--entry agent now t)) 2)))
+        (should-not (string-match-p "finishing" state-col))))
+    (dolist (state '(working asking))
+      (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer state
+                                                 nil "ah-f9c"))
+             (state-col (aref (cadr (cerebro--entry agent now t)) 2)))
+        (should (string-match-p "finishing" state-col))))))
+
+;; ---------------------------------------------------------------------------
 ;; ah-vcf.3 increment 2: owned sessions feed the list
 
 ;; The seam this bead fills: a non-empty OWNED turns an interactive agent
@@ -1389,6 +1456,185 @@ list it partitions is."
           (should (cl-some (lambda (a) (string-match-p status a)) args)))
         ;; No type exclusion: an epic has to land in Other, not vanish.
         (should-not (member "--exclude-type" args))))))
+
+;; ---------------------------------------------------------------------------
+;; ah-4ao increment 3: turning a sweep's facts into a decision
+
+;; `cerebro--claim-finding' works from `sweep-claims.sh's JSON, parsed the way
+;; `cerebro--bd-json' would: an alist with symbol keys.
+(defun cerebro-test--claim-candidate (id assignee &optional on-main age verification-failed
+                                                    docs-only lease-age)
+  ;; Booleans as `cerebro--bd-json' parses them: `:false-object nil', so JSON
+  ;; false and absent both read as plain nil, same as everywhere else here.
+  `((id . ,id) (assignee . ,assignee) (title . "a bead")
+    (verification_failed . ,verification-failed)
+    (on_main . ,on-main)
+    (commit_age_min . ,age)
+    (docs_only . ,docs-only)
+    (lease_age_min . ,lease-age)))
+
+(ert-deftest cerebro-test/claim-finding-leaves-verification-failed ()
+  "Psylocke's reopen puts the old commit back on main every time - that
+proves nothing about whether the rework has landed, so this bead is never
+sweep-closed regardless of what else is true of it."
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 30 t)
+                 nil (current-time)))))
+
+(ert-deftest cerebro-test/claim-finding-leaves-live-implementer ()
+  "A name that is still running keeps its bead, however old the merge looks."
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 30)
+                 '("Cyclops") (current-time)))))
+
+(ert-deftest cerebro-test/claim-finding-leaves-fresh-commit ()
+  "An implementer closes within seconds of merging; anything fresher than
+ten minutes is one still mid-cleanup, not a dead one."
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 3)
+                 nil (current-time)))))
+
+(ert-deftest cerebro-test/claim-finding-closes-delivered-dead-and-old ()
+  (should (equal (cerebro--claim-finding
+                  (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 30)
+                  nil (current-time))
+                 '(close "ah-x1" "Delivered in PR; closed by the fleet view, Cyclops did not"))))
+
+(ert-deftest cerebro-test/claim-finding-reclaims-dead-not-on-main ()
+  (should (equal (cerebro--claim-finding
+                  (cerebro-test--claim-candidate "ah-x1" "Cyclops" nil nil nil nil 30)
+                  nil (current-time))
+                 '(reclaim "ah-x1"))))
+
+(ert-deftest cerebro-test/claim-finding-leaves-a-lease-not-yet-stale ()
+  "`assignee' not being on the roster is not evidence of anything by
+itself - \"Henrik Kurelid\" is a live claim held by hand exactly as often
+as it is a crashed session, and only the lease tells the two apart. A bead
+this function has just claimed, whose own session sets no `BEADS_ACTOR',
+must not be offered for reclaim the moment its assignee reads as a human
+name - which is the bug this test was written to catch."
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Henrik Kurelid" nil nil nil nil 3)
+                 nil (current-time))))
+  (should (null (cerebro--claim-finding
+                 (cerebro-test--claim-candidate "ah-x1" "Henrik Kurelid" nil nil nil nil nil)
+                 nil (current-time)))))
+
+(defun cerebro-test--epic-candidate (id minutes)
+  `((id . ,id) (title . "an epic") (minutes_since_last_child_closed . ,minutes)))
+
+(ert-deftest cerebro-test/epic-finding-waits-ten-minutes ()
+  "An implementer closes its parent within seconds of its last child; a
+close inside ten minutes is one still mid-cleanup."
+  (should (null (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" 3))))
+  (should (equal (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" 30))
+                 '(epic-close "ah-e1"))))
+
+(ert-deftest cerebro-test/epic-finding-nil-minutes-waits ()
+  "A close time the script could not parse is not evidence of anything -
+leave it rather than guess."
+  (should (null (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" nil)))))
+
+(ert-deftest cerebro-test/finding-command-covers-only-the-three-shapes ()
+  "This function is the complete list of destructive commands the fleet
+view can run - so its total output range has to be pinned, not just its
+happy path."
+  (should (equal (cerebro--finding-command '(close "ah-x1" "reason here") "/repo")
+                 '("bd" "close" "ah-x1" "--reason" "reason here")))
+  (should (equal (cerebro--finding-command '(reclaim "ah-x1") "/repo")
+                 '("bd" "reclaim" "--id" "ah-x1" "--older-than" "10m")))
+  (should (equal (cerebro--finding-command '(epic-close "ah-e1") "/repo")
+                 '("bd" "close" "ah-e1")))
+  (should (null (cerebro--finding-command nil "/repo")))
+  (should-error (cerebro--finding-command '(unknown-shape "ah-x1") "/repo")))
+
+;; ---------------------------------------------------------------------------
+;; ah-4ao increment 4: showing sweep findings and acting on them, confirmed
+
+(ert-deftest cerebro-test/sweep-section-renders-findings ()
+  (let ((lines (cerebro--sweep-section
+                (list (cons "close ah-x1 — delivered by Cyclops, on main 25m" '(close "ah-x1" "r"))
+                      (cons "reclaim ah-x2 — Storm gone, not on main" '(reclaim "ah-x2"))))))
+    (should (string-match-p "\\`Sweeps\\'" (substring-no-properties (car lines))))
+    (should (= 3 (length lines)))
+    (should (string-match-p "close ah-x1" (nth 1 lines)))
+    (should (string-match-p "reclaim ah-x2" (nth 2 lines)))
+    ;; Each line carries its own finding, the way a bead row carries its id -
+    ;; `x' acts on what point is standing on, not on a re-parse of the text.
+    (should (equal (get-text-property 0 'cerebro-finding (nth 1 lines)) '(close "ah-x1" "r")))))
+
+(ert-deftest cerebro-test/sweep-section-hidden-when-empty ()
+  "Unlike the bead sections, which say \"(none)\", an empty Sweeps section
+says nothing at all - that is the ordinary state of every render but one."
+  (should (null (cerebro--sweep-section nil))))
+
+(ert-deftest cerebro-test/sweep-act-runs-nothing-without-confirmation ()
+  "The confirmation gate is the one thing standing between a sweep finding
+and a destructive `bd' call; this pins that nothing reaches the runner
+without it saying yes."
+  (let ((ran nil))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--run-sweep-command)
+               (lambda (&rest args) (push args ran) t))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+              ((symbol-function 'cerebro--finding-at-point)
+               (lambda () '(close "ah-x1" "delivered"))))
+      (cerebro-sweep-act)
+      (should (null ran)))))
+
+(ert-deftest cerebro-test/sweep-act-with-no-finding-at-point-is-refused ()
+  (cl-letf (((symbol-function 'cerebro--finding-at-point) (lambda () nil)))
+    (should-error (cerebro-sweep-act) :type 'user-error)))
+
+(ert-deftest cerebro-test/sweep-act-key-is-bound ()
+  (should (eq (lookup-key cerebro-beads-mode-map "x") #'cerebro-sweep-act)))
+
+(ert-deftest cerebro-test/sweep-act-warns-when-the-push-fails ()
+  "The close/reclaim itself succeeded - a `user-error' claiming nothing
+happened would be wrong - but the other machines cannot see it until the
+push does, and that has to reach the navigator, not just the exit status."
+  (let ((calls nil) (messages nil))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+              ((symbol-function 'cerebro--run-sweep-command)
+               ;; First call (the close) succeeds; second (the push) fails.
+               (lambda (_root argv) (push argv calls) (= (length calls) 1)))
+              ((symbol-function 'cerebro--beads-render) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+              ((symbol-function 'cerebro--finding-at-point)
+               (lambda () '(close "ah-x1" "delivered")))
+              ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (cerebro-sweep-act)
+      ;; The close ran and the push was attempted, in that order.
+      (should (equal (reverse calls)
+                      (list '("bd" "close" "ah-x1" "--reason" "delivered")
+                            '("bd" "dolt" "push"))))
+      (should (string-match-p "push" (car messages))))))
+
+;; ---------------------------------------------------------------------------
+;; ah-4ao increment 5: the prune watcher moves from Cerebro to `M-x cerebro'
+
+(ert-deftest cerebro-test/prune-action-starts-when-absent ()
+  (should (eq (cerebro--prune-action nil) 'start)))
+
+(ert-deftest cerebro-test/prune-action-leaves-running-process ()
+  "Starting a second `--watch' would sweep in duplicate and race the first
+one's removals - not merely redundant, since `prune-worktrees.sh' talks to
+git."
+  (should (eq (cerebro--prune-action t) 'already-running)))
+
+(ert-deftest cerebro-test/ensure-prune-watcher-starts-a-process-once ()
+  (let ((started 0))
+    (cl-letf (((symbol-function 'cerebro--prune-process-live-p) (lambda () nil))
+              ((symbol-function 'cerebro--start-prune-process)
+               (lambda (_repo-root) (setq started (1+ started)))))
+      (cerebro--ensure-prune-watcher "/repo")
+      (should (= started 1))))
+  (let ((started 0))
+    (cl-letf (((symbol-function 'cerebro--prune-process-live-p) (lambda () t))
+              ((symbol-function 'cerebro--start-prune-process)
+               (lambda (_repo-root) (setq started (1+ started)))))
+      (cerebro--ensure-prune-watcher "/repo")
+      (should (= started 0)))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

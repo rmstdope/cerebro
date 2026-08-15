@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'let-alist)
 (require 'json)
 (require 'iso8601)
 (require 'tabulated-list)
@@ -218,10 +219,25 @@ fails to parse, renders as the empty string."
   "TEXT in bold when EMPHASIZE, otherwise TEXT unchanged."
   (if emphasize (propertize text 'face 'bold) text))
 
-(defun cerebro--entry (agent now)
-  "AGENT as a `tabulated-list-entries' element, evaluated at NOW."
+(defun cerebro--entry (agent now &optional flagged)
+  "AGENT as a `tabulated-list-entries' element, evaluated at NOW.
+
+FLAGGED, when non-nil, means a stop flag is set for AGENT: the state column
+gains a \" finishing\" suffix, so the navigator sees the flag took effect
+while the bead is still in flight rather than being told nothing happened.
+Flags are read between beads, never during one - see `cerebro-finish' - so
+this is the only place \"finishing\" is said.
+
+The suffix only ever shows for a state a bead can actually be in flight
+under - `working' or `asking'. FLAGGED can be non-nil for any implementer
+\(`cerebro--finish-action' writes the flag regardless of current state\), but
+\"dead finishing\" or \"idle finishing\" would describe a bead that either
+was never running or has none to complete - there is nothing in flight for
+the flag to be waiting on, so the marker would say something untrue rather
+than nothing."
   (let* ((state (cerebro-agent-state agent))
          (external (cerebro-agent-external agent))
+         (in-flight (memq state '(working asking)))
          ;; A glyph is one character in the corner of the eye, and there are
          ;; eighteen rows. Bolding the name, role and state makes the row
          ;; itself the signal - so bold has to stay rare enough to mean it.
@@ -229,7 +245,9 @@ fails to parse, renders as the empty string."
          (agent-col (format "%s %s" (cerebro--glyph state)
                             (cerebro--emphasize (cerebro-agent-name agent) attention)))
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
-         (state-col (cerebro--emphasize (symbol-name state) attention))
+         (state-col (cerebro--emphasize
+                     (concat (symbol-name state) (if (and flagged in-flight) " finishing" ""))
+                     attention))
          (bead-col (cond (external "(external)")
                           ((cerebro-agent-bead agent))
                           (t "")))
@@ -310,7 +328,7 @@ still has to say how much work is really in it."
      (when (> hidden 0)
        (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
 
-(defun cerebro--bead-panel (claimed planned unplanned merged width max)
+(defun cerebro--bead-panel (claimed planned unplanned merged width max &optional sweep-findings)
   "The whole panel as a list of lines.
 
 The order work moves in, and it stops where the fleet's part in it does:
@@ -318,14 +336,145 @@ being built, ready to pick up, not planned yet, and merged but not yet
 verified - which is Psylocke's queue.
 
 Verified work is not here. Neither is anything nobody can pick up. See
-`cerebro--partition-beads' for what that leaves out and why."
+`cerebro--partition-beads' for what that leaves out and why.
+
+SWEEP-FINDINGS, when given, adds a Sweeps section at the bottom (see
+`cerebro--sweep-section') - what the claims and epics sweeps found, each
+one a candidate for `x' rather than something already decided."
   (append (cerebro--bead-section "Claimed" claimed width max) (list "")
           (cerebro--bead-section "Planned, unclaimed" planned width max) (list "")
           (cerebro--bead-section "Unplanned" unplanned width max) (list "")
           ;; Newest first: priority says nothing about finished work, so what
           ;; this answers is what just landed and still wants checking.
           (cerebro--bead-section "Merged, unverified" merged width max
-                                 #'cerebro--sort-recent)))
+                                 #'cerebro--sort-recent)
+          (let ((sweep-lines (cerebro--sweep-section sweep-findings)))
+            (when sweep-lines (cons "" sweep-lines)))))
+
+;;; The Sweeps section (ah-4ao): claims and epics found by the sweep scripts
+
+(defun cerebro--sweep-label (finding candidate)
+  "One line of human-readable text for FINDING, built from CANDIDATE - the
+claim or epic object `cerebro--claim-finding'/`cerebro--epic-finding' judged
+it from."
+  (let-alist candidate
+    (pcase finding
+      (`(close ,id ,_reason)
+       (format "close %s — delivered by %s, on main %sm" id .assignee
+               (or .commit_age_min "?")))
+      (`(reclaim ,id)
+       (format "reclaim %s — %s gone, not on main" id .assignee))
+      (`(epic-close ,id)
+       (format "close %s — all children closed %sm ago" id
+               .minutes_since_last_child_closed)))))
+
+(defun cerebro--sweep-line (label finding)
+  "One propertized Sweeps line: LABEL, carrying FINDING the way a bead row
+carries its id - so `cerebro-sweep-act' acts on what point stands on rather
+than re-deriving it from the text."
+  (propertize label 'cerebro-finding finding))
+
+(defun cerebro--sweep-section (findings)
+  "Lines for the Sweeps section. FINDINGS is a list of (LABEL . FINDING).
+
+Nil - no header, nothing - when FINDINGS is empty. That is deliberately
+unlike `cerebro--bead-section', which prints \"(none)\": those sections
+describe queues that are normally non-empty, so their being empty is worth
+a line saying so. An empty Sweeps section is the *ordinary* result of every
+render but one, and a panel that said \"Sweeps 0 / (none)\" every ten
+minutes would be exactly the noise `orchestrator.md' already warns against
+for a sweep that found nothing."
+  (when findings
+    (cons (propertize "Sweeps" 'face 'bold)
+          (mapcar (lambda (f) (cerebro--sweep-line (car f) (cdr f))) findings))))
+
+(defun cerebro--live-implementer-names (repo-root)
+  "Implementer names with a live session right now, in REPO-ROOT.
+
+By process, not by `cerebro--owned': a session running in the navigator's
+own terminal is just as live as one Emacs started, and just as much not to
+be swept as one Emacs started."
+  (let ((roster (cerebro--roster repo-root)))
+    (delq nil
+          (mapcar (lambda (name)
+                    (let* ((parsed (cerebro--read-state-file
+                                    (cerebro--state-file-path repo-root name)))
+                           (pid (and parsed (alist-get 'pid parsed))))
+                      (and pid (cerebro--pid-alive-p pid) name)))
+                  roster))))
+
+(defun cerebro--run-script-json (repo-root script &rest args)
+  "Run SCRIPT (one of the sweep scripts, `cerebro--script'-relative) with
+ARGS in REPO-ROOT; the parsed JSON it printed, or nil.
+
+Never signals, the same as `cerebro--bd-json' and for the same reason: a
+sweep script that cannot run - missing, erroring, no `bd' on PATH - must
+leave the panel showing no findings rather than take it down."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((default-directory (file-name-as-directory repo-root)))
+          (when (zerop (apply #'call-process
+                              (expand-file-name (cerebro--script script) repo-root)
+                              nil t nil args))
+            (json-parse-string (buffer-string) :object-type 'alist :array-type 'list
+                               :null-object nil :false-object nil))))
+    (error nil)))
+
+(defun cerebro--gather-sweeps (repo-root)
+  "The current sweep findings, as a list of (LABEL . FINDING). Impure."
+  (let* ((live-names (cerebro--live-implementer-names repo-root))
+         (now (current-time))
+         (claims (cerebro--run-script-json repo-root "sweep-claims.sh" "--json"))
+         (epics (cerebro--run-script-json repo-root "sweep-epics.sh" "--json")))
+    (append
+     (delq nil (mapcar (lambda (c)
+                         (let ((finding (cerebro--claim-finding c live-names now)))
+                           (and finding (cons (cerebro--sweep-label finding c) finding))))
+                       claims))
+     (delq nil (mapcar (lambda (e)
+                         (let ((finding (cerebro--epic-finding e)))
+                           (and finding (cons (cerebro--sweep-label finding e) finding))))
+                       epics)))))
+
+(defun cerebro--finding-at-point ()
+  "The sweep finding on this line, or nil."
+  (get-text-property (line-beginning-position) 'cerebro-finding))
+
+(defun cerebro--run-sweep-command (repo-root argv)
+  "Run ARGV (program then args) in REPO-ROOT. Non-nil if it exited zero.
+
+The one function through which `cerebro-sweep-act' ever runs a program -
+kept this thin, and this named, so a test can stub exactly this and nothing
+underneath it."
+  (let ((default-directory (file-name-as-directory repo-root)))
+    (zerop (apply #'call-process (car argv) nil nil nil (cdr argv)))))
+
+(defun cerebro-sweep-act ()
+  "Act on the sweep finding at point (`x'), after confirming the exact
+command it is about to run.
+
+`bd dolt push' rides the same confirmation: a close or reclaim the other
+machines cannot see yet is only half done, and asking twice for one
+keypress's worth of intent would be its own kind of noise."
+  (interactive)
+  (let ((finding (cerebro--finding-at-point)))
+    (unless finding
+      (user-error "cerebro: no sweep finding on this line"))
+    (let* ((repo-root (cerebro--repo-root))
+           (argv (cerebro--finding-command finding repo-root))
+           (command-string (mapconcat #'identity argv " ")))
+      (when (y-or-n-p (format "run: %s ? " command-string))
+        (if (cerebro--run-sweep-command repo-root argv)
+            (let ((pushed (cerebro--run-sweep-command repo-root '("bd" "dolt" "push"))))
+              (cerebro--beads-render (current-buffer))
+              (if pushed
+                  (message "ran: %s" command-string)
+                ;; The close/reclaim itself succeeded - only the push failed - so this
+                ;; is not `user-error's "nothing happened", but the navigator still has
+                ;; to know the other machines cannot see it yet.
+                (message "ran: %s - but `bd dolt push' failed; other machines will not see this until it succeeds"
+                         command-string)))
+          (user-error "cerebro: %s failed" command-string))))))
 
 ;;; Supervising the implementers
 
@@ -438,6 +587,18 @@ harder confirm), `external' (refuse - not ours to stop) or `dead'
     'kill-working)
    (t 'kill)))
 
+(defun cerebro--finish-action (agent flag-set)
+  "What `f' should do for AGENT given FLAG-SET.
+
+One of `write' (implementer, no flag yet - tell it to finish), `offer-clear'
+\(flag already set - ask before removing it, which is the cheap way back to
+\"actually, keep going\") or `not-implementer' (the four interactive roles
+have no bead to finish and no flag to write)."
+  (cond
+   ((not (eq (cerebro-agent-kind agent) 'implementer)) 'not-implementer)
+   (flag-set 'offer-clear)
+   (t 'write)))
+
 (defun cerebro--placeholder (agent)
   "The detail-window text for AGENT when it has no live view."
   (let ((name (cerebro-agent-name agent)))
@@ -445,6 +606,88 @@ harder confirm), `external' (refuse - not ours to stop) or `dead'
         (format "%s is running outside Emacs - no live view. Use the terminal that started it."
                 name)
       (format "%s is not running. Press s to start it." name))))
+
+;;; Sweep findings (ah-4ao): turning `sweep-claims.sh'/`sweep-epics.sh' facts into a decision
+
+(defconst cerebro--sweep-stale-minutes 10
+  "Minutes past which a claim's delivery, or an epic's last child close, is
+old enough to act on rather than mid-cleanup.
+
+Matches `agents/orchestrator.md's own claims and epics sweeps: an
+implementer closes what it just finished within seconds, so anything
+fresher than this is an agent still tidying up, not one that is gone.")
+
+(defun cerebro--claim-finding (candidate live-names now)
+  "Pure. What the claims sweep should offer for CANDIDATE, or nil.
+
+CANDIDATE is one parsed object from `sweep-claims.sh --json'. LIVE-NAMES is
+the implementer names with a live session (from the state files the fleet
+view already gathers - `cerebro--gather-states'). NOW is unused by the
+guards themselves (which key on `commit_age_min' and `lease_age_min',
+computed by the script at the moment it ran) but taken for symmetry with
+`cerebro--supervise-action' and so a future guard can use it without
+changing every caller.
+
+Returns nil (leave it alone), (close ID REASON), or (reclaim ID). Nil
+covers four cases: a live session still holds it; a `verification:failed'
+label makes `on_main' meaningless; the delivering commit is too fresh to be
+sure the implementer has finished tidying up; or nothing is on main but the
+lease has not been expired long enough to call the claim dead.
+
+The last of those is not a detail: `assignee' not being in LIVE-NAMES means
+only that no roster session's pid is holding this claim - it is exactly as
+true of a claim the navigator is holding by hand as of one a crashed
+implementer left behind, and `agents/orchestrator.md's own rule for telling
+them apart is the lease, not the name. `lease_age_min' mirrors `bd reclaim
+--id <id> --older-than 10m's own window for that reason: a finding this
+function offers and the command it maps to must agree on what counts as
+dead, or a confirmed `reclaim' could still be refused by `bd' - or worse,
+accepted, on a claim that was never actually abandoned."
+  (ignore now)
+  (let-alist candidate
+    (cond
+     (.verification_failed nil)
+     ((member .assignee live-names) nil)
+     (.on_main
+      (if (and .commit_age_min (> .commit_age_min cerebro--sweep-stale-minutes))
+          (list 'close .id
+                (format "Delivered in PR; closed by the fleet view, %s did not" .assignee))
+        nil))
+     ((and .lease_age_min (> .lease_age_min cerebro--sweep-stale-minutes))
+      (list 'reclaim .id))
+     (t nil))))
+
+(defun cerebro--epic-finding (candidate)
+  "Pure. What the epics sweep should offer for CANDIDATE, or nil.
+
+CANDIDATE is one parsed object from `sweep-epics.sh --json' - already
+known eligible (every child closed) by the script's own `bd epic status
+--eligible-only'. The only question left here is staleness: nil when
+`minutes_since_last_child_closed' is absent (nothing to act on) or under
+`cerebro--sweep-stale-minutes' (an implementer is still mid-cleanup),
+otherwise (epic-close ID)."
+  (let-alist candidate
+    (if (and .minutes_since_last_child_closed
+             (> .minutes_since_last_child_closed cerebro--sweep-stale-minutes))
+        (list 'epic-close .id)
+      nil)))
+
+(defun cerebro--finding-command (finding repo-root)
+  "The exact argv for FINDING, or nil for nil.
+
+This function is the complete list of destructive commands the fleet view
+can run - every other path to `bd close' or `bd reclaim' goes through a
+sweep finding built by `cerebro--claim-finding' or `cerebro--epic-finding'
+and then this. REPO-ROOT is accepted for symmetry with the rest of the
+sweep pipeline; the command itself carries no path, since it is run with
+`default-directory' already bound the way every other `bd' call here is."
+  (ignore repo-root)
+  (pcase finding
+    ('nil nil)
+    (`(close ,id ,reason) (list "bd" "close" id "--reason" reason))
+    (`(reclaim ,id) (list "bd" "reclaim" "--id" id "--older-than" "10m"))
+    (`(epic-close ,id) (list "bd" "close" id))
+    (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure
 
@@ -1061,13 +1304,20 @@ when the navigator holds the key down hides where it finishes."
   (cerebro--move-bead -1))
 
 (defun cerebro--beads-render (buffer)
-  "Redraw BUFFER's panel from `bd'."
+  "Redraw BUFFER's panel from `bd'.
+
+Draws from `cerebro--sweep-findings' rather than gathering it fresh - that
+is `cerebro--sweep-tick's job, on its own ten-minute cadence, because the
+sweep scripts fetch from origin and spawn twice what `cerebro--gather-beads'
+does. A `g' or the thirty-second bead timer redraws with whatever the last
+sweep found rather than paying that cost again."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (let* ((width (cerebro--panel-width buffer))
              (beads (cerebro--gather-beads (cerebro--repo-root)))
              (lines (apply #'cerebro--bead-panel
-                           (append beads (list width cerebro-beads-per-section))))
+                           (append beads (list width cerebro-beads-per-section)
+                                   (list cerebro--sweep-findings))))
              (inhibit-read-only t)
              ;; By id, not by position: the panel redraws every thirty seconds
              ;; and a bead landing above the selected one would otherwise slide
@@ -1102,6 +1352,37 @@ nobody can see."
     (cancel-function-timers #'cerebro--beads-tick)
     (setq cerebro--beads-timer nil)))
 
+(defvar cerebro-sweep-refresh-seconds 600
+  "How often the Sweeps section re-runs the claims and epics sweep scripts.
+
+Ten minutes: Cerebro's own cadence for these sweeps (`agents/orchestrator.md'),
+and slower than the thirty-second bead timer on purpose - each sweep script
+fetches from origin and spawns a `bd' call per candidate, which is
+considerably more than `cerebro--gather-beads's one call.")
+
+(defvar cerebro--sweep-timer nil
+  "The Sweeps section's own refresh timer, or nil.
+
+Global, not buffer-local, for the same reason `cerebro--beads-timer' is: it
+has to be able to cancel itself once the buffer is gone.")
+
+(defvar-local cerebro--sweep-findings nil
+  "The sweep findings as of the last `cerebro--sweep-tick', a list of
+\(LABEL . FINDING\). What `cerebro--beads-render' actually draws - see
+there for why the render does not gather this itself.")
+
+(defun cerebro--sweep-tick (buffer)
+  "Refresh BUFFER's sweep findings and redraw; called every
+`cerebro-sweep-refresh-seconds', and once from `cerebro--beads-buffer' so
+the section is not empty until the first ten minutes are up."
+  (if (buffer-live-p buffer)
+      (with-demoted-errors "cerebro: %S"
+        (with-current-buffer buffer
+          (setq cerebro--sweep-findings (cerebro--gather-sweeps (cerebro--repo-root))))
+        (cerebro--beads-render buffer))
+    (cancel-function-timers #'cerebro--sweep-tick)
+    (setq cerebro--sweep-timer nil)))
+
 (defvar cerebro-beads-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
@@ -1121,6 +1402,7 @@ nobody can see."
     (define-key map "+" #'cerebro-beads-raise)
     (define-key map "-" #'cerebro-beads-lower)
     (define-key map "u" #'cerebro-beads-undo-priority)
+    (define-key map "x" #'cerebro-sweep-act)
     map)
   "Keymap for `cerebro-beads-mode'.")
 
@@ -1147,7 +1429,14 @@ nobody can see."
       (unless (timerp cerebro--beads-timer)
         (setq cerebro--beads-timer
               (run-at-time cerebro-beads-refresh-seconds cerebro-beads-refresh-seconds
-                           #'cerebro--beads-tick buffer))))
+                           #'cerebro--beads-tick buffer)))
+      (unless (timerp cerebro--sweep-timer)
+        ;; Run once immediately, in the foreground, so the Sweeps section is
+        ;; not simply empty for the first ten minutes of a fresh `M-x cerebro'.
+        (cerebro--sweep-tick buffer)
+        (setq cerebro--sweep-timer
+              (run-at-time cerebro-sweep-refresh-seconds cerebro-sweep-refresh-seconds
+                           #'cerebro--sweep-tick buffer))))
     buffer))
 
 ;;; The buffer
@@ -1177,7 +1466,69 @@ nobody can see."
          (agents (cerebro--derive roster cerebro-interactive-agents states
                                           #'cerebro--pid-alive-p args owned)))
     (setq cerebro--agents agents)
-    (setq tabulated-list-entries (mapcar (lambda (a) (cerebro--entry a now)) agents))))
+    (setq tabulated-list-entries
+          (mapcar (lambda (a)
+                    (cerebro--entry a now (cerebro--stop-flag-p repo-root (cerebro-agent-name a))))
+                  agents))))
+
+;;; The prune watcher (ah-4ao): `prune-worktrees.sh --watch' moves here from Cerebro
+
+(defconst cerebro--prune-process-name " *cerebro-prune*"
+  "Name of the background `prune-worktrees.sh --watch' process and its
+output buffer. Leading space: an internal process, not something the
+navigator picks from the buffer list.")
+
+(defun cerebro--prune-action (process-live)
+  "Pure. `start' when no watcher is live, `already-running' otherwise.
+
+The script's own guards are the safety story - clean tree, work already on
+main, untouched for half an hour (see `prune-worktrees.sh') - this decides
+nothing about what gets removed, only whether a second `--watch' loop
+should be started alongside a first. It should not: two would sweep the
+same worktrees at once and race each other's `git worktree remove', not
+merely duplicate work."
+  (if process-live 'already-running 'start))
+
+(defun cerebro--prune-process-live-p ()
+  "Non-nil if the prune watcher process is already running."
+  (let ((process (get-process cerebro--prune-process-name)))
+    (and process (process-live-p process))))
+
+(defun cerebro--start-prune-process (repo-root)
+  "Start `prune-worktrees.sh --watch' in REPO-ROOT, output going nowhere
+the navigator has to look at - the script already says why it kept or
+removed each tree, and that is for troubleshooting, not the ordinary case.
+
+Never signals: `M-x cerebro' has to open even when the script is missing or
+unrunnable (a fresh checkout without `--recurse-submodules', for one), the
+same way `cerebro--bd-json' degrades rather than taking the buffer down."
+  (condition-case nil
+      (make-process
+       :name cerebro--prune-process-name
+       :buffer (get-buffer-create cerebro--prune-process-name)
+       :command (list (expand-file-name (cerebro--script "prune-worktrees.sh") repo-root) "--watch")
+       :noquery t)
+    (error nil)))
+
+(defun cerebro--ensure-prune-watcher (repo-root)
+  "Start the prune watcher in REPO-ROOT unless one is already running.
+
+Called from `M-x cerebro' on every open, not only the first - `--prune-action'
+is what makes a second call a no-op rather than a second `--watch' loop, the
+same way `cerebro--beads-buffer' guards its own timers."
+  (when (eq (cerebro--prune-action (cerebro--prune-process-live-p)) 'start)
+    (cerebro--start-prune-process repo-root)))
+
+(defun cerebro--kill-prune-watcher ()
+  "Stop the prune watcher, if running.
+
+Bound to the fleet buffer's own `kill-buffer-hook': the watcher exists to
+serve `M-x cerebro', and a `sleep 600' loop nobody can see it report is not
+something to leave running past the buffer that started it - unlike the
+sweep scripts here, `prune-worktrees.sh' talks to git and disk, not merely
+to `bd', so an orphaned loop is more than idle load."
+  (let ((process (get-process cerebro--prune-process-name)))
+    (when process (delete-process process))))
 
 (defun cerebro--cancel-timer ()
   "Stop this buffer's auto-refresh timer, if any."
@@ -1280,6 +1631,44 @@ cleared first rather than prompting a second time for the same kill."
                   (cerebro-agent-name agent)))
         ('dead (message "%s is not running" (cerebro-agent-name agent)))))))
 
+(defun cerebro--write-stop-flag (repo-root name)
+  "Create NAME's stop flag in REPO-ROOT, empty - only its existence is read.
+
+`make-directory' first, `:parents' t, mirroring the documented
+\"mkdir -p .claude/implementers && touch ...\" flow (`orchestrator.md') -
+in practice `.claude/implementers' already exists whenever
+`cerebro--repo-root' has found it, but costs nothing to not depend on that."
+  (let ((path (cerebro--stop-flag-path repo-root name)))
+    (make-directory (file-name-directory path) t)
+    (write-region "" nil path)))
+
+(defun cerebro-finish ()
+  "Tell the implementer at point to finish (`f'): write its stop flag.
+
+The flag is read between beads, never during one (see `orchestrator.md'):
+the session completes the bead it is on, closes it, and only then stops -
+so this cannot end an implementer mid-bead, and does not try to. If a flag
+is already set, offers to clear it instead, which cancels the instruction
+cleanly."
+  (interactive)
+  (let ((agent (cerebro--agent-at-point)))
+    (when agent
+      (let* ((repo-root (cerebro--repo-root))
+             (name (cerebro-agent-name agent))
+             (flagged (cerebro--stop-flag-p repo-root name)))
+        (pcase (cerebro--finish-action agent flagged)
+          ('write
+           (cerebro--write-stop-flag repo-root name)
+           (revert-buffer)
+           (message "told %s to finish - it completes its current bead first" name))
+          ('offer-clear
+           (when (y-or-n-p (format "Stop flag already set for %s - clear it? " name))
+             (delete-file (cerebro--stop-flag-path repo-root name))
+             (revert-buffer)
+             (message "%s will keep going" name)))
+          ('not-implementer
+           (message "%s is not an implementer - nothing to finish" name)))))))
+
 (defun cerebro-other-window ()
   "Move to the next window (`TAB'), exactly as `C-x o' does.
 
@@ -1340,6 +1729,7 @@ would have taken TAB from every vterm the navigator has, fleet or not.
     (define-key map (kbd "<tab>") #'cerebro-other-window)
     (define-key map "s" #'cerebro-start)
     (define-key map "k" #'cerebro-kill)
+    (define-key map "f" #'cerebro-finish)
     map)
   "Keymap for `cerebro-mode'.")
 
@@ -1353,6 +1743,7 @@ would have taken TAB from every vterm the navigator has, fleet or not.
   (setq tabulated-list-sort-key nil)
   (add-hook 'tabulated-list-revert-hook #'cerebro--revert nil t)
   (add-hook 'kill-buffer-hook #'cerebro--cancel-timer nil t)
+  (add-hook 'kill-buffer-hook #'cerebro--kill-prune-watcher nil t)
   (add-hook 'post-command-hook #'cerebro--follow nil t)
   (tabulated-list-init-header))
 
@@ -1368,7 +1759,8 @@ would have taken TAB from every vterm the navigator has, fleet or not.
       (tabulated-list-print t)
       (cerebro--cancel-timer)
       (setq cerebro--timer
-            (run-with-timer 5 5 #'cerebro--tick buffer)))
+            (run-with-timer 5 5 #'cerebro--tick buffer))
+      (cerebro--ensure-prune-watcher (cerebro--repo-root)))
     ;; `pop-to-buffer' must run before `--setup-layout': layout claims
     ;; `selected-window' as the list window, which is only correct once that
     ;; window is actually showing this buffer.

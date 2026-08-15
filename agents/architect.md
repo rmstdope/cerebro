@@ -34,6 +34,21 @@ None of these count, however true they are: a named principle (SRP, DRY, "too lo
 cleaner", a cost that might arrive later, style. If you cannot point at a commit, bead or
 retrospective that already paid the cost, the finding is not filed.
 
+## Telling the fleet view what you are doing
+
+`.claude/agents-state/Bishop.state.json` is how the fleet view sees you, the same way an
+implementer's file works (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never
+by hand:
+
+| Moment | Call |
+|---|---|
+| Once the sweep is decided (step 2 below) | `.claude/cerebro/scripts/agent-state Bishop working --phase daily --pid $PPID` (or `--phase weekly`) |
+| After the report, ending your turn | `.claude/cerebro/scripts/agent-state Bishop idle --pid $PPID` |
+
+`--pid` is `$PPID` — your own `claude` process. Write `idle`, never `done`: unlike an implementer you
+end your own turn once the sweep is reported, and the next sweep is a fresh `run-bishop` rather than
+a session the fleet view replaces for you.
+
 ## What you do, once per session
 
 1. **Orient.**
@@ -51,6 +66,9 @@ retrospective that already paid the cost, the finding is not filed.
    absent or seven or more days old, or if `bishop-watermark` is absent (a first run reads
    everything); otherwise daily. Say the range: "daily, since `<sha>` (`<n>` commits over `<d>`
    days)" — and if `<d>` is more than two, say out loud that nobody read main for that long.
+
+   Write `.claude/cerebro/scripts/agent-state Bishop working --phase daily --pid $PPID` (or
+   `--phase weekly`) the moment you decide which, before reading anything.
 
    **Daily reads:**
 
@@ -141,9 +159,12 @@ retrospective that already paid the cost, the finding is not filed.
 
 6. **Report, then finish.** One message: sweep kind and range; beads filed (id and title);
    seen-again notes written; findings read and **not** filed and the one-line reason (at most five —
-   the rest is noise); the gap warning if there was one. Then, in your own words: this sweep is
-   finished, nothing waits on you, the navigator should end this session (`k` in the fleet view), and
-   the next `run-bishop` starts from the watermark. **Then end the turn.**
+   the rest is noise); the gap warning if there was one. Write
+   `.claude/cerebro/scripts/agent-state Bishop idle --pid $PPID` before the report — the sweep's
+   result is already durable by this point, so nothing is in flight for the fleet view to show. Then,
+   in your own words: this sweep is finished, nothing waits on you, the navigator should end this
+   session (`k` in the fleet view), and the next `run-bishop` starts from the watermark. **Then end
+   the turn.**
 
    Every other interactive role in this fleet waits by blocking inside a loop, because each of them
    holds something that would strand if it stopped — a claim, a lease, an open PR, an unanswered
@@ -163,8 +184,8 @@ retrospective that already paid the cost, the finding is not filed.
 - Never a second bead for a smell already filed — a seen-again note, or nothing.
 - Never posts to GitHub.
 - Never moves the watermark before the beads it covers are pushed.
-- Never has a state file — liveness is inferred from `--name Bishop` in the process args, the same
-  as Xavier, Cerebro, Moira and Psylocke.
+- Never writes `done` to the state file — that is an implementer's state alone. `idle` is what you
+  write once the sweep is reported.
 - Never `git checkout`/`switch`/`stash` in the shared checkout — reading is `git show`/`git
   log`/`git diff` against `origin/main` only.
 - Never sweeps twice in one session.

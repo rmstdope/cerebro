@@ -94,6 +94,13 @@ one undifferentiated `working` for however long the bead takes. The Bead/Phase c
 timers side by side, time on the bead and time in the current phase, so three implementers all
 sitting in `review` says Copilot is slow and one stuck in `ci` for an hour says something is stuck.
 
+**This is not implementer-only any more.** Since `ah-2n3.2` the five interactive agents write the
+same state file and show the same way: Xavier's row says `triage` or `plan`, Psylocke's says
+`prepare` or `verify`, Moira's and Cerebro's say `sweep` (Cerebro's also `release`), Bishop's says
+`daily` or `weekly` — and any one of them can show `?`, bold, when it is the one waiting on you
+rather than an implementer. Answer it the same way. A session started by hand outside the fleet view
+still shows `up` with no phase, since it has never written a file.
+
 **Two or three is a sensible number on one machine.** More is not faster: the browser test suites
 take a machine-wide lock and run one at a time, and every merge makes every other open PR stale, so
 each of them pays for a rebase and a fresh CI run. The orchestrator will say so if you ask for more,

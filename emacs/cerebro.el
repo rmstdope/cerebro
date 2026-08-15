@@ -14,14 +14,18 @@
 ;; unbound here on purpose.
 ;;
 ;; Data sources:
-;;   - an implementer's status file, `.claude/agents-state/<name>.state.json',
-;;     written by the implementer itself at every state transition (see
-;;     ah-vcf.1 and ah-u3i): { state: "idle"|"working"|"asking"|"done", phase,
-;;     bead, since, phase_since, pid }.
+;;   - an agent's status file, `.claude/agents-state/<name>.state.json',
+;;     written by the agent itself at every state transition (see ah-vcf.1,
+;;     ah-u3i and ah-2n3.2): { state: "idle"|"working"|"asking"|"done", phase,
+;;     bead, since, phase_since, pid }.  Every implementer writes one; since
+;;     ah-2n3.2 the interactive five do too, `done' excepted - it is an
+;;     implementer's state alone.
 ;;   - the launcher's `--roster', the thirteen implementer names.
-;;   - the interactive five (Xavier, Cerebro, Moira, Psylocke, Bishop) have no
-;;     such file; their liveness comes from scanning system processes for the
-;;     `--name <Name>' argument their launchers pass.
+;;   - liveness for the interactive five (Xavier, Cerebro, Moira, Psylocke,
+;;     Bishop) is the state file first, when one exists for a live pid, and
+;;     falls back to scanning system processes for the `--name <Name>'
+;;     argument their launchers pass when it does not - a session started by
+;;     hand, outside this fleet, has no file and still has to show `up'.
 
 ;;; Code:
 
@@ -87,22 +91,76 @@ whatever the frame has left.")
   (let ((needle (concat "--name[ \t]+" (regexp-quote name) "\\_>")))
     (cl-some (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
 
-(defun cerebro--derive-interactive (entry args owned)
+(defun cerebro--derive-from-state (name role kind parsed owned-p)
+  "Build one `cerebro-agent' for NAME from a live, parsed state file PARSED.
+
+ROLE and KIND are the row's static fields; OWNED-P is whether Emacs itself
+started this session. Shared between an implementer and an interactive agent
+once each has confirmed the file it read names a still-live pid - this is
+the one place a raw `state' string becomes the `cerebro-agent-state' symbol
+the rest of the view reads."
+  (let* ((raw-state (alist-get 'state parsed))
+         (state (cond ((equal raw-state "working") 'working)
+                      ;; The bead is merged and closed and the session has
+                      ;; nothing left to do; `cerebro--supervise' replaces
+                      ;; it, because an interactive session cannot end
+                      ;; itself the way a --print one did. `done' is an
+                      ;; implementer's state alone - `scripts/agent-state'
+                      ;; refuses it from an interactive name - so a stray one
+                      ;; here is a bug, not a finished bead, and must not be
+                      ;; handed to `cerebro--supervise-action' as if it were.
+                      ((equal raw-state "done") (if (eq kind 'implementer) 'done 'unknown))
+                      ;; Blocked on a question only the navigator can
+                      ;; answer, with a bead still in flight.
+                      ((equal raw-state "asking") 'asking)
+                      ((equal raw-state "idle") 'idle)
+                      ;; A raw state this list has never seen - a typo in
+                      ;; the skill, most likely.  A live process the view
+                      ;; does not understand is something the navigator
+                      ;; may want to look at, so this must not read as
+                      ;; `idle', which means "free, give it a bead".
+                      (t 'unknown))))
+    (make-cerebro-agent :name name :role role :kind kind
+                                :state state
+                                :bead (alist-get 'bead parsed)
+                                :since (alist-get 'since parsed)
+                                :external (not owned-p)
+                                :phase (alist-get 'phase parsed)
+                                :phase-since (alist-get 'phase_since parsed)
+                                :raw raw-state)))
+
+(defun cerebro--derive-interactive (entry states pid-alive-p args owned)
   "Derive one interactive agent's row from (NAME . ROLE) ENTRY.
 
-ARGS is the system process args list; OWNED the names Emacs itself started."
-  (let ((name (car entry))
-        (role (cdr entry)))
-    (cond
-     ((member name owned)
-      (make-cerebro-agent :name name :role role :kind 'interactive
-                                  :state 'up :bead nil :since nil :external nil))
-     ((cerebro--name-in-args-p name args)
-      (make-cerebro-agent :name name :role role :kind 'interactive
-                                  :state 'up :bead nil :since nil :external t))
-     (t
-      (make-cerebro-agent :name name :role role :kind 'interactive
-                                  :state 'dead :bead nil :since nil :external nil)))))
+STATES is an alist of (NAME . parsed-state-json-or-nil), the same one an
+implementer's row is derived from; PID-ALIVE-P a predicate on a pid; ARGS is
+the system process args list; OWNED the names Emacs itself started.
+
+Liveness is the state file first, the process scan second: when STATES has
+an entry for NAME whose pid is still alive, the row comes from the file -
+`working'/`idle'/`asking' and a phase, exactly like an implementer's row.
+Otherwise (no entry, or a pid that is no longer running - the file, if any,
+is a previous session's) this falls back to the three process-scan branches
+below, so a session started by hand outside this fleet
+\(`claude --name Xavier ...'\) with no file at all still shows `up'."
+  (let* ((name (car entry))
+         (role (cdr entry))
+         (parsed (cdr (assoc name states)))
+         (pid (and parsed (alist-get 'pid parsed)))
+         (alive (and pid (funcall pid-alive-p pid)))
+         (owned-p (and (member name owned) t)))
+    (if alive
+        (cerebro--derive-from-state name role 'interactive parsed owned-p)
+      (cond
+       ((member name owned)
+        (make-cerebro-agent :name name :role role :kind 'interactive
+                                    :state 'up :bead nil :since nil :external nil))
+       ((cerebro--name-in-args-p name args)
+        (make-cerebro-agent :name name :role role :kind 'interactive
+                                    :state 'up :bead nil :since nil :external t))
+       (t
+        (make-cerebro-agent :name name :role role :kind 'interactive
+                                    :state 'dead :bead nil :since nil :external nil))))))
 
 (defun cerebro--derive-implementer (name states pid-alive-p owned)
   "Derive one implementer's row for NAME.
@@ -128,34 +186,7 @@ predicate on a pid; OWNED the names Emacs itself started."
      ((not alive)
       (make-cerebro-agent :name name :role "implementer" :kind 'implementer
                                   :state 'dead :bead nil :since nil :external nil))
-     (t
-      (let* ((raw-state (alist-get 'state parsed))
-             (state (cond ((equal raw-state "working") 'working)
-                          ;; The bead is merged and closed and the session has
-                          ;; nothing left to do; `cerebro--supervise' replaces
-                          ;; it, because an interactive session cannot end
-                          ;; itself the way a --print one did.
-                          ((equal raw-state "done") 'done)
-                          ;; Blocked on a question only the navigator can
-                          ;; answer, with a bead still in flight.
-                          ((equal raw-state "asking") 'asking)
-                          ((equal raw-state "idle") 'idle)
-                          ;; A raw state this list has never seen - a typo in
-                          ;; the skill, most likely.  A live process the view
-                          ;; does not understand is something the navigator
-                          ;; may want to look at, so this must not read as
-                          ;; `idle', which means "free, give it a bead".
-                          (t 'unknown)))
-             (bead (alist-get 'bead parsed))
-             (since (alist-get 'since parsed))
-             (phase (alist-get 'phase parsed))
-             (phase-since (alist-get 'phase_since parsed))
-             (external (not owned-p)))
-        (make-cerebro-agent :name name :role "implementer" :kind 'implementer
-                                    :state state :bead bead :since since
-                                    :external external
-                                    :phase phase :phase-since phase-since
-                                    :raw raw-state))))))
+     (t (cerebro--derive-from-state name "implementer" 'implementer parsed owned-p)))))
 
 (defun cerebro--derive (roster interactive-agents states pid-alive-p args owned)
   "Return the fleet as a list of `cerebro-agent', interactive first.
@@ -163,11 +194,12 @@ predicate on a pid; OWNED the names Emacs itself started."
 ROSTER is the implementer name list, in the order they should be shown.
 INTERACTIVE-AGENTS is an alist of (NAME . ROLE), normally
 `cerebro-interactive-agents'.  STATES is an alist of (NAME .
-parsed-state-json-or-nil).  PID-ALIVE-P is a predicate on a pid.  ARGS is the
-system process args list.  OWNED is the set of agent names whose sessions
-Emacs itself started."
+parsed-state-json-or-nil) covering both the roster and the interactive
+names - see `cerebro--gather-states'.  PID-ALIVE-P is a predicate on a pid.
+ARGS is the system process args list.  OWNED is the set of agent names whose
+sessions Emacs itself started."
   (append
-   (mapcar (lambda (entry) (cerebro--derive-interactive entry args owned))
+   (mapcar (lambda (entry) (cerebro--derive-interactive entry states pid-alive-p args owned))
            interactive-agents)
    (mapcar (lambda (name) (cerebro--derive-implementer name states pid-alive-p owned))
            roster)))
@@ -240,8 +272,17 @@ fails to parse, renders as the empty string."
   "Whether STATE is one the navigator has to do something about."
   (eq state 'asking))
 
-(defconst cerebro--phases '("build" "gate" "review" "ci" "rebase" "merge")
-  "The phase vocabulary, in run order. Mirrors scripts/agent-state.")
+(defconst cerebro--phases
+  '("build" "gate" "review" "ci" "rebase" "merge"
+    "triage" "plan" "prepare" "verify" "sweep" "release" "daily" "weekly")
+  "The phase vocabulary. Mirrors scripts/agent-state.
+
+Not divided by role in code - the fleet list shows whatever word a state
+file carries, in the State column, and a wrong word for the role in that
+column is not worth a per-role table in Elisp any more than in the script.
+By role, for reference: `build gate review ci rebase merge' belong to an
+implementer; `triage plan' to Xavier; `prepare verify' to Psylocke; `sweep',
+or `sweep release', to Moira and Cerebro; `daily weekly' to Bishop.")
 
 (defun cerebro--in-flight-p (state)
   "Whether STATE means a bead is still in flight under it."
@@ -593,7 +634,15 @@ answers are:
 
 Only an implementer Emacs itself started is supervised.  One running in
 somebody's own terminal is theirs to end, and a dead one stays dead -
-restarting it would fight the navigator's own `k'."
+restarting it would fight the navigator's own `k'.
+
+The `kind' guard is load-bearing now that the interactive five write the
+same state file an implementer does (ah-2n3.2): Xavier, Cerebro, Moira,
+Psylocke and Bishop can show `asking' or, if one ever writes it in error,
+`unknown', but never `restart'ed, `retire'd or `nudge'd from here - they are
+never replaced between beads because they have none, and any future
+unification of this function must keep excluding them explicitly rather
+than by accident."
   (when (and (eq (cerebro-agent-kind agent) 'implementer)
              (not (cerebro-agent-external agent)))
     (pcase (cerebro-agent-state agent)
@@ -845,7 +894,11 @@ may not exist yet on a fresh machine - `agent-state' and
       (error nil))))
 
 (defun cerebro--gather-states (repo-root roster)
-  "The (NAME . parsed-state-json-or-nil) alist for every name in ROSTER."
+  "The (NAME . parsed-state-json-or-nil) alist for every name in ROSTER.
+
+ROSTER need not be only implementers - `cerebro--revert' passes it the
+roster plus the five interactive names, since ah-2n3.2 has all of them
+writing the same file."
   (mapcar (lambda (name)
             (cons name (cerebro--read-state-file
                         (cerebro--state-file-path repo-root name))))
@@ -1600,7 +1653,12 @@ the section is not empty until the first ten minutes are up."
   "Recompute `tabulated-list-entries' for the fleet buffer."
   (let* ((repo-root (cerebro--repo-root))
          (roster (cerebro--roster repo-root))
-         (states (cerebro--gather-states repo-root roster))
+         ;; The interactive five write the same file when they can (ah-2n3.2),
+         ;; so their names are gathered alongside the roster's - one read per
+         ;; name per tick either way, and `cerebro--derive-interactive' falls
+         ;; back to the process scan for whichever of them have none.
+         (states (cerebro--gather-states
+                  repo-root (append (mapcar #'car cerebro-interactive-agents) roster)))
          (args (cerebro--system-args))
          (owned (cerebro--owned))
          (now (current-time))

@@ -73,13 +73,16 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   promise a re-invocation that nothing delivers; this stranded a claimed bead, an open PR and
   unanswered review comments. Implementers are interactive now, so an ended turn no longer kills the
   process — it just sits there until a human types something, which is not better.
-- **The state file is the contract.** `.claude/agents-state/<name>.state.json` carries
-  `idle`/`working`/`asking`/`done`; the implementer writes it, `cerebro.el` acts on it. Since ah-u3i
-  it also carries `phase` (`build`/`gate`/`review`/`ci`/`rebase`/`merge`, or null) and `phase_since`
-  — supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
+- **The state file is the contract, for every agent.** `.claude/agents-state/<name>.state.json`
+  carries `idle`/`working`/`asking`/`done`; every agent in the fleet writes it, `cerebro.el` acts on
+  it. Since ah-u3i it also carries `phase` (an implementer's `build`/`gate`/`review`/`ci`/`rebase`/
+  `merge`, or a role word for the interactive five since ah-2n3.2, or null) and `phase_since` —
+  supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
   phase vocabulary can only mislabel a column, never break the restart loop. An unrecognised `state`
   string shows its raw word in yellow rather than reading as `idle`, which used to mean "fine" when
-  it meant "an error".
+  it meant "an error". **`done` is an implementer's state alone** — `scripts/agent-state` refuses it
+  from an interactive name, and a live file that carries it anyway maps to `'unknown` rather than
+  being handed to the restart/retire logic as a finished bead.
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
@@ -119,18 +122,21 @@ it becomes untestable.
 Two data sources it depends on, both under `.claude/agents-state/` in the consumer repo:
 
 - `<name>.state.json` — `{state: "idle"|"working"|"asking"|"done", phase, bead, since, phase_since,
-  pid}`, written by the **implementer itself** at each transition through `scripts/agent-state`
-  (never by hand — see that script's header). The launcher used to write the file and no longer
-  does: it `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/
-  `review`/`ci`/`rebase`/`merge`, meaningful with `working` and `asking`; `since` is the last change
-  of `state` or `bead`, `phase_since` the last change of `phase`. Whoever changes the `state`
-  vocabulary must change `cerebro--derive-implementer` with it — an unrecognised `state` now maps to
-  `'unknown` and shows its raw word in yellow, not `idle`.
+  pid}`, written by **the agent itself** at each transition through `scripts/agent-state` (never by
+  hand — see that script's header). Every implementer writes one, and since ah-2n3.2 so does each of
+  the interactive five, `done` excepted. The launcher used to write the file and no longer does: it
+  `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/`review`/`ci`/
+  `rebase`/`merge` for an implementer, or a role word (`triage`/`plan`, `prepare`/`verify`, `sweep`,
+  `sweep`/`release`, `daily`/`weekly`) for the interactive five — meaningful with `working` and
+  `asking`; `since` is the last change of `state` or `bead`, `phase_since` the last change of
+  `phase`. Whoever changes the `state` vocabulary must change `cerebro--derive-from-state` with it —
+  an unrecognised `state` now maps to `'unknown` and shows its raw word in yellow, not `idle`.
 - `scripts/run-implementer --roster` — the implementer names, shelled out to from
   `cerebro--roster`.
 
-Interactive agents have no state file: liveness is inferred by scanning system process args for
-`--name <Name>`, which is why the launchers must pass it.
+Liveness for the interactive five is the state file first, when one exists for a live pid
+(`cerebro--derive-interactive`), and falls back to scanning system process args for `--name <Name>`
+when it does not — a session started by hand, outside this fleet, has no file and still shows `up`.
 
 ## Gotchas
 

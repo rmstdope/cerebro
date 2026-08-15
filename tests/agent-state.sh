@@ -214,4 +214,61 @@ grep -q "renamed to agent-state" <<<"$out" \
 rm -rf "$tmp"
 pass "shim-writes-same-file-and-warns"
 
+# --- ah-2n3.2: the five interactive agents write the same file ---
+
+# --- interactive-agent-writes ---
+tmp="$(new_fixture)"
+run_state "$tmp" Xavier working --phase triage --pid 42
+f="$(state_file "$tmp" Xavier)"
+[[ -f "$f" ]] || fail "interactive-agent-writes: no state file written"
+state="$(jq -r '.state' "$f")"; [[ "$state" == "working" ]] || fail "interactive-agent-writes: state=$state"
+phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "triage" ]] || fail "interactive-agent-writes: phase=$phase"
+rm -rf "$tmp"
+pass "interactive-agent-writes"
+
+# --- interactive-agent-asking-with-bead-and-role-phase ---
+tmp="$(new_fixture)"
+run_state "$tmp" Psylocke asking --bead ah-xyz --phase verify --pid 7
+f="$(state_file "$tmp" Psylocke)"
+state="$(jq -r '.state' "$f")"; [[ "$state" == "asking" ]] || fail "interactive-agent-asking-with-bead-and-role-phase: state=$state"
+bead="$(jq -r '.bead' "$f")"; [[ "$bead" == "ah-xyz" ]] || fail "interactive-agent-asking-with-bead-and-role-phase: bead=$bead"
+phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "verify" ]] || fail "interactive-agent-asking-with-bead-and-role-phase: phase=$phase"
+rm -rf "$tmp"
+pass "interactive-agent-asking-with-bead-and-role-phase"
+
+# --- interactive-agent-refuses-done ---
+tmp="$(new_fixture)"
+set +e
+out="$(run_state "$tmp" Bishop done --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "interactive-agent-refuses-done: expected exit 2, got $status"
+grep -q "done is an implementer's state" <<<"$out" \
+  || fail "interactive-agent-refuses-done: wrong message, got: $out"
+[[ -f "$(state_file "$tmp" Bishop)" ]] && fail "interactive-agent-refuses-done: file was written"
+rm -rf "$tmp"
+pass "interactive-agent-refuses-done"
+
+# --- off-roster-non-interactive-name-still-refused ---
+tmp="$(new_fixture)"
+set +e
+out="$(run_state "$tmp" Nobody working --phase build --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "off-roster-non-interactive-name-still-refused: expected exit 2, got $status"
+grep -q "neither on the roster nor an interactive agent" <<<"$out" \
+  || fail "off-roster-non-interactive-name-still-refused: wrong message, got: $out"
+rm -rf "$tmp"
+pass "off-roster-non-interactive-name-still-refused"
+
+# --- an-implementer-name-can-use-a-role-phase-word-too ---
+# The vocabulary is a union, not checked per role (cerebro.el's `cerebro--phases' makes the same
+# trade) - a wrong word in a column is not worth a per-role table in bash.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --phase triage --pid 1
+f="$(state_file "$tmp" Cyclops)"
+phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "triage" ]] || fail "an-implementer-name-can-use-a-role-phase-word-too: phase=$phase"
+rm -rf "$tmp"
+pass "an-implementer-name-can-use-a-role-phase-word-too"
+
 echo "All agent-state tests passed."

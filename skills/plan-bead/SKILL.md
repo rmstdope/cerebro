@@ -24,6 +24,24 @@ the navigator, and ask whether to continue rather than halting the queue on a se
 check. Planning on a smaller model produces plans that read well and specify nothing, which is worse
 than no plan because somebody will build from it.
 
+## Telling the fleet view what you are doing
+
+`.claude/agents-state/Xavier.state.json` is how the fleet view sees you, the same way an
+implementer's file works (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never
+by hand:
+
+| Moment | Call |
+|---|---|
+| The triage pass starts | `.claude/cerebro/scripts/agent-state Xavier working --phase triage --pid $PPID` |
+| Every triage question | `.claude/cerebro/scripts/agent-state Xavier asking --phase triage --pid $PPID`, and `working --phase triage` again once answered |
+| A bead gets the `planning` label | `.claude/cerebro/scripts/agent-state Xavier working --bead <id> --phase plan --pid $PPID` |
+| Every interview question while planning it | `.claude/cerebro/scripts/agent-state Xavier asking --bead <id> --phase plan --pid $PPID`, and `working` again once answered |
+| The P0 check (*P0 pre-empts the buffer*) | stays `working --phase plan`, same as any other bead being planned |
+| Before *Sleeping without dying* | `.claude/cerebro/scripts/agent-state Xavier idle --pid $PPID` |
+
+`--pid` is `$PPID` — your own `claude` process. You never write `done`: you are not replaced between
+beads, so `idle` is the state between one pass and the next.
+
 ## Then: triage the P4 backlog
 
 **Before you plan anything, agree the priorities.** P4 is the backlog floor, and a bead sitting there
@@ -210,13 +228,17 @@ has children rather than a plan.
 
 **How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
 state file under `.claude/agents-state/` whose `pid` is alive, minus any implementer whose stop flag
-is set (it finishes its bead and retires, so it will not take another). Interactive agents — Xavier,
-Cerebro, Moira, Psylocke — have no state file and never count.
+is set (it finishes its bead and retires, so it will not take another). **Since ah-2n3.2 the
+interactive five — Xavier, Cerebro, Moira, Psylocke, Bishop — write the same file you do**, so the
+loop below filters to the implementer roster explicitly; without that filter your own file inflates
+`n` by one, and the buffer target moves under you for no reason.
 
 ```bash
+roster="$(.claude/cerebro/scripts/run-implementer --roster)"
 n=0
 for f in $(find .claude/agents-state -maxdepth 1 -name '*.state.json' 2>/dev/null); do
   name="$(basename "$f" .state.json)"
+  grep -qFx -- "$name" <<<"$roster" || continue      # skip the interactive five's own files
   [ -e ".claude/agents-state/$name.stop" ] && continue
   pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && n=$((n+1))
@@ -259,6 +281,7 @@ Ten minutes is longer than a single `Bash` call may safely run: the tool's own t
 five-minute halves that say something each minute:
 
 ```bash
+.claude/cerebro/scripts/agent-state Xavier idle --pid $PPID
 for i in $(seq 5); do sleep 60; echo "planner idle, ${i}/5 of this half"; done
 ```
 
@@ -272,6 +295,7 @@ bd dolt pull
 bd list --exclude-label planned --exclude-label planning --exclude-label human \
         --exclude-type epic --sort priority --json
 bd update <id> --add-label planning
+.claude/cerebro/scripts/agent-state Xavier working --bead <id> --phase plan --pid $PPID
 bd dolt push                                       # publish it at once
 # ... research, decide, discuss, write ...
 bd update <id> --design-file plan.md --add-label planned --remove-label planning

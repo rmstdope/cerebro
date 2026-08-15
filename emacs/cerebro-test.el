@@ -310,6 +310,32 @@
 (ert-deftest cerebro-test/finish-key-is-bound ()
   (should (eq (lookup-key cerebro-mode-map "f") #'cerebro-finish)))
 
+(ert-deftest cerebro-test/write-stop-flag-creates-a-missing-directory ()
+  "`.claude/implementers' exists in practice whenever `cerebro--repo-root'
+found it, but this must not depend on that."
+  (let ((root (make-temp-file "cerebro-test-" t)))
+    (unwind-protect
+        (progn
+          (cerebro--write-stop-flag root "Wolverine")
+          (should (file-exists-p (cerebro--stop-flag-path root "Wolverine"))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/entry-finishing-marker-only-for-in-flight-states ()
+  "A stop flag can be written for an implementer in any state - nothing
+stops `f' from being pressed on a dead or idle one - but \"dead finishing\"
+or \"idle finishing\" would describe a bead that is not actually in flight
+for the flag to be waiting on."
+  (let ((now (current-time)))
+    (dolist (state '(dead idle done))
+      (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer state))
+             (state-col (aref (cadr (cerebro--entry agent now t)) 2)))
+        (should-not (string-match-p "finishing" state-col))))
+    (dolist (state '(working asking))
+      (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer state
+                                                 nil "ah-f9c"))
+             (state-col (aref (cadr (cerebro--entry agent now t)) 2)))
+        (should (string-match-p "finishing" state-col))))))
+
 ;; ---------------------------------------------------------------------------
 ;; ah-vcf.3 increment 2: owned sessions feed the list
 
@@ -1562,6 +1588,27 @@ without it saying yes."
 
 (ert-deftest cerebro-test/sweep-act-key-is-bound ()
   (should (eq (lookup-key cerebro-beads-mode-map "x") #'cerebro-sweep-act)))
+
+(ert-deftest cerebro-test/sweep-act-warns-when-the-push-fails ()
+  "The close/reclaim itself succeeded - a `user-error' claiming nothing
+happened would be wrong - but the other machines cannot see it until the
+push does, and that has to reach the navigator, not just the exit status."
+  (let ((calls nil) (messages nil))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+              ((symbol-function 'cerebro--run-sweep-command)
+               ;; First call (the close) succeeds; second (the push) fails.
+               (lambda (_root argv) (push argv calls) (= (length calls) 1)))
+              ((symbol-function 'cerebro--beads-render) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+              ((symbol-function 'cerebro--finding-at-point)
+               (lambda () '(close "ah-x1" "delivered")))
+              ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (cerebro-sweep-act)
+      ;; The close ran and the push was attempted, in that order.
+      (should (equal (reverse calls)
+                      (list '("bd" "close" "ah-x1" "--reason" "delivered")
+                            '("bd" "dolt" "push"))))
+      (should (string-match-p "push" (car messages))))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 5: the prune watcher moves from Cerebro to `M-x cerebro'

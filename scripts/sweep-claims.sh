@@ -99,7 +99,7 @@ while IFS= read -r bead; do
 
   # The colon and parens matter: bare "$id" also matches "$id.8", a child of this bead.
   match_commits="$(git -C "$repo_root" log origin/main --grep "($id):" -F --oneline 2>/dev/null || true)"
-  non_mockup="$(printf '%s\n' "$match_commits" | grep -v "docs($id): mockup" || true)"
+  non_mockup="$(printf '%s\n' "$match_commits" | grep -vF "docs($id): mockup" || true)"
 
   docs_only=false
   on_main=false

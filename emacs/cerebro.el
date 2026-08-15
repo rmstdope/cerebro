@@ -226,9 +226,18 @@ FLAGGED, when non-nil, means a stop flag is set for AGENT: the state column
 gains a \" finishing\" suffix, so the navigator sees the flag took effect
 while the bead is still in flight rather than being told nothing happened.
 Flags are read between beads, never during one - see `cerebro-finish' - so
-this is the only place \"finishing\" is said."
+this is the only place \"finishing\" is said.
+
+The suffix only ever shows for a state a bead can actually be in flight
+under - `working' or `asking'. FLAGGED can be non-nil for any implementer
+\(`cerebro--finish-action' writes the flag regardless of current state\), but
+\"dead finishing\" or \"idle finishing\" would describe a bead that either
+was never running or has none to complete - there is nothing in flight for
+the flag to be waiting on, so the marker would say something untrue rather
+than nothing."
   (let* ((state (cerebro-agent-state agent))
          (external (cerebro-agent-external agent))
+         (in-flight (memq state '(working asking)))
          ;; A glyph is one character in the corner of the eye, and there are
          ;; eighteen rows. Bolding the name, role and state makes the row
          ;; itself the signal - so bold has to stay rare enough to mean it.
@@ -237,7 +246,7 @@ this is the only place \"finishing\" is said."
                             (cerebro--emphasize (cerebro-agent-name agent) attention)))
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
          (state-col (cerebro--emphasize
-                     (concat (symbol-name state) (if flagged " finishing" ""))
+                     (concat (symbol-name state) (if (and flagged in-flight) " finishing" ""))
                      attention))
          (bead-col (cond (external "(external)")
                           ((cerebro-agent-bead agent))
@@ -456,10 +465,15 @@ keypress's worth of intent would be its own kind of noise."
            (command-string (mapconcat #'identity argv " ")))
       (when (y-or-n-p (format "run: %s ? " command-string))
         (if (cerebro--run-sweep-command repo-root argv)
-            (progn
-              (cerebro--run-sweep-command repo-root '("bd" "dolt" "push"))
+            (let ((pushed (cerebro--run-sweep-command repo-root '("bd" "dolt" "push"))))
               (cerebro--beads-render (current-buffer))
-              (message "ran: %s" command-string))
+              (if pushed
+                  (message "ran: %s" command-string)
+                ;; The close/reclaim itself succeeded - only the push failed - so this
+                ;; is not `user-error's "nothing happened", but the navigator still has
+                ;; to know the other machines cannot see it yet.
+                (message "ran: %s - but `bd dolt push' failed; other machines will not see this until it succeeds"
+                         command-string)))
           (user-error "cerebro: %s failed" command-string))))))
 
 ;;; Supervising the implementers
@@ -1618,8 +1632,15 @@ cleared first rather than prompting a second time for the same kill."
         ('dead (message "%s is not running" (cerebro-agent-name agent)))))))
 
 (defun cerebro--write-stop-flag (repo-root name)
-  "Create NAME's stop flag in REPO-ROOT, empty - only its existence is read."
-  (write-region "" nil (cerebro--stop-flag-path repo-root name)))
+  "Create NAME's stop flag in REPO-ROOT, empty - only its existence is read.
+
+`make-directory' first, `:parents' t, mirroring the documented
+\"mkdir -p .claude/implementers && touch ...\" flow (`orchestrator.md') -
+in practice `.claude/implementers' already exists whenever
+`cerebro--repo-root' has found it, but costs nothing to not depend on that."
+  (let ((path (cerebro--stop-flag-path repo-root name)))
+    (make-directory (file-name-directory path) t)
+    (write-region "" nil path)))
 
 (defun cerebro-finish ()
   "Tell the implementer at point to finish (`f'): write its stop flag.

@@ -209,15 +209,15 @@ counting it would starve the queue while the number looked healthy. `epic` is a 
 has children rather than a plan.
 
 **How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
-state file under `.claude/implementers/` whose `pid` is alive, minus any implementer whose stop flag
+state file under `.claude/agents-state/` whose `pid` is alive, minus any implementer whose stop flag
 is set (it finishes its bead and retires, so it will not take another). Interactive agents — Xavier,
 Cerebro, Moira, Psylocke — have no state file and never count.
 
 ```bash
 n=0
-for f in $(find .claude/implementers -maxdepth 1 -name '*.state.json' 2>/dev/null); do
+for f in $(find .claude/agents-state -maxdepth 1 -name '*.state.json' 2>/dev/null); do
   name="$(basename "$f" .state.json)"
-  [ -e ".claude/implementers/$name.stop" ] && continue
+  [ -e ".claude/agents-state/$name.stop" ] && continue
   pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && n=$((n+1))
 done

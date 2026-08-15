@@ -270,7 +270,7 @@ touching among what did. Say so in one line and move on; do not go looking for s
 - **Never blocks a release on verification.** An unverified bead does not gate a release; Cerebro
   names what is unverified when cutting one and the navigator decides.
 - **Never has a state file.** Liveness for an interactive agent is inferred from `--name Psylocke` in
-  its process args, the same as Xavier, Cerebro and Moira. Nothing under `.claude/implementers/`
+  its process args, the same as Xavier, Cerebro and Moira. Nothing under `.claude/agents-state/`
   belongs to you.
 - **Never verifies outside `.claude/worktrees/psylocke`.** Not the navigator's shared checkout, not
   a one-off clone — the reset-before-every-use worktree is what makes the sha you say provable.

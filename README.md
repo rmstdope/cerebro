@@ -39,7 +39,7 @@ implementer at all.
 Now an implementer is interactive, so it can be answered — and because an interactive session never
 exits, the loop moved to something that can end one. The Emacs fleet view polls each implementer's
 state file, and when one reports `done` it ends that session and starts a fresh one, unless
-`.claude/implementers/<name>.stop` says not to. **The `.go` flag is retired**, along with the loop
+`.claude/agents-state/<name>.stop` says not to. **The `.go` flag is retired**, along with the loop
 that read it: a running implementer is a working one.
 
 `scripts/prune-worktrees.sh` is the worktree sweep, run by Cerebro on a timer and by you whenever

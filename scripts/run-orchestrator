@@ -10,7 +10,7 @@
 #
 # It owns no work. It sweeps the worktrees and the claims, watches that a planner and at least two
 # implementers are up, reports what has shipped, and takes an implementer down by touching
-# `.claude/implementers/<name>.stop`. It cannot put one to work: starting an implementer means
+# `.claude/agents-state/<name>.stop`. It cannot put one to work: starting an implementer means
 # starting a session, and every session is a terminal the navigator opens or a name they press `s`
 # on in the fleet view. (There was a `.go` flag for that once. It is retired: a running implementer
 # is a working one.)

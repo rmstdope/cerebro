@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Proves scripts/implementer-state writes the state file's contract correctly: field validation,
+# Proves scripts/agent-state writes the state file's contract correctly: field validation,
 # the `since` / `phase_since` rules (ah-u3i), atomic writes, and tolerance of an old-format file
 # with no phase fields.
 #
 # No framework: plain bash, set -euo pipefail, exit non-zero on the first failed assertion. Run from
 # the submodule root:
 #
-#     bash tests/implementer-state.sh
+#     bash tests/agent-state.sh
 
 set -euo pipefail
 
@@ -23,27 +23,29 @@ pass() {
 }
 
 # A fixture tree with its own scripts/ directory, symlinked to the real scripts, so
-# implementer-state's own root-derivation (../../../ from .claude/cerebro/scripts) resolves inside
+# agent-state's own root-derivation (../../../ from .claude/cerebro/scripts) resolves inside
 # the fixture rather than the real repo. run-implementer is symlinked alongside it because
-# implementer-state consults it for the roster.
+# agent-state consults it for the roster. implementer-state (the deprecation shim) is symlinked
+# too, so a caller still using the old name is exercised the same way a real consumer would hit it.
 new_fixture() {
   local tmp
   tmp="$(mktemp -d)"
   mkdir -p "$tmp/.claude/cerebro/scripts"
   ln -s "$repo_root/scripts/run-implementer" "$tmp/.claude/cerebro/scripts/run-implementer"
+  ln -s "$repo_root/scripts/agent-state" "$tmp/.claude/cerebro/scripts/agent-state"
   ln -s "$repo_root/scripts/implementer-state" "$tmp/.claude/cerebro/scripts/implementer-state"
   printf '%s' "$tmp"
 }
 
 run_state() {
-  # $1 = fixture root, rest = args to implementer-state
+  # $1 = fixture root, rest = args to agent-state
   local tmp="$1"
   shift
-  "$tmp/.claude/cerebro/scripts/implementer-state" "$@"
+  "$tmp/.claude/cerebro/scripts/agent-state" "$@"
 }
 
 state_file() {
-  printf '%s/.claude/implementers/%s.state.json' "$1" "$2"
+  printf '%s/.claude/agents-state/%s.state.json' "$1" "$2"
 }
 
 # --- writes-all-fields ---
@@ -181,7 +183,7 @@ pass "no-phase-is-null"
 
 # --- old-format-file-is-fine ---
 tmp="$(new_fixture)"
-mkdir -p "$tmp/.claude/implementers"
+mkdir -p "$tmp/.claude/agents-state"
 f="$(state_file "$tmp" Cyclops)"
 cat > "$f" <<'EOF'
 {"state":"working","bead":"ah-f9c","since":"2026-08-14T09:00:00Z","pid":1}
@@ -196,9 +198,20 @@ pass "old-format-file-is-fine"
 # --- no-tmp-left-behind ---
 tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1
-leftover="$(find "$tmp/.claude/implementers" -name '*.tmp' 2>/dev/null)"
+leftover="$(find "$tmp/.claude/agents-state" -name '*.tmp' 2>/dev/null)"
 [[ -z "$leftover" ]] || fail "no-tmp-left-behind: found $leftover"
 rm -rf "$tmp"
 pass "no-tmp-left-behind"
 
-echo "All implementer-state tests passed."
+# --- shim-writes-same-file-and-warns ---
+tmp="$(new_fixture)"
+out="$("$tmp/.claude/cerebro/scripts/implementer-state" Cyclops working --bead ah-f9c --phase build --pid 1 2>&1)"
+f="$(state_file "$tmp" Cyclops)"
+[[ -f "$f" ]] || fail "shim-writes-same-file-and-warns: no state file written"
+state="$(jq -r '.state' "$f")"; [[ "$state" == "working" ]] || fail "shim-writes-same-file-and-warns: state=$state"
+grep -q "renamed to agent-state" <<<"$out" \
+  || fail "shim-writes-same-file-and-warns: no deprecation line, got: $out"
+rm -rf "$tmp"
+pass "shim-writes-same-file-and-warns"
+
+echo "All agent-state tests passed."

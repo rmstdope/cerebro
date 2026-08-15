@@ -112,15 +112,36 @@
     (should (equal (aref row 3) "ah-f9c"))
     (should (equal (aref row 4) "12m"))))
 
-(ert-deftest cerebro-test/entry-external-marked ()
+(ert-deftest cerebro-test/entry-external-shows-a-dash ()
+  "An external agent's bead column used to say \"(external)\", which alone
+took the whole 10-column budget. A dash says the same thing in one character
+and leaves the column free for real bead ids (see ah-lyc)."
   (let* ((now (encode-time (iso8601-parse "2026-08-14T09:12:00Z")))
          (agent (make-cerebro-agent :name "Storm" :role "implementer" :kind 'implementer
                                             :state 'working :bead "ah-f9c"
                                             :since "2026-08-14T09:00:00Z" :external t))
          (entry (cerebro--entry agent now))
          (row (nth 1 entry)))
-    (should (equal (aref row 3) "(external)"))
+    (should (equal (aref row 3) "—"))
     (should (equal (aref row 4) ""))))
+
+(ert-deftest cerebro-test/entry-long-bead-id-truncates ()
+  "A child bead's id can run past the 10-column Bead budget - up to
+\"ah-dzj.1.1.1.1\" in this repository's own database. It truncates with an
+ellipsis rather than pushing the rest of the row right; a short id is
+unaffected."
+  (let* ((now (encode-time (iso8601-parse "2026-08-14T09:12:00Z")))
+         (long-agent (make-cerebro-agent :name "Cyclops" :role "implementer" :kind 'implementer
+                                          :state 'working :bead "ah-dzj.1.1.1.1"
+                                          :since "2026-08-14T09:00:00Z" :external nil))
+         (short-agent (make-cerebro-agent :name "Storm" :role "implementer" :kind 'implementer
+                                           :state 'working :bead "ah-m9q"
+                                           :since "2026-08-14T09:00:00Z" :external nil))
+         (long-row (nth 1 (cerebro--entry long-agent now)))
+         (short-row (nth 1 (cerebro--entry short-agent now))))
+    (should (equal (length (aref long-row 3)) 10))
+    (should (string-suffix-p "…" (aref long-row 3)))
+    (should (equal (aref short-row 3) "ah-m9q"))))
 
 (ert-deftest cerebro-test/entry-dead-has-empty-bead-column ()
   (let* ((now (encode-time (iso8601-parse "2026-08-14T09:12:00Z")))
@@ -292,17 +313,19 @@
                 nil)
               'not-implementer)))
 
-(ert-deftest cerebro-test/entry-shows-finishing-when-flag-set ()
+(ert-deftest cerebro-test/entry-finishing-is-a-glyph ()
   "The list says a stop flag took effect while the bead is still in flight -
-`f' does not stop anything, so the marker has to come from somewhere."
+`f' does not stop anything, so the marker has to come from somewhere. It used
+to be the word \" finishing\", which alone cost the State column eleven
+columns; a glyph says the same thing in two (see ah-lyc)."
   (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
                                              nil "ah-f9c"))
          (now (current-time))
          (flagged-state-col (aref (cadr (cerebro--entry agent now t)) 2))
          (unflagged-state-col (aref (cadr (cerebro--entry agent now nil)) 2))
          (default-state-col (aref (cadr (cerebro--entry agent now)) 2)))
-    (should (string-match-p "finishing" flagged-state-col))
-    (should-not (string-match-p "finishing" unflagged-state-col))
+    (should (equal flagged-state-col "working ■"))
+    (should-not (string-match-p "■" unflagged-state-col))
     ;; The third argument is optional, and omitting it must read as unflagged -
     ;; every existing caller of `cerebro--entry' predates this argument.
     (should (equal unflagged-state-col default-state-col))))
@@ -329,12 +352,12 @@ for the flag to be waiting on."
     (dolist (state '(dead idle done))
       (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer state))
              (state-col (aref (cadr (cerebro--entry agent now t)) 2)))
-        (should-not (string-match-p "finishing" state-col))))
+        (should-not (string-match-p "■" state-col))))
     (dolist (state '(working asking))
       (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer state
                                                  nil "ah-f9c"))
              (state-col (aref (cadr (cerebro--entry agent now t)) 2)))
-        (should (string-match-p "finishing" state-col))))))
+        (should (string-match-p "■" state-col))))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-vcf.3 increment 2: owned sessions feed the list
@@ -1685,6 +1708,20 @@ tail of `cerebro--beads-render'."
                             "B"))))
       (kill-buffer list-buffer)
       (kill-buffer other-buffer))))
+
+;; ---------------------------------------------------------------------------
+;; ah-lyc: the table fits inside its window
+
+(ert-deftest cerebro-test/list-fits-inside-its-window ()
+  "A table exactly as wide as its window loses its last column to Emacs's `$'
+truncation marker - the bug this bead exists to kill. The table must be
+strictly narrower than `cerebro-list-width', not merely equal to it."
+  (with-temp-buffer
+    (cerebro-mode)
+    (let ((table-width (+ (apply #'+ (mapcar (lambda (c) (nth 1 c))
+                                              (append tabulated-list-format nil)))
+                           tabulated-list-padding)))
+      (should (< table-width cerebro-list-width)))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

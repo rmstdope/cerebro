@@ -89,10 +89,12 @@ you are away, it is told to give up after fifteen minutes and hands the bead to 
 so a fleet left alone overnight drains the queue rather than sitting blocked on you.
 
 The fleet view's State column names the **phase** an implementer is actually in — `build`, `gate`
-(the local check suite, behind a machine-wide lock), `review`, `ci`, `rebase`, `merge` — rather than
-one undifferentiated `working` for however long the bead takes. The Bead/Phase column shows both
-timers side by side, time on the bead and time in the current phase, so three implementers all
-sitting in `review` says Copilot is slow and one stuck in `ci` for an hour says something is stuck.
+(the fast local checks — lint, typecheck, unit, cargo fmt/clippy; no machine-wide lock any more),
+`review`, `ci`, `rebase` (catching a `BEHIND` branch up on GitHub, or resolving a real conflict
+locally), `merge` — rather than one undifferentiated `working` for however long the bead takes. The
+Bead/Phase column shows both timers side by side, time on the bead and time in the current phase, so
+three implementers all sitting in `review` says Copilot is slow and one stuck in `ci` for an hour
+says something is stuck.
 
 **This is not implementer-only any more.** Since `ah-2n3.2` the five interactive agents write the
 same state file and show the same way: Xavier's row says `triage` or `plan`, Psylocke's says
@@ -101,10 +103,10 @@ same state file and show the same way: Xavier's row says `triage` or `plan`, Psy
 rather than an implementer. Answer it the same way. A session started by hand outside the fleet view
 still shows `up` with no phase, since it has never written a file.
 
-**Two or three is a sensible number on one machine.** More is not faster: the browser test suites
-take a machine-wide lock and run one at a time, and every merge makes every other open PR stale, so
-each of them pays for a rebase and a fresh CI run. The orchestrator will say so if you ask for more,
-once, and then do as it is told.
+**Two or three is a sensible number on one machine.** More is not faster: every merge makes every
+other open PR stale, so each of them pays for a `BEHIND` catch-up and a fresh CI run — and CI is
+where the browser suites actually run now, in parallel jobs implementers no longer serialize behind
+locally. The orchestrator will say so if you ask for more, once, and then do as it is told.
 
 ### What "take one down" means
 
@@ -290,10 +292,10 @@ and checking out a branch there moves an agent off its own work.
 Honest numbers from building this repository's own harness:
 
 - **A bead is an hour or more**, most of it CI. The code is usually the short part.
-- **Expect a rebase on nearly every merge.** With several agents, a PR that sat through one review
-  round has usually been overtaken, and the rules require a rebase plus a fresh CI cycle before it
-  can merge. That is deliberate: a green run on a stale tree is evidence about a tree that will never
-  exist.
+- **Expect a `BEHIND` branch on nearly every merge.** With several agents, a PR that sat through one
+  review round has usually been overtaken, and the rules require catching it up (on GitHub, not
+  locally — see *Starting builders* above) plus a fresh CI cycle before it can merge. That is
+  deliberate: a green run on a stale tree is evidence about a tree that will never exist.
 - **Copilot reviews about four PRs in five**, sometimes minutes late, and never marks one approved.
   When it does not review, the builder leaves the PR open and tells you rather than merging.
 - **One review per bead**, requested when the PR opens and never again. Fixes and rebases move the

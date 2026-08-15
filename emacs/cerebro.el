@@ -1446,11 +1446,13 @@ the section is not empty until the first ten minutes are up."
   "What the fleet could be working on: claimed, planned, and unplanned."
   (setq-local revert-buffer-function #'cerebro--beads-revert)
   (setq truncate-lines t)
-  ;; The mark has to stay visible when the navigator is in another window -
-  ;; the cursor itself is only drawn in the selected one, and the whole point
-  ;; is to see which bead is picked while looking at the agents.
-  (setq-local hl-line-sticky-flag t)
-  (hl-line-mode 1))
+  ;; No `hl-line-mode' here, deliberately (ah-4xl): the mark is the cursor
+  ;; alone, as in the agent list - a hollow box in a window the navigator is
+  ;; not in, since `cursor-in-non-selected-windows' defaults to t. If that
+  ;; ever proves too faint, the agreed next step is
+  ;; (setq-local cursor-in-non-selected-windows 'box) in both modes, not a
+  ;; row background.
+  )
 
 (defun cerebro--beads-buffer (repo-root)
   "The panel buffer, created and started if it does not exist."

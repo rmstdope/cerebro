@@ -247,8 +247,9 @@ the rest of the row right - see ah-lyc."
          (external (cerebro-agent-external agent))
          (in-flight (memq state '(working asking)))
          ;; A glyph is one character in the corner of the eye, and there are
-         ;; eighteen rows. Bolding the name, role and state makes the row
-         ;; itself the signal - so bold has to stay rare enough to mean it.
+         ;; eighteen rows. Bolding the whole row makes the row itself the
+         ;; signal - so bold has to stay rare enough to mean it, which is why
+         ;; it is exclusive to `asking' (see `cerebro--wants-attention-p').
          (attention (cerebro--wants-attention-p state))
          (agent-col (format "%s %s" (cerebro--glyph state)
                             (cerebro--emphasize (cerebro-agent-name agent) attention)))
@@ -256,11 +257,15 @@ the rest of the row right - see ah-lyc."
          (state-col (cerebro--emphasize
                      (concat (symbol-name state) (if (and flagged in-flight) " ■" ""))
                      attention))
-         (bead-col (cond (external "—")
+         (bead-col (cerebro--emphasize
+                    (cond (external "—")
                           ((cerebro-agent-bead agent)
                            (truncate-string-to-width (cerebro-agent-bead agent) 10 nil nil "…"))
-                          (t "")))
-         (for-col (if external "" (cerebro--elapsed (cerebro-agent-since agent) now))))
+                          (t ""))
+                    attention))
+         (for-col (cerebro--emphasize
+                   (if external "" (cerebro--elapsed (cerebro-agent-since agent) now))
+                   attention)))
     (list (cerebro-agent-name agent)
           (vector agent-col role-col state-col bead-col for-col))))
 

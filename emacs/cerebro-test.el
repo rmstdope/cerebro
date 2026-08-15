@@ -152,6 +152,33 @@ unaffected."
     (should (equal (aref row 3) ""))
     (should (equal (aref row 4) ""))))
 
+(defun cerebro-test--any-bold-p (text)
+  "Whether any character of TEXT carries the bold face."
+  (let ((bold nil))
+    (dotimes (i (length text))
+      (when (eq (get-text-property i 'face text) 'bold)
+        (setq bold t)))
+    bold))
+
+(ert-deftest cerebro-test/entry-asking-emphasises-every-column ()
+  "An agent in `asking' wants the navigator's attention, and the navigator
+asked for the whole row to say so - not just the Agent, Role and State
+columns, but Bead and For too, which are exactly the two facts worth
+reading once the row has caught the eye (see ah-axj)."
+  (let* ((now (encode-time (iso8601-parse "2026-08-14T09:12:00Z")))
+         (asking (make-cerebro-agent :name "Storm" :role "implementer" :kind 'implementer
+                                      :state 'asking :bead "ah-a1b"
+                                      :since "2026-08-14T09:00:00Z" :external nil))
+         (working (make-cerebro-agent :name "Cyclops" :role "implementer" :kind 'implementer
+                                       :state 'working :bead "ah-f9c"
+                                       :since "2026-08-14T09:00:00Z" :external nil))
+         (asking-row (nth 1 (cerebro--entry asking now)))
+         (working-row (nth 1 (cerebro--entry working now))))
+    (dotimes (i 5)
+      (should (cerebro-test--any-bold-p (aref asking-row i))))
+    (dotimes (i 5)
+      (should-not (cerebro-test--any-bold-p (aref working-row i))))))
+
 (ert-deftest cerebro-test/elapsed-minutes-hours-days ()
   (let ((now (encode-time (iso8601-parse "2026-08-14T09:12:00Z"))))
     (should (equal (cerebro--elapsed "2026-08-14T09:00:00Z" now) "12m"))

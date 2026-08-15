@@ -12,7 +12,7 @@ from the list:
 |-------|----------------------------------------------------------------------------|
 | `s`   | starts a dead agent, into an Emacs-owned `vterm` buffer running its launcher |
 | `k`   | kills a live one, confirming harder mid-bead                                |
-| `f`   | tells an implementer to finish: mid-bead it completes the bead first (row shows ■) and is not replaced; idle, it stops at once |
+| `f`   | tells an Emacs-owned implementer to finish: mid-bead it completes the bead first (row shows ■) and is not replaced; idle, it stops at once. Refuses for a dead one, or one idle outside Emacs |
 | `RET` | in the agent list: selects the detail window, to type to the agent shown there. In the bead panel: shows the marked bead there |
 | `TAB` | next window: list → beads → detail → list. Works from all three             |
 | `n`/`p` | next/previous row                                                        |

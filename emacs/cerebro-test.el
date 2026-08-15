@@ -1636,5 +1636,55 @@ git."
       (cerebro--ensure-prune-watcher "/repo")
       (should (= started 0)))))
 
+;; ---------------------------------------------------------------------------
+;; ah-b8o: the fleet list keeps its selected agent across the 5s refresh
+
+(ert-deftest cerebro-test/list-window-keeps-selection-across-refresh ()
+  "A refresh must not walk the list window's selection back to the top.
+
+`tabulated-list-print' restores the BUFFER's point by id (remember-pos),
+but a window whose buffer is not the selected one keeps its own point -
+so once a detail window takes the selection (as TAB does in the real
+fleet view), the list window's own point is left stale across the next
+refresh.  `cerebro--sync-list-windows' pushes the buffer's restored point
+out to every window showing it, mirroring the same loop already at the
+tail of `cerebro--beads-render'."
+  (let ((list-buffer (generate-new-buffer " *cerebro-test-fleet-list*"))
+        (other-buffer (generate-new-buffer " *cerebro-test-other*")))
+    (unwind-protect
+        (save-window-excursion
+          (with-current-buffer list-buffer
+            (cerebro-mode)
+            (setq tabulated-list-entries
+                  '(("A" ["A" "" "" "" ""])
+                    ("B" ["B" "" "" "" ""])
+                    ("C" ["C" "" "" "" ""])))
+            (tabulated-list-print))
+          (delete-other-windows)
+          (let* ((list-window (selected-window)))
+            (set-window-buffer list-window list-buffer)
+            ;; Select "B", the way the navigator would with point on an
+            ;; agent partway down the list.
+            (with-current-buffer list-buffer
+              (goto-char (point-min))
+              (while (not (equal (tabulated-list-get-id) "B"))
+                (forward-line 1))
+              (set-window-point list-window (point)))
+            ;; TAB away: a detail window takes the selection, and the list
+            ;; window is left showing its own (frozen) point.
+            (let ((detail-window (split-window list-window nil 'right)))
+              (select-window detail-window)
+              (set-window-buffer detail-window other-buffer))
+            ;; Refresh, exactly as `cerebro--tick' does: from the buffer,
+            ;; while the list window is not selected.
+            (with-current-buffer list-buffer
+              (tabulated-list-print t)
+              (cerebro--sync-list-windows))
+            (should (equal (with-current-buffer list-buffer
+                              (tabulated-list-get-id (window-point list-window)))
+                            "B"))))
+      (kill-buffer list-buffer)
+      (kill-buffer other-buffer))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

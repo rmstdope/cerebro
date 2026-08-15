@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Writes an implementer's state file: .claude/agents-state/<name>.state.json. This is the only
-# writer an implementer should use (see agents/implementer.md, skills/implement-bead/SKILL.md) - it
-# exists so the two timestamps below are handled by code rather than remembered by an agent an hour
-# into a bead.
+# Writes an agent's state file: .claude/agents-state/<name>.state.json. Currently used by
+# implementers only (see agents/implementer.md, skills/implement-bead/SKILL.md), but named and
+# placed for every role - it exists so the two timestamps below are handled by code rather than
+# remembered by an agent an hour into a bead.
 #
 #     .claude/cerebro/scripts/agent-state <name> <state> [--bead <id>] [--phase <phase>] --pid <pid>
 #

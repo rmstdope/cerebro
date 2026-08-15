@@ -27,9 +27,11 @@ if [[ "$SOURCE_ROOT" != "$CLAUDE_ROOT"/* ]]; then
   exit 1
 fi
 
-# Every link this script writes is relative to $CLAUDE_ROOT, so the same link is correct in the
-# main checkout, in every worktree and on every machine — an absolute link would point at one
-# worktree's path and be wrong (or dirty the tree) everywhere else (ah-cuc).
+# Every link this script writes is RELATIVE, so the same link is correct in the main checkout, in
+# every worktree and on every machine — an absolute link would point at one worktree's path and be
+# wrong (or dirty the tree) everywhere else (ah-cuc). REL_SOURCE is not relative to $CLAUDE_ROOT
+# itself: it is relative to where a link actually lives, one level below $CLAUDE_ROOT
+# ($CLAUDE_ROOT/skills/<name>, $CLAUDE_ROOT/agents/<name>) — hence the leading "../" and no more.
 REL_SOURCE="../${SOURCE_ROOT#"$CLAUDE_ROOT/"}"
 
 # Ensure target subdirectories exist.

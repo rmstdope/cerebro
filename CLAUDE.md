@@ -35,7 +35,8 @@ Five roles, each an agent definition in `agents/` backed by a skill in `skills/`
 
 - **Xavier** (`planner`, Fable/high) — loads `plan-bead`. Turns unplanned beads into plans a Sonnet
   agent could build unattended. Decides architecture itself; takes every user-facing decision to the
-  human ("the navigator"). Keeps four planned beads ahead of the builders.
+  human ("the navigator"). Keeps a buffer of planned beads ahead of the builders, sized from how
+  many are running (twice the count, never fewer than four).
 - **Cerebro** (`orchestrator`, Fable/medium) — stops implementers on request by writing their stop
   flag; it cannot start one, since that means starting a session. **Starts nothing on its own.** The
   worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself

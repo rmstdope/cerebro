@@ -1,6 +1,6 @@
 ---
 name: plan-bead
-description: The planning role — plan every P0 immediately, keep four planned, unclaimed beads ahead of the implementers, turning each into something an agent can build unattended, deciding architecture yourself and every user-facing question with the navigator. Use when running a planning session in atlantis-hud.
+description: The planning role — plan every P0 immediately, keep a buffer of planned, unclaimed beads ahead of the implementers, sized from how many are running, turning each into something an agent can build unattended, deciding architecture yourself and every user-facing question with the navigator. Use when running a planning session in atlantis-hud.
 ---
 
 # Planning a bead
@@ -154,8 +154,8 @@ bd list --status open --exclude-label planned --exclude-label planning --exclude
 ```
 
 Anything it returns, plan. All of it, one at a time, before you look at the buffer at all — and if
-that leaves five or six planned beads instead of four, the buffer is over its number and that is
-simply what it costs. The buffer is a floor under the fleet, not a ceiling on urgent work.
+that leaves the buffer over its `2m`, that is simply what it costs. The buffer is a floor under the
+fleet, not a ceiling on urgent work.
 
 Then go on to the buffer as usual. A P0 you just planned counts toward it like anything else, so the
 top-up that follows is usually short.
@@ -193,39 +193,64 @@ answer — a plan revision is not a second bite at decisions that were already m
 
 Then re-add `planned` as usual, and go on to the buffer.
 
-## You keep a buffer of four
+## You keep a buffer sized to the fleet
 
 You are not here to plan one bead and leave. You keep the implementers fed, and the measure of that
-is a **buffer of four beads that are planned, open and unclaimed** — ready for anyone to pick up.
+is a **buffer of planned, open, unclaimed beads** — ready for anyone to pick up — whose size follows
+how many implementers are running.
 
 ```bash
-# The buffer, and the only number that matters:
-bd list --label planned --status open --exclude-label human --exclude-type epic --json
+# The buffer, and the only count that matters:
+bd list --label planned --status open --exclude-label human --exclude-type epic --json | jq length
 ```
 
 `human` is excluded because a bead waiting on the navigator is not available to an implementer, so
 counting it would starve the queue while the number looked healthy. `epic` is a split parent, which
 has children rather than a plan.
 
+**How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
+state file under `.claude/implementers/` whose `pid` is alive, minus any implementer whose stop flag
+is set (it finishes its bead and retires, so it will not take another). Interactive agents — Xavier,
+Cerebro, Moira, Psylocke — have no state file and never count.
+
+```bash
+n=0
+for f in $(find .claude/implementers -maxdepth 1 -name '*.state.json' 2>/dev/null); do
+  name="$(basename "$f" .state.json)"
+  [ -e ".claude/implementers/$name.stop" ] && continue
+  pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && n=$((n+1))
+done
+m=$(( n > 2 ? n : 2 )); echo "n=$n implementers, refill below $m, fill to $((2*m))"
+```
+
+**The two numbers are `m = max(2, n)` and `2m`**: refill when the buffer drops **below `m`**, and
+fill **to `2m`**. Two or fewer implementers — including none — is a floor of two and a target of
+four; three is 3/6; four is 4/8. Measure `n` on every pass, since the fleet changes under you.
+
 The cycle:
 
 1. **Plan every unplanned P0**, whatever the buffer says. See *P0 pre-empts the buffer*.
-2. **Fill to four.** Plan beads one at a time until the count reaches four.
+2. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m`.
 3. **Sleep ten minutes.** Say that you are doing so, then wait.
-4. **Look again.** A new P0 — plan it, always, and then continue. Otherwise: two or more in the
-   buffer, sleep another ten minutes and look again; **fewer than two, fill back to four** and start
-   over.
+4. **Look again**, re-measuring `n`. A new P0 — plan it, always, and then continue. Otherwise:
+   `m` or more in the buffer, sleep another ten minutes and look again; **fewer than `m`, fill
+   back to `2m`** and start over.
 
-The gap between four and two is deliberate: topping up on every single claim would have you planning
+The gap between `2m` and `m` is deliberate: topping up on every single claim would have you planning
 constantly against a queue that barely moved. Let it drain by half, then refill it in one go.
 
 **The P0 check has no such gap, and that is the point.** It runs on every wake-up and acts on every
 hit — a P0 filed while you slept is planned on the next wake-up even if the buffer is untouched at
-four and step 4 would otherwise have sent you straight back to sleep.
+`2m` and step 4 would otherwise have sent you straight back to sleep.
 
-**If you cannot reach four, that is fine.** Plan every candidate there is, say how far you got and
-why, and sleep as usual — new beads arrive, and the next wake-up will find them. Never invent work to
-hit the number.
+**A buffer over its number is left alone.** When the fleet shrinks — six planned and one
+implementer — nothing is unplanned; the extra beads simply get built later. The buffer is a floor
+under the fleet, never a ceiling on planned work.
+
+**If you cannot reach `2m`, that is fine.** Plan every candidate there is, say how far you got and
+why, and sleep as usual — new beads arrive, and the next wake-up will find them. Never invent work
+to hit the number.
 
 ### Sleeping without dying
 
@@ -664,6 +689,6 @@ is one no later session will consider, so check that nothing behind you still ha
 bd list --label planning --status open --json | jq -r '.[] | "\(.id)\t\(.title)"'
 ```
 
-Then count the buffer again and act on it: below four, plan the next one; at four, say so and sleep.
+Then count the buffer again and act on it: below `2m`, plan the next one; at `2m`, say so and sleep.
 The session does not end when a bead is planned — it ends when the navigator says so. See *You keep
-a buffer of four*.
+a buffer sized to the fleet*.

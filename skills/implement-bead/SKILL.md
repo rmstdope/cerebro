@@ -523,7 +523,9 @@ exactly what this catches.
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID
 gh api -X PUT "repos/<owner>/<repo>/pulls/<n>/update-branch"
-gh pr view <n> --json mergeStateStatus       # poll until it moves off BEHIND
+until [ "$(gh pr view <n> --json mergeStateStatus -q .mergeStateStatus)" != "BEHIND" ]; do
+  sleep 10
+done
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
 # wait for CI on the new head
 ```

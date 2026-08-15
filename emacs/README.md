@@ -12,6 +12,7 @@ from the list:
 |-------|----------------------------------------------------------------------------|
 | `s`   | starts a dead agent, into an Emacs-owned `vterm` buffer running its launcher |
 | `k`   | kills a live one, confirming harder mid-bead                                |
+| `f`   | tells an Emacs-owned implementer to finish: mid-bead it completes the bead first (row shows ■) and is not replaced; idle, it stops at once. Refuses for a dead one, or one idle outside Emacs |
 | `RET` | in the agent list: selects the detail window, to type to the agent shown there. In the bead panel: shows the marked bead there |
 | `TAB` | next window: list → beads → detail → list. Works from all three             |
 | `n`/`p` | next/previous row                                                        |
@@ -144,6 +145,8 @@ same five-second poll that refreshes the list acts on what each one reports in
 - **`asking`** — blocked on a question only the navigator can answer. Answer it in the detail
   window. After `cerebro-answer-timeout` (900s) with no answer, the session is told to hand the
   bead to the `human` queue and finish, once, so a fleet left alone does not sit blocked.
+- **`idle` with the flag present** — ended at once, no replacement: nothing is in flight to finish.
+  `f` on an idle row does this on the keypress rather than waiting for the next poll.
 
 Only implementers Emacs itself started are supervised: one running in somebody's own terminal is
 theirs to end, and a dead one stays dead rather than fighting your own `k`.

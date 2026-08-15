@@ -291,11 +291,14 @@ read between beads, never during one - see `cerebro-finish' - so this is the
 only place the glyph is added.
 
 The suffix only ever shows for a state a bead can actually be in flight
-under - `working' or `asking'. FLAGGED can be non-nil for any implementer
-\(`cerebro--finish-action' writes the flag regardless of current state\), but
-\"dead ■\" or \"idle ■\" would describe a bead that either was never running
-or has none to complete - there is nothing in flight for the flag to be
-waiting on, so the marker would say something untrue rather than nothing.
+under - `working' or `asking'. \"dead ■\" or \"idle ■\" would describe a bead
+that either was never running or has none to complete - there is nothing in
+flight for the flag to be waiting on, so the marker would say something
+untrue rather than nothing. That case barely arises any more: an idle
+implementer under a flag is retired by the fleet poll within about one tick
+\(`cerebro--supervise-action', ah-ymn\), and `f' no longer writes a flag at
+all for a dead or externally-idle one \(`cerebro--finish-action'\) - so there
+is effectively no idle-and-flagged state left to describe.
 
 The Bead column is 10 columns wide; an external agent shows \"—\" rather than
 the wordier \"(external)\", and a real bead id longer than 10 (a nested child
@@ -574,12 +577,18 @@ answers are:
             a fresh one, which is what keeps a session to one bead and its
             context free of every bead before it.
 `retire'  - AGENT finished its bead and a stop flag says do not start
-            another.  Note the flag is only ever read here, with the bead
-            already merged and closed: taking an implementer down in flight
-            strands a claim, a worktree and an open PR, so a stop means
-            *finish*, not *stop now*.  The flag is removed as it retires
-            (ah-kgc), so the next session started under that name does not
-            inherit an instruction meant for this one.
+            another; or AGENT is `idle' under a stop flag - nothing is in
+            flight, so nothing is stranded by ending it now, and the flag
+            means *stop now* rather than *finish* (ah-ymn).  This is what
+            makes `f' - and Cerebro's own `touch' - mean the same thing on an
+            idle implementer as on a working one: no further bead.  Note the
+            flag is only ever read here, with the bead already merged and
+            closed (or with none in flight at all): taking an implementer
+            down mid-bead strands a claim, a worktree and an open PR, so a
+            stop on a working one means *finish*, not *stop now*.  The flag
+            is removed as it retires (ah-kgc), so the next session started
+            under that name does not inherit an instruction meant for this
+            one.
 `nudge'   - AGENT has waited past `cerebro-answer-timeout' for an answer.
 
 Only an implementer Emacs itself started is supervised.  One running in
@@ -589,6 +598,7 @@ restarting it would fight the navigator's own `k'."
              (not (cerebro-agent-external agent)))
     (pcase (cerebro-agent-state agent)
       ('done (if stop-flag-p 'retire 'restart))
+      ('idle (and stop-flag-p 'retire))
       ('asking
        (let ((waited (cerebro--seconds-since (cerebro-agent-since agent) now)))
          ;; A stop flag makes no difference: the bead is still in flight, so
@@ -681,13 +691,24 @@ harder confirm), `external' (refuse - not ours to stop) or `dead'
 (defun cerebro--finish-action (agent flag-set)
   "What `f' should do for AGENT given FLAG-SET.
 
-One of `write' (implementer, no flag yet - tell it to finish), `offer-clear'
-\(flag already set - ask before removing it, which is the cheap way back to
-\"actually, keep going\") or `not-implementer' (the five interactive roles
-have no bead to finish and no flag to write)."
+One of `not-implementer' (the five interactive roles have no bead to finish
+and no flag to write), `offer-clear' (flag already set - ask before removing
+it, which is the cheap way back to \"actually, keep going\"; checked ahead of
+every state below, since a stale flag is worth offering to clear whatever
+AGENT is doing now), `dead' (nothing is running - there is nothing to finish
+and writing a flag would lie about that, ah-ymn), `external' (idle, but
+running outside Emacs - the poll that would act on a flag never touches it,
+so writing one would sit unread and unmarked, ah-ymn), `stop-now' (idle -
+nothing is in flight, so the flag means *stop now* rather than *finish*,
+ah-ymn) or `write' (a bead is in flight - tell it to finish, and it stops
+once that bead is done)."
   (cond
    ((not (eq (cerebro-agent-kind agent) 'implementer)) 'not-implementer)
    (flag-set 'offer-clear)
+   ((not (cerebro--alive-p agent)) 'dead)
+   ((and (eq (cerebro-agent-state agent) 'idle)
+         (cerebro-agent-external agent)) 'external)
+   ((eq (cerebro-agent-state agent) 'idle) 'stop-now)
    (t 'write)))
 
 (defun cerebro--placeholder (agent)
@@ -1809,12 +1830,18 @@ swallowed silently rather than simply doing nothing."
   "Tell the implementer at point to finish (`f'): write its stop flag.
 
 The flag is read between beads, never during one (see `orchestrator.md'):
-the session completes the bead it is on, closes it, and only then stops -
-so this cannot end an implementer mid-bead, and does not try to. If a flag
-is already set, offers to clear it instead, which cancels the instruction
-cleanly. A flag left on disk is also cleared when the fleet view retires
-the session it stopped, and when `s' starts that name again (ah-kgc), so
-it never outlives the session it was written for."
+a working or asking session completes the bead it is on, closes it, and only
+then stops - so this cannot end an implementer mid-bead, and does not try
+to. An idle implementer has nothing in flight, so the flag means *stop now*
+instead (ah-ymn): the flag is written and the fleet poll is run at once
+\(`cerebro--tick'), so the session ends on this keypress rather than up to
+five seconds later. If a flag is already set, offers to clear it instead,
+which cancels the instruction cleanly. A flag left on disk is also cleared
+when the fleet view retires the session it stopped, and when `s' starts
+that name again (ah-kgc), so it never outlives the session it was written
+for. A dead implementer has nothing to finish, and an idle one running
+outside Emacs is never touched by the poll that would act on a flag - both
+refuse rather than write one that would sit unread (ah-ymn)."
   (interactive)
   (let ((agent (cerebro--agent-at-point)))
     (when agent
@@ -1826,11 +1853,18 @@ it never outlives the session it was written for."
            (cerebro--write-stop-flag repo-root name)
            (revert-buffer)
            (message "told %s to finish - it completes its current bead first" name))
+          ('stop-now
+           (cerebro--write-stop-flag repo-root name)
+           (cerebro--tick (current-buffer))
+           (message "%s was idle - stopped now, no replacement" name))
           ('offer-clear
            (when (y-or-n-p (format "Stop flag already set for %s - clear it? " name))
              (cerebro--clear-stop-flag repo-root name)
              (revert-buffer)
              (message "%s will keep going" name)))
+          ('dead (message "%s is not running - nothing to finish" name))
+          ('external
+           (message "%s is running outside Emacs - stop it from its own terminal" name))
           ('not-implementer
            (message "%s is not an implementer - nothing to finish" name)))))))
 

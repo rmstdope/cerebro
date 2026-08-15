@@ -367,6 +367,42 @@ stale by definition."
                 nil)
               'not-implementer)))
 
+;; ---------------------------------------------------------------------------
+;; ah-ymn: `f' on an idle implementer stops it now, not after one more bead
+
+(ert-deftest cerebro-test/finish-action-stops-an-idle-implementer-now ()
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'idle)
+                nil)
+              'stop-now))
+  ;; A flag already set is still offered for clearing, whatever the state.
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'idle)
+                t)
+              'offer-clear)))
+
+(ert-deftest cerebro-test/finish-action-refuses-a-dead-implementer ()
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Rogue" "implementer" 'implementer 'dead)
+                nil)
+              'dead))
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Rogue" "implementer" 'implementer 'dead)
+                t)
+              'offer-clear)))
+
+(ert-deftest cerebro-test/finish-action-refuses-an-idle-implementer-outside-emacs ()
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'idle t)
+                nil)
+              'external))
+  ;; The working case, external or not, is untouched by this bead.
+  (should (eq (cerebro--finish-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
+                                             t "ah-f9c")
+                nil)
+              'write)))
+
 (ert-deftest cerebro-test/entry-finishing-is-a-glyph ()
   "The list says a stop flag took effect while the bead is still in flight -
 `f' does not stop anything, so the marker has to come from somewhere. It used
@@ -398,10 +434,12 @@ this directory, so `.claude/agents-state' is no longer guaranteed to exist."
       (delete-directory root t))))
 
 (ert-deftest cerebro-test/entry-finishing-marker-only-for-in-flight-states ()
-  "A stop flag can be written for an implementer in any state - nothing
-stops `f' from being pressed on a dead or idle one - but \"dead ■\" or
-\"idle ■\" would describe a bead that is not actually in flight for the flag
-to be waiting on."
+  "\"dead ■\" or \"idle ■\" would describe a bead that is not actually in
+flight for the flag to be waiting on - and since ah-ymn there is barely a
+window to see one: an idle implementer under a flag is retired within a
+tick, and `f' refuses outright for a dead or externally-idle one rather than
+writing a flag at all. This test constructs the row directly, bypassing
+`cerebro--finish-action', to prove the rendering rule holds regardless."
   (let ((now (current-time)))
     (dolist (state '(dead idle done))
       (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer state))
@@ -701,10 +739,28 @@ killed in flight strands a claim, a worktree and an open PR."
               'retire)))
 
 (ert-deftest cerebro-test/supervise-leaves-a-working-implementer-alone ()
-  (dolist (state '(working idle asking))
+  "`idle' is covered separately below - it retires under a stop flag; this
+test is only about states with a bead genuinely in flight."
+  (dolist (state '(working asking))
     (should (null (cerebro--supervise-action
                    (cerebro-test--supervised state nil "2026-08-14T09:29:00Z")
                    t cerebro-test--now)))))
+
+;; ---------------------------------------------------------------------------
+;; ah-ymn: `f' on an idle implementer stops it now, not after one more bead
+
+(ert-deftest cerebro-test/supervise-retires-an-idle-implementer-under-stop ()
+  "Nothing is in flight for an idle implementer, so a stop flag means *stop
+now* rather than *finish* - unlike `done', which waits for nothing further to
+strand."
+  (should (eq (cerebro--supervise-action (cerebro-test--supervised 'idle) t
+                                                  cerebro-test--now)
+              'retire))
+  (should (null (cerebro--supervise-action (cerebro-test--supervised 'idle) nil
+                                                    cerebro-test--now)))
+  ;; Only an owned session is supervised at all.
+  (should (null (cerebro--supervise-action (cerebro-test--supervised 'idle t) t
+                                                    cerebro-test--now))))
 
 (ert-deftest cerebro-test/supervise-never-touches-a-terminal-emacs-does-not-own ()
   "An implementer started outside Emacs belongs to whoever started it."
@@ -893,6 +949,19 @@ still happens exactly once."
           (should-not (cerebro--stop-flag-p root "Cyclops"))
           (should (= launched 1)))
       (delete-directory root t))))
+
+(ert-deftest cerebro-test/supervise-ends-an-idle-session-under-stop ()
+  "The supervisor, not just the pure decision, actually ends an idle
+implementer under a stop flag - `cerebro--end-session', not `cerebro--launch'."
+  (let ((ended nil)
+        (agent (cerebro-test--supervised 'idle)))
+    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) t))
+              ((symbol-function 'cerebro--end-session)
+               (lambda (a) (push (cerebro-agent-name a) ended)))
+              ((symbol-function 'cerebro--launch) (lambda (&rest _) (error "launched"))))
+      (with-temp-buffer
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (should (equal ended '("Cyclops")))))))
 
 (ert-deftest cerebro-test/stop-flag-path-is-the-documented-one ()
   (should (equal (cerebro--stop-flag-path "/repo" "Cyclops")

@@ -49,11 +49,21 @@ state between one pass and the next.
 Closed beads that either carry no `verification:*` label at all, or carry `verification:failed`:
 
 ```bash
-bd list --status closed --json | jq -r '.[]
+bd list --status closed --exclude-type event --json | jq -r '.[]
+  | select(.issue_type != "event")
   | select(([.labels[]? | select(startswith("verification:"))] | length == 0)
            or ([.labels[]?] | index("verification:failed")))
   | .id'
 ```
+
+Both filters on purpose — the flag is what does the work; the `jq` guard makes the query safe under a
+`bd` whose `--exclude-type` does not know `event`. **Why the exclusion exists at all**: `bd set-state
+<id> verification=<x>` — the command you use for every verdict — writes an **event bead** as its
+audit record (`issue_type: "event"`, closed, unlabelled), one more per verdict you record. Without
+this exclusion, each pass would find the previous pass's own event beads in the work list, label them
+(as `not-needed`, since they have no commit and touch nothing), which writes another event bead
+recording *that* label — a chain that grows one link per pass, forever (ah-9gm). **Never label an
+event bead** — a chain that already exists from before this fix is harmless and is left alone.
 
 `verification:failed` is kept **through the rebuild** — a bead reopened by a failed verdict closes
 again when the rework merges, still carrying that label, which is exactly what makes it a candidate a

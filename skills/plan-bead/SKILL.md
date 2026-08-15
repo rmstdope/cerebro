@@ -253,6 +253,40 @@ bd update <id> --design-file plan.md --add-label planned --remove-label planning
 bd dolt push                                       # or the release is invisible elsewhere
 ```
 
+### A bead from an issue: go and read the issue
+
+**Before you research anything else, if the bead carries a `gh-<n>` external ref, open the thread.**
+
+```bash
+bd show <id> --json | jq -r '.external_ref'    # gh-212, or null
+gh issue view <n> --comments
+```
+
+The bead is a summary somebody wrote once. The thread is where the reporter kept talking — and they
+were asked to: Moira's acknowledgement tells every reporter that a clearer reproduction, a
+screenshot, or what they expected to happen instead is welcome in the thread. That material arrives
+*after* the bead was filed, so it is in exactly the place you would not look if you only read the
+bead.
+
+**Open the screenshots.** An image attached to an issue is often the specification — the layout the
+reporter meant, the state the app was in, the thing that looks wrong — and it says in one picture
+what a paragraph of the bead approximates. Download it and read it rather than inferring from the
+filename:
+
+```bash
+gh issue view <n> --json body,comments --jq '.body, .comments[].body' | grep -oE 'https://[^ )]+\.(png|jpg|jpeg|gif)'
+curl -sL "<url>" -o /tmp/issue-<n>-1.png    # then read the file
+```
+
+What to take from it: a reproduction the bead lacks, the version or platform it happened on, what
+the reporter expected, a later comment narrowing or widening what they meant, and anything a
+maintainer said in the thread that the bead never absorbed. Where the thread changes the shape of
+the work, say so in the plan's *Context* and name the comment — the implementer never sees the
+issue, and a decision whose reason lives in a GitHub thread is a decision it cannot check.
+
+If the thread turns out to contradict the bead, that is a user-facing question and it is the
+navigator's: ask, rather than planning the version you prefer.
+
 **You never claim a bead.** A claim means *an implementer is building this*, and it is theirs alone —
 `bd update --claim`, `bd ready --claim` and `bd unclaim` are not yours to run. What you take instead
 is the `planning` label, which says the same thing about planning without taking the bead out of the

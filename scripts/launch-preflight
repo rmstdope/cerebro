@@ -32,11 +32,11 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-parent="$(cd "$script_dir/../.." && pwd -P)"                  # .claude, in a consumer
-[[ "$(basename "$parent")" == ".claude" ]] || exit 0
-consumer="$(cd "$parent/.." && pwd -P)"
-# git resolves symlinks in --show-toplevel (e.g. macOS /tmp -> /private/tmp), so $consumer must be
-# physically resolved (-P) too, or a symlinked path (common under mktemp) never matches.
+consumer="$("$script_dir/consumer-root" 2>/dev/null)" || exit 0
+parent="$consumer/.claude"                                    # .claude, in a consumer
+# consumer-root alone would accept a standalone clone sitting at e.g. ~/.claude/cerebro (the
+# layout it checks for is satisfied by construction) - require that $consumer is also a git
+# working tree's own toplevel, which a mere ~/.claude is not.
 [[ "$(git -C "$consumer" rev-parse --show-toplevel 2>/dev/null)" == "$consumer" ]] || exit 0
 
 if [[ ! -f "$parent/cerebro/agents/$role.md" ]]; then

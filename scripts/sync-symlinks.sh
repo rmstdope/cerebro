@@ -8,24 +8,21 @@ shopt -s nullglob
 # Sync Claude Code customization symlinks from .claude/cerebro into .claude.
 # Run from anywhere inside the consumer repo.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CLAUDE_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)/.claude"
+# -P (physical) throughout: consumer-root resolves symlinks the same way (macOS mktemp lives
+# under /var -> /private/var), and REL_SOURCE below strips CLAUDE_ROOT as a literal prefix of
+# SOURCE_ROOT, so the two must agree on which form of the path they use.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
-# Verify consumer repo root by checking .claude.
-if [[ ! -d "$CLAUDE_ROOT" ]]; then
-  echo "Required directory not found: $CLAUDE_ROOT" >&2
-  exit 1
-fi
-
-# A standalone clone of this repository (e.g. ~/repos/cerebro) climbs the same three levels and
-# can land on the user's own ~/.claude, which exists — so the check above is not enough on its
-# own. Require that SOURCE_ROOT (.claude/cerebro) actually sits inside the CLAUDE_ROOT it found,
-# which is only true when this script is running as a consumer's submodule.
-if [[ "$SOURCE_ROOT" != "$CLAUDE_ROOT"/* ]]; then
+# The enclosing tree — the consumer this copy is running as (main checkout, or a bead worktree
+# when this copy is the worktree's own submodule). A worktree syncs its own links, which is what
+# lets a submodule-bump PR commit them (ah-cuc). See scripts/consumer-root's header for why this
+# is not --shared.
+consumer_root="$("$SCRIPT_DIR/consumer-root" 2>/dev/null)" || {
   echo "sync-symlinks.sh: must run from a consumer repo's .claude/cerebro (found $SOURCE_ROOT)" >&2
   exit 1
-fi
+}
+CLAUDE_ROOT="$consumer_root/.claude"
 
 # Every link this script writes is RELATIVE, so the same link is correct in the main checkout, in
 # every worktree and on every machine — an absolute link would point at one worktree's path and be

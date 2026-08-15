@@ -68,9 +68,12 @@ Run from the consumer repository root:
 .claude/cerebro/scripts/sync-symlinks.sh
 ```
 
+It syncs the *enclosing* tree — run from a bead worktree's own submodule copy, it links that
+worktree's `.claude`, not the main checkout's (see `scripts/consumer-root`).
+
 What it does:
 
-- Verifies `../../.claude/` exists (relative to the script location) to confirm the script is being run in a consumer repository root, and exits with an error if it is missing.
+- Asks `scripts/consumer-root` for the consumer repository root (the enclosing working tree) and exits with an error if this checkout is not mounted at `<consumer>/.claude/cerebro`.
 - Creates `../../.claude/skills/` and `../../.claude/agents/` if they do not exist.
 - Scans `.claude/cerebro/skills/*` for folders that contain `SKILL.md`.
 - Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/plan-bead -> ../cerebro/skills/plan-bead`), relative rather than absolute, so the same link is correct in the main checkout, in every worktree and on every machine.

@@ -23,17 +23,21 @@ pass() {
 }
 
 # A fixture tree with its own scripts/ directory, symlinked to the real scripts, so
-# agent-state's own root-derivation (../../../ from .claude/cerebro/scripts) resolves inside
+# agent-state's own root-derivation (via scripts/consumer-root --shared) resolves inside
 # the fixture rather than the real repo. run-implementer is symlinked alongside it because
 # agent-state consults it for the roster. implementer-state (the deprecation shim) is symlinked
 # too, so a caller still using the old name is exercised the same way a real consumer would hit it.
+# A git repo, since consumer-root --shared asks git for the main .git directory.
 new_fixture() {
   local tmp
   tmp="$(mktemp -d)"
+  git init -q "$tmp"
+  git -C "$tmp" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
   mkdir -p "$tmp/.claude/cerebro/scripts"
   ln -s "$repo_root/scripts/run-implementer" "$tmp/.claude/cerebro/scripts/run-implementer"
   ln -s "$repo_root/scripts/agent-state" "$tmp/.claude/cerebro/scripts/agent-state"
   ln -s "$repo_root/scripts/implementer-state" "$tmp/.claude/cerebro/scripts/implementer-state"
+  ln -s "$repo_root/scripts/consumer-root" "$tmp/.claude/cerebro/scripts/consumer-root"
   printf '%s' "$tmp"
 }
 
@@ -270,5 +274,28 @@ f="$(state_file "$tmp" Cyclops)"
 phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "triage" ]] || fail "an-implementer-name-can-use-a-role-phase-word-too: phase=$phase"
 rm -rf "$tmp"
 pass "an-implementer-name-can-use-a-role-phase-word-too"
+
+# --- from-a-worktree-copy-writes-to-the-shared-checkout (ah-e0w) ---
+# An implementer that inits the submodule inside its own bead worktree (the remedy ah-4ao, ah-axj
+# and ah-aao prescribe) invokes agent-state relative to THAT copy. The state file must still land
+# in the main checkout the fleet view reads, never in the worktree's own .claude/agents-state/.
+tmp="$(new_fixture)"
+worktree="$tmp/.claude/worktrees/ah-f9c"
+git -C "$tmp" worktree add -q "$worktree" -b ah-f9c-branch
+mkdir -p "$worktree/.claude/cerebro/scripts"
+ln -s "$repo_root/scripts/agent-state" "$worktree/.claude/cerebro/scripts/agent-state"
+ln -s "$repo_root/scripts/run-implementer" "$worktree/.claude/cerebro/scripts/run-implementer"
+ln -s "$repo_root/scripts/consumer-root" "$worktree/.claude/cerebro/scripts/consumer-root"
+
+"$worktree/.claude/cerebro/scripts/agent-state" Cyclops working --bead ah-f9c --pid 42
+
+f="$(state_file "$tmp" Cyclops)"
+[[ -f "$f" ]] || fail "from-a-worktree-copy-writes-to-the-shared-checkout: no state file in the main checkout"
+state="$(jq -r '.state' "$f")"; [[ "$state" == "working" ]] \
+  || fail "from-a-worktree-copy-writes-to-the-shared-checkout: state=$state"
+[[ ! -d "$worktree/.claude/agents-state" ]] \
+  || fail "from-a-worktree-copy-writes-to-the-shared-checkout: a copy was also written in the worktree"
+rm -rf "$tmp"
+pass "from-a-worktree-copy-writes-to-the-shared-checkout"
 
 echo "All agent-state tests passed."

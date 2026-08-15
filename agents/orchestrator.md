@@ -494,7 +494,7 @@ fleet by looking, never by remembering what you set:
 ```bash
 for f in .claude/implementers/*.state.json; do
   name="$(basename "$f" .state.json)"
-  jq -r --arg name "$name" '"\($name): \(.state) \(.bead // "")"' "$f"
+  jq -r --arg name "$name" '"\($name): \(.state)\(if .phase then " (" + .phase + ")" else "" end) \(.bead // "")"' "$f"
 done
 claude agents --json | jq -r '.[] | select(.name=="Xavier") | "Xavier \(.status)"'
 ```

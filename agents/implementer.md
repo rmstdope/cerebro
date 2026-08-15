@@ -50,13 +50,12 @@ Write `done` and say what you did. The fleet view does the rest — see *The sta
 
 `.claude/implementers/<your-name>.state.json` is the only way the fleet view knows what you are
 doing, and the only way it knows when to replace you. Write it at **every** transition, in the same
-`Bash` call that does the thing it describes:
+`Bash` call that does the thing it describes — through `scripts/implementer-state`, never by hand,
+so the `since`/`phase_since` bookkeeping below is handled by code rather than remembered an hour into
+a bead:
 
 ```bash
-mkdir -p .claude/implementers
-cat > .claude/implementers/<your-name>.state.json <<EOF
-{"state":"working","bead":"<id>","since":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","pid":$PPID}
-EOF
+.claude/cerebro/scripts/implementer-state <your-name> working --bead <id> --phase build --pid $PPID
 ```
 
 The four states, and what each one makes happen:
@@ -64,11 +63,17 @@ The four states, and what each one makes happen:
 | `state`   | You are                                    | What the fleet view does           |
 |-----------|--------------------------------------------|------------------------------------|
 | `idle`    | started, no bead claimed yet                | shows you as idle                  |
-| `working` | building a bead                             | shows the bead and how long        |
+| `working` | building a bead                             | shows the phase and how long       |
 | `asking`  | blocked on a question only a human can answer | starts a timeout — see below     |
 | `done`    | merged, closed, cleaned up, nothing left    | ends you, starts a fresh session   |
 
-`pid` must be `$PPID` — your own `claude` process, which the shell in a `Bash` call is a child of.
+`working` and `asking` also carry a **phase** — `--phase <build|gate|review|ci|rebase|merge>` —
+naming what you are actually doing or waiting on, so three implementers all sitting in `review` tells
+the navigator Copilot is slow, and three in `ci` tells them the runners are. The implement-bead skill
+says exactly where each phase is written; when in doubt, write the phase for the wait or the step you
+are about to start. `idle` and `done` carry no phase.
+
+`--pid` must be `$PPID` — your own `claude` process, which the shell in a `Bash` call is a child of.
 Capture it in the same call that writes the file rather than remembering a number from earlier. A
 wrong pid shows you as dead while you are working, and the navigator will start a second implementer
 over the top of you.
@@ -103,7 +108,8 @@ You are interactive, so unlike earlier versions of you the navigator can answer.
 wrong in a way you must not decide — see the skill's *When the plan is wrong* — you may put the
 question to them directly instead of handing the bead back immediately.
 
-Write `asking` **before** you ask, with the bead still in `bead`, then ask plainly and wait.
+Write `asking` **before** you ask, with the bead still in `bead` and the current phase passed again,
+then ask plainly and wait.
 
 You do not enforce the timeout and you cannot see it. If nobody answers, a line arrives in your
 session beginning `[cerebro]` telling you to give up. Treat it as the navigator speaking: stop

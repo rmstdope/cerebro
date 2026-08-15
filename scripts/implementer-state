@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+#
+# Writes an implementer's state file: .claude/implementers/<name>.state.json. This is the only
+# writer an implementer should use (see agents/implementer.md, skills/implement-bead/SKILL.md) - it
+# exists so the two timestamps below are handled by code rather than remembered by an agent an hour
+# into a bead.
+#
+#     .claude/cerebro/scripts/implementer-state <name> <state> [--bead <id>] [--phase <phase>] --pid <pid>
+#
+# <state> is one of: idle working asking done - the only field cerebro--supervise-action reads.
+# <phase>, only meaningful with `working` or `asking`, is one of:
+#   build gate review ci rebase merge
+# --pid is required and is never defaulted from this script's own parentage: pass the caller's
+# $PPID (the claude process), not $$ (this script's own shell) - a guessed pid shows an implementer
+# as dead and starts a second session over it.
+#
+# `since` is the time of the last change of state or bead (unchanged meaning from before this
+# script existed) - preserved across a phase-only change, reset when state or bead changes.
+# `phase_since` is the time of the last change of phase; null when no --phase is given.
+#
+# Writes atomically (write to a .tmp file, then mv) so cerebro.el never reads a torn file.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "usage: implementer-state <name> <idle|working|asking|done> [--bead <id>] [--phase <build|gate|review|ci|rebase|merge>] --pid <pid>" >&2
+  exit 2
+}
+
+name="${1:-}"
+state="${2:-}"
+[[ -n "$name" && -n "$state" ]] || usage
+shift 2
+
+bead=""
+phase=""
+pid=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --bead)
+      bead="${2:-}"; shift 2 ;;
+    --phase)
+      phase="${2:-}"; shift 2 ;;
+    --pid)
+      pid="${2:-}"; shift 2 ;;
+    *)
+      echo "implementer-state: unknown argument '$1'" >&2
+      exit 2 ;;
+  esac
+done
+
+# The roster is closed, and it is the same one run-implementer enforces - an off-roster name is a
+# file the fleet view never reads. Captured to a variable first, not piped straight into `grep -q`:
+# `-q` closes its stdin the moment it sees a match, and a match on Cyclops (the roster's first line)
+# would SIGPIPE run-implementer's still-writing printf, which `pipefail` then reports as a failure.
+roster="$("$script_dir/run-implementer" --roster)"
+# Fixed-string, whole-line match: `grep -qx` alone treats NAME as a regex, so a crafted name like
+# ".*" could match any roster line rather than being rejected. `-F` disables that, and `--` stops a
+# name that starts with `-` being read as an option.
+if ! grep -qFx -- "$name" <<<"$roster"; then
+  echo "implementer-state: $name is not on the roster" >&2
+  exit 2
+fi
+
+case "$state" in
+  idle|working|asking|done) ;;
+  *)
+    echo "implementer-state: unknown state '$state' (idle|working|asking|done)" >&2
+    exit 2 ;;
+esac
+
+if [[ -n "$phase" ]]; then
+  case "$phase" in
+    build|gate|review|ci|rebase|merge) ;;
+    *)
+      echo "implementer-state: unknown phase '$phase' (build|gate|review|ci|rebase|merge)" >&2
+      exit 2 ;;
+  esac
+  # A phase is only meaningful with a bead in flight - writing one into an idle or done file would
+  # leave the state file internally inconsistent (a phase with no bead being worked).
+  case "$state" in
+    working|asking) ;;
+    *)
+      echo "implementer-state: --phase is only valid with working or asking, not '$state'" >&2
+      exit 2 ;;
+  esac
+fi
+
+if [[ -z "$pid" ]]; then
+  echo "implementer-state: --pid is required (pass \$PPID)" >&2
+  exit 2
+fi
+if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+  echo "implementer-state: --pid is required (pass \$PPID)" >&2
+  exit 2
+fi
+
+# The consumer root: .claude/cerebro/scripts is a load-bearing location (cerebro CLAUDE.md,
+# Gotchas), so it is derived the same way scripts/sync-symlinks.sh does it - never
+# `git rev-parse --show-toplevel`, which from a bead worktree is the worktree, not the shared
+# checkout.
+repo_root="$(cd "$script_dir/../../.." && pwd)"
+out_dir="$repo_root/.claude/implementers"
+mkdir -p "$out_dir"
+out_file="$out_dir/$name.state.json"
+tmp_file="$out_file.tmp"
+
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+prev="$(jq -c '.' "$out_file" 2>/dev/null || true)"
+
+prev_state="$(jq -r '.state // empty' <<<"${prev:-{}}" 2>/dev/null || true)"
+prev_bead="$(jq -r '.bead // empty' <<<"${prev:-{}}" 2>/dev/null || true)"
+prev_phase="$(jq -r '.phase // empty' <<<"${prev:-{}}" 2>/dev/null || true)"
+prev_since="$(jq -r '.since // empty' <<<"${prev:-{}}" 2>/dev/null || true)"
+prev_phase_since="$(jq -r '.phase_since // empty' <<<"${prev:-{}}" 2>/dev/null || true)"
+
+if [[ -n "$prev_since" && "$prev_state" == "$state" && "$prev_bead" == "$bead" ]]; then
+  since="$prev_since"
+else
+  since="$now"
+fi
+
+if [[ -z "$phase" ]]; then
+  phase_since=""
+elif [[ -n "$prev_phase_since" && "$prev_phase" == "$phase" ]]; then
+  phase_since="$prev_phase_since"
+else
+  phase_since="$now"
+fi
+
+jq -n \
+  --arg state "$state" \
+  --arg phase "$phase" \
+  --arg bead "$bead" \
+  --arg since "$since" \
+  --arg phase_since "$phase_since" \
+  --arg pid "$pid" \
+  '{
+    state: $state,
+    phase: (if $phase == "" then null else $phase end),
+    bead: (if $bead == "" then null else $bead end),
+    since: $since,
+    phase_since: (if $phase_since == "" then null else $phase_since end),
+    pid: ($pid | tonumber)
+  }' > "$tmp_file"
+
+mv -f "$tmp_file" "$out_file"

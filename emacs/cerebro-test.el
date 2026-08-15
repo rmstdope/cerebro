@@ -247,9 +247,9 @@ reading once the row has caught the eye (see ah-axj)."
 ;; ---------------------------------------------------------------------------
 ;; ah-vcf.3 increment 1: the pure decisions
 
-(defun cerebro-test--agent (name role kind state &optional external bead)
+(defun cerebro-test--agent (name role kind state &optional external bead phase)
   (make-cerebro-agent :name name :role role :kind kind :state state
-                              :bead bead :since nil :external external))
+                              :bead bead :since nil :external external :phase phase))
 
 (ert-deftest cerebro-test/launch-command-each-interactive-launcher ()
   (should (equal (cerebro--launch-command
@@ -1835,6 +1835,158 @@ strictly narrower than `cerebro-list-width', not merely equal to it."
                                               (append tabulated-list-format nil)))
                            tabulated-list-padding)))
       (should (< table-width cerebro-list-width)))))
+
+;; ---------------------------------------------------------------------------
+;; ah-u3i: a state per phase in the fleet list
+
+(ert-deftest cerebro-test/derive-implementer-carries-phase ()
+  (let* ((states '(("Storm" . ((state . "working") (bead . "ah-axj")
+                                (phase . "review") (phase_since . "2026-08-15T09:18:00Z")
+                                (since . "2026-08-15T09:00:00Z") (pid . 4242)))))
+         (agents (cerebro--derive '("Storm") nil states
+                                          #'cerebro-test--always-alive nil nil))
+         (agent (car agents)))
+    (should (equal (cerebro-agent-phase agent) "review"))
+    (should (equal (cerebro-agent-phase-since agent) "2026-08-15T09:18:00Z"))
+    (should (equal (cerebro-agent-raw agent) "working"))))
+
+(ert-deftest cerebro-test/derive-implementer-carries-phase-nil-when-absent ()
+  "An old-format state file - no `phase\=' or `phase_since\=' fields at all -
+must derive to nil rather than erroring, so a file written before this bead
+landed is still valid (see the design's \"old-format-file-is-fine\")."
+  (let* ((states '(("Storm" . ((state . "working") (bead . "ah-axj")
+                                (since . "2026-08-15T09:00:00Z") (pid . 4242)))))
+         (agents (cerebro--derive '("Storm") nil states
+                                          #'cerebro-test--always-alive nil nil))
+         (agent (car agents)))
+    (should (null (cerebro-agent-phase agent)))
+    (should (null (cerebro-agent-phase-since agent)))))
+
+(ert-deftest cerebro-test/derive-implementer-unknown-state-is-not-idle ()
+  "An implementer's state file can carry a raw `state\=' string this list has
+never seen - a typo in the skill, most likely.  That must not read as
+`idle\=', which means \"free, give it a bead\": it means \"alive, but this
+list does not understand what it is doing\"."
+  (let* ((states '(("Cyclops" . ((state . "finishing-up") (bead . "ah-f9c")
+                                  (since . "2026-08-15T09:00:00Z") (pid . 4242)))))
+         (agents (cerebro--derive '("Cyclops") nil states
+                                          #'cerebro-test--always-alive nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'unknown))
+    (should (equal (cerebro-agent-raw agent) "finishing-up"))))
+
+(ert-deftest cerebro-test/derive-implementer-idle-state-still-idle ()
+  "`idle\=' is a known state and must keep mapping to `'idle\=', not fall into
+the new `'unknown\=' bucket alongside a typo."
+  (let* ((states '(("Wolverine" . ((state . "idle") (bead . nil)
+                                    (since . "2026-08-15T09:00:00Z") (pid . 4343)))))
+         (agents (cerebro--derive '("Wolverine") nil states
+                                          #'cerebro-test--always-alive nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'idle))))
+
+(ert-deftest cerebro-test/entry-state-column-shows-the-phase ()
+  (let ((now (current-time)))
+    (should (equal (aref (cadr (cerebro--entry
+                                 (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                       'working nil "ah-aao" "build")
+                                 now))
+                          2)
+                    "build"))
+    (should (equal (aref (cadr (cerebro--entry
+                                 (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                       'working nil "ah-aao" nil)
+                                 now))
+                          2)
+                    "working"))
+    (should (equal (aref (cadr (cerebro--entry
+                                 (cerebro-test--agent "Storm" "implementer" 'implementer
+                                                       'asking nil "ah-axj" "review")
+                                 now))
+                          2)
+                    "asking"))
+    (should (equal (aref (cadr (cerebro--entry
+                                 (cerebro-test--agent "Wolverine" "implementer" 'implementer
+                                                       'working nil "ah-m9q.2" "ci")
+                                 now t))
+                          2)
+                    "ci ■"))))
+
+(ert-deftest cerebro-test/entry-unknown-state-shows-the-raw-word ()
+  (let* ((now (current-time))
+         (agent (make-cerebro-agent :name "Bishop" :role "implementer" :kind 'implementer
+                                            :state 'unknown :raw "finishing-up"))
+         (row (cadr (cerebro--entry agent now)))
+         (glyph (aref row 0)))
+    (should (equal (aref row 2) (truncate-string-to-width "finishing-up" 10 nil nil "…")))
+    (should (memq 'cerebro-idle (cerebro-test--faces-at glyph 0)))))
+
+(ert-deftest cerebro-test/for-column-shows-bead-and-phase-time ()
+  (let ((now (encode-time (iso8601-parse "2026-08-15T09:30:00Z"))))
+    (should (equal (cerebro--for-column "2026-08-15T09:00:00Z" "2026-08-15T09:18:00Z" now)
+                    "30m 12m"))
+    (should (equal (cerebro--for-column "2026-08-15T09:21:00Z" nil now)
+                    "9m"))
+    (should (equal (cerebro--for-column nil nil now)
+                    ""))))
+
+(ert-deftest cerebro-test/entry-bead-phase-column ()
+  (let* ((now (encode-time (iso8601-parse "2026-08-15T09:30:00Z")))
+         (agent (make-cerebro-agent :name "Storm" :role "implementer" :kind 'implementer
+                                            :state 'working :bead "ah-axj"
+                                            :since "2026-08-15T09:00:00Z"
+                                            :phase "review"
+                                            :phase-since "2026-08-15T09:18:00Z"
+                                            :external nil))
+         (row (cadr (cerebro--entry agent now))))
+    (should (equal (aref row 4) "30m 12m")))
+  (let* ((now (encode-time (iso8601-parse "2026-08-15T09:30:00Z")))
+         (agent (make-cerebro-agent :name "Xavier" :role "planner" :kind 'interactive
+                                            :state 'up :external t))
+         (row (cadr (cerebro--entry agent now))))
+    (should (equal (aref row 4) ""))))
+
+(ert-deftest cerebro-test/for-column-header-fits ()
+  (with-temp-buffer
+    (cerebro-mode)
+    (let ((col (aref tabulated-list-format 4)))
+      (should (equal (car col) "Bead/Phase"))
+      (should (<= (length (car col)) (nth 1 col))))))
+
+(ert-deftest cerebro-test/alive-is-everything-but-dead ()
+  "`asking\=', `done\=' and `unknown\=' are all live sessions - a process really
+is up, whatever the fleet view makes of its state - so `s\=' must treat them
+as already running rather than launching a second session over them (the
+`*fleet: <name>*<2>\=' bug this folds in a fix for)."
+  (dolist (state '(asking done unknown))
+    (should (eq (cerebro--start-action
+                 (cerebro-test--agent "Cyclops" "implementer" 'implementer state)
+                 '("Cyclops"))
+                'already-up)))
+  (should (eq (cerebro--start-action
+               (cerebro-test--agent "Rogue" "implementer" 'implementer 'dead)
+               nil)
+              'launch)))
+
+(ert-deftest cerebro-test/kill-action-covers-asking-and-unknown ()
+  (should (eq (cerebro--kill-action
+               (cerebro-test--agent "Storm" "implementer" 'implementer 'asking nil "ah-axj")
+               '("Storm"))
+              'kill-working))
+  (should (eq (cerebro--kill-action
+               (cerebro-test--agent "Bishop" "implementer" 'implementer 'unknown)
+               '("Bishop"))
+              'kill))
+  (should (eq (cerebro--kill-action
+               (cerebro-test--agent "Gambit" "implementer" 'implementer 'dead)
+               '("Gambit"))
+              'dead)))
+
+(ert-deftest cerebro-test/supervise-ignores-an-unknown-state ()
+  (let* ((now (current-time))
+         (agent (cerebro-test--agent "Bishop" "implementer" 'implementer 'unknown)))
+    (should (null (cerebro--supervise-action agent nil now)))
+    (should (null (cerebro--supervise-action agent t now)))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

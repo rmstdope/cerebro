@@ -554,6 +554,51 @@ does not match - so that session is invisible to the fleet list for ever."
       (kill-buffer session)
       (kill-buffer hostage))))
 
+;; ---------------------------------------------------------------------------
+;; ah-aao: a restart only refreshes a detail window that was watching it
+
+(ert-deftest cerebro-test/detail-showing-p-tracks-the-window ()
+  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+         (session-name (cerebro--session-buffer-name agent))
+         (session (get-buffer-create session-name))
+         (other (generate-new-buffer " *cerebro-test-other*")))
+    (unwind-protect
+        (cerebro-test--with-layout list-buffer detail-window
+          (set-window-buffer detail-window session)
+          (should (cerebro--detail-showing-p agent))
+          (set-window-buffer detail-window other)
+          (should-not (cerebro--detail-showing-p agent))
+          (let ((dead-window detail-window))
+            (delete-window detail-window)
+            (setq-local cerebro--detail-window dead-window)
+            (should-not (cerebro--detail-showing-p agent)))
+          (setq-local cerebro--detail-window nil)
+          (should-not (cerebro--detail-showing-p agent)))
+      (kill-buffer session)
+      (kill-buffer other))))
+
+(ert-deftest cerebro-test/spawn-quietly-leaves-windows-alone ()
+  "The quiet restart path must not move any window or the selection.
+
+`save-window-excursion' is the mechanism: it lets SPAWN display its buffer
+however it likes - vterm uses `pop-to-buffer-same-window' - and then puts
+every window back exactly as it was."
+  (let ((session (generate-new-buffer " *cerebro-test-session*")))
+    (unwind-protect
+        (cerebro-test--with-layout list-buffer detail-window
+          (let ((list-window (selected-window))
+                (list-buffer-name (buffer-name list-buffer))
+                (detail-buffer-name (buffer-name (window-buffer detail-window))))
+            (let ((shown (cerebro--spawn-quietly
+                          (lambda () (cerebro-test--spawn-like-vterm session)))))
+              (should (eq shown session))
+              (should (buffer-live-p session)))
+            (should (equal (buffer-name (window-buffer list-window)) list-buffer-name))
+            (should (equal (buffer-name (window-buffer detail-window)) detail-buffer-name))
+            (should (eq (selected-window) list-window))
+            (should (eq (current-buffer) list-buffer))))
+      (kill-buffer session))))
+
 ;; Entering through `cerebro--launch' rather than the seam it calls: without
 ;; this, `cerebro--launch' could go back to calling `vterm' directly and every
 ;; other test here would still pass.  Proven by mutation, not assumed.
@@ -719,10 +764,50 @@ does not match, so it would be invisible to the list for ever."
               ((symbol-function 'cerebro--end-session)
                (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
               ((symbol-function 'cerebro--launch)
-               (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls))))
+               (lambda (a &optional _quiet) (push (cons 'launch (cerebro-agent-name a)) calls))))
       (with-temp-buffer
         (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
         (should (equal (reverse calls) '((kill . "Cyclops") (launch . "Cyclops"))))))))
+
+(ert-deftest cerebro-test/restart-is-quiet-unless-the-agent-was-watched ()
+  "A restart only refreshes a detail window that was showing that agent.
+
+The showing-check has to run before `cerebro--end-session' kills the
+buffer the window is showing - after that the window shows whatever the
+kill left behind, and the check would be meaningless."
+  (let ((calls nil)
+        (agent (cerebro-test--supervised 'done)))
+    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
+              ((symbol-function 'cerebro--end-session)
+               (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
+              ((symbol-function 'cerebro--launch)
+               (lambda (a &optional quiet)
+                 (push (list 'launch (cerebro-agent-name a) quiet) calls))))
+      ;; Watching: a detail window showing the agent's own session.
+      (let ((watching t))
+        (cl-letf (((symbol-function 'cerebro--detail-showing-p)
+                   (lambda (a)
+                     (push (cons 'checked (cerebro-agent-name a)) calls)
+                     watching)))
+          (with-temp-buffer
+            (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)))
+        (should (equal (reverse calls)
+                        (list (cons 'checked "Cyclops")
+                              (cons 'kill "Cyclops")
+                              (list 'launch "Cyclops" nil)))))
+      ;; Not watching: nothing in the detail window was showing this agent.
+      (setq calls nil)
+      (let ((watching nil))
+        (cl-letf (((symbol-function 'cerebro--detail-showing-p)
+                   (lambda (a)
+                     (push (cons 'checked (cerebro-agent-name a)) calls)
+                     watching)))
+          (with-temp-buffer
+            (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)))
+        (should (equal (reverse calls)
+                        (list (cons 'checked "Cyclops")
+                              (cons 'kill "Cyclops")
+                              (list 'launch "Cyclops" t))))))))
 
 (ert-deftest cerebro-test/supervise-retire-kills-without-launching ()
   "A stop flag means this name does not come back until the navigator says so."

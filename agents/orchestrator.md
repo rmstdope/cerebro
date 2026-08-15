@@ -211,6 +211,12 @@ Changed their mind before the bead finished? `rm` the flag and nothing happens â
 the moment the implementer reports `done`, so deleting it before then cancels the instruction
 entirely. Say that when you set one, because it is the cheap way back.
 
+Once it has taken effect the flag is removed automatically (ah-kgc): by the fleet view when the
+implementer retires under it, and by `s` when the navigator starts that name again â€” `s` tells the
+navigator so in the echo area, but nothing tells *you*. If a flag you set gets cleared this way, you
+find out the same way you find out about anything else the navigator does directly: from the fleet,
+not from a message aimed at you.
+
 The flag is read **between beads**, never during one. Say plainly what that means when you report
 it: the agent is not stopping now, it is stopping after the bead it is on, which may be an hour of
 CI and review away. One that has just claimed something will be a while; one waiting on a review may

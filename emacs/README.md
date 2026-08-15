@@ -138,8 +138,9 @@ same five-second poll that refreshes the list acts on what each one reports in
 
 - **`done`** — the bead is merged, closed and cleaned up. The session is ended and a fresh one
   started for the next bead, which is how a session's context stays one bead deep.
-- **`done` with `.claude/agents-state/<name>.stop` present** — ended, and no replacement. That is
-  what "stop an implementer" means: it finishes what it is on, and then does not come back.
+- **`done` with `.claude/agents-state/<name>.stop` present** — ended, and no replacement; the flag is
+  removed with it. `s` on a name with a flag removes it too, and says so. That is what "stop an
+  implementer" means: it finishes what it is on, and then does not come back until started again.
 - **`asking`** — blocked on a question only the navigator can answer. Answer it in the detail
   window. After `cerebro-answer-timeout` (900s) with no answer, the session is told to hand the
   bead to the `human` queue and finish, once, so a fleet left alone does not sit blocked.

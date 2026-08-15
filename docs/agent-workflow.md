@@ -119,6 +119,8 @@ Changed your mind before it noticed? Deleting the flag cancels the instruction:
 rm .claude/agents-state/<name>.stop
 ```
 
+— or just press `s`; a stale flag is cleared on start.
+
 ### What the builders learned
 
 An implementer that hit something unexpected writes it up before it merges, as

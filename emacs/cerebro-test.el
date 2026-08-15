@@ -300,6 +300,21 @@ reading once the row has caught the eye (see ah-axj)."
                 '("Xavier"))
               'already-up)))
 
+;; ---------------------------------------------------------------------------
+;; ah-kgc: a stop flag is cleared when it retires an implementer, and when
+;; the name is started again
+
+(ert-deftest cerebro-test/start-clears-a-stale-flag-for-an-implementer ()
+  "Starting a name is a statement that it should run, so any flag for it is
+stale by definition."
+  (should (eq (cerebro--start-clears-flag-p
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) t)
+              t))
+  (should (null (cerebro--start-clears-flag-p
+                  (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) nil)))
+  (should (null (cerebro--start-clears-flag-p
+                  (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) t))))
+
 (ert-deftest cerebro-test/kill-action-plain-kill-for-idle ()
   (should (eq (cerebro--kill-action
                 (cerebro-test--agent "Wolverine" "implementer" 'implementer 'idle nil)
@@ -833,6 +848,51 @@ kill left behind, and the check would be meaningless."
       (with-temp-buffer
         (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
         (should (equal calls '((kill . "Cyclops"))))))))
+
+(ert-deftest cerebro-test/clear-stop-flag-tolerates-a-missing-file ()
+  "The helper must not error when there is nothing to remove -
+`cerebro--supervise' runs from a timer with demoted errors, so an
+unguarded `delete-file' on a missing file would be swallowed silently."
+  (let ((root (make-temp-file "cerebro-test-" t)))
+    (unwind-protect
+        (progn
+          (should-not (cerebro--stop-flag-p root "Wolverine"))
+          (cerebro--clear-stop-flag root "Wolverine")
+          (should-not (cerebro--stop-flag-p root "Wolverine")))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/retire-removes-the-stop-flag ()
+  "The flag has done its job by the time `retire' runs; leaving it behind
+is what let the next session inherit an instruction from a session that no
+longer exists."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (agent (cerebro-test--supervised 'done)))
+    (unwind-protect
+        (progn
+          (cerebro--write-stop-flag root "Cyclops")
+          (cl-letf (((symbol-function 'cerebro--end-session) (lambda (_a) nil))
+                    ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
+            (with-temp-buffer
+              (cerebro--supervise (list agent) root cerebro-test--now)))
+          (should-not (cerebro--stop-flag-p root "Cyclops")))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/restart-leaves-no-flag-to-remove ()
+  "The mirror of the retire case: no flag, nothing to clear, the launch
+still happens exactly once."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (agent (cerebro-test--supervised 'done))
+        (launched nil))
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'cerebro--end-session) (lambda (_a) nil))
+                    ((symbol-function 'cerebro--launch)
+                     (lambda (&rest _) (setq launched (1+ (or launched 0))))))
+            (with-temp-buffer
+              (cerebro--supervise (list agent) root cerebro-test--now)))
+          (should-not (cerebro--stop-flag-p root "Cyclops"))
+          (should (= launched 1)))
+      (delete-directory root t))))
 
 (ert-deftest cerebro-test/stop-flag-path-is-the-documented-one ()
   (should (equal (cerebro--stop-flag-path "/repo" "Cyclops")

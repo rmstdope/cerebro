@@ -577,7 +577,9 @@ answers are:
             another.  Note the flag is only ever read here, with the bead
             already merged and closed: taking an implementer down in flight
             strands a claim, a worktree and an open PR, so a stop means
-            *finish*, not *stop now*.
+            *finish*, not *stop now*.  The flag is removed as it retires
+            (ah-kgc), so the next session started under that name does not
+            inherit an instruction meant for this one.
 `nudge'   - AGENT has waited past `cerebro-answer-timeout' for an answer.
 
 Only an implementer Emacs itself started is supervised.  One running in
@@ -654,6 +656,13 @@ refuse rather than launch a second one)."
    ((not (cerebro--alive-p agent)) 'launch)
    ((member (cerebro-agent-name agent) owned) 'already-up)
    (t 'external)))
+
+(defun cerebro--start-clears-flag-p (agent flag-set)
+  "Whether starting AGENT should first remove its stop flag.
+
+Only an implementer has one; a flag on a name being started is stale by
+definition (ah-kgc): the navigator is saying it should run."
+  (and flag-set (eq (cerebro-agent-kind agent) 'implementer)))
 
 (defun cerebro--kill-action (agent owned)
   "What `k' should do for AGENT, given OWNED session names.
@@ -1077,7 +1086,8 @@ other agents down with it."
           ('restart (let ((watching (cerebro--detail-showing-p agent)))
                       (cerebro--end-session agent)
                       (cerebro--launch agent (not watching))))
-          ('retire (cerebro--end-session agent))
+          ('retire (cerebro--end-session agent)
+                   (cerebro--clear-stop-flag repo-root name))
           ('nudge (unless (member name cerebro--nudged)
                     (push name cerebro--nudged)
                     (cerebro--nudge agent))))))))
@@ -1702,17 +1712,31 @@ ids and return - since it runs after every command in the list buffer."
       (cerebro--beads-render (get-buffer cerebro-beads-buffer-name)))))
 
 (defun cerebro-start ()
-  "Start the agent at point (`s')."
+  "Start the agent at point (`s').
+
+Starting a name is a statement that it should run, so any stop flag left
+over for it - from a session killed with `k', an Emacs that quit mid-bead,
+or a flag set by hand - is cleared first (ah-kgc), and the echo area says
+so: silently discarding an instruction the navigator may have set thirty
+seconds earlier would be a worse surprise than announcing it."
   (interactive)
   (let ((agent (cerebro--agent-at-point)))
     (when agent
-      (pcase (cerebro--start-action agent (cerebro--owned))
-        ('launch
-         (cerebro--launch agent)
-         (revert-buffer)
-         (cerebro--show-detail agent))
-        ('already-up (message "%s is already up" (cerebro-agent-name agent)))
-        ('external (message "%s is running outside Emacs" (cerebro-agent-name agent)))))))
+      (let* ((repo-root (cerebro--repo-root))
+             (name (cerebro-agent-name agent))
+             (flagged (cerebro--stop-flag-p repo-root name))
+             (clears-flag (cerebro--start-clears-flag-p agent flagged)))
+        (pcase (cerebro--start-action agent (cerebro--owned))
+          ('launch
+           (when clears-flag
+             (cerebro--clear-stop-flag repo-root name))
+           (cerebro--launch agent)
+           (revert-buffer)
+           (cerebro--show-detail agent)
+           (when clears-flag
+             (message "%s: cleared a stale stop flag" name)))
+          ('already-up (message "%s is already up" name))
+          ('external (message "%s is running outside Emacs" name)))))))
 
 (defun cerebro--kill-session-buffer (agent)
   "Kill AGENT's session buffer if it still exists, then refresh the view.
@@ -1765,6 +1789,22 @@ the time this runs."
     (make-directory (file-name-directory path) t)
     (write-region "" nil path)))
 
+(defun cerebro--clear-stop-flag (repo-root name)
+  "Remove NAME's stop flag in REPO-ROOT, if any.
+
+A pre-check with `file-exists-p' would leave a race - the flag can vanish
+between the check and the `delete-file' (another Emacs, a shell `rm', a
+second caller), which raises `file-missing' right where the check was
+meant to prevent it.  Deleting unconditionally and catching that signal
+closes the race instead of narrowing its window.  This is the one place
+that deletes a stop flag, so retire, restart and `s' can all call it
+without checking first - and, since `cerebro--supervise' runs from a timer
+with demoted errors, an uncaught `file-missing' here would otherwise be
+swallowed silently rather than simply doing nothing."
+  (condition-case nil
+      (delete-file (cerebro--stop-flag-path repo-root name))
+    (file-missing nil)))
+
 (defun cerebro-finish ()
   "Tell the implementer at point to finish (`f'): write its stop flag.
 
@@ -1772,7 +1812,9 @@ The flag is read between beads, never during one (see `orchestrator.md'):
 the session completes the bead it is on, closes it, and only then stops -
 so this cannot end an implementer mid-bead, and does not try to. If a flag
 is already set, offers to clear it instead, which cancels the instruction
-cleanly."
+cleanly. A flag left on disk is also cleared when the fleet view retires
+the session it stopped, and when `s' starts that name again (ah-kgc), so
+it never outlives the session it was written for."
   (interactive)
   (let ((agent (cerebro--agent-at-point)))
     (when agent
@@ -1786,7 +1828,7 @@ cleanly."
            (message "told %s to finish - it completes its current bead first" name))
           ('offer-clear
            (when (y-or-n-p (format "Stop flag already set for %s - clear it? " name))
-             (delete-file (cerebro--stop-flag-path repo-root name))
+             (cerebro--clear-stop-flag repo-root name)
              (revert-buffer)
              (message "%s will keep going" name)))
           ('not-implementer

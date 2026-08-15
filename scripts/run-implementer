@@ -13,8 +13,10 @@
 #
 # **This starts one interactive session and nothing else.** It does not loop, it reads no flags, and
 # it writes no files — the one exception is the skill and agent symlinks under .claude/, which
-# scripts/ensure-symlinks re-syncs right before exec, so a submodule bump is usable the moment
-# something is started rather than only after someone runs sync-symlinks.sh by hand (ah-cuc). That
+# scripts/launch-preflight re-syncs right before exec, so a submodule bump is usable the moment
+# something is started rather than only after someone runs sync-symlinks.sh by hand (ah-cuc); the
+# same preflight refuses with one line, rather than exiting silently, if claude is not on PATH or
+# the submodule never brought the implementer agent file in (ah-bri). That
 # is a deliberate reversal of what it used to do, and the reasons are worth knowing:
 #
 #   - It ran `claude --print`, which ends when the session stops producing output, and looped around
@@ -92,7 +94,8 @@ fi
 export BEADS_ACTOR="$on_roster"
 
 # ah-cuc: link whatever a submodule bump brought in, so `claude --agent <role>` finds it.
-"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ensure-symlinks"
+# ah-bri: refuse with one line if it cannot, instead of exiting silently.
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/launch-preflight" implementer "$on_roster"
 
 exec claude \
   --agent implementer \

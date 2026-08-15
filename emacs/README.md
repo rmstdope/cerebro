@@ -25,6 +25,11 @@ An agent running outside Emacs is shown and marked but not viewable — a placeh
 needs **vterm** (`emacs-libvterm`); without it the list still works, and `s`/`RET` signal a clear
 error instead of failing obscurely.
 
+A session that dies on its own — a launcher refusing because `claude` is missing or the submodule
+never brought its agent file in, or `claude` exiting on its own — leaves its last printed line behind:
+once in the echo area, and in the dead row's placeholder until the next `s` starts it again (ah-bri).
+A session `k` killed, or one the ten-minute poll ended on purpose, records nothing.
+
 ## Reading a row
 
 The glyph carries the state and the weight carries the urgency:

@@ -1252,10 +1252,11 @@ beads rather than about line numbers."
     (should (equal (cerebro--bead-at-point) "ah-c1"))))
 
 (ert-deftest cerebro-test/a-bead-is-marked-from-the-first-render ()
-  "Point starts on a bead rather than on the header above it."
+  "Point starts on a bead rather than on the header above it, and the mark is
+the cursor alone - no hl-line background (ah-4xl)."
   (cerebro-test--with-panel buffer
     (should (equal (cerebro--bead-at-point) "ah-c1"))
-    (should hl-line-mode)))
+    (should-not (bound-and-true-p hl-line-mode))))
 
 (ert-deftest cerebro-test/the-selected-bead-survives-a-refresh ()
   "The panel redraws on a timer; the selection has to follow the bead.

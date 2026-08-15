@@ -26,6 +26,11 @@
 # Fail any one and it stays, with the reason printed. Together they mean the directory can go without
 # destroying a line of anybody's work: the commits are on main and there is nothing uncommitted.
 #
+# One named exception: `.claude/worktrees/psylocke` is kept by name, unconditionally, ahead of all
+# four checks. It is Psylocke's own verification tree (ah-p31) — reset hard to `origin/main` before
+# every use rather than merged, so it never satisfies "holds no commit main lacks" the way a normal
+# agent worktree does, and there is nothing in it to lose by keeping it either way.
+#
 # Deliberately NOT part of the test: whether the bead is `in_progress`. That sounds like the obvious
 # guard and it is the wrong one — an agent that crashed leaves its bead claimed for ever, so keying
 # on it would protect exactly the trees most in need of removing. ah-6xq.8 was one: merged, closed by
@@ -118,7 +123,9 @@ sweep() {
     local name reason=""
     name="$(basename "$tree")"
 
-    if [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
+    if [ "$name" = "psylocke" ]; then
+      reason="it is Psylocke's verification tree, reset to origin/main before every use (ah-p31)"
+    elif [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
       reason="it has uncommitted or untracked changes"
     elif ! landed_on_main "$tree"; then
       reason="it holds work that is not on main yet"

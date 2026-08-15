@@ -38,7 +38,8 @@ clean sweep costs nothing to look at. Acting on one (`x`) always shows the exact
 and runs it only on `y`. Worktree pruning is the one exception the navigator asked for: it stays
 fully automatic, because `prune-worktrees.sh`'s own guards (clean tree, work already on `origin/main`,
 untouched for half an hour) can only ever discard a copy of something that is safely elsewhere —
-there is nothing here for a confirmation to protect against.
+there is nothing here for a confirmation to protect against — and one named worktree, `psylocke`,
+that is kept by name because it is reset rather than merged.
 
 ## Stays with a session, started when wanted
 

@@ -39,13 +39,17 @@
 
 (defconst cerebro-buffer-name "*cerebro*")
 
-(defconst cerebro-list-width 62
+(defconst cerebro-list-width 54
   "Columns for the left column of the layout.
 
-The agent table is 14+13+18+10+6 plus padding, so anything narrower cuts the
-elapsed-time column off the right edge - it was 45 for a while, and the
-column was simply invisible. The bead panel underneath inherits this width
-and wants every one of them for its titles.")
+The agent table is 14+13+10+10+5 plus one column of padding = 53; this is 54
+so the table is strictly narrower than the window, which is what keeps
+Emacs's `$' truncation marker off the right edge - a table exactly as wide
+as its window loses its last column to that marker (ah-lyc). It was 62
+before the State column's \" finishing\" suffix became a one-glyph \" ■\" and
+the Bead column stopped needing room for the word \"(external)\". The bead
+panel underneath inherits this width and, like the table, is narrower for
+it - its titles get less room than they used to, an accepted trade.")
 
 (defconst cerebro-list-height 20
   "Lines given to the agent list before the bead panel starts.
@@ -223,18 +227,22 @@ fails to parse, renders as the empty string."
   "AGENT as a `tabulated-list-entries' element, evaluated at NOW.
 
 FLAGGED, when non-nil, means a stop flag is set for AGENT: the state column
-gains a \" finishing\" suffix, so the navigator sees the flag took effect
-while the bead is still in flight rather than being told nothing happened.
-Flags are read between beads, never during one - see `cerebro-finish' - so
-this is the only place \"finishing\" is said.
+gains a \" ■\" suffix, so the navigator sees the flag took effect while the
+bead is still in flight rather than being told nothing happened. Flags are
+read between beads, never during one - see `cerebro-finish' - so this is the
+only place the glyph is added.
 
 The suffix only ever shows for a state a bead can actually be in flight
 under - `working' or `asking'. FLAGGED can be non-nil for any implementer
 \(`cerebro--finish-action' writes the flag regardless of current state\), but
-\"dead finishing\" or \"idle finishing\" would describe a bead that either
-was never running or has none to complete - there is nothing in flight for
-the flag to be waiting on, so the marker would say something untrue rather
-than nothing."
+\"dead ■\" or \"idle ■\" would describe a bead that either was never running
+or has none to complete - there is nothing in flight for the flag to be
+waiting on, so the marker would say something untrue rather than nothing.
+
+The Bead column is 10 columns wide; an external agent shows \"—\" rather than
+the wordier \"(external)\", and a real bead id longer than 10 (a nested child
+bead, e.g. \"ah-dzj.1.1.1.1\") truncates with an ellipsis rather than pushing
+the rest of the row right - see ah-lyc."
   (let* ((state (cerebro-agent-state agent))
          (external (cerebro-agent-external agent))
          (in-flight (memq state '(working asking)))
@@ -246,10 +254,11 @@ than nothing."
                             (cerebro--emphasize (cerebro-agent-name agent) attention)))
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
          (state-col (cerebro--emphasize
-                     (concat (symbol-name state) (if (and flagged in-flight) " finishing" ""))
+                     (concat (symbol-name state) (if (and flagged in-flight) " ■" ""))
                      attention))
-         (bead-col (cond (external "(external)")
-                          ((cerebro-agent-bead agent))
+         (bead-col (cond (external "—")
+                          ((cerebro-agent-bead agent)
+                           (truncate-string-to-width (cerebro-agent-bead agent) 10 nil nil "…"))
                           (t "")))
          (for-col (if external "" (cerebro--elapsed (cerebro-agent-since agent) now))))
     (list (cerebro-agent-name agent)
@@ -1750,7 +1759,7 @@ would have taken TAB from every vterm the navigator has, fleet or not.
 
 \\{cerebro-mode-map}"
   (setq tabulated-list-format
-        [("Agent" 14 nil) ("Role" 13 nil) ("State" 18 nil) ("Bead" 10 nil) ("For" 6 nil)])
+        [("Agent" 14 nil) ("Role" 13 nil) ("State" 10 nil) ("Bead" 10 nil) ("For" 5 nil)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (add-hook 'tabulated-list-revert-hook #'cerebro--revert nil t)

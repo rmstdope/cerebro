@@ -80,16 +80,16 @@ hand.
 
 | Where in this skill | Call |
 |---|---|
-| *Picking up*, the empty-queue poll | `implementer-state <name> idle --pid $PPID` |
-| *Picking up*, right after `bd ready … --claim` | `implementer-state <name> working --bead <id> --phase build --pid $PPID` |
-| *Building*, before `pnpm check` | `implementer-state <name> working --bead <id> --phase gate --pid $PPID` |
-| *The review*, after `gh pr edit --add-reviewer @copilot` | `… --phase review …` |
-| *The review*, once every comment is answered and resolved | `… --phase ci …` |
+| *Picking up*, the empty-queue poll | `.claude/cerebro/scripts/implementer-state <name> idle --pid $PPID` |
+| *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase build --pid $PPID` |
+| *Building*, before `pnpm check` | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase gate --pid $PPID` |
+| *The review*, after `gh pr edit --add-reviewer @copilot` | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase review --pid $PPID` |
+| *The review*, once every comment is answered and resolved | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase ci --pid $PPID` |
 | *Red CI* | stays `ci` |
-| *Merging*, on `BEHIND`: rebase → local gate → CI | `rebase`, then `gate`, then `ci` |
-| *The retrospective* opening line onward | `… --phase merge …` — merge covers retro, merge, close, cleanup |
-| *Asking instead of handing back* | `… asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
-| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `… done --bead <id> --pid $PPID` |
+| *Merging*, on `BEHIND`: rebase → local gate → CI | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase gate ...`, then `... --phase ci ...` |
+| *The retrospective* opening line onward | `.claude/cerebro/scripts/implementer-state <name> working --bead <id> --phase merge --pid $PPID` — merge covers retro, merge, close, cleanup |
+| *Asking instead of handing back* | `.claude/cerebro/scripts/implementer-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
+| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/implementer-state <name> done --bead <id> --pid $PPID` |
 
 `done` is a request to be ended, granted within about five seconds. Write it last.
 

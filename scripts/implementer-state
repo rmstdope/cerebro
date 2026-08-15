@@ -57,7 +57,10 @@ done
 # `-q` closes its stdin the moment it sees a match, and a match on Cyclops (the roster's first line)
 # would SIGPIPE run-implementer's still-writing printf, which `pipefail` then reports as a failure.
 roster="$("$script_dir/run-implementer" --roster)"
-if ! grep -qx "$name" <<<"$roster"; then
+# Fixed-string, whole-line match: `grep -qx` alone treats NAME as a regex, so a crafted name like
+# ".*" could match any roster line rather than being rejected. `-F` disables that, and `--` stops a
+# name that starts with `-` being read as an option.
+if ! grep -qFx -- "$name" <<<"$roster"; then
   echo "implementer-state: $name is not on the roster" >&2
   exit 2
 fi
@@ -74,6 +77,14 @@ if [[ -n "$phase" ]]; then
     build|gate|review|ci|rebase|merge) ;;
     *)
       echo "implementer-state: unknown phase '$phase' (build|gate|review|ci|rebase|merge)" >&2
+      exit 2 ;;
+  esac
+  # A phase is only meaningful with a bead in flight - writing one into an idle or done file would
+  # leave the state file internally inconsistent (a phase with no bead being worked).
+  case "$state" in
+    working|asking) ;;
+    *)
+      echo "implementer-state: --phase is only valid with working or asking, not '$state'" >&2
       exit 2 ;;
   esac
 fi

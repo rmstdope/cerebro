@@ -96,6 +96,37 @@ set -e
 rm -rf "$tmp"
 pass "rejects-unknown-phase"
 
+# --- rejects-phase-with-idle ---
+tmp="$(new_fixture)"
+set +e
+out="$(run_state "$tmp" Cyclops idle --phase build --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "rejects-phase-with-idle: expected exit 2, got $status"
+[[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "rejects-phase-with-idle: file was written"
+rm -rf "$tmp"
+pass "rejects-phase-with-idle"
+
+# --- rejects-phase-with-done ---
+tmp="$(new_fixture)"
+set +e
+out="$(run_state "$tmp" Cyclops done --bead ah-f9c --phase merge --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "rejects-phase-with-done: expected exit 2, got $status"
+rm -rf "$tmp"
+pass "rejects-phase-with-done"
+
+# --- roster-check-is-not-a-regex ---
+tmp="$(new_fixture)"
+set +e
+out="$(run_state "$tmp" '.*' working --bead ah-f9c --phase build --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "roster-check-is-not-a-regex: expected exit 2, got $status"
+rm -rf "$tmp"
+pass "roster-check-is-not-a-regex"
+
 # --- requires-pid ---
 tmp="$(new_fixture)"
 set +e
@@ -112,13 +143,15 @@ tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1
 f="$(state_file "$tmp" Cyclops)"
 since1="$(jq -r '.since' "$f")"
+phase_since1="$(jq -r '.phase_since' "$f")"
 sleep 1
 run_state "$tmp" Cyclops working --bead ah-f9c --phase review --pid 1
 since2="$(jq -r '.since' "$f")"
 phase_since2="$(jq -r '.phase_since' "$f")"
 [[ "$since1" == "$since2" ]] || fail "phase-change-keeps-since: since changed ($since1 -> $since2)"
-[[ "$phase_since2" > "$since2" || "$phase_since2" == "$since2" ]] || true
-[[ "$phase_since2" != "$since1" ]] || fail "phase-change-keeps-since: phase_since did not advance"
+[[ "$phase_since2" != "null" && -n "$phase_since2" ]] || fail "phase-change-keeps-since: phase_since is missing"
+[[ "$phase_since2" != "$phase_since1" ]] || fail "phase-change-keeps-since: phase_since did not advance"
+[[ "$phase_since2" > "$since2" ]] || fail "phase-change-keeps-since: phase_since ($phase_since2) is not after since ($since2)"
 rm -rf "$tmp"
 pass "phase-change-keeps-since"
 

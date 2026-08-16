@@ -1,7 +1,6 @@
 # What Cerebro does, and how much of it the fleet view can do instead
 
-Cerebro is a `claude` session on Fable that does almost nothing a model actually has to reason
-about: it writes a flag to start or stop an implementer, sweeps worktrees, claims and epics on a
+Cerebro is a `claude` session that does almost nothing a model actually has to reason about: it writes a flag to start or stop an implementer, sweeps worktrees, claims and epics on a
 timer, and reports counts. That is `touch`, `pgrep` and a handful of `bd` queries wearing an agent's
 clothes — and it costs a terminal, a model and the navigator's attention to drive.
 

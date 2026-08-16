@@ -180,16 +180,18 @@ pass "launch: every roster row reaches the stub with the right actor, agent, nam
 
 # --- launch overrides ---
 
-out="$(run_launcher launch Xavier --model opus)"
-before_opus="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1)"
-before_fable="$(echo "$out" | grep -n '^ARG:fable$' | head -1 | cut -d: -f1)"
-[[ -n "$before_fable" && -n "$before_opus" && $before_fable -lt $before_opus ]] \
-  || fail "launch Xavier --model opus: expected fable before opus in ARG list, got: $out"
+# The override model is deliberately not the declared one: the assertion is that the caller's
+# --model lands *after* the launcher's and so wins, which says nothing if both are the same word.
+out="$(run_launcher launch Xavier --model sonnet)"
+before_sonnet="$(echo "$out" | grep -n '^ARG:sonnet$' | head -1 | cut -d: -f1)"
+before_declared="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1)"
+[[ -n "$before_declared" && -n "$before_sonnet" && $before_declared -lt $before_sonnet ]] \
+  || fail "launch Xavier --model sonnet: expected opus before sonnet in ARG list, got: $out"
 last_arg="$(echo "$out" | tail -1)"
-opus_line="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1)"
+sonnet_line="$(echo "$out" | grep -n '^ARG:sonnet$' | head -1 | cut -d: -f1)"
 total_lines="$(echo "$out" | wc -l | tr -d ' ')"
-[[ $opus_line -lt $total_lines ]] || fail "launch Xavier --model opus: opus should come before the prompt"
-pass "launch Xavier --model opus: fable (declared) before opus (override) before the prompt"
+[[ $sonnet_line -lt $total_lines ]] || fail "launch Xavier --model sonnet: sonnet should come before the prompt"
+pass "launch Xavier --model sonnet: opus (declared) before sonnet (override) before the prompt"
 
 # --- launch overrides: a caller's own --remote-control comes after the launcher's ---
 out="$(run_launcher launch Xavier --remote-control Elsewhere)"
@@ -357,10 +359,10 @@ pass "launch Forge refuses when the submodule never brought its agent file in"
 
 # --- agents/architect.md exists with the right frontmatter ---
 [[ -f "$repo_root/agents/architect.md" ]] || fail "agents/architect.md does not exist"
-grep -qx 'model: fable' "$repo_root/agents/architect.md" \
-  || fail "agents/architect.md: expected a line 'model: fable'"
+grep -qx 'model: opus' "$repo_root/agents/architect.md" \
+  || fail "agents/architect.md: expected a line 'model: opus'"
 grep -qx 'effort: xhigh' "$repo_root/agents/architect.md" \
   || fail "agents/architect.md: expected a line 'effort: xhigh'"
-pass "agents/architect.md exists with model: fable and effort: xhigh"
+pass "agents/architect.md exists with model: opus and effort: xhigh"
 
 echo "all launcher tests passed"

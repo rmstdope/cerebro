@@ -18,10 +18,9 @@ Read `beads-workflow` for the label lifecycle and the commands; this is the role
 
 ## Before anything: the model
 
-This role wants **Fable**, or **Opus** if Fable is unavailable, at high reasoning effort. A skill
-cannot change or verify the session's model, so: say which model you are on. If it is neither, tell
-the navigator, and ask whether to continue rather than halting the queue on a self-report you cannot
-check. Planning on a smaller model produces plans that read well and specify nothing, which is worse
+This role wants **Opus**, at high reasoning effort. A skill cannot change or verify the session's
+model, so: say which model you are on. If it is something else, tell the navigator, and ask whether
+to continue rather than halting the queue on a self-report you cannot check. Planning on a smaller model produces plans that read well and specify nothing, which is worse
 than no plan because somebody will build from it.
 
 ## You are one of the planners, and you have a name

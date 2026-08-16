@@ -46,7 +46,7 @@ Six roles, each an agent definition in `agents/`; most are backed by a skill in 
 not a session count — **`planner` is held by two agents, Xavier and Beast** (`scripts/roster --role
 planner`), which is the one place a name and a role stop being interchangeable:
 
-- **Xavier** and **Beast** (`planner`, Fable/high) — load `plan-bead`. Turn unplanned beads into
+- **Xavier** and **Beast** (`planner`, Opus/high) — load `plan-bead`. Turn unplanned beads into
   plans a Sonnet agent could build unattended. Decide architecture themselves; take every
   user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
   builders, sized from how many are running (twice the count, never fewer than four). They divide
@@ -57,7 +57,7 @@ planner`), which is the one place a name and a role stop being interchangeable:
   sessions interview the navigator twice over the same backlog. The buffer counts `planned` beads
   and never `planning` ones: a bead being planned is not claimable, and counting it put both
   planners to sleep over a two-bead queue (ah-2p.1).
-- **Cerebro** (`orchestrator`, Fable/medium) — stops implementers on request by writing their stop
+- **Cerebro** (`orchestrator`, Opus/medium) — stops implementers on request by writing their stop
   flag; it cannot start one, since that means starting a session. **Starts nothing on its own.** The
   worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
   (`ah-4ao`; see `docs/cerebro-jobs.md`); what is left for a Cerebro session is release cutting,
@@ -72,7 +72,7 @@ planner`), which is the one place a name and a role stop being interchangeable:
   `agents/verifier.md`. Walks beads merged since her last pass, judges which touched the application,
   prepares each verification before ever asking for the navigator's time, then briefs, launches and
   records their verdict. A failed verdict reopens the bead at P0 and sends it back to the fleet.
-- **Forge** (`architect`, Fable/xhigh) — loads no separate skill either; its whole job lives
+- **Forge** (`architect`, Opus/xhigh) — loads no separate skill either; its whole job lives
   in `agents/architect.md`. One sweep per session: reads what merged since its last sweep (daily) or
   the whole codebase (weekly), and files a `Refactoring:` bead at P4 for each smell that names a cost
   already being paid, never a fix. Watermark kept in bd memory. Ends its own turn when the sweep is

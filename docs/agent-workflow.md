@@ -59,7 +59,7 @@ than more plans. If he is mostly `working`, the second one buys you throughput d
 One session, in its own terminal:
 
 ```
-claude --model fable        # or opus; the skill will tell you if it is on something else
+claude --model opus         # the skill will tell you if it is on something else
 /plan-bead
 ```
 

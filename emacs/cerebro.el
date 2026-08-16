@@ -176,10 +176,10 @@ predicate on a pid; OWNED the names Emacs itself started."
      ;; already requires a live process, and the file lags it twice over - a
      ;; fresh session has not written one yet, and after a restart the file on
      ;; disk is still the *previous* session's, with a dead pid and a finished
-     ;; bead. Reporting dead here is not cosmetic: `cerebro--start-action' tests
-     ;; aliveness before ownership, so `s' would start a second session for the
-     ;; same name, and vterm would call it `*fleet: <name>*<2>' - a name
-     ;; `cerebro--owned-buffer-agent-name' does not match, invisible for ever.
+     ;; bead. Reporting dead here is not cosmetic: it is what the row shows
+     ;; while `cerebro--start-action' checks ownership first and `cerebro--launch'
+     ;; refuses a second session at the source - the row should not lie about
+     ;; what `s' would do in the meantime.
      ((and (not alive) owned-p)
       (make-cerebro-agent :name name :role "implementer" :kind 'implementer
                                   :state 'idle :bead nil :since nil :external nil))
@@ -710,10 +710,15 @@ read as \"not alive\" and start a second session over the first."
 
 One of `launch' (start a dead agent), `already-up' (an owned session is
 already running) or `external' (a live session exists outside Emacs -
-refuse rather than launch a second one)."
+refuse rather than launch a second one).
+
+Ownership is checked *before* the derived state, not after: `cerebro--session'
+is the one place liveness is decided now, so no gap in how a state is
+derived can start a second session over one this Emacs holds (ah-u3i's
+`*fleet: <name>*<2>' double session)."
   (cond
-   ((not (cerebro--alive-p agent)) 'launch)
    ((member (cerebro-agent-name agent) owned) 'already-up)
+   ((not (cerebro--alive-p agent)) 'launch)
    (t 'external)))
 
 (defun cerebro--start-clears-flag-p (agent flag-set)
@@ -934,25 +939,40 @@ writing the same file."
         (mapcar (lambda (pid) (alist-get 'args (process-attributes pid)))
                 (list-system-processes))))
 
-(defun cerebro--owned-buffer-agent-name (buffer-name)
-  "The agent name BUFFER-NAME names as a live session, or nil.
+(defvar cerebro--sessions nil
+  "The sessions this Emacs started: an alist of (NAME . BUFFER), one per agent.
 
-Matches only the plain session-buffer scheme (`--session-buffer-name'),
-never the placeholder scheme (`*fleet: NAME (no view)*') - a placeholder
-buffer names an agent with no live view, the opposite of owned."
-  (and (string-match "\\`\\*fleet: \\([^()]+\\)\\*\\'" buffer-name)
-       (match-string 1 buffer-name)))
+The one record of ownership (ah-5pp).  It used to be inferred by matching
+every buffer's name against `*fleet: NAME*', so a second launch for a name -
+which vterm would call `*fleet: NAME*<2>' - made an agent nobody could see,
+and four separate guards stood in front of that one failure.  Now
+`cerebro--launch' writes here and refuses a second session while the first
+is live, and everything that asks whose a session is, whether it is up, or
+which buffer holds it reads here.  Global, not buffer-local: sessions
+outlive the fleet buffer, and `M-x cerebro' after a `q' must still know
+what it started.")
+
+(defun cerebro--session (name)
+  "The live session buffer this Emacs started for NAME, or nil.
+
+Live means the buffer exists and its process is running - the same test
+`cerebro--owned' has always applied.  A dead entry is dropped on the way
+past, so the table never accumulates the sessions of the day."
+  (let ((buffer (alist-get name cerebro--sessions nil nil #'equal)))
+    (if (and buffer (buffer-live-p buffer) (get-buffer-process buffer))
+        buffer
+      (when buffer
+        (setq cerebro--sessions (assoc-delete-all name cerebro--sessions)))
+      nil)))
+
+(defun cerebro--session-name (buffer)
+  "The agent name whose session is BUFFER, or nil when it is not one of ours."
+  (car (rassq buffer cerebro--sessions)))
 
 (defun cerebro--owned ()
-  "Agent names whose sessions this Emacs itself started.
-
-Derived fresh from live buffers matching the session-buffer naming
-scheme with a live process - no registry to go stale."
-  (delq nil
-        (mapcar (lambda (buffer)
-                  (and (get-buffer-process buffer)
-                       (cerebro--owned-buffer-agent-name (buffer-name buffer))))
-                (buffer-list))))
+  "Agent names whose sessions this Emacs itself started and which are still up."
+  (delq nil (mapcar (lambda (entry) (and (cerebro--session (car entry)) (car entry)))
+                     cerebro--sessions)))
 
 ;;; The detail window (ah-vcf.3)
 
@@ -989,20 +1009,17 @@ scheme with a live process - no registry to go stale."
   "Non-nil when the detail window is live and shows AGENT's session buffer."
   (and cerebro--detail-window
        (window-live-p cerebro--detail-window)
-       (let ((buffer (get-buffer (cerebro--session-buffer-name agent))))
+       (let ((buffer (cerebro--session (cerebro-agent-name agent))))
          (and buffer (eq (window-buffer cerebro--detail-window) buffer)))))
 
 (defun cerebro--show-detail (agent)
   "Put AGENT's live session, or a placeholder, in the detail window.
 
-Returns the buffer chosen.  AGENT's session buffer is used only when
-its name is in `cerebro--owned' - an owned buffer that has not
-actually been created yet (should not happen; `--owned' derives from
-live buffers) falls back to the placeholder rather than erroring."
-  (let ((buffer (if (member (cerebro-agent-name agent) (cerebro--owned))
-                     (or (get-buffer (cerebro--session-buffer-name agent))
-                         (cerebro--placeholder-buffer agent))
-                   (cerebro--placeholder-buffer agent))))
+Returns the buffer chosen.  A session with no live buffer - should not
+happen, `cerebro--session' is what `cerebro--owned' derives from too -
+falls back to the placeholder rather than erroring."
+  (let ((buffer (or (cerebro--session (cerebro-agent-name agent))
+                     (cerebro--placeholder-buffer agent))))
     (when (and cerebro--detail-window (window-live-p cerebro--detail-window))
       (set-window-buffer cerebro--detail-window buffer))
     buffer))
@@ -1057,7 +1074,13 @@ idempotently, since vterm's sentinel (vterm.el) runs it with whatever buffer
 happens to be current, not necessarily this one, so a buffer-local hook
 would silently never fire (ah-bri). AGENT's name is cleared from
 `cerebro--last-exit' before spawning, so a fresh run starts with no stale
-line from the one before it."
+line from the one before it.
+
+The buffer is recorded in `cerebro--sessions', which is what makes it ours;
+a name with a live session is refused here, whatever the derived state
+believes about it (ah-5pp)."
+  (when (cerebro--session (cerebro-agent-name agent))
+    (error "cerebro: %s already has a live session" (cerebro-agent-name agent)))
   (unless (require 'vterm nil t)
     (user-error "cerebro needs vterm for live sessions - install emacs-libvterm"))
   (add-hook 'vterm-exit-functions #'cerebro--note-exit)
@@ -1068,6 +1091,7 @@ line from the one before it."
          (vterm-shell (if (stringp cmd) cmd (mapconcat #'shell-quote-argument cmd " ")))
          (session-name (cerebro--session-buffer-name agent))
          (buffer (cerebro--make-session-buffer session-name)))
+    (setf (alist-get (cerebro-agent-name agent) cerebro--sessions nil nil #'equal) buffer)
     ;; The navigator's quit guard: confirm before Emacs or a buffer kill
     ;; takes a live agent down.  vterm's own kill behaviour is tuned for
     ;; disposable shells and does not set this on its own.
@@ -1117,13 +1141,18 @@ so `cerebro--note-exit' never reads more than this many characters of it.")
 
 The impure counterpart to `cerebro--exit-record' and
 `cerebro--last-nonblank-line': reads the last `cerebro--exit-tail-chars' of
-BUFFER's text (never the whole buffer - see there), matches BUFFER's name
-against a session-buffer name to find the agent, and updates the global
+BUFFER's text (never the whole buffer - see there), finds the agent through
+`cerebro--sessions' - not by the buffer's name - and updates the global
 alist and the echo area. BUFFER can be nil - vterm's sentinel passes it
 after the buffer itself has already been killed (`k', retire, restart) -
-and any buffer whose name is not a session-buffer name is left alone."
+and a buffer that is not one of ours is left alone.
+
+Reads `cerebro--session-name' rather than `cerebro--session': the sentinel
+calls this after the process has already died, when `cerebro--session'
+would already say the entry is gone and prune it before this ever saw the
+name."
   (let ((name (and (buffer-live-p buffer)
-                    (cerebro--owned-buffer-agent-name (buffer-name buffer)))))
+                    (cerebro--session-name buffer))))
     (when name
       (let* ((text (with-current-buffer buffer
                       (buffer-substring-no-properties
@@ -1164,7 +1193,7 @@ one place that says how a bead is handed back.")
 
 (defun cerebro--nudge (agent)
   "Type `cerebro--nudge-message' into AGENT's session."
-  (let ((buffer (get-buffer (cerebro--session-buffer-name agent))))
+  (let ((buffer (cerebro--session (cerebro-agent-name agent))))
     (when (and buffer (fboundp 'vterm-send-string))
       (with-current-buffer buffer
         (vterm-send-string cerebro--nudge-message)
@@ -1174,12 +1203,16 @@ one place that says how a bead is handed back.")
   "Kill AGENT's session buffer, without asking and without refreshing.
 
 The query-on-exit flag guards an *accidental* kill; this one is the poll
-acting on a bead the agent itself reported finished."
-  (let ((buffer (get-buffer (cerebro--session-buffer-name agent))))
-    (when buffer
-      (let ((proc (get-buffer-process buffer)))
-        (when proc (set-process-query-on-exit-flag proc nil)))
-      (kill-buffer buffer))))
+acting on a bead the agent itself reported finished.  Forgets the entry in
+`cerebro--sessions' too, so a launch right afterwards - a restart - sees no
+session even before the process sentinel has run."
+  (let ((name (cerebro-agent-name agent)))
+    (let ((buffer (cerebro--session name)))
+      (when buffer
+        (let ((proc (get-buffer-process buffer)))
+          (when proc (set-process-query-on-exit-flag proc nil)))
+        (kill-buffer buffer)))
+    (setq cerebro--sessions (assoc-delete-all name cerebro--sessions))))
 
 (defun cerebro--supervise (agents repo-root now)
   "Act on what `cerebro--supervise-action' says about each of AGENTS.
@@ -1193,10 +1226,9 @@ other agents down with it."
         (setq cerebro--nudged (delete name cerebro--nudged)))
       (with-demoted-errors "cerebro: %S"
         (pcase (cerebro--supervise-action agent (cerebro--stop-flag-p repo-root name) now)
-          ;; Kill before launching: two sessions for one name would make
-          ;; vterm call the second `*fleet: <name>*<2>', which
-          ;; `cerebro--owned-buffer-agent-name' does not match, leaving it
-          ;; invisible to the list for ever.
+          ;; Kill before launching: `cerebro--launch' would refuse a second
+          ;; session for a name it still holds, rather than making one vterm
+          ;; would call `*fleet: <name>*<2>' and the list would never show.
           ('restart (let ((watching (cerebro--detail-showing-p agent)))
                       (cerebro--end-session agent)
                       (cerebro--launch agent)
@@ -1907,11 +1939,13 @@ not a hypothetical one - so a missing buffer is not an error here.
 `y-or-n-p'; the process's query-on-exit flag exists to guard against an
 *accidental* buffer/Emacs kill, not this intentional one, so it is
 cleared first rather than prompting a second time for the same kill."
-  (let ((buffer (get-buffer (cerebro--session-buffer-name agent))))
-    (when buffer
-      (let ((proc (get-buffer-process buffer)))
-        (when proc (set-process-query-on-exit-flag proc nil)))
-      (kill-buffer buffer)))
+  (let ((name (cerebro-agent-name agent)))
+    (let ((buffer (cerebro--session name)))
+      (when buffer
+        (let ((proc (get-buffer-process buffer)))
+          (when proc (set-process-query-on-exit-flag proc nil)))
+        (kill-buffer buffer)))
+    (setq cerebro--sessions (assoc-delete-all name cerebro--sessions)))
   (revert-buffer)
   (cerebro--show-detail agent))
 

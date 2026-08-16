@@ -1474,16 +1474,70 @@ test."
     (should (< (funcall at "Unplanned") (funcall at "ah-7s7")))
     (should (< (funcall at "Merged, unverified") (funcall at "ah-m1")))))
 
-(ert-deftest cerebro-test/bd-json-is-quiet-when-bd-cannot-answer ()
-  "A panel that cannot read must not take the fleet view down with it.
+;; ---------------------------------------------------------------------------
+;; ah-9dv: the non-blocking subprocess runner
 
-`bd' may be absent, unconfigured or mid-write; the agent list is what the
-navigator actually steers by, and it has to keep refreshing regardless."
-  (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 127)))
-    (should (null (cerebro--bd-json "/repo" "list" "--json"))))
-  (cl-letf (((symbol-function 'call-process)
-             (lambda (&rest _) (insert "this is not json") 0)))
-    (should (null (cerebro--bd-json "/repo" "list" "--json")))))
+(ert-deftest cerebro-test/run-async-calls-back-with-stdout ()
+  "The common case: a program that runs and prints something."
+  (let (got done)
+    (should (eq (cerebro--run-async 'rt1 default-directory
+                                     '("sh" "-c" "printf hi")
+                                     (lambda (out) (setq got out done t)))
+                'started))
+    (with-timeout (5 (ert-fail "no callback"))
+      (while (not done) (accept-process-output nil 0.05)))
+    (should (equal got "hi"))
+    (should-not (assq 'rt1 cerebro--inflight))))
+
+(ert-deftest cerebro-test/run-async-calls-back-nil-on-a-non-zero-exit ()
+  (let (got done)
+    (cerebro--run-async 'rt2 default-directory '("sh" "-c" "exit 3")
+                         (lambda (out) (setq got out done t)))
+    (with-timeout (5 (ert-fail "no callback"))
+      (while (not done) (accept-process-output nil 0.05)))
+    (should (null got))))
+
+(ert-deftest cerebro-test/run-async-calls-back-nil-when-the-program-is-missing ()
+  "`make-process' with a program that does not exist fails synchronously -
+CALLBACK still gets exactly one call, and the caller's `started' contract
+still holds."
+  (let (got done)
+    (should (eq (cerebro--run-async 'rt3 default-directory
+                                     '("cerebro-no-such-program-9dv")
+                                     (lambda (out) (setq got out done t)))
+                'started))
+    (should done)
+    (should (null got))))
+
+(ert-deftest cerebro-test/run-async-refuses-a-second-run-under-one-key ()
+  "A slow `bd' is waited for rather than stacked."
+  (let (proc)
+    (unwind-protect
+        (progn
+          (should (eq (cerebro--run-async 'rt4 default-directory '("sleep" "5") #'ignore)
+                      'started))
+          (setq proc (cdr (assq 'rt4 cerebro--inflight)))
+          (should (eq (cerebro--run-async 'rt4 default-directory '("sleep" "5") #'ignore)
+                      'busy)))
+      (when (and proc (process-live-p proc)) (delete-process proc))
+      (setq cerebro--inflight (assq-delete-all 'rt4 cerebro--inflight)))))
+
+(ert-deftest cerebro-test/run-async-kills-a-run-that-outlives-the-timeout ()
+  (let ((cerebro-subprocess-timeout-seconds 0.2) got done proc)
+    (cerebro--run-async 'rt5 default-directory '("sleep" "30")
+                         (lambda (out) (setq got out done t)))
+    (setq proc (cdr (assq 'rt5 cerebro--inflight)))
+    (with-timeout (3 (ert-fail "not killed"))
+      (while (not done) (accept-process-output nil 0.05)))
+    (should (null got))
+    (should-not (assq 'rt5 cerebro--inflight))
+    (should-not (process-live-p proc))))
+
+(ert-deftest cerebro-test/parse-json-is-nil-on-garbage-and-on-nil ()
+  (should (null (cerebro--parse-json nil)))
+  (should (null (cerebro--parse-json "this is not json")))
+  (should (equal (cerebro--parse-json "[]") nil))
+  (should (equal (alist-get 'a (car (cerebro--parse-json "[{\"a\":1}]"))) 1)))
 
 (ert-deftest cerebro-test/layout-puts-the-panel-under-the-list ()
   (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))

@@ -538,6 +538,67 @@ be swept as one Emacs started."
                       (and pid (cerebro--pid-alive-p pid) name)))
                   roster))))
 
+(defvar cerebro-subprocess-timeout-seconds 120
+  "How long an asynchronous subprocess may run before it is killed and its
+answer treated as none. Generous: the sweeps fetch from origin and talk to
+`gh', which this bounds a hang against, not a slow answer.")
+
+(defvar cerebro--inflight nil
+  "Runs still awaiting an answer: an alist of (KEY . PROCESS). One per KEY -
+`cerebro--run-async' refuses a second while the first is out, so a slow
+`bd' is waited for rather than stacked.")
+
+(defun cerebro--run-async (key repo-root argv callback)
+  "Run ARGV (program, then args) in REPO-ROOT without blocking Emacs.
+
+CALLBACK is called exactly once, later, with the program's stdout as a
+string when it exited zero and nil otherwise - non-zero exit, a signal, the
+program missing, or `cerebro-subprocess-timeout-seconds' passing first, in
+which case the process is killed. Returns `started', or `busy' when a run
+under KEY is already in flight - then nothing is started and CALLBACK is
+never called. Never signals."
+  (if (assq key cerebro--inflight)
+      'busy
+    (condition-case nil
+        (let* ((default-directory (file-name-as-directory repo-root))
+               (out (generate-new-buffer (format " *cerebro-async-%s*" key)))
+               proc)
+          (setq proc
+                (make-process
+                 :name (format " *cerebro-%s*" key)
+                 :buffer out
+                 :command argv
+                 :noquery t
+                 :connection-type 'pipe
+                 :sentinel
+                 (lambda (proc _event)
+                   (when (memq (process-status proc) '(exit signal))
+                     (setq cerebro--inflight (assq-delete-all key cerebro--inflight))
+                     (let ((timer (process-get proc 'cerebro-timeout)))
+                       (when timer (cancel-timer timer)))
+                     (let ((output (and (eq (process-status proc) 'exit)
+                                        (zerop (process-exit-status proc))
+                                        (with-current-buffer out (buffer-string)))))
+                       (kill-buffer out)
+                       (with-demoted-errors "cerebro: %S" (funcall callback output)))))))
+          (process-put proc 'cerebro-timeout
+                       (run-at-time cerebro-subprocess-timeout-seconds nil
+                                    (lambda ()
+                                      (when (process-live-p proc)
+                                        (delete-process proc)))))
+          (push (cons key proc) cerebro--inflight)
+          'started)
+      (error (with-demoted-errors "cerebro: %S" (funcall callback nil)) 'started))))
+
+(defun cerebro--parse-json (text)
+  "TEXT parsed as JSON the way the panel wants it (alists, lists, nil), or nil
+when TEXT is nil or not JSON."
+  (and text
+       (condition-case nil
+           (json-parse-string text :object-type 'alist :array-type 'list
+                              :null-object nil :false-object nil)
+         (error nil))))
+
 (defun cerebro--run-script-json (repo-root script &rest args)
   "Run SCRIPT (one of the sweep scripts, `cerebro--script'-relative) with
 ARGS in REPO-ROOT; the parsed JSON it printed, or nil.

@@ -2012,7 +2012,11 @@ on a state file read five seconds ago.  Then the bead panel, when its
 thirty seconds are up, and the sweeps, when their ten minutes are: one
 timer with the fleet buffer's lifetime, instead of a timer per panel each
 cancelling itself by a different route (ah-6uo).  Both are demoted: a `bd'
-that will not answer must not stop the list refreshing.  NOW is for tests."
+that will not answer must not stop the list refreshing.  NOW is for tests.
+
+Nothing here waits on a subprocess: the panel and the sweeps request and
+draw when answered (ah-9dv); the process scan is the one blocking read
+left and runs every `cerebro-system-scan-seconds'."
   (when (buffer-live-p buffer)
     (let ((now (or now (current-time))))
       (with-current-buffer buffer

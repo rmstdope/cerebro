@@ -1334,6 +1334,35 @@ navigator actually steers by, and it has to keep refreshing regardless."
         (kill-buffer cerebro-beads-buffer-name))
       (kill-buffer fleet))))
 
+(ert-deftest cerebro-test/setup-layout-redraws-a-panel-that-already-existed ()
+  "`cerebro--beads-buffer' only renders on its own first creation - a panel
+that survived a fleet buffer kill-and-reopen must still be redrawn by
+`cerebro--setup-layout' rather than left showing whatever it last did."
+  (let ((fleet (generate-new-buffer " *cerebro-test-fleet-relayout*"))
+        (render-calls 0))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                  ((symbol-function 'cerebro--gather-sweeps) (lambda (_root) nil))
+                  ((symbol-function 'cerebro--beads-render)
+                   (lambda (_buffer) (cl-incf render-calls))))
+          (save-window-excursion
+            (delete-other-windows)
+            (set-window-buffer (selected-window) fleet)
+            (with-current-buffer fleet
+              ;; First layout creates the panel - one render, from
+              ;; `cerebro--beads-buffer's own immediate sweep.
+              (cerebro--setup-layout)
+              (should (= render-calls 1))
+              ;; Force a second layout pass, as a fresh `M-x cerebro' does
+              ;; when the fleet buffer was killed and reopened but the panel
+              ;; buffer survived.
+              (setq cerebro--list-window nil)
+              (cerebro--setup-layout)
+              (should (= render-calls 2)))))
+      (when (get-buffer cerebro-beads-buffer-name)
+        (kill-buffer cerebro-beads-buffer-name))
+      (kill-buffer fleet))))
+
 ;; ---------------------------------------------------------------------------
 ;; TAB cycles from wherever the navigator is
 
@@ -2287,12 +2316,15 @@ redraw step, or a fix to it stops covering one of them."
 (ert-deftest cerebro-test/tick-refreshes-the-panel-only-when-due ()
   "The panel and the sweeps keep their own cadences even though the list is
 driven every five seconds - a five-second panel would triple `bd's load for
-nothing a human would notice."
-  (let ((list-calls 0) (supervise-calls 0) (panel-calls 0) (sweep-calls 0))
+nothing a human would notice.  `cerebro--sweep' itself is not stubbed, so
+its own call to `cerebro--beads-render' counts toward PANEL-CALLS too - a
+tick where both cadences are due must still render exactly once."
+  (let ((list-calls 0) (supervise-calls 0) (panel-calls 0) (sweep-gather-calls 0))
     (cl-letf (((symbol-function 'cerebro--list-render) (lambda (_buffer) (cl-incf list-calls)))
               ((symbol-function 'cerebro--supervise) (lambda (&rest _) (cl-incf supervise-calls)))
               ((symbol-function 'cerebro--beads-render) (lambda (_buffer) (cl-incf panel-calls)))
-              ((symbol-function 'cerebro--sweep) (lambda (_buffer) (cl-incf sweep-calls)))
+              ((symbol-function 'cerebro--gather-sweeps)
+               (lambda (_root) (cl-incf sweep-gather-calls) nil))
               ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
       (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-list*"))
             (panel (generate-new-buffer cerebro-beads-buffer-name)))
@@ -2300,25 +2332,27 @@ nothing a human would notice."
             (progn
               (with-current-buffer list-buffer (cerebro-mode))
               (with-current-buffer panel (cerebro-beads-mode))
-              ;; T: nothing rendered yet, so both the panel and the sweeps are due.
+              ;; T: nothing rendered yet, so both the panel and the sweeps are
+              ;; due - and the panel is still rendered exactly once.
               (cerebro--tick list-buffer (seconds-to-time 1000))
               (should (= list-calls 1))
               (should (= supervise-calls 1))
               (should (= panel-calls 1))
-              (should (= sweep-calls 1))
+              (should (= sweep-gather-calls 1))
               ;; T+5: neither cadence is up yet.
               (cerebro--tick list-buffer (seconds-to-time 1005))
               (should (= list-calls 2))
               (should (= supervise-calls 2))
               (should (= panel-calls 1))
-              (should (= sweep-calls 1))
+              (should (= sweep-gather-calls 1))
               ;; T+30: the panel's thirty seconds are up; the sweeps' are not.
               (cerebro--tick list-buffer (seconds-to-time 1030))
               (should (= panel-calls 2))
-              (should (= sweep-calls 1))
-              ;; T+1000: the sweeps' ten minutes are up too.
+              (should (= sweep-gather-calls 1))
+              ;; T+1000: the sweeps' ten minutes are up too - one render, not two.
               (cerebro--tick list-buffer (seconds-to-time 2000))
-              (should (= sweep-calls 2)))
+              (should (= panel-calls 3))
+              (should (= sweep-gather-calls 2)))
           (kill-buffer list-buffer)
           (kill-buffer panel))))))
 

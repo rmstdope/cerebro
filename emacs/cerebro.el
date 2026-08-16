@@ -1647,7 +1647,9 @@ buffer on its own cadences once the fleet buffer's tick is running (ah-6uo)."
       (unless cerebro--swept-at
         ;; Run once immediately, in the foreground, so the Sweeps section is
         ;; not simply empty for the first ten minutes of a fresh `M-x cerebro'.
-        (cerebro--sweep buffer)
+        ;; Demoted, same as the tick's own call: a `bd' that will not answer
+        ;; must not stop the fleet view opening.
+        (with-demoted-errors "cerebro: %S" (cerebro--sweep buffer))
         (setq cerebro--swept-at (float-time))))
     buffer))
 
@@ -1792,15 +1794,21 @@ Bound as `revert-buffer-function' so `g' and the tick share this one path."
 (defun cerebro--refresh-panel-when-due (panel seconds)
   "Redraw PANEL and re-run the sweeps if their cadences say so at SECONDS.
 
-The sweep runs first: a tick where both are due must not redraw the panel
-twice - `cerebro--sweep' already renders as its last step."
+The sweep runs first, and `cerebro--sweep' already renders as its last
+step - so on a tick where both cadences are due, the plain render below is
+skipped rather than redrawing PANEL a second time.  `cerebro--beads-rendered-at'
+is still stamped either way, so the next due check comes out right
+regardless of which branch actually drew the panel."
   (with-current-buffer panel
-    (when (cerebro--due-p cerebro--swept-at cerebro-sweep-refresh-seconds seconds)
-      (setq cerebro--swept-at seconds)
-      (cerebro--sweep panel))
-    (when (cerebro--due-p cerebro--beads-rendered-at cerebro-beads-refresh-seconds seconds)
-      (setq cerebro--beads-rendered-at seconds)
-      (cerebro--beads-render panel))))
+    (let ((swept (cerebro--due-p cerebro--swept-at cerebro-sweep-refresh-seconds seconds))
+          (render-due (cerebro--due-p cerebro--beads-rendered-at cerebro-beads-refresh-seconds seconds)))
+      (when swept
+        (setq cerebro--swept-at seconds)
+        (cerebro--sweep panel))
+      (when (or swept render-due)
+        (setq cerebro--beads-rendered-at seconds)
+        (unless swept
+          (cerebro--beads-render panel))))))
 
 (defun cerebro--tick (buffer &optional now)
   "Refresh BUFFER if it is still alive; called every 5s while it lives.
@@ -1850,8 +1858,16 @@ ids and return - since it runs after every command in the list buffer."
     (setq cerebro--beads-window
           (ignore-errors (split-window cerebro--list-window cerebro-list-height 'below)))
     (when (window-live-p cerebro--beads-window)
-      (set-window-buffer cerebro--beads-window
-                         (cerebro--beads-buffer (cerebro--repo-root))))))
+      ;; `cerebro--beads-buffer' only renders on its own first creation -
+      ;; before calling it, so a panel that already existed (the fleet
+      ;; buffer was killed and reopened, say) is redrawn once here rather
+      ;; than sitting however it last looked until the tick's own cadence
+      ;; next comes due, and a brand new one is not rendered twice.
+      (let* ((preexisting (get-buffer cerebro-beads-buffer-name))
+             (panel (cerebro--beads-buffer (cerebro--repo-root))))
+        (set-window-buffer cerebro--beads-window panel)
+        (when preexisting
+          (cerebro--beads-render panel))))))
 
 (defun cerebro-start ()
   "Start the agent at point (`s').

@@ -14,6 +14,12 @@
 # `launch-preflight` re-syncs right before exec (ah-cuc), refusing with one line rather than exiting
 # silently if `claude` is not on PATH or the submodule never brought the role's agent file in
 # (ah-bri).
+#
+# Every session starts with Remote Control on, named after its agent, so it can be read and steered
+# from claude.ai/code or the Claude app (ah-qym). `--remote-control` degrades rather than fails —
+# without an eligible login or network it shows a notification and the session runs on as a normal
+# one — so it is unconditional. The name is passed explicitly: the flag's value is optional, and a
+# bare `--remote-control` would take the next argument as the session name.
 
 set -euo pipefail
 
@@ -68,6 +74,7 @@ effort="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="effo
 exec claude \
   --agent "$role" \
   --name "$name" \
+  --remote-control "$name" \
   ${model:+--model "$model"} \
   ${effort:+--effort "$effort"} \
   --permission-mode auto \

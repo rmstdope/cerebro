@@ -63,6 +63,13 @@ claude --model opus         # the skill will tell you if it is on something else
 /plan-bead
 ```
 
+**Changing what the fleet runs on** is one file, in this repository rather than in the submodule:
+copy `.claude/cerebro/models.conf.example` to `.cerebro/models.conf` and uncomment a line. Keys are
+an agent's name, a role, or `default`, most specific first, so `default fable` moves everybody and
+`Beast sonnet` moves one planner — which is the cheap way to compare two models on the same queue.
+It takes effect at the next launch; a session already running keeps the model it started with, and
+the launcher says which key it matched when it starts one.
+
 It takes the next unplanned bead that is not blocked, researches it, and writes a plan into the
 bead. Then the next one, and the next.
 

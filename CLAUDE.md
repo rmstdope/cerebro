@@ -206,6 +206,13 @@ would otherwise protect a stale claim from being reclaimed.
   hook subprocess inherits through `claude`) and sets `CEREBRO_HOOK_SETTINGS` for the `--settings`
   flag. Source it *and* pass the flag: doing one without the other gets hooks that silently do
   nothing, which is by design — `agent-asking` exits 0 rather than failing a question.
+- **The model an agent runs on is the agent definition's `model:`, unless the consumer overrides it.**
+  `scripts/launch` reads `<consumer>/.cerebro/models.conf` if it exists — `<name|role|default>
+  <model|-> [effort]`, most specific key wins, `-` meaning "pass no `--model`" — and says on stderr
+  which key it matched, so an unexpected model is traceable to the file nobody remembers editing. A
+  `--model` on the command line still wins, since it is appended after. `models.conf.example` is the
+  documented copy; the live file is consumer-side and uncommitted, which is what makes switching the
+  fleet between Opus and Fable a one-line edit rather than a submodule change every consumer shares.
 - `scripts/launch-preflight <role> <name>` runs before every launch. It refuses (exit 2, one line on
   stderr) if `claude` is not on `PATH`; the symlink sync it runs is consumer-only, same as
   `sync-symlinks.sh` — it does nothing beyond the `claude` check unless it is sitting inside a

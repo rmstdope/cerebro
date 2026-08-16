@@ -300,6 +300,53 @@ echo "$out" | grep -q '^ARG:--agent$' || fail "launch Forge (consumer): stub was
   || fail "launch Forge (consumer): expected a relative link to ../cerebro/agents/architect.md"
 pass "launch Forge links the consumer's agents before starting the session"
 
+# --- .cerebro/models.conf: switching models without editing an agent definition ---
+#
+# The config lives in the consumer, not here, so a fabricated consumer is the only place these can
+# run. `models_conf` writes one and `launched_model` reports what reached the stub.
+models_conf() {
+  mkdir -p "$consumer_dir/.cerebro"
+  printf '%s\n' "$@" > "$consumer_dir/.cerebro/models.conf"
+}
+no_models_conf() { rm -f "$consumer_dir/.cerebro/models.conf"; }
+launched_flag() {
+  # $1 = agent name, $2 = flag (--model/--effort). Prints the value, or nothing if absent.
+  run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$1" \
+    | grep -A1 "^ARG:$2\$" | grep '^ARG:' | grep -v -- "^ARG:$2\$" | head -1 | sed 's/^ARG://'
+}
+
+no_models_conf
+[[ "$(launched_flag Xavier --model)" == "$(model_of planner)" ]] \
+  || fail "no models.conf: expected the declared model $(model_of planner)"
+pass "no models.conf leaves the agent definition's model alone"
+
+models_conf "default fable"
+[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf default: expected fable"
+[[ "$(launched_flag Xavier --effort)" == "$(effort_of planner)" ]] \
+  || fail "models.conf default: a model-only line must leave the declared effort alone"
+[[ "$(launched_flag Cyclops --model)" == "fable" ]] \
+  || fail "models.conf default: applies to an agent whose definition declares no model"
+pass "models.conf: a default line switches every agent's model, keeping declared efforts"
+
+models_conf "# a comment" "" "planner fable low"
+[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf role: expected fable"
+[[ "$(launched_flag Xavier --effort)" == "low" ]] || fail "models.conf role: expected effort low"
+[[ "$(launched_flag Forge --model)" == "$(model_of architect)" ]] \
+  || fail "models.conf role: a role not named must keep its declared model"
+pass "models.conf: a role line switches that role only, model and effort, past comments and blanks"
+
+models_conf "planner fable" "Beast sonnet"
+[[ "$(launched_flag Beast --model)" == "sonnet" ]] || fail "models.conf name: expected sonnet for Beast"
+[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf name: Xavier keeps the role line"
+pass "models.conf: an agent name beats its role, so two planners can differ"
+
+models_conf "Xavier -"
+[[ -z "$(launched_flag Xavier --model)" ]] \
+  || fail "models.conf '-': expected no --model at all, got $(launched_flag Xavier --model)"
+pass "models.conf: '-' passes no --model, leaving the session on claude's own default"
+
+no_models_conf
+
 # --- a sync failure aborts the launch: the stub is never reached ---
 # The first run above already symlinked .claude/skills/plan-bead; remove that link before
 # replacing it with a real directory, or `mkdir -p` on an existing symlink-to-directory is a

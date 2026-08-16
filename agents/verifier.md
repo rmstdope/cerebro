@@ -71,10 +71,15 @@ second time. Nothing else about the query changes for a reopened bead; it is jus
 
 ### The first pass ever
 
-Detect it before running the query above: no bead anywhere carries a `verification:*` label.
+Detect it before running the query above: no bead anywhere carries a `verification:*` label. Check
+**closed** beads — a `verification:*` label is only ever applied to a closed one, and `bd list --json`
+with no `--status` flag defaults to open beads only. Omitting `--status closed` here always reads zero
+and reports "first pass" even after hundreds of beads have already been labelled — seen live on
+2026-08-16, with 118 closed beads already carrying labels and this check still reading zero. Always
+pass `--status closed`:
 
 ```bash
-bd list --json | jq -r '[.[] | .labels[]? | select(startswith("verification:"))] | length'
+bd list --status closed --json | jq -r '[.[] | .labels[]? | select(startswith("verification:"))] | length'
 ```
 
 Zero means this is the first pass. There are closed beads from before this role existed, and

@@ -550,12 +550,13 @@ force-push, a fix pushed onto a head that sat through a review — check that th
 
 ```bash
 until state="$(gh pr view <n> --json mergeable,mergeStateStatus -q '"\(.mergeable) \(.mergeStateStatus)"')" \
-      && [ "${state%% *}" != "UNKNOWN" ]; do sleep 5; done
+      && [ "${state%% *}" != "UNKNOWN" ] && [ "${state#* }" != "UNKNOWN" ]; do sleep 5; done
 echo "$state"
 ```
 
-`mergeable` reads `UNKNOWN` for a few seconds after every push while GitHub recomputes it, which is
-what the poll is for. Then:
+`mergeable` and `mergeStateStatus` both read `UNKNOWN` for a few seconds after every push while
+GitHub recomputes them, which is what the poll waits out — on either field, not just the first, so a
+`mergeStateStatus` that is still catching up cannot slip through as a false `MERGEABLE UNKNOWN`. Then:
 
 - `CONFLICTING DIRTY` — the head cannot merge, and whatever `gh pr checks` would show you next
   describes an older head or a run GitHub will not meaningfully finish. **Do not enter the CI wait.**

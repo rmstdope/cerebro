@@ -37,7 +37,7 @@ planner's.
 
 Two planners share the work through the `planning` label and nothing else: no lease, no claim, no
 conversation between sessions. Three rules keep that honest, and each is spelled out where it
-applies — **label before you think** (*Picking the next bead*), **count what the other planner is
+applies — **label before you think** (*Choosing what to plan*), **count what the other planner is
 holding** (*You keep a buffer sized to the fleet*), and **only the first planner triages**
 (*Then: triage the P4 backlog*).
 
@@ -272,7 +272,7 @@ while the backlog behind it goes unranked. Counting the label costs a second `bd
 the two sessions add up to one queue.
 
 The one bead this over-counts is your own current candidate, which you labelled `planning` before
-you started (see *Picking the next bead*). That is deliberate: it is real work in flight.
+you started (see *Choosing what to plan*). That is deliberate: it is real work in flight.
 
 **How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
 state file under `.cerebro/state/` whose `pid` is alive, minus any implementer whose stop flag

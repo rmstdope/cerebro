@@ -230,8 +230,8 @@ pass "launch with no argument exits 2"
 
 # --- shims ---
 
-SHIMS=(run-planner run-orchestrator run-user-feedback run-psylocke run-forge)
-SHIM_NAMES=(Xavier Cerebro Moira Psylocke Forge)
+SHIMS=(run-planner run-beast run-orchestrator run-user-feedback run-psylocke run-forge)
+SHIM_NAMES=(Xavier Beast Cerebro Moira Psylocke Forge)
 
 i=0
 while [[ $i -lt ${#SHIMS[@]} ]]; do

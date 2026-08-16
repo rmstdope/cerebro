@@ -9,13 +9,20 @@
 (require 'ert)
 (require 'cerebro)
 
+(defconst cerebro-test--repo-root
+  (expand-file-name ".." (file-name-directory
+                           (or load-file-name buffer-file-name)))
+  "The repository root: the parent of the directory holding this file.
+Captured at load time - `load-file-name' is nil once loading is done, so a
+test body cannot compute this itself.")
+
 ;; ---------------------------------------------------------------------------
 ;; Increment 1: the pure derivation
 
 (defconst cerebro-test--interactive
   '(("Xavier" . "planner")
     ("Cerebro" . "orchestrator")
-    ("Moira" . "feedback")))
+    ("Moira" . "user-feedback")))
 
 (defun cerebro-test--always-alive (_pid) t)
 (defun cerebro-test--never-alive (_pid) nil)
@@ -257,10 +264,15 @@ reading once the row has caught the eye (see ah-axj)."
 ;; ---------------------------------------------------------------------------
 ;; Increment 3: the buffer
 
+(defconst cerebro-test--fleet-fixture
+  '(("Alpha" "planner" interactive) ("Beta" "verifier" interactive)
+    ("One" "implementer" implementer) ("Two" "implementer" implementer)
+    ("Three" "implementer" implementer)))
+
 (ert-deftest cerebro-test/buffer-lists-every-agent-once ()
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () "/fake/repo"))
-            ((symbol-function 'cerebro--roster)
-             (lambda (_repo-root) (mapcar #'car cerebro-roster-fixture)))
+            ((symbol-function 'cerebro--fleet)
+             (lambda (_repo-root) cerebro-test--fleet-fixture))
             ((symbol-function 'cerebro--gather-states)
              (lambda (_repo-root _roster) nil))
             ((symbol-function 'cerebro--system-args) (lambda () nil))
@@ -269,81 +281,70 @@ reading once the row has caught the eye (see ah-axj)."
         (progn
           (cerebro)
           (with-current-buffer cerebro-buffer-name
-            (should (= (length tabulated-list-entries) 18))
-            (should (equal (length (delete-dups (mapcar #'car tabulated-list-entries))) 18))
-            ;; Not just the count: every interactive agent and every roster
-            ;; name appears exactly once, with no overlap between the two -
-            ;; Psylocke moving from the roster to the interactive list must
-            ;; not let the row count hold by coincidence again.
+            (should (= (length tabulated-list-entries) (length cerebro-test--fleet-fixture)))
+            (should (equal (length (delete-dups (mapcar #'car tabulated-list-entries)))
+                            (length cerebro-test--fleet-fixture)))
             (should (equal (sort (mapcar #'car tabulated-list-entries) #'string<)
-                            (sort (append (mapcar #'car cerebro-interactive-agents)
-                                          (mapcar #'car cerebro-roster-fixture))
-                                  #'string<)))))
+                            (sort (mapcar #'car cerebro-test--fleet-fixture) #'string<)))))
       (when (get-buffer cerebro-buffer-name)
         (kill-buffer cerebro-buffer-name)))))
-
-(defconst cerebro-roster-fixture
-  (mapcar (lambda (n) (cons n nil))
-          '("Cyclops" "Storm" "Wolverine" "Rogue" "Gambit" "Nightcrawler" "Colossus"
-            "Iceman" "Beast" "Jubilee" "Phoenix" "Mystique" "Magneto")))
-
-;; ---------------------------------------------------------------------------
-;; ah-7s7: Psylocke joins the interactive roster
-
-(ert-deftest cerebro-test/interactive-roster-has-psylocke ()
-  (should (equal (assoc "Psylocke" cerebro-interactive-agents) '("Psylocke" . "verifier")))
-  (should (= (length cerebro-interactive-agents) 5)))
-
-(ert-deftest cerebro-test/launch-command-verifier ()
-  (should (equal (cerebro--launch-command
-                   (cerebro-test--agent "Psylocke" "verifier" 'interactive 'dead))
-                  ".claude/cerebro/scripts/run-psylocke")))
-
-;; ---------------------------------------------------------------------------
-;; ah-3bl: Forge leaves the implementer roster and becomes the architect
-
-(ert-deftest cerebro-test/interactive-roster-has-bishop ()
-  (should (equal (assoc "Forge" cerebro-interactive-agents) '("Forge" . "architect")))
-  (should (equal (car (car (last cerebro-interactive-agents))) "Forge")))
-
-(ert-deftest cerebro-test/launch-command-architect ()
-  (should (equal (cerebro--launch-command
-                   (cerebro-test--agent "Forge" "architect" 'interactive 'dead))
-                  ".claude/cerebro/scripts/run-forge")))
-
-;; ---------------------------------------------------------------------------
-;; Increment 4: roster parsing
-
-(ert-deftest cerebro-test/roster-parses-lines ()
-  (should (equal (cerebro--parse-roster "Cyclops\nStorm\nWolverine\n")
-                  '("Cyclops" "Storm" "Wolverine"))))
-
-(ert-deftest cerebro-test/roster-parses-lines-ignoring-blank ()
-  (should (equal (cerebro--parse-roster "Cyclops\n\nStorm\n\n")
-                  '("Cyclops" "Storm"))))
-
-;; ---------------------------------------------------------------------------
-;; ah-vcf.3 increment 1: the pure decisions
 
 (defun cerebro-test--agent (name role kind state &optional external bead phase)
   (make-cerebro-agent :name name :role role :kind kind :state state
                               :bead bead :since nil :external external :phase phase))
 
-(ert-deftest cerebro-test/launch-command-each-interactive-launcher ()
+;; ---------------------------------------------------------------------------
+;; ah-goz: the fleet roster - one declaration, `scripts/roster', instead of
+;; `cerebro-interactive-agents' and `cerebro--role-launch-commands'
+
+(ert-deftest cerebro-test/parse-fleet-rows-into-name-role-kind ()
+  (should (equal (cerebro--parse-fleet "Xavier\tplanner\tinteractive\nCyclops\timplementer\timplementer\n")
+                  '(("Xavier" "planner" interactive) ("Cyclops" "implementer" implementer)))))
+
+(ert-deftest cerebro-test/parse-fleet-skips-blank-and-short-lines ()
+  (should (equal (cerebro--parse-fleet "Xavier\tplanner\tinteractive\n\nbad-line\n")
+                  '(("Xavier" "planner" interactive)))))
+
+(ert-deftest cerebro-test/fleet-roster-is-the-implementer-names-in-order ()
+  (should (equal (cerebro--fleet-roster cerebro-test--fleet-fixture)
+                  '("One" "Two" "Three"))))
+
+(ert-deftest cerebro-test/fleet-interactive-is-a-name-role-alist-in-order ()
+  (should (equal (cerebro--fleet-interactive cerebro-test--fleet-fixture)
+                  '(("Alpha" . "planner") ("Beta" . "verifier")))))
+
+(ert-deftest cerebro-test/list-height-is-rows-plus-header-and-mode-line ()
+  (should (= (cerebro--list-height 18) 20)))
+
+(ert-deftest cerebro-test/launch-command-is-launch-plus-name-for-every-kind ()
   (should (equal (cerebro--launch-command
                    (cerebro-test--agent "Xavier" "planner" 'interactive 'dead))
-                  ".claude/cerebro/scripts/run-planner"))
-  (should (equal (cerebro--launch-command
-                   (cerebro-test--agent "Cerebro" "orchestrator" 'interactive 'dead))
-                  ".claude/cerebro/scripts/run-orchestrator"))
-  (should (equal (cerebro--launch-command
-                   (cerebro-test--agent "Moira" "feedback" 'interactive 'dead))
-                  ".claude/cerebro/scripts/run-user-feedback")))
-
-(ert-deftest cerebro-test/launch-command-implementer-takes-its-name ()
+                  '(".claude/cerebro/scripts/launch" "Xavier")))
   (should (equal (cerebro--launch-command
                    (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
-                  '(".claude/cerebro/scripts/run-implementer" "Cyclops"))))
+                  '(".claude/cerebro/scripts/launch" "Cyclops"))))
+
+(ert-deftest cerebro-test/fleet-reads-the-roster-script ()
+  (let* ((tmp (make-temp-file "cerebro-fleet-test" t))
+         (repo-root cerebro-test--repo-root))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name ".claude" tmp) t)
+          (make-symbolic-link repo-root (expand-file-name ".claude/cerebro" tmp))
+          (let ((fleet (cerebro--fleet tmp)))
+            (should fleet)
+            (should (cl-every (lambda (row)
+                                 (and (= (length row) 3)
+                                      (stringp (nth 0 row))
+                                      (stringp (nth 1 row))
+                                      (symbolp (nth 2 row))))
+                               fleet))
+            (should (memq 'interactive (mapcar (lambda (r) (nth 2 r)) fleet)))
+            (should (memq 'implementer (mapcar (lambda (r) (nth 2 r)) fleet)))
+            (dolist (row fleet)
+              (should (file-exists-p (expand-file-name
+                                       (format "agents/%s.md" (nth 1 row)) repo-root))))))
+      (delete-directory tmp t))))
 
 (ert-deftest cerebro-test/session-buffer-name-shape ()
   (should (equal (cerebro--session-buffer-name

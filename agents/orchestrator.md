@@ -186,9 +186,8 @@ fresh claim. That claim is not lost: Cerebro's claims sweep reclaims a lease nob
 **Implementers are named after X-Men.** Take them from this list, in order, skipping any that is
 already running:
 
-```
-Cyclops · Storm · Wolverine · Rogue · Gambit · Nightcrawler · Colossus
-Iceman · Beast · Jubilee · Phoenix · Mystique · Magneto
+```bash
+.claude/cerebro/scripts/roster --implementers
 ```
 
 **The list is a fence, not a suggestion.** `.claude/cerebro/scripts/run-implementer` refuses anything that is not on
@@ -199,8 +198,8 @@ and prints the roster.
 That is enforced because you work from this list. An off-roster implementer would hold a bead, open
 PRs and be invisible to every question asked about the fleet, since you would never look for it.
 
-Run out of names — which needs thirteen implementers at once and will not happen — and say so rather
-than inventing an extra one.
+Run out of names — which needs every implementer on the roster at once and will not happen — and say
+so rather than inventing an extra one.
 
 **Forge is not on this list.** Forge is the architect — an interactive agent, like Xavier, Moira
 and Psylocke, that you neither start nor stop: it writes the same state file the rest of the
@@ -365,7 +364,7 @@ lease, Moira claims nothing at all, and you claim nothing either. So `in_progres
 possibilities rather than four — which is what makes the lease check below decisive.
 
 **The assignee name now tells you who claimed a bead — but only for a claim made from a launched
-session.** Each launcher (`run-implementer` and the five role launchers, see ah-rnz) exports
+session.** The one launcher, `scripts/launch` (behind every `run-*` name; see ah-rnz), exports
 `BEADS_ACTOR=<agent name>` before starting its session, so a claim made from one is stamped with the
 roster name that made it: `assignee: Cyclops` means Cyclops's session claimed it, full stop.
 `assignee: Henrik Kurelid` (or any name off the roster) now specifically means a claim made by hand,
@@ -576,7 +575,7 @@ claude agents --json | jq -r '.[] | select(.name=="Xavier") | "Xavier \(.status)
 ```
 
 (`runImplementer.ts` and its `pgrep` are gone — `scripts/runImplementer.ts` was deleted in
-atlantis-hud `8049f17`, and the closed roster now lives in `scripts/run-implementer` and each
+atlantis-hud `8049f17`, and the closed roster now lives in `scripts/roster` and each
 implementer's own `.cerebro/state/<name>.state.json`, which the fleet view already reads.)
 
 The first names every implementer whose session is up — the list to skip when you pick a new X-Man

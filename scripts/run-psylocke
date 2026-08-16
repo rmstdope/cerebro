@@ -1,41 +1,4 @@
 #!/usr/bin/env bash
-#
-# Runs the verification session, in a terminal of its own.
-#
-#     .claude/cerebro/scripts/run-psylocke
-#
-# One session, called Psylocke, and **interactive** — for the same reason `run-planner` and
-# `run-user-feedback` are. An implementer runs with `--print` so its run ends and a loop can own the
-# cadence; Psylocke must be able to put a prepared verification in front of the navigator and wait
-# for their verdict — passed, passed with a follow-up, or failed. Print mode has no way to ask.
-#
-# So there is no loop here and no go flag. The session itself keeps the cycle described in
-# `.claude/agents/verifier.md`: one pass over what has merged since the last one, sleep ten minutes,
-# pass again. It runs until the navigator ends it.
-#
-# The prompt below is the only injection. Without it the session would start and wait for someone to
-# say something, which is a poor use of a terminal that was opened precisely to get verification
-# moving.
-
-set -euo pipefail
-
-# Every bd call in this session acts as Psylocke, not as the machine's git identity, so her writes
-# (reopens, labels) belong in the audit trail as an agent's, not the navigator's.
-export BEADS_ACTOR="Psylocke"
-
-# Any extra arguments go to `claude` ahead of the prompt, so `.claude/cerebro/scripts/run-psylocke --model ...`
-# works for a one-off without editing this file.
-# ah-cuc: link whatever a submodule bump brought in, so `claude --agent <role>` finds it.
-# ah-bri: refuse with one line if it cannot, instead of exiting silently.
-"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/launch-preflight" verifier Psylocke
-
-exec claude \
-  --agent verifier \
-  --name Psylocke \
-  --permission-mode auto \
-  "$@" \
-  "You are Psylocke, the verifier. Follow your agent definition. Start now: pull the beads, find
-what has merged unverified, mark what a player could never see as not needed, and prepare the rest.
-Bring me one verification at a time, ready to run — say what I am checking, how to tell success from
-failure, and which reports to load — then launch the application and take my verdict. A failure
-reopens the bead at P0. Then tell me what you did and sleep."
+# Starts Psylocke, the verifier: a name for `scripts/launch Psylocke`, kept because the docs and
+# the navigator's fingers know it. Everything it does lives in `launch`; nothing here may grow.
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/launch" Psylocke "$@"

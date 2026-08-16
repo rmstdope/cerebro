@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 #
-# Writes an agent's state file: .cerebro/state/<name>.state.json. Written by every agent in
-# the fleet - the thirteen implementers and, since ah-2n3.2, the five interactive roles (Xavier,
-# Cerebro, Moira, Psylocke, Bishop) - so cerebro.el derives a row the same way for all of them; it
-# exists so the two timestamps below are handled by code rather than remembered by an agent an hour
-# into a bead.
+# Writes an agent's state file: .cerebro/state/<name>.state.json. Written by every agent on
+# `scripts/roster` — implementers and interactive roles alike (the interactive ones since
+# ah-2n3.2) - so cerebro.el derives a row the same way for all of them; it exists so the two
+# timestamps below are handled by code rather than remembered by an agent an hour into a bead.
 #
 #     .claude/cerebro/scripts/agent-state <name> <state> [--bead <id>] [--phase <phase>] --pid <pid>
 #
@@ -17,7 +16,7 @@
 #   prepare verify                             (Psylocke)
 #   sweep                                      (Moira)
 #   sweep release                              (Cerebro)
-#   daily weekly                               (Bishop)
+#   daily weekly                               (Forge)
 # The vocabulary is not checked per-role - any of the words above is accepted from any name, the
 # same trade cerebro.el's `cerebro--phases` makes: a wrong word in the State column is not worth a
 # per-role table in bash.
@@ -34,12 +33,6 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# The five interactive agents, mirroring `cerebro-interactive-agents` in emacs/cerebro.el and the
-# `--name` each of their launchers (scripts/run-planner, run-orchestrator, run-user-feedback,
-# run-psylocke, run-bishop) passes - three copies of the same list, and all three must agree, since
-# a bash script cannot read the Elisp one at runtime.
-INTERACTIVE=(Xavier Cerebro Moira Psylocke Bishop)
 
 usage() {
   echo "usage: agent-state <name> <idle|working|asking|done> [--bead <id>] [--phase <build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly>] --pid <pid>" >&2
@@ -69,26 +62,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# The name is either on the roster or one of the five interactive agents - an off-roster,
-# non-interactive name is a file the fleet view never reads. Captured to a variable first, not
-# piped straight into `grep -q`: `-q` closes its stdin the moment it sees a match, and a match on
-# Cyclops (the roster's first line) would SIGPIPE run-implementer's still-writing printf, which
-# `pipefail` then reports as a failure.
-roster="$("$script_dir/run-implementer" --roster)"
-is_interactive=""
-for candidate in "${INTERACTIVE[@]}"; do
-  if [[ "$candidate" == "$name" ]]; then
-    is_interactive=1
-    break
-  fi
-done
-# Fixed-string, whole-line match: `grep -qx` alone treats NAME as a regex, so a crafted name like
-# ".*" could match any roster line rather than being rejected. `-F` disables that, and `--` stops a
-# name that starts with `-` being read as an option.
-if [[ -z "$is_interactive" ]] && ! grep -qFx -- "$name" <<<"$roster"; then
-  echo "agent-state: $name is neither on the roster nor an interactive agent" >&2
+# The name must be on scripts/roster - the one list of the fleet - and its kind decides below
+# whether `done` is allowed.
+if ! entry="$("$script_dir/roster" --entry "$name" 2>/dev/null)"; then
+  echo "agent-state: $name is not on the roster" >&2
   exit 2
 fi
+is_interactive=""
+[[ "${entry##*$'\t'}" == interactive ]] && is_interactive=1
 
 case "$state" in
   idle|working|asking) ;;

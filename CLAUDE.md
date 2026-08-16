@@ -99,7 +99,8 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 
 ## emacs/cerebro.el
 
-`M-x cerebro` lists the fleet (Xavier, Cerebro, Moira, Psylocke, Forge + thirteen implementers) with state,
+`M-x cerebro` lists the fleet (every agent on `scripts/roster` — the interactive roles first, then
+the implementers) with state,
 current bead and elapsed time; `s` starts, `k` kills, `f` tells an implementer to finish (writes its
 stop flag; the bead in flight is unaffected), `RET` focuses the detail window. Emacs 28+, no
 dependencies except optional **vterm** for live sessions.
@@ -114,10 +115,10 @@ the fleet buffer and needs no confirmation - see `docs/cerebro-jobs.md` for why.
 
 The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebro--entry`,
 `cerebro--*-action`, `cerebro--launch-command`, `cerebro--claim-finding`, `cerebro--epic-finding`,
-`cerebro--finding-command`) and a small set of **impure readers** at the bottom (`cerebro--roster`,
-`cerebro--read-state-file`, `cerebro--system-args`, `cerebro--owned`, `cerebro--gather-sweeps`). The
-tests only exercise the pure half, passing state in as plain data. Keep new logic on the pure side or
-it becomes untestable.
+`cerebro--finding-command`) and a small set of **impure readers** at the bottom (`cerebro--fleet`,
+`cerebro--roster`, `cerebro--read-state-file`, `cerebro--system-args`, `cerebro--owned`,
+`cerebro--gather-sweeps`). The tests only exercise the pure half, passing state in as plain data. Keep
+new logic on the pure side or it becomes untestable.
 
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
 
@@ -131,8 +132,8 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
   `asking`; `since` is the last change of `state` or `bead`, `phase_since` the last change of
   `phase`. Whoever changes the `state` vocabulary must change `cerebro--derive-from-state` with it —
   an unrecognised `state` now maps to `'unknown` and shows its raw word in yellow, not `idle`.
-- `scripts/run-implementer --roster` — the implementer names, shelled out to from
-  `cerebro--roster`.
+- `scripts/roster` — the fleet: name, role and kind per agent, read once per buffer by
+  `cerebro--fleet`.
 
 Liveness for the interactive five is the state file first, when one exists for a live pid
 (`cerebro--derive-interactive`), and falls back to scanning system process args for `--name <Name>`
@@ -172,15 +173,21 @@ when it does not — a session started by hand, outside this fleet, has no file 
   `cerebro--script-directory` in `cerebro.el`, and every doc that tells someone what to type. The
   launchers themselves take no view — they are `exec claude …` and work from anywhere — so a wrong
   path here fails at `s` in the fleet view, not at the script.
-- The launchers start **one interactive session** each. Nothing loops, nothing polls a flag, nothing
-  writes a state file: the agent writes its own state, and `cerebro--supervise` owns the cadence.
-  Adding a loop back to a launcher would put two supervisors on one session. The one file a launcher
-  does touch is the symlinks, via `scripts/launch-preflight`, right before it execs — see above.
+- `scripts/launch <Name>` starts **one interactive session** — every `run-*` script is a shim over
+  it. Nothing loops, nothing polls a flag, nothing writes a state file: the agent writes its own
+  state, and `cerebro--supervise` owns the cadence. Adding a loop back to `launch` would put two
+  supervisors on one session. The one file it does touch is the symlinks, via
+  `scripts/launch-preflight`, right before it execs — see above.
 - Emacs backup files (`*.el~`, `*.md~`, `*.sh~`) are committed alongside the originals; ignore them
   and never edit them.
 - The state directory was `.claude/implementers/` until ah-2n3.1, and its writer was
   `scripts/implementer-state`; a shim at that old script name survives one release, `exec`ing
   `scripts/agent-state` with a deprecation line on stderr.
+- **The fleet is declared once, in `scripts/roster`.** Adding a role is one line there plus
+  `agents/<role>.md` (and a skill if it has one); `launch`, `agent-state`, `cerebro.el` and the tests
+  read the roster, and the model and effort come from the agent file's frontmatter. The only per-role
+  facts still written by hand are the phase words in `scripts/agent-state` and `cerebro--phases`, and
+  the `run-*` shim if you want a named entry point.
 
 # Test driven development
 

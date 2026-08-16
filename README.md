@@ -34,6 +34,11 @@ Each agent is started by a script of its own, run from the consumer repository r
 
 The `run-*` scripts are shims over `launch`; the roster is the one place the fleet is declared.
 
+Every session starts with Remote Control on and is listed under its agent's name at
+[claude.ai/code](https://claude.ai/code) and in the Claude app, so an agent can be read and steered
+from another device. It needs a Pro/Max/Team login; where it cannot connect the session shows a
+notification and runs on as a normal one, so nothing here depends on it.
+
 All of them start **one interactive `claude` session** and nothing else — no loop, no flags, no
 files of their own, other than running `scripts/launch-preflight` right before they exec: it
 re-syncs the skill and agent symlinks, so a bumped submodule is usable the moment something is

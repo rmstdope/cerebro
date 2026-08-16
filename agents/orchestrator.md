@@ -262,9 +262,9 @@ closed*.
 
 **The fleet view runs this sweep for you now** (`ah-4ao`), automatically, on every `M-x cerebro` and
 without asking: `prune-worktrees.sh --watch` starts alongside the fleet buffer and stops when it is
-killed. Nothing here needs a Cerebro session's judgement — the script's guards are the whole safety
-story — so this section is read for background, not run by hand, unless you are troubleshooting a
-worktree the watcher left behind.
+killed. The watcher's own removals need no judgement from you — the script's guards are the whole
+safety story for those. What is left for a session is the trees it *declines* or never looks at:
+those are yours to judge and remove, on your own, by the tests further down.
 
 Implementers build in `.cerebro/worktrees/<bead>` and are told to remove the tree on the way out. They
 do not always get there — a crash, a kill, a bead somebody else merged — and the leftovers are not

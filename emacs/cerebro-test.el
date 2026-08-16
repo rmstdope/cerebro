@@ -86,6 +86,19 @@ test body cannot compute this itself.")
     (should (eq (cerebro-agent-state xavier) 'up))
     (should (cerebro-agent-external xavier))))
 
+(ert-deftest cerebro-test/name-in-args-reads-only-the-name-flag ()
+  ;; ah-qym: every launch now carries `--remote-control NAME' too. The needle must still key on
+  ;; `--name' alone - a name that appears only as the remote-control value, or a flag that merely
+  ;; contains "-name-", must not make an agent look up.
+  (should (cerebro--name-in-args-p
+           "Xavier" '("claude --agent planner --name Xavier --remote-control Xavier --permission-mode auto")))
+  (should-not (cerebro--name-in-args-p
+               "Xavier" '("claude --agent planner --remote-control Xavier --permission-mode auto")))
+  (should-not (cerebro--name-in-args-p
+               "Xavier" '("claude --remote-control-session-name-prefix Xavier --name Storm")))
+  (should (cerebro--name-in-args-p
+           "Storm" '("claude --remote-control-session-name-prefix Xavier --name Storm"))))
+
 (ert-deftest cerebro-test/derive-interactive-up-when-owned ()
   (let* ((agents (cerebro--derive nil cerebro-test--interactive nil
                                           #'cerebro-test--never-alive nil '("Xavier")))

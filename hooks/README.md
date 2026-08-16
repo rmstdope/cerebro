@@ -42,3 +42,9 @@ What the hook deliberately does **not** do: invent a state file that does not ex
 asked before the agent's first `agent-state` call is invisible to it), invent a bead or a phase, or
 touch a file that is not at `asking` when `end` runs without a sidecar. Each of those would need a
 guess, and a wrong state file is worse than a late one.
+
+A session that dies between `begin` and `end` leaves its sidecar behind, describing a bead the next
+session has nothing to do with. `begin` removes any sidecar it finds when the file already says
+`asking` — the one path that would otherwise carry it forward — so a crash can only ever cost the
+no-sidecar restore (`asking` → `working`, bead and phase read from the file itself), never a restore
+of somebody else's bead.

@@ -81,9 +81,18 @@ write_state() {
 case "$mode" in
   begin)
     # Already asking - the agent wrote it itself, which is the documented behaviour and not a case
-    # to overwrite. Leaving the sidecar alone matters: it holds the state from before *this*
-    # question, and rewriting it with `asking' would make `end' restore `asking'.
-    [[ "$state" == "asking" ]] && exit 0
+    # to overwrite: writing a sidecar now would record `asking' as the state to go back to, and
+    # `end' would restore the very thing it exists to clear.
+    #
+    # Any sidecar lying here is therefore from an *earlier* question, left by a session that died
+    # between begin and end. It describes a bead and a phase from before that crash, and `end' would
+    # restore it over this session's, silently moving the row to work that finished hours ago.
+    # Removing it leaves `end' with its no-sidecar path, which reads this file rather than trusting
+    # a stale one: `asking' becomes `working', bead and phase untouched.
+    if [[ "$state" == "asking" ]]; then
+      rm -f "$sidecar"
+      exit 0
+    fi
     jq -n --arg state "$state" --arg bead "$bead" --arg phase "$phase" \
       '{state: $state, bead: $bead, phase: $phase}' > "$sidecar.tmp" 2>/dev/null || exit 0
     mv -f "$sidecar.tmp" "$sidecar" 2>/dev/null || exit 0

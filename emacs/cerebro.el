@@ -947,8 +947,8 @@ every buffer's name against `*fleet: NAME*', so a second launch for a name -
 which vterm would call `*fleet: NAME*<2>' - made an agent nobody could see,
 and four separate guards stood in front of that one failure.  Now
 `cerebro--launch' writes here and refuses a second session while the first
-is live, and everything that asks whose a session is, whether it is up, or
-which buffer holds it reads here.  Global, not buffer-local: sessions
+is live, and everything that asks whose session it is, whether it is up,
+or which buffer holds it, reads here.  Global, not buffer-local: sessions
 outlive the fleet buffer, and `M-x cerebro' after a `q' must still know
 what it started.")
 
@@ -956,18 +956,35 @@ what it started.")
   "The live session buffer this Emacs started for NAME, or nil.
 
 Live means the buffer exists and its process is running - the same test
-`cerebro--owned' has always applied.  A dead entry is dropped on the way
-past, so the table never accumulates the sessions of the day."
+`cerebro--owned' has always applied.  The table entry is pruned only when
+the *buffer* itself is gone, not merely because its process exited - a
+session whose shell has finished but whose buffer still exists (vterm
+leaves it for the navigator to read) is not `live' here, but it is still
+ours, and `cerebro--recorded-buffer' is what finds it so it can be cleaned
+up rather than left to collide with the next launch."
   (let ((buffer (alist-get name cerebro--sessions nil nil #'equal)))
-    (if (and buffer (buffer-live-p buffer) (get-buffer-process buffer))
-        buffer
+    (unless (and buffer (buffer-live-p buffer))
       (when buffer
-        (setq cerebro--sessions (assoc-delete-all name cerebro--sessions)))
-      nil)))
+        (setq cerebro--sessions (assoc-delete-all name cerebro--sessions))))
+    (and buffer (buffer-live-p buffer) (get-buffer-process buffer) buffer)))
 
 (defun cerebro--session-name (buffer)
   "The agent name whose session is BUFFER, or nil when it is not one of ours."
   (car (rassq buffer cerebro--sessions)))
+
+(defun cerebro--recorded-buffer (name)
+  "NAME's recorded session buffer, live or not, or nil.
+
+Unlike `cerebro--session', this does not require a live process - a vterm
+buffer whose shell has already exited stays around for the navigator to
+read, and is still ours to kill.  Forgets a dead entry on the way past, the
+same as `cerebro--session'."
+  (let ((buffer (alist-get name cerebro--sessions nil nil #'equal)))
+    (if (and buffer (buffer-live-p buffer))
+        buffer
+      (when buffer
+        (setq cerebro--sessions (assoc-delete-all name cerebro--sessions)))
+      nil)))
 
 (defun cerebro--owned ()
   "Agent names whose sessions this Emacs itself started and which are still up."
@@ -1203,11 +1220,15 @@ one place that says how a bead is handed back.")
   "Kill AGENT's session buffer, without asking and without refreshing.
 
 The query-on-exit flag guards an *accidental* kill; this one is the poll
-acting on a bead the agent itself reported finished.  Forgets the entry in
-`cerebro--sessions' too, so a launch right afterwards - a restart - sees no
-session even before the process sentinel has run."
+acting on a bead the agent itself reported finished.  Looks up the buffer
+via `cerebro--recorded-buffer', not `cerebro--session': a session whose
+process has already exited still has a buffer to clean up, and requiring a
+live process here would leave it for the next launch to collide with.
+Forgets the entry in `cerebro--sessions' too, so a launch right
+afterwards - a restart - sees no session even before the process sentinel
+has run."
   (let ((name (cerebro-agent-name agent)))
-    (let ((buffer (cerebro--session name)))
+    (let ((buffer (cerebro--recorded-buffer name)))
       (when buffer
         (let ((proc (get-buffer-process buffer)))
           (when proc (set-process-query-on-exit-flag proc nil)))
@@ -1938,9 +1959,11 @@ not a hypothetical one - so a missing buffer is not an error here.
 `cerebro-kill' has already confirmed this exact kill via
 `y-or-n-p'; the process's query-on-exit flag exists to guard against an
 *accidental* buffer/Emacs kill, not this intentional one, so it is
-cleared first rather than prompting a second time for the same kill."
+cleared first rather than prompting a second time for the same kill.
+Looks the buffer up via `cerebro--recorded-buffer', not `cerebro--session':
+a session whose process has already exited is still ours to clean up."
   (let ((name (cerebro-agent-name agent)))
-    (let ((buffer (cerebro--session name)))
+    (let ((buffer (cerebro--recorded-buffer name)))
       (when buffer
         (let ((proc (get-buffer-process buffer)))
           (when proc (set-process-query-on-exit-flag proc nil)))

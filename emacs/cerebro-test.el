@@ -643,8 +643,12 @@ writing a flag at all. This test constructs the row directly, bypassing
                 (should (null (cerebro--session "Rogue")))
                 (delete-process proc)
                 (while (process-live-p proc) (accept-process-output proc 0.1))
+                ;; The process is gone but the buffer lingers - not `live',
+                ;; but still ours: the table entry survives so
+                ;; `cerebro--recorded-buffer' can still find it to clean up.
                 (should (null (cerebro--session "Cyclops")))
-                (should (null (alist-get "Cyclops" cerebro--sessions nil nil #'equal))))
+                (should (eq (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf))
+                (should (eq (cerebro--recorded-buffer "Cyclops") buf)))
             (when (process-live-p proc) (delete-process proc))))
       (kill-buffer buf))))
 
@@ -868,6 +872,41 @@ left alone."
           (cerebro--end-session agent)
           (should (null (get-buffer session-name)))
           (should (null (cerebro--session "Cyclops"))))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
+(ert-deftest cerebro-test/end-session-kills-a-buffer-whose-process-already-exited ()
+  "A session whose process exited but whose buffer lingers (vterm leaves it
+for the navigator to read) is still ours to kill - `cerebro--session'
+requires a live process and would wrongly skip it, leaving the buffer
+around for the next launch to collide with (review comment on PR #36)."
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+         (session-name (cerebro--session-buffer-name agent))
+         (buf (get-buffer-create session-name)))
+    (unwind-protect
+        (progn
+          (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+          (should (null (cerebro--session "Cyclops")))   ; no process: not "live"
+          (cerebro--end-session agent)
+          (should (null (get-buffer session-name)))
+          (should (null (alist-get "Cyclops" cerebro--sessions nil nil #'equal))))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
+(ert-deftest cerebro-test/kill-session-buffer-kills-a-buffer-whose-process-already-exited ()
+  "The same fix as `end-session-kills-a-buffer-whose-process-already-exited',
+for the `k' path."
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+         (session-name (cerebro--session-buffer-name agent))
+         (buf (get-buffer-create session-name)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'revert-buffer) #'ignore)
+                  ((symbol-function 'cerebro--show-detail) #'ignore))
+          (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+          (should (null (cerebro--session "Cyclops")))
+          (cerebro--kill-session-buffer agent)
+          (should (null (get-buffer session-name)))
+          (should (null (alist-get "Cyclops" cerebro--sessions nil nil #'equal))))
       (when (get-buffer session-name) (kill-buffer session-name)))))
 
 ;; The placement itself - `cerebro-start' is where it lives now that launch

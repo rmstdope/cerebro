@@ -131,13 +131,24 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
   `sweep`/`release`, `daily`/`weekly`) for the interactive five — meaningful with `working` and
   `asking`; `since` is the last change of `state` or `bead`, `phase_since` the last change of
   `phase`. Whoever changes the `state` vocabulary must change `cerebro--derive-from-state` with it —
-  an unrecognised `state` now maps to `'unknown` and shows its raw word in yellow, not `idle`.
+  an unrecognised `state` now maps to `'unknown` and shows its raw word in yellow, not `idle`. **The
+  fleet view deletes the file when it ends the session the file describes** — both the retire and
+  the restart branch of `cerebro--supervise`, restart before it launches — because a killed agent
+  cannot write a last transition, and a file that outlives its session outlives its pid.
 - `scripts/roster` — the fleet: name, role and kind per agent, read once per buffer by
   `cerebro--fleet`.
 
 Liveness for the interactive five is the state file first, when one exists for a live pid
 (`cerebro--derive-interactive`), and falls back to scanning system process args for `--name <Name>`
 when it does not — a session started by hand, outside this fleet, has no file and still shows `up`.
+
+**"A live pid" means the agent's own session, not merely an existing pid.**
+`cerebro--session-alive-p` reads the named pid's command line and requires `--name <Name>` in it,
+which every session has because `scripts/launch` passes it. A bare `process-attributes` check was
+what let a `done` file that outlived its session by ten hours light up green again once the OS
+recycled its pid onto an unrelated daemon: pids are reused, so a number alone is not an identity.
+The same check guards the claims sweep (`cerebro--live-implementer-names`), where a recycled pid
+would otherwise protect a stale claim from being reclaimed.
 
 ## Gotchas
 

@@ -46,6 +46,12 @@ The glyph carries the state and the weight carries the urgency:
 Bold is only ever "this row wants you", so it stays worth noticing: idle and dead share the quiet
 weight, and only a question earns the loud one.
 
+A row is only as alive as its process: the state file's pid must still be running **and** its command
+line must still carry `--name <that agent>`. Pids are recycled, and a state file left behind by a
+finished session used to come back green hours later once the operating system handed its number to
+something else. The fleet view now deletes an agent's state file whenever it ends that agent's
+session, so the file rarely outlives the pid in the first place.
+
 Idle and working are the same dot and differ only in colour, which is what the State column beside
 them spells out in words. The yellow is the `cerebro-idle` face — its own face rather than the stock
 `warning`, which Emacs defines as DarkOrange **and bold**: orange where yellow was wanted, and bold

@@ -24,8 +24,12 @@ test body cannot compute this itself.")
     ("Cerebro" . "orchestrator")
     ("Moira" . "user-feedback")))
 
-(defun cerebro-test--always-alive (_pid) t)
-(defun cerebro-test--never-alive (_pid) nil)
+;; The liveness predicate is asked about a pid *and* the name whose file claims
+;; it (ah-rogue): "is this pid a live session of this agent", not "does this pid
+;; exist". Both helpers ignore the name, which is what makes every test written
+;; before that distinction existed still mean what it meant.
+(defun cerebro-test--always-alive (_pid &optional _name) t)
+(defun cerebro-test--never-alive (_pid &optional _name) nil)
 
 (ert-deftest cerebro-test/derive-implementer-working-from-live-state-file ()
   (let* ((states '(("Cyclops" . ((state . "working") (bead . "ah-f9c")
@@ -2864,6 +2868,127 @@ thirty-second cadence, the same as the bead panel's."
             (cerebro--cached-system-args 1031.0)
             (should (= calls 2))))
       (kill-buffer buffer))))
+
+;; ---------------------------------------------------------------------------
+;; A pid is only alive if it is still *this agent's* session
+;;
+;; Seen live: Rogue finished ah-6uo at 02:43, its session ended, and the state
+;; file stayed behind saying `done' with pid 92395. By morning macOS had reused
+;; that pid for an unrelated system daemon, so the row read `done' - green, and
+;; `s' refused it as "running outside Emacs" - for a session that had not
+;; existed for ten hours.
+
+(defun cerebro-test--session-of (owner)
+  "A liveness predicate that only believes a pid belongs to OWNER."
+  (lambda (_pid name) (equal name owner)))
+
+(ert-deftest cerebro-test/recycled-pid-does-not-keep-an-implementer-alive ()
+  (let* ((states '(("Rogue" . ((state . "done") (bead . "ah-6uo")
+                               (since . "2026-08-16T02:43:32Z") (pid . 92395)))))
+         (agent (car (cerebro--derive '("Rogue") nil states
+                                      (cerebro-test--session-of "somebody-else")
+                                      nil nil))))
+    (should (eq (cerebro-agent-state agent) 'dead))
+    (should-not (cerebro-agent-bead agent))))
+
+(ert-deftest cerebro-test/a-pid-that-is-still-the-agents-own-session-is-alive ()
+  "The other half of the same test: the check must not simply say dead."
+  (let* ((states '(("Rogue" . ((state . "working") (bead . "ah-6uo")
+                               (since . "2026-08-16T02:43:32Z") (pid . 92395)))))
+         (agent (car (cerebro--derive '("Rogue") nil states
+                                      (cerebro-test--session-of "Rogue")
+                                      nil nil))))
+    (should (eq (cerebro-agent-state agent) 'working))
+    (should (equal (cerebro-agent-bead agent) "ah-6uo"))))
+
+(ert-deftest cerebro-test/liveness-is-asked-about-the-pid-and-the-name ()
+  "The contract the impure `cerebro--session-alive-p' implements."
+  (let ((asked nil))
+    (cerebro--derive '("Rogue") '(("Xavier" . "planner"))
+                     '(("Rogue" . ((state . "working") (pid . 92395)))
+                       ("Xavier" . ((state . "working") (pid . 27123))))
+                     (lambda (pid name) (push (cons pid name) asked) t)
+                     nil nil)
+    (should (member '(92395 . "Rogue") asked))
+    (should (member '(27123 . "Xavier") asked))))
+
+(ert-deftest cerebro-test/recycled-pid-falls-back-to-the-scan-for-an-interactive-agent ()
+  "An interactive row reads its file first and the process scan second; a pid
+that is no longer that agent's session must drop through to the scan rather
+than dressing a dead session in the file's `working'."
+  (let ((states '(("Xavier" . ((state . "working") (phase . "plan")
+                               (bead . "ah-1") (pid . 92395))))))
+    (should (eq (cerebro-agent-state
+                 (car (cerebro--derive nil '(("Xavier" . "planner")) states
+                                       (cerebro-test--session-of "somebody-else")
+                                       nil nil)))
+                'dead))
+    (should (eq (cerebro-agent-state
+                 (car (cerebro--derive nil '(("Xavier" . "planner")) states
+                                       (cerebro-test--session-of "somebody-else")
+                                       '("claude --name Xavier --agent planner") nil)))
+                'up))))
+
+(ert-deftest cerebro-test/session-alive-p-rejects-a-pid-that-is-not-that-session ()
+  "The impure half, against this very Emacs: alive, certainly, and not Rogue."
+  (should-not (cerebro--session-alive-p (emacs-pid) "Rogue"))
+  (should-not (cerebro--session-alive-p nil "Rogue")))
+
+(ert-deftest cerebro-test/session-alive-p-accepts-the-agents-own-process ()
+  "A real process whose command line carries `--name Rogue'."
+  (let ((process (start-process "cerebro-test-session" nil
+                                "bash" "-c" "sleep 30" "--name" "Rogue")))
+    (unwind-protect
+        (should (cerebro--session-alive-p (process-id process) "Rogue"))
+      (delete-process process))))
+
+;; ---------------------------------------------------------------------------
+;; Ending a session on purpose takes its state file with it
+
+(ert-deftest cerebro-test/retire-removes-the-state-file ()
+  "The file describes a session that is over; left behind, it is what the pid
+recycling above turns into a phantom row (see the tests just above)."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (agent (cerebro-test--supervised 'done)))
+    (unwind-protect
+        (let ((path (cerebro--state-file-path root "Cyclops")))
+          (make-directory (file-name-directory path) t)
+          (write-region "{\"state\":\"done\",\"pid\":42}" nil path nil 'quiet)
+          (cerebro--write-stop-flag root "Cyclops")
+          (cl-letf (((symbol-function 'cerebro--end-session) (lambda (_a) nil))
+                    ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
+            (with-temp-buffer
+              (cerebro--supervise (list agent) root cerebro-test--now)))
+          (should-not (file-exists-p path)))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/restart-removes-the-state-file-before-launching ()
+  "A restart ends one session and starts another under the same name. The old
+file is the *previous* session's, and leaving it is how a recycled pid gets a
+fresh session read as the finished one it replaced - restarted again, forever."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (agent (cerebro-test--supervised 'done))
+        (order nil))
+    (unwind-protect
+        (let ((path (cerebro--state-file-path root "Cyclops")))
+          (make-directory (file-name-directory path) t)
+          (write-region "{\"state\":\"done\",\"pid\":42}" nil path nil 'quiet)
+          (cl-letf (((symbol-function 'cerebro--end-session) (lambda (_a) nil))
+                    ((symbol-function 'cerebro--launch)
+                     (lambda (&rest _) (push (file-exists-p path) order))))
+            (with-temp-buffer
+              (cerebro--supervise (list agent) root cerebro-test--now)))
+          (should (equal order '(nil)))
+          (should-not (file-exists-p path)))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/delete-state-file-tolerates-a-missing-file ()
+  "Same race as `cerebro--clear-stop-flag': the agent, another Emacs or a
+shell can remove it between a check and the delete."
+  (let ((root (make-temp-file "cerebro-test-" t)))
+    (unwind-protect
+        (should-not (cerebro--delete-state-file root "Cyclops"))
+      (delete-directory root t))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

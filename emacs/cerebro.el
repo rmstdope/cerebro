@@ -146,7 +146,7 @@ the rest of the view reads."
                                 :phase-since (alist-get 'phase_since parsed)
                                 :raw raw-state)))
 
-(defun cerebro--derive-interactive (entry states pid-alive-p args owned)
+(defun cerebro--derive-interactive (entry states session-alive-p args owned)
   "Derive one interactive agent's row from (NAME . ROLE) ENTRY.
 
 STATES is an alist of (NAME . parsed-state-json-or-nil), the same one an
@@ -164,7 +164,7 @@ below, so a session started by hand outside this fleet
          (role (cdr entry))
          (parsed (cdr (assoc name states)))
          (pid (and parsed (alist-get 'pid parsed)))
-         (alive (and pid (funcall pid-alive-p pid)))
+         (alive (and pid (funcall session-alive-p pid name)))
          (owned-p (and (member name owned) t)))
     (if alive
         (cerebro--derive-from-state name role 'interactive parsed owned-p)
@@ -179,14 +179,14 @@ below, so a session started by hand outside this fleet
         (make-cerebro-agent :name name :role role :kind 'interactive
                                     :state 'dead :bead nil :since nil :external nil))))))
 
-(defun cerebro--derive-implementer (name states pid-alive-p owned)
+(defun cerebro--derive-implementer (name states session-alive-p owned)
   "Derive one implementer's row for NAME.
 
 STATES is an alist of (NAME . parsed-state-json-or-nil); PID-ALIVE-P a
 predicate on a pid; OWNED the names Emacs itself started."
   (let* ((parsed (cdr (assoc name states)))
          (pid (and parsed (alist-get 'pid parsed)))
-         (alive (and pid (funcall pid-alive-p pid)))
+         (alive (and pid (funcall session-alive-p pid name)))
          (owned-p (and (member name owned) t)))
     (cond
      ;; A session Emacs started is alive whatever the file says: `cerebro--owned'
@@ -205,7 +205,7 @@ predicate on a pid; OWNED the names Emacs itself started."
                                   :state 'dead :bead nil :since nil :external nil))
      (t (cerebro--derive-from-state name "implementer" 'implementer parsed owned-p)))))
 
-(defun cerebro--derive (roster interactive-agents states pid-alive-p args owned)
+(defun cerebro--derive (roster interactive-agents states session-alive-p args owned)
   "Return the fleet as a list of `cerebro-agent', interactive first.
 
 ROSTER is the implementer name list, in the order they should be shown.
@@ -216,9 +216,9 @@ names - see `cerebro--gather-states'.  PID-ALIVE-P is a predicate on a pid.
 ARGS is the system process args list.  OWNED is the set of agent names whose
 sessions Emacs itself started."
   (append
-   (mapcar (lambda (entry) (cerebro--derive-interactive entry states pid-alive-p args owned))
+   (mapcar (lambda (entry) (cerebro--derive-interactive entry states session-alive-p args owned))
            interactive-agents)
-   (mapcar (lambda (name) (cerebro--derive-implementer name states pid-alive-p owned))
+   (mapcar (lambda (name) (cerebro--derive-implementer name states session-alive-p owned))
            roster)))
 
 ;;; Formatting
@@ -535,7 +535,7 @@ be swept as one Emacs started."
                     (let* ((parsed (cerebro--read-state-file
                                     (cerebro--state-file-path repo-root name)))
                            (pid (and parsed (alist-get 'pid parsed))))
-                      (and pid (cerebro--pid-alive-p pid) name)))
+                      (and pid (cerebro--session-alive-p pid name) name)))
                   roster))))
 
 (defvar cerebro-subprocess-timeout-seconds 120
@@ -1025,9 +1025,23 @@ writing the same file."
                         (cerebro--state-file-path repo-root name))))
           roster))
 
-(defun cerebro--pid-alive-p (pid)
-  "Non-nil if a process with PID currently exists."
-  (and pid (process-attributes pid) t))
+(defun cerebro--session-alive-p (pid name)
+  "Non-nil if PID is a live process and is NAME's own session.
+
+Both halves matter. \"Does this pid exist\" was the whole test until a
+`done' state file outlived its session by ten hours and the operating
+system reused its pid for an unrelated daemon: the row read `done' - green,
+and `s' refused it as \"running outside Emacs\" - for an agent that had not
+been running since the night before. Pids are recycled, so a bare number is
+not an identity; the launcher passes `--name <Name>' to every session
+\(`scripts/launch'), which makes the process's own command line the proof
+that this pid is still the one the file was written about.
+
+Reads only the named pid's args, not the whole process list - this is asked
+once per agent on every refresh, where `cerebro--system-args' is a scan the
+fleet view deliberately caches."
+  (let ((args (and pid (alist-get 'args (process-attributes pid)))))
+    (and args (cerebro--name-in-args-p name (list args)) t)))
 
 (defun cerebro--system-args ()
   "The command-line args string of every system process, as a list."
@@ -1366,11 +1380,18 @@ other agents down with it."
           ;; Kill before launching: `cerebro--launch' would refuse a second
           ;; session for a name it still holds, rather than making one vterm
           ;; would call `*fleet: <name>*<2>' and the list would never show.
+          ;; Both branches end a session, so both take its state file with
+          ;; them (`cerebro--delete-state-file'). On a restart the deletion
+          ;; must come before the launch: the file is the *previous*
+          ;; session's, and the fresh one under the same name would otherwise
+          ;; be read as the finished session it replaced and restarted again.
           ('restart (let ((watching (cerebro--detail-showing-p agent)))
                       (cerebro--end-session agent)
+                      (cerebro--delete-state-file repo-root name)
                       (cerebro--launch agent)
                       (when watching (cerebro--show-detail agent))))
           ('retire (cerebro--end-session agent)
+                   (cerebro--delete-state-file repo-root name)
                    (cerebro--clear-stop-flag repo-root name))
           ('nudge (unless (member name cerebro--nudged)
                     (push name cerebro--nudged)
@@ -1950,7 +1971,7 @@ Does nothing when BUFFER is dead."
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states
-                                          #'cerebro--pid-alive-p args owned)))
+                                          #'cerebro--session-alive-p args owned)))
     (setq cerebro--agents agents)
     (setq tabulated-list-entries
           (mapcar (lambda (a)
@@ -2196,6 +2217,26 @@ the time this runs."
   (let ((path (cerebro--stop-flag-path repo-root name)))
     (make-directory (file-name-directory path) t)
     (write-region "" nil path)))
+
+(defun cerebro--delete-state-file (repo-root name)
+  "Remove NAME's state file in REPO-ROOT, if any.
+
+A state file describes a session that is running; once the fleet view has
+ended one on purpose, the file is a claim about a process that no longer
+exists. The agent cannot retract it - it is killed, so it never writes a
+last transition - which leaves the fleet view, the only other writer, to do
+it. Left behind, the file outlives the pid it names, and pids are recycled:
+see `cerebro--session-alive-p' for what that looked like the morning it
+happened.
+
+Deletes unconditionally and catches `file-missing' rather than checking
+first, for the reason `cerebro--clear-stop-flag' gives: the file has
+several writers, so a pre-check would leave the very race it looks like it
+closes - and this runs from a timer with demoted errors, where an uncaught
+signal would be swallowed rather than simply doing nothing."
+  (condition-case nil
+      (delete-file (cerebro--state-file-path repo-root name))
+    (file-missing nil)))
 
 (defun cerebro--clear-stop-flag (repo-root name)
   "Remove NAME's stop flag in REPO-ROOT, if any.

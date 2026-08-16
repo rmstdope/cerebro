@@ -1509,6 +1509,14 @@ still holds."
     (should done)
     (should (null got))))
 
+(ert-deftest cerebro-test/run-async-does-not-leak-the-output-buffer-when-the-program-is-missing ()
+  "The output buffer is created before `make-process' is called; when
+`make-process' itself signals, that buffer must not be left behind
+(PR #42 review)."
+  (let ((before (length (buffer-list))))
+    (cerebro--run-async 'rt7 default-directory '("cerebro-no-such-program-9dv-2") #'ignore)
+    (should (= (length (buffer-list)) before))))
+
 (ert-deftest cerebro-test/run-async-refuses-a-second-run-under-one-key ()
   "A slow `bd' is waited for rather than stacked."
   (let (proc)
@@ -1557,6 +1565,19 @@ still holds."
     ;; "[]" is a successful, empty answer - a four-list partition of nothing,
     ;; not "bd did not answer".
     (should (equal got (list nil nil nil nil)))))
+
+(ert-deftest cerebro-test/request-beads-treats-invalid-output-as-no-answer ()
+  "`bd' exiting zero but printing garbage must not read as a valid empty
+answer - both parse to nil, but only one of them is `bd' actually having
+answered.  Reading garbage as an answer would blank the panel and silently
+clear the \"bd did not answer\" indicator (PR #42 review)."
+  (let (got)
+    (cl-letf (((symbol-function 'cerebro--run-async)
+               (lambda (_key _root _argv callback)
+                 (funcall callback "this is not json")
+                 'started)))
+      (cerebro--request-beads "/repo" (lambda (beads) (setq got beads))))
+    (should (null got))))
 
 (ert-deftest cerebro-test/panel-header-says-what-the-rows-date-from ()
   (should (equal (cerebro--panel-header nil nil nil) "Beads"))
@@ -2330,6 +2351,63 @@ add to it."
             (setq cerebro--sweep-findings (list (cons "held" '(close "ah-x1" "delivered"))))
             (cerebro--sweep buffer)
             (should (null cerebro--sweep-findings))))
+      (kill-buffer buffer))))
+
+(ert-deftest cerebro-test/request-sweeps-treats-invalid-claims-output-as-no-answer ()
+  "`sweep-claims.sh' exiting zero but printing garbage must not read as an
+answer, and must not even start the epics script (PR #42 review)."
+  (let (got (started nil))
+    (cl-letf (((symbol-function 'cerebro--run-async)
+               (lambda (key _root _argv callback)
+                 (push key started)
+                 (funcall callback "this is not json")
+                 'started)))
+      (cerebro--request-sweeps "/repo" (lambda (answer) (setq got answer))))
+    (should (null got))
+    (should (equal started '(sweep-claims)))))
+
+(ert-deftest cerebro-test/request-sweeps-treats-invalid-epics-output-as-no-answer ()
+  "The same, for the epics script - a claims answer that parses fine must
+not paper over an epics script that printed garbage."
+  (let (got)
+    (cl-letf (((symbol-function 'cerebro--run-async)
+               (lambda (key _root _argv callback)
+                 (if (eq key 'sweep-claims)
+                     (funcall callback "[]")
+                   (funcall callback "this is not json"))
+                 'started)))
+      (cerebro--request-sweeps "/repo" (lambda (answer) (setq got answer))))
+    (should (null got))))
+
+(ert-deftest cerebro-test/sweep-refuses-a-second-run-while-the-first-is-still-out ()
+  "The claims/epics chain uses two different `cerebro--run-async' keys, so a
+second sweep starting while the first's epics call is still out could
+otherwise have its own epics request silently dropped as `busy' - this
+guards at the `cerebro--sweep' level instead, the same way
+`cerebro--beads-render' leaves a request already out to finish rather than
+joining it with a second (PR #42 review)."
+  (let ((buffer (get-buffer-create "*cerebro-test-sweep-overlap*"))
+        (request-calls 0)
+        stashed-callback)
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                  ((symbol-function 'cerebro--request-sweeps)
+                   (lambda (_root callback)
+                     (cl-incf request-calls)
+                     (setq stashed-callback callback)
+                     'started)))
+          (with-current-buffer buffer
+            (cerebro-beads-mode)
+            (cerebro--sweep buffer)
+            (should (= request-calls 1))
+            ;; A second sweep while the first is still out must not start a
+            ;; second chain.
+            (cerebro--sweep buffer)
+            (should (= request-calls 1))
+            (funcall stashed-callback (list nil))
+            ;; Once it has answered, a further sweep is free to run again.
+            (cerebro--sweep buffer)
+            (should (= request-calls 2))))
       (kill-buffer buffer))))
 
 (ert-deftest cerebro-test/sweep-act-runs-nothing-without-confirmation ()

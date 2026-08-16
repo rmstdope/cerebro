@@ -559,36 +559,44 @@ under KEY is already in flight - then nothing is started and CALLBACK is
 never called. Never signals."
   (if (assq key cerebro--inflight)
       'busy
-    (condition-case nil
-        (let* ((default-directory (file-name-as-directory repo-root))
-               (out (generate-new-buffer (format " *cerebro-async-%s*" key)))
-               proc)
-          (setq proc
-                (make-process
-                 :name (format " *cerebro-%s*" key)
-                 :buffer out
-                 :command argv
-                 :noquery t
-                 :connection-type 'pipe
-                 :sentinel
-                 (lambda (proc _event)
-                   (when (memq (process-status proc) '(exit signal))
-                     (setq cerebro--inflight (assq-delete-all key cerebro--inflight))
-                     (let ((timer (process-get proc 'cerebro-timeout)))
-                       (when timer (cancel-timer timer)))
-                     (let ((output (and (eq (process-status proc) 'exit)
-                                        (zerop (process-exit-status proc))
-                                        (with-current-buffer out (buffer-string)))))
-                       (kill-buffer out)
-                       (with-demoted-errors "cerebro: %S" (funcall callback output)))))))
-          (process-put proc 'cerebro-timeout
-                       (run-at-time cerebro-subprocess-timeout-seconds nil
-                                    (lambda ()
-                                      (when (process-live-p proc)
-                                        (delete-process proc)))))
-          (push (cons key proc) cerebro--inflight)
-          'started)
-      (error (with-demoted-errors "cerebro: %S" (funcall callback nil)) 'started))))
+    ;; OUT is created outside the `condition-case' it is used in, so a
+    ;; `make-process' error (the program is missing, say) can still kill it
+    ;; in the handler - inside the protected form, the handler clause has no
+    ;; access to bindings the form never finished establishing (PR #42
+    ;; review: an earlier version leaked this buffer on every such error).
+    (let* ((default-directory (file-name-as-directory repo-root))
+           (out (generate-new-buffer (format " *cerebro-async-%s*" key))))
+      (condition-case nil
+          (let (proc)
+            (setq proc
+                  (make-process
+                   :name (format " *cerebro-%s*" key)
+                   :buffer out
+                   :command argv
+                   :noquery t
+                   :connection-type 'pipe
+                   :sentinel
+                   (lambda (proc _event)
+                     (when (memq (process-status proc) '(exit signal))
+                       (setq cerebro--inflight (assq-delete-all key cerebro--inflight))
+                       (let ((timer (process-get proc 'cerebro-timeout)))
+                         (when timer (cancel-timer timer)))
+                       (let ((output (and (eq (process-status proc) 'exit)
+                                          (zerop (process-exit-status proc))
+                                          (with-current-buffer out (buffer-string)))))
+                         (kill-buffer out)
+                         (with-demoted-errors "cerebro: %S" (funcall callback output)))))))
+            (process-put proc 'cerebro-timeout
+                         (run-at-time cerebro-subprocess-timeout-seconds nil
+                                      (lambda ()
+                                        (when (process-live-p proc)
+                                          (delete-process proc)))))
+            (push (cons key proc) cerebro--inflight)
+            'started)
+        (error
+         (when (buffer-live-p out) (kill-buffer out))
+         (with-demoted-errors "cerebro: %S" (funcall callback nil))
+         'started)))))
 
 (defun cerebro--parse-json (text)
   "TEXT parsed as JSON the way the panel wants it (alists, lists, nil), or nil
@@ -598,6 +606,21 @@ when TEXT is nil or not JSON."
            (json-parse-string text :object-type 'alist :array-type 'list
                               :null-object nil :false-object nil)
          (error nil))))
+
+(defconst cerebro--parse-failed 'cerebro--parse-failed
+  "Sentinel `cerebro--try-parse-json' returns for invalid JSON - distinct
+from nil, which a valid empty answer (\"[]\") also parses to.")
+
+(defun cerebro--try-parse-json (text)
+  "TEXT parsed as JSON, or `cerebro--parse-failed' when TEXT is not valid
+JSON. `cerebro--parse-json' cannot tell a genuinely empty answer (\"[]\",
+parses to nil) from garbage (also nil) apart - this can, for a caller that
+has to treat the two differently: a program exiting zero but printing
+garbage is not `bd' or a sweep script having answered."
+  (condition-case nil
+      (json-parse-string text :object-type 'alist :array-type 'list
+                         :null-object nil :false-object nil)
+    (error cerebro--parse-failed)))
 
 (defun cerebro--findings-from (repo-root claims epics)
   "The sweep findings (LABEL . FINDING) from CLAIMS and EPICS, the parsed
@@ -619,23 +642,27 @@ when the findings are shown, not when the scripts were kicked off."
 (defun cerebro--request-sweeps (repo-root callback)
   "Run the claims and epics sweep scripts without blocking, one after the
 other; CALLBACK gets the (LABEL . FINDING) list when both have answered, or
-nil when either did not. Returns `busy' if a sweep is already out."
+nil when either did not - including either script exiting zero but printing
+something that is not JSON. Returns `busy' if a sweep is already out."
   (cerebro--run-async
    'sweep-claims repo-root
    (list (expand-file-name (cerebro--script "sweep-claims.sh") repo-root) "--json")
    (lambda (claims-out)
      (if (null claims-out)
          (funcall callback nil)
-       (cerebro--run-async
-        'sweep-epics repo-root
-        (list (expand-file-name (cerebro--script "sweep-epics.sh") repo-root) "--json")
-        (lambda (epics-out)
-          (funcall callback
-                   (and epics-out
-                        (list (cerebro--findings-from
-                               repo-root
-                               (cerebro--parse-json claims-out)
-                               (cerebro--parse-json epics-out)))))))))))
+       (let ((claims-parsed (cerebro--try-parse-json claims-out)))
+         (if (eq claims-parsed cerebro--parse-failed)
+             (funcall callback nil)
+           (cerebro--run-async
+            'sweep-epics repo-root
+            (list (expand-file-name (cerebro--script "sweep-epics.sh") repo-root) "--json")
+            (lambda (epics-out)
+              (funcall callback
+                       (and epics-out
+                            (let ((epics-parsed (cerebro--try-parse-json epics-out)))
+                              (and (not (eq epics-parsed cerebro--parse-failed))
+                                   (list (cerebro--findings-from
+                                          repo-root claims-parsed epics-parsed))))))))))))))
 
 (defun cerebro--finding-at-point ()
   "The sweep finding on this line, or nil."
@@ -1371,11 +1398,17 @@ if the list it partitions is.")
 (defun cerebro--request-beads (repo-root callback)
   "Ask `bd' for the panel's beads without blocking; CALLBACK gets the four
 partition lists (see `cerebro--partition-beads') when the answer lands, or
-nil when `bd' did not answer. Returns what `cerebro--run-async' returns."
+nil when `bd' did not answer - including `bd' exiting zero but printing
+something that is not JSON, which is not a valid empty answer either.
+Returns what `cerebro--run-async' returns."
   (cerebro--run-async
    'beads repo-root cerebro--bd-list-argv
    (lambda (out)
-     (funcall callback (and out (cerebro--partition-beads (cerebro--parse-json out)))))))
+     (funcall callback
+              (and out
+                   (let ((parsed (cerebro--try-parse-json out)))
+                     (and (not (eq parsed cerebro--parse-failed))
+                          (cerebro--partition-beads parsed))))))))
 
 (defun cerebro--bd-text (repo-root id)
   "The output of `bd show ID' run in REPO-ROOT, or nil if it failed.
@@ -1669,6 +1702,14 @@ next timed one. See `cerebro--refresh-panel-when-due'.")
 Also set by `cerebro--beads-buffer's own immediate sweep, so the first
 timed one is ten minutes after the layout, not five seconds after.")
 
+(defvar-local cerebro--sweep-requested-at nil
+  "`float-time' of the sweep chain now in flight, or nil when none is.
+
+`cerebro--sweep' refuses to start a second chain while one is out: the
+claims and epics scripts run under two different `cerebro--run-async' keys,
+so without this a second chain's own epics call could be silently dropped
+as `busy' by the first chain's still-running one (PR #42 review).")
+
 (defvar-local cerebro--beads nil
   "The last partition `bd' answered with, or nil before the first.")
 
@@ -1774,13 +1815,18 @@ section would say the fleet is clean when the script simply failed.
 
 Called by `cerebro--refresh-panel-when-due' every
 `cerebro-sweep-refresh-seconds', and once from `cerebro--beads-buffer' so the
-section is not empty until the first ten minutes are up."
-  (when (buffer-live-p buffer)
+section is not empty until the first ten minutes are up.  A chain already
+out is left to finish rather than joined by a second - see
+`cerebro--sweep-requested-at'."
+  (when (and (buffer-live-p buffer)
+             (not (with-current-buffer buffer cerebro--sweep-requested-at)))
+    (with-current-buffer buffer (setq cerebro--sweep-requested-at (float-time)))
     (let ((root (with-current-buffer buffer (cerebro--repo-root))))
       (cerebro--request-sweeps
        root
        (lambda (answer)
          (when (buffer-live-p buffer)
+           (with-current-buffer buffer (setq cerebro--sweep-requested-at nil))
            ;; ANSWER is (FINDINGS), possibly (nil), when both scripts
            ;; answered; nil when either did not - so only an actual answer
            ;; replaces what is already shown.

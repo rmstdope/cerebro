@@ -127,7 +127,7 @@ have that cleanup to do.
 Changed your mind before it noticed? Deleting the flag cancels the instruction:
 
 ```bash
-rm .claude/agents-state/<name>.stop
+rm .cerebro/state/<name>.stop
 ```
 
 — or just press `s`; a stale flag is cleared on start.
@@ -148,12 +148,12 @@ CI is yours. Read the *Seen before* line: a finding on its third bead is one the
 for.
 
 They are committed, so they survive the machine and the session that wrote them. That is why they
-live under `docs/` rather than beside the state files in `.claude/agents-state/`, which is gitignored
+live under `docs/` rather than beside the state files in `.cerebro/state/`, which is gitignored
 as live state.
 
 ### Leftover worktrees
 
-Builders work in `.claude/worktrees/<bead>` and remove the tree when they finish. One that crashes,
+Builders work in `.cerebro/worktrees/<bead>` and remove the tree when they finish. One that crashes,
 or whose bead somebody else merged, leaves it behind — and a stray tree holding `main` makes the next
 agent's `git checkout main` fail for no visible reason.
 
@@ -219,7 +219,7 @@ you to build one in the first place — starting the app, loading the report she
 what you saw. It runs on a ten-minute cycle like the other passive sessions, so it will sit quietly
 between beads rather than pestering you.
 
-She verifies in her own worktree, `.claude/worktrees/psylocke`, reset to `origin/main` immediately
+She verifies in her own worktree, `.cerebro/worktrees/psylocke`, reset to `origin/main` immediately
 before every use — never the shared checkout, and never a build started before she fetched. She tells
 you the sha she is about to build before she ever asks you to look at anything, and if a port she
 needs is already serving something, she refuses to reuse it rather than risk verifying against a
@@ -284,7 +284,7 @@ gh pr list                    # what is in flight
 git worktree list             # which agent is in which directory
 ```
 
-The one thing not to do is work in `.claude/worktrees/` yourself — those belong to running agents,
+The one thing not to do is work in `.cerebro/worktrees/` yourself — those belong to running agents,
 and checking out a branch there moves an agent off its own work.
 
 ## What it costs
@@ -312,7 +312,7 @@ After about fifteen minutes of silence:
 
 ```bash
 bd reclaim --id <bead> --older-than 10m
-git worktree remove --force .claude/worktrees/<bead>
+git worktree remove --force .cerebro/worktrees/<bead>
 git worktree prune
 ```
 

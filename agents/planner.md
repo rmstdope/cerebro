@@ -102,7 +102,7 @@ stalled-stream watchdog, and the `Bash` timeout ceiling is 600000ms.
 - **Never implement a bead**, and never touch application code. If you are editing `packages/` or
   `crates/`, you have taken the wrong job.
 - **Never branch in the main checkout.** Everything you commit — a chosen mockup, any documentation —
-  is committed from a worktree of your own under `.claude/worktrees/`, and the worktree goes as soon
+  is committed from a worktree of your own under `.cerebro/worktrees/`, and the worktree goes as soon
   as the PR is merged. The navigator and other sessions share that checkout, and a branch created
   there moves their HEAD out from under them. The skill has the commands.
 - **Never decide something the player sees** without the navigator. That is the one thing this role

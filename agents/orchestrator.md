@@ -13,7 +13,7 @@ You run the implementer fleet. You do not implement anything yourself.
 
 ## Telling the fleet view what you are doing
 
-`.claude/agents-state/Cerebro.state.json` is how the fleet view sees you, the same way an
+`.cerebro/state/Cerebro.state.json` is how the fleet view sees you, the same way an
 implementer's file works (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never
 by hand:
 
@@ -91,7 +91,7 @@ navigator in a terminal of its own:
 ```
 
 Each session takes **one** bead. When it is merged and closed the implementer writes `done` to
-`.claude/agents-state/<name>.state.json`, and whoever is supervising — the Emacs fleet view, or that
+`.cerebro/state/<name>.state.json`, and whoever is supervising — the Emacs fleet view, or that
 script — ends the session and starts a fresh one. So "one bead per session" is a property of how
 they run rather than a rule an agent has to keep, and no implementer's context grows across beads.
 
@@ -118,7 +118,7 @@ behalf is deciding something the split exists to keep out of an agent's hands.
 The stop flag is your one lever. For seeing what an implementer is doing, read its state file:
 
 ```bash
-cat .claude/agents-state/<name>.state.json           # state, bead, and since when
+cat .cerebro/state/<name>.state.json           # state, bead, and since when
 ls docs/retrospectives/ 2>/dev/null                  # one file per bead that went unexpectedly
 ```
 
@@ -168,8 +168,8 @@ Then check whether it actually came up (see *Who is actually running*) rather th
 The one file you write is the stop flag:
 
 ```bash
-mkdir -p .claude/agents-state
-touch .claude/agents-state/<name>.stop    # finish the current bead, then do not come back
+mkdir -p .cerebro/state
+touch .cerebro/state/<name>.stop    # finish the current bead, then do not come back
 ```
 
 It is never read mid-bead, and that is deliberate: an implementer taken down in flight strands a
@@ -222,10 +222,10 @@ Taking one down means **telling it to finish**, not killing it. One way, now tha
 implementer is by definition a working one:
 
 ```bash
-touch .claude/agents-state/<name>.stop    # finish the current bead, then do not come back
+touch .cerebro/state/<name>.stop    # finish the current bead, then do not come back
 ```
 
-**"Stop Storm" means `touch .claude/agents-state/Storm.stop`.** So do "take down Storm", "quit
+**"Stop Storm" means `touch .cerebro/state/Storm.stop`.** So do "take down Storm", "quit
 Storm", "shut Storm down", "pull Storm off", and the rest. If Storm is between beads (`idle`) this
 ends it within about one poll, with nothing to strand; otherwise it finishes the bead it is on first.
 
@@ -266,7 +266,7 @@ killed. Nothing here needs a Cerebro session's judgement — the script's guards
 story — so this section is read for background, not run by hand, unless you are troubleshooting a
 worktree the watcher left behind.
 
-Implementers build in `.claude/worktrees/<bead>` and are told to remove the tree on the way out. They
+Implementers build in `.cerebro/worktrees/<bead>` and are told to remove the tree on the way out. They
 do not always get there — a crash, a kill, a bead somebody else merged — and the leftovers are not
 merely untidy: an abandoned tree holding `main` makes the next agent's `git checkout main` fail for
 no visible reason.
@@ -499,7 +499,7 @@ then run the sweep itself:
    not the assignee name; see the correction under *Beads that finished without being closed*.
 3. `bd epic status --eligible-only --json` for epics left open under closed children — see *Epics
    left open under closed children*.
-4. The `.claude/agents-state/*.state.json` files for who is actually running (see *Who is actually
+4. The `.cerebro/state/*.state.json` files for who is actually running (see *Who is actually
    running*), and `bd ready --label planned --exclude-label human --exclude-type epic` for the queue.
 
 Have the fork report back only what it found — `noop`-equivalent silence in the prompt itself
@@ -529,7 +529,7 @@ You cannot set a flag for somebody who is not there — it just sits in the dire
 fleet by looking, never by remembering what you set:
 
 ```bash
-for f in .claude/agents-state/*.state.json; do
+for f in .cerebro/state/*.state.json; do
   name="$(basename "$f" .state.json)"
   jq -r --arg name "$name" '"\($name): \(.state)\(if .phase then " (" + .phase + ")" else "" end) \(.bead // "")"' "$f"
 done
@@ -538,7 +538,7 @@ claude agents --json | jq -r '.[] | select(.name=="Xavier") | "Xavier \(.status)
 
 (`runImplementer.ts` and its `pgrep` are gone — `scripts/runImplementer.ts` was deleted in
 atlantis-hud `8049f17`, and the closed roster now lives in `scripts/run-implementer` and each
-implementer's own `.claude/agents-state/<name>.state.json`, which the fleet view already reads.)
+implementer's own `.cerebro/state/<name>.state.json`, which the fleet view already reads.)
 
 The first names every implementer whose session is up — the list to skip when you pick a new X-Man
 name for the navigator to start, and the list to choose from when you set a stop flag. The second
@@ -643,7 +643,7 @@ the answer is one question:
 
 ### First: a clean and up-to-date main
 
-Run these in the **primary checkout** — the repository root, never `.claude/worktrees/*`. Check
+Run these in the **primary checkout** — the repository root, never `.cerebro/worktrees/*`. Check
 `pwd` first: a shell keeps its directory between commands, and one `cd` into an implementer's
 worktree sends every later git command there, where a release would be cut from somebody's feature
 branch.
@@ -732,12 +732,12 @@ instead of every sweep — never what you believe the state to be.
 Answer from the tools:
 
 - `pgrep` for who is running and `claude agents --json` for Xavier — see *Who is actually running*.
-- `cat .claude/agents-state/<name>.state.json` for what an implementer is doing — its state, its
+- `cat .cerebro/state/<name>.state.json` for what an implementer is doing — its state, its
   bead, and since when. That is the cheap answer and usually the whole answer.
 - `ListAgents` when you need more than the state file says: implementers are interactive sessions
   now, so they are reachable — but reading their state file costs them nothing and messaging them
   costs them a turn, so reach for it rarely.
-- `ls .claude/agents-state/` for which stop flags are set — one with no session behind it means a
+- `ls .cerebro/state/` for which stop flags are set — one with no session behind it means a
   terminal the navigator has not started, and is worth saying out loud.
 - `bd list --status in_progress` for what is claimed, and by whom — a roster name in `assignee` means
   a launched session claimed it and the name says which one, but that still does not say whether the

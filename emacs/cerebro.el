@@ -14,7 +14,7 @@
 ;; unbound here on purpose.
 ;;
 ;; Data sources:
-;;   - an agent's status file, `.claude/agents-state/<name>.state.json',
+;;   - an agent's status file, `.cerebro/state/<name>.state.json',
 ;;     written by the agent itself at every state transition (see ah-vcf.1,
 ;;     ah-u3i and ah-2n3.2): { state: "idle"|"working"|"asking"|"done", phase,
 ;;     bead, since, phase_since, pid }.  Every implementer writes one; since
@@ -610,7 +610,7 @@ than an abandoned one."
 (defun cerebro--supervise-action (agent stop-flag-p now)
   "What the fleet poll should do about AGENT at NOW, or nil for nothing.
 
-STOP-FLAG-P is whether `.claude/agents-state/<name>.stop' exists.  The
+STOP-FLAG-P is whether `.cerebro/state/<name>.stop' exists.  The
 answers are:
 
 `restart' - AGENT finished its bead.  An interactive session cannot end
@@ -875,7 +875,7 @@ sweep pipeline; the command itself carries no path, since it is run with
 (defun cerebro--repo-root ()
   "The repository root above `default-directory', or an error.
 Located by `.claude/cerebro' (the submodule mount, present in every
-consumer from clone time) rather than by `.claude/agents-state', which
+consumer from clone time) rather than by `.cerebro/state', which
 may not exist yet on a fresh machine - `agent-state' and
 `cerebro--write-stop-flag' both create it on first write."
   (or (locate-dominating-file default-directory ".claude/cerebro")
@@ -901,7 +901,7 @@ may not exist yet on a fresh machine - `agent-state' and
 
 (defun cerebro--state-file-path (repo-root name)
   "Where NAME's status file lives, mirroring `statePath' in runImplementer.ts."
-  (expand-file-name (format ".claude/agents-state/%s.state.json" name) repo-root))
+  (expand-file-name (format ".cerebro/state/%s.state.json" name) repo-root))
 
 (defun cerebro--read-state-file (path)
   "The parsed contents of PATH, or nil if it is absent, unreadable or torn."
@@ -1185,7 +1185,7 @@ longer asking, so its next question is nudgeable again.")
 
 (defun cerebro--stop-flag-path (repo-root name)
   "Where NAME's stop flag lives, as `orchestrator.md' documents it."
-  (expand-file-name (format ".claude/agents-state/%s.stop" name) repo-root))
+  (expand-file-name (format ".cerebro/state/%s.stop" name) repo-root))
 
 (defun cerebro--stop-flag-p (repo-root name)
   "Whether a stop flag is set for NAME."
@@ -1939,9 +1939,9 @@ cleared first rather than prompting a second time for the same kill."
   "Create NAME's stop flag in REPO-ROOT, empty - only its existence is read.
 
 `make-directory' first, `:parents' t, mirroring the documented
-\"mkdir -p .claude/agents-state && touch ...\" flow (`orchestrator.md') - since
+\"mkdir -p .cerebro/state && touch ...\" flow (`orchestrator.md') - since
 ah-2n3.1, `cerebro--repo-root' is located by `.claude/cerebro' rather than by
-this directory, so `.claude/agents-state' is no longer guaranteed to exist by
+this directory, so `.cerebro/state' is no longer guaranteed to exist by
 the time this runs."
   (let ((path (cerebro--stop-flag-path repo-root name)))
     (make-directory (file-name-directory path) t)

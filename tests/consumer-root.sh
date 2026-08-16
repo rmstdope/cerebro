@@ -43,7 +43,7 @@ shared_out="$("$consumer/.claude/cerebro/scripts/consumer-root" --shared)"
 pass "--shared, from the main checkout, prints the same consumer"
 
 # --- a linked worktree of it: plain answers the worktree, --shared answers the main checkout ---
-worktree="$consumer/.claude/worktrees/wt"
+worktree="$consumer/.cerebro/worktrees/wt"
 git -C "$consumer" worktree add -q "$worktree" -b wt-branch
 mkdir -p "$worktree/.claude/cerebro/scripts"
 ln -s "$repo_root/scripts/consumer-root" "$worktree/.claude/cerebro/scripts/consumer-root"

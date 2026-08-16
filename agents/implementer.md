@@ -48,7 +48,7 @@ Write `done` and say what you did. The fleet view does the rest — see *The sta
 
 ## The state file is how you are seen
 
-`.claude/agents-state/<your-name>.state.json` is the only way the fleet view knows what you are
+`.cerebro/state/<your-name>.state.json` is the only way the fleet view knows what you are
 doing, and the only way it knows when to replace you. Write it at **every** transition, in the same
 `Bash` call that does the thing it describes — through `scripts/agent-state`, never by hand,
 so the `since`/`phase_since` bookkeeping below is handled by code rather than remembered an hour into

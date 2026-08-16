@@ -28,7 +28,7 @@ bd dolt pull
 
 ### Telling the fleet view what you are doing
 
-`.claude/agents-state/Psylocke.state.json` is how the fleet view sees you, exactly as an
+`.cerebro/state/Psylocke.state.json` is how the fleet view sees you, exactly as an
 implementer's file is — see `ah-2n3.2`. Write it at every transition, through
 `.claude/cerebro/scripts/agent-state`, never by hand:
 
@@ -126,20 +126,20 @@ judged.**
 ```bash
 # Once, if the worktree does not exist yet (a pruned or first-run tree comes back the same way):
 git fetch origin main
-git worktree add --detach .claude/worktrees/psylocke origin/main
+git worktree add --detach .cerebro/worktrees/psylocke origin/main
 # Before EVERY verification, whether or not the tree existed a minute ago:
-git -C .claude/worktrees/psylocke fetch origin main
-git -C .claude/worktrees/psylocke reset --hard origin/main
-git -C .claude/worktrees/psylocke clean -fd
-git -C .claude/worktrees/psylocke submodule update --init --recursive
-(cd .claude/worktrees/psylocke && pnpm install --frozen-lockfile)
-git -C .claude/worktrees/psylocke rev-parse --short HEAD        # the sha you will build — say it
+git -C .cerebro/worktrees/psylocke fetch origin main
+git -C .cerebro/worktrees/psylocke reset --hard origin/main
+git -C .cerebro/worktrees/psylocke clean -fd
+git -C .cerebro/worktrees/psylocke submodule update --init --recursive
+(cd .cerebro/worktrees/psylocke && pnpm install --frozen-lockfile)
+git -C .cerebro/worktrees/psylocke rev-parse --short HEAD        # the sha you will build — say it
 ```
 
 - **Detached, no branch.** `--detach` so there is nothing for `prune-worktrees.sh` to delete a
   branch of and nothing that could drift from `origin/main`. Never `checkout -b` here, never commit
   here.
-- **Prove the work is in it**, per candidate: `git -C .claude/worktrees/psylocke merge-base
+- **Prove the work is in it**, per candidate: `git -C .cerebro/worktrees/psylocke merge-base
   --is-ancestor <bead's commit> HEAD` (the commit you already found with `git log origin/main --grep
   "(<id>):" -F`). Non-zero → say "`<id>` is not in `origin/main` yet at `<sha>`", leave the bead
   `verification:pending`, and move on; there is nothing to verify.
@@ -150,9 +150,9 @@ git -C .claude/worktrees/psylocke rev-parse --short HEAD        # the sha you wi
   verify against a server I did not start — stop it and say when"), and wait. Never kill it — it may
   be theirs.
 - **Build after the reset, never before it.** Warming stays allowed and encouraged, but it is
-  `pnpm --filter @atlantis/browser-core build:wasm` **run inside `.claude/worktrees/psylocke` after
+  `pnpm --filter @atlantis/browser-core build:wasm` **run inside `.cerebro/worktrees/psylocke` after
   the reset above** — the reset is what makes the warm build the right build.
-- **The sweep keeps this tree** (`prune-worktrees.sh` keeps `.claude/worktrees/psylocke` by name); if
+- **The sweep keeps this tree** (`prune-worktrees.sh` keeps `.cerebro/worktrees/psylocke` by name); if
   it is nevertheless gone, the "once" block above recreates it and the cold build is the cost — say
   so, warm, and carry on.
 
@@ -164,11 +164,11 @@ you can ahead of the question:
 - **What it claimed.** Read the bead's description, acceptance criteria, and the plan's *User-facing
   decisions* — what was supposed to change, from the player's side.
 - **Where it landed.** The PR(s) and commit(s) via the `git log` above.
-- **What to run**, always from `.claude/worktrees/psylocke`, reset per *The tree you verify in*
+- **What to run**, always from `.cerebro/worktrees/psylocke`, reset per *The tree you verify in*
   above. Desktop or web, or both in turn when the change genuinely differs between them:
-  - Web: `(cd .claude/worktrees/psylocke && pnpm --filter @atlantis/web dev)` (vite, default port
+  - Web: `(cd .cerebro/worktrees/psylocke && pnpm --filter @atlantis/web dev)` (vite, default port
     5173).
-  - Desktop: `(cd .claude/worktrees/psylocke && pnpm --filter @atlantis/desktop exec tauri dev)`
+  - Desktop: `(cd .cerebro/worktrees/psylocke && pnpm --filter @atlantis/desktop exec tauri dev)`
     (Tauri v2; its own `beforeDevCommand` starts vite on 4174 with `--strictPort`).
   - Both run `build:wasm` first, which is minutes on a cold cache. **Warm it before asking whether
     the navigator is ready** — after the reset, inside the worktree, start the dev server once ahead
@@ -278,7 +278,7 @@ bd dolt push
 
 If a verification is found to have run against the wrong build, or a verdict has to be withdrawn,
 write it up the same way an implementer writes a retrospective — but under your own name. From a
-worktree of your own (`.claude/worktrees/<bead>-retro`, never `.claude/worktrees/psylocke` and never
+worktree of your own (`.cerebro/worktrees/<bead>-retro`, never `.cerebro/worktrees/psylocke` and never
 the navigator's shared checkout — the same rule the planner follows for a mockup PR), write
 `docs/retrospectives/<bead>-verifier.md` in the README's format, with `**Role:** verifier` in place
 of the `Implementer:` line, and open it as a `docs(<bead>): verifier retrospective` PR. It merges on
@@ -326,7 +326,7 @@ touching among what did. Say so in one line and move on; do not go looking for s
 - **Never writes `done`.** That state is an implementer's alone — you have no bead of your own to
   finish and are never replaced between passes. `idle` is what you write when a pass ends with
   nothing left to prepare.
-- **Never verifies outside `.claude/worktrees/psylocke`.** Not the navigator's shared checkout, not
+- **Never verifies outside `.cerebro/worktrees/psylocke`.** Not the navigator's shared checkout, not
   a one-off clone — the reset-before-every-use worktree is what makes the sha you say provable.
 - **Never reuses a server she did not start this pass.** Anything already listening on the port is a
   refusal, not something to build on top of.

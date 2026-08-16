@@ -73,7 +73,7 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   promise a re-invocation that nothing delivers; this stranded a claimed bead, an open PR and
   unanswered review comments. Implementers are interactive now, so an ended turn no longer kills the
   process — it just sits there until a human types something, which is not better.
-- **The state file is the contract, for every agent.** `.claude/agents-state/<name>.state.json`
+- **The state file is the contract, for every agent.** `.cerebro/state/<name>.state.json`
   carries `idle`/`working`/`asking`/`done`; every agent in the fleet writes it, `cerebro.el` acts on
   it. Since ah-u3i it also carries `phase` (an implementer's `build`/`gate`/`review`/`ci`/`rebase`/
   `merge`, or a role word for the interactive five since ah-2n3.2, or null) and `phase_since` —
@@ -119,7 +119,7 @@ The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebr
 tests only exercise the pure half, passing state in as plain data. Keep new logic on the pure side or
 it becomes untestable.
 
-Two data sources it depends on, both under `.claude/agents-state/` in the consumer repo:
+Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
 
 - `<name>.state.json` — `{state: "idle"|"working"|"asking"|"done", phase, bead, since, phase_since,
   pid}`, written by **the agent itself** at each transition through `scripts/agent-state` (never by

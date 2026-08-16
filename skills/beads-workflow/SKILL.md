@@ -132,7 +132,7 @@ leaves its bead in_progress forever, invisible to `bd ready`, so
 
 ```bash
 bd reclaim --id <bead> --older-than 10m        # one named bead, never a sweep
-git worktree remove --force .claude/worktrees/<bead>
+git worktree remove --force .cerebro/worktrees/<bead>
 git worktree prune                             # separately: it must run even if the remove failed
 ```
 
@@ -164,10 +164,10 @@ assignee commit, and they travel only on `bd dolt push`/`bd dolt pull`. A claim 
 invisible to an agent on another machine for as long as you hold it.
 
 **Check your working directory before any `git` command.** The other agents are in
-`.claude/worktrees/*`, and a shell's directory persists between commands — one `cd` into a worktree
+`.cerebro/worktrees/*`, and a shell's directory persists between commands — one `cd` into a worktree
 to check something leaves every later command there. Branching from that shell checks a branch out
 inside somebody else's live worktree, which is a collision the bead graph cannot prevent. This has
-happened: a `cd .claude/worktrees/task` to see whether worktrees share the database was followed,
+happened: a `cd .cerebro/worktrees/task` to see whether worktrees share the database was followed,
 several commands later, by a `git checkout -b` that moved that agent off its own branch. Run
 `pwd && git branch --show-current` before branching, or give `git -C /path/to/repo` the path
 outright.

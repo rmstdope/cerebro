@@ -2,7 +2,7 @@
 #
 # Removes agent worktrees that have nothing left in them.
 #
-# Every implementer builds its bead in `.claude/worktrees/<bead>` and is told to remove it on the way
+# Every implementer builds its bead in `.cerebro/worktrees/<bead>` and is told to remove it on the way
 # out — on every exit, including the ones that go wrong. It does not always get there: a session that
 # crashes, is killed, or has its bead merged by somebody else leaves the tree, its branch and its
 # build artifacts on disk. They accumulate, and a stray one costs more than space: `git worktree
@@ -17,7 +17,7 @@
 #
 # Safe means **nothing can be lost**, which is a stronger and simpler test than "nobody is using it":
 #
-#   1. It is under `.claude/worktrees/`. The main checkout is never touched.
+#   1. It is under `.cerebro/worktrees/`. The main checkout is never touched.
 #   2. The working tree is clean — no modified files, no untracked ones.
 #   3. Its branch holds no commit that `origin/main` does not already have.
 #   4. Nothing has changed in it for a while (see STALE_MINUTES), so a tree that was created moments
@@ -26,7 +26,7 @@
 # Fail any one and it stays, with the reason printed. Together they mean the directory can go without
 # destroying a line of anybody's work: the commits are on main and there is nothing uncommitted.
 #
-# One named exception: `.claude/worktrees/psylocke` is kept by name, unconditionally, ahead of all
+# One named exception: `.cerebro/worktrees/psylocke` is kept by name, unconditionally, ahead of all
 # four checks. It is Psylocke's own verification tree (ah-p31) — reset hard to `origin/main` before
 # every use rather than merged, so it never satisfies "holds no commit main lacks" the way a normal
 # agent worktree does, and there is nothing in it to lose by keeping it either way.
@@ -98,7 +98,7 @@ sweep() {
 
   while IFS= read -r tree; do
     case "$tree" in
-      "$repo_root"/.claude/worktrees/*) ;;
+      "$repo_root"/.cerebro/worktrees/*) ;;
       *) continue ;;
     esac
 

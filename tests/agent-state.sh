@@ -49,7 +49,7 @@ run_state() {
 }
 
 state_file() {
-  printf '%s/.claude/agents-state/%s.state.json' "$1" "$2"
+  printf '%s/.cerebro/state/%s.state.json' "$1" "$2"
 }
 
 # --- writes-all-fields ---
@@ -187,7 +187,7 @@ pass "no-phase-is-null"
 
 # --- old-format-file-is-fine ---
 tmp="$(new_fixture)"
-mkdir -p "$tmp/.claude/agents-state"
+mkdir -p "$tmp/.cerebro/state"
 f="$(state_file "$tmp" Cyclops)"
 cat > "$f" <<'EOF'
 {"state":"working","bead":"ah-f9c","since":"2026-08-14T09:00:00Z","pid":1}
@@ -202,7 +202,7 @@ pass "old-format-file-is-fine"
 # --- no-tmp-left-behind ---
 tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1
-leftover="$(find "$tmp/.claude/agents-state" -name '*.tmp' 2>/dev/null)"
+leftover="$(find "$tmp/.cerebro/state" -name '*.tmp' 2>/dev/null)"
 [[ -z "$leftover" ]] || fail "no-tmp-left-behind: found $leftover"
 rm -rf "$tmp"
 pass "no-tmp-left-behind"
@@ -278,9 +278,9 @@ pass "an-implementer-name-can-use-a-role-phase-word-too"
 # --- from-a-worktree-copy-writes-to-the-shared-checkout (ah-e0w) ---
 # An implementer that inits the submodule inside its own bead worktree (the remedy ah-4ao, ah-axj
 # and ah-aao prescribe) invokes agent-state relative to THAT copy. The state file must still land
-# in the main checkout the fleet view reads, never in the worktree's own .claude/agents-state/.
+# in the main checkout the fleet view reads, never in the worktree's own .cerebro/state/.
 tmp="$(new_fixture)"
-worktree="$tmp/.claude/worktrees/ah-f9c"
+worktree="$tmp/.cerebro/worktrees/ah-f9c"
 git -C "$tmp" worktree add -q "$worktree" -b ah-f9c-branch
 mkdir -p "$worktree/.claude/cerebro/scripts"
 ln -s "$repo_root/scripts/agent-state" "$worktree/.claude/cerebro/scripts/agent-state"
@@ -293,7 +293,7 @@ f="$(state_file "$tmp" Cyclops)"
 [[ -f "$f" ]] || fail "from-a-worktree-copy-writes-to-the-shared-checkout: no state file in the main checkout"
 state="$(jq -r '.state' "$f")"; [[ "$state" == "working" ]] \
   || fail "from-a-worktree-copy-writes-to-the-shared-checkout: state=$state"
-[[ ! -d "$worktree/.claude/agents-state" ]] \
+[[ ! -d "$worktree/.cerebro/state" ]] \
   || fail "from-a-worktree-copy-writes-to-the-shared-checkout: a copy was also written in the worktree"
 rm -rf "$tmp"
 pass "from-a-worktree-copy-writes-to-the-shared-checkout"

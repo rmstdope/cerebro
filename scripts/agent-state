@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Writes an agent's state file: .claude/agents-state/<name>.state.json. Written by every agent in
+# Writes an agent's state file: .cerebro/state/<name>.state.json. Written by every agent in
 # the fleet - the thirteen implementers and, since ah-2n3.2, the five interactive roles (Xavier,
 # Cerebro, Moira, Psylocke, Bishop) - so cerebro.el derives a row the same way for all of them; it
 # exists so the two timestamps below are handled by code rather than remembered by an agent an hour
@@ -133,7 +133,7 @@ fi
 # which from a bead worktree's own submodule copy is the worktree itself, not the main checkout
 # the fleet view reads (ah-e0w). See scripts/consumer-root for the two roots and why they differ.
 repo_root="$("$script_dir/consumer-root" --shared)"
-out_dir="$repo_root/.claude/agents-state"
+out_dir="$repo_root/.cerebro/state"
 mkdir -p "$out_dir"
 out_file="$out_dir/$name.state.json"
 tmp_file="$out_file.tmp"

@@ -61,7 +61,7 @@ the lease going stale the whole time. Block, and stay in the run.
 
 ## Telling the fleet view what you are doing
 
-`.claude/agents-state/<your-name>.state.json` is how you are seen and how you are replaced. Rewrite
+`.cerebro/state/<your-name>.state.json` is how you are seen and how you are replaced. Rewrite
 it at every transition, in the same `Bash` call as the thing it describes — through
 `scripts/agent-state`, never by hand:
 
@@ -157,7 +157,7 @@ rewrite one: they are the record of runs that are over. If your bead produced tw
 in your own file, as two sections of the one retrospective.
 
 It lives under `docs/` rather than beside your state file because it is knowledge rather than live
-state — `.claude/agents-state/` is gitignored, so a retrospective there would never leave the
+state — `.cerebro/state/` is gitignored, so a retrospective there would never leave the
 machine that wrote it.
 
 **Committing it costs a CI cycle, and that is the intended trade.** Adding the file moves the head
@@ -367,14 +367,14 @@ Never check out `main` — another agent usually holds it:
 
 ```bash
 git -C <repo> fetch origin main
-git -C <repo> worktree add -b <id>-short-description <repo>/.claude/worktrees/<id> origin/main
-cd <repo>/.claude/worktrees/<id> && pnpm install --frozen-lockfile
+git -C <repo> worktree add -b <id>-short-description <repo>/.cerebro/worktrees/<id> origin/main
+cd <repo>/.cerebro/worktrees/<id> && pnpm install --frozen-lockfile
 ```
 
 The install is not optional: a fresh worktree has no `node_modules`, so the first `pnpm run lint`
 fails for a reason that has nothing to do with the bead.
 
-Worktrees must stay under `.claude/worktrees/`. `bd` and cargo both find their configuration by
+Worktrees must stay under `.cerebro/worktrees/`. `bd` and cargo both find their configuration by
 walking up, so a worktree outside the repository silently gets its own empty bead database and its
 own multi-gigabyte build directory.
 
@@ -566,7 +566,7 @@ survived.
 
 ```bash
 bd close <id> --reason "Delivered in PR #NN"
-git -C <repo> worktree remove --force .claude/worktrees/<id>
+git -C <repo> worktree remove --force .cerebro/worktrees/<id>
 git -C <repo> worktree prune
 bd dolt push
 .claude/cerebro/scripts/agent-state <name> done --bead <id> --pid $PPID

@@ -2194,10 +2194,10 @@ renders."
 ;; ah-4ao increment 3: turning a sweep's facts into a decision
 
 ;; `cerebro--claim-finding' works from `sweep-claims.sh's JSON, parsed the way
-;; `cerebro--bd-json' would: an alist with symbol keys.
+;; `cerebro--parse-json' would: an alist with symbol keys.
 (defun cerebro-test--claim-candidate (id assignee &optional on-main age verification-failed
                                                     docs-only lease-age)
-  ;; Booleans as `cerebro--bd-json' parses them: `:false-object nil', so JSON
+  ;; Booleans as `cerebro--parse-json' parses them: `:false-object nil', so JSON
   ;; false and absent both read as plain nil, same as everywhere else here.
   `((id . ,id) (assignee . ,assignee) (title . "a bead")
     (verification_failed . ,verification-failed)

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+#
+# Flips an interactive agent's state file to `asking' while it has a question in front of the
+# navigator, and back again when the answer lands. Called by hooks, never by an agent:
+#
+#     .claude/cerebro/scripts/agent-asking begin      # PreToolUse on the question tool
+#     .claude/cerebro/scripts/agent-asking end        # PostToolUse, and PostToolUseFailure
+#
+# WHY THIS EXISTS. `agents/verifier.md' has told Psylocke to write `asking' before every question and
+# `working' the moment it is answered since ah-2n3.2, in a table, then in per-site repeats, then as a
+# rule with the reason spelled out. She still asks under `working' and still leaves `asking' behind
+# for an hour after the navigator answered, because the two writes sit either side of the one moment
+# in a session where attention is on the human rather than the bookkeeping. Prose was the wrong tool:
+# this is a mechanical fact about a tool call, so a hook states it mechanically and the agent's own
+# writes become a belt-and-braces second copy rather than the only one.
+#
+# WHAT IT NEEDS. `CEREBRO_AGENT_NAME', exported by `scripts/launch' via `agent-hooks-env'. Without
+# it there is no way to know whose file this is, so the script exits 0 and does nothing - which is
+# also what happens in an ordinary `claude' session that happens to load these settings. Every other
+# failure is swallowed the same way: a hook that breaks a question is far worse than a stale state
+# file, which is the very thing it exists to clean up.
+#
+# HOW IT RESTORES. `begin' copies the pre-question state to <name>.prequestion.json and writes
+# `asking'; `end' puts back exactly what was there, except that `idle' comes back as `working' - an
+# agent that has just been answered is doing something, whatever it was doing before it asked. If the
+# sidecar is missing (a session that restarted mid-question, a `begin' that never ran), `end' still
+# rescues the common case: a file left at `asking' is flipped to `working', keeping bead and phase.
+# It never invents a bead or a phase, and never touches a file that is not at `asking'.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+mode="${1:-}"
+case "$mode" in
+  begin|end) ;;
+  *)
+    echo "usage: agent-asking <begin|end>" >&2
+    exit 2 ;;
+esac
+
+# Nothing below is worth failing a question over.
+exit_quietly() { exit 0; }
+trap exit_quietly ERR
+
+name="${CEREBRO_AGENT_NAME:-}"
+[[ -n "$name" ]] || exit 0
+
+command -v jq >/dev/null 2>&1 || exit 0
+
+repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || exit 0
+state_file="$repo_root/.cerebro/state/$name.state.json"
+sidecar="$repo_root/.cerebro/state/$name.prequestion.json"
+
+[[ -f "$state_file" ]] || exit 0
+
+read_field() { jq -r "(.$1 // empty)" "$2" 2>/dev/null || true; }
+
+state="$(read_field state "$state_file")"
+bead="$(read_field bead "$state_file")"
+phase="$(read_field phase "$state_file")"
+# The agent's own claude process, as it recorded it. $PPID here is the shell the hook runs in, whose
+# parent is that same process - a usable fallback, but the recorded pid is the one that is certainly
+# right, and a wrong pid shows the agent as dead and invites a second session over it.
+pid="$(read_field pid "$state_file")"
+[[ "$pid" =~ ^[0-9]+$ ]] || pid="$PPID"
+
+write_state() {
+  local target_state="$1" target_bead="$2" target_phase="$3"
+  local args=("$name" "$target_state")
+  [[ -n "$target_bead" ]] && args+=(--bead "$target_bead")
+  # A phase is only accepted with working or asking, and only from agent-state's vocabulary; an
+  # empty one is simply left off rather than guessed at.
+  if [[ -n "$target_phase" && ( "$target_state" == "working" || "$target_state" == "asking" ) ]]; then
+    args+=(--phase "$target_phase")
+  fi
+  args+=(--pid "$pid")
+  "$script_dir/agent-state" "${args[@]}" >/dev/null 2>&1 || true
+}
+
+case "$mode" in
+  begin)
+    # Already asking - the agent wrote it itself, which is the documented behaviour and not a case
+    # to overwrite. Leaving the sidecar alone matters: it holds the state from before *this*
+    # question, and rewriting it with `asking' would make `end' restore `asking'.
+    [[ "$state" == "asking" ]] && exit 0
+    jq -n --arg state "$state" --arg bead "$bead" --arg phase "$phase" \
+      '{state: $state, bead: $bead, phase: $phase}' > "$sidecar.tmp" 2>/dev/null || exit 0
+    mv -f "$sidecar.tmp" "$sidecar" 2>/dev/null || exit 0
+    write_state asking "$bead" "$phase"
+    ;;
+  end)
+    if [[ -f "$sidecar" ]]; then
+      prev_state="$(read_field state "$sidecar")"
+      prev_bead="$(read_field bead "$sidecar")"
+      prev_phase="$(read_field phase "$sidecar")"
+      rm -f "$sidecar"
+      # `idle' is the sleep loop and nothing else (agents/verifier.md, rule 2): an answered question
+      # means work, so it comes back as `working' rather than as the idle it interrupted.
+      [[ "$prev_state" == "idle" || -z "$prev_state" ]] && prev_state="working"
+      write_state "$prev_state" "$prev_bead" "$prev_phase"
+    elif [[ "$state" == "asking" ]]; then
+      write_state working "$bead" "$phase"
+    fi
+    ;;
+esac
+
+exit 0

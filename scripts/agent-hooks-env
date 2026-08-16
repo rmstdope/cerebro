@@ -1,0 +1,31 @@
+# Sourced by `scripts/launch', never run:
+#
+#     . "$here/agent-hooks-env" <Name>
+#     exec claude ... --settings "$CEREBRO_HOOK_SETTINGS" ...
+#
+# Sets up what the Claude Code hooks in hooks/ need (see hooks/README.md):
+#
+#   CEREBRO_AGENT_NAME    whose state file the hooks write - the canonical `scripts/roster'
+#                         spelling, the same string `agent-state' and the state file are named for,
+#                         which is not always what the navigator typed on the command line. `launch'
+#                         has already resolved that by the time it sources this.
+#   CEREBRO_SCRIPTS       absolute path to this directory, so the settings file can name the hook
+#                         command without knowing where the submodule is mounted.
+#   CEREBRO_HOOK_SETTINGS the settings file to pass to `claude --settings`.
+#
+# The first two are exported because the hook subprocess inherits them through `claude`; the third
+# is only read by the launcher itself, one line later.
+#
+# A file of its own rather than four lines inside `launch' only because the hooks are a subject:
+# `launch' says what starts a session, this says what the session's hooks need, and `hooks/' holds
+# the settings they are declared in. A launcher that passes --settings without exporting the names
+# gets hooks that quietly do nothing, which is the failure mode hardest to notice from the fleet
+# view - so the two halves live in one place and are sourced together.
+
+_agent_hooks_env_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+export CEREBRO_AGENT_NAME="$1"
+export CEREBRO_SCRIPTS="$_agent_hooks_env_dir"
+CEREBRO_HOOK_SETTINGS="$_agent_hooks_env_dir/../hooks/question-state.settings.json"
+
+unset _agent_hooks_env_dir

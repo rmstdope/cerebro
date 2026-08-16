@@ -131,6 +131,7 @@ while IFS=$'\t' read -r name role kind; do
   echo "$out" | grep -q "^BEADS_ACTOR=${name}\$" || fail "launch $name: expected BEADS_ACTOR=$name, got: $out"
   echo "$out" | grep -A1 '^ARG:--agent$' | grep -q "^ARG:${role}\$" || fail "launch $name: expected --agent $role, got: $out"
   echo "$out" | grep -A1 '^ARG:--name$' | grep -q "^ARG:${name}\$" || fail "launch $name: expected --name $name, got: $out"
+  echo "$out" | grep -A1 '^ARG:--remote-control$' | grep -q "^ARG:${name}\$" || fail "launch $name: expected --remote-control $name, got: $out"
 
   expected_model="$(model_of "$role")"
   if [[ -n "$expected_model" ]]; then
@@ -154,7 +155,7 @@ while IFS=$'\t' read -r name role kind; do
   echo "$prompt" | grep -q "$role" || fail "launch $name: prompt does not name $role"
   echo "$prompt" | grep -q "fill the buffer" && fail "launch $name: prompt still has the old per-role drift"
 done <<<"$roster_out"
-pass "launch: every roster row reaches the stub with the right actor, agent, name, model, effort"
+pass "launch: every roster row reaches the stub with the right actor, agent, name, remote-control name, model, effort"
 
 # --- launch overrides ---
 
@@ -168,6 +169,16 @@ opus_line="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1)"
 total_lines="$(echo "$out" | wc -l | tr -d ' ')"
 [[ $opus_line -lt $total_lines ]] || fail "launch Xavier --model opus: opus should come before the prompt"
 pass "launch Xavier --model opus: fable (declared) before opus (override) before the prompt"
+
+# --- launch overrides: a caller's own --remote-control comes after the launcher's ---
+out="$(run_launcher launch Xavier --remote-control Elsewhere)"
+first="$(echo "$out" | grep -n '^ARG:--remote-control$' | head -1 | cut -d: -f1)"
+second="$(echo "$out" | grep -n '^ARG:--remote-control$' | tail -1 | cut -d: -f1)"
+[[ -n "$first" && -n "$second" && $first -lt $second ]] \
+  || fail "launch Xavier --remote-control Elsewhere: expected the launcher's flag before the caller's, got: $out"
+echo "$out" | sed -n "$((second+1))p" | grep -q '^ARG:Elsewhere$' \
+  || fail "launch Xavier --remote-control Elsewhere: caller's name should follow its flag, got: $out"
+pass "launch Xavier --remote-control Elsewhere: launcher's Xavier before the caller's Elsewhere"
 
 # --- launch spelling ---
 

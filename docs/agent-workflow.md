@@ -98,7 +98,7 @@ says something is stuck.
 
 **This is not implementer-only any more.** Since `ah-2n3.2` the five interactive agents write the
 same state file and show the same way: Xavier's row says `triage` or `plan`, Psylocke's says
-`prepare` or `verify`, Moira's and Cerebro's say `sweep` (Cerebro's also `release`), Bishop's says
+`prepare` or `verify`, Moira's and Cerebro's say `sweep` (Cerebro's also `release`), Forge's says
 `daily` or `weekly` — and any one of them can show `?`, bold, when it is the one waiting on you
 rather than an implementer. Answer it the same way. A session started by hand outside the fleet view
 still shows `up` with no phase, since it has never written a file.
@@ -231,13 +231,13 @@ build, she writes a retrospective of her own, the same way an implementer does.
 Nobody else in the fleet reads the *shape* of the code. Xavier plans one bead, an implementer builds
 one bead, Copilot reviews that one diff, Psylocke checks that one merged bead does what it claimed —
 and across fifty merges nobody asks whether the codebase got harder to change along the way.
-**Bishop** is that reader:
+**Forge** is that reader:
 
 ```bash
-.claude/cerebro/scripts/run-bishop
+.claude/cerebro/scripts/run-forge
 ```
 
-Unlike every other interactive session here, Bishop does **one sweep and stops** — it works out for
+Unlike every other interactive session here, Forge does **one sweep and stops** — it works out for
 itself whether this is a daily sweep (what merged since its last one) or a weekly one (the whole
 codebase), reads accordingly, and then ends its own turn once it has reported. There is no loop to
 end and no flag to set: when it says the sweep is finished, end the session with `k` in the fleet
@@ -246,7 +246,7 @@ view, same as any other agent you are done with.
 Start it whenever you want a read — each morning is a reasonable habit, or any time you want to know
 whether recent work left something worth revisiting. It costs you nothing until triage: what it finds
 becomes an ordinary `Refactoring:`-titled bead at P4, unranked, for Xavier to bring to you like
-anything else in the backlog. Bishop never fixes anything itself, and it only files a finding that
+anything else in the backlog. Forge never fixes anything itself, and it only files a finding that
 names a cost already being paid today — a defect fixed twice in the same place, a change that had to
 touch several files, a retrospective that names a structural reason something cost time — never a bare
 principle or a "could be cleaner."

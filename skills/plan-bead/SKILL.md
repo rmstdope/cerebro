@@ -229,7 +229,7 @@ has children rather than a plan.
 **How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
 state file under `.cerebro/state/` whose `pid` is alive, minus any implementer whose stop flag
 is set (it finishes its bead and retires, so it will not take another). **Since ah-2n3.2 the
-interactive five — Xavier, Cerebro, Moira, Psylocke, Bishop — write the same file you do**, so the
+interactive five — Xavier, Cerebro, Moira, Psylocke, Forge — write the same file you do**, so the
 loop below filters to the implementer roster explicitly; without that filter your own file inflates
 `n` by one, and the buffer target moves under you for no reason.
 

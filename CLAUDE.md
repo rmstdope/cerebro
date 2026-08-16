@@ -52,7 +52,7 @@ Six roles, each an agent definition in `agents/`; most are backed by a skill in 
   `agents/verifier.md`. Walks beads merged since her last pass, judges which touched the application,
   prepares each verification before ever asking for the navigator's time, then briefs, launches and
   records their verdict. A failed verdict reopens the bead at P0 and sends it back to the fleet.
-- **Bishop** (`architect`, Fable/xhigh) — loads no separate skill either; its whole job lives
+- **Forge** (`architect`, Fable/xhigh) — loads no separate skill either; its whole job lives
   in `agents/architect.md`. One sweep per session: reads what merged since its last sweep (daily) or
   the whole codebase (weekly), and files a `Refactoring:` bead at P4 for each smell that names a cost
   already being paid, never a fix. Watermark kept in bd memory. Ends its own turn when the sweep is
@@ -93,13 +93,13 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   describes what it does when one comes back — Psylocke reopens it, Xavier amends the plan if the
   plan was wrong, an implementer picks it up like any other P0, and Moira tells the reporter it was
   taken back. A change to any one of those has to keep the others consistent with it.
-- **Bishop files, never fixes.** It never edits `packages/`, `crates/`, `apps/` or `emacs/`, and a
+- **Forge files, never fixes.** It never edits `packages/`, `crates/`, `apps/` or `emacs/`, and a
   finding that cannot name a cost already being paid — a repeated fix, a change that touched several
   files, a retrospective, a misread module — is not filed at all.
 
 ## emacs/cerebro.el
 
-`M-x cerebro` lists the fleet (Xavier, Cerebro, Moira, Psylocke, Bishop + thirteen implementers) with state,
+`M-x cerebro` lists the fleet (Xavier, Cerebro, Moira, Psylocke, Forge + thirteen implementers) with state,
 current bead and elapsed time; `s` starts, `k` kills, `f` tells an implementer to finish (writes its
 stop flag; the bead in flight is unaffected), `RET` focuses the detail window. Emacs 28+, no
 dependencies except optional **vterm** for live sessions.

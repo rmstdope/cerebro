@@ -22,7 +22,7 @@ test body cannot compute this itself.")
 (defconst cerebro-test--interactive
   '(("Xavier" . "planner")
     ("Cerebro" . "orchestrator")
-    ("Moira" . "feedback")))
+    ("Moira" . "user-feedback")))
 
 (defun cerebro-test--always-alive (_pid) t)
 (defun cerebro-test--never-alive (_pid) nil)

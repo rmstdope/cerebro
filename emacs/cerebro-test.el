@@ -1566,7 +1566,7 @@ still holds."
     (should (equal (cadr argv) "list"))
     (should (member "--brief" argv))
     (should (member "--json" argv))
-    ;; "[]" is a successful, empty answer - a four-list partition of nothing,
+    ;; "[]" is a successful, empty answer - a five-list partition of nothing,
     ;; not "bd did not answer".
     (should (equal got (list nil nil nil nil nil)))))
 
@@ -2106,11 +2106,13 @@ noticed."
   `((id . ,id) (priority . 2) (title . ,title) (labels . ,labels) (updated_at . ,updated)))
 
 (ert-deftest cerebro-test/panel-sections-follow-the-lifecycle ()
-  "Claimed, planned, unplanned, merged - as far as the panel follows work."
+  "Claimed, planned, being planned, unplanned, merged - as far as the panel
+follows work, and in the order it moves in read backwards."
   (let* ((text (string-join (cerebro--bead-panel nil nil nil nil nil 62 8) "\n"))
          (at (lambda (s) (string-match (regexp-quote s) text))))
     (should (< (funcall at "Claimed") (funcall at "Planned, unclaimed")))
-    (should (< (funcall at "Planned, unclaimed") (funcall at "Unplanned")))
+    (should (< (funcall at "Planned, unclaimed") (funcall at "Being planned")))
+    (should (< (funcall at "Being planned") (funcall at "Unplanned")))
     (should (< (funcall at "Unplanned") (funcall at "Merged, unverified")))))
 
 (ert-deftest cerebro-test/the-panel-stops-at-merged ()
@@ -2229,14 +2231,6 @@ can claim it, whatever else the bead says."
          (buckets (cerebro--partition-beads beads)))
     (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 1 buckets)) '("both")))
     (should-not (nth 2 buckets))))
-
-(ert-deftest cerebro-test/being-planned-sits-between-planned-and-unplanned ()
-  "Down the panel is backwards along the pipeline: claimed, ready to claim,
-being planned, not planned yet."
-  (let* ((text (string-join (cerebro--bead-panel nil nil nil nil nil 62 8) "\n"))
-         (at (lambda (s) (string-match (regexp-quote s) text))))
-    (should (< (funcall at "Planned, unclaimed") (funcall at "Being planned")))
-    (should (< (funcall at "Being planned") (funcall at "Unplanned")))))
 
 (ert-deftest cerebro-test/being-planned-renders-its-beads-and-its-count ()
   (let* ((being (list (cerebro-test--any "ah-1" "open" '("planning"))

@@ -5,7 +5,7 @@
 ;;; Commentary:
 
 ;; `M-x cerebro' opens a buffer listing every agent the fleet can have -
-;; Xavier, Cerebro, Moira, Psylocke, Bishop and the thirteen implementers - each with
+;; Xavier, Cerebro, Moira, Psylocke, Forge and the thirteen implementers - each with
 ;; a state glyph, role, state, and (for a working implementer) the bead it is
 ;; on and for how long.  It refreshes itself every 5 seconds.
 ;;
@@ -22,7 +22,7 @@
 ;;     implementer's state alone.
 ;;   - the launcher's `--roster', the thirteen implementer names.
 ;;   - liveness for the interactive five (Xavier, Cerebro, Moira, Psylocke,
-;;     Bishop) is the state file first, when one exists for a live pid, and
+;;     Forge) is the state file first, when one exists for a live pid, and
 ;;     falls back to scanning system processes for the `--name <Name>'
 ;;     argument their launchers pass when it does not - a session started by
 ;;     hand, outside this fleet, has no file and still has to show `up'.
@@ -72,7 +72,7 @@ whatever the frame has left.")
     ("Cerebro" . "orchestrator")
     ("Moira" . "feedback")
     ("Psylocke" . "verifier")
-    ("Bishop" . "architect"))
+    ("Forge" . "architect"))
   "The five interactive agents, mirroring their launchers.")
 
 ;;; The pure core
@@ -282,7 +282,7 @@ file carries, in the State column, and a wrong word for the role in that
 column is not worth a per-role table in Elisp any more than in the script.
 By role, for reference: `build gate review ci rebase merge' belong to an
 implementer; `triage plan' to Xavier; `prepare verify' to Psylocke; `sweep',
-or `sweep release', to Moira and Cerebro; `daily weekly' to Bishop.")
+or `sweep release', to Moira and Cerebro; `daily weekly' to Forge.")
 
 (defun cerebro--in-flight-p (state)
   "Whether STATE means a bead is still in flight under it."
@@ -638,7 +638,7 @@ restarting it would fight the navigator's own `k'.
 
 The `kind' guard is load-bearing now that the interactive five write the
 same state file an implementer does (ah-2n3.2): Xavier, Cerebro, Moira,
-Psylocke and Bishop can show `asking' or, if one ever writes it in error,
+Psylocke and Forge can show `asking' or, if one ever writes it in error,
 `unknown', but never `restart'ed, `retire'd or `nudge'd from here - they are
 never replaced between beads because they have none, and any future
 unification of this function must keep excluding them explicitly rather
@@ -674,7 +674,7 @@ directory, which no longer has one.")
     ("orchestrator" . "run-orchestrator")
     ("feedback" . "run-user-feedback")
     ("verifier" . "run-psylocke")
-    ("architect" . "run-bishop"))
+    ("architect" . "run-forge"))
   "Launcher script name for each interactive role.")
 
 (defun cerebro--launch-command (agent)

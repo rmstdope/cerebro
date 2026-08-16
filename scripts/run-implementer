@@ -75,8 +75,15 @@ for candidate in "${ROSTER[@]}"; do
 done
 
 if [[ -z "$on_roster" ]]; then
+  if [[ "$(lower "$name")" == "forge" ]]; then
+    echo "run-implementer: Forge is the architect, not an implementer — start it with .claude/cerebro/scripts/run-forge" >&2
+    exit 2
+  fi
+  # The architect answered to Bishop until it was renamed, and the old name will be
+  # typed for a while yet. "Not on the roster" is true and useless to somebody
+  # reaching for an agent that still exists under another name.
   if [[ "$(lower "$name")" == "bishop" ]]; then
-    echo "run-implementer: Bishop is the architect now, not an implementer — start it with .claude/cerebro/scripts/run-bishop" >&2
+    echo "run-implementer: Bishop is now called Forge, and is the architect rather than an implementer — start it with .claude/cerebro/scripts/run-forge" >&2
     exit 2
   fi
   if [[ -n "$misspelt" ]]; then

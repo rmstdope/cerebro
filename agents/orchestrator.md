@@ -202,11 +202,11 @@ PRs and be invisible to every question asked about the fleet, since you would ne
 Run out of names — which needs thirteen implementers at once and will not happen — and say so rather
 than inventing an extra one.
 
-**Bishop is not on this list.** Bishop is the architect — an interactive agent, like Xavier, Moira
+**Forge is not on this list.** Forge is the architect — an interactive agent, like Xavier, Moira
 and Psylocke, that you neither start nor stop: it writes the same state file the rest of the
 interactive five do (`ah-2n3.2`), but has no stop flag, and the navigator starts it directly with
-`run-bishop` whenever they want another sweep. A `Refactoring:` bead turning up in the backlog is one
-Bishop filed; nothing else about your sweeps below changes — Bishop claims nothing, so it never
+`run-forge` whenever they want another sweep. A `Refactoring:` bead turning up in the backlog is one
+Forge filed; nothing else about your sweeps below changes — Forge claims nothing, so it never
 appears in the claims sweep, and it holds no bead, so it never appears in the epics sweep either.
 
 **Two or three on one machine is sensible; more is not faster.** The browser suites take a

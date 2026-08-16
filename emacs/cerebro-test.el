@@ -148,9 +148,9 @@
   ;; `scripts/agent-state' refuses `done' from an interactive name, so a live
   ;; file carrying it anyway is a bug, not a finished bead - it must not be
   ;; handed to `cerebro--supervise-action' as a `done' implementer would be.
-  (let* ((states '(("Bishop" . ((state . "done") (bead . nil)
+  (let* ((states '(("Forge" . ((state . "done") (bead . nil)
                                  (since . "2026-08-15T09:00:00Z") (pid . 777)))))
-         (agents (cerebro--derive nil '(("Bishop" . "architect")) states
+         (agents (cerebro--derive nil '(("Forge" . "architect")) states
                                           #'cerebro-test--always-alive nil nil))
          (agent (car agents)))
     (should (eq (cerebro-agent-state agent) 'unknown))
@@ -300,16 +300,16 @@ reading once the row has caught the eye (see ah-axj)."
                   ".claude/cerebro/scripts/run-psylocke")))
 
 ;; ---------------------------------------------------------------------------
-;; ah-3bl: Bishop leaves the implementer roster and becomes the architect
+;; ah-3bl: Forge leaves the implementer roster and becomes the architect
 
 (ert-deftest cerebro-test/interactive-roster-has-bishop ()
-  (should (equal (assoc "Bishop" cerebro-interactive-agents) '("Bishop" . "architect")))
-  (should (equal (car (car (last cerebro-interactive-agents))) "Bishop")))
+  (should (equal (assoc "Forge" cerebro-interactive-agents) '("Forge" . "architect")))
+  (should (equal (car (car (last cerebro-interactive-agents))) "Forge")))
 
 (ert-deftest cerebro-test/launch-command-architect ()
   (should (equal (cerebro--launch-command
-                   (cerebro-test--agent "Bishop" "architect" 'interactive 'dead))
-                  ".claude/cerebro/scripts/run-bishop")))
+                   (cerebro-test--agent "Forge" "architect" 'interactive 'dead))
+                  ".claude/cerebro/scripts/run-forge")))
 
 ;; ---------------------------------------------------------------------------
 ;; Increment 4: roster parsing
@@ -443,10 +443,10 @@ stale by definition."
   (should (null (cerebro--last-nonblank-line "\n\n"))))
 
 (ert-deftest cerebro-test/placeholder-shows-the-last-exit-line ()
-  (let ((cerebro--last-exit '(("Bishop" . "cerebro: boom"))))
+  (let ((cerebro--last-exit '(("Forge" . "cerebro: boom"))))
     (should (equal (cerebro--placeholder
-                     (cerebro-test--agent "Bishop" "architect" 'implementer 'dead))
-                    (concat "Bishop is not running.\n"
+                     (cerebro-test--agent "Forge" "architect" 'implementer 'dead))
+                    (concat "Forge is not running.\n"
                             "Its last session ended with:\n"
                             "  cerebro: boom\n"
                             "Press s to start it.")))
@@ -466,20 +466,20 @@ read the raw table rather than go through the liveness check."
   (let ((cerebro--last-exit nil)
         (cerebro--sessions nil))
     (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
-      (let ((buf (generate-new-buffer "*fleet: Bishop*")))
+      (let ((buf (generate-new-buffer "*fleet: Forge*")))
         (unwind-protect
             (progn
-              (setf (alist-get "Bishop" cerebro--sessions nil nil #'equal) buf)
+              (setf (alist-get "Forge" cerebro--sessions nil nil #'equal) buf)
               (with-current-buffer buf
                 (insert "starting up...\ncerebro: boom\n\n"))
               (cerebro--note-exit buf "exited abnormally with code 2\n")
-              (should (equal (alist-get "Bishop" cerebro--last-exit nil nil #'equal)
+              (should (equal (alist-get "Forge" cerebro--last-exit nil nil #'equal)
                               "cerebro: boom")))
           (kill-buffer buf)))
-      (let ((buf (generate-new-buffer "*fleet: Bishop*")))
+      (let ((buf (generate-new-buffer "*fleet: Forge*")))
         (unwind-protect
             (progn
-              (setf (alist-get "Bishop" cerebro--sessions nil nil #'equal) buf)
+              (setf (alist-get "Forge" cerebro--sessions nil nil #'equal) buf)
               (with-current-buffer buf
                 (insert "cerebro: boom\n"))
               (setq cerebro--last-exit nil)
@@ -492,7 +492,7 @@ read the raw table rather than go through the liveness check."
         (should (null cerebro--last-exit)))
       ;; A buffer named like a session but never recorded: the name is not
       ;; the key any more.
-      (let ((buf (generate-new-buffer "*fleet: Bishop*")))
+      (let ((buf (generate-new-buffer "*fleet: Forge*")))
         (unwind-protect
             (progn
               (with-current-buffer buf

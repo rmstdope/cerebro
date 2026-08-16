@@ -1,0 +1,37 @@
+# Which model each agent runs on, overriding what its `agents/<role>.md` declares.
+#
+# Copy to `.cerebro/models.conf` **in the consumer repository** (not here — this submodule is shared
+# by every consumer, and `.cerebro/` is ignored wholesale, so the file is yours and needs no commit):
+#
+#     cp .claude/cerebro/models.conf.example .cerebro/models.conf
+#
+# Every launch reads it. Nothing needs restarting except the sessions themselves, and a session that
+# is already up keeps the model it started with — this decides what the *next* one gets.
+#
+#     <agent-name | role | default>   <model | ->   [effort]
+#
+# Most specific wins: an agent's own name, then its role, then `default`. A `--model` typed on the
+# command line still beats the file. `-` as the model passes no `--model` at all, leaving the
+# session on whatever `claude` itself defaults to. Omit the effort column to keep the one the agent
+# definition declares.
+#
+# Anything from a `#` to the end of a line is a comment, including after a setting:
+#
+#     planner   fable   high      # both, with a note about why
+#
+# Every line here is commented out: the file as shipped changes nothing.
+
+# Everything on Opus, keeping each role's declared effort:
+# default   opus
+
+# Back to Fable for planning only, at its usual effort:
+# planner   fable   high
+
+# One of the two planners on something else, to compare them on the same queue:
+# Beast     sonnet
+
+# Cheap sweeps: Cerebro reads tools and relays what they say.
+# orchestrator  haiku
+
+# Whatever the session default is, no flag passed:
+# Xavier    -

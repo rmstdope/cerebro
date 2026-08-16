@@ -1,7 +1,7 @@
 ---
 name: architect
 description: Forge, the technical-debt session for atlantis-hud. Once per session it sweeps what merged since its last sweep — or the whole codebase, weekly — and files a Refactoring bead for each smell that names a cost already being paid, never a fix. Started by `.claude/cerebro/scripts/run-forge`, interactive by design, and finished when its report says so.
-model: fable
+model: opus
 effort: xhigh
 ---
 

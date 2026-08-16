@@ -180,16 +180,18 @@ pass "launch: every roster row reaches the stub with the right actor, agent, nam
 
 # --- launch overrides ---
 
-out="$(run_launcher launch Xavier --model opus)"
-before_opus="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1)"
-before_fable="$(echo "$out" | grep -n '^ARG:fable$' | head -1 | cut -d: -f1)"
-[[ -n "$before_fable" && -n "$before_opus" && $before_fable -lt $before_opus ]] \
-  || fail "launch Xavier --model opus: expected fable before opus in ARG list, got: $out"
+# The override model is deliberately not the declared one: the assertion is that the caller's
+# --model lands *after* the launcher's and so wins, which says nothing if both are the same word.
+out="$(run_launcher launch Xavier --model sonnet)"
+before_sonnet="$(echo "$out" | grep -n '^ARG:sonnet$' | head -1 | cut -d: -f1)"
+before_declared="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1)"
+[[ -n "$before_declared" && -n "$before_sonnet" && $before_declared -lt $before_sonnet ]] \
+  || fail "launch Xavier --model sonnet: expected opus before sonnet in ARG list, got: $out"
 last_arg="$(echo "$out" | tail -1)"
-opus_line="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1)"
+sonnet_line="$(echo "$out" | grep -n '^ARG:sonnet$' | head -1 | cut -d: -f1)"
 total_lines="$(echo "$out" | wc -l | tr -d ' ')"
-[[ $opus_line -lt $total_lines ]] || fail "launch Xavier --model opus: opus should come before the prompt"
-pass "launch Xavier --model opus: fable (declared) before opus (override) before the prompt"
+[[ $sonnet_line -lt $total_lines ]] || fail "launch Xavier --model sonnet: sonnet should come before the prompt"
+pass "launch Xavier --model sonnet: opus (declared) before sonnet (override) before the prompt"
 
 # --- launch overrides: a caller's own --remote-control comes after the launcher's ---
 out="$(run_launcher launch Xavier --remote-control Elsewhere)"
@@ -298,6 +300,68 @@ echo "$out" | grep -q '^ARG:--agent$' || fail "launch Forge (consumer): stub was
   || fail "launch Forge (consumer): expected a relative link to ../cerebro/agents/architect.md"
 pass "launch Forge links the consumer's agents before starting the session"
 
+# --- .cerebro/models.conf: switching models without editing an agent definition ---
+#
+# The config lives in the consumer, not here, so a fabricated consumer is the only place these can
+# run. `models_conf` writes one and `launched_flag` reports the value a flag reached the stub with.
+models_conf() {
+  mkdir -p "$consumer_dir/.cerebro"
+  printf '%s\n' "$@" > "$consumer_dir/.cerebro/models.conf"
+}
+no_models_conf() { rm -f "$consumer_dir/.cerebro/models.conf"; }
+launched_flag() {
+  # $1 = agent name, $2 = flag (--model/--effort). Prints the value, or nothing if the flag is
+  # absent - which is an answer here ("Xavier -" passes no --model), not a failure. `|| true`
+  # because the grep in the pipeline exits non-zero on no match and this suite runs under
+  # `set -euo pipefail`: without it, asking about an absent flag would kill the run rather than
+  # return the empty string the assertion is looking for.
+  run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$1" \
+    | grep -A1 "^ARG:$2\$" | grep '^ARG:' | grep -v -- "^ARG:$2\$" | head -1 | sed 's/^ARG://' \
+    || true
+}
+
+no_models_conf
+[[ "$(launched_flag Xavier --model)" == "$(model_of planner)" ]] \
+  || fail "no models.conf: expected the declared model $(model_of planner)"
+pass "no models.conf leaves the agent definition's model alone"
+
+models_conf "default fable"
+[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf default: expected fable"
+[[ "$(launched_flag Xavier --effort)" == "$(effort_of planner)" ]] \
+  || fail "models.conf default: a model-only line must leave the declared effort alone"
+[[ "$(launched_flag Cyclops --model)" == "fable" ]] \
+  || fail "models.conf default: applies to an agent whose definition declares no model"
+pass "models.conf: a default line switches every agent's model, keeping declared efforts"
+
+models_conf "# a comment" "" "planner fable low"
+[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf role: expected fable"
+[[ "$(launched_flag Xavier --effort)" == "low" ]] || fail "models.conf role: expected effort low"
+[[ "$(launched_flag Forge --model)" == "$(model_of architect)" ]] \
+  || fail "models.conf role: a role not named must keep its declared model"
+pass "models.conf: a role line switches that role only, model and effort, past comments and blanks"
+
+models_conf "default opus # everything, with a note about why" "planner fable high  # and this role lower"
+[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf inline comment: expected fable"
+[[ "$(launched_flag Xavier --effort)" == "high" ]] \
+  || fail "models.conf inline comment: expected effort high, not the comment"
+[[ "$(launched_flag Cerebro --model)" == "opus" ]] \
+  || fail "models.conf inline comment: a model-only line must not read '#' as its effort"
+[[ "$(launched_flag Cerebro --effort)" == "$(effort_of orchestrator)" ]] \
+  || fail "models.conf inline comment: expected the declared effort, got the comment"
+pass "models.conf: an inline # comment is not the effort column"
+
+models_conf "planner fable" "Beast sonnet"
+[[ "$(launched_flag Beast --model)" == "sonnet" ]] || fail "models.conf name: expected sonnet for Beast"
+[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf name: Xavier keeps the role line"
+pass "models.conf: an agent name beats its role, so two planners can differ"
+
+models_conf "Xavier -"
+[[ -z "$(launched_flag Xavier --model)" ]] \
+  || fail "models.conf '-': expected no --model at all, got $(launched_flag Xavier --model)"
+pass "models.conf: '-' passes no --model, leaving the session on claude's own default"
+
+no_models_conf
+
 # --- a sync failure aborts the launch: the stub is never reached ---
 # The first run above already symlinked .claude/skills/plan-bead; remove that link before
 # replacing it with a real directory, or `mkdir -p` on an existing symlink-to-directory is a
@@ -357,10 +421,10 @@ pass "launch Forge refuses when the submodule never brought its agent file in"
 
 # --- agents/architect.md exists with the right frontmatter ---
 [[ -f "$repo_root/agents/architect.md" ]] || fail "agents/architect.md does not exist"
-grep -qx 'model: fable' "$repo_root/agents/architect.md" \
-  || fail "agents/architect.md: expected a line 'model: fable'"
+grep -qx 'model: opus' "$repo_root/agents/architect.md" \
+  || fail "agents/architect.md: expected a line 'model: opus'"
 grep -qx 'effort: xhigh' "$repo_root/agents/architect.md" \
   || fail "agents/architect.md: expected a line 'effort: xhigh'"
-pass "agents/architect.md exists with model: fable and effort: xhigh"
+pass "agents/architect.md exists with model: opus and effort: xhigh"
 
 echo "all launcher tests passed"

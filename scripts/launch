@@ -78,6 +78,67 @@ agents_dir="$here/../agents"
 model="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="model:"{print $2; exit}' "$agents_dir/$role.md")"
 effort="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="effort:"{print $2; exit}' "$agents_dir/$role.md")"
 
+# The agent definition carries the model the role was *written* for; `.cerebro/models.conf` in the
+# consumer is where a navigator changes their mind about it without editing a submodule they share
+# with every other consumer, and without a commit. Absent - the ordinary case - nothing here
+# happens.
+#
+#     # <agent-name | role | default>   <model | ->   [effort]
+#     default   opus
+#     planner   fable   high      # this role, model and effort
+#     Beast     sonnet            # this agent, keeping the declared effort
+#     Xavier    -                 # no --model at all: whatever claude defaults to
+#
+# Most specific wins: the agent's own name, then its role, then `default`. A `--model` typed on the
+# command line still beats all of it, since it is appended after (see the exec below).
+models_conf=""
+if consumer_root="$("$here/consumer-root" --shared 2>/dev/null)"; then
+  models_conf="$consumer_root/.cerebro/models.conf"
+fi
+
+# Prints "MODEL<TAB>EFFORT" for the first line whose key matches $2, or nothing. Bash 3.2, so no
+# associative array: the file is a handful of lines read once per launch.
+config_lookup() {
+  local file="$1" key="$2" line k m e
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Everything from a `#' on is a comment, wherever it starts. Stripping it here rather than
+    # only skipping whole comment lines is what keeps `planner fable high  # and this role lower'
+    # from passing "# and this role lower" to `--effort' - and `default opus # why' from reading
+    # the `#' itself as the effort column.
+    line="${line%%#*}"
+    read -r k m e <<<"$line"
+    [[ -n "$k" ]] || continue
+    if [[ "$k" == "$key" ]]; then
+      printf '%s\t%s\n' "$m" "$e"
+      return 0
+    fi
+  done < "$file"
+}
+
+if [[ -n "$models_conf" ]]; then
+  for key in "$name" "$role" default; do
+    hit="$(config_lookup "$models_conf" "$key")"
+    [[ -n "$hit" ]] || continue
+    IFS=$'\t' read -r conf_model conf_effort <<<"$hit"
+    [[ -n "$conf_model" ]] || continue          # a key with no value says nothing; keep the default
+    # `-' means "pass no --model": the session runs on whatever claude itself defaults to, which is
+    # the one thing a model name cannot express.
+    if [[ "$conf_model" == "-" ]]; then
+      model=""
+    else
+      model="$conf_model"
+    fi
+    [[ -n "$conf_effort" ]] && effort="$conf_effort"
+    # Said out loud: a session on an unexpected model is otherwise a mystery three days later, and
+    # this is the file nobody remembers editing.
+    # The apostrophe in "claude's" is deliberately absent: bash 3.2 mis-parses a quote inside
+    # ${x:-word} within double quotes, which is a syntax error rather than a stray character.
+    echo "launch: models.conf ($key) -> ${model:-the claude default}${conf_effort:+ at $conf_effort effort}" >&2
+    break
+  done
+fi
+
 exec claude \
   --agent "$role" \
   --name "$name" \

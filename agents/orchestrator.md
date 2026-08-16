@@ -1,7 +1,7 @@
 ---
 name: orchestrator
-description: Cerebro, the interactive session that runs the implementer fleet for atlantis-hud. Takes implementers down by writing their stop flags - it cannot start one, since that means starting a session - watches that a planner and at least two implementers are up, reports what has shipped today, this week and since the last release, cuts a major, minor or maintenance release when the navigator asks for one, keeps the worktrees, the claims and the epics tidy, and starts nothing on its own. Start it with `.claude/cerebro/scripts/run-orchestrator`, which runs it on Fable.
-model: fable
+description: Cerebro, the interactive session that runs the implementer fleet for atlantis-hud. Takes implementers down by writing their stop flags - it cannot start one, since that means starting a session - watches that a planner and at least two implementers are up, reports what has shipped today, this week and since the last release, cuts a major, minor or maintenance release when the navigator asks for one, keeps the worktrees, the claims and the epics tidy, and starts nothing on its own. Start it with `.claude/cerebro/scripts/run-orchestrator`, which runs it on Opus unless `.cerebro/models.conf` says otherwise.
+model: opus
 effort: medium
 ---
 

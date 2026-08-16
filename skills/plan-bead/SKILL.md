@@ -234,7 +234,7 @@ loop below filters to the implementer roster explicitly; without that filter you
 `n` by one, and the buffer target moves under you for no reason.
 
 ```bash
-roster="$(.claude/cerebro/scripts/run-implementer --roster)"
+roster="$(.claude/cerebro/scripts/roster --implementers)"
 n=0
 for f in $(find .cerebro/state -maxdepth 1 -name '*.state.json' 2>/dev/null); do
   name="$(basename "$f" .state.json)"

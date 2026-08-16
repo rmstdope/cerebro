@@ -4,10 +4,10 @@
 
 ;;; Commentary:
 
-;; `M-x cerebro' opens a buffer listing every agent the fleet can have -
-;; Xavier, Cerebro, Moira, Psylocke, Forge and the thirteen implementers - each with
-;; a state glyph, role, state, and (for a working implementer) the bead it is
-;; on and for how long.  It refreshes itself every 5 seconds.
+;; `M-x cerebro' opens a buffer listing every agent on `scripts/roster' - the
+;; interactive roles and the implementers - each with a state glyph, role,
+;; state, and (for a working implementer) the bead it is on and for how
+;; long.  It refreshes itself every 5 seconds.
 ;;
 ;; This is the list half of the fleet view (ah-vcf.2).  The live detail
 ;; window, and starting/killing agents, are ah-vcf.3 - RET, s and k are
@@ -18,14 +18,15 @@
 ;;     written by the agent itself at every state transition (see ah-vcf.1,
 ;;     ah-u3i and ah-2n3.2): { state: "idle"|"working"|"asking"|"done", phase,
 ;;     bead, since, phase_since, pid }.  Every implementer writes one; since
-;;     ah-2n3.2 the interactive five do too, `done' excepted - it is an
+;;     ah-2n3.2 the interactive roles do too, `done' excepted - it is an
 ;;     implementer's state alone.
-;;   - the launcher's `--roster', the thirteen implementer names.
-;;   - liveness for the interactive five (Xavier, Cerebro, Moira, Psylocke,
+;;   - `scripts/roster', the fleet: name, role and kind per agent, in
+;;     display order.
+;;   - liveness for the interactive roles (Xavier, Cerebro, Moira, Psylocke,
 ;;     Forge) is the state file first, when one exists for a live pid, and
 ;;     falls back to scanning system processes for the `--name <Name>'
-;;     argument their launchers pass when it does not - a session started by
-;;     hand, outside this fleet, has no file and still has to show `up'.
+;;     argument `scripts/launch' passes when it does not - a session started
+;;     by hand, outside this fleet, has no file and still has to show `up'.
 
 ;;; Code:
 
@@ -59,23 +60,39 @@ detail window underneath inherit this width and, like the table, are
 narrower for it - their titles get less room than they used to, an accepted
 trade.")
 
-(defconst cerebro-list-height 20
-  "Lines given to the agent list before the bead panel starts.
-
-Eighteen agents and a header, so the list never scrolls and the panel gets
-whatever the frame has left.")
-
-;;; The interactive roster
-
-(defconst cerebro-interactive-agents
-  '(("Xavier" . "planner")
-    ("Cerebro" . "orchestrator")
-    ("Moira" . "feedback")
-    ("Psylocke" . "verifier")
-    ("Forge" . "architect"))
-  "The five interactive agents, mirroring their launchers.")
-
 ;;; The pure core
+
+;;; The fleet roster (replaces `cerebro-interactive-agents' and `cerebro--role-launch-commands')
+
+(defun cerebro--parse-fleet (output)
+  "Turn OUTPUT of `scripts/roster' into a list of (NAME ROLE KIND).
+
+One agent per line, NAME, ROLE and KIND tab-separated; KIND becomes the
+symbol `implementer' or `interactive' (`intern' of the third field).  Blank
+lines and lines with fewer than three fields are skipped, so a torn read
+cannot put a half-row in the fleet.  Order is preserved: the roster's order
+is the fleet view's order."
+  (let (rows)
+    (dolist (line (split-string output "\n"))
+      (let ((fields (split-string line "\t")))
+        (when (>= (length fields) 3)
+          (push (list (nth 0 fields) (nth 1 fields) (intern (nth 2 fields))) rows))))
+    (nreverse rows)))
+
+(defun cerebro--fleet-roster (fleet)
+  "The implementer names in FLEET, in order."
+  (mapcar #'car (seq-filter (lambda (row) (eq (nth 2 row) 'implementer)) fleet)))
+
+(defun cerebro--fleet-interactive (fleet)
+  "The (NAME . ROLE) alist of FLEET's interactive agents, in order."
+  (mapcar (lambda (row) (cons (nth 0 row) (nth 1 row)))
+          (seq-filter (lambda (row) (eq (nth 2 row) 'interactive)) fleet)))
+
+(defun cerebro--list-height (agent-count)
+  "Lines the agent list needs for AGENT-COUNT agents: the rows, the header
+line and the mode line, so the list never scrolls and the bead panel gets
+whatever the frame has left (was a constant of 20 for eighteen agents)."
+  (+ agent-count 2))
 
 (cl-defstruct cerebro-agent
   "One row of the fleet list."
@@ -193,7 +210,7 @@ predicate on a pid; OWNED the names Emacs itself started."
 
 ROSTER is the implementer name list, in the order they should be shown.
 INTERACTIVE-AGENTS is an alist of (NAME . ROLE), normally
-`cerebro-interactive-agents'.  STATES is an alist of (NAME .
+`cerebro--interactive-agents'.  STATES is an alist of (NAME .
 parsed-state-json-or-nil) covering both the roster and the interactive
 names - see `cerebro--gather-states'.  PID-ALIVE-P is a predicate on a pid.
 ARGS is the system process args list.  OWNED is the set of agent names whose
@@ -669,26 +686,10 @@ directory, which no longer has one.")
   "The path to launcher NAME, relative to the repository root."
   (concat cerebro--script-directory "/" name))
 
-(defconst cerebro--role-launch-commands
-  '(("planner" . "run-planner")
-    ("orchestrator" . "run-orchestrator")
-    ("feedback" . "run-user-feedback")
-    ("verifier" . "run-psylocke")
-    ("architect" . "run-forge"))
-  "Launcher script name for each interactive role.")
-
 (defun cerebro--launch-command (agent)
-  "The command that launches AGENT.
-
-A string for an interactive agent; a (COMMAND NAME) list for an
-implementer, since its name is an argument rather than part of the
-command name."
-  (if (eq (cerebro-agent-kind agent) 'implementer)
-      (list (cerebro--script "run-implementer") (cerebro-agent-name agent))
-    (let ((script (cdr (assoc (cerebro-agent-role agent) cerebro--role-launch-commands))))
-      (unless script
-        (error "cerebro: no launch command for role %s" (cerebro-agent-role agent)))
-      (cerebro--script script))))
+  "The command that launches AGENT: `scripts/launch' and the agent's name,
+for every kind - a role's launcher is no longer a fact this file knows."
+  (list (cerebro--script "launch") (cerebro-agent-name agent)))
 
 (defun cerebro--session-buffer-name (agent)
   "The vterm buffer name that holds AGENT's live session."
@@ -886,23 +887,25 @@ may not exist yet on a fresh machine - `agent-state' and
   (or (locate-dominating-file default-directory ".claude/cerebro")
       (error "cerebro: no .claude/cerebro found above %s" default-directory)))
 
-(defun cerebro--parse-roster (output)
-  "Turn OUTPUT (one implementer name per line) into a list of names."
-  (seq-filter (lambda (s) (not (string-empty-p s)))
-              (mapcar #'string-trim (split-string output "\n"))))
+(defvar-local cerebro--fleet-cache nil
+  "The parsed roster, once read; buffer-local so a revert does not re-shell out.")
 
-(defvar-local cerebro--roster-cache nil
-  "The roster, once read; buffer-local so a revert does not re-shell out.")
-
-(defun cerebro--roster (repo-root)
-  "The thirteen implementer names, via the launcher's --roster."
-  (or cerebro--roster-cache
-      (setq cerebro--roster-cache
-            (cerebro--parse-roster
+(defun cerebro--fleet (repo-root)
+  "The fleet as (NAME ROLE KIND) rows, via `scripts/roster' in REPO-ROOT."
+  (or cerebro--fleet-cache
+      (setq cerebro--fleet-cache
+            (cerebro--parse-fleet
              (with-temp-buffer
-               (call-process (expand-file-name (cerebro--script "run-implementer") repo-root)
-                              nil t nil "--roster")
+               (call-process (expand-file-name (cerebro--script "roster") repo-root) nil t nil)
                (buffer-string))))))
+
+(defun cerebro--roster (repo-root)                 ; keeps its name and both callers
+  "The implementer names, in roster order."
+  (cerebro--fleet-roster (cerebro--fleet repo-root)))
+
+(defun cerebro--interactive-agents (repo-root)
+  "The (NAME . ROLE) alist of interactive agents, in roster order."
+  (cerebro--fleet-interactive (cerebro--fleet repo-root)))
 
 (defun cerebro--state-file-path (repo-root name)
   "Where NAME's status file lives, mirroring `statePath' in runImplementer.ts."
@@ -1105,7 +1108,7 @@ believes about it (ah-5pp)."
         (assoc-delete-all (cerebro-agent-name agent) cerebro--last-exit))
   (let* ((default-directory (cerebro--repo-root))
          (cmd (cerebro--launch-command agent))
-         (vterm-shell (if (stringp cmd) cmd (mapconcat #'shell-quote-argument cmd " ")))
+         (vterm-shell (mapconcat #'shell-quote-argument cmd " "))
          (session-name (cerebro--session-buffer-name agent))
          (buffer (cerebro--make-session-buffer session-name)))
     (setf (alist-get (cerebro-agent-name agent) cerebro--sessions nil nil #'equal) buffer)
@@ -1748,16 +1751,18 @@ Does nothing when BUFFER is dead."
   "Recompute `tabulated-list-entries' for the fleet buffer."
   (let* ((repo-root (cerebro--repo-root))
          (roster (cerebro--roster repo-root))
-         ;; The interactive five write the same file when they can (ah-2n3.2),
-         ;; so their names are gathered alongside the roster's - one read per
-         ;; name per tick either way, and `cerebro--derive-interactive' falls
-         ;; back to the process scan for whichever of them have none.
+         (interactive (cerebro--interactive-agents repo-root))
+         ;; The interactive roles write the same file when they can
+         ;; (ah-2n3.2), so their names are gathered alongside the roster's -
+         ;; one read per name per tick either way, and
+         ;; `cerebro--derive-interactive' falls back to the process scan for
+         ;; whichever of them have none.
          (states (cerebro--gather-states
-                  repo-root (append (mapcar #'car cerebro-interactive-agents) roster)))
+                  repo-root (append (mapcar #'car interactive) roster)))
          (args (cerebro--system-args))
          (owned (cerebro--owned))
          (now (current-time))
-         (agents (cerebro--derive roster cerebro-interactive-agents states
+         (agents (cerebro--derive roster interactive states
                                           #'cerebro--pid-alive-p args owned)))
     (setq cerebro--agents agents)
     (setq tabulated-list-entries
@@ -1909,7 +1914,9 @@ ids and return - since it runs after every command in the list buffer."
       (when (/= width 0)
         (ignore-errors (window-resize cerebro--list-window width t))))
     (setq cerebro--beads-window
-          (ignore-errors (split-window cerebro--list-window cerebro-list-height 'below)))
+          (ignore-errors (split-window cerebro--list-window
+                                        (cerebro--list-height (length cerebro--agents))
+                                        'below)))
     (when (window-live-p cerebro--beads-window)
       ;; `cerebro--beads-buffer' only renders on its own first creation -
       ;; before calling it, so a panel that already existed (the fleet

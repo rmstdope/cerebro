@@ -21,14 +21,18 @@ git submodule update --remote --merge .claude/cerebro
 Each agent is started by a script of its own, run from the consumer repository root:
 
 ```bash
-.claude/cerebro/scripts/run-planner              # Xavier, on Fable at high effort
-.claude/cerebro/scripts/run-orchestrator         # Cerebro, on Fable at medium effort
+.claude/cerebro/scripts/run-planner              # Xavier
+.claude/cerebro/scripts/run-orchestrator         # Cerebro
 .claude/cerebro/scripts/run-user-feedback        # Moira
 .claude/cerebro/scripts/run-psylocke             # Psylocke, the verifier
-.claude/cerebro/scripts/run-forge               # Forge, the architect, one sweep per session
+.claude/cerebro/scripts/run-forge                # Forge, the architect, one sweep per session
 .claude/cerebro/scripts/run-implementer Cyclops  # one implementer, named from a closed roster
-.claude/cerebro/scripts/run-implementer --roster # the thirteen names, one per line
+.claude/cerebro/scripts/run-implementer --roster # the implementer names, one per line
+.claude/cerebro/scripts/roster                   # the fleet: name, role, kind - one line per agent
+.claude/cerebro/scripts/launch <Name>            # what every run-* script is a name for
 ```
+
+The `run-*` scripts are shims over `launch`; the roster is the one place the fleet is declared.
 
 All of them start **one interactive `claude` session** and nothing else — no loop, no flags, no
 files of their own, other than running `scripts/launch-preflight` right before they exec: it

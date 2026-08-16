@@ -24,9 +24,9 @@ pass() {
 
 # A fixture tree with its own scripts/ directory, symlinked to the real scripts, so
 # agent-state's own root-derivation (via scripts/consumer-root --shared) resolves inside
-# the fixture rather than the real repo. run-implementer is symlinked alongside it because
-# agent-state consults it for the roster. implementer-state (the deprecation shim) is symlinked
-# too, so a caller still using the old name is exercised the same way a real consumer would hit it.
+# the fixture rather than the real repo. roster is symlinked alongside it because agent-state
+# consults it for the fleet. implementer-state (the deprecation shim) is symlinked too, so a
+# caller still using the old name is exercised the same way a real consumer would hit it.
 # A git repo, since consumer-root --shared asks git for the main .git directory.
 new_fixture() {
   local tmp
@@ -34,7 +34,7 @@ new_fixture() {
   git init -q "$tmp"
   git -C "$tmp" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
   mkdir -p "$tmp/.claude/cerebro/scripts"
-  ln -s "$repo_root/scripts/run-implementer" "$tmp/.claude/cerebro/scripts/run-implementer"
+  ln -s "$repo_root/scripts/roster" "$tmp/.claude/cerebro/scripts/roster"
   ln -s "$repo_root/scripts/agent-state" "$tmp/.claude/cerebro/scripts/agent-state"
   ln -s "$repo_root/scripts/implementer-state" "$tmp/.claude/cerebro/scripts/implementer-state"
   ln -s "$repo_root/scripts/consumer-root" "$tmp/.claude/cerebro/scripts/consumer-root"
@@ -243,13 +243,13 @@ pass "interactive-agent-asking-with-bead-and-role-phase"
 # --- interactive-agent-refuses-done ---
 tmp="$(new_fixture)"
 set +e
-out="$(run_state "$tmp" Bishop done --pid 1 2>&1)"
+out="$(run_state "$tmp" Forge done --pid 1 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "interactive-agent-refuses-done: expected exit 2, got $status"
 grep -q "done is an implementer's state" <<<"$out" \
   || fail "interactive-agent-refuses-done: wrong message, got: $out"
-[[ -f "$(state_file "$tmp" Bishop)" ]] && fail "interactive-agent-refuses-done: file was written"
+[[ -f "$(state_file "$tmp" Forge)" ]] && fail "interactive-agent-refuses-done: file was written"
 rm -rf "$tmp"
 pass "interactive-agent-refuses-done"
 
@@ -260,7 +260,7 @@ out="$(run_state "$tmp" Nobody working --phase build --pid 1 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "off-roster-non-interactive-name-still-refused: expected exit 2, got $status"
-grep -q "neither on the roster nor an interactive agent" <<<"$out" \
+grep -q "is not on the roster" <<<"$out" \
   || fail "off-roster-non-interactive-name-still-refused: wrong message, got: $out"
 rm -rf "$tmp"
 pass "off-roster-non-interactive-name-still-refused"
@@ -284,7 +284,7 @@ worktree="$tmp/.cerebro/worktrees/ah-f9c"
 git -C "$tmp" worktree add -q "$worktree" -b ah-f9c-branch
 mkdir -p "$worktree/.claude/cerebro/scripts"
 ln -s "$repo_root/scripts/agent-state" "$worktree/.claude/cerebro/scripts/agent-state"
-ln -s "$repo_root/scripts/run-implementer" "$worktree/.claude/cerebro/scripts/run-implementer"
+ln -s "$repo_root/scripts/roster" "$worktree/.claude/cerebro/scripts/roster"
 ln -s "$repo_root/scripts/consumer-root" "$worktree/.claude/cerebro/scripts/consumer-root"
 
 "$worktree/.claude/cerebro/scripts/agent-state" Cyclops working --bead ah-f9c --pid 42

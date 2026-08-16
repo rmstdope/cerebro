@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#
+# `launch <Name> [claude args...]` is the only place a session is started and the only place
+# `BEADS_ACTOR`, `launch-preflight` and the model/effort come together. Every `run-*` script is a
+# name for this — kept because the docs and the navigator's fingers know them — but nothing in them
+# does anything of its own any more: this is where that used to live, six times over, and where it
+# drifted (ah-rnz, and this bead's own *Context*).
+#
+# The prompt below deliberately restates nothing about the role: the agent definition
+# (`agents/<role>.md`) is the instruction, and a second copy here is exactly what went stale before.
+#
+# **This starts one interactive session and nothing else.** It does not loop, it reads no flags, and
+# it writes no files — the one exception is the skill and agent symlinks under .claude/, which
+# `launch-preflight` re-syncs right before exec (ah-cuc), refusing with one line rather than exiting
+# silently if `claude` is not on PATH or the submodule never brought the role's agent file in
+# (ah-bri).
+
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+names() { "$here/roster" | while IFS=$'\t' read -r n _ _; do printf '%s\n' "$n"; done; }
+
+usage() {
+  echo "usage: launch <Name> [claude args...]" >&2
+  names >&2
+  exit 2
+}
+
+name="${1:-}"
+[[ -n "$name" ]] || usage
+shift
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+if ! entry="$("$here/roster" --entry "$name" 2>/dev/null)"; then
+  misspelt=""
+  while IFS= read -r row_name; do
+    if [[ "$(lower "$row_name")" == "$(lower "$name")" ]]; then
+      misspelt="$row_name"
+      break
+    fi
+  done < <(names)
+  if [[ -n "$misspelt" ]]; then
+    echo "launch: it is spelt $misspelt, not $name" >&2
+  else
+    echo "launch: $name is not on the roster" >&2
+    names >&2
+  fi
+  exit 2
+fi
+
+IFS=$'\t' read -r _ role kind <<<"$entry"
+
+# Every bd call in this session acts as this agent, not as the machine's git identity. Distinct
+# actors are what make a second claim on a held bead fail instead of aliasing into the first (bd's
+# --actor default chain: $BEADS_ACTOR, git user.name, $USER).
+export BEADS_ACTOR="$name"
+
+# ah-cuc: link whatever a submodule bump brought in, so `claude --agent <role>` finds it.
+# ah-bri: refuse with one line if it cannot, instead of exiting silently.
+"$here/launch-preflight" "$role" "$name"
+
+agents_dir="$here/../agents"
+model="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="model:"{print $2; exit}' "$agents_dir/$role.md")"
+effort="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="effort:"{print $2; exit}' "$agents_dir/$role.md")"
+
+exec claude \
+  --agent "$role" \
+  --name "$name" \
+  ${model:+--model "$model"} \
+  ${effort:+--effort "$effort"} \
+  --permission-mode auto \
+  "$@" \
+  "You are $name. Your agent definition ($role) is the whole of your instructions: follow it from
+the top, and start now rather than waiting to be spoken to."

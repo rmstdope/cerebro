@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+#
+# The one place the fleet is declared: name, role, and (derived) kind, one agent per line. Every
+# other reader — `scripts/launch`, `scripts/agent-state`, `emacs/cerebro.el`, and the tests — reads
+# this file rather than keeping its own copy, which is what let those copies drift from each other
+# and from the launchers before this script existed.
+#
+# Order matters: interactive agents first, then implementers, in the order the fleet view shows them
+# and the order Cerebro picks the next unused implementer name from. Keep new entries in that shape.
+#
+# KIND is derived, not written: `implementer` when ROLE is `implementer`, `interactive` otherwise.
+# That rule lives here and nowhere else — every reader takes the KIND column rather than
+# re-deriving it.
+#
+# Adding a role: one line here and one `agents/<role>.md`; the fleet view, `agent-state`, `launch`
+# and the tests read this file.
+#
+#     roster                    every row, NAME<TAB>ROLE<TAB>KIND, in file order
+#     roster --implementers     the implementer names only, one per line, in file order
+#     roster --entry <Name>     that one row (NAME<TAB>ROLE<TAB>KIND); exit 2 if absent
+#
+# Exact-match only, case-sensitive — the "it is spelt Storm" courtesy belongs to `launch`, where a
+# human types the name.
+#
+# Bash 3.2, builtins only (plus `dirname`, already required by callers): no `awk`, `grep`, `cut`,
+# `tr`, and no `declare -A` — this runs on macOS's stock bash, and on the PATH the
+# claude-missing test in tests/launchers.sh deliberately narrows to `dirname` and `bash` alone.
+
+set -euo pipefail
+
+# NAME        ROLE            (role = the agents/<role>.md file it runs, and the --agent value)
+TABLE="
+Xavier        planner
+Cerebro       orchestrator
+Moira         user-feedback
+Psylocke      verifier
+Forge         architect
+Cyclops       implementer
+Storm         implementer
+Wolverine     implementer
+Rogue         implementer
+Gambit        implementer
+Nightcrawler  implementer
+Colossus      implementer
+Iceman        implementer
+Beast         implementer
+Jubilee       implementer
+Phoenix       implementer
+Mystique      implementer
+Magneto       implementer
+"
+
+kind_of() {
+  # $1 = role
+  if [[ "$1" == "implementer" ]]; then
+    printf 'implementer'
+  else
+    printf 'interactive'
+  fi
+}
+
+print_all() {
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    case "$line" in
+      \#*) continue ;;
+    esac
+    read -r name role _ <<<"$line"
+    [[ -z "$name" ]] && continue
+    printf '%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")"
+  done <<<"$TABLE"
+}
+
+case "${1:-}" in
+  "")
+    print_all
+    ;;
+  --implementers)
+    while IFS=$'\t' read -r name role kind; do
+      [[ "$kind" == "implementer" ]] && printf '%s\n' "$name"
+    done < <(print_all)
+    ;;
+  --entry)
+    name="${2:-}"
+    if [[ -z "$name" ]]; then
+      echo "usage: roster [--implementers | --entry <Name>]" >&2
+      exit 2
+    fi
+    found=""
+    while IFS=$'\t' read -r row_name row_role row_kind; do
+      if [[ "$row_name" == "$name" ]]; then
+        printf '%s\t%s\t%s\n' "$row_name" "$row_role" "$row_kind"
+        found=1
+        break
+      fi
+    done < <(print_all)
+    if [[ -z "$found" ]]; then
+      echo "roster: $name is not on the roster" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "usage: roster [--implementers | --entry <Name>]" >&2
+    exit 2
+    ;;
+esac

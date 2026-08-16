@@ -1336,20 +1336,21 @@ timescales - a claim, a plan, a merge are minutes apart - and each refresh
 is three subprocesses, so a five-second cadence would buy nothing but load.
 `g' refreshes on demand.")
 
-(defun cerebro--bd-json (repo-root &rest args)
-  "Run `bd' with ARGS in REPO-ROOT and return the parsed JSON, or nil.
+(defconst cerebro--bd-list-argv
+  '("bd" "list" "--status" "open,in_progress,blocked,deferred,closed" "--json" "--brief")
+  "The one `bd' call the panel is drawn from. `--brief' drops the free-form
+text nothing here renders (1.95 MB to 199 KB on this backlog); every status
+by name and no `--exclude-type', as before - the partition is only complete
+if the list it partitions is.")
 
-Never signals. `bd' may be absent, unconfigured, or mid-write, and a panel
-that cannot answer must degrade to saying nothing rather than taking the
-fleet view down with it."
-  (condition-case nil
-      (with-temp-buffer
-        (let ((default-directory (file-name-as-directory repo-root)))
-          (when (zerop (apply #'call-process "bd" nil t nil args))
-            (json-parse-string (buffer-string)
-                               :object-type 'alist :array-type 'list
-                               :null-object nil :false-object nil))))
-    (error nil)))
+(defun cerebro--request-beads (repo-root callback)
+  "Ask `bd' for the panel's beads without blocking; CALLBACK gets the four
+partition lists (see `cerebro--partition-beads') when the answer lands, or
+nil when `bd' did not answer. Returns what `cerebro--run-async' returns."
+  (cerebro--run-async
+   'beads repo-root cerebro--bd-list-argv
+   (lambda (out)
+     (funcall callback (and out (cerebro--partition-beads (cerebro--parse-json out)))))))
 
 (defun cerebro--bd-text (repo-root id)
   "The output of `bd show ID' run in REPO-ROOT, or nil if it failed.
@@ -1455,23 +1456,6 @@ not roll a bead round to P0."
           (zerop (call-process "bd" nil t nil "update" id
                                "--priority" (number-to-string priority)))))
     (error nil)))
-
-(defun cerebro--gather-beads (repo-root)
-  "The six lists the panel shows, from one `bd' call.
-
-Every status by name, and no `--exclude-type': the partition can only be
-complete if the list it partitions is.  One call also costs less than the
-five it replaced, and cannot show a half-updated database the way five
-sequential calls could.
-
-An earlier version filtered the open lists by the `owner' field and showed
-an empty panel every time: `owner' is the address of whoever *filed* the
-bead and is set on all of them, claimed or not."
-  (cerebro--partition-beads
-   (cerebro--bd-json repo-root "list"
-                     "--status" "open,in_progress,blocked,deferred,closed"
-                     "--json")))
-
 
 (defun cerebro--layout-detail-window ()
   "The layout's detail window, or nil.
@@ -1660,19 +1644,49 @@ next timed one. See `cerebro--refresh-panel-when-due'.")
 Also set by `cerebro--beads-buffer's own immediate sweep, so the first
 timed one is ten minutes after the layout, not five seconds after.")
 
-(defun cerebro--beads-render (buffer)
-  "Redraw BUFFER's panel from `bd'.
+(defvar-local cerebro--beads nil
+  "The last partition `bd' answered with, or nil before the first.")
+
+(defvar-local cerebro--beads-as-of nil
+  "`float-time' when `cerebro--beads' arrived, or nil.")
+
+(defvar-local cerebro--beads-requested-at nil
+  "`float-time' of the request now in flight, or nil when none is.")
+
+(defvar-local cerebro--beads-failed-at nil
+  "`float-time' of the last request that got no answer, or nil once one has
+succeeded since.")
+
+(defun cerebro--panel-header (as-of requested-at failed-at)
+  "Pure. The panel's header line: what the rows date from and what is going on."
+  (concat "Beads"
+          (and as-of (format " · as of %s"
+                             (format-time-string "%H:%M:%S" (seconds-to-time as-of))))
+          (and requested-at " · refreshing…")
+          (and failed-at (format " · bd did not answer at %s"
+                                 (format-time-string "%H:%M:%S" (seconds-to-time failed-at))))))
+
+(defun cerebro--update-panel-header (buffer)
+  "Set BUFFER's `header-line-format' from its panel state and redisplay it."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq header-line-format
+            (cerebro--panel-header cerebro--beads-as-of cerebro--beads-requested-at
+                                   cerebro--beads-failed-at))
+      (force-mode-line-update))))
+
+(defun cerebro--draw-beads (buffer)
+  "Draw BUFFER's rows from `cerebro--beads' and `cerebro--sweep-findings'.
 
 Draws from `cerebro--sweep-findings' rather than gathering it fresh - that
 is `cerebro--sweep's job, on its own ten-minute cadence, because the
-sweep scripts fetch from origin and spawn twice what `cerebro--gather-beads'
-does. A `g' or the thirty-second bead timer redraws with whatever the last
-sweep found rather than paying that cost again."
+sweep scripts fetch from origin and spawn twice what one bead request
+does."
   (cerebro--redraw
    buffer
    (lambda ()
      (let* ((width (cerebro--panel-width buffer))
-            (beads (cerebro--gather-beads (cerebro--repo-root)))
+            (beads (or cerebro--beads (list nil nil nil nil)))
             (lines (apply #'cerebro--bead-panel
                           (append beads (list width cerebro-beads-per-section)
                                   (list cerebro--sweep-findings))))
@@ -1685,6 +1699,30 @@ sweep found rather than paying that cost again."
        (unless (and selected (cerebro--goto-bead selected))
          ;; Selected bead merged, closed, or claimed away while it was marked.
          (cerebro--goto-first-bead))))))
+
+(defun cerebro--beads-render (buffer)
+  "Refresh BUFFER: draw what is known now, ask `bd' for what is current, and
+draw again when it answers. Never blocks. A request already out is left to
+finish rather than joined by a second (`cerebro--run-async' says `busy')."
+  (cerebro--draw-beads buffer)
+  (when (buffer-live-p buffer)
+    (let ((root (with-current-buffer buffer (cerebro--repo-root))))
+      (pcase (cerebro--request-beads
+              root
+              (lambda (beads)
+                (when (buffer-live-p buffer)
+                  (with-current-buffer buffer
+                    (setq cerebro--beads-requested-at nil)
+                    (if beads
+                        (setq cerebro--beads beads
+                              cerebro--beads-as-of (float-time)
+                              cerebro--beads-failed-at nil)
+                      (setq cerebro--beads-failed-at (float-time))))
+                  (cerebro--draw-beads buffer)
+                  (cerebro--update-panel-header buffer))))
+        ('started (with-current-buffer buffer
+                    (setq cerebro--beads-requested-at (float-time)))))))
+  (cerebro--update-panel-header buffer))
 
 (defun cerebro--beads-revert (&rest _)
   "Refresh the panel, for `g'."

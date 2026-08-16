@@ -26,7 +26,7 @@ than no plan because somebody will build from it.
 
 ## Telling the fleet view what you are doing
 
-`.claude/agents-state/Xavier.state.json` is how the fleet view sees you, the same way an
+`.cerebro/state/Xavier.state.json` is how the fleet view sees you, the same way an
 implementer's file works (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never
 by hand:
 
@@ -227,7 +227,7 @@ counting it would starve the queue while the number looked healthy. `epic` is a 
 has children rather than a plan.
 
 **How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
-state file under `.claude/agents-state/` whose `pid` is alive, minus any implementer whose stop flag
+state file under `.cerebro/state/` whose `pid` is alive, minus any implementer whose stop flag
 is set (it finishes its bead and retires, so it will not take another). **Since ah-2n3.2 the
 interactive five — Xavier, Cerebro, Moira, Psylocke, Bishop — write the same file you do**, so the
 loop below filters to the implementer roster explicitly; without that filter your own file inflates
@@ -236,10 +236,10 @@ loop below filters to the implementer roster explicitly; without that filter you
 ```bash
 roster="$(.claude/cerebro/scripts/run-implementer --roster)"
 n=0
-for f in $(find .claude/agents-state -maxdepth 1 -name '*.state.json' 2>/dev/null); do
+for f in $(find .cerebro/state -maxdepth 1 -name '*.state.json' 2>/dev/null); do
   name="$(basename "$f" .state.json)"
   grep -qFx -- "$name" <<<"$roster" || continue      # skip the interactive five's own files
-  [ -e ".claude/agents-state/$name.stop" ] && continue
+  [ -e ".cerebro/state/$name.stop" ] && continue
   pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && n=$((n+1))
 done
@@ -503,11 +503,11 @@ identically, and a docs commit is not small enough to be an exception.
 
 ```bash
 git -C <repo> fetch origin main
-git -C <repo> worktree add -b <id>-mockup <repo>/.claude/worktrees/<id>-mockup origin/main
-cd <repo>/.claude/worktrees/<id>-mockup
+git -C <repo> worktree add -b <id>-mockup <repo>/.cerebro/worktrees/<id>-mockup origin/main
+cd <repo>/.cerebro/worktrees/<id>-mockup
 ```
 
-`.claude/worktrees/` and nowhere else: `bd` and cargo both find their configuration by walking up, so
+`.cerebro/worktrees/` and nowhere else: `bd` and cargo both find their configuration by walking up, so
 a worktree outside the repository quietly gets its own empty bead database and its own
 multi-gigabyte build directory. The `-mockup` suffix keeps it distinct from the worktree an
 implementer will later add for the same bead — two worktrees cannot share a path, and the
@@ -522,7 +522,7 @@ merged**, running from the main checkout rather than from inside the tree you ar
 
 ```bash
 cd <repo>
-git -C <repo> worktree remove --force .claude/worktrees/<id>-mockup
+git -C <repo> worktree remove --force .cerebro/worktrees/<id>-mockup
 git -C <repo> worktree prune
 ```
 

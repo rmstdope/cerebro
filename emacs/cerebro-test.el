@@ -552,7 +552,7 @@ columns; a glyph says the same thing in two (see ah-lyc)."
 
 (ert-deftest cerebro-test/write-stop-flag-creates-a-missing-directory ()
   "Since ah-2n3.1 `cerebro--repo-root' is located by `.claude/cerebro', not by
-this directory, so `.claude/agents-state' is no longer guaranteed to exist."
+this directory, so `.cerebro/state' is no longer guaranteed to exist."
   (let ((root (make-temp-file "cerebro-test-" t)))
     (unwind-protect
         (progn
@@ -1092,7 +1092,7 @@ implementer under a stop flag - `cerebro--end-session', not `cerebro--launch'."
 
 (ert-deftest cerebro-test/stop-flag-path-is-the-documented-one ()
   (should (equal (cerebro--stop-flag-path "/repo" "Cyclops")
-                  "/repo/.claude/agents-state/Cyclops.stop")))
+                  "/repo/.cerebro/state/Cyclops.stop")))
 
 ;; ---------------------------------------------------------------------------
 ;; A session Emacs owns is alive, whatever the state file says yet

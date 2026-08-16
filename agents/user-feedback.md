@@ -25,7 +25,7 @@ gh issue list --state open --json number,title,body,author,createdAt,labels --li
 
 ### Telling the fleet view what you are doing
 
-`.claude/agents-state/Moira.state.json` is how the fleet view sees you, exactly as an implementer's
+`.cerebro/state/Moira.state.json` is how the fleet view sees you, exactly as an implementer's
 file is (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never by hand:
 
 | Moment | Call |

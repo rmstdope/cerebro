@@ -141,11 +141,11 @@ every one of them; who is *working* on a bead is what the agent list directly ab
 
 Implementers are interactive sessions that take one bead each, so they cannot end themselves. The
 same five-second poll that refreshes the list acts on what each one reports in
-`.claude/agents-state/<name>.state.json`:
+`.cerebro/state/<name>.state.json`:
 
 - **`done`** — the bead is merged, closed and cleaned up. The session is ended and a fresh one
   started for the next bead, which is how a session's context stays one bead deep.
-- **`done` with `.claude/agents-state/<name>.stop` present** — ended, and no replacement; the flag is
+- **`done` with `.cerebro/state/<name>.stop` present** — ended, and no replacement; the flag is
   removed with it. `s` on a name with a flag removes it too, and says so. That is what "stop an
   implementer" means: it finishes what it is on, and then does not come back until started again.
 - **`asking`** — blocked on a question only the navigator can answer. Answer it in the detail

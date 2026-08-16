@@ -150,14 +150,16 @@ the rest of the view reads."
   "Derive one interactive agent's row from (NAME . ROLE) ENTRY.
 
 STATES is an alist of (NAME . parsed-state-json-or-nil), the same one an
-implementer's row is derived from; PID-ALIVE-P a predicate on a pid; ARGS is
+implementer's row is derived from; SESSION-ALIVE-P a predicate on (PID NAME) -
+is that pid still *this* agent's session, not merely a live one; ARGS is
 the system process args list; OWNED the names Emacs itself started.
 
 Liveness is the state file first, the process scan second: when STATES has
 an entry for NAME whose pid is still alive, the row comes from the file -
 `working'/`idle'/`asking' and a phase, exactly like an implementer's row.
-Otherwise (no entry, or a pid that is no longer running - the file, if any,
-is a previous session's) this falls back to the three process-scan branches
+Otherwise (no entry, or a pid that is no longer this agent's session - the
+file, if any, is a previous session's, and the pid may since have been
+recycled onto something else) this falls back to the three process-scan branches
 below, so a session started by hand outside this fleet
 \(`claude --name Xavier ...'\) with no file at all still shows `up'."
   (let* ((name (car entry))
@@ -182,8 +184,10 @@ below, so a session started by hand outside this fleet
 (defun cerebro--derive-implementer (name states session-alive-p owned)
   "Derive one implementer's row for NAME.
 
-STATES is an alist of (NAME . parsed-state-json-or-nil); PID-ALIVE-P a
-predicate on a pid; OWNED the names Emacs itself started."
+STATES is an alist of (NAME . parsed-state-json-or-nil); SESSION-ALIVE-P a
+predicate on (PID NAME) - see `cerebro--session-alive-p', which requires the
+pid's own command line to name this agent, since pids are recycled; OWNED the
+names Emacs itself started."
   (let* ((parsed (cdr (assoc name states)))
          (pid (and parsed (alist-get 'pid parsed)))
          (alive (and pid (funcall session-alive-p pid name)))
@@ -212,7 +216,8 @@ ROSTER is the implementer name list, in the order they should be shown.
 INTERACTIVE-AGENTS is an alist of (NAME . ROLE), normally
 `cerebro--interactive-agents'.  STATES is an alist of (NAME .
 parsed-state-json-or-nil) covering both the roster and the interactive
-names - see `cerebro--gather-states'.  PID-ALIVE-P is a predicate on a pid.
+names - see `cerebro--gather-states'.  SESSION-ALIVE-P is a predicate on
+(PID NAME): whether that pid is still that agent's own session.
 ARGS is the system process args list.  OWNED is the set of agent names whose
 sessions Emacs itself started."
   (append

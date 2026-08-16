@@ -2768,5 +2768,24 @@ navigator who redraws by hand every twenty seconds would never see one."
         (kill-buffer list-buffer)
         (kill-buffer panel)))))
 
+;; ---------------------------------------------------------------------------
+;; ah-9dv: the process scan runs on its own, slower cadence
+
+(ert-deftest cerebro-test/system-args-are-rescanned-every-thirty-seconds-not-five ()
+  "The scan used to be on the five-second tick; it now keeps its own
+thirty-second cadence, the same as the bead panel's."
+  (let ((calls 0) (buffer (generate-new-buffer " *cerebro-test-system-args*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--system-args)
+                   (lambda () (cl-incf calls) '("fake args"))))
+          (with-current-buffer buffer
+            (cerebro--cached-system-args 1000.0)
+            (should (= calls 1))
+            (cerebro--cached-system-args 1005.0)
+            (should (= calls 1))
+            (cerebro--cached-system-args 1031.0)
+            (should (= calls 2))))
+      (kill-buffer buffer))))
+
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

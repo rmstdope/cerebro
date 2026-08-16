@@ -1008,6 +1008,26 @@ writing the same file."
         (mapcar (lambda (pid) (alist-get 'args (process-attributes pid)))
                 (list-system-processes))))
 
+(defvar cerebro-system-scan-seconds 30
+  "How often the process list is scanned for interactive agents started
+outside Emacs. A rare event, polled at the rate of a state file; the scan
+itself is 75 ms of blocking work and was on the five-second tick.")
+
+(defvar-local cerebro--system-args-cache nil
+  "(ARGS . SCANNED-AT) from the last scan, per fleet buffer.")
+
+(defun cerebro--cached-system-args (&optional now)
+  "`cerebro--system-args', rescanned only when `cerebro-system-scan-seconds'
+have passed. NOW is for tests."
+  (let ((now (or now (float-time))))
+    (if (and cerebro--system-args-cache
+             (not (cerebro--due-p (cdr cerebro--system-args-cache)
+                                  cerebro-system-scan-seconds now)))
+        (car cerebro--system-args-cache)
+      (let ((args (cerebro--system-args)))
+        (setq cerebro--system-args-cache (cons args now))
+        args))))
+
 (defvar cerebro--sessions nil
   "The sessions this Emacs started: an alist of (NAME . BUFFER), one per agent.
 
@@ -1880,7 +1900,7 @@ Does nothing when BUFFER is dead."
          ;; whichever of them have none.
          (states (cerebro--gather-states
                   repo-root (append (mapcar #'car interactive) roster)))
-         (args (cerebro--system-args))
+         (args (cerebro--cached-system-args))
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states

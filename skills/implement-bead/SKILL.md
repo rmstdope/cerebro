@@ -343,7 +343,7 @@ shipped and what the navigator saw fail:
 git log origin/main --grep "(<id>):" -F --oneline    # the original PR(s)
 ```
 
-and the failure itself, in the bead's notes. The plan (amended in place by Xavier, per `plan-bead`)
+and the failure itself, in the bead's notes. The plan (amended in place by a planner, per `plan-bead`)
 is what you build from as always; the failure notes tell you what "done" now has to mean. **Your
 scope is making the plan's promise true — the gap the navigator found — not rebuilding the bead from
 nothing.** Where the failure is testable at all, let your first failing test reproduce what they

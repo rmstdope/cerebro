@@ -15,9 +15,16 @@
 # Adding a role: one line here and one `agents/<role>.md`; the fleet view, `agent-state`, `launch`
 # and the tests read this file.
 #
+# Adding a *second agent to an existing role* (as `planner` has, Xavier and Beast): one line here,
+# and nothing else structural — every reader is name-driven. What it does need is a look at whatever
+# that role does exactly once per fleet rather than once per session: `plan-bead` gives the P4
+# triage pass to the first planner listed here, so file order is load-bearing for more than display.
+#
 #     roster                    every row, NAME<TAB>ROLE<TAB>KIND, in file order
 #     roster --implementers     the implementer names only, one per line, in file order
 #     roster --entry <Name>     that one row (NAME<TAB>ROLE<TAB>KIND); exit 2 if absent
+#     roster --role <role>      the names holding that ROLE, one per line, in file order; nothing
+#                               (exit 0) if nobody holds it
 #
 # Exact-match only, case-sensitive — the "it is spelt Storm" courtesy belongs to `launch`, where a
 # human types the name.
@@ -31,6 +38,7 @@ set -euo pipefail
 # NAME        ROLE            (role = the agents/<role>.md file it runs, and the --agent value)
 TABLE="
 Xavier        planner
+Beast         planner
 Cerebro       orchestrator
 Moira         user-feedback
 Psylocke      verifier
@@ -43,7 +51,6 @@ Gambit        implementer
 Nightcrawler  implementer
 Colossus      implementer
 Iceman        implementer
-Beast         implementer
 Jubilee       implementer
 Phoenix       implementer
 Mystique      implementer
@@ -80,10 +87,28 @@ case "${1:-}" in
       [[ "$kind" == "implementer" ]] && printf '%s\n' "$name"
     done < <(print_all)
     ;;
+  --role)
+    # A role can be held by more than one agent (two planners, ah-2p), so "who is the first of
+    # them" is a question with an answer rather than a tautology: file order is the answer, and
+    # `plan-bead' uses it to give the triage pass to exactly one planner.
+    role="${2:-}"
+    if [[ -z "$role" ]]; then
+      echo "usage: roster [--implementers | --role <role> | --entry <Name>]" >&2
+      exit 2
+    fi
+    # `if' rather than `[[ ... ]] &&': the latter leaves the loop - and so this script - exiting
+    # non-zero whenever the *last* roster row is not a match, which for any interactive role is
+    # every time. `--implementers' gets away with it only because the roster ends in implementers.
+    while IFS=$'\t' read -r name row_role _; do
+      if [[ "$row_role" == "$role" ]]; then
+        printf '%s\n' "$name"
+      fi
+    done < <(print_all)
+    ;;
   --entry)
     name="${2:-}"
     if [[ -z "$name" ]]; then
-      echo "usage: roster [--implementers | --entry <Name>]" >&2
+      echo "usage: roster [--implementers | --role <role> | --entry <Name>]" >&2
       exit 2
     fi
     found=""
@@ -100,7 +125,7 @@ case "${1:-}" in
     fi
     ;;
   *)
-    echo "usage: roster [--implementers | --entry <Name>]" >&2
+    echo "usage: roster [--implementers | --role <role> | --entry <Name>]" >&2
     exit 2
     ;;
 esac

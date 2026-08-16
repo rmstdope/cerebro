@@ -103,6 +103,27 @@ printf '%s\n' "$implementers_out" | grep -qx "Forge" \
   && fail "roster --implementers: contains an interactive name"
 pass "roster --implementers matches the implementer rows and excludes interactive names"
 
+# --role exists for the one question a role with more than one agent raises: which of them is it?
+# `plan-bead` asks it to decide which planner runs the triage pass, so that two planning sessions do
+# not walk the navigator through the same P4 backlog twice.
+role_out="$("$repo_root/scripts/roster" --role planner)"
+expected_planners="$(printf '%s\n' "$roster_out" | awk -F'\t' '$2 == "planner" {print $1}')"
+[[ "$role_out" == "$expected_planners" ]] \
+  || fail "roster --role planner: got '$role_out', expected '$expected_planners'"
+[[ -n "$role_out" ]] || fail "roster --role planner: no planner on the roster"
+pass "roster --role planner lists the planners in file order"
+
+[[ -z "$("$repo_root/scripts/roster" --role nobody)" ]] \
+  || fail "roster --role nobody: expected no output"
+pass "roster --role of an unheld role prints nothing"
+
+set +e
+"$repo_root/scripts/roster" --role >/dev/null 2>&1
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "roster --role with no role: expected exit 2, got $status"
+pass "roster --role with no role exits 2"
+
 first_name="$(printf '%s\n' "$roster_out" | head -1 | awk -F'\t' '{print $1}')"
 entry_out="$("$repo_root/scripts/roster" --entry "$first_name")"
 [[ "$entry_out" == "$(printf '%s\n' "$roster_out" | head -1)" ]] \
@@ -209,8 +230,8 @@ pass "launch with no argument exits 2"
 
 # --- shims ---
 
-SHIMS=(run-planner run-orchestrator run-user-feedback run-psylocke run-forge)
-SHIM_NAMES=(Xavier Cerebro Moira Psylocke Forge)
+SHIMS=(run-planner run-beast run-orchestrator run-user-feedback run-psylocke run-forge)
+SHIM_NAMES=(Xavier Beast Cerebro Moira Psylocke Forge)
 
 i=0
 while [[ $i -lt ${#SHIMS[@]} ]]; do

@@ -42,12 +42,17 @@ Sync symlinks into a consumer repo (run from that repo, not this one):
 
 ## The agent fleet these files describe
 
-Six roles, each an agent definition in `agents/`; most are backed by a skill in `skills/`:
+Six roles, each an agent definition in `agents/`; most are backed by a skill in `skills/`. A role is
+not a session count — **`planner` is held by two agents, Xavier and Beast** (`scripts/roster --role
+planner`), which is the one place a name and a role stop being interchangeable:
 
-- **Xavier** (`planner`, Fable/high) — loads `plan-bead`. Turns unplanned beads into plans a Sonnet
-  agent could build unattended. Decides architecture itself; takes every user-facing decision to the
-  human ("the navigator"). Keeps a buffer of planned beads ahead of the builders, sized from how
-  many are running (twice the count, never fewer than four).
+- **Xavier** and **Beast** (`planner`, Fable/high) — load `plan-bead`. Turn unplanned beads into
+  plans a Sonnet agent could build unattended. Decide architecture themselves; take every
+  user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
+  builders, sized from how many are running (twice the count, never fewer than four). They divide
+  the work through the `planning` label alone — taken before research and pushed at once, counted
+  toward the buffer by both, and with the P4 **triage pass belonging to the first planner on the
+  roster only**, since two triaging sessions interview the navigator twice over the same backlog.
 - **Cerebro** (`orchestrator`, Fable/medium) — stops implementers on request by writing their stop
   flag; it cannot start one, since that means starting a session. **Starts nothing on its own.** The
   worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
@@ -87,7 +92,7 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **The state file is the contract, for every agent.** `.cerebro/state/<name>.state.json`
   carries `idle`/`working`/`asking`/`done`; every agent in the fleet writes it, `cerebro.el` acts on
   it. Since ah-u3i it also carries `phase` (an implementer's `build`/`gate`/`review`/`ci`/`rebase`/
-  `merge`, or a role word for the interactive five since ah-2n3.2, or null) and `phase_since` —
+  `merge`, or a role word for the interactive agents since ah-2n3.2, or null) and `phase_since` —
   supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
   phase vocabulary can only mislabel a column, never break the restart loop. An unrecognised `state`
   string shows its raw word in yellow rather than reading as `idle`, which used to mean "fine" when
@@ -106,7 +111,7 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   documented crashed-agent recovery), and never act outside a planned bead.
 - Each agent announces its own name in its first message — the human watches several sessions at once.
 - **Closed is not terminal.** A failed verification reopens a bead at P0, and every role above
-  describes what it does when one comes back — Psylocke reopens it, Xavier amends the plan if the
+  describes what it does when one comes back — Psylocke reopens it, a planner amends the plan if the
   plan was wrong, an implementer picks it up like any other P0, and Moira tells the reporter it was
   taken back. A change to any one of those has to keep the others consistent with it.
 - **Forge files, never fixes.** It never edits `packages/`, `crates/`, `apps/` or `emacs/`, and a
@@ -141,10 +146,10 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
 - `<name>.state.json` — `{state: "idle"|"working"|"asking"|"done", phase, bead, since, phase_since,
   pid}`, written by **the agent itself** at each transition through `scripts/agent-state` (never by
   hand — see that script's header). Every implementer writes one, and since ah-2n3.2 so does each of
-  the interactive five, `done` excepted. The launcher used to write the file and no longer does: it
+  the interactive agents, `done` excepted. The launcher used to write the file and no longer does: it
   `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/`review`/`ci`/
   `rebase`/`merge` for an implementer, or a role word (`triage`/`plan`, `prepare`/`verify`, `sweep`,
-  `sweep`/`release`, `daily`/`weekly`) for the interactive five — meaningful with `working` and
+  `sweep`/`release`, `daily`/`weekly`) for the interactive agents — meaningful with `working` and
   `asking`; `since` is the last change of `state` or `bead`, `phase_since` the last change of
   `phase`. Whoever changes the `state` vocabulary must change `cerebro--derive-from-state` with it —
   an unrecognised `state` now maps to `'unknown` and shows its raw word in yellow, not `idle`. **The
@@ -154,7 +159,7 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
 - `scripts/roster` — the fleet: name, role and kind per agent, read once per buffer by
   `cerebro--fleet`.
 
-Liveness for the interactive five is the state file first, when one exists for a live pid
+Liveness for the interactive agents is the state file first, when one exists for a live pid
 (`cerebro--derive-interactive`), and falls back to scanning system process args for `--name <Name>`
 when it does not — a session started by hand, outside this fleet, has no file and still shows `up`.
 

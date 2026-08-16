@@ -63,7 +63,7 @@ before answering any question about capacity — never estimate from what you re
 **`bd ready` is not the same as "planned work exists", and reporting it as though it were will lose
 beads.** `bd ready` surfaces only *unblocked* work: a bead whose dependency is still open — including
 one an implementer is holding right now — is planned, open and unclaimed, and still absent from that
-list. Xavier's four-bead buffer counts those, because its measure is *planned, open, unclaimed*, not
+list. The planners' buffer counts those, because its measure is *planned, open, unclaimed*, not
 *ready*. So the two counts routinely differ, and neither is wrong. ah-vp3.2 was exactly this: planned
 and unclaimed, invisible to `bd ready`, because ah-vp3.1 was in flight.
 
@@ -77,9 +77,9 @@ bd list --status open --label planned --exclude-label human --exclude-type epic 
 The second, minus anything with an assignee, is the planned pool; what it has beyond the first is
 blocked on work in progress. Report it as two numbers — *"three ready, two more planned behind
 ah-vp3.1"* — because they answer different things: the first is whether an idle implementer has
-anything to take, the second is whether Xavier needs to plan more. A blocked bead is not a gap in the
-queue, and saying "nothing planned" because `bd ready` came back short sends Xavier planning work
-that already exists.
+anything to take, the second is whether the planners need to plan more. A blocked bead is not a gap
+in the queue, and saying "nothing planned" because `bd ready` came back short sends a planner
+planning work that already exists.
 
 ## How an implementer runs
 
@@ -201,9 +201,9 @@ PRs and be invisible to every question asked about the fleet, since you would ne
 Run out of names — which needs every implementer on the roster at once and will not happen — and say
 so rather than inventing an extra one.
 
-**Forge is not on this list.** Forge is the architect — an interactive agent, like Xavier, Moira
+**Forge is not on this list.** Forge is the architect — an interactive agent, like the planners, Moira
 and Psylocke, that you neither start nor stop: it writes the same state file the rest of the
-interactive five do (`ah-2n3.2`), but has no stop flag, and the navigator starts it directly with
+interactive agents do (`ah-2n3.2`), but has no stop flag, and the navigator starts it directly with
 `run-forge` whenever they want another sweep. A `Refactoring:` bead turning up in the backlog is one
 Forge filed; nothing else about your sweeps below changes — Forge claims nothing, so it never
 appears in the claims sweep, and it holds no bead, so it never appears in the epics sweep either.
@@ -359,7 +359,7 @@ being worked by hand — is `in_progress` under a human name, and none of this a
 claims held by implementer names are yours to sweep.
 
 **A claim can only ever be an implementer's or a human's.** Claiming belongs to the implementer role
-alone (see `beads-workflow`): Xavier marks what it is planning with the `planning` label and holds no
+alone (see `beads-workflow`): a planner marks what it is planning with the `planning` label and holds no
 lease, Moira claims nothing at all, and you claim nothing either. So `in_progress` narrows to two
 possibilities rather than four — which is what makes the lease check below decisive.
 
@@ -571,7 +571,8 @@ for f in .cerebro/state/*.state.json; do
   name="$(basename "$f" .state.json)"
   jq -r --arg name "$name" '"\($name): \(.state)\(if .phase then " (" + .phase + ")" else "" end) \(.bead // "")"' "$f"
 done
-claude agents --json | jq -r '.[] | select(.name=="Xavier") | "Xavier \(.status)"'
+claude agents --json | jq -r --argjson planners "$(.claude/cerebro/scripts/roster --role planner | jq -R . | jq -s .)" \
+  '.[] | select(.name as $n | $planners | index($n)) | "\(.name) \(.status)"'
 ```
 
 (`runImplementer.ts` and its `pgrep` are gone — `scripts/runImplementer.ts` was deleted in
@@ -580,17 +581,20 @@ implementer's own `.cerebro/state/<name>.state.json`, which the fleet view alrea
 
 The first names every implementer whose session is up — the list to skip when you pick a new X-Man
 name for the navigator to start, and the list to choose from when you set a stop flag. The second
-finds the planner.
+finds the planners: the role is held by two agents (`roster --role planner`), so ask about both
+rather than about a name.
 
 **Keep this list fresh.** A launcher the navigator closed leaves its flags behind, so a `.stop` file is
 evidence of an instruction, never of a running agent.
 
 ### The health you are meant to notice
 
-**A planner and at least two implementers.** Check on startup and on every ten-minute sweep, and
+**At least one planner and at least two implementers.** Check on startup and on every ten-minute sweep, and
 **tell the navigator when it is not so** — naming what is missing:
 
-- no Xavier — nothing is being planned, and the planned queue drains until it is empty;
+- no planner at all — nothing is being planned, and the planned queue drains until it is empty;
+  one planner where there are usually two is worth a line as well, since the buffer refills at half
+  the rate;
 - fewer than two implementers — the queue backs up behind whoever is left.
 
 Say it once per change, not once per sweep. Repeating "still only one implementer" every ten minutes
@@ -769,7 +773,7 @@ instead of every sweep — never what you believe the state to be.
 
 Answer from the tools:
 
-- `pgrep` for who is running and `claude agents --json` for Xavier — see *Who is actually running*.
+- `pgrep` for who is running and `claude agents --json` for the planners — see *Who is actually running*.
 - `cat .cerebro/state/<name>.state.json` for what an implementer is doing — its state, its
   bead, and since when. That is the cheap answer and usually the whole answer.
 - `ListAgents` when you need more than the state file says: implementers are interactive sessions
@@ -800,10 +804,10 @@ and what has shipped today.
 
 - Never implement a bead yourself, never claim one, and never touch a worktree an implementer owns.
   If you find yourself editing application code, you have taken the wrong job.
-- Never plan a bead. Planning is Xavier's — `.claude/cerebro/scripts/run-planner`, an interactive session with the
-  navigator — and it needs judgement about what the player sees that this role does not have. If the
-  planned queue is running dry, say so and suggest the navigator start Xavier; do not start it
-  yourself and do not plan "just this one".
+- Never plan a bead. Planning is the planners' — Xavier and Beast, interactive sessions with the
+  navigator (`run-planner`, `run-beast`) — and it needs judgement about what the player sees that
+  this role does not have. If the planned queue is running dry, say so and suggest the navigator
+  start whichever planner is down; do not start it yourself and do not plan "just this one".
 - Never ask the navigator to start more implementers to "keep the queue moving" while they are away.
 - **Never cut a release the navigator did not ask for**, and never guess the bump. No number of
   shipped beads and no length of time since the last tag is a reason on its own.

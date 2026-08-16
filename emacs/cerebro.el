@@ -751,7 +751,7 @@ Only an implementer Emacs itself started is supervised.  One running in
 somebody's own terminal is theirs to end, and a dead one stays dead -
 restarting it would fight the navigator's own `k'.
 
-The `kind' guard is load-bearing now that the interactive five write the
+The `kind' guard is load-bearing now that the interactive agents write the
 same state file an implementer does (ah-2n3.2): Xavier, Cerebro, Moira,
 Psylocke and Forge can show `asking' or, if one ever writes it in error,
 `unknown', but never `restart'ed, `retire'd or `nudge'd from here - they are
@@ -844,7 +844,7 @@ harder confirm), `external' (refuse - not ours to stop) or `dead'
 (defun cerebro--finish-action (agent flag-set)
   "What `f' should do for AGENT given FLAG-SET.
 
-One of `not-implementer' (the five interactive roles have no bead to finish
+One of `not-implementer' (an interactive agent has no bead to finish
 and no flag to write), `offer-clear' (flag already set - ask before removing
 it, which is the cheap way back to \"actually, keep going\"; checked ahead of
 every state below, since a stale flag is worth offering to clear whatever
@@ -1023,7 +1023,7 @@ may not exist yet on a fresh machine - `agent-state' and
   "The (NAME . parsed-state-json-or-nil) alist for every name in ROSTER.
 
 ROSTER need not be only implementers - `cerebro--revert' passes it the
-roster plus the five interactive names, since ah-2n3.2 has all of them
+roster plus the interactive names, since ah-2n3.2 has all of them
 writing the same file."
   (mapcar (lambda (name)
             (cons name (cerebro--read-state-file

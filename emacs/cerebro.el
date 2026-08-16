@@ -1219,12 +1219,6 @@ timescales - a claim, a plan, a merge are minutes apart - and each refresh
 is three subprocesses, so a five-second cadence would buy nothing but load.
 `g' refreshes on demand.")
 
-(defvar cerebro--beads-timer nil
-  "The bead panel's refresh timer, or nil.")
-;; Global, not buffer-local: the tick has to be able to cancel itself once the
-;; buffer is gone, and a buffer-local value dies with the buffer that held it -
-;; leaving a timer firing every thirty seconds with nothing to read it from.
-
 (defun cerebro--bd-json (repo-root &rest args)
   "Run `bd' with ARGS in REPO-ROOT and return the parsed JSON, or nil.
 
@@ -1536,54 +1530,48 @@ when the navigator holds the key down hides where it finishes."
   (interactive)
   (cerebro--move-bead -1))
 
+(defvar-local cerebro--beads-rendered-at nil
+  "`float-time' of the last timer redraw of this panel, or nil.
+
+Not touched by an on-demand redraw (`g', a priority change) - only the
+tick's own timed refresh sets it, so redrawing by hand never postpones the
+next timed one. See `cerebro--refresh-panel-when-due'.")
+
+(defvar-local cerebro--swept-at nil
+  "`float-time' of the last timed sweep of this panel, or nil.
+
+Also set by `cerebro--beads-buffer's own immediate sweep, so the first
+timed one is ten minutes after the layout, not five seconds after.")
+
 (defun cerebro--beads-render (buffer)
   "Redraw BUFFER's panel from `bd'.
 
 Draws from `cerebro--sweep-findings' rather than gathering it fresh - that
-is `cerebro--sweep-tick's job, on its own ten-minute cadence, because the
+is `cerebro--sweep's job, on its own ten-minute cadence, because the
 sweep scripts fetch from origin and spawn twice what `cerebro--gather-beads'
 does. A `g' or the thirty-second bead timer redraws with whatever the last
 sweep found rather than paying that cost again."
-  (when (buffer-live-p buffer)
-    (with-current-buffer buffer
-      (let* ((width (cerebro--panel-width buffer))
-             (beads (cerebro--gather-beads (cerebro--repo-root)))
-             (lines (apply #'cerebro--bead-panel
-                           (append beads (list width cerebro-beads-per-section)
-                                   (list cerebro--sweep-findings))))
-             (inhibit-read-only t)
-             ;; By id, not by position: the panel redraws every thirty seconds
-             ;; and a bead landing above the selected one would otherwise slide
-             ;; the mark onto whatever row took its line.
-             (selected (cerebro--bead-at-point)))
-        (erase-buffer)
-        (insert (string-join lines "\n"))
-        (unless (and selected (cerebro--goto-bead selected))
-          ;; Selected bead merged, closed, or claimed away while it was marked.
-          (cerebro--goto-first-bead))
-        ;; A window keeps its own point when its buffer is not the selected
-        ;; one, so moving the buffer's point above is not enough: the mark
-        ;; would stay on line 1 - the "Claimed 0" header - while the buffer
-        ;; believed it was on a bead. Both the layout and the timer render
-        ;; from another window, so this is the normal path rather than an edge.
-        (dolist (window (get-buffer-window-list buffer nil t))
-          (set-window-point window (point)))))))
+  (cerebro--redraw
+   buffer
+   (lambda ()
+     (let* ((width (cerebro--panel-width buffer))
+            (beads (cerebro--gather-beads (cerebro--repo-root)))
+            (lines (apply #'cerebro--bead-panel
+                          (append beads (list width cerebro-beads-per-section)
+                                  (list cerebro--sweep-findings))))
+            ;; By id, not by position: the panel redraws every thirty seconds
+            ;; and a bead landing above the selected one would otherwise slide
+            ;; the mark onto whatever row took its line.
+            (selected (cerebro--bead-at-point)))
+       (erase-buffer)
+       (insert (string-join lines "\n"))
+       (unless (and selected (cerebro--goto-bead selected))
+         ;; Selected bead merged, closed, or claimed away while it was marked.
+         (cerebro--goto-first-bead))))))
 
 (defun cerebro--beads-revert (&rest _)
-  "Refresh the panel, for `g' and for the timer."
+  "Refresh the panel, for `g'."
   (cerebro--beads-render (current-buffer)))
-
-(defun cerebro--beads-tick (buffer)
-  "Refresh BUFFER while it lives; called every `cerebro-beads-refresh-seconds'.
-
-Once BUFFER is gone the timer cancels itself by function rather than by the
-variable that holds it: killing the panel is the ordinary way to stop it,
-and a timer left running would go on shelling out to `bd' for a buffer
-nobody can see."
-  (if (buffer-live-p buffer)
-      (with-demoted-errors "cerebro: %S" (cerebro--beads-render buffer))
-    (cancel-function-timers #'cerebro--beads-tick)
-    (setq cerebro--beads-timer nil)))
 
 (defvar cerebro-sweep-refresh-seconds 600
   "How often the Sweeps section re-runs the claims and epics sweep scripts.
@@ -1593,28 +1581,20 @@ and slower than the thirty-second bead timer on purpose - each sweep script
 fetches from origin and spawns a `bd' call per candidate, which is
 considerably more than `cerebro--gather-beads's one call.")
 
-(defvar cerebro--sweep-timer nil
-  "The Sweeps section's own refresh timer, or nil.
-
-Global, not buffer-local, for the same reason `cerebro--beads-timer' is: it
-has to be able to cancel itself once the buffer is gone.")
-
 (defvar-local cerebro--sweep-findings nil
-  "The sweep findings as of the last `cerebro--sweep-tick', a list of
+  "The sweep findings as of the last `cerebro--sweep', a list of
 \(LABEL . FINDING\). What `cerebro--beads-render' actually draws - see
 there for why the render does not gather this itself.")
 
-(defun cerebro--sweep-tick (buffer)
-  "Refresh BUFFER's sweep findings and redraw; called every
-`cerebro-sweep-refresh-seconds', and once from `cerebro--beads-buffer' so
-the section is not empty until the first ten minutes are up."
-  (if (buffer-live-p buffer)
-      (with-demoted-errors "cerebro: %S"
-        (with-current-buffer buffer
-          (setq cerebro--sweep-findings (cerebro--gather-sweeps (cerebro--repo-root))))
-        (cerebro--beads-render buffer))
-    (cancel-function-timers #'cerebro--sweep-tick)
-    (setq cerebro--sweep-timer nil)))
+(defun cerebro--sweep (buffer)
+  "Refresh BUFFER's sweep findings and redraw.
+
+Called by `cerebro--refresh-panel-when-due' every
+`cerebro-sweep-refresh-seconds', and once from `cerebro--beads-buffer' so the
+section is not empty until the first ten minutes are up."
+  (with-current-buffer buffer
+    (setq cerebro--sweep-findings (cerebro--gather-sweeps (cerebro--repo-root))))
+  (cerebro--beads-render buffer))
 
 (defvar cerebro-beads-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1652,7 +1632,10 @@ the section is not empty until the first ten minutes are up."
   )
 
 (defun cerebro--beads-buffer (repo-root)
-  "The panel buffer, created and started if it does not exist."
+  "The panel buffer, created and started if it does not exist.
+
+Starts no timer of its own - `cerebro--tick' redraws and re-sweeps this
+buffer on its own cadences once the fleet buffer's tick is running (ah-6uo)."
   (let ((buffer (get-buffer-create cerebro-beads-buffer-name)))
     (with-current-buffer buffer
       (unless (derived-mode-p 'cerebro-beads-mode)
@@ -1661,21 +1644,39 @@ the section is not empty until the first ten minutes are up."
       ;; visiting a file, so it would otherwise inherit whatever directory
       ;; the navigator happened to be in.
       (setq default-directory (file-name-as-directory repo-root))
-      (unless (timerp cerebro--beads-timer)
-        (setq cerebro--beads-timer
-              (run-at-time cerebro-beads-refresh-seconds cerebro-beads-refresh-seconds
-                           #'cerebro--beads-tick buffer)))
-      (unless (timerp cerebro--sweep-timer)
+      (unless cerebro--swept-at
         ;; Run once immediately, in the foreground, so the Sweeps section is
         ;; not simply empty for the first ten minutes of a fresh `M-x cerebro'.
-        (cerebro--sweep-tick buffer)
-        (setq cerebro--sweep-timer
-              (run-at-time cerebro-sweep-refresh-seconds cerebro-sweep-refresh-seconds
-                           #'cerebro--sweep-tick buffer))))
+        ;; Demoted, same as the tick's own call: a `bd' that will not answer
+        ;; must not stop the fleet view opening.
+        (with-demoted-errors "cerebro: %S" (cerebro--sweep buffer))
+        (setq cerebro--swept-at (float-time))))
     buffer))
 
 ;;; The buffer
 
+
+(defun cerebro--redraw (buffer draw)
+  "Redraw BUFFER with DRAW, and put the result where the navigator can see it.
+
+DRAW runs with BUFFER current and `inhibit-read-only' bound.  It rebuilds
+the text and leaves point on the row that should stay selected - by id,
+never by position, since a row landing above the selection would otherwise
+slide the mark onto whatever took its line.  Then every window showing
+BUFFER is given that point: a window keeps its own point while its buffer
+is not the selected one, and both panels are almost always redrawn from
+some other window - the timer, the layout, a key pressed in the detail
+window - so without this the visible mark stays where it was while the
+buffer believes it moved.  The one place this rule is written; the agent
+list and the bead panel both come through here (ah-6uo).
+
+Does nothing when BUFFER is dead."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (funcall draw))
+      (dolist (window (get-buffer-window-list buffer nil t))
+        (set-window-point window (point))))))
 
 (defvar cerebro--timer nil
   "The buffer-local auto-refresh timer, or nil.")
@@ -1776,27 +1777,57 @@ to `bd', so an orphaned loop is more than idle load."
     (cancel-timer cerebro--timer)
     (setq cerebro--timer nil)))
 
-(defun cerebro--sync-list-windows ()
-  "Give every window showing the current buffer the buffer's own point.
+(defun cerebro--list-render (buffer)
+  "Refresh BUFFER's table and give every window showing it the buffer's point.
 
-`tabulated-list-print' restores the buffer's point by id, but a window
-whose buffer is not selected keeps its own point - the timer almost
-always renders from the detail or beads window, so without this the
-list window's selection walks to the top on every refresh.  Mirrors the
-`set-window-point' loop in `cerebro--beads-render'."
-  (dolist (window (get-buffer-window-list (current-buffer) nil t))
-    (set-window-point window (point))))
+`tabulated-list-revert' runs `cerebro--revert' (via
+`tabulated-list-revert-hook') and then `tabulated-list-print', which
+restores the buffer's point by id -
+`cerebro--redraw' is what pushes that out to windows that are not selected.
+Bound as `revert-buffer-function' so `g' and the tick share this one path."
+  (cerebro--redraw buffer #'tabulated-list-revert))
 
-(defun cerebro--tick (buffer)
+(defun cerebro--due-p (last every seconds)
+  "Non-nil when LAST is nil or EVERY seconds have passed since it, at SECONDS."
+  (or (null last) (>= (- seconds last) every)))
+
+(defun cerebro--refresh-panel-when-due (panel seconds)
+  "Redraw PANEL and re-run the sweeps if their cadences say so at SECONDS.
+
+The sweep runs first, and `cerebro--sweep' already renders as its last
+step - so on a tick where both cadences are due, the plain render below is
+skipped rather than redrawing PANEL a second time.  `cerebro--beads-rendered-at'
+is still stamped either way, so the next due check comes out right
+regardless of which branch actually drew the panel."
+  (with-current-buffer panel
+    (let ((swept (cerebro--due-p cerebro--swept-at cerebro-sweep-refresh-seconds seconds))
+          (render-due (cerebro--due-p cerebro--beads-rendered-at cerebro-beads-refresh-seconds seconds)))
+      (when swept
+        (setq cerebro--swept-at seconds)
+        (cerebro--sweep panel))
+      (when (or swept render-due)
+        (setq cerebro--beads-rendered-at seconds)
+        (unless swept
+          (cerebro--beads-render panel))))))
+
+(defun cerebro--tick (buffer &optional now)
   "Refresh BUFFER if it is still alive; called every 5s while it lives.
 
-The refresh comes first: `cerebro--supervise' acts on what the revert just
-derived, so it never decides from a state file read five seconds ago."
+The list first, then `cerebro--supervise' on what that just derived - never
+on a state file read five seconds ago.  Then the bead panel, when its
+thirty seconds are up, and the sweeps, when their ten minutes are: one
+timer with the fleet buffer's lifetime, instead of a timer per panel each
+cancelling itself by a different route (ah-6uo).  Both are demoted: a `bd'
+that will not answer must not stop the list refreshing.  NOW is for tests."
   (when (buffer-live-p buffer)
-    (with-current-buffer buffer
-      (revert-buffer)
-      (cerebro--sync-list-windows)
-      (cerebro--supervise cerebro--agents (cerebro--repo-root) (current-time)))))
+    (let ((now (or now (current-time))))
+      (with-current-buffer buffer
+        (cerebro--list-render buffer)
+        (cerebro--supervise cerebro--agents (cerebro--repo-root) now))
+      (let ((panel (get-buffer cerebro-beads-buffer-name)))
+        (when (buffer-live-p panel)
+          (with-demoted-errors "cerebro: %S"
+            (cerebro--refresh-panel-when-due panel (float-time now))))))))
 
 (defun cerebro--follow ()
   "Show the selected agent's detail whenever the list selection changes.
@@ -1827,9 +1858,16 @@ ids and return - since it runs after every command in the list buffer."
     (setq cerebro--beads-window
           (ignore-errors (split-window cerebro--list-window cerebro-list-height 'below)))
     (when (window-live-p cerebro--beads-window)
-      (set-window-buffer cerebro--beads-window
-                         (cerebro--beads-buffer (cerebro--repo-root)))
-      (cerebro--beads-render (get-buffer cerebro-beads-buffer-name)))))
+      ;; `cerebro--beads-buffer' only renders on its own first creation -
+      ;; before calling it, so a panel that already existed (the fleet
+      ;; buffer was killed and reopened, say) is redrawn once here rather
+      ;; than sitting however it last looked until the tick's own cadence
+      ;; next comes due, and a brand new one is not rendered twice.
+      (let* ((preexisting (get-buffer cerebro-beads-buffer-name))
+             (panel (cerebro--beads-buffer (cerebro--repo-root))))
+        (set-window-buffer cerebro--beads-window panel)
+        (when preexisting
+          (cerebro--beads-render panel))))))
 
 (defun cerebro-start ()
   "Start the agent at point (`s').
@@ -2043,6 +2081,12 @@ would have taken TAB from every vterm the navigator has, fleet or not.
   (add-hook 'kill-buffer-hook #'cerebro--cancel-timer nil t)
   (add-hook 'kill-buffer-hook #'cerebro--kill-prune-watcher nil t)
   (add-hook 'post-command-hook #'cerebro--follow nil t)
+  ;; So `g' and the tick share one path (`cerebro--list-render') instead of
+  ;; `g' calling the parent mode's default and the tick calling `revert-buffer'
+  ;; some other way (ah-6uo). Set here, after `tabulated-list-mode's own body
+  ;; has already run, or this would be clobbered by its default.
+  (setq-local revert-buffer-function
+              (lambda (&rest _) (cerebro--list-render (current-buffer))))
   (tabulated-list-init-header))
 
 ;;;###autoload
@@ -2053,8 +2097,7 @@ would have taken TAB from every vterm the navigator has, fleet or not.
     (with-current-buffer buffer
       (unless (derived-mode-p 'cerebro-mode)
         (cerebro-mode))
-      (cerebro--revert)
-      (tabulated-list-print t)
+      (cerebro--list-render buffer)
       (cerebro--cancel-timer)
       (setq cerebro--timer
             (run-with-timer 5 5 #'cerebro--tick buffer))

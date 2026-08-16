@@ -642,6 +642,22 @@ runs."
                ,@body)))
        (kill-buffer ,list-buffer))))
 
+(defmacro cerebro-test--shown-elsewhere (buffer window &rest body)
+  "Run BODY with BUFFER displayed in WINDOW while another window is selected.
+
+How the timer sees both panels: the buffer is on screen, but not where
+point is."
+  (declare (indent 2))
+  `(let ((elsewhere (generate-new-buffer " *cerebro-test-elsewhere*")))
+     (unwind-protect
+         (save-window-excursion
+           (delete-other-windows)
+           (set-window-buffer (selected-window) elsewhere)
+           (let ((,window (split-window (selected-window) nil 'below)))
+             (set-window-buffer ,window ,buffer)
+             ,@body))
+       (kill-buffer elsewhere))))
+
 ;; ---------------------------------------------------------------------------
 ;; ah-aao: a restart only refreshes a detail window that was watching it
 
@@ -1296,7 +1312,8 @@ navigator actually steers by, and it has to keep refreshing regardless."
   (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
     (unwind-protect
         (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
-                  ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil nil))))
+                  ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil nil)))
+                  ((symbol-function 'cerebro--gather-sweeps) (lambda (_root) nil)))
           (save-window-excursion
             (delete-other-windows)
             (set-window-buffer (selected-window) fleet)
@@ -1314,24 +1331,37 @@ navigator actually steers by, and it has to keep refreshing regardless."
               (should (> (window-left-column cerebro--detail-window)
                           (window-left-column cerebro--list-window))))))
       (when (get-buffer cerebro-beads-buffer-name)
-        (with-current-buffer cerebro-beads-buffer-name
-          (when (timerp cerebro--beads-timer) (cancel-timer cerebro--beads-timer)))
         (kill-buffer cerebro-beads-buffer-name))
       (kill-buffer fleet))))
 
-(ert-deftest cerebro-test/beads-tick-stops-itself-when-the-panel-is-gone ()
-  "Killing the panel is the ordinary way to stop it refreshing.
-
-The timer used to be cancelled through a buffer-local variable, which dies
-with the buffer holding it - so the tick would have gone on shelling out to
-bd every thirty seconds for a buffer nobody could see."
-  (let ((dead (generate-new-buffer " *cerebro-test-dead*"))
-        (cancelled nil))
-    (kill-buffer dead)
-    (cl-letf (((symbol-function 'cancel-function-timers)
-               (lambda (f) (setq cancelled f))))
-      (cerebro--beads-tick dead)
-      (should (eq cancelled #'cerebro--beads-tick)))))
+(ert-deftest cerebro-test/setup-layout-redraws-a-panel-that-already-existed ()
+  "`cerebro--beads-buffer' only renders on its own first creation - a panel
+that survived a fleet buffer kill-and-reopen must still be redrawn by
+`cerebro--setup-layout' rather than left showing whatever it last did."
+  (let ((fleet (generate-new-buffer " *cerebro-test-fleet-relayout*"))
+        (render-calls 0))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                  ((symbol-function 'cerebro--gather-sweeps) (lambda (_root) nil))
+                  ((symbol-function 'cerebro--beads-render)
+                   (lambda (_buffer) (cl-incf render-calls))))
+          (save-window-excursion
+            (delete-other-windows)
+            (set-window-buffer (selected-window) fleet)
+            (with-current-buffer fleet
+              ;; First layout creates the panel - one render, from
+              ;; `cerebro--beads-buffer's own immediate sweep.
+              (cerebro--setup-layout)
+              (should (= render-calls 1))
+              ;; Force a second layout pass, as a fresh `M-x cerebro' does
+              ;; when the fleet buffer was killed and reopened but the panel
+              ;; buffer survived.
+              (setq cerebro--list-window nil)
+              (cerebro--setup-layout)
+              (should (= render-calls 2)))))
+      (when (get-buffer cerebro-beads-buffer-name)
+        (kill-buffer cerebro-beads-buffer-name))
+      (kill-buffer fleet))))
 
 ;; ---------------------------------------------------------------------------
 ;; TAB cycles from wherever the navigator is
@@ -1345,7 +1375,8 @@ bd every thirty seconds for a buffer nobody could see."
 (ert-deftest cerebro-test/tab-cycles-list-beads-detail-and-round ()
   "The order the navigator reads in, and back to the top rather than stopping."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
-            ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil nil))))
+            ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil nil)))
+            ((symbol-function 'cerebro--gather-sweeps) (lambda (_root) nil)))
     (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
       (unwind-protect
           (save-window-excursion
@@ -1550,23 +1581,18 @@ timer render from another window, so this is the normal path, not an edge."
             ((symbol-function 'cerebro--gather-beads)
              (lambda (_root)
                (list nil nil (list (cerebro-test--bead "ah-u1" 1 "first real bead")) nil))))
-    (let ((buffer (get-buffer-create "*cerebro-test-window-point*"))
-          (elsewhere (generate-new-buffer " *cerebro-test-elsewhere*")))
+    (let ((buffer (get-buffer-create "*cerebro-test-window-point*")))
       (unwind-protect
-          (save-window-excursion
+          (progn
             (with-current-buffer buffer (cerebro-beads-mode))
-            (delete-other-windows)
-            (set-window-buffer (selected-window) elsewhere)
-            (let ((window (split-window (selected-window) nil 'below)))
-              (set-window-buffer window buffer)
+            (cerebro-test--shown-elsewhere buffer window
               ;; Rendered from the other window, exactly as the timer does.
               (cerebro--beads-render buffer)
               (with-current-buffer buffer
                 (save-excursion
                   (goto-char (window-point window))
                   (should (equal (cerebro--bead-at-point) "ah-u1"))))))
-        (kill-buffer buffer)
-        (kill-buffer elsewhere)))))
+        (kill-buffer buffer)))))
 
 ;; ---------------------------------------------------------------------------
 ;; RET on a bead shows it in the detail window
@@ -2018,43 +2044,46 @@ git."
 but a window whose buffer is not the selected one keeps its own point -
 so once a detail window takes the selection (as TAB does in the real
 fleet view), the list window's own point is left stale across the next
-refresh.  `cerebro--sync-list-windows' pushes the buffer's restored point
-out to every window showing it, mirroring the same loop already at the
-tail of `cerebro--beads-render'."
+refresh.  Both the list and the bead panel are redrawn through `cerebro--redraw',
+which pushes the buffer's restored point out to every window showing it -
+this pins that the list's own refresh path, `cerebro--list-render', goes
+through it too."
   (let ((list-buffer (generate-new-buffer " *cerebro-test-fleet-list*"))
         (other-buffer (generate-new-buffer " *cerebro-test-other*")))
     (unwind-protect
-        (save-window-excursion
-          (with-current-buffer list-buffer
-            (cerebro-mode)
-            (setq tabulated-list-entries
-                  '(("A" ["A" "" "" "" ""])
-                    ("B" ["B" "" "" "" ""])
-                    ("C" ["C" "" "" "" ""])))
-            (tabulated-list-print))
-          (delete-other-windows)
-          (let* ((list-window (selected-window)))
-            (set-window-buffer list-window list-buffer)
-            ;; Select "B", the way the navigator would with point on an
-            ;; agent partway down the list.
+        (cl-letf (((symbol-function 'cerebro--revert) #'ignore))
+          (save-window-excursion
             (with-current-buffer list-buffer
-              (goto-char (point-min))
-              (while (not (equal (tabulated-list-get-id) "B"))
-                (forward-line 1))
-              (set-window-point list-window (point)))
-            ;; TAB away: a detail window takes the selection, and the list
-            ;; window is left showing its own (frozen) point.
-            (let ((detail-window (split-window list-window nil 'right)))
-              (select-window detail-window)
-              (set-window-buffer detail-window other-buffer))
-            ;; Refresh, exactly as `cerebro--tick' does: from the buffer,
-            ;; while the list window is not selected.
-            (with-current-buffer list-buffer
-              (tabulated-list-print t)
-              (cerebro--sync-list-windows))
-            (should (equal (with-current-buffer list-buffer
-                              (tabulated-list-get-id (window-point list-window)))
-                            "B"))))
+              (cerebro-mode)
+              (setq tabulated-list-entries
+                    '(("A" ["A" "" "" "" ""])
+                      ("B" ["B" "" "" "" ""])
+                      ("C" ["C" "" "" "" ""])))
+              (tabulated-list-print))
+            (delete-other-windows)
+            (let* ((list-window (selected-window)))
+              (set-window-buffer list-window list-buffer)
+              ;; Select "B", the way the navigator would with point on an
+              ;; agent partway down the list.
+              (with-current-buffer list-buffer
+                (goto-char (point-min))
+                (while (not (equal (tabulated-list-get-id) "B"))
+                  (forward-line 1))
+                (set-window-point list-window (point)))
+              ;; TAB away: a detail window takes the selection, and the list
+              ;; window is left showing its own (frozen) point.
+              (let ((detail-window (split-window list-window nil 'right)))
+                (select-window detail-window)
+                (set-window-buffer detail-window other-buffer))
+              ;; Refresh, exactly as `cerebro--tick' does: from the buffer,
+              ;; while the list window is not selected. `cerebro--revert' is
+              ;; stubbed to a no-op so the pre-set entries survive the revert
+              ;; hook and `tabulated-list-print' restores by id as usual.
+              (with-current-buffer list-buffer
+                (cerebro--list-render list-buffer))
+              (should (equal (with-current-buffer list-buffer
+                                (tabulated-list-get-id (window-point list-window)))
+                              "B")))))
       (kill-buffer list-buffer)
       (kill-buffer other-buffer))))
 
@@ -2223,6 +2252,150 @@ as already running rather than launching a second session over them (the
          (agent (cerebro-test--agent "Phoenix" "implementer" 'implementer 'unknown)))
     (should (null (cerebro--supervise-action agent nil now)))
     (should (null (cerebro--supervise-action agent t now)))))
+
+;; ---------------------------------------------------------------------------
+;; ah-6uo: one redraw step and one tick for both panels
+
+(ert-deftest cerebro-test/redraw-gives-every-window-the-buffers-point ()
+  "Every window showing the buffer gets the point DRAW left it on - not just
+the buffer, which is all `goto-char' alone would move."
+  (let ((buffer (generate-new-buffer " *cerebro-test-redraw*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer
+            (special-mode)
+            (let ((inhibit-read-only t))
+              (insert "one\ntwo\nthree")))
+          (save-window-excursion
+            (delete-other-windows)
+            (let ((elsewhere (generate-new-buffer " *cerebro-test-elsewhere*")))
+              (unwind-protect
+                  (progn
+                    (set-window-buffer (selected-window) elsewhere)
+                    (let* ((window1 (split-window (selected-window) nil 'below))
+                           (window2 (progn (set-window-buffer window1 buffer)
+                                            (split-window window1 nil 'below))))
+                      (set-window-buffer window2 buffer)
+                      (let ((selected (selected-window))
+                            (current (current-buffer)))
+                        (cerebro--redraw buffer
+                                          (lambda ()
+                                            (goto-char (point-min))
+                                            (forward-line 2)))
+                        ;; Unchanged: the redraw does not touch the navigator's
+                        ;; own position.
+                        (should (eq (selected-window) selected))
+                        (should (eq (current-buffer) current)))
+                      (with-current-buffer buffer
+                        (should (= (window-point window1) (point)))
+                        (should (= (window-point window2) (point))))))
+                (kill-buffer elsewhere)))))
+      (kill-buffer buffer))))
+
+(ert-deftest cerebro-test/redraw-does-nothing-to-a-dead-buffer ()
+  "A tick that outlives its buffer must not error."
+  (let ((buffer (generate-new-buffer " *cerebro-test-redraw-dead*")))
+    (kill-buffer buffer)
+    (should-not (cerebro--redraw buffer (lambda () (error "must not run"))))))
+
+(ert-deftest cerebro-test/g-in-the-list-goes-through-the-same-redraw ()
+  "`g' and the tick must not diverge: both reach the panel through the one
+redraw step, or a fix to it stops covering one of them."
+  (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+    (let ((list-buffer (generate-new-buffer " *cerebro-test-list-redraw*"))
+          (redrawn nil))
+      (unwind-protect
+          (with-current-buffer list-buffer
+            (cerebro-mode)
+            (cl-letf (((symbol-function 'cerebro--redraw)
+                       (lambda (buffer _draw) (push buffer redrawn))))
+              (revert-buffer))
+            (should (equal redrawn (list list-buffer))))
+        (kill-buffer list-buffer)))))
+
+(ert-deftest cerebro-test/tick-refreshes-the-panel-only-when-due ()
+  "The panel and the sweeps keep their own cadences even though the list is
+driven every five seconds - a five-second panel would triple `bd's load for
+nothing a human would notice.  `cerebro--sweep' itself is not stubbed, so
+its own call to `cerebro--beads-render' counts toward PANEL-CALLS too - a
+tick where both cadences are due must still render exactly once."
+  (let ((list-calls 0) (supervise-calls 0) (panel-calls 0) (sweep-gather-calls 0))
+    (cl-letf (((symbol-function 'cerebro--list-render) (lambda (_buffer) (cl-incf list-calls)))
+              ((symbol-function 'cerebro--supervise) (lambda (&rest _) (cl-incf supervise-calls)))
+              ((symbol-function 'cerebro--beads-render) (lambda (_buffer) (cl-incf panel-calls)))
+              ((symbol-function 'cerebro--gather-sweeps)
+               (lambda (_root) (cl-incf sweep-gather-calls) nil))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+      (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-list*"))
+            (panel (generate-new-buffer cerebro-beads-buffer-name)))
+        (unwind-protect
+            (progn
+              (with-current-buffer list-buffer (cerebro-mode))
+              (with-current-buffer panel (cerebro-beads-mode))
+              ;; T: nothing rendered yet, so both the panel and the sweeps are
+              ;; due - and the panel is still rendered exactly once.
+              (cerebro--tick list-buffer (seconds-to-time 1000))
+              (should (= list-calls 1))
+              (should (= supervise-calls 1))
+              (should (= panel-calls 1))
+              (should (= sweep-gather-calls 1))
+              ;; T+5: neither cadence is up yet.
+              (cerebro--tick list-buffer (seconds-to-time 1005))
+              (should (= list-calls 2))
+              (should (= supervise-calls 2))
+              (should (= panel-calls 1))
+              (should (= sweep-gather-calls 1))
+              ;; T+30: the panel's thirty seconds are up; the sweeps' are not.
+              (cerebro--tick list-buffer (seconds-to-time 1030))
+              (should (= panel-calls 2))
+              (should (= sweep-gather-calls 1))
+              ;; T+1000: the sweeps' ten minutes are up too - one render, not two.
+              (cerebro--tick list-buffer (seconds-to-time 2000))
+              (should (= panel-calls 3))
+              (should (= sweep-gather-calls 2)))
+          (kill-buffer list-buffer)
+          (kill-buffer panel))))))
+
+(ert-deftest cerebro-test/tick-skips-a-dead-panel-and-keeps-going ()
+  "The panel buffer may not exist yet, or may have been killed by hand; the
+list must still refresh and supervise without error."
+  (cl-letf (((symbol-function 'cerebro--list-render) #'ignore)
+            ((symbol-function 'cerebro--supervise) #'ignore)
+            ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+    (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-no-panel*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer list-buffer (cerebro-mode))
+            (when (get-buffer cerebro-beads-buffer-name)
+              (kill-buffer cerebro-beads-buffer-name))
+            (should-not (cerebro--tick list-buffer (seconds-to-time 1000))))
+        (kill-buffer list-buffer)))))
+
+(ert-deftest cerebro-test/on-demand-redraws-do-not-postpone-the-timed-one ()
+  "A `g' or a priority change must not push the next timer refresh back, or a
+navigator who redraws by hand every twenty seconds would never see one."
+  (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+            ((symbol-function 'cerebro--gather-beads) (lambda (_root) (list nil nil nil nil)))
+            ((symbol-function 'cerebro--sweep) #'ignore)
+            ((symbol-function 'cerebro--list-render) #'ignore)
+            ((symbol-function 'cerebro--supervise) #'ignore))
+    (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-postpone*"))
+          (panel (generate-new-buffer cerebro-beads-buffer-name)))
+      (unwind-protect
+          (progn
+            (with-current-buffer list-buffer (cerebro-mode))
+            (with-current-buffer panel (cerebro-beads-mode))
+            (cerebro--tick list-buffer (seconds-to-time 1000))
+            (should (= (with-current-buffer panel cerebro--beads-rendered-at) 1000.0))
+            ;; An on-demand redraw, as `g' or a priority change causes, must
+            ;; not move the timestamp the tick uses to decide it is due.
+            (with-current-buffer panel (cerebro--beads-render panel))
+            (should (= (with-current-buffer panel cerebro--beads-rendered-at) 1000.0))
+            ;; T+30: the timed refresh still fires since the stamp did not move.
+            (cerebro--tick list-buffer (seconds-to-time 1030))
+            (should (= (with-current-buffer panel cerebro--beads-rendered-at) 1030.0)))
+        (kill-buffer list-buffer)
+        (kill-buffer panel)))))
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here

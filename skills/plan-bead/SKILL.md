@@ -303,10 +303,13 @@ four; three is 3/6; four is 4/8. Measure `n` on every pass, since the fleet chan
 
 The cycle:
 
-1. **Plan every unplanned P0**, whatever the buffer says. See *P0 pre-empts the buffer*.
-2. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m`.
-3. **Sleep ten minutes.** Say that you are doing so, then wait.
-4. **Look again**, re-measuring `n`. A new P0 — plan it, always, and then continue. Otherwise:
+1. **Free every abandoned `planning` label.** See *Reclaiming a label nobody is holding* — a bead
+   stranded there is invisible to steps 1 and 2 alike, so it comes first.
+2. **Plan every unplanned P0**, whatever the buffer says. See *P0 pre-empts the buffer*.
+3. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m`.
+4. **Sleep ten minutes.** Say that you are doing so, then wait.
+5. **Look again**, re-measuring `n`, and free any abandoned label again — a session died while you
+   slept is exactly when one appears. A new P0 — plan it, always, and then continue. Otherwise:
    `m` or more in the buffer, sleep another ten minutes and look again; **fewer than `m`, fill
    back to `2m`** and start over.
 
@@ -315,7 +318,8 @@ constantly against a queue that barely moved. Let it drain by half, then refill 
 
 **The P0 check has no such gap, and that is the point.** It runs on every wake-up and acts on every
 hit — a P0 filed while you slept is planned on the next wake-up even if the buffer is untouched at
-`2m` and step 4 would otherwise have sent you straight back to sleep.
+`2m` and step 5 would otherwise have sent you straight back to sleep. The abandoned-label check has
+no gap either, and for the same reason: what it frees may be the P0.
 
 **A buffer over its number is left alone.** When the fleet shrinks — six planned and one
 implementer — nothing is unplanned; the extra beads simply get built later. The buffer is a floor
@@ -345,8 +349,8 @@ on nothing but the clock, and a foreground loop is the one wait that certainly w
 bd dolt pull
 bd list --exclude-label planned --exclude-label planning --exclude-label human \
         --exclude-type epic --sort priority --json
-bd update <id> --add-label planning
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID
+bd update <id> --add-label planning
 bd dolt push                                       # publish it at once
 # ... research, decide, discuss, write ...
 bd update <id> --design-file plan.md --add-label planned --remove-label planning
@@ -360,9 +364,58 @@ those two adjacent and pushing at once shrinks that window to seconds; researchi
 labelling when you are ready widens it to the length of a plan, which is exactly long enough for two
 planners to write two designs for one bead and for one of them to be thrown away.
 
+**The state file is written before the label, not after** (it reads oddly, and it is deliberate).
+Your state file naming a bead you have not labelled yet costs nothing — nobody reads it as a hold.
+The label existing while your state file still says `idle` is the dangerous order, because that is
+exactly the shape of an abandoned label, and *Reclaiming a label nobody is holding* below would let
+the other planner take your candidate out from under you.
+
 If a `bd dolt pull` mid-plan shows the bead already carrying `planning` from the other session, you
 lost the race: drop it without finishing, say so in a line, and pick the next candidate. The one who
 labelled it first keeps it — no negotiation, since there is nobody to negotiate with.
+
+### Reclaiming a label nobody is holding
+
+**Every pass starts by checking whether any `planning` label has been abandoned.** A planning session
+that is killed, or an Emacs that quits mid-plan, leaves the label behind — and a bead carrying
+`planning` is excluded from every candidate query, so nothing ever considers it again. Three beads
+sat like that for a day before anybody noticed (ah-2p.3): the label is the one part of this role that
+strands work when a session dies, precisely because it is deliberately not a claim and so has no
+lease for Cerebro's sweep to reclaim.
+
+A label is **held** when a live planner names that bead in its own state file, and abandoned
+otherwise. That is the same evidence the buffer count uses, read the same way:
+
+```bash
+# Beads carrying the label, and the bead each live planner says it is on.
+bd list --label planning --status open --json | jq -r '.[].id' | sort > /tmp/labelled
+for name in $(.claude/cerebro/scripts/roster --role planner); do
+  f=".cerebro/state/$name.state.json"
+  [ -f "$f" ] || continue
+  pid="$(jq -r '.pid // empty' "$f")"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || continue      # a dead session holds nothing
+  jq -r '.bead // empty' "$f"
+done | sort > /tmp/held
+comm -23 /tmp/labelled /tmp/held            # labelled, held by nobody: abandoned
+```
+
+For each abandoned one, take the label off and say which and why — one line, naming the bead, so the
+navigator sees work coming back rather than a queue that silently grew:
+
+```bash
+bd update <id> --remove-label planning
+bd dolt push
+```
+
+Then it is an ordinary candidate again, for you or the other planner, at whatever priority it
+carries. **Do not plan it just because you freed it** — it goes back in the queue and is picked in
+priority order like anything else.
+
+This is safe to run with the other planner mid-plan, because of the write order above: a planner
+takes a bead by naming it in its state file *first* and labelling it second, so there is no moment
+where a live planner's candidate looks abandoned. What can still look abandoned is a bead held by a
+planner running outside this fleet, with no state file at all — say what you are about to free
+before you free it, and the navigator can stop you.
 
 ### A bead from an issue: go and read the issue
 
@@ -813,9 +866,10 @@ bd list --label planning --status open --json | jq -r '.[] | "\(.id)\t\(.title)"
 ```
 
 **What this list shows is not all yours.** The other planner's current candidate is on it too, and
-taking their label off is how two sessions end up planning one bead. Clear only what you know you
-labelled this session; anything else that looks stuck — a bead carrying `planning` while both
-planners are idle, say — is for the navigator to judge, so name it rather than tidying it.
+taking a *held* label off is how two sessions end up planning one bead. Yours to clear are the one
+you just planned and any the state files show nobody holding — the test, and the reason it is safe,
+are in *Reclaiming a label nobody is holding*. Anything held by a live planner is theirs, whatever
+it looks like from here.
 
 Then count the buffer again and act on it: **below `2m`, plan the next one — immediately, without
 sleeping in between**; at `2m`, say so and sleep. Count `planned` alone (see *You keep a buffer sized

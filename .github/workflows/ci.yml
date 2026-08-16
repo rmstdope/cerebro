@@ -27,3 +27,30 @@ jobs:
 
       - name: Run tests
         run: emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit
+
+  bash-tests:
+    name: Bash suites (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run every tests/*.sh
+        shell: bash
+        run: |
+          set -uo pipefail
+          failed=()
+          for t in tests/*.sh; do
+            echo "::group::$t"
+            if bash "$t"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error file=$t::$t failed"
+              failed+=("$t")
+            fi
+          done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            printf 'FAILED: %s\n' "${failed[@]}" >&2
+            exit 1
+          fi
+          echo "all bash suites passed"

@@ -492,8 +492,9 @@ Once every comment is answered and every thread resolved:
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
 ```
 
-and wait for CI as *Waiting, without ending your run* describes. *Red CI* below stays in this same
-`ci` phase — a fix-and-push does not change what you are waiting on.
+and wait for CI as *Waiting, without ending your run* describes — after first checking the head can
+merge, per *Merging*'s merge-state check, if anything was pushed since the PR opened. *Red CI* below
+stays in this same `ci` phase — a fix-and-push does not change what you are waiting on.
 
 **No review within about twenty minutes**: leave the PR open, escalate the bead (the hand-back block above, worktree included), say so plainly, and take the next bead. Some PRs never get one. Merging anyway is not the
 answer, and neither is waiting forever. Do not re-request in the hope of shaking one loose — your one
@@ -543,6 +544,31 @@ git fetch origin main && git rebase origin/main   # resolve conflicts
 git push --force-with-lease
 # back to --phase ci, and wait for CI
 ```
+
+**Before waiting on CI after any push that could have raced main** — an `update-branch`, a rebase and
+force-push, a fix pushed onto a head that sat through a review — check that the head can merge at all:
+
+```bash
+until state="$(gh pr view <n> --json mergeable,mergeStateStatus -q '"\(.mergeable) \(.mergeStateStatus)"')" \
+      && [ "${state%% *}" != "UNKNOWN" ] && [ "${state#* }" != "UNKNOWN" ]; do sleep 5; done
+echo "$state"
+```
+
+`mergeable` and `mergeStateStatus` both read `UNKNOWN` for a few seconds after every push while
+GitHub recomputes them, which is what the poll waits out — on either field, not just the first, so a
+`mergeStateStatus` that is still catching up cannot slip through as a false `MERGEABLE UNKNOWN`. Then:
+
+- `CONFLICTING DIRTY` — the head cannot merge, and whatever `gh pr checks` would show you next
+  describes an older head or a run GitHub will not meaningfully finish. **Do not enter the CI wait.**
+  Go to the local rebase above (`--phase rebase`), resolve, `git push --force-with-lease`, and run
+  this check again.
+- `MERGEABLE BEHIND` — catch up with `update-branch` as above, and check again once it lands.
+- anything else (`MERGEABLE CLEAN`, `MERGEABLE BLOCKED`, `MERGEABLE UNSTABLE`) — the head is worth
+  waiting on: `--phase ci`, and wait per *Waiting, without ending your run*.
+
+Observed on ah-k6i.5 (PR #285, 2026-08-15): after a rebase and force-push the PR already read
+`CONFLICTING`/`DIRTY`, and the implementer polled check state for a head that would never merge until
+the navigator interrupted. Twenty seconds of `gh pr view` is what that wait cost.
 
 An update (or a resolved rebase) that brings in commits touching nothing the bead's own diff touches
 can still leave nothing new to test beyond what CI already ran — if the resulting diff against main
@@ -637,3 +663,7 @@ into it.
   while the native shell shows nothing. `native` is the job that tells you.
 - **A stale lease is not an abandoned agent** unless it is genuinely stale — see `beads-workflow`
   before reclaiming anything.
+- **A CI wait against a conflicted head.** After a rebase, a force-push or an `update-branch`,
+  `gh pr view --json mergeable,mergeStateStatus` can already say `CONFLICTING`/`DIRTY` while the
+  check state you are about to poll still describes the previous head. Look at the merge state
+  before the checks — *Merging* has the loop. Cost once on ah-k6i.5.

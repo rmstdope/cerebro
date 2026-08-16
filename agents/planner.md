@@ -141,3 +141,7 @@ stalled-stream watchdog, and the `Bash` timeout ceiling is 600000ms.
   whose it is, so the navigator can see who owes them a pass.
 - Never leave the `planning` label behind you. Remove it when the bead is planned or parked, and
   `bd dolt push`, every time.
+- **Never let an abandoned one lie.** A killed session leaves its label, and a labelled bead is
+  excluded from every candidate query — so it is not "still being planned", it is lost. Every pass
+  starts by freeing the labels no live planner names in its state file, and says which it freed.
+  `plan-bead` has the check and the reason it cannot take a live planner's candidate by mistake.

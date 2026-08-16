@@ -34,6 +34,13 @@ What they divide, and how:
   and pushes it at once, so the other sees the bead as spoken for. There is no lease and nothing to
   reclaim: if a planning session dies, the label is all it leaves, and any planner can pick that bead
   up next pass.
+- **Abandoned labels**, at the top of every pass. The `planning` label is not a claim and has no
+  lease, so nothing reclaims it: a planning session that is killed mid-bead leaves its candidate
+  labelled, and a labelled bead is excluded from every candidate query — lost rather than pending.
+  Each planner now frees, on every pass and every wake-up, any `planning` label that no live planner
+  names in its own state file, and says which it freed. Three beads sat stranded for a day before
+  this existed. You can see them yourself in the fleet view: **Being planned** with both planner rows
+  idle is the shape of it.
 - **The buffer**, by counting `planned` beads only — what an idle implementer could actually claim.
   Both planners may therefore fill at the same time, which is what a second planner is *for*; the
   overshoot is at most one bead each. Counting `planning` too was tried and starved the queue: two

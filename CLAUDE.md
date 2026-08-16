@@ -50,7 +50,9 @@ planner`), which is the one place a name and a role stop being interchangeable:
   plans a Sonnet agent could build unattended. Decide architecture themselves; take every
   user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
   builders, sized from how many are running (twice the count, never fewer than four). They divide
-  the work through the `planning` label alone — taken before research and pushed at once, and with
+  the work through the `planning` label alone — taken before research and pushed at once (after the
+  state file names the bead, which is what makes an abandoned label safe to tell apart from a held
+  one), freed again by whichever planner finds it held by nobody, and with
   the P4 **triage pass belonging to the first planner on the roster only**, since two triaging
   sessions interview the navigator twice over the same backlog. The buffer counts `planned` beads
   and never `planning` ones: a bead being planned is not claimable, and counting it put both

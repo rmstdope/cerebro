@@ -303,16 +303,21 @@ pass "launch Forge links the consumer's agents before starting the session"
 # --- .cerebro/models.conf: switching models without editing an agent definition ---
 #
 # The config lives in the consumer, not here, so a fabricated consumer is the only place these can
-# run. `models_conf` writes one and `launched_model` reports what reached the stub.
+# run. `models_conf` writes one and `launched_flag` reports the value a flag reached the stub with.
 models_conf() {
   mkdir -p "$consumer_dir/.cerebro"
   printf '%s\n' "$@" > "$consumer_dir/.cerebro/models.conf"
 }
 no_models_conf() { rm -f "$consumer_dir/.cerebro/models.conf"; }
 launched_flag() {
-  # $1 = agent name, $2 = flag (--model/--effort). Prints the value, or nothing if absent.
+  # $1 = agent name, $2 = flag (--model/--effort). Prints the value, or nothing if the flag is
+  # absent - which is an answer here ("Xavier -" passes no --model), not a failure. `|| true`
+  # because the grep in the pipeline exits non-zero on no match and this suite runs under
+  # `set -euo pipefail`: without it, asking about an absent flag would kill the run rather than
+  # return the empty string the assertion is looking for.
   run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$1" \
-    | grep -A1 "^ARG:$2\$" | grep '^ARG:' | grep -v -- "^ARG:$2\$" | head -1 | sed 's/^ARG://'
+    | grep -A1 "^ARG:$2\$" | grep '^ARG:' | grep -v -- "^ARG:$2\$" | head -1 | sed 's/^ARG://' \
+    || true
 }
 
 no_models_conf
@@ -334,6 +339,16 @@ models_conf "# a comment" "" "planner fable low"
 [[ "$(launched_flag Forge --model)" == "$(model_of architect)" ]] \
   || fail "models.conf role: a role not named must keep its declared model"
 pass "models.conf: a role line switches that role only, model and effort, past comments and blanks"
+
+models_conf "default opus # everything, with a note about why" "planner fable high  # and this role lower"
+[[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf inline comment: expected fable"
+[[ "$(launched_flag Xavier --effort)" == "high" ]] \
+  || fail "models.conf inline comment: expected effort high, not the comment"
+[[ "$(launched_flag Cerebro --model)" == "opus" ]] \
+  || fail "models.conf inline comment: a model-only line must not read '#' as its effort"
+[[ "$(launched_flag Cerebro --effort)" == "$(effort_of orchestrator)" ]] \
+  || fail "models.conf inline comment: expected the declared effort, got the comment"
+pass "models.conf: an inline # comment is not the effort column"
 
 models_conf "planner fable" "Beast sonnet"
 [[ "$(launched_flag Beast --model)" == "sonnet" ]] || fail "models.conf name: expected sonnet for Beast"

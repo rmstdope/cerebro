@@ -99,10 +99,16 @@ fi
 # Prints "MODEL<TAB>EFFORT" for the first line whose key matches $2, or nothing. Bash 3.2, so no
 # associative array: the file is a handful of lines read once per launch.
 config_lookup() {
-  local file="$1" key="$2" k m e
+  local file="$1" key="$2" line k m e
   [[ -f "$file" ]] || return 0
-  while read -r k m e || [[ -n "$k" ]]; do
-    case "$k" in ''|'#'*) continue ;; esac
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Everything from a `#' on is a comment, wherever it starts. Stripping it here rather than
+    # only skipping whole comment lines is what keeps `planner fable high  # and this role lower'
+    # from passing "# and this role lower" to `--effort' - and `default opus # why' from reading
+    # the `#' itself as the effort column.
+    line="${line%%#*}"
+    read -r k m e <<<"$line"
+    [[ -n "$k" ]] || continue
     if [[ "$k" == "$key" ]]; then
       printf '%s\t%s\n' "$m" "$e"
       return 0

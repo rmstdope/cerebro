@@ -15,6 +15,10 @@
 # session on whatever `claude` itself defaults to. Omit the effort column to keep the one the agent
 # definition declares.
 #
+# Anything from a `#` to the end of a line is a comment, including after a setting:
+#
+#     planner   fable   high      # both, with a note about why
+#
 # Every line here is commented out: the file as shipped changes nothing.
 
 # Everything on Opus, keeping each role's declared effort:

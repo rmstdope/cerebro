@@ -82,7 +82,12 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   string shows its raw word in yellow rather than reading as `idle`, which used to mean "fine" when
   it meant "an error". **`done` is an implementer's state alone** — `scripts/agent-state` refuses it
   from an interactive name, and a live file that carries it anyway maps to `'unknown` rather than
-  being handed to the restart/retire logic as a finished bead.
+  being handed to the restart/retire logic as a finished bead. **`asking` has a hook behind it**:
+  `hooks/question-state.settings.json` + `scripts/agent-asking`, wired into the whole fleet by the
+  two lines `scripts/launch` gives every session (`agent-hooks-env`, `--settings`), flip the file
+  for the lifetime of a question tool call, because telling an agent three ways did not make it so.
+  The agent files still describe the transitions and must keep doing so — the hook covers the
+  question tool, not a question asked in prose, and knows nothing about `idle` versus `working`.
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
@@ -160,6 +165,13 @@ when it does not — a session started by hand, outside this fleet, has no file 
   tree is `--show-toplevel` by definition.
 - `githooks/install.sh` sets `core.hooksPath`, which is repository-wide and replaces `.git/hooks`
   entirely. It refuses rather than clobbering a `core.hooksPath` already pointing elsewhere.
+- **`hooks/` and `githooks/` are different mechanisms.** `githooks/` is git; `hooks/` holds Claude
+  Code hook settings `scripts/launch` passes to `claude --settings` (see `hooks/README.md`). The settings
+  file names no paths of its own — it runs `"$CEREBRO_SCRIPTS/agent-asking"`, and sourcing
+  `scripts/agent-hooks-env <Name>` exports `CEREBRO_SCRIPTS` and `CEREBRO_AGENT_NAME` (which the
+  hook subprocess inherits through `claude`) and sets `CEREBRO_HOOK_SETTINGS` for the `--settings`
+  flag. Source it *and* pass the flag: doing one without the other gets hooks that silently do
+  nothing, which is by design — `agent-asking` exits 0 rather than failing a question.
 - `scripts/launch-preflight <role> <name>` runs before every launch. It refuses (exit 2, one line on
   stderr) if `claude` is not on `PATH`; the symlink sync it runs is consumer-only, same as
   `sync-symlinks.sh` — it does nothing beyond the `claude` check unless it is sitting inside a

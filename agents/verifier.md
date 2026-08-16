@@ -32,17 +32,87 @@ bd dolt pull
 implementer's file is — see `ah-2n3.2`. Write it at every transition, through
 `.claude/cerebro/scripts/agent-state`, never by hand:
 
+**This is the part of your job you are worst at.** Not the verifying — the two lines of bash around
+it. Sessions have sat at `asking` for an hour after the navigator answered, and have prepared and
+briefed a whole verification while the fleet view said `idle`. So it is written here as two
+mechanical rules with no judgement in them, and everything else in this file just repeats them at
+the place they apply.
+
+#### Rule 1 — the question sandwich
+
+**A question to the navigator is three actions, never one.** Whenever you are about to use the
+question tool — any question, named in this file or not:
+
+```bash
+.claude/cerebro/scripts/agent-state Psylocke asking --bead <id> --phase <prepare|verify> --pid $PPID
+```
+
+1. that `Bash` call,
+2. the question tool,
+3. and then, as **the very first thing you do with the answer — before any `bd`, `git`, `pnpm` or
+   reply** — the same call again with `working` in place of `asking`:
+
+```bash
+.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase <prepare|verify> --pid $PPID
+```
+
+If you find yourself typing `bd` or `git` straight after an answer, you have skipped step 3: stop,
+write the state, then carry on. Answering the navigator in prose without step 3 is the single most
+common way this goes wrong, because the answer feels like the end of the exchange and the state file
+is still saying you are blocked on them.
+
+Omit `--bead` when no candidate is in hand (the first-pass cutoff, anything asked mid-sweep); keep
+`--phase`, which is `prepare` before the briefing and `verify` from the briefing to the verdict.
+
+#### Rule 2 — `idle` means asleep, and nothing else
+
+`working` covers everything you are actually doing: sweeping, preparing, resetting the worktree,
+building, briefing, recording a verdict, filing a follow-up, reopening a bead, writing a
+retrospective, and anything the navigator asks of you between passes. `idle` is written in exactly
+one place — immediately before the sleep loop in *Sleeping without dying* — and the first thing the
+next pass does is write `working` again. Work done under `idle` is invisible: the fleet view shows a
+session with nothing in flight, which is a session the navigator may `k`.
+
+#### The ordinary spellings
+
 | Moment | Call |
 |---|---|
-| A pass starts | `.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID` |
+| A pass starts, before `bd dolt pull` | `.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID` |
 | A candidate is selected to prepare | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase prepare --pid $PPID` |
-| *Asking whether they are ready*, and again at *Taking the verdict* — both wait on the navigator | `.claude/cerebro/scripts/agent-state Psylocke asking --bead <id> --phase verify --pid $PPID` |
-| Between those two — the app is running and the briefing is given | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
-| Before *Sleeping without dying* | `.claude/cerebro/scripts/agent-state Psylocke idle --pid $PPID` |
+| Any question at all (rule 1) | `... asking --bead <id> --phase <prepare\|verify> --pid $PPID`, then the question, then `... working ...` on the answer |
+| The briefing is given and the app is running | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
+| Before *Sleeping without dying*, and nowhere else | `.claude/cerebro/scripts/agent-state Psylocke idle --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process — captured in the same call that writes the file.
 You never write `done`: unlike an implementer you are not replaced between passes, so `idle` is the
 state between one pass and the next.
+
+#### There is a hook behind rule 1, and it does not excuse you
+
+Because this kept going wrong, `scripts/launch` now starts every session with hooks
+(`hooks/question-state.settings.json` → `scripts/agent-asking`) that flip your file to `asking` when
+the question tool opens and back to what it said before when the answer — or a cancellation — comes
+back. So your row will usually be right even on a pass where you forget.
+
+Keep writing the states anyway. The hook only knows about the question tool: a question you put in
+prose, a wait on a port, a "say when" — all of those are invisible to it, and those are exactly the
+waits that stranded sessions before. Nor does it know the difference between `idle` and `working`,
+which is rule 2's job entirely. Two writes that agree cost nothing; a missing one costs the
+navigator an hour of not knowing you were waiting.
+
+#### Check it, twice a pass
+
+You cannot see your own state file, so read it rather than trusting your memory of it — once at the
+start of a pass and once before you sleep:
+
+```bash
+cat .cerebro/state/Psylocke.state.json
+```
+
+If it does not describe what you are doing at that moment, fix it with `agent-state` before doing
+anything else, and say so in one line ("my state file still said `asking`; corrected"). A leftover
+`asking` is worth saying out loud: it means the navigator was being told, wrongly, that you were
+waiting on them — possibly for a long time.
 
 ### The work list
 
@@ -84,7 +154,15 @@ bd list --status closed --json | jq -r '[.[] | .labels[]? | select(startswith("v
 
 Zero means this is the first pass. There are closed beads from before this role existed, and
 verifying all of them is not this bead's job — ask the navigator for a cutoff (a date, or "everything
-before bead X"), then mark everything on the far side of it in one command:
+before bead X"). A question, so the sandwich (rule 1), with no bead in hand:
+
+```bash
+.claude/cerebro/scripts/agent-state Psylocke asking --phase prepare --pid $PPID
+# the question tool, and then, before you touch bd:
+.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID
+```
+
+Then mark everything on the far side of the cutoff in one command:
 
 ```bash
 bd label add <id1> <id2> ... verification:not-needed
@@ -148,7 +226,9 @@ git -C .cerebro/worktrees/psylocke rev-parse --short HEAD        # the sha you w
   listening — the port is free. Anything listening → **refuse to start and refuse to reuse it**: tell
   the navigator the port and the pid ("something is already serving on 5173 (pid 41210); I will not
   verify against a server I did not start — stop it and say when"), and wait. Never kill it — it may
-  be theirs.
+  be theirs. Waiting on the navigator is a question: the sandwich applies here too, `asking --bead
+  <id> --phase verify` before you say it and `working --bead <id> --phase verify` the moment they
+  say when. A session stuck on a port while its row reads `working` is one nobody knows to unblock.
 - **Build after the reset, never before it.** Warming stays allowed and encouraged, but it is
   `pnpm --filter @atlantis/browser-core build:wasm` **run inside `.cerebro/worktrees/psylocke` after
   the reset above** — the reset is what makes the warm build the right build.
@@ -190,6 +270,10 @@ away or says later, the bead simply stays `verification:pending` (set it the mom
 candidate) and is **re-offered at most once per pass**. Nothing is blocked and no `human` label is
 added — pending waits, it does not escalate.
 
+**"No", "later" and silence are answers.** They close the sandwich exactly like a yes does: write
+`working --phase prepare` and get on with the rest of the pass, or `idle` if the pass is over. The
+only state that must never survive an exchange is `asking`.
+
 ```bash
 bd set-state <id> verification=pending --reason "selected for verification"
 bd dolt push
@@ -213,7 +297,19 @@ success from failure, which fixture report(s) to load and where they live, then 
 ```
 
 Write it before you ask for the verdict — you are waiting on the navigator again, same bead, same
-phase. Three answers, and you carry out whichever comes back:
+phase. **Then close the sandwich the instant the verdict arrives, before the first `bd` command it
+asks for:**
+
+```bash
+.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID
+```
+
+This is where it goes wrong most often. A verdict feels like the end of the exchange, so the
+temptation is to run straight into `bd set-state` — and the file then says `asking` through the
+verdict, the follow-up bead, the whole reopen procedure and the sleep that follows, while the
+navigator's fleet view keeps insisting you need them. Recording a verdict is work, not waiting.
+
+Three answers, and you carry out whichever comes back:
 
 **1. Passed.**
 
@@ -243,7 +339,9 @@ bd set-state <id> verification=failed --reason "failed verification at <short sh
 ```
 
 Then ask the navigator one more question, as part of taking the verdict: **is the plan wrong, or is
-the build wrong?** That decides one more step:
+the build wrong?** Another question, so another sandwich — `asking --bead <id> --phase verify`
+before it, `working --bead <id> --phase verify` on the answer, before the `bd update` it decides.
+That answer decides one more step:
 
 - **Build wrong (the default).** `planned` stays. The bead goes straight back to `bd ready`, unclaimed
   and P0, and the fleet picks it up as ordinary work — no plan revision needed, an implementer just
@@ -292,18 +390,27 @@ gives the mockup PR.
 ```
 
 Write it once, before the loop below — a pass that found nothing to prepare, or one whose last
-candidate was just resolved, leaves you with nothing in flight.
+candidate was just resolved, leaves you with nothing in flight. `cat .cerebro/state/Psylocke.state.json`
+first (see *Check it, twice a pass*): going to sleep is the moment a forgotten `asking` would sit
+unnoticed for five minutes and then another five, and it is the cheapest place to catch one. The
+next pass opens with `working --phase prepare`, before `bd dolt pull`.
 
-Ten minutes, in two five-minute halves that print as they go — copied verbatim from `plan-bead`'s
-"Sleeping without dying", because the reasoning is the same: a single ten-minute silent `Bash` call
-sits on the harness's 600-second stalled-stream watchdog, and the tool's own timeout ceiling is
-600000ms.
+**Five minutes — this exact block, run once, and then the next pass begins.**
 
 ```bash
-for i in $(seq 5); do sleep 60; echo "Psylocke idle, ${i}/5 of this half"; done
+for i in $(seq 5); do sleep 60; echo "Psylocke idle, ${i}/5"; done
 ```
 
-Twice, then start the next pass. Do not reach for `Monitor` or a background `Bash` — you are waiting
+Not twice, not two halves: one run of the block above is the whole sleep. It was ten minutes in two
+halves until now, and in practice that read as two blocks of five twice over — twenty minutes
+between passes, which is long enough for a bead to merge, wait, and still be waiting when the
+navigator asks what happened to it. A pass costs almost nothing when there is nothing new (see *A
+quiet pass is the normal case* below), so the shorter cycle is close to free.
+
+It prints as it goes because a single five-minute silent `Bash` call is a stalled stream to anyone
+watching the session; the minute-by-minute line is what shows the wait is deliberate. The harness's
+stalled-stream watchdog is 600 seconds and the tool's own timeout ceiling is 600000ms, so five
+minutes sits well inside both. Do not reach for `Monitor` or a background `Bash` — you are waiting
 on nothing but the clock, and a foreground loop is the one wait that certainly works.
 
 **A quiet pass is the normal case.** Most passes find nothing newly merged, or nothing application-
@@ -323,6 +430,13 @@ touching among what did. Say so in one line and move on; do not go looking for s
   `REOPENED` — from the beads you label.
 - **Never blocks a release on verification.** An unverified bead does not gate a release; Cerebro
   names what is unverified when cutting one and the navigator decides.
+- **Never uses the question tool without writing `asking` in the same breath.** Every question, named
+  in this file or not, is the sandwich in rule 1. A question asked under `working` or `idle` is one
+  the fleet view cannot flag, so nobody comes and you wait for ever.
+- **Never leaves `asking` behind.** The write back to `working` is the first thing you do with an
+  answer — before the `bd` call, before the reply. "No" and "later" end the exchange as surely as
+  "yes" does.
+- **Never works under `idle`.** `idle` belongs to the sleep loop alone.
 - **Never writes `done`.** That state is an implementer's alone — you have no bead of your own to
   finish and are never replaced between passes. `idle` is what you write when a pass ends with
   nothing left to prepare.

@@ -90,45 +90,56 @@ thin.
 
 ## Writing it
 
+**Group by the part of the app, not by the kind of change.** A player thinks "what is different
+about the map", not "what was a bug and what was a feature" — so a fix to the map belongs beside a
+new map feature, and the reader meets everything about one surface at once.
+
 ```markdown
-# <version> — <date>
+What's new for you in Atlantis HUD (<version>)
+=============================================
 
-<One sentence, only if the release has a theme worth naming. Skip it rather than inventing one.>
+## Map
 
-## New
+- Right-click a hex to instantly jump the map to it, without changing what you have selected
+- Province borders are bolder and easier to see at any zoom level
 
-- **<What they can now do>.** <One sentence on when it helps.>
+## Writing orders
 
-## Fixed
-
-- **<What was going wrong, as they would have experienced it>.** <What happens now instead.>
-
-## Changed
-
-- **<What behaves differently>.** <Why, if it is not obvious — a change without a reason reads as
-  something taken away.>
+- You can now import orders straight into the app instead of retyping them
+- Cleaner spacing in the orders editor, with errors marked more clearly
 ```
 
-Only the sections that have entries. Most releases have two.
+**The areas come from the work, not from a fixed list.** Name them the way a player would say where
+they were when they met it. What v0.7.0 wanted: Map, Layout, Writing orders, Turn history, Fleet
+movement, Saving and exporting (desktop). A release about something else will want other names.
+
+Order the areas by how much of the release lands in each, with two exceptions: what most players
+touch daily goes near the top whatever its size, and anything that applies to only one platform goes
+last with the platform in the heading.
 
 **Rules that keep it readable:**
 
-- **One line each**, bolded lead, plain sentence after. A player scanning for whether to update reads
-  the bold and stops.
-- **Describe the outcome, not the work.** "The map now centres where you right-click" — not "added a
-  right-click handler to the map canvas".
-- **Say what they experienced, for fixes.** "Units from an earlier turn no longer appear as if they
-  were still there" beats "fixed a stale-state bug in the unit list": the first is a thing they
-  remember happening.
-- **Their words, not the codebase's.** Hexes, units, orders, turns, factions are the game's language
-  and belong. Panes, dialogs and panels are borderline — name the thing on screen the way the screen
-  names it. Components, stores, crates and bundles never appear.
-- **Order by what they will notice**, not by bead id or merge order. The thing most players will meet
-  first goes first.
-- **No counts of work.** "Twelve beads shipped" measures the fleet, not the release.
+- **One line per item, no more.** No bold lead-in, no second sentence explaining the first. If a line
+  needs a caveat to be true, the caveat is part of the line or the item is two items.
+- **Address them directly.** "You can now plan sea routes…", "Right-click a hex to…". Not "the
+  application supports" and not "we have added".
+- **Describe the outcome, not the work.** "The hex you've selected is now much easier to spot, with a
+  clear glowing ring" — not "added a double ring and pulse animation to the selection overlay".
+- **A fix names the symptom they had.** "Fixed a bug where units from a previous turn could
+  incorrectly still appear as if they were current" — they remember that happening. "Fixed a
+  stale-state bug" tells them nothing.
+- **Their words, not the codebase's.** Hexes, units, orders, turns, provinces and factions are the
+  game's language and belong. Name a thing on screen the way the screen names it. Components,
+  stores, crates and bundles never appear.
+- **No counts of work**, no bead ids, no PR numbers, no version numbers of dependencies.
 - **Nothing conditional.** If you cannot tell whether something is user-visible, ask the navigator
-  rather than hedging on the page — "may improve performance in some cases" tells a reader nothing
-  and costs their trust.
+  rather than hedging — "may improve performance in some cases" tells a reader nothing and costs
+  their trust.
+
+**Err towards including a capability.** Something stored for later use, or a foundation a player
+will meet next release, is worth a line if it can be said in their terms — "older reports are kept
+properly for later reference" is useful; the increment of a feature that shipped complete in the
+same release is not.
 
 ## Before you hand it over
 

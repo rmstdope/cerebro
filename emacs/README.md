@@ -129,10 +129,13 @@ The mark follows the *bead*, not the line: the panel redraws on a timer, and res
 would slide the mark onto whatever row took that line when the queue changed. If the marked bead is
 merged, closed or claimed away, the mark falls back to the first row rather than to nothing.
 
-It refreshes every `cerebro-beads-refresh-seconds` (30) and on `g`, rather than on the agent list's
-five-second tick: a refresh is three `bd` subprocesses, and beads move on human timescales. If `bd`
-cannot answer — absent, unconfigured, mid-write — the panel goes quiet rather than taking the fleet
-view down with it.
+It refreshes every `cerebro-beads-refresh-seconds` (30) and on `g`, without ever holding Emacs: `bd`
+is asked in the background and the rows stay put until it answers. The header line above the panel
+says what the rows date from (`Beads · as of 12:03:41`), that a refresh is out (`· refreshing…`), and
+when `bd` did not answer — absent, unconfigured, mid-write, or past
+`cerebro-subprocess-timeout-seconds` — (`· bd did not answer at 12:04:32`), rather than showing
+numbers that do not say they are stale. The sweeps run the same way on their ten-minute cadence, and
+a sweep that does not answer leaves the last findings standing.
 
 There is deliberately no owner column. `bd`'s `owner` is whoever *filed* the bead and is set on
 every one of them; who is *working* on a bead is what the agent list directly above already says.

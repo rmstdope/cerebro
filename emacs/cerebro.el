@@ -538,29 +538,97 @@ be swept as one Emacs started."
                       (and pid (cerebro--pid-alive-p pid) name)))
                   roster))))
 
-(defun cerebro--run-script-json (repo-root script &rest args)
-  "Run SCRIPT (one of the sweep scripts, `cerebro--script'-relative) with
-ARGS in REPO-ROOT; the parsed JSON it printed, or nil.
+(defvar cerebro-subprocess-timeout-seconds 120
+  "How long an asynchronous subprocess may run before it is killed and its
+answer treated as none. Generous: the sweeps fetch from origin and talk to
+`gh', which this bounds a hang against, not a slow answer.")
 
-Never signals, the same as `cerebro--bd-json' and for the same reason: a
-sweep script that cannot run - missing, erroring, no `bd' on PATH - must
-leave the panel showing no findings rather than take it down."
+(defvar cerebro--inflight nil
+  "Runs still awaiting an answer: an alist of (KEY . PROCESS). One per KEY -
+`cerebro--run-async' refuses a second while the first is out, so a slow
+`bd' is waited for rather than stacked.")
+
+(defun cerebro--run-async (key repo-root argv callback)
+  "Run ARGV (program, then args) in REPO-ROOT without blocking Emacs.
+
+CALLBACK is called exactly once, later, with the program's stdout as a
+string when it exited zero and nil otherwise - non-zero exit, a signal, the
+program missing, or `cerebro-subprocess-timeout-seconds' passing first, in
+which case the process is killed. Returns `started', or `busy' when a run
+under KEY is already in flight - then nothing is started and CALLBACK is
+never called. Never signals."
+  (if (assq key cerebro--inflight)
+      'busy
+    ;; OUT is created outside the `condition-case' it is used in, so a
+    ;; `make-process' error (the program is missing, say) can still kill it
+    ;; in the handler - inside the protected form, the handler clause has no
+    ;; access to bindings the form never finished establishing (PR #42
+    ;; review: an earlier version leaked this buffer on every such error).
+    (let* ((default-directory (file-name-as-directory repo-root))
+           (out (generate-new-buffer (format " *cerebro-async-%s*" key))))
+      (condition-case nil
+          (let (proc)
+            (setq proc
+                  (make-process
+                   :name (format " *cerebro-%s*" key)
+                   :buffer out
+                   :command argv
+                   :noquery t
+                   :connection-type 'pipe
+                   :sentinel
+                   (lambda (proc _event)
+                     (when (memq (process-status proc) '(exit signal))
+                       (setq cerebro--inflight (assq-delete-all key cerebro--inflight))
+                       (let ((timer (process-get proc 'cerebro-timeout)))
+                         (when timer (cancel-timer timer)))
+                       (let ((output (and (eq (process-status proc) 'exit)
+                                          (zerop (process-exit-status proc))
+                                          (with-current-buffer out (buffer-string)))))
+                         (kill-buffer out)
+                         (with-demoted-errors "cerebro: %S" (funcall callback output)))))))
+            (process-put proc 'cerebro-timeout
+                         (run-at-time cerebro-subprocess-timeout-seconds nil
+                                      (lambda ()
+                                        (when (process-live-p proc)
+                                          (delete-process proc)))))
+            (push (cons key proc) cerebro--inflight)
+            'started)
+        (error
+         (when (buffer-live-p out) (kill-buffer out))
+         (with-demoted-errors "cerebro: %S" (funcall callback nil))
+         'started)))))
+
+(defun cerebro--parse-json (text)
+  "TEXT parsed as JSON the way the panel wants it (alists, lists, nil), or nil
+when TEXT is nil or not JSON."
+  (and text
+       (condition-case nil
+           (json-parse-string text :object-type 'alist :array-type 'list
+                              :null-object nil :false-object nil)
+         (error nil))))
+
+(defconst cerebro--parse-failed 'cerebro--parse-failed
+  "Sentinel `cerebro--try-parse-json' returns for invalid JSON - distinct
+from nil, which a valid empty answer (\"[]\") also parses to.")
+
+(defun cerebro--try-parse-json (text)
+  "TEXT parsed as JSON, or `cerebro--parse-failed' when TEXT is not valid
+JSON. `cerebro--parse-json' cannot tell a genuinely empty answer (\"[]\",
+parses to nil) from garbage (also nil) apart - this can, for a caller that
+has to treat the two differently: a program exiting zero but printing
+garbage is not `bd' or a sweep script having answered."
   (condition-case nil
-      (with-temp-buffer
-        (let ((default-directory (file-name-as-directory repo-root)))
-          (when (zerop (apply #'call-process
-                              (expand-file-name (cerebro--script script) repo-root)
-                              nil t nil args))
-            (json-parse-string (buffer-string) :object-type 'alist :array-type 'list
-                               :null-object nil :false-object nil))))
-    (error nil)))
+      (json-parse-string text :object-type 'alist :array-type 'list
+                         :null-object nil :false-object nil)
+    (error cerebro--parse-failed)))
 
-(defun cerebro--gather-sweeps (repo-root)
-  "The current sweep findings, as a list of (LABEL . FINDING). Impure."
+(defun cerebro--findings-from (repo-root claims epics)
+  "The sweep findings (LABEL . FINDING) from CLAIMS and EPICS, the parsed
+JSON of the two sweep scripts. Computed at answer time (called from
+`cerebro--request-sweeps's callback) so `live-names' describes the fleet
+when the findings are shown, not when the scripts were kicked off."
   (let* ((live-names (cerebro--live-implementer-names repo-root))
-         (now (current-time))
-         (claims (cerebro--run-script-json repo-root "sweep-claims.sh" "--json"))
-         (epics (cerebro--run-script-json repo-root "sweep-epics.sh" "--json")))
+         (now (current-time)))
     (append
      (delq nil (mapcar (lambda (c)
                          (let ((finding (cerebro--claim-finding c live-names now)))
@@ -570,6 +638,31 @@ leave the panel showing no findings rather than take it down."
                          (let ((finding (cerebro--epic-finding e)))
                            (and finding (cons (cerebro--sweep-label finding e) finding))))
                        epics)))))
+
+(defun cerebro--request-sweeps (repo-root callback)
+  "Run the claims and epics sweep scripts without blocking, one after the
+other; CALLBACK gets the (LABEL . FINDING) list when both have answered, or
+nil when either did not - including either script exiting zero but printing
+something that is not JSON. Returns `busy' if a sweep is already out."
+  (cerebro--run-async
+   'sweep-claims repo-root
+   (list (expand-file-name (cerebro--script "sweep-claims.sh") repo-root) "--json")
+   (lambda (claims-out)
+     (if (null claims-out)
+         (funcall callback nil)
+       (let ((claims-parsed (cerebro--try-parse-json claims-out)))
+         (if (eq claims-parsed cerebro--parse-failed)
+             (funcall callback nil)
+           (cerebro--run-async
+            'sweep-epics repo-root
+            (list (expand-file-name (cerebro--script "sweep-epics.sh") repo-root) "--json")
+            (lambda (epics-out)
+              (funcall callback
+                       (and epics-out
+                            (let ((epics-parsed (cerebro--try-parse-json epics-out)))
+                              (and (not (eq epics-parsed cerebro--parse-failed))
+                                   (list (cerebro--findings-from
+                                          repo-root claims-parsed epics-parsed))))))))))))))
 
 (defun cerebro--finding-at-point ()
   "The sweep finding on this line, or nil."
@@ -942,6 +1035,26 @@ writing the same file."
         (mapcar (lambda (pid) (alist-get 'args (process-attributes pid)))
                 (list-system-processes))))
 
+(defvar cerebro-system-scan-seconds 30
+  "How often the process list is scanned for interactive agents started
+outside Emacs. A rare event, polled at the rate of a state file; the scan
+itself is 75 ms of blocking work and was on the five-second tick.")
+
+(defvar-local cerebro--system-args-cache nil
+  "(ARGS . SCANNED-AT) from the last scan, per fleet buffer.")
+
+(defun cerebro--cached-system-args (&optional now)
+  "`cerebro--system-args', rescanned only when `cerebro-system-scan-seconds'
+have passed. NOW is for tests."
+  (let ((now (or now (float-time))))
+    (if (and cerebro--system-args-cache
+             (not (cerebro--due-p (cdr cerebro--system-args-cache)
+                                  cerebro-system-scan-seconds now)))
+        (car cerebro--system-args-cache)
+      (let ((args (cerebro--system-args)))
+        (setq cerebro--system-args-cache (cons args now))
+        args))))
+
 (defvar cerebro--sessions nil
   "The sessions this Emacs started: an alist of (NAME . BUFFER), one per agent.
 
@@ -1275,20 +1388,27 @@ timescales - a claim, a plan, a merge are minutes apart - and each refresh
 is three subprocesses, so a five-second cadence would buy nothing but load.
 `g' refreshes on demand.")
 
-(defun cerebro--bd-json (repo-root &rest args)
-  "Run `bd' with ARGS in REPO-ROOT and return the parsed JSON, or nil.
+(defconst cerebro--bd-list-argv
+  '("bd" "list" "--status" "open,in_progress,blocked,deferred,closed" "--json" "--brief")
+  "The one `bd' call the panel is drawn from. `--brief' drops the free-form
+text nothing here renders (1.95 MB to 199 KB on this backlog); every status
+by name and no `--exclude-type', as before - the partition is only complete
+if the list it partitions is.")
 
-Never signals. `bd' may be absent, unconfigured, or mid-write, and a panel
-that cannot answer must degrade to saying nothing rather than taking the
-fleet view down with it."
-  (condition-case nil
-      (with-temp-buffer
-        (let ((default-directory (file-name-as-directory repo-root)))
-          (when (zerop (apply #'call-process "bd" nil t nil args))
-            (json-parse-string (buffer-string)
-                               :object-type 'alist :array-type 'list
-                               :null-object nil :false-object nil))))
-    (error nil)))
+(defun cerebro--request-beads (repo-root callback)
+  "Ask `bd' for the panel's beads without blocking; CALLBACK gets the four
+partition lists (see `cerebro--partition-beads') when the answer lands, or
+nil when `bd' did not answer - including `bd' exiting zero but printing
+something that is not JSON, which is not a valid empty answer either.
+Returns what `cerebro--run-async' returns."
+  (cerebro--run-async
+   'beads repo-root cerebro--bd-list-argv
+   (lambda (out)
+     (funcall callback
+              (and out
+                   (let ((parsed (cerebro--try-parse-json out)))
+                     (and (not (eq parsed cerebro--parse-failed))
+                          (cerebro--partition-beads parsed))))))))
 
 (defun cerebro--bd-text (repo-root id)
   "The output of `bd show ID' run in REPO-ROOT, or nil if it failed.
@@ -1394,23 +1514,6 @@ not roll a bead round to P0."
           (zerop (call-process "bd" nil t nil "update" id
                                "--priority" (number-to-string priority)))))
     (error nil)))
-
-(defun cerebro--gather-beads (repo-root)
-  "The six lists the panel shows, from one `bd' call.
-
-Every status by name, and no `--exclude-type': the partition can only be
-complete if the list it partitions is.  One call also costs less than the
-five it replaced, and cannot show a half-updated database the way five
-sequential calls could.
-
-An earlier version filtered the open lists by the `owner' field and showed
-an empty panel every time: `owner' is the address of whoever *filed* the
-bead and is set on all of them, claimed or not."
-  (cerebro--partition-beads
-   (cerebro--bd-json repo-root "list"
-                     "--status" "open,in_progress,blocked,deferred,closed"
-                     "--json")))
-
 
 (defun cerebro--layout-detail-window ()
   "The layout's detail window, or nil.
@@ -1599,19 +1702,57 @@ next timed one. See `cerebro--refresh-panel-when-due'.")
 Also set by `cerebro--beads-buffer's own immediate sweep, so the first
 timed one is ten minutes after the layout, not five seconds after.")
 
-(defun cerebro--beads-render (buffer)
-  "Redraw BUFFER's panel from `bd'.
+(defvar-local cerebro--sweep-requested-at nil
+  "`float-time' of the sweep chain now in flight, or nil when none is.
+
+`cerebro--sweep' refuses to start a second chain while one is out: the
+claims and epics scripts run under two different `cerebro--run-async' keys,
+so without this a second chain's own epics call could be silently dropped
+as `busy' by the first chain's still-running one (PR #42 review).")
+
+(defvar-local cerebro--beads nil
+  "The last partition `bd' answered with, or nil before the first.")
+
+(defvar-local cerebro--beads-as-of nil
+  "`float-time' when `cerebro--beads' arrived, or nil.")
+
+(defvar-local cerebro--beads-requested-at nil
+  "`float-time' of the request now in flight, or nil when none is.")
+
+(defvar-local cerebro--beads-failed-at nil
+  "`float-time' of the last request that got no answer, or nil once one has
+succeeded since.")
+
+(defun cerebro--panel-header (as-of requested-at failed-at)
+  "Pure. The panel's header line: what the rows date from and what is going on."
+  (concat "Beads"
+          (and as-of (format " · as of %s"
+                             (format-time-string "%H:%M:%S" (seconds-to-time as-of))))
+          (and requested-at " · refreshing…")
+          (and failed-at (format " · bd did not answer at %s"
+                                 (format-time-string "%H:%M:%S" (seconds-to-time failed-at))))))
+
+(defun cerebro--update-panel-header (buffer)
+  "Set BUFFER's `header-line-format' from its panel state and redisplay it."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq header-line-format
+            (cerebro--panel-header cerebro--beads-as-of cerebro--beads-requested-at
+                                   cerebro--beads-failed-at))
+      (force-mode-line-update))))
+
+(defun cerebro--draw-beads (buffer)
+  "Draw BUFFER's rows from `cerebro--beads' and `cerebro--sweep-findings'.
 
 Draws from `cerebro--sweep-findings' rather than gathering it fresh - that
 is `cerebro--sweep's job, on its own ten-minute cadence, because the
-sweep scripts fetch from origin and spawn twice what `cerebro--gather-beads'
-does. A `g' or the thirty-second bead timer redraws with whatever the last
-sweep found rather than paying that cost again."
+sweep scripts fetch from origin and spawn twice what one bead request
+does."
   (cerebro--redraw
    buffer
    (lambda ()
      (let* ((width (cerebro--panel-width buffer))
-            (beads (cerebro--gather-beads (cerebro--repo-root)))
+            (beads (or cerebro--beads (list nil nil nil nil)))
             (lines (apply #'cerebro--bead-panel
                           (append beads (list width cerebro-beads-per-section)
                                   (list cerebro--sweep-findings))))
@@ -1625,6 +1766,30 @@ sweep found rather than paying that cost again."
          ;; Selected bead merged, closed, or claimed away while it was marked.
          (cerebro--goto-first-bead))))))
 
+(defun cerebro--beads-render (buffer)
+  "Refresh BUFFER: draw what is known now, ask `bd' for what is current, and
+draw again when it answers. Never blocks. A request already out is left to
+finish rather than joined by a second (`cerebro--run-async' says `busy')."
+  (cerebro--draw-beads buffer)
+  (when (buffer-live-p buffer)
+    (let ((root (with-current-buffer buffer (cerebro--repo-root))))
+      (pcase (cerebro--request-beads
+              root
+              (lambda (beads)
+                (when (buffer-live-p buffer)
+                  (with-current-buffer buffer
+                    (setq cerebro--beads-requested-at nil)
+                    (if beads
+                        (setq cerebro--beads beads
+                              cerebro--beads-as-of (float-time)
+                              cerebro--beads-failed-at nil)
+                      (setq cerebro--beads-failed-at (float-time))))
+                  (cerebro--draw-beads buffer)
+                  (cerebro--update-panel-header buffer))))
+        ('started (with-current-buffer buffer
+                    (setq cerebro--beads-requested-at (float-time)))))))
+  (cerebro--update-panel-header buffer))
+
 (defun cerebro--beads-revert (&rest _)
   "Refresh the panel, for `g'."
   (cerebro--beads-render (current-buffer)))
@@ -1635,7 +1800,7 @@ sweep found rather than paying that cost again."
 Ten minutes: Cerebro's own cadence for these sweeps (`agents/orchestrator.md'),
 and slower than the thirty-second bead timer on purpose - each sweep script
 fetches from origin and spawns a `bd' call per candidate, which is
-considerably more than `cerebro--gather-beads's one call.")
+considerably more than the one `bd list' call `cerebro--request-beads' makes.")
 
 (defvar-local cerebro--sweep-findings nil
   "The sweep findings as of the last `cerebro--sweep', a list of
@@ -1643,14 +1808,32 @@ considerably more than `cerebro--gather-beads's one call.")
 there for why the render does not gather this itself.")
 
 (defun cerebro--sweep (buffer)
-  "Refresh BUFFER's sweep findings and redraw.
+  "Re-run the sweeps for BUFFER without blocking; when they answer, keep the
+findings and redraw. A sweep that does not answer leaves the last findings
+standing - ten-minutely housekeeping may miss a beat, and an empty Sweeps
+section would say the fleet is clean when the script simply failed.
 
 Called by `cerebro--refresh-panel-when-due' every
 `cerebro-sweep-refresh-seconds', and once from `cerebro--beads-buffer' so the
-section is not empty until the first ten minutes are up."
-  (with-current-buffer buffer
-    (setq cerebro--sweep-findings (cerebro--gather-sweeps (cerebro--repo-root))))
-  (cerebro--beads-render buffer))
+section is not empty until the first ten minutes are up.  A chain already
+out is left to finish rather than joined by a second - see
+`cerebro--sweep-requested-at'."
+  (when (and (buffer-live-p buffer)
+             (not (with-current-buffer buffer cerebro--sweep-requested-at)))
+    (with-current-buffer buffer (setq cerebro--sweep-requested-at (float-time)))
+    (let ((root (with-current-buffer buffer (cerebro--repo-root))))
+      (cerebro--request-sweeps
+       root
+       (lambda (answer)
+         (when (buffer-live-p buffer)
+           (with-current-buffer buffer (setq cerebro--sweep-requested-at nil))
+           ;; ANSWER is (FINDINGS), possibly (nil), when both scripts
+           ;; answered; nil when either did not - so only an actual answer
+           ;; replaces what is already shown.
+           (when answer
+             (with-current-buffer buffer
+               (setq cerebro--sweep-findings (car answer))))
+           (cerebro--draw-beads buffer)))))))
 
 (defvar cerebro-beads-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1701,11 +1884,15 @@ buffer on its own cadences once the fleet buffer's tick is running (ah-6uo)."
       ;; the navigator happened to be in.
       (setq default-directory (file-name-as-directory repo-root))
       (unless cerebro--swept-at
-        ;; Run once immediately, in the foreground, so the Sweeps section is
-        ;; not simply empty for the first ten minutes of a fresh `M-x cerebro'.
-        ;; Demoted, same as the tick's own call: a `bd' that will not answer
-        ;; must not stop the fleet view opening.
+        ;; Kick off both once immediately, so neither section is simply
+        ;; empty until its own cadence next comes due - the beads section
+        ;; for up to thirty seconds, the Sweeps section for up to ten
+        ;; minutes. Neither blocks: each asks in the background and
+        ;; redraws when it answers. Still demoted: a `bd' or `gh' that
+        ;; errors synchronously (program missing) must not stop the fleet
+        ;; view opening.
         (with-demoted-errors "cerebro: %S" (cerebro--sweep buffer))
+        (with-demoted-errors "cerebro: %S" (cerebro--beads-render buffer))
         (setq cerebro--swept-at (float-time))))
     buffer))
 
@@ -1759,7 +1946,7 @@ Does nothing when BUFFER is dead."
          ;; whichever of them have none.
          (states (cerebro--gather-states
                   repo-root (append (mapcar #'car interactive) roster)))
-         (args (cerebro--system-args))
+         (args (cerebro--cached-system-args))
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states
@@ -1800,7 +1987,7 @@ removed each tree, and that is for troubleshooting, not the ordinary case.
 
 Never signals: `M-x cerebro' has to open even when the script is missing or
 unrunnable (a fresh checkout without `--recurse-submodules', for one), the
-same way `cerebro--bd-json' degrades rather than taking the buffer down."
+same way `cerebro--run-async' degrades rather than taking the buffer down."
   (condition-case nil
       (make-process
        :name cerebro--prune-process-name
@@ -1852,21 +2039,16 @@ Bound as `revert-buffer-function' so `g' and the tick share this one path."
 (defun cerebro--refresh-panel-when-due (panel seconds)
   "Redraw PANEL and re-run the sweeps if their cadences say so at SECONDS.
 
-The sweep runs first, and `cerebro--sweep' already renders as its last
-step - so on a tick where both cadences are due, the plain render below is
-skipped rather than redrawing PANEL a second time.  `cerebro--beads-rendered-at'
-is still stamped either way, so the next due check comes out right
-regardless of which branch actually drew the panel."
+The two run independently: neither blocks any more, so there is no cost to
+avoid by coupling them the way an earlier version did (a sweep costs no
+`bd list' call, so a tick where both are due simply runs both)."
   (with-current-buffer panel
-    (let ((swept (cerebro--due-p cerebro--swept-at cerebro-sweep-refresh-seconds seconds))
-          (render-due (cerebro--due-p cerebro--beads-rendered-at cerebro-beads-refresh-seconds seconds)))
-      (when swept
-        (setq cerebro--swept-at seconds)
-        (cerebro--sweep panel))
-      (when (or swept render-due)
-        (setq cerebro--beads-rendered-at seconds)
-        (unless swept
-          (cerebro--beads-render panel))))))
+    (when (cerebro--due-p cerebro--swept-at cerebro-sweep-refresh-seconds seconds)
+      (setq cerebro--swept-at seconds)
+      (cerebro--sweep panel))
+    (when (cerebro--due-p cerebro--beads-rendered-at cerebro-beads-refresh-seconds seconds)
+      (setq cerebro--beads-rendered-at seconds)
+      (cerebro--beads-render panel))))
 
 (defun cerebro--tick (buffer &optional now)
   "Refresh BUFFER if it is still alive; called every 5s while it lives.
@@ -1876,7 +2058,11 @@ on a state file read five seconds ago.  Then the bead panel, when its
 thirty seconds are up, and the sweeps, when their ten minutes are: one
 timer with the fleet buffer's lifetime, instead of a timer per panel each
 cancelling itself by a different route (ah-6uo).  Both are demoted: a `bd'
-that will not answer must not stop the list refreshing.  NOW is for tests."
+that will not answer must not stop the list refreshing.  NOW is for tests.
+
+Nothing here waits on a subprocess: the panel and the sweeps request and
+draw when answered (ah-9dv); the process scan is the one blocking read
+left and runs every `cerebro-system-scan-seconds'."
   (when (buffer-live-p buffer)
     (let ((now (or now (current-time))))
       (with-current-buffer buffer

@@ -281,13 +281,34 @@ So sweep. Once on startup, and then every ten minutes for as long as you are run
 Start the `--watch` sweep in the background once, on startup, and never a second time — check
 whether one is already running before you start another.
 
-The script decides what is safe, not you. It removes a worktree only when nothing can be lost from
-it: clean tree, work already on main, and untouched for half an hour. Everything else it keeps and
-says why. **Do not reach for `git worktree remove --force`** to tidy something the script declined —
-it declined because a removal would have destroyed something, and the reason is printed.
+The script decides what is safe for an implementer's tree, and it is conservative on purpose: it
+removes a worktree only when nothing can be lost from it — clean tree, work already on main, and
+untouched for half an hour — and keeps everything else, saying why. **The trees it declines are
+yours to judge, and you decide on your own** (the navigator asked for this on 2026-08-16, after a
+sweep that stopped to ask about the obvious): remove a worktree the script kept, or one it never
+looks at (a scratchpad tree from an old session, a role's tree outside `.cerebro/worktrees/`, a tree
+detached at a commit already on main), when all of these hold:
+
+- no live session is in it — no `ListAgents` name whose bead is that tree's, and no process with its
+  working directory there (`lsof +D <path>` or `pgrep -f <path>`);
+- its branch is merged into `origin/main`, or its HEAD is already on `origin/main`
+  (`git branch --merged origin/main`, `git merge-base --is-ancestor <sha> origin/main`);
+- it has no uncommitted or untracked changes (`git -C <path> status --porcelain` is empty), or its
+  only such changes are build output and caches (`node_modules/`, `target/`, `dist/`).
+
+**Never `.claude/worktrees/psylocke`**, whatever the tests say: Psylocke's tree is reset to main
+between passes rather than merged, so it always looks abandoned and never is (see
+`docs/cerebro-jobs.md`).
+
+Then `git worktree remove <path>` and `git worktree prune`. A tree that fails the third test is
+somebody's unpushed work: leave it, and say whose tree it is and what it holds, because that is a
+decision about someone else's edits and not one to take alone. **`--force` is for the cache-only
+case and nothing else** — a tree the script declined for uncommitted source is declined because a
+removal would have destroyed something, and the reason is printed.
 
 Report a sweep only when it did something, or when the navigator asks. A janitor announcing that it
-found nothing, every ten minutes, is noise.
+found nothing, every ten minutes, is noise. A tree you removed on your own judgement is something it
+did: say which one and why it was safe.
 
 ## Beads that finished without being closed
 
@@ -362,9 +383,12 @@ bd show <id>     # look for "Lease: expires expired (heartbeat <age>)"
 ```
 
 An expired lease with no live agent behind it (`ListAgents`, and `pgrep` for implementer launchers)
-is a stale claim regardless of what name is on it. It is still not yours to unclaim on your own
-judgement — surface it to the navigator (as with any claim, human-named or not) and unclaim only once
-asked, the same as any other claim recovery in this document.
+is a stale claim regardless of what name is on it, and **you recover it yourself, on your own
+judgement** — an implementer's name or a human's makes no difference once the lease is dead and
+nobody is behind it. The navigator asked for exactly this on 2026-08-16: a sweep that finds a claim
+eight hours dead, reports it, and then waits to be told to run the one command that fixes it has
+turned the fix into a question, and the question into a bead nobody could pick up in the meantime.
+Recover it (below), and report what you did.
 
 **Close a claim only when all three hold:**
 
@@ -395,23 +419,38 @@ bd dolt push
 A bead closing itself is the visible end of an implementer that died, and the navigator wants to know
 that happened — including which agent's name was on it.
 
-A claim whose work is *not* on main is a different case and not yours to close. If the assignee is
-gone from `ListAgents`, that is the narrow recovery in `beads-workflow`:
+A claim whose work is *not* on main is a different case and not one to close. If the session that
+claimed it is gone, that is the narrow recovery in `beads-workflow`, and **you run it as part of the
+sweep — on startup, on every pass, and without asking**:
 
 ```bash
 bd reclaim --id <bead> --older-than 10m     # one named bead, by ID, never a sweep
+bd dolt push
 ```
+
+**"Gone" is about the session, not the name.** An implementer is one session per bead, so a fresh
+Wolverine that came up a minute ago and is heartbeating ah-v2l is not the Wolverine that claimed
+ah-u4e.2 eight hours earlier — that session died, and its claim is stale however alive the name looks
+in `ListAgents`. The test is: does any live session hold *this* bead? Read `.cerebro/state/<name>.state.json`
+for what each running implementer is on, and treat a claim as held only when a live session's `bead`
+is that id (or its lease is fresh — a heartbeat inside the last five minutes means somebody is on it,
+whatever the state files say). ah-u4e.2 on 2026-08-16 was exactly this: `assignee: Wolverine`, lease
+expired eight hours, live Wolverine on a different bead, one child (ah-u4e.3) blocked behind it.
 
 **Do not add a waiting period of your own on top of that `10m`.** It counts from lease expiry, not
 from the last heartbeat, so with a five-minute lease it already declines to touch anything that was
 alive within about the last fifteen minutes. The command enforces the window; your job is only to be
 sure the agent is gone. Sitting on it for a further quarter of an hour is silence nobody needs.
 
-Never without `--id`, and never for a name that is still running — a long CI watch looks identical to
-a death from out here. It also only works on the machine that granted the lease, so a claim from
-another machine will simply be skipped; that is not a failure to retry, it is the navigator's to
-sort out. Anything less clear-cut than "the agent is gone and the work is not there" is
-the navigator's call: say what you found and leave it alone.
+Never without `--id`, and never for a bead a live session is on — a long CI watch looks identical to
+a death from out here, which is why the lease and the state file, not the name, are what you read.
+It also only works on the machine that granted the lease, so a claim from another machine will simply
+be skipped; that is not a failure to retry, it is the navigator's to sort out. Anything less
+clear-cut than "the session is gone and the work is not there" — a fresh lease, a state file naming
+the bead, work half on main — is the navigator's call: say what you found and leave it alone.
+
+**Always report a claim you reclaimed**, the same as one you closed: which bead, whose name was on
+it, how old the lease was, and what it unblocked. Doing it yourself does not make it silent.
 
 ## Epics left open under closed children
 

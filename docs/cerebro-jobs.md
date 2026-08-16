@@ -51,6 +51,12 @@ that is kept by name because it is reset rather than merged.
 - **Anything `bd update --force`-shaped.** Reassigning a claim, overriding a lease, anything the
   workflow already routes through the navigator's explicit approval — see `beads-workflow`. A
   keybinding that could do this on its own judgement is worse than the session it would replace.
+- **Recovering a stale claim and pruning what the watcher declined.** The fleet view detects a dead
+  lease and asks before acting; a Cerebro session, when one is running, does not wait — it runs
+  `bd reclaim --id` on a claim no live session holds and removes a worktree that is merged, clean and
+  unowned on its own judgement, then reports (2026-08-16, `orchestrator.md`, "Beads that finished
+  without being closed" and "Keeping the worktrees tidy"). Same guards, no keypress: this is the
+  reading a session is for.
 
 Nothing here changes: start a session with `.claude/cerebro/scripts/run-orchestrator` exactly as
 before, for exactly these three things.

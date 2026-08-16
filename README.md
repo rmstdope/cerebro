@@ -50,6 +50,12 @@ that read it: a running implementer is a working one.
 `scripts/prune-worktrees.sh` is the worktree sweep, run by Cerebro on a timer and by you whenever
 you like (`--dry-run` first).
 
+## Skills
+
+`plan-bead` and `implement-bead` are the two roles' procedures; `beads-workflow` is the substrate
+both read. `release-notes` turns the work between two release tags into a page a player can read —
+it drops everything that never reached the application, and describes outcomes rather than changes.
+
 ## Sync Script (Skills and Agents)
 
 You do not normally run this by hand: every launcher runs it before starting a session, so a bumped

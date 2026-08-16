@@ -1016,6 +1016,7 @@ live buffers) falls back to the placeholder rather than erroring."
 (declare-function vterm-mode "vterm" ())
 (declare-function vterm-send-string "vterm" (string &optional paste-p))
 (declare-function vterm-send-return "vterm" ())
+(declare-function vterm-send-tab "vterm" ())
 
 (defun cerebro--make-session-buffer (name)
   "Create the vterm session buffer NAME, process running, shown in no window.

@@ -34,9 +34,11 @@ What they divide, and how:
   and pushes it at once, so the other sees the bead as spoken for. There is no lease and nothing to
   reclaim: if a planning session dies, the label is all it leaves, and any planner can pick that bead
   up next pass.
-- **The buffer**, by counting `planned` *and* `planning` together — beads the other planner is
-  holding are stock in flight. Without that, both read the same shortfall and both fill it, and you
-  are interviewed twice for a queue that needed topping up once.
+- **The buffer**, by counting `planned` beads only — what an idle implementer could actually claim.
+  Both planners may therefore fill at the same time, which is what a second planner is *for*; the
+  overshoot is at most one bead each. Counting `planning` too was tried and starved the queue: two
+  held candidates were enough to make a small fleet's target look met, and both planners slept over
+  a queue of two.
 - **The triage pass belongs to Xavier alone** — the first planner on the roster. It is the one part
   of the role that is not divisible, because what a session remembers asking lives in its own context
   and nowhere on the bead: two triaging planners means being walked through the same P4 backlog

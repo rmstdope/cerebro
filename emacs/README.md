@@ -70,6 +70,10 @@ Claimed 1
 Planned, unclaimed 0
   (none)
 
+Being planned 2
+  ah-8m0  P1 Fleet-wide question-state hooks
+  ah-2p1  P2 Second planner: the buffer counts pickable work
+
 Unplanned 4
   ah-3cs  P1 Config option for fixed unit-in-hex pane size
   ah-4ao  P2 Drive the implementer fleet from the Emacs agent…
@@ -78,6 +82,12 @@ Unplanned 4
 Merged, unverified 0
   (none)
 ```
+
+**Being planned** is what the planners are holding right now — open beads carrying the `planning`
+label, one per planning session. They are deliberately not folded into either neighbour: Unplanned is
+work nobody has started, and Planned, unclaimed is work an implementer can take this second, while
+these can be neither claimed nor picked up until the plan lands. Read next to Planned, unclaimed it
+also answers the question a short queue raises — whether the planners are behind, or simply mid-bead.
 
 The panel shows work the fleet can act on, and stops there. **Merged, unverified** is what has landed
 and still wants checking — Psylocke's queue — sorted newest first, since priority says nothing about

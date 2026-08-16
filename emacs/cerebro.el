@@ -468,12 +468,20 @@ still has to say how much work is really in it."
      (when (> hidden 0)
        (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
 
-(defun cerebro--bead-panel (claimed planned unplanned merged width max &optional sweep-findings)
+(defun cerebro--bead-panel (claimed planned being-planned unplanned merged width max
+                                    &optional sweep-findings)
   "The whole panel as a list of lines.
 
-The order work moves in, and it stops where the fleet's part in it does:
-being built, ready to pick up, not planned yet, and merged but not yet
-verified - which is Psylocke's queue.
+The order work moves in, read backwards, and it stops where the fleet's part
+in it does: being built, ready to pick up, being planned, not planned yet,
+and merged but not yet verified - which is Psylocke's queue.
+
+BEING-PLANNED is the planners' own row of the pipeline. It is worth its own
+section rather than being folded into Unplanned because the two answer
+opposite questions: Unplanned is work nobody has started, and this is work
+that is under way and simply cannot be claimed yet. Read together with
+Planned, unclaimed, it is also what says whether a short queue means the
+planners are behind or merely mid-bead.
 
 Verified work is not here. Neither is anything nobody can pick up. See
 `cerebro--partition-beads' for what that leaves out and why.
@@ -483,6 +491,7 @@ SWEEP-FINDINGS, when given, adds a Sweeps section at the bottom (see
 one a candidate for `x' rather than something already decided."
   (append (cerebro--bead-section "Claimed" claimed width max) (list "")
           (cerebro--bead-section "Planned, unclaimed" planned width max) (list "")
+          (cerebro--bead-section "Being planned" being-planned width max) (list "")
           (cerebro--bead-section "Unplanned" unplanned width max) (list "")
           ;; Newest first: priority says nothing about finished work, so what
           ;; this answers is what just landed and still wants checking.
@@ -1483,10 +1492,12 @@ thread, and \"nothing left to do\" here.")
            (cerebro--bead-labels bead)))
 
 (defun cerebro--partition-beads (beads)
-  "Split BEADS into the four lists the panel shows.
+  "Split BEADS into the five lists the panel shows.
 
-\(CLAIMED PLANNED UNPLANNED MERGED), where merged means merged and not yet
-verified.  Not every bead lands in one, deliberately: verified work is
+\(CLAIMED PLANNED BEING-PLANNED UNPLANNED MERGED), where merged means merged
+and not yet verified, and BEING-PLANNED is what a planner is holding right
+now - open, labelled `planning', and not claimable by anybody until the plan
+lands (ah-2p.2).  Not every bead lands in one, deliberately: verified work is
 finished, epics are parents rather than work, bd's own `event' records are
 bookkeeping, and blocked or deferred beads cannot be picked up.  A panel is
 a list of what to do about something, so what there is nothing to do about
@@ -1497,7 +1508,7 @@ is what keeps those exclusions in one readable place instead of spread
 across five `bd' invocations - an `event' in particular carries the very
 labels these rules key on, and would otherwise arrive looking like merged
 work."
-  (let (claimed planned unplanned merged)
+  (let (claimed planned being-planned unplanned merged)
     (dolist (bead beads)
       (let ((status (alist-get 'status bead)))
         (cond
@@ -1509,9 +1520,16 @@ work."
          ((member (alist-get 'issue_type bead) '("epic" "event")) nil)
          ((equal status "in_progress") (push bead claimed))
          ((equal status "open")
-          (if (member "planned" (cerebro--bead-labels bead))
-              (push bead planned)
-            (push bead unplanned)))
+          (let ((labels (cerebro--bead-labels bead)))
+            (cond
+             ;; `planned' first, and deliberately: `bd update --add-label
+             ;; planned --remove-label planning' is one call, but a bead read
+             ;; mid-write - or left behind by a planner that forgot the
+             ;; removal - carries both. Pickable wins, because an implementer
+             ;; can claim it whatever else the bead says.
+             ((member "planned" labels) (push bead planned))
+             ((member "planning" labels) (push bead being-planned))
+             (t (push bead unplanned)))))
          ((equal status "closed")
           ;; Settled means nothing further is wanted from anybody - verified
           ;; by a person, or ruled out of scope. Finished, so not here.
@@ -1519,8 +1537,8 @@ work."
          ;; Blocked, deferred, or a status from a future bd: real beads, but
          ;; nothing the fleet can pick up today.
          (t nil))))
-    (list (nreverse claimed) (nreverse planned) (nreverse unplanned)
-          (nreverse merged))))
+    (list (nreverse claimed) (nreverse planned) (nreverse being-planned)
+          (nreverse unplanned) (nreverse merged))))
 
 (defconst cerebro-priority-floor 4
   "The least urgent priority `bd' takes; 0 is the most urgent.")
@@ -1778,7 +1796,7 @@ does."
    buffer
    (lambda ()
      (let* ((width (cerebro--panel-width buffer))
-            (beads (or cerebro--beads (list nil nil nil nil)))
+            (beads (or cerebro--beads (list nil nil nil nil nil)))
             (lines (apply #'cerebro--bead-panel
                           (append beads (list width cerebro-beads-per-section)
                                   (list cerebro--sweep-findings))))

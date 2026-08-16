@@ -642,110 +642,6 @@ runs."
                ,@body)))
        (kill-buffer ,list-buffer))))
 
-;; vterm shows its new buffer with `pop-to-buffer-same-window', which takes
-;; the *selected* window - the list window, since `s' is pressed there.  This
-;; stands in for it, so the test pins the wiring rather than a helper nobody
-;; would notice was bypassed.
-(defun cerebro-test--spawn-like-vterm (buffer)
-  "Display BUFFER the way `vterm' does, and return it."
-  (pop-to-buffer-same-window buffer)
-  buffer)
-
-(ert-deftest cerebro-test/spawn-into-detail-leaves-the-list-visible ()
-  (let ((session (generate-new-buffer " *cerebro-test-session*")))
-    (unwind-protect
-        (cerebro-test--with-layout list-buffer detail-window
-          ;; Buffer names rather than objects: ert renders a failing form's
-          ;; values after this test's cleanup has killed the buffers, and
-          ;; "#<killed buffer> vs #<killed buffer>" says nothing.
-          (let ((list-window (selected-window))
-                (shown (cerebro--spawn-into-detail
-                        (buffer-name session)
-                        (lambda () (cerebro-test--spawn-like-vterm session)))))
-            ;; The reported symptom first: the navigator can still see the fleet.
-            (should (equal (buffer-name (window-buffer list-window))
-                            (buffer-name list-buffer)))
-            (should (equal (buffer-name (window-buffer detail-window))
-                            (buffer-name session)))
-            (should (eq shown session))
-            (should (eq (selected-window) list-window))
-            (should (eq (current-buffer) list-buffer))))
-      (kill-buffer session))))
-
-(ert-deftest cerebro-test/spawn-into-detail-without-a-detail-window-keeps-the-list ()
-  "A torn-down layout must still start the agent - without hiding the fleet.
-
-`cerebro--setup-layout' only rebuilds the split when the *list* window is
-dead, so `C-x 1' in the list window leaves a live list and a dead detail
-window that `M-x cerebro' will not restore.  Falling back to the selected
-window there would silently reproduce the very bug this code exists to fix."
-  (let ((session (generate-new-buffer " *cerebro-test-session*")))
-    (unwind-protect
-        (cerebro-test--with-layout list-buffer detail-window
-          (delete-window detail-window)
-          (let ((list-window (selected-window)))
-            (should (eq (cerebro--spawn-into-detail
-                         (buffer-name session)
-                         (lambda () (cerebro-test--spawn-like-vterm session)))
-                        session))
-            (should (equal (buffer-name (window-buffer list-window))
-                            (buffer-name list-buffer)))))
-      (kill-buffer session))))
-
-(ert-deftest cerebro-test/spawn-into-detail-only-claims-its-own-buffer ()
-  "The override must not swallow whatever else the spawn displays.
-
-`vterm--internal' runs `vterm-mode' *after* displaying the session, so a
-`display-warning' (or the module-compile log on a first run) lands while the
-override is still bound.  An unscoped action would evict the session and
-leave the navigator looking at a warning buffer."
-  (let ((session (generate-new-buffer " *cerebro-test-session*"))
-        (foreign (generate-new-buffer " *cerebro-test-foreign*")))
-    (unwind-protect
-        (cerebro-test--with-layout list-buffer detail-window
-          (let* ((extra (split-window detail-window nil 'below))
-                 ;; Beaten by an overriding action, so it only gets a say if
-                 ;; ours correctly declines the foreign buffer.
-                 (display-buffer-alist
-                  (list (cons (regexp-quote (buffer-name foreign))
-                              (list (lambda (buffer _alist)
-                                      (set-window-buffer extra buffer)
-                                      extra))))))
-            (cerebro--spawn-into-detail
-             (buffer-name session)
-             (lambda ()
-               (prog1 (cerebro-test--spawn-like-vterm session)
-                 (display-buffer foreign))))
-            (should (equal (buffer-name (window-buffer detail-window))
-                            (buffer-name session)))
-            (should (equal (buffer-name (window-buffer extra))
-                            (buffer-name foreign)))))
-      (kill-buffer session)
-      (kill-buffer foreign))))
-
-(ert-deftest cerebro-test/spawn-into-detail-survives-a-dedicated-detail-window ()
-  "A signal from `set-window-buffer' must not strand a half-built session.
-
-If it propagates, it escapes `vterm--internal' between `generate-new-buffer'
-and `vterm-mode', leaving a live process-less `*fleet: <name>*'.  The next
-start then gets `*fleet: <name>*<2>', which `cerebro--owned-buffer-agent-name'
-does not match - so that session is invisible to the fleet list for ever."
-  (let ((session (generate-new-buffer " *cerebro-test-session*"))
-        (hostage (generate-new-buffer " *cerebro-test-hostage*")))
-    (unwind-protect
-        (cerebro-test--with-layout list-buffer detail-window
-          (set-window-buffer detail-window hostage)
-          (set-window-dedicated-p detail-window t)
-          (let ((list-window (selected-window)))
-            (should (eq (cerebro--spawn-into-detail
-                         (buffer-name session)
-                         (lambda () (cerebro-test--spawn-like-vterm session)))
-                        session))
-            (should (equal (buffer-name (window-buffer list-window))
-                            (buffer-name list-buffer)))))
-      (kill-buffer session)
-      (kill-buffer hostage))))
-
 ;; ---------------------------------------------------------------------------
 ;; ah-aao: a restart only refreshes a detail window that was watching it
 
@@ -769,58 +665,130 @@ does not match - so that session is invisible to the fleet list for ever."
       (kill-buffer session)
       (kill-buffer other))))
 
-(ert-deftest cerebro-test/spawn-quietly-leaves-windows-alone ()
-  "The quiet restart path must not move any window or the selection.
-
-`save-window-excursion' is the mechanism: it lets SPAWN display its buffer
-however it likes - vterm uses `pop-to-buffer-same-window' - and then puts
-every window back exactly as it was."
-  (let ((session (generate-new-buffer " *cerebro-test-session*")))
+;; Entering through `cerebro--launch' rather than a lower seam: without this,
+;; `cerebro--launch' could go back to displaying its buffer directly and every
+;; other test here would still pass.  Proven by mutation, not assumed.
+;;
+;; Both stub `require' rather than loading vterm, so `vterm-shell' is never
+;; read - these pin where the session is displayed, not the command.
+(ert-deftest cerebro-test/launch-makes-the-session-in-no-window ()
+  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+         (session-name (cerebro--session-buffer-name agent))
+         (orig-require (symbol-function 'require))
+         (vterm-mode-calls nil))
     (unwind-protect
         (cerebro-test--with-layout list-buffer detail-window
-          (let ((list-window (selected-window))
-                (list-buffer-name (buffer-name list-buffer))
-                (detail-buffer-name (buffer-name (window-buffer detail-window))))
-            (let ((shown (cerebro--spawn-quietly
-                          (lambda () (cerebro-test--spawn-like-vterm session)))))
-              (should (eq shown session))
-              (should (buffer-live-p session)))
-            (should (equal (buffer-name (window-buffer list-window)) list-buffer-name))
-            (should (equal (buffer-name (window-buffer detail-window)) detail-buffer-name))
-            (should (eq (selected-window) list-window))
-            (should (eq (current-buffer) list-buffer))))
-      (kill-buffer session))))
+          (let ((detail-buffer-name (buffer-name (window-buffer detail-window))))
+            (cl-letf (((symbol-function 'cerebro--repo-root)
+                       (lambda () default-directory))
+                      ;; vterm is not installed in batch; stand in for it.
+                      ;; Delegate rather than blanket-nil: a `should' failing
+                      ;; inside this body has ert building its explanation
+                      ;; while `require' is stubbed, and a lazy require
+                      ;; answering nil there produces a confusing secondary
+                      ;; failure.
+                      ((symbol-function 'require)
+                       (lambda (feature &rest args)
+                         (or (eq feature 'vterm) (apply orig-require feature args))))
+                      ((symbol-function 'vterm-mode)
+                       (lambda () (push (current-buffer) vterm-mode-calls))))
+              (let ((list-window (selected-window)))
+                (cerebro--launch agent)
+                (should (get-buffer session-name))
+                (should (equal (mapcar #'buffer-name vterm-mode-calls)
+                                (list session-name)))
+                (should-not (get-buffer-window session-name t))
+                (should (eq (selected-window) list-window))
+                (should (equal (buffer-name (window-buffer list-window))
+                                (buffer-name list-buffer)))
+                (should (eq (current-buffer) list-buffer))
+                (should (equal (buffer-name (window-buffer detail-window))
+                                detail-buffer-name))))))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
 
-;; Entering through `cerebro--launch' rather than the seam it calls: without
-;; this, `cerebro--launch' could go back to calling `vterm' directly and every
-;; other test here would still pass.  Proven by mutation, not assumed.
-(ert-deftest cerebro-test/launch-puts-the-session-in-the-detail-window ()
-  ;; Note this stubs `require' rather than loading vterm, so `vterm-shell' is
-  ;; never read - this pins where the session is displayed, not the command.
+(ert-deftest cerebro-test/launch-touches-no-window-even-a-dedicated-one ()
+  "A dedicated detail window used to be where a signal could strand a
+half-built session (`set-window-buffer' refusing it between
+`generate-new-buffer' and `vterm-mode').  There is no window step inside
+launch any more, so nothing can strand anything - the dedication is just
+left alone."
+  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+         (session-name (cerebro--session-buffer-name agent))
+         (orig-require (symbol-function 'require))
+         (hostage (generate-new-buffer " *cerebro-test-hostage*")))
+    (unwind-protect
+        (cerebro-test--with-layout list-buffer detail-window
+          (set-window-buffer detail-window hostage)
+          (set-window-dedicated-p detail-window t)
+          (cl-letf (((symbol-function 'cerebro--repo-root)
+                     (lambda () default-directory))
+                    ((symbol-function 'require)
+                     (lambda (feature &rest args)
+                       (or (eq feature 'vterm) (apply orig-require feature args))))
+                    ((symbol-function 'vterm-mode) #'ignore))
+            (let ((list-window (selected-window)))
+              (cerebro--launch agent)
+              (should (get-buffer session-name))
+              (should (equal (buffer-name (window-buffer detail-window))
+                              (buffer-name hostage)))
+              (should (equal (buffer-name (window-buffer list-window))
+                              (buffer-name list-buffer))))))
+      (kill-buffer hostage)
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
+;; The placement itself - `cerebro-start' is where it lives now that launch
+;; touches no window.
+(ert-deftest cerebro-test/start-shows-the-session-in-the-detail-window ()
   (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
          (session-name (cerebro--session-buffer-name agent))
          (orig-require (symbol-function 'require)))
     (unwind-protect
         (cerebro-test--with-layout list-buffer detail-window
-          (cl-letf (((symbol-function 'cerebro--repo-root)
-                     (lambda () default-directory))
-                    ;; vterm is not installed in batch; stand in for it.
-                    ;; Delegate rather than blanket-nil: a `should' failing
-                    ;; inside this body has ert building its explanation while
-                    ;; `require' is stubbed, and a lazy require answering nil
-                    ;; there produces a confusing secondary failure.
+          (cl-letf (((symbol-function 'cerebro--agent-at-point) (lambda () agent))
+                    ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                    ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
+                    ((symbol-function 'revert-buffer) #'ignore)
                     ((symbol-function 'require)
                      (lambda (feature &rest args)
                        (or (eq feature 'vterm) (apply orig-require feature args))))
-                    ((symbol-function 'vterm)
-                     (lambda (name)
-                       (cerebro-test--spawn-like-vterm (get-buffer-create name)))))
+                    ((symbol-function 'vterm-mode) #'ignore)
+                    ((symbol-function 'cerebro--owned) (lambda () (list "Cyclops"))))
             (let ((list-window (selected-window)))
-              (cerebro--launch agent)
+              (cerebro-start)
+              (should (equal (buffer-name (window-buffer detail-window))
+                              session-name))
               (should (equal (buffer-name (window-buffer list-window))
                               (buffer-name list-buffer)))
-              (should (equal (buffer-name (window-buffer detail-window))
-                              session-name)))))
+              (should (eq (selected-window) list-window)))))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
+(ert-deftest cerebro-test/start-with-no-detail-window-shows-the-session-nowhere ()
+  "A torn-down layout must still start the agent - without popping up a
+window to show it.  `cerebro--setup-layout' only rebuilds the split when the
+*list* window is dead, so `C-x 1' in the list window leaves a live list and a
+dead detail window that `M-x cerebro' will not restore.  Popping up a fresh
+window there would reintroduce the window-choosing this bead removes."
+  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+         (session-name (cerebro--session-buffer-name agent))
+         (orig-require (symbol-function 'require)))
+    (unwind-protect
+        (cerebro-test--with-layout list-buffer detail-window
+          (delete-window detail-window)
+          (cl-letf (((symbol-function 'cerebro--agent-at-point) (lambda () agent))
+                    ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                    ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
+                    ((symbol-function 'revert-buffer) #'ignore)
+                    ((symbol-function 'require)
+                     (lambda (feature &rest args)
+                       (or (eq feature 'vterm) (apply orig-require feature args))))
+                    ((symbol-function 'vterm-mode) #'ignore)
+                    ((symbol-function 'cerebro--owned) (lambda () (list "Cyclops"))))
+            (let ((list-window (selected-window)))
+              (cerebro-start)
+              (should (get-buffer session-name))
+              (should-not (get-buffer-window session-name t))
+              (should (equal (buffer-name (window-buffer list-window))
+                              (buffer-name list-buffer))))))
       (when (get-buffer session-name) (kill-buffer session-name)))))
 
 ;; ---------------------------------------------------------------------------
@@ -974,25 +942,27 @@ does not match, so it would be invisible to the list for ever."
               ((symbol-function 'cerebro--end-session)
                (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
               ((symbol-function 'cerebro--launch)
-               (lambda (a &optional _quiet) (push (cons 'launch (cerebro-agent-name a)) calls))))
+               (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls))))
       (with-temp-buffer
         (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
         (should (equal (reverse calls) '((kill . "Cyclops") (launch . "Cyclops"))))))))
 
-(ert-deftest cerebro-test/restart-is-quiet-unless-the-agent-was-watched ()
+(ert-deftest cerebro-test/restart-shows-the-session-only-where-it-was-watched ()
   "A restart only refreshes a detail window that was showing that agent.
 
 The showing-check has to run before `cerebro--end-session' kills the
 buffer the window is showing - after that the window shows whatever the
-kill left behind, and the check would be meaningless."
+kill left behind, and the check would be meaningless.  Placement now goes
+through `cerebro--show-detail', the same function `s' uses."
   (let ((calls nil)
         (agent (cerebro-test--supervised 'done)))
     (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
               ((symbol-function 'cerebro--end-session)
                (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
               ((symbol-function 'cerebro--launch)
-               (lambda (a &optional quiet)
-                 (push (list 'launch (cerebro-agent-name a) quiet) calls))))
+               (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls)))
+              ((symbol-function 'cerebro--show-detail)
+               (lambda (a) (push (cons 'shown (cerebro-agent-name a)) calls))))
       ;; Watching: a detail window showing the agent's own session.
       (let ((watching t))
         (cl-letf (((symbol-function 'cerebro--detail-showing-p)
@@ -1004,7 +974,8 @@ kill left behind, and the check would be meaningless."
         (should (equal (reverse calls)
                         (list (cons 'checked "Cyclops")
                               (cons 'kill "Cyclops")
-                              (list 'launch "Cyclops" nil)))))
+                              (cons 'launch "Cyclops")
+                              (cons 'shown "Cyclops")))))
       ;; Not watching: nothing in the detail window was showing this agent.
       (setq calls nil)
       (let ((watching nil))
@@ -1017,7 +988,7 @@ kill left behind, and the check would be meaningless."
         (should (equal (reverse calls)
                         (list (cons 'checked "Cyclops")
                               (cons 'kill "Cyclops")
-                              (list 'launch "Cyclops" t))))))))
+                              (cons 'launch "Cyclops"))))))))
 
 (ert-deftest cerebro-test/supervise-retire-kills-without-launching ()
   "A stop flag means this name does not come back until the navigator says so."
@@ -1444,15 +1415,12 @@ session, which is the case the navigator actually hits, was not."
                     ((symbol-function 'require)
                      (lambda (feature &rest args)
                        (or (eq feature 'vterm) (apply orig-require feature args))))
-                    ((symbol-function 'vterm)
-                     (lambda (name)
-                       (let ((buffer (get-buffer-create name)))
-                         ;; vterm owns TAB in its major-mode map; stand in for that.
-                         (with-current-buffer buffer
-                           (use-local-map (let ((m (make-sparse-keymap)))
-                                            (define-key m (kbd "TAB") #'ignore)
-                                            m)))
-                         (cerebro-test--spawn-like-vterm buffer)))))
+                    ((symbol-function 'vterm-mode)
+                     (lambda ()
+                       ;; vterm owns TAB in its major-mode map; stand in for that.
+                       (use-local-map (let ((m (make-sparse-keymap)))
+                                        (define-key m (kbd "TAB") #'ignore)
+                                        m)))))
             (cerebro--launch agent)
             (with-current-buffer session-name
               (should cerebro-session-mode)

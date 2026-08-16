@@ -50,9 +50,11 @@ planner`), which is the one place a name and a role stop being interchangeable:
   plans a Sonnet agent could build unattended. Decide architecture themselves; take every
   user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
   builders, sized from how many are running (twice the count, never fewer than four). They divide
-  the work through the `planning` label alone — taken before research and pushed at once, counted
-  toward the buffer by both, and with the P4 **triage pass belonging to the first planner on the
-  roster only**, since two triaging sessions interview the navigator twice over the same backlog.
+  the work through the `planning` label alone — taken before research and pushed at once, and with
+  the P4 **triage pass belonging to the first planner on the roster only**, since two triaging
+  sessions interview the navigator twice over the same backlog. The buffer counts `planned` beads
+  and never `planning` ones: a bead being planned is not claimable, and counting it put both
+  planners to sleep over a two-bead queue (ah-2p.1).
 - **Cerebro** (`orchestrator`, Fable/medium) — stops implementers on request by writing their stop
   flag; it cannot start one, since that means starting a session. **Starts nothing on its own.** The
   worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
@@ -126,7 +128,10 @@ current bead and elapsed time; `s` starts, `k` kills, `f` tells an implementer t
 stop flag; the bead in flight is unaffected), `RET` focuses the detail window. Emacs 28+, no
 dependencies except optional **vterm** for live sessions.
 
-Under the list, the bead panel (`RET`, `n`/`p`, digits and `+`/`-`/`u` to reprioritise) also shows a
+Under the list, the bead panel (`RET`, `n`/`p`, digits and `+`/`-`/`u` to reprioritise) partitions
+one `bd` call into Claimed / Planned, unclaimed / **Being planned** (`planning`, what a planner holds
+mid-bead — never counted as buffer, since nobody can claim it) / Unplanned / Merged, unverified. It
+also shows a
 **Sweeps** section: the claims and epics sweeps `agents/orchestrator.md` describes, run every ten
 minutes by `scripts/sweep-claims.sh` and `scripts/sweep-epics.sh` (read-only; they gather facts and
 mutate nothing), turned into findings by pure decision functions, and hidden entirely when there is

@@ -255,24 +255,26 @@ is a **buffer of planned, open, unclaimed beads** — ready for anyone to pick u
 how many implementers are running.
 
 ```bash
-# The buffer, and the only count that matters - planned, plus what is being planned right now:
+# The buffer, and the only count that matters:
 bd list --label planned --status open --exclude-label human --exclude-type epic --json | jq length
-bd list --label planning --status open --exclude-label human --exclude-type epic --json | jq length
 ```
 
-**Add the two.** `human` is excluded because a bead waiting on the navigator is not available to an
-implementer, so counting it would starve the queue while the number looked healthy. `epic` is a
-split parent, which has children rather than a plan.
+`human` is excluded because a bead waiting on the navigator is not available to an implementer, so
+counting it would starve the queue while the number looked healthy. `epic` is a split parent, which
+has children rather than a plan.
 
-`planning` counts because a second planner is holding those beads and is minutes from marking them
-`planned` — they are stock in flight, not stock missing. Count only `planned` and both planners read
-the same shortfall at the same moment and both fill it: the fleet plans twice what it needs, the
-navigator is interviewed twice as often for it, and the buffer overshoots `2m` and then sits idle
-while the backlog behind it goes unranked. Counting the label costs a second `bd` call and makes
-the two sessions add up to one queue.
+**Count `planned` only. A bead carrying `planning` is not in the buffer** — not yours, not the other
+planner's. The buffer measures what an idle implementer could claim *right now*, and a bead being
+planned cannot be claimed by anyone: it has no design yet. Counting `planning` too was tried and
+starved the queue within a day (ah-2p.1). Two planners, each holding one candidate, added two to the
+count; with a small fleet that reached `2m` on its own, so both sessions reported a full buffer and
+went to sleep over a queue with two pickable beads in it.
 
-The one bead this over-counts is your own current candidate, which you labelled `planning` before
-you started (see *Choosing what to plan*). That is deliberate: it is real work in flight.
+**Both planners filling at once is not a fault to design against.** It is the whole point of a second
+planner, and the cost is bounded: each of you can only be holding one candidate, so the buffer can
+overshoot `2m` by one bead per planner. That is a bead built slightly earlier than it needed to be —
+against a rule this file already states twice, that the buffer is a floor and never a ceiling. An
+under-full buffer costs an idle implementer, which is the expensive error of the two.
 
 **How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
 state file under `.cerebro/state/` whose `pid` is alive, minus any implementer whose stop flag
@@ -815,6 +817,8 @@ taking their label off is how two sessions end up planning one bead. Clear only 
 labelled this session; anything else that looks stuck — a bead carrying `planning` while both
 planners are idle, say — is for the navigator to judge, so name it rather than tidying it.
 
-Then count the buffer again and act on it: below `2m`, plan the next one; at `2m`, say so and sleep.
-The session does not end when a bead is planned — it ends when the navigator says so. See *You keep
-a buffer sized to the fleet*.
+Then count the buffer again and act on it: **below `2m`, plan the next one — immediately, without
+sleeping in between**; at `2m`, say so and sleep. Count `planned` alone (see *You keep a buffer sized
+to the fleet*): if you have just planned a bead and the pickable count is still short, there is
+nothing to wait for and the sleep is ten minutes an implementer spends idle. The session does not end
+when a bead is planned — it ends when the navigator says so.

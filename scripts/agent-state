@@ -9,10 +9,10 @@
 #
 # <state> is one of: idle working asking done - the only field cerebro--supervise-action reads.
 # `done` is an implementer's state alone: an interactive agent has no bead to finish and is never
-# replaced between beads, so this script refuses `done` from one of the five interactive names.
+# replaced between beads, so this script refuses `done` from an interactive name.
 # <phase>, only meaningful with `working` or `asking`, is one of:
 #   build gate review ci rebase merge          (an implementer)
-#   triage plan                                (Xavier)
+#   triage plan                                (a planner: Xavier, Beast)
 #   prepare verify                             (Psylocke)
 #   sweep                                      (Moira)
 #   sweep release                              (Cerebro)

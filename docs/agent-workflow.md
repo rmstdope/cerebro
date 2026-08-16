@@ -21,7 +21,31 @@ The handover is one label. A bead is *planned* or it is not.
                         └──────── needs you ◄───────────────┘
 ```
 
-## Starting a planner
+## Starting a planner — there are two of them
+
+**Xavier and Beast both hold the planner role** (`scripts/roster --role planner`). One planner keeps
+about two implementers fed; a wider fleet outruns a single planning session, which is what the second
+one is for. Run one or both — nothing breaks with only Xavier up, the buffer simply refills at half
+the rate, and Cerebro will say so on its sweep.
+
+What they divide, and how:
+
+- **Candidates**, by the `planning` label. A planner takes the label before it researches anything
+  and pushes it at once, so the other sees the bead as spoken for. There is no lease and nothing to
+  reclaim: if a planning session dies, the label is all it leaves, and any planner can pick that bead
+  up next pass.
+- **The buffer**, by counting `planned` *and* `planning` together — beads the other planner is
+  holding are stock in flight. Without that, both read the same shortfall and both fill it, and you
+  are interviewed twice for a queue that needed topping up once.
+- **The triage pass belongs to Xavier alone** — the first planner on the roster. It is the one part
+  of the role that is not divisible, because what a session remembers asking lives in its own context
+  and nowhere on the bead: two triaging planners means being walked through the same P4 backlog
+  twice. Beast says so in a line when it starts and goes straight to the buffer.
+
+**Two planners is two sessions asking you questions.** That is the cost, and it is the thing to watch
+before adding the second: if Xavier's row spends most of its time on `asking` rather than `working`,
+the queue is bounded by your answers, and a second planner adds a second row waiting on you rather
+than more plans. If he is mostly `working`, the second one buys you throughput directly.
 
 One session, in its own terminal:
 
@@ -96,8 +120,8 @@ Bead/Phase column shows both timers side by side, time on the bead and time in t
 three implementers all sitting in `review` says Copilot is slow and one stuck in `ci` for an hour
 says something is stuck.
 
-**This is not implementer-only any more.** Since `ah-2n3.2` the five interactive agents write the
-same state file and show the same way: Xavier's row says `triage` or `plan`, Psylocke's says
+**This is not implementer-only any more.** Since `ah-2n3.2` the interactive agents write the
+same state file and show the same way: a planner's row says `triage` or `plan`, Psylocke's says
 `prepare` or `verify`, Moira's and Cerebro's say `sweep` (Cerebro's also `release`), Forge's says
 `daily` or `weekly` — and any one of them can show `?`, bold, when it is the one waiting on you
 rather than an implementer. Answer it the same way. A session started by hand outside the fleet view
@@ -228,7 +252,7 @@ build, she writes a retrospective of her own, the same way an implementer does.
 
 ## Starting the architect
 
-Nobody else in the fleet reads the *shape* of the code. Xavier plans one bead, an implementer builds
+Nobody else in the fleet reads the *shape* of the code. A planner plans one bead, an implementer builds
 one bead, Copilot reviews that one diff, Psylocke checks that one merged bead does what it claimed —
 and across fifty merges nobody asks whether the codebase got harder to change along the way.
 **Forge** is that reader:
@@ -245,7 +269,7 @@ view, same as any other agent you are done with.
 
 Start it whenever you want a read — each morning is a reasonable habit, or any time you want to know
 whether recent work left something worth revisiting. It costs you nothing until triage: what it finds
-becomes an ordinary `Refactoring:`-titled bead at P4, unranked, for Xavier to bring to you like
+becomes an ordinary `Refactoring:`-titled bead at P4, unranked, for the planners to bring to you like
 anything else in the backlog. Forge never fixes anything itself, and it only files a finding that
 names a cost already being paid today — a defect fixed twice in the same place, a change that had to
 touch several files, a retrospective that names a structural reason something cost time — never a bare

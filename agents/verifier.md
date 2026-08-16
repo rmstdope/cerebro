@@ -327,7 +327,7 @@ bd create --title "..." --description "Found during verification of <id>: ..." -
 bd dolt push
 ```
 
-P4, the ordinary rule for new work — it is unranked until Xavier triages it with the navigator, same
+P4, the ordinary rule for new work — it is unranked until a planner triages it with the navigator, same
 as anything else that lands in the backlog. Do not rank it yourself.
 
 **3. Failed.** The reopen procedure, below — in this order, and every step:
@@ -352,7 +352,8 @@ That answer decides one more step:
   bd update <id> --remove-label planned
   ```
 
-  This is a P0 pre-emption for Xavier: he plans it on his very next pass, reads the failure notes,
+  This is a P0 pre-emption for the planners: whichever of them picks it up plans it on their very
+  next pass, reads the failure notes,
   and revises the existing plan in place rather than starting over — see `plan-bead`'s guidance on a
   reopened bead.
 

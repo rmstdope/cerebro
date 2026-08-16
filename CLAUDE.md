@@ -15,13 +15,24 @@ launchers in `scripts/` only make sense from a consumer root, where this repo is
 
 ## Commands
 
-Only the Emacs package has a test suite:
+Two test suites. The Emacs package (ERT):
 
 ```bash
 emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit    # all tests
 emacs --batch -L emacs -l cerebro-test \
   --eval '(ert-run-tests-batch-and-exit "cerebro-test/elapsed-minutes-hours-days")'   # one test (name or regexp)
 ```
+
+And the scripts, in plain bash (no framework; each file exits non-zero at its first failed
+assertion), run from this repository's root:
+
+```bash
+for t in tests/*.sh; do bash "$t"; done    # all of them
+bash tests/launchers.sh                     # one suite
+```
+
+CI (`.github/workflows/ci.yml`) runs both: ERT on Emacs 28.2 and 30.1, and every `tests/*.sh` on
+ubuntu-latest. A suite that only passes on macOS is a red PR.
 
 Sync symlinks into a consumer repo (run from that repo, not this one):
 

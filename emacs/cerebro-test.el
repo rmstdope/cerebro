@@ -366,6 +366,22 @@ reading once the row has caught the eye (see ah-axj)."
                 '("Xavier"))
               'already-up)))
 
+(ert-deftest cerebro-test/start-action-already-up-beats-any-state ()
+  "Ownership is checked before the derived state, so no gap in how a state
+is derived can start a second session over one this Emacs holds (ah-u3i's
+`*fleet: <name>*<2>' double session)."
+  (dolist (state '(dead asking done unknown))
+    (should (eq (cerebro--start-action
+                  (cerebro-test--agent "Cyclops" "implementer" 'implementer state)
+                  '("Cyclops"))
+                'already-up)))
+  (should (eq (cerebro--start-action
+                (cerebro-test--agent "Xavier" "planner" 'interactive 'up t) nil)
+              'external))
+  (should (eq (cerebro--start-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) nil)
+              'launch)))
+
 ;; ---------------------------------------------------------------------------
 ;; ah-kgc: a stop flag is cleared when it retires an implementer, and when
 ;; the name is started again
@@ -443,11 +459,17 @@ stale by definition."
                             "Use the terminal that started it.")))))
 
 (ert-deftest cerebro-test/note-exit-records-and-forgets ()
-  (let ((cerebro--last-exit nil))
+  "`cerebro--note-exit' finds the agent through `cerebro--sessions', not by
+the buffer's name - vterm's sentinel calls it after the process has died,
+when `cerebro--session' would already say the entry is gone, so it must
+read the raw table rather than go through the liveness check."
+  (let ((cerebro--last-exit nil)
+        (cerebro--sessions nil))
     (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
       (let ((buf (generate-new-buffer "*fleet: Bishop*")))
         (unwind-protect
             (progn
+              (setf (alist-get "Bishop" cerebro--sessions nil nil #'equal) buf)
               (with-current-buffer buf
                 (insert "starting up...\ncerebro: boom\n\n"))
               (cerebro--note-exit buf "exited abnormally with code 2\n")
@@ -457,6 +479,7 @@ stale by definition."
       (let ((buf (generate-new-buffer "*fleet: Bishop*")))
         (unwind-protect
             (progn
+              (setf (alist-get "Bishop" cerebro--sessions nil nil #'equal) buf)
               (with-current-buffer buf
                 (insert "cerebro: boom\n"))
               (setq cerebro--last-exit nil)
@@ -467,6 +490,17 @@ stale by definition."
         (setq cerebro--last-exit nil)
         (cerebro--note-exit buf "exited abnormally with code 2\n")
         (should (null cerebro--last-exit)))
+      ;; A buffer named like a session but never recorded: the name is not
+      ;; the key any more.
+      (let ((buf (generate-new-buffer "*fleet: Bishop*")))
+        (unwind-protect
+            (progn
+              (with-current-buffer buf
+                (insert "cerebro: boom\n"))
+              (setq cerebro--last-exit nil)
+              (cerebro--note-exit buf "exited abnormally with code 2\n")
+              (should (null cerebro--last-exit)))
+          (kill-buffer buf)))
       (setq cerebro--last-exit nil)
       (cerebro--note-exit nil "exited abnormally with code 2\n")
       (should (null cerebro--last-exit)))))
@@ -591,32 +625,69 @@ writing a flag at all. This test constructs the row directly, bypassing
     (should (eq (cerebro-agent-state xavier) 'up))
     (should-not (cerebro-agent-external xavier))))
 
-(ert-deftest cerebro-test/owned-buffer-agent-name-matches-session-scheme ()
-  (should (equal (cerebro--owned-buffer-agent-name "*fleet: Cyclops*") "Cyclops"))
-  (should (equal (cerebro--owned-buffer-agent-name "*fleet: Xavier*") "Xavier")))
+;; ---------------------------------------------------------------------------
+;; ah-5pp: the fleet view records the sessions it starts, rather than
+;; inferring ownership from a buffer name
 
-(ert-deftest cerebro-test/owned-buffer-agent-name-no-match ()
-  (should (null (cerebro--owned-buffer-agent-name "*scratch*")))
-  (should (null (cerebro--owned-buffer-agent-name "*fleet: Cyclops (no view)*"))))
+(ert-deftest cerebro-test/session-table-knows-what-it-started ()
+  (let ((cerebro--sessions nil)
+        (buf (generate-new-buffer " *cerebro-test-session*")))
+    (unwind-protect
+        (let ((proc (start-process "cerebro-test" buf "sleep" "30")))
+          (unwind-protect
+              (progn
+                (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+                (should (eq (cerebro--session "Cyclops") buf))
+                (should (equal (cerebro--owned) '("Cyclops")))
+                (should (equal (cerebro--session-name buf) "Cyclops"))
+                (should (null (cerebro--session "Rogue")))
+                (delete-process proc)
+                (while (process-live-p proc) (accept-process-output proc 0.1))
+                ;; The process is gone but the buffer lingers - not `live',
+                ;; but still ours: the table entry survives so
+                ;; `cerebro--recorded-buffer' can still find it to clean up.
+                (should (null (cerebro--session "Cyclops")))
+                (should (eq (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf))
+                (should (eq (cerebro--recorded-buffer "Cyclops") buf)))
+            (when (process-live-p proc) (delete-process proc))))
+      (kill-buffer buf))))
+
+(ert-deftest cerebro-test/session-table-forgets-a-killed-buffer ()
+  (let ((cerebro--sessions nil)
+        (buf (generate-new-buffer " *cerebro-test-session-2*")))
+    (let ((proc (start-process "cerebro-test" buf "sleep" "30")))
+      (set-process-query-on-exit-flag proc nil)
+      (unwind-protect
+          (progn
+            (setf (alist-get "Storm" cerebro--sessions nil nil #'equal) buf)
+            (should (eq (cerebro--session "Storm") buf))
+            (kill-buffer buf)
+            (should (null (cerebro--session "Storm")))
+            (should (null (alist-get "Storm" cerebro--sessions nil nil #'equal))))
+        (when (process-live-p proc) (delete-process proc))))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-vcf.3 increment 3: windows and keys
 
 (ert-deftest cerebro-test/show-detail-picks-session-when-owned-else-placeholder ()
-  (let* ((owned-agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
+  (let* ((cerebro--sessions nil)
+         (owned-agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working
                                                     nil "ah-f9c"))
          (dead-agent (cerebro-test--agent "Rogue" "implementer" 'implementer 'dead))
          (session-name (cerebro--session-buffer-name owned-agent))
-         (placeholder-name "*fleet: Rogue (no view)*"))
+         (placeholder-name "*fleet: Rogue (no view)*")
+         (buf (get-buffer-create session-name))
+         (proc (start-process "cerebro-test" buf "sleep" "30")))
+    (set-process-query-on-exit-flag proc nil)
+    (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
     (unwind-protect
         (progn
-          (get-buffer-create session-name)
-          (cl-letf (((symbol-function 'cerebro--owned) (lambda () '("Cyclops"))))
-            (should (eq (cerebro--show-detail owned-agent) (get-buffer session-name)))
-            (let ((placeholder (cerebro--show-detail dead-agent)))
-              (should (equal (buffer-name placeholder) placeholder-name))
-              (should (equal (with-current-buffer placeholder (buffer-string))
-                              (cerebro--placeholder dead-agent))))))
+          (should (eq (cerebro--show-detail owned-agent) buf))
+          (let ((placeholder (cerebro--show-detail dead-agent)))
+            (should (equal (buffer-name placeholder) placeholder-name))
+            (should (equal (with-current-buffer placeholder (buffer-string))
+                            (cerebro--placeholder dead-agent)))))
+      (when (process-live-p proc) (delete-process proc))
       (dolist (name (list session-name placeholder-name))
         (when (get-buffer name) (kill-buffer name))))))
 
@@ -662,10 +733,14 @@ point is."
 ;; ah-aao: a restart only refreshes a detail window that was watching it
 
 (ert-deftest cerebro-test/detail-showing-p-tracks-the-window ()
-  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
          (session-name (cerebro--session-buffer-name agent))
          (session (get-buffer-create session-name))
+         (proc (start-process "cerebro-test" session "sleep" "30"))
          (other (generate-new-buffer " *cerebro-test-other*")))
+    (set-process-query-on-exit-flag proc nil)
+    (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) session)
     (unwind-protect
         (cerebro-test--with-layout list-buffer detail-window
           (set-window-buffer detail-window session)
@@ -678,6 +753,7 @@ point is."
             (should-not (cerebro--detail-showing-p agent)))
           (setq-local cerebro--detail-window nil)
           (should-not (cerebro--detail-showing-p agent)))
+      (when (process-live-p proc) (delete-process proc))
       (kill-buffer session)
       (kill-buffer other))))
 
@@ -752,10 +828,92 @@ left alone."
       (kill-buffer hostage)
       (when (get-buffer session-name) (kill-buffer session-name)))))
 
+;; A stubbed `vterm-mode' that starts nothing reads as dead to
+;; `cerebro--session' - this one starts a real process so liveness, and
+;; therefore ownership, is real.
+(ert-deftest cerebro-test/launch-records-its-session-and-refuses-a-second ()
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+         (session-name (cerebro--session-buffer-name agent))
+         (orig-require (symbol-function 'require)))
+    (unwind-protect
+        (cerebro-test--with-layout list-buffer detail-window
+          (cl-letf (((symbol-function 'cerebro--repo-root)
+                     (lambda () default-directory))
+                    ((symbol-function 'require)
+                     (lambda (feature &rest args)
+                       (or (eq feature 'vterm) (apply orig-require feature args))))
+                    ((symbol-function 'vterm-mode)
+                     (lambda ()
+                       (let ((proc (start-process "cerebro-test" (current-buffer)
+                                                   "sleep" "30")))
+                         (set-process-query-on-exit-flag proc nil)))))
+            (cerebro--launch agent)
+            (should (equal (cerebro--session-name (get-buffer session-name)) "Cyclops"))
+            (should (equal (cerebro--owned) '("Cyclops")))
+            (should-error (cerebro--launch agent))
+            (should (equal (length cerebro--sessions) 1))
+            (should (equal (cerebro--owned) '("Cyclops")))))
+      (when (get-buffer session-name)
+        (let ((proc (get-buffer-process (get-buffer session-name))))
+          (when (process-live-p proc) (delete-process proc)))
+        (kill-buffer session-name)))))
+
+(ert-deftest cerebro-test/end-session-forgets-the-session ()
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+         (session-name (cerebro--session-buffer-name agent))
+         (buf (get-buffer-create session-name)))
+    (unwind-protect
+        (let ((proc (start-process "cerebro-test" buf "sleep" "30")))
+          (set-process-query-on-exit-flag proc nil)
+          (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+          (should (eq (cerebro--session "Cyclops") buf))
+          (cerebro--end-session agent)
+          (should (null (get-buffer session-name)))
+          (should (null (cerebro--session "Cyclops"))))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
+(ert-deftest cerebro-test/end-session-kills-a-buffer-whose-process-already-exited ()
+  "A session whose process exited but whose buffer lingers (vterm leaves it
+for the navigator to read) is still ours to kill - `cerebro--session'
+requires a live process and would wrongly skip it, leaving the buffer
+around for the next launch to collide with (review comment on PR #36)."
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+         (session-name (cerebro--session-buffer-name agent))
+         (buf (get-buffer-create session-name)))
+    (unwind-protect
+        (progn
+          (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+          (should (null (cerebro--session "Cyclops")))   ; no process: not "live"
+          (cerebro--end-session agent)
+          (should (null (get-buffer session-name)))
+          (should (null (alist-get "Cyclops" cerebro--sessions nil nil #'equal))))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
+(ert-deftest cerebro-test/kill-session-buffer-kills-a-buffer-whose-process-already-exited ()
+  "The same fix as `end-session-kills-a-buffer-whose-process-already-exited',
+for the `k' path."
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+         (session-name (cerebro--session-buffer-name agent))
+         (buf (get-buffer-create session-name)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'revert-buffer) #'ignore)
+                  ((symbol-function 'cerebro--show-detail) #'ignore))
+          (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+          (should (null (cerebro--session "Cyclops")))
+          (cerebro--kill-session-buffer agent)
+          (should (null (get-buffer session-name)))
+          (should (null (alist-get "Cyclops" cerebro--sessions nil nil #'equal))))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
 ;; The placement itself - `cerebro-start' is where it lives now that launch
 ;; touches no window.
 (ert-deftest cerebro-test/start-shows-the-session-in-the-detail-window ()
-  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
          (session-name (cerebro--session-buffer-name agent))
          (orig-require (symbol-function 'require)))
     (unwind-protect
@@ -767,8 +925,11 @@ left alone."
                     ((symbol-function 'require)
                      (lambda (feature &rest args)
                        (or (eq feature 'vterm) (apply orig-require feature args))))
-                    ((symbol-function 'vterm-mode) #'ignore)
-                    ((symbol-function 'cerebro--owned) (lambda () (list "Cyclops"))))
+                    ((symbol-function 'vterm-mode)
+                     (lambda ()
+                       (let ((proc (start-process "cerebro-test" (current-buffer)
+                                                   "sleep" "30")))
+                         (set-process-query-on-exit-flag proc nil)))))
             (let ((list-window (selected-window)))
               (cerebro-start)
               (should (equal (buffer-name (window-buffer detail-window))
@@ -776,7 +937,10 @@ left alone."
               (should (equal (buffer-name (window-buffer list-window))
                               (buffer-name list-buffer)))
               (should (eq (selected-window) list-window)))))
-      (when (get-buffer session-name) (kill-buffer session-name)))))
+      (when (get-buffer session-name)
+        (let ((proc (get-buffer-process (get-buffer session-name))))
+          (when (process-live-p proc) (delete-process proc)))
+        (kill-buffer session-name)))))
 
 (ert-deftest cerebro-test/start-with-no-detail-window-shows-the-session-nowhere ()
   "A torn-down layout must still start the agent - without popping up a
@@ -784,7 +948,8 @@ window to show it.  `cerebro--setup-layout' only rebuilds the split when the
 *list* window is dead, so `C-x 1' in the list window leaves a live list and a
 dead detail window that `M-x cerebro' will not restore.  Popping up a fresh
 window there would reintroduce the window-choosing this bead removes."
-  (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
          (session-name (cerebro--session-buffer-name agent))
          (orig-require (symbol-function 'require)))
     (unwind-protect
@@ -797,8 +962,7 @@ window there would reintroduce the window-choosing this bead removes."
                     ((symbol-function 'require)
                      (lambda (feature &rest args)
                        (or (eq feature 'vterm) (apply orig-require feature args))))
-                    ((symbol-function 'vterm-mode) #'ignore)
-                    ((symbol-function 'cerebro--owned) (lambda () (list "Cyclops"))))
+                    ((symbol-function 'vterm-mode) #'ignore))
             (let ((list-window (selected-window)))
               (cerebro-start)
               (should (get-buffer session-name))
@@ -949,9 +1113,9 @@ what it was told, which is worse than not telling it at all."
 (ert-deftest cerebro-test/supervise-restart-kills-then-launches ()
   "Restart is a kill and a fresh launch, in that order.
 
-Launching first would leave two sessions for one name, and vterm would call
-the second `*fleet: Cyclops*<2>' - a name `cerebro--owned-buffer-agent-name'
-does not match, so it would be invisible to the list for ever."
+Launching first would leave two sessions for one name, and `cerebro--launch'
+would refuse the second rather than let vterm call it `*fleet: Cyclops*<2>'
+and leave it invisible to the list."
   (let ((calls nil)
         (agent (cerebro-test--supervised 'done)))
     (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
@@ -1087,11 +1251,10 @@ implementer under a stop flag - `cerebro--end-session', not `cerebro--launch'."
 (ert-deftest cerebro-test/derive-owned-implementer-without-a-state-file-is-idle ()
   "A just-launched implementer has a session before it has a state file.
 
-Reporting it dead there is not cosmetic: `cerebro--start-action' tests
-aliveness *before* it tests ownership, so `s' would launch a second session
-for the same name - and vterm would call it `*fleet: Cyclops*<2>', a name
-`cerebro--owned-buffer-agent-name' does not match, invisible to the list for
-ever."
+Reporting it dead there is not cosmetic: it is what the row shows while
+`cerebro--start-action' checks ownership before state and `cerebro--launch'
+refuses a second session at the source - the row should not lie about what
+`s' would do in the meantime."
   (let* ((agents (cerebro--derive '("Cyclops") nil '(("Cyclops" . nil))
                                            #'cerebro-test--never-alive nil '("Cyclops")))
          (agent (car agents)))

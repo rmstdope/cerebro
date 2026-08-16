@@ -140,6 +140,10 @@ when it does not — a session started by hand, outside this fleet, has no file 
 
 ## Gotchas
 
+- `.cerebro/` is the harness's own directory in the consumer — agent state files, stop flags and
+  agent worktrees (ah-v82). It is ignored wholesale by the consumer's `.gitignore`, never partially,
+  because nothing tracked ever lives there. `.claude/` holds only what Claude Code itself discovers
+  (`agents/`, `skills/`, `settings.json`) plus this repository's own submodule mount.
 - `scripts/consumer-root` is the one place "where is the consumer root" is answered (ah-e0w). Every
   other script that needs it asks this one rather than deriving it itself — `consumer-root` (no
   argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the

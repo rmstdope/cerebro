@@ -289,15 +289,15 @@ rule `cerebro--session-alive-p` follows in elisp, and here a phantom implementer
 the buffer is sized from and puts both planners to sleep over a short queue.
 
 ```bash
-roster="$(.claude/cerebro/scripts/roster --implementers)"
 # The shared checkout, never the enclosing tree: from a worktree of your own `.cerebro/state` is
 # the worktree's, while `agent-alive` reads the checkout the fleet actually writes into (ah-e0w),
-# and the two halves of this loop must be looking at the same files.
+# and both halves of this loop must be looking at the same files.
 state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"
 n=0
-for f in $(find "$state" -maxdepth 1 -name '*.state.json' 2>/dev/null); do
-  name="$(basename "$f" .state.json)"
-  grep -qFx -- "$name" <<<"$roster" || continue      # skip the interactive agents' own files
+# Walk the implementer roster, not the state directory: roster names are single words, so nothing
+# here word-splits on a checkout path with a space in it - and `agent-alive` already answers "no
+# file, no pid, not that session" as one exit status, so no file test is needed either.
+for name in $(.claude/cerebro/scripts/roster --implementers); do
   [ -e "$state/$name.stop" ] && continue
   .claude/cerebro/scripts/agent-alive "$name" && n=$((n+1))
 done

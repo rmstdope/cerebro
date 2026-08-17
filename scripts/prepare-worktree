@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# Prepares one worktree of the consumer repository, the one step every role that needs a tree
+# of its own was writing out by hand and getting wrong the same way: `git worktree add` does not
+# initialise the `.claude/cerebro` submodule, so the tree it produces has no scripts under
+# .claude/cerebro until something runs `git submodule update --init --recursive` - five
+# implementers hit exactly that (docs/retrospectives/ah-4ao.md and friends, in the consumer repo)
+# before anyone gave the step an owner. This script is that owner: implement-bead and
+# agents/verifier.md both call it instead of copying the recipe.
+#
+# usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--with-wasm]
+#
+#   --path <dir>    where the worktree goes, relative to the consumer root or an absolute path
+#                    under it. Required. Must resolve under <consumer>/.cerebro/worktrees/ - `bd`
+#                    and cargo both find their configuration by walking up, so a worktree outside
+#                    the repository silently gets its own empty bead database and its own
+#                    multi-gigabyte build directory.
+#   --branch <name>  create a fresh worktree on a new branch (an implementer's own tree). <dir>
+#                    must not already exist - reusing another bead's tree is how work gets lost.
+#   (no --branch)    create, or reuse, the one detached, resettable tree (Psylocke's). Missing:
+#                    created detached. Present and detached: fetched, hard-reset and cleaned to
+#                    <ref>. Present and on a branch: refused, naming the branch, tree untouched -
+#                    a `reset --hard` here would destroy whatever that branch is holding.
+#   --from <ref>     what to branch from, or reset to. Defaults to origin/main.
+#   --with-wasm      also build the wasm bundle the browser suites need, inside the tree, after
+#                    everything else below. Most beads never run those suites, so this stays a
+#                    flag rather than always-on cost.
+#
+# Every check this script owns exits 2 with one line on stderr naming what is wrong. In both
+# modes, once the tree exists, it always then:
+#   1. git -C <path> submodule update --init --recursive   - the missing line this bead is about.
+#   2. (cd <path> && pnpm install --frozen-lockfile)        - a fresh tree has no node_modules.
+#   3. --with-wasm only: (cd <path> && pnpm --filter @atlantis/browser-core build:wasm)
+# and finally prints, on stdout, the tree's path and its current short sha - the sha is what a
+# verification is supposed to say out loud, and an implementer wants to know what it branched
+# from. This script never `cd`s its caller; the path it prints is for the caller's own `cd`.
+set -euo pipefail
+
+path=""
+branch=""
+from_ref="origin/main"
+with_wasm=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --path)
+      path="${2:-}"; shift 2 ;;
+    --branch)
+      branch="${2:-}"; shift 2 ;;
+    --from)
+      from_ref="${2:-}"; shift 2 ;;
+    --with-wasm)
+      with_wasm=1; shift ;;
+    *)
+      echo "usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--with-wasm]" >&2
+      exit 2 ;;
+  esac
+done
+
+if [[ -z "$path" ]]; then
+  echo "usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--with-wasm]" >&2
+  exit 2
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+consumer="$("$script_dir/consumer-root")"
+
+# Normalise to a path relative to the consumer root, without requiring it to exist yet - a
+# fresh --branch tree's parent directory may not either. Accept either form on input.
+case "$path" in
+  /*)
+    case "$path" in
+      "$consumer"/.cerebro/worktrees/*) rel_path="${path#"$consumer"/}" ;;
+      *) rel_path="" ;;
+    esac
+    ;;
+  .cerebro/worktrees/*) rel_path="$path" ;;
+  *) rel_path="" ;;
+esac
+
+if [[ -z "$rel_path" ]]; then
+  echo "prepare-worktree: $path is not under .cerebro/worktrees/ - worktrees live there, never elsewhere" >&2
+  exit 2
+fi
+
+abs_path="$consumer/$rel_path"
+
+git -C "$consumer" fetch origin main >&2
+
+if [[ -n "$branch" ]]; then
+  if [[ -e "$abs_path" ]]; then
+    echo "prepare-worktree: $rel_path already exists - refusing to reuse it for a new branch (pick a different --path or remove the tree first)" >&2
+    exit 2
+  fi
+  git -C "$consumer" worktree add -b "$branch" "$abs_path" "$from_ref" >&2
+else
+  if [[ ! -e "$abs_path" ]]; then
+    git -C "$consumer" worktree add --detach "$abs_path" "$from_ref" >&2
+  else
+    if git -C "$abs_path" symbolic-ref -q HEAD >/dev/null; then
+      held_branch="$(git -C "$abs_path" symbolic-ref --short HEAD)"
+      echo "prepare-worktree: $rel_path is on branch '$held_branch', not detached - refusing to reset a tree that may hold work" >&2
+      exit 2
+    fi
+    git -C "$abs_path" fetch origin main >&2
+    git -C "$abs_path" reset --hard "$from_ref" >&2
+    git -C "$abs_path" clean -fd >&2
+  fi
+fi
+
+git -C "$abs_path" submodule update --init --recursive >&2
+(cd "$abs_path" && pnpm install --frozen-lockfile >&2)
+
+if [[ "$with_wasm" -eq 1 ]]; then
+  (cd "$abs_path" && pnpm --filter @atlantis/browser-core build:wasm >&2)
+fi
+
+sha="$(git -C "$abs_path" rev-parse --short HEAD)"
+printf '%s %s\n' "$abs_path" "$sha"

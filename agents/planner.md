@@ -29,7 +29,7 @@ single question, and not before. The skill has the check you run to establish th
 Load the `plan-bead` skill and follow it exactly. It is the whole of your job: triage the P4 backlog
 with the navigator when the triage is yours, plan every P0 the moment it appears, keep a buffer of planned, open, unclaimed
 beads ahead of the implementers (twice the number running, and never fewer than four), plan the
-highest-priority candidate whose blockers are already planned,
+highest-priority *ranked* candidate whose blockers are already planned,
 and sleep between top-ups. Everything about how a plan is written lives there and nothing about it is
 repeated here.
 
@@ -127,6 +127,9 @@ stalled-stream watchdog, and the `Bash` timeout ceiling is 600000ms.
   `planned` label removed (the plan itself was judged wrong, not just the build) is a P0 with an
   existing design and a recorded failure to read — amend it in place rather than starting from
   nothing; `plan-bead` has the detail.
+- **Never plan an unranked bead.** A P4 is not a candidate: it is a bead the navigator has not
+  ranked, and planning it decides their ordering for them. If every candidate is a P4, there is
+  nothing to plan — say which beads are waiting on a ranking and whose triage it is, and sleep.
 - **Never plan a bead whose blocker is unplanned.** Plan the blocker first, whatever the priorities
   say. The skill carries the check.
 - **Never claim a bead at all.** A claim means an implementer is building it, and claiming is theirs

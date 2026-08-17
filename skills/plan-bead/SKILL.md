@@ -418,6 +418,12 @@ bd update <id> --remove-label planning
 bd dolt push
 ```
 
+**A just-split family is the one shape that fools this.** A planner mid-split names one child in its
+state file while its siblings carry the label they inherited, so a sibling reads as abandoned when it
+is not. The rule above — say what you are about to free before you free it — is what catches it, and
+*Too big for one increment* is what stops it arising. If you see a labelled bead whose parent another
+planner is holding, leave it alone and say so.
+
 Then it is an ordinary candidate again, for you or the other planner, at whatever priority it
 carries. **Do not plan it just because you freed it** — it goes back in the queue and is picked in
 priority order like anything else.
@@ -694,6 +700,21 @@ is about work nobody has weighed yet, and a split epic has already been ranked b
 `bd create --parent <id> -p <the parent's priority>`, and if the parent is itself still P4 the
 children are P4 with it, and the whole family gets ranked in one question at the next triage.
 
+**Take `planning` off every child as you create them.** `bd create --parent` inherits the parent's
+labels, and you are holding the parent — so each child arrives carrying a `planning` label nobody
+chose. That excludes it from every candidate query, including your own, and makes it look abandoned
+to the other planner, whose reclaim check names only the child you happen to be planning right now
+(ah-3ox, twice in one session).
+
+```bash
+bd update <child> <child> ... --remove-label planning
+bd dolt push
+```
+
+In the same breath as the `bd dep add` edges, before you plan any of them. `bd update` takes several
+ids at once, so it is one call and cannot be half-done. The parent keeps its label until you retype
+it as an epic and drop it with the rest.
+
 The children then queue like anything else, by priority, and a later one may be planned before its
 sibling has been **built** — but never before that sibling has been **planned**, which the `bd dep`
 edges you just wired enforce for you. Same care as any blocked bead: read the sibling's plan, name it
@@ -880,7 +901,9 @@ bd list --label planning --status open --json | jq -r '.[] | "\(.id)\t\(.title)"
 taking a *held* label off is how two sessions end up planning one bead. Yours to clear are the one
 you just planned and any the state files show nobody holding — the test, and the reason it is safe,
 are in *Reclaiming a label nobody is holding*. Anything held by a live planner is theirs, whatever
-it looks like from here.
+it looks like from here — and so is **a child of a bead the other planner is holding**, which is
+mid-split work whatever the state files say, since a splitting planner names only one child at a
+time.
 
 Then count the buffer again and act on it: **below `2m`, plan the next one — immediately, without
 sleeping in between**; at `2m`, say so and sleep. Count `planned` alone (see *You keep a buffer sized

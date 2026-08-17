@@ -313,7 +313,9 @@ The cycle:
 1. **Free every abandoned `planning` label.** See *Reclaiming a label nobody is holding* — a bead
    stranded there is invisible to steps 1 and 2 alike, so it comes first.
 2. **Plan every unplanned P0**, whatever the buffer says. See *P0 pre-empts the buffer*.
-3. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m`.
+3. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m` — from ranked candidates
+   only, since a P4 is not a candidate. If that leaves nothing to plan, report the beads waiting on
+   a ranking and go to step 4.
 4. **Sleep ten minutes.** Say that you are doing so, then wait.
 5. **Look again**, re-measuring `n`, and free any abandoned label again — a session died while you
    slept is exactly when one appears. A new P0 — plan it, always, and then continue. Otherwise:
@@ -335,6 +337,13 @@ under the fleet, never a ceiling on planned work.
 **If you cannot reach `2m`, that is fine.** Plan every candidate there is, say how far you got and
 why, and sleep as usual — new beads arrive, and the next wake-up will find them. Never invent work
 to hit the number.
+
+**A backlog of nothing but unranked beads is an empty backlog.** Say so — name the beads waiting on
+a ranking, say whose triage it is, and sleep. Do not plan one to keep busy, and do not rank one
+yourself. An idle implementer costs an hour; a bead planned in an order the navigator never chose
+costs their hold on the queue, and they may never learn it happened. That holds when the navigator
+is away too, which is the case it was decided for: leave the beads unranked, report them, and go
+idle rather than picking one and announcing it afterwards.
 
 ### Sleeping without dying
 

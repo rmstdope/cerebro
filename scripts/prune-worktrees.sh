@@ -17,7 +17,9 @@
 #
 # Safe means **nothing can be lost**, which is a stronger and simpler test than "nobody is using it":
 #
-#   1. It is under `.cerebro/worktrees/`. The main checkout is never touched.
+#   1. It is under `.cerebro/worktrees/` or `.claude/worktrees/`. The main checkout is never
+#      touched. The second path is the pre-`.cerebro/`-move location — nothing else sweeps it, and a
+#      2.1 GB tree sat there, registered and invisible, until ah-gdp added it here.
 #   2. The working tree is clean — no modified files, no untracked ones.
 #   3. Its branch holds no commit that `origin/main` does not already have.
 #   4. Nothing has changed in it for a while (see STALE_MINUTES), so a tree that was created moments
@@ -26,7 +28,7 @@
 # Fail any one and it stays, with the reason printed. Together they mean the directory can go without
 # destroying a line of anybody's work: the commits are on main and there is nothing uncommitted.
 #
-# One named exception: `.cerebro/worktrees/psylocke` is kept by name, unconditionally, ahead of all
+# One named exception, at **either** path: `psylocke` is kept by name, unconditionally, ahead of all
 # four checks. It is Psylocke's own verification tree (ah-p31) — reset hard to `origin/main` before
 # every use rather than merged, so it never satisfies "holds no commit main lacks" the way a normal
 # agent worktree does, and there is nothing in it to lose by keeping it either way.
@@ -38,10 +40,22 @@
 #
 # `git worktree prune` runs first regardless. That only clears registrations whose directory is
 # already gone, which can never lose anything.
+#
+# ## Reclaiming a kept tree's build directory
+#
+# `psylocke` is kept for ever, and every worktree now builds into its own `target/` (ah-gdp:
+# `.cargo/config.toml` is tracked, so each worktree's search for it stops at its own root rather
+# than reaching a shared one) — so its build tree only ever grows. This sweep reclaims just that
+# directory, never the worktree itself, once it has sat unwritten for far longer than
+# STALE_MINUTES would ever tolerate for a whole tree (see COLD_TARGET_MINUTES; a day by default —
+# Psylocke runs several times a day, so this fires on a quiet weekend rather than between two
+# verifications). The rebuild that follows is a cold one; Psylocke's own text already warms it
+# again after her reset, so that cost is accepted on purpose.
 
 set -uo pipefail
 
 STALE_MINUTES="${STALE_MINUTES:-30}"
+COLD_TARGET_MINUTES="${COLD_TARGET_MINUTES:-1440}"
 WATCH_SECONDS="${WATCH_SECONDS:-600}"
 
 dry_run=false
@@ -84,6 +98,27 @@ landed_on_main() {
   [ "$(gh pr list --head "$branch" --state merged --json number --jq 'length' 2>/dev/null || echo 0)" != "0" ]
 }
 
+# Removes a kept tree's `target/` when it has sat unwritten for far longer than a whole tree would
+# ever be left alone for (COLD_TARGET_MINUTES). This never touches the worktree itself — only a
+# directory inside one that is staying — and never reaches a tree that failed the safety checks
+# above; call sites gate on that already.
+reclaim_cold_target() {
+  local tree="$1" name="$2" target size_gb
+
+  target="$tree/target"
+  [ -d "$target" ] || return 0
+  [ -z "$(find "$target" -maxdepth 0 -mmin "-$COLD_TARGET_MINUTES" 2>/dev/null)" ] || return 0
+
+  size_gb="$(du -sk "$target" 2>/dev/null | awk '{printf "%.1f", $1 / 1024 / 1024}')"
+
+  if $dry_run; then
+    echo "prune-worktrees: would reclaim $name/target ($size_gb GB, cold for over $COLD_TARGET_MINUTES minutes)"
+  else
+    rm -rf "$target"
+    echo "prune-worktrees: reclaimed $name/target ($size_gb GB, cold for over $COLD_TARGET_MINUTES minutes)"
+  fi
+}
+
 sweep() {
   git -C "$repo_root" worktree prune
 
@@ -99,6 +134,7 @@ sweep() {
   while IFS= read -r tree; do
     case "$tree" in
       "$repo_root"/.cerebro/worktrees/*) ;;
+      "$repo_root"/.claude/worktrees/*) ;;
       *) continue ;;
     esac
 
@@ -107,6 +143,7 @@ sweep() {
 
     if [ "$name" = "psylocke" ]; then
       reason="it is Psylocke's verification tree, reset to origin/main before every use (ah-p31)"
+      reclaim_cold_target "$tree" "$name"
     elif [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
       reason="it has uncommitted or untracked changes"
     elif ! landed_on_main "$tree"; then

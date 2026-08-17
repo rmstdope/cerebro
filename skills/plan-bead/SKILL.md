@@ -186,9 +186,17 @@ them at P4, and go on to the buffer — an unanswered triage costs you ordering,
 apply your own recommendation unasked: priority is what the navigator uses to steer the fleet, and
 taking that silently is the one thing this step exists to prevent.
 
-Triage runs **once per session, at the start**. On later wake-ups, only beads that have arrived at P4
-since the last pass need asking about — a bead the navigator already ranked is settled, and a bead
-they declined to rank is not worth asking about twice.
+Triage runs **on every wake-up**, starting with the first pass of the session — not once and then
+never again. It is the only way a bead is ever ranked, and an unranked bead is not a candidate for
+planning at all (see *Choosing what to plan*), so a pass you skip is a pass in which every bead
+filed since the last one stays unplannable for as long as this session lives.
+
+It is short after the first pass, and that is the point: the query above still returns every open
+P4 every time — nothing records a watermark — so what shortens is what you **ask about**. Ask only
+about the beads in it you have not already put to the navigator this session. A bead they already
+ranked has left the list; one they declined to rank has not, and is not asked about twice. So a
+wake-up whose query returns nothing you have not already raised is a wake-up with no triage to do,
+and you go straight on to the buffer.
 
 ## P0 pre-empts the buffer
 
@@ -197,8 +205,7 @@ queue already is. A P0 is a bead the navigator has said is the most urgent thing
 is the only thing standing between it and an implementer picking it up; a P0 sitting unplanned behind
 a healthy buffer is the fleet working on the wrong thing while the right thing waits.
 
-Check at the top of every pass — after triage on the first one, immediately on waking on every one
-after — and check it **before you count the buffer**, because the buffer's answer does not matter
+Check at the top of every pass, after that pass's triage — and check it **before you count the buffer**, because the buffer's answer does not matter
 here:
 
 ```bash
@@ -313,9 +320,12 @@ The cycle:
 1. **Free every abandoned `planning` label.** See *Reclaiming a label nobody is holding* — a bead
    stranded there is invisible to steps 1 and 2 alike, so it comes first.
 2. **Plan every unplanned P0**, whatever the buffer says. See *P0 pre-empts the buffer*.
-3. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m`.
+3. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m` — from ranked candidates
+   only, since a P4 is not a candidate. If that leaves nothing to plan, report the beads waiting on
+   a ranking and go to step 4.
 4. **Sleep ten minutes.** Say that you are doing so, then wait.
-5. **Look again**, re-measuring `n`, and free any abandoned label again — a session died while you
+5. **Look again**, re-measuring `n`, triaging what arrived while you slept if the triage is yours
+   (*Then: triage the P4 backlog*), and freeing any abandoned label again — a session died while you
    slept is exactly when one appears. A new P0 — plan it, always, and then continue. Otherwise:
    `m` or more in the buffer, sleep another ten minutes and look again; **fewer than `m`, fill
    back to `2m`** and start over.
@@ -336,6 +346,13 @@ under the fleet, never a ceiling on planned work.
 why, and sleep as usual — new beads arrive, and the next wake-up will find them. Never invent work
 to hit the number.
 
+**A backlog of nothing but unranked beads is an empty backlog.** Say so — name the beads waiting on
+a ranking, say whose triage it is, and sleep. Do not plan one to keep busy, and do not rank one
+yourself. An idle implementer costs an hour; a bead planned in an order the navigator never chose
+costs their hold on the queue, and they may never learn it happened. That holds when the navigator
+is away too, which is the case it was decided for: leave the beads unranked, report them, and go
+idle rather than picking one and announcing it afterwards.
+
 ### Sleeping without dying
 
 Ten minutes is longer than a single `Bash` call may safely run: the tool's own timeout tops out at
@@ -354,8 +371,10 @@ on nothing but the clock, and a foreground loop is the one wait that certainly w
 
 ```bash
 bd dolt pull
+# Candidates: never a P4. Unranked is not a rank, and planning one takes the navigator's
+# decision by default.
 bd list --exclude-label planned --exclude-label planning --exclude-label human \
-        --exclude-type epic --sort priority --json
+        --exclude-type epic --sort priority --json | jq '[.[] | select(.priority != 4)]'
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID
 bd update <id> --add-label planning
 bd dolt push                                       # publish it at once
@@ -364,7 +383,7 @@ bd update <id> --design-file plan.md --add-label planned --remove-label planning
 bd dolt push                                       # or the release is invisible elsewhere
 ```
 
-**Label before you think, and push before you read a line of code.** The four lines above are in
+**Label before you think, and push before you read a line of code.** The steps above are in
 that order for the other planner's sake: between the `bd list` that picked your candidate and the
 `planning` label reaching them, they are looking at a list that still has your bead on it. Making
 those two adjacent and pushing at once shrinks that window to seconds; researching first and
@@ -482,6 +501,17 @@ pushed the moment it is taken rather than kept in your head until the plan is do
 **Highest priority first**, which is what `--sort priority` gives you: P0 before P1, and so on down.
 P0 goes further than being first in this list — it pre-empts the buffer entirely, so an unplanned one
 is planned whether or not the queue needs topping up. See *P0 pre-empts the buffer*.
+
+**A P4 is not a candidate at all**, which is why the query filters it out rather than leaving it at
+the bottom of the sort. P4 here does not mean *low priority*; it means *nobody has ranked this yet* —
+every bead in this repository is created at P4, whoever files it. Planning one decides the
+navigator's ordering for them, silently, and that is the single thing the triage step exists to
+prevent: their chance to say "close this", "this is actually a P0", or "this goes behind the other
+thing" is gone the moment a plan exists and an implementer picks it up. Ranking it yourself is worse
+still — see *Then: triage the P4 backlog*, where a priority is recommended and never applied
+unasked. If every remaining candidate is a P4, there is nothing to plan; the
+buffer cycle above says what to do about that.
+
 Several at the same priority is not a decision — take any of them and move on rather than weighing
 them against each other. Priority orders the *candidates*; it never overrides the dependency rule
 below.

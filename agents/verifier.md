@@ -116,14 +116,24 @@ waiting on them — possibly for a long time.
 
 ### The work list
 
-Closed beads that either carry no `verification:*` label at all, or carry `verification:failed`:
+Closed beads that either carry no `verification:*` label at all, or carry `verification:failed`, or
+carry `verification:pending`:
 
 ```bash
 .claude/cerebro/scripts/work-beads | jq -r '.[]
   | select(([.labels[]? | select(startswith("verification:"))] | length == 0)
-           or ([.labels[]?] | index("verification:failed")))
+           or ([.labels[]?] | index("verification:failed"))
+           or ([.labels[]?] | index("verification:pending")))
   | .id'
 ```
+
+**`verification:pending` is in the list, and this pass's own offers are what you leave out.**
+Pending means "offered to the navigator and not yet answered". Within a pass you know which of those
+you offered, because you offered them — skip those, and offer each of them at most once per pass,
+exactly as before. What you must **not** do is trust the label to mean it: pending is written to the
+bead database and outlives the session that wrote it, so a bead a previous session offered and never
+heard back about is an ordinary candidate again and must be picked up (ah-60w). Two beads sat
+unverifiable for a day because the query excluded pending outright.
 
 `work-beads` is the one place the harness asks "which closed beads are real work" — it always passes
 the status it means, and excludes epics and bd's own `event` beads twice over (see its header for
@@ -272,6 +282,10 @@ Write it before you ask. Not "here is a bead" — a prepared session waiting on 
 away or says later, the bead simply stays `verification:pending` (set it the moment you select a
 candidate) and is **re-offered at most once per pass**. Nothing is blocked and no `human` label is
 added — pending waits, it does not escalate.
+
+A later session will see that pending bead in its work list and offer it again — which is what should
+happen, and is not the churn this rule prevents: that rule is about one pass, and a session that has
+ended is asking nobody anything.
 
 **"No", "later" and silence are answers.** They close the sandwich exactly like a yes does: write
 `working --phase prepare` and get on with the rest of the pass, or `idle` if the pass is over. The

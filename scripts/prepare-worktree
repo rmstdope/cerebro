@@ -41,25 +41,31 @@ branch=""
 from_ref="origin/main"
 with_wasm=0
 
+usage() {
+  echo "usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--with-wasm]" >&2
+  exit 2
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path)
-      path="${2:-}"; shift 2 ;;
+      [[ $# -ge 2 ]] || usage
+      path="$2"; shift 2 ;;
     --branch)
-      branch="${2:-}"; shift 2 ;;
+      [[ $# -ge 2 ]] || usage
+      branch="$2"; shift 2 ;;
     --from)
-      from_ref="${2:-}"; shift 2 ;;
+      [[ $# -ge 2 ]] || usage
+      from_ref="$2"; shift 2 ;;
     --with-wasm)
       with_wasm=1; shift ;;
     *)
-      echo "usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--with-wasm]" >&2
-      exit 2 ;;
+      usage ;;
   esac
 done
 
 if [[ -z "$path" ]]; then
-  echo "usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--with-wasm]" >&2
-  exit 2
+  usage
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

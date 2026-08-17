@@ -371,7 +371,7 @@ first `pnpm run lint` both find what they need instead of failing for a reason t
 do with the bead:
 
 ```bash
-.claude/cerebro/scripts/prepare-worktree --path <repo>/.cerebro/worktrees/<id> --branch <id>-short-description
+<repo>/.claude/cerebro/scripts/prepare-worktree --path <repo>/.cerebro/worktrees/<id> --branch <id>-short-description
 cd <repo>/.cerebro/worktrees/<id>
 ```
 

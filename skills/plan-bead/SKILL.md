@@ -354,8 +354,10 @@ on nothing but the clock, and a foreground loop is the one wait that certainly w
 
 ```bash
 bd dolt pull
+# Candidates: never a P4. Unranked is not a rank, and planning one takes the navigator's
+# decision by default.
 bd list --exclude-label planned --exclude-label planning --exclude-label human \
-        --exclude-type epic --sort priority --json
+        --exclude-type epic --sort priority --json | jq '[.[] | select(.priority != 4)]'
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID
 bd update <id> --add-label planning
 bd dolt push                                       # publish it at once
@@ -364,7 +366,7 @@ bd update <id> --design-file plan.md --add-label planned --remove-label planning
 bd dolt push                                       # or the release is invisible elsewhere
 ```
 
-**Label before you think, and push before you read a line of code.** The four lines above are in
+**Label before you think, and push before you read a line of code.** The steps above are in
 that order for the other planner's sake: between the `bd list` that picked your candidate and the
 `planning` label reaching them, they are looking at a list that still has your bead on it. Making
 those two adjacent and pushing at once shrinks that window to seconds; researching first and
@@ -482,6 +484,17 @@ pushed the moment it is taken rather than kept in your head until the plan is do
 **Highest priority first**, which is what `--sort priority` gives you: P0 before P1, and so on down.
 P0 goes further than being first in this list — it pre-empts the buffer entirely, so an unplanned one
 is planned whether or not the queue needs topping up. See *P0 pre-empts the buffer*.
+
+**A P4 is not a candidate at all**, which is why the query filters it out rather than leaving it at
+the bottom of the sort. P4 here does not mean *low priority*; it means *nobody has ranked this yet* —
+every bead in this repository is created at P4, whoever files it. Planning one decides the
+navigator's ordering for them, silently, and that is the single thing the triage step exists to
+prevent: their chance to say "close this", "this is actually a P0", or "this goes behind the other
+thing" is gone the moment a plan exists and an implementer picks it up. Ranking it yourself is worse
+still — see *Then: triage the P4 backlog*, where a priority is recommended and never applied
+unasked. If every remaining candidate is a P4, there is nothing to plan; the
+buffer cycle above says what to do about that.
+
 Several at the same priority is not a decision — take any of them and move on rather than weighing
 them against each other. Priority orders the *candidates*; it never overrides the dependency rule
 below.

@@ -283,15 +283,23 @@ write the same file you do**, so the
 loop below filters to the implementer roster explicitly; without that filter your own file inflates
 `n` by one, and the buffer target moves under you for no reason.
 
+**Liveness is `scripts/agent-alive`'s to answer, never a bare `kill -0`.** Pids are recycled, so a
+bare `kill -0` makes a dead implementer look alive — `agent-alive` checks the pid's own `--name`, the
+rule `cerebro--session-alive-p` follows in elisp, and here a phantom implementer inflates the count
+the buffer is sized from and puts both planners to sleep over a short queue.
+
 ```bash
-roster="$(.claude/cerebro/scripts/roster --implementers)"
+# The shared checkout, never the enclosing tree: from a worktree of your own `.cerebro/state` is
+# the worktree's, while `agent-alive` reads the checkout the fleet actually writes into (ah-e0w),
+# and both halves of this loop must be looking at the same files.
+state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"
 n=0
-for f in $(find .cerebro/state -maxdepth 1 -name '*.state.json' 2>/dev/null); do
-  name="$(basename "$f" .state.json)"
-  grep -qFx -- "$name" <<<"$roster" || continue      # skip the interactive agents' own files
-  [ -e ".cerebro/state/$name.stop" ] && continue
-  pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && n=$((n+1))
+# Walk the implementer roster, not the state directory: roster names are single words, so nothing
+# here word-splits on a checkout path with a space in it - and `agent-alive` already answers "no
+# file, no pid, not that session" as one exit status, so no file test is needed either.
+for name in $(.claude/cerebro/scripts/roster --implementers); do
+  [ -e "$state/$name.stop" ] && continue
+  .claude/cerebro/scripts/agent-alive "$name" && n=$((n+1))
 done
 m=$(( n > 2 ? n : 2 )); echo "n=$n implementers, refill below $m, fill to $((2*m))"
 ```
@@ -383,16 +391,20 @@ strands work when a session dies, precisely because it is deliberately not a cla
 lease for Cerebro's sweep to reclaim.
 
 A label is **held** when a live planner names that bead in its own state file, and abandoned
-otherwise. That is the same evidence the buffer count uses, read the same way:
+otherwise. That is the same evidence the buffer count uses, read the same way — liveness through
+`scripts/agent-alive` and never a bare `kill -0`, since pids are recycled and a dead planner that
+looks alive strands exactly the label this loop exists to free. `agent-alive` checks the pid's own
+`--name`, the rule `cerebro--session-alive-p` follows in elisp; the `jq` for the bead stays, because
+`agent-alive` answers liveness and nothing else.
 
 ```bash
 # Beads carrying the label, and the bead each live planner says it is on.
 bd list --label planning --status open --json | jq -r '.[].id' | sort > /tmp/labelled
+state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"   # the fleet's, not this worktree's
 for name in $(.claude/cerebro/scripts/roster --role planner); do
-  f=".cerebro/state/$name.state.json"
+  f="$state/$name.state.json"
   [ -f "$f" ] || continue
-  pid="$(jq -r '.pid // empty' "$f")"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || continue      # a dead session holds nothing
+  .claude/cerebro/scripts/agent-alive "$name" || continue     # a dead session holds nothing
   jq -r '.bead // empty' "$f"
 done | sort > /tmp/held
 comm -23 /tmp/labelled /tmp/held            # labelled, held by nobody: abandoned

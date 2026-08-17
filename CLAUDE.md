@@ -160,9 +160,15 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
   `asking`; `since` is the last change of `state` or `bead`, `phase_since` the last change of
   `phase`. Whoever changes the `state` vocabulary must change `cerebro--derive-from-state` with it —
   an unrecognised `state` now maps to `'unknown` and shows its raw word in yellow, not `idle`. **The
-  fleet view deletes the file when it ends the session the file describes** — both the retire and
-  the restart branch of `cerebro--supervise`, restart before it launches — because a killed agent
-  cannot write a last transition, and a file that outlives its session outlives its pid.
+  fleet view deletes the file when it ends the session the file describes** — every path that ends
+  one, because a killed agent cannot write a last transition and a file that outlives its session
+  outlives its pid. There is one owner of that: `cerebro--end-session`, which removes the buffer and
+  the `cerebro--sessions` entry (`cerebro--forget-session`), always the state file, and the stop flag
+  only when its caller asks. Its three callers are `cerebro--supervise`'s retire (flag cleared) and
+  restart branches (deletion before the launch), and `k` (`cerebro--kill-session-buffer`, flag left
+  alone — `f` then `k` means stay gone). Enumerating two of the three is how the same omission came
+  to be fixed twice while `k` went on leaking a state file (ah-bqi); add a fourth caller by calling
+  that function, not by listing artifacts again.
 - `scripts/roster` — the fleet: name, role and kind per agent, read once per buffer by
   `cerebro--fleet`.
 
@@ -178,12 +184,23 @@ recycled its pid onto an unrelated daemon: pids are reused, so a number alone is
 The same check guards the claims sweep (`cerebro--live-implementer-names`), where a recycled pid
 would otherwise protect a stale claim from being reclaimed.
 
+**The shell has the same rule, in `scripts/agent-alive <Name>`** — exit 0 alive, 1 dead, 2 for a
+usage error or a name that is not on the roster, so a typo can never read as "not running". It is
+what `skills/plan-bead/SKILL.md` calls in both places it needs liveness: sizing the buffer from the
+running implementers, and deciding whether a `planning` label is still held. Anything in bash that
+needs to know whether an agent is up calls this; a bare `kill -0` there is the pre-ah-bqi shape, and
+it makes a dead planner look alive, which strands the very label the reclaim loop exists to free.
+
 ## Gotchas
 
 - `.cerebro/` is the harness's own directory in the consumer — agent state files, stop flags and
   agent worktrees (ah-v82). It is ignored wholesale by the consumer's `.gitignore`, never partially,
   because nothing tracked ever lives there. `.claude/` holds only what Claude Code itself discovers
   (`agents/`, `skills/`, `settings.json`) plus this repository's own submodule mount.
+- `scripts/agent-alive <Name>` is the one place bash answers "is this agent up" (see above). A
+  predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state`: it
+  prints nothing and the exit status is the whole answer, since it runs once per agent on every
+  planner pass.
 - `scripts/consumer-root` is the one place "where is the consumer root" is answered (ah-e0w). Every
   other script that needs it asks this one rather than deriving it itself — `consumer-root` (no
   argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the

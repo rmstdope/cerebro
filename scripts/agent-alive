@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+#
+# Answers one question, for the shell, the way cerebro--session-alive-p answers it in elisp:
+#
+#     .claude/cerebro/scripts/agent-alive <Name>
+#
+#   exit 0   <Name>'s state file names a pid that is running AND whose command line carries
+#            `--name <Name>' - so it is still that session, not a recycled pid
+#   exit 1   not alive: no state file, no pid in it, the pid is gone, or the pid is alive but is
+#            somebody else's process
+#   exit 2   usage error, or <Name> is not on scripts/roster
+#
+# WHY THIS EXISTS. A bare `kill -0 "$pid"' asks whether *some* process holds that number. Pids are
+# recycled, so a dead agent's state file can name a live pid belonging to an unrelated daemon: in
+# elisp that lit a finished session's row green ten hours after it ended, and in the skills it makes
+# a dead planner look alive - stranding the very `planning' label the reclaim loop exists to free,
+# and inflating the count the planning buffer is sized from. Every session `scripts/launch' starts
+# carries `--name <Name>' in its args, so the name is the identity and the pid alone is not.
+#
+# A predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state'
+# (which requires --pid and exists to write a file). Nothing is printed in the 0/1 cases: this runs
+# once per agent on every planner pass, so output would be noise and the exit status is the whole
+# answer.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+name="${1:-}"
+if [[ -z "$name" || $# -gt 1 ]]; then
+  echo "usage: agent-alive <Name>" >&2
+  exit 2
+fi
+
+# The name must be on scripts/roster - the one list of the fleet. A typo must not read as "dead":
+# that is exit 2, distinct from the 1 a caller treats as "not running".
+if ! "$script_dir/roster" --entry "$name" >/dev/null 2>&1; then
+  echo "agent-alive: $name is not on the roster" >&2
+  exit 2
+fi
+
+# The shared checkout every worktree of the repository has in common - never the enclosing tree,
+# which from a bead worktree's own submodule copy is the worktree itself, not the main checkout the
+# fleet writes state into (ah-e0w). See scripts/consumer-root for the two roots and why they differ.
+repo_root="$("$script_dir/consumer-root" --shared)"
+state_file="$repo_root/.cerebro/state/$name.state.json"
+
+[[ -f "$state_file" ]] || exit 1
+
+pid="$(jq -r '.pid // empty' "$state_file" 2>/dev/null || true)"
+[[ -n "$pid" ]] || exit 1
+# A single integer, or nothing. `ps -p' takes a *list*, so a field carrying "1 2" or "1,2" would
+# have it print two processes' command lines concatenated and the match below could land on the
+# wrong one - the one path by which this could wrongly answer "alive". The elisp side cannot do
+# this, since `process-attributes' takes an integer.
+[[ "$pid" =~ ^[0-9]+$ ]] || exit 1
+
+# `ps -o args= -p <pid>' is the portable form (BSD and GNU alike); the trailing `=' suppresses the
+# header, without which a dead pid still yields a non-empty line and every ended session reads
+# alive. Each command is guarded explicitly rather than left to `set -e', so the exit status is by
+# design rather than by luck.
+args="$(ps -o args= -p "$pid" 2>/dev/null)" || exit 1
+[[ -n "$args" ]] || exit 1
+
+# The bash counterpart of cerebro--name-in-args-p. The trailing ([[:space:]]|$) is the word
+# boundary elisp spells `\_>': without it, one roster name that is a prefix of another silently
+# reads as alive.
+grep -Eq -- "--name[[:space:]]+${name}([[:space:]]|\$)" <<<"$args" || exit 1
+
+exit 0

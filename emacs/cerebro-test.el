@@ -877,7 +877,7 @@ left alone."
           (when (process-live-p proc) (delete-process proc)))
         (kill-buffer session-name)))))
 
-(ert-deftest cerebro-test/end-session-forgets-the-session ()
+(ert-deftest cerebro-test/forget-session-forgets-the-session ()
   (let* ((cerebro--sessions nil)
          (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
          (session-name (cerebro--session-buffer-name agent))
@@ -887,12 +887,12 @@ left alone."
           (set-process-query-on-exit-flag proc nil)
           (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
           (should (eq (cerebro--session "Cyclops") buf))
-          (cerebro--end-session agent)
+          (cerebro--forget-session agent)
           (should (null (get-buffer session-name)))
           (should (null (cerebro--session "Cyclops"))))
       (when (get-buffer session-name) (kill-buffer session-name)))))
 
-(ert-deftest cerebro-test/end-session-kills-a-buffer-whose-process-already-exited ()
+(ert-deftest cerebro-test/forget-session-kills-a-buffer-whose-process-already-exited ()
   "A session whose process exited but whose buffer lingers (vterm leaves it
 for the navigator to read) is still ours to kill - `cerebro--session'
 requires a live process and would wrongly skip it, leaving the buffer
@@ -905,15 +905,16 @@ around for the next launch to collide with (review comment on PR #36)."
         (progn
           (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
           (should (null (cerebro--session "Cyclops")))   ; no process: not "live"
-          (cerebro--end-session agent)
+          (cerebro--forget-session agent)
           (should (null (get-buffer session-name)))
           (should (null (alist-get "Cyclops" cerebro--sessions nil nil #'equal))))
       (when (get-buffer session-name) (kill-buffer session-name)))))
 
 (ert-deftest cerebro-test/kill-session-buffer-kills-a-buffer-whose-process-already-exited ()
-  "The same fix as `end-session-kills-a-buffer-whose-process-already-exited',
+  "The same fix as `forget-session-kills-a-buffer-whose-process-already-exited',
 for the `k' path."
   (let* ((cerebro--sessions nil)
+         (root (make-temp-file "cerebro-test-" t))
          (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
          (session-name (cerebro--session-buffer-name agent))
          (buf (get-buffer-create session-name)))
@@ -922,10 +923,11 @@ for the `k' path."
                   ((symbol-function 'cerebro--show-detail) #'ignore))
           (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
           (should (null (cerebro--session "Cyclops")))
-          (cerebro--kill-session-buffer agent)
+          (cerebro--kill-session-buffer agent root)
           (should (null (get-buffer session-name)))
           (should (null (alist-get "Cyclops" cerebro--sessions nil nil #'equal))))
-      (when (get-buffer session-name) (kill-buffer session-name)))))
+      (when (get-buffer session-name) (kill-buffer session-name))
+      (delete-directory root t))))
 
 ;; The placement itself - `cerebro-start' is where it lives now that launch
 ;; touches no window.
@@ -1137,7 +1139,7 @@ and leave it invisible to the list."
   (let ((calls nil)
         (agent (cerebro-test--supervised 'done)))
     (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
-              ((symbol-function 'cerebro--end-session)
+              ((symbol-function 'cerebro--forget-session)
                (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
               ((symbol-function 'cerebro--launch)
                (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls))))
@@ -1148,14 +1150,14 @@ and leave it invisible to the list."
 (ert-deftest cerebro-test/restart-shows-the-session-only-where-it-was-watched ()
   "A restart only refreshes a detail window that was showing that agent.
 
-The showing-check has to run before `cerebro--end-session' kills the
+The showing-check has to run before `cerebro--forget-session' kills the
 buffer the window is showing - after that the window shows whatever the
 kill left behind, and the check would be meaningless.  Placement now goes
 through `cerebro--show-detail', the same function `s' uses."
   (let ((calls nil)
         (agent (cerebro-test--supervised 'done)))
     (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
-              ((symbol-function 'cerebro--end-session)
+              ((symbol-function 'cerebro--forget-session)
                (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
               ((symbol-function 'cerebro--launch)
                (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls)))
@@ -1193,7 +1195,7 @@ through `cerebro--show-detail', the same function `s' uses."
   (let ((calls nil)
         (agent (cerebro-test--supervised 'done)))
     (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) t))
-              ((symbol-function 'cerebro--end-session)
+              ((symbol-function 'cerebro--forget-session)
                (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
               ((symbol-function 'cerebro--launch)
                (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls))))
@@ -1222,7 +1224,7 @@ longer exists."
     (unwind-protect
         (progn
           (cerebro--write-stop-flag root "Cyclops")
-          (cl-letf (((symbol-function 'cerebro--end-session) (lambda (_a) nil))
+          (cl-letf (((symbol-function 'cerebro--forget-session) (lambda (_a) nil))
                     ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
             (with-temp-buffer
               (cerebro--supervise (list agent) root cerebro-test--now)))
@@ -1237,7 +1239,7 @@ still happens exactly once."
         (launched nil))
     (unwind-protect
         (progn
-          (cl-letf (((symbol-function 'cerebro--end-session) (lambda (_a) nil))
+          (cl-letf (((symbol-function 'cerebro--forget-session) (lambda (_a) nil))
                     ((symbol-function 'cerebro--launch)
                      (lambda (&rest _) (setq launched (1+ (or launched 0))))))
             (with-temp-buffer
@@ -1248,11 +1250,11 @@ still happens exactly once."
 
 (ert-deftest cerebro-test/supervise-ends-an-idle-session-under-stop ()
   "The supervisor, not just the pure decision, actually ends an idle
-implementer under a stop flag - `cerebro--end-session', not `cerebro--launch'."
+implementer under a stop flag - the session-ender, not `cerebro--launch'."
   (let ((ended nil)
         (agent (cerebro-test--supervised 'idle)))
     (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) t))
-              ((symbol-function 'cerebro--end-session)
+              ((symbol-function 'cerebro--forget-session)
                (lambda (a) (push (cerebro-agent-name a) ended)))
               ((symbol-function 'cerebro--launch) (lambda (&rest _) (error "launched"))))
       (with-temp-buffer
@@ -2993,7 +2995,7 @@ recycling above turns into a phantom row (see the tests just above)."
           (make-directory (file-name-directory path) t)
           (write-region "{\"state\":\"done\",\"pid\":42}" nil path nil 'quiet)
           (cerebro--write-stop-flag root "Cyclops")
-          (cl-letf (((symbol-function 'cerebro--end-session) (lambda (_a) nil))
+          (cl-letf (((symbol-function 'cerebro--forget-session) (lambda (_a) nil))
                     ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
             (with-temp-buffer
               (cerebro--supervise (list agent) root cerebro-test--now)))
@@ -3011,13 +3013,95 @@ fresh session read as the finished one it replaced - restarted again, forever."
         (let ((path (cerebro--state-file-path root "Cyclops")))
           (make-directory (file-name-directory path) t)
           (write-region "{\"state\":\"done\",\"pid\":42}" nil path nil 'quiet)
-          (cl-letf (((symbol-function 'cerebro--end-session) (lambda (_a) nil))
+          (cl-letf (((symbol-function 'cerebro--forget-session) (lambda (_a) nil))
                     ((symbol-function 'cerebro--launch)
                      (lambda (&rest _) (push (file-exists-p path) order))))
             (with-temp-buffer
               (cerebro--supervise (list agent) root cerebro-test--now)))
           (should (equal order '(nil)))
           (should-not (file-exists-p path)))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/kill-removes-the-state-file ()
+  "`k' is a full session-end, so it takes the state file with it.
+
+Left behind, the file keeps the row reading `working' on a bead nobody is
+building, and once the operating system recycles that pid the row goes
+green for an unrelated process (`cerebro--session-alive-p')."
+  (let* ((cerebro--sessions nil)
+         (root (make-temp-file "cerebro-test-" t))
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+         (session-name (cerebro--session-buffer-name agent))
+         (buf (get-buffer-create session-name)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'revert-buffer) #'ignore)
+                  ((symbol-function 'cerebro--show-detail) #'ignore))
+          (let ((path (cerebro--state-file-path root "Cyclops")))
+            (make-directory (file-name-directory path) t)
+            (write-region "{\"state\":\"working\",\"pid\":42}" nil path nil 'quiet)
+            (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+            (cerebro--kill-session-buffer agent root)
+            (should-not (file-exists-p path))
+            (should (null (get-buffer session-name)))))
+      (when (get-buffer session-name) (kill-buffer session-name))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/end-session-removes-the-state-file ()
+  "The one owner removes buffer, session entry and state file together."
+  (let* ((cerebro--sessions nil)
+         (root (make-temp-file "cerebro-test-" t))
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+         (session-name (cerebro--session-buffer-name agent))
+         (buf (get-buffer-create session-name)))
+    (unwind-protect
+        (let ((path (cerebro--state-file-path root "Cyclops")))
+          (make-directory (file-name-directory path) t)
+          (write-region "{\"state\":\"working\",\"pid\":42}" nil path nil 'quiet)
+          (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+          (cerebro--end-session agent root)
+          (should (null (get-buffer session-name)))
+          (should (null (alist-get "Cyclops" cerebro--sessions nil nil #'equal)))
+          (should-not (file-exists-p path)))
+      (when (get-buffer session-name) (kill-buffer session-name))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/end-session-leaves-the-stop-flag-unless-asked ()
+  "The flag is opt-in, so a flag written between a restart being decided and
+this running - the navigator pressing `f' - is not swallowed."
+  (let* ((cerebro--sessions nil)
+         (root (make-temp-file "cerebro-test-" t))
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working)))
+    (unwind-protect
+        (progn
+          (cerebro--write-stop-flag root "Cyclops")
+          (cerebro--end-session agent root)
+          (should (cerebro--stop-flag-p root "Cyclops")))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/end-session-clears-the-stop-flag-when-asked ()
+  "Retire's half of the same contract: the flag has done its job by then."
+  (let* ((cerebro--sessions nil)
+         (root (make-temp-file "cerebro-test-" t))
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working)))
+    (unwind-protect
+        (progn
+          (cerebro--write-stop-flag root "Cyclops")
+          (cerebro--end-session agent root 'clear-stop-flag)
+          (should-not (cerebro--stop-flag-p root "Cyclops")))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/kill-leaves-the-stop-flag ()
+  "`f' then `k' means stop now and stay gone; `s' is what clears a stale flag,
+and it says so when it does."
+  (let* ((cerebro--sessions nil)
+         (root (make-temp-file "cerebro-test-" t))
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'revert-buffer) #'ignore)
+                  ((symbol-function 'cerebro--show-detail) #'ignore))
+          (cerebro--write-stop-flag root "Cyclops")
+          (cerebro--kill-session-buffer agent root)
+          (should (cerebro--stop-flag-p root "Cyclops")))
       (delete-directory root t))))
 
 (ert-deftest cerebro-test/delete-state-file-tolerates-a-missing-file ()

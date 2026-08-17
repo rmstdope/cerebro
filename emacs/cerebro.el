@@ -1360,7 +1360,7 @@ one place that says how a bead is handed back.")
         (vterm-send-string cerebro--nudge-message)
         (vterm-send-return)))))
 
-(defun cerebro--end-session (agent)
+(defun cerebro--forget-session (agent)
   "Kill AGENT's session buffer, without asking and without refreshing.
 
 The query-on-exit flag guards an *accidental* kill; this one is the poll
@@ -1378,6 +1378,29 @@ has run."
           (when proc (set-process-query-on-exit-flag proc nil)))
         (kill-buffer buffer)))
     (setq cerebro--sessions (assoc-delete-all name cerebro--sessions))))
+
+(defun cerebro--end-session (agent repo-root &optional clear-stop-flag)
+  "End AGENT's session and remove every per-session artifact it leaves behind.
+
+Buffer and `cerebro--sessions' entry always (`cerebro--forget-session');
+the state file always, because a file naming a session that has been ended
+is a claim about a pid that no longer exists and pids are recycled (see
+`cerebro--session-alive-p'); the stop flag only when CLEAR-STOP-FLAG, since
+only a retire has finished with the instruction.
+
+This is the one owner of ending a session: every artifact a session leaves
+is removed here or nowhere, so a fourth call site cannot be added
+half-right - which is how the same omission came to be fixed twice, in the
+two `cerebro--supervise' branches only, while `k' kept leaking a state file.
+
+CLEAR-STOP-FLAG stays explicit rather than inferred from the state: a flag
+written between a restart being decided and this running is the navigator
+pressing `f', and swallowing it silently is the inherited-instruction bug
+with the sign reversed."
+  (let ((name (cerebro-agent-name agent)))
+    (cerebro--forget-session agent)
+    (cerebro--delete-state-file repo-root name)
+    (when clear-stop-flag (cerebro--clear-stop-flag repo-root name))))
 
 (defun cerebro--supervise (agents repo-root now)
   "Act on what `cerebro--supervise-action' says about each of AGENTS.
@@ -1400,13 +1423,10 @@ other agents down with it."
           ;; session's, and the fresh one under the same name would otherwise
           ;; be read as the finished session it replaced and restarted again.
           ('restart (let ((watching (cerebro--detail-showing-p agent)))
-                      (cerebro--end-session agent)
-                      (cerebro--delete-state-file repo-root name)
+                      (cerebro--end-session agent repo-root)
                       (cerebro--launch agent)
                       (when watching (cerebro--show-detail agent))))
-          ('retire (cerebro--end-session agent)
-                   (cerebro--delete-state-file repo-root name)
-                   (cerebro--clear-stop-flag repo-root name))
+          ('retire (cerebro--end-session agent repo-root 'clear-stop-flag))
           ('nudge (unless (member name cerebro--nudged)
                     (push name cerebro--nudged)
                     (cerebro--nudge agent))))))))
@@ -2186,26 +2206,22 @@ seconds earlier would be a worse surprise than announcing it."
           ('already-up (message "%s is already up" name))
           ('external (message "%s is running outside Emacs" name)))))))
 
-(defun cerebro--kill-session-buffer (agent)
-  "Kill AGENT's session buffer if it still exists, then refresh the view.
+(defun cerebro--kill-session-buffer (agent repo-root)
+  "End AGENT's session (`k'), then refresh the view and the detail window.
 
-The buffer can have died between `--kill-action' deciding it was
-killable (from a `--owned' snapshot) and this running - a real race,
-not a hypothetical one - so a missing buffer is not an error here.
+`cerebro-kill' has already confirmed this exact kill via `y-or-n-p', so the
+process's query-on-exit flag is cleared - in `cerebro--forget-session',
+which `cerebro--end-session' calls - rather than prompting a
+second time.  The state file goes with the session, which is
+what stops the row reading `working' on a bead nobody is building.
 
-`cerebro-kill' has already confirmed this exact kill via
-`y-or-n-p'; the process's query-on-exit flag exists to guard against an
-*accidental* buffer/Emacs kill, not this intentional one, so it is
-cleared first rather than prompting a second time for the same kill.
-Looks the buffer up via `cerebro--recorded-buffer', not `cerebro--session':
-a session whose process has already exited is still ours to clean up."
-  (let ((name (cerebro-agent-name agent)))
-    (let ((buffer (cerebro--recorded-buffer name)))
-      (when buffer
-        (let ((proc (get-buffer-process buffer)))
-          (when proc (set-process-query-on-exit-flag proc nil)))
-        (kill-buffer buffer)))
-    (setq cerebro--sessions (assoc-delete-all name cerebro--sessions)))
+The stop flag is left alone: `k' is not a retire, and a flag set with `f'
+means this name stays down until `s' clears it and says so.
+
+REPO-ROOT is passed in rather than looked up here, so `cerebro--repo-root'
+and its buffer-local `default-directory' work stay out of the unit under
+test - `cerebro-kill' computes it once for all its branches."
+  (cerebro--end-session agent repo-root)
   (revert-buffer)
   (cerebro--show-detail agent))
 
@@ -2214,20 +2230,24 @@ a session whose process has already exited is still ours to clean up."
   (interactive)
   (let ((agent (cerebro--agent-at-point)))
     (when agent
-      (pcase (cerebro--kill-action agent (cerebro--owned))
+      ;; Once, for whichever branch needs it - `cerebro--kill-session-buffer'
+      ;; takes the root as a parameter so the buffer-local `default-directory'
+      ;; work stays out of the unit under test.
+      (let ((repo-root (cerebro--repo-root)))
+       (pcase (cerebro--kill-action agent (cerebro--owned))
         ('kill
          (when (y-or-n-p (format "Kill %s? " (cerebro-agent-name agent)))
-           (cerebro--kill-session-buffer agent)))
+           (cerebro--kill-session-buffer agent repo-root)))
         ('kill-working
          (when (y-or-n-p
                 (format (concat "%s is working on %s - killing mid-bead strands a claim, "
                                  "a worktree and an open PR. Kill anyway? ")
                         (cerebro-agent-name agent) (cerebro-agent-bead agent)))
-           (cerebro--kill-session-buffer agent)))
+           (cerebro--kill-session-buffer agent repo-root)))
         ('external
          (message "%s is running outside Emacs - stop it from its own terminal"
                   (cerebro-agent-name agent)))
-        ('dead (message "%s is not running" (cerebro-agent-name agent)))))))
+        ('dead (message "%s is not running" (cerebro-agent-name agent))))))))
 
 (defun cerebro--write-stop-flag (repo-root name)
   "Create NAME's stop flag in REPO-ROOT, empty - only its existence is read.

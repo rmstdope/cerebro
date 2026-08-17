@@ -232,8 +232,8 @@ pass "launch with no argument exits 2"
 
 # --- shims ---
 
-SHIMS=(run-planner run-beast run-orchestrator run-user-feedback run-psylocke run-forge)
-SHIM_NAMES=(Xavier Beast Cerebro Moira Psylocke Forge)
+SHIMS=(run-planner run-beast run-orchestrator run-user-feedback run-psylocke run-forge run-cypher)
+SHIM_NAMES=(Xavier Beast Cerebro Moira Psylocke Forge Cypher)
 
 i=0
 while [[ $i -lt ${#SHIMS[@]} ]]; do
@@ -418,6 +418,27 @@ echo "$out" | grep -q "the submodule is behind" \
 echo "$out" | grep -q '^ARG:--agent$' \
   && fail "launch Forge (submodule behind): should never have reached the stub"
 pass "launch Forge refuses when the submodule never brought its agent file in"
+
+# --- the reviewer role: on the roster, with phases agent-state accepts ---
+entry_out="$("$repo_root/scripts/roster" --entry Cypher)"
+[[ "$entry_out" == "$(printf 'Cypher\treviewer\tinteractive')" ]] \
+  || fail "roster --entry Cypher: expected reviewer/interactive, got: $entry_out"
+[[ -f "$repo_root/agents/reviewer.md" ]] || fail "agents/reviewer.md does not exist"
+grep -qx 'model: opus' "$repo_root/agents/reviewer.md" \
+  || fail "agents/reviewer.md: expected a line 'model: opus'"
+pass "Cypher is on the roster as the reviewer, with an agent file declaring its model"
+
+# `agent-state` is checked here rather than run: it writes to a consumer root, which these tests do
+# not have. The phase vocabulary is a list in one `case`, and a role whose words are missing from it
+# cannot write its state at all - the failure ah-2n3.2 was written to prevent.
+for phase in read check walk report; do
+  grep -q "|$phase|" "$repo_root/scripts/agent-state" \
+    || grep -q "|$phase)" "$repo_root/scripts/agent-state" \
+    || fail "scripts/agent-state: phase '$phase' is not in the accepted vocabulary"
+  grep -q "\"$phase\"" "$repo_root/emacs/cerebro.el" \
+    || fail "emacs/cerebro.el: phase '$phase' is missing from cerebro--phases"
+done
+pass "the reviewer's phases (read check walk report) are accepted by agent-state and known to cerebro.el"
 
 # --- agents/architect.md exists with the right frontmatter ---
 [[ -f "$repo_root/agents/architect.md" ]] || fail "agents/architect.md does not exist"

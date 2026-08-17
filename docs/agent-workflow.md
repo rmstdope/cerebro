@@ -150,6 +150,36 @@ other open PR stale, so each of them pays for a `BEHIND` catch-up and a fresh CI
 where the browser suites actually run now, in parallel jobs implementers no longer serialize behind
 locally. The orchestrator will say so if you ask for more, once, and then do as it is told.
 
+## Reviewing what comes from outside
+
+Anyone can open a pull request. The fleet's own work is planned, built, reviewed by Copilot and
+merged by the implementer that built it — none of which applies to a contributor who holds no bead
+and has read none of that. **Cypher** (`run-cypher`) is the path for those.
+
+One session, interactive, and it works a PR at a time:
+
+- **It picks up open, non-draft PRs whose author is not you**, and re-reviews one when its head sha
+  changes — a contributor who pushes a fix is asking for another look, one who pushes nothing is
+  not.
+- **It reads the diff before it runs anything.** An external branch is untrusted code: `pnpm
+  install` runs lifecycle scripts, a test file executes, `build.rs` executes, a workflow change runs
+  in CI. If the PR touches any of those, Cypher asks you before building, and it builds only in its
+  own worktree.
+- **It reviews on five questions**: does the change do what it says, does it fit the architecture,
+  are the regression tests enough (would they have failed before the change), what does it cost the
+  application and the CI, and the rest a reviewer owes a project — dependencies, secrets, error
+  handling, docs, scope.
+- **It shows you every user-visible change, running.** Same discipline as Psylocke: prepare
+  everything first, warm the build, check the port, ask whether you are ready, brief you, launch,
+  and record your verdict in your words. A PR that touches nothing a player sees skips this in one
+  line.
+- **It posts one review comment per pass** — never an approval, never a merge, never a push to the
+  contributor's branch — ranked so a defect and a naming preference are not the same class, and then
+  tells you what it recommends. **You merge.**
+
+Psylocke is unchanged by this: she verifies merged beads against their acceptance criteria, which is
+a different question from whether a stranger's PR should land at all.
+
 ### What "take one down" means
 
 It means *finish*, not *stop now* — for a builder mid-bead. The orchestrator writes a stop flag; for

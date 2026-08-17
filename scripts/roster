@@ -42,6 +42,7 @@ Beast         planner
 Cerebro       orchestrator
 Moira         user-feedback
 Psylocke      verifier
+Cypher        reviewer
 Forge         architect
 Cyclops       implementer
 Storm         implementer

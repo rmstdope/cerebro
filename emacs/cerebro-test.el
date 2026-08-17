@@ -2262,10 +2262,14 @@ is this one.  Run as CI runs ERT, from the repository root."
   ;; Absolute, because `process-lines' searches `exec-path' rather than
   ;; `default-directory' - a relative name here reads as "no such program".
   (let ((script (expand-file-name "scripts/work-beads")))
-    (unless (file-executable-p script)
+    ;; Skip only when the file is genuinely absent - the suite is run from
+    ;; elsewhere - and never merely because the executable bit was lost, which
+    ;; would let the drift this test exists to catch through unnoticed. Hence
+    ;; `bash SCRIPT' rather than SCRIPT.
+    (unless (file-exists-p script)
       (ert-skip "scripts/work-beads not found - run ERT from the repository root"))
     (should (equal (sort (copy-sequence cerebro-skipped-issue-types) #'string<)
-                   (sort (process-lines script "--print-excluded-types") #'string<)))))
+                   (sort (process-lines "bash" script "--print-excluded-types") #'string<)))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 3: turning a sweep's facts into a decision

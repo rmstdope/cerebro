@@ -58,6 +58,13 @@ STALE_MINUTES="${STALE_MINUTES:-30}"
 COLD_TARGET_MINUTES="${COLD_TARGET_MINUTES:-1440}"
 WATCH_SECONDS="${WATCH_SECONDS:-600}"
 
+case "$COLD_TARGET_MINUTES" in
+  ''|*[!0-9]*)
+    echo "prune-worktrees: COLD_TARGET_MINUTES must be a positive integer of minutes, got '$COLD_TARGET_MINUTES'" >&2
+    exit 2
+    ;;
+esac
+
 dry_run=false
 watch=false
 for argument in "$@"; do
@@ -100,14 +107,20 @@ landed_on_main() {
 
 # Removes a kept tree's `target/` when it has sat unwritten for far longer than a whole tree would
 # ever be left alone for (COLD_TARGET_MINUTES). This never touches the worktree itself — only a
-# directory inside one that is staying — and never reaches a tree that failed the safety checks
-# above; call sites gate on that already.
+# directory inside one that is staying. Called only for the tree kept by the `psylocke` name
+# exception, before any of the elif safety checks below ever run for it — those checks judge
+# whether a *worktree* can be removed, which is a different question from this one; what makes
+# removing just its target/ safe is this function's own existence check and the mtime check next.
 reclaim_cold_target() {
   local tree="$1" name="$2" target size_gb
 
   target="$tree/target"
   [ -d "$target" ] || return 0
-  [ -z "$(find "$target" -maxdepth 0 -mmin "-$COLD_TARGET_MINUTES" 2>/dev/null)" ] || return 0
+  # Any file or directory touched within the window, not just target/'s own mtime: a build in
+  # progress only bumps that the moment a new top-level entry lands, and stays unchanged while
+  # every later write lands in a subdirectory that already exists — `-maxdepth 0` alone
+  # misclassified an actively-building tree as cold. `-print -quit` stops at the first match.
+  [ -z "$(find "$target" -mmin "-$COLD_TARGET_MINUTES" -print -quit 2>/dev/null)" ] || return 0
 
   size_gb="$(du -sk "$target" 2>/dev/null | awk '{printf "%.1f", $1 / 1024 / 1024}')"
 

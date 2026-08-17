@@ -186,9 +186,15 @@ them at P4, and go on to the buffer — an unanswered triage costs you ordering,
 apply your own recommendation unasked: priority is what the navigator uses to steer the fleet, and
 taking that silently is the one thing this step exists to prevent.
 
-Triage runs **once per session, at the start**. On later wake-ups, only beads that have arrived at P4
-since the last pass need asking about — a bead the navigator already ranked is settled, and a bead
-they declined to rank is not worth asking about twice.
+Triage runs **on every wake-up**, starting with the first pass of the session — not once and then
+never again. It is the only way a bead is ever ranked, and an unranked bead is not a candidate for
+planning at all (see *Choosing what to plan*), so a pass you skip is a pass in which every bead
+filed since the last one stays unplannable for as long as this session lives.
+
+It is short after the first pass, and that is the point: each pass covers only the beads that have
+arrived at P4 **since your last pass**. A bead the navigator already ranked is settled, and one they
+declined to rank is not asked about twice — so a wake-up with nothing new arrived is a wake-up with
+no triage to do, and you go straight on to the buffer.
 
 ## P0 pre-empts the buffer
 
@@ -197,8 +203,7 @@ queue already is. A P0 is a bead the navigator has said is the most urgent thing
 is the only thing standing between it and an implementer picking it up; a P0 sitting unplanned behind
 a healthy buffer is the fleet working on the wrong thing while the right thing waits.
 
-Check at the top of every pass — after triage on the first one, immediately on waking on every one
-after — and check it **before you count the buffer**, because the buffer's answer does not matter
+Check at the top of every pass, after that pass's triage — and check it **before you count the buffer**, because the buffer's answer does not matter
 here:
 
 ```bash
@@ -317,7 +322,8 @@ The cycle:
    only, since a P4 is not a candidate. If that leaves nothing to plan, report the beads waiting on
    a ranking and go to step 4.
 4. **Sleep ten minutes.** Say that you are doing so, then wait.
-5. **Look again**, re-measuring `n`, and free any abandoned label again — a session died while you
+5. **Look again**, re-measuring `n`, triaging what arrived while you slept if the triage is yours
+   (*Then: triage the P4 backlog*), and freeing any abandoned label again — a session died while you
    slept is exactly when one appears. A new P0 — plan it, always, and then continue. Otherwise:
    `m` or more in the buffer, sleep another ten minutes and look again; **fewer than `m`, fill
    back to `2m`** and start over.

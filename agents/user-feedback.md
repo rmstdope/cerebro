@@ -54,6 +54,12 @@ gets triaged again from scratch. Without `--all` this failure is invisible in th
 most beads you check *are* still open; it only bites on exactly the issues where getting it wrong
 matters most; a closed one.
 
+The same family of bd traps — this one, closed epics, and bd's own `event` beads — is written down
+once in `.claude/cerebro/scripts/work-beads`, which is what every "closed work beads" query in the
+fleet now goes through. Your query is not one of those (it is a lookup by external ref across every
+status, not a closed-work-beads query), so it stays here; the header is still the place to read if
+one of these bites you.
+
 Empty means it is new: triage it with the navigator (*A new issue*). Non-empty means it is already
 tracked: report where the work has got to (*An issue that has a bead*).
 

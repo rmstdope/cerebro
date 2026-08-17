@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# The one place the harness asks: "which closed beads are real work?" Prints a JSON array on stdout,
+# so a caller pipes it into `jq` exactly as it pipes `bd list --json` today.
+#
+#     .claude/cerebro/scripts/work-beads [--status <list>] [--closed-after <when>]
+#     .claude/cerebro/scripts/work-beads --print-excluded-types
+#
+# It exists because that question was hand-written independently by every reader of closed beads -
+# the fleet view's bead panel, Psylocke's work list, Cerebro's delivery counts - and each copy had
+# to learn the same three `bd` quirks on its own. The same defect was fixed three times in two days
+# (ah-cg1). If you have never been bitten by any of them, here they are:
+#
+#   1. `bd list` defaults to OPEN beads. A closed-bead query without `--status closed` silently
+#      reads zero and looks like a quiet day, or like a first pass - seen live with 118 closed
+#      labelled beads in the database. So `--status` defaults to `closed` here: every caller of
+#      this script wants closed beads, and the default that bites is bd's own.
+#   2. An `epic` closing is bookkeeping, not delivery. It closes when its last child does, so
+#      counting both reports the same work twice.
+#   3. `bd set-state <id> <k>=<v>` writes an **event bead** as its audit record: `issue_type:
+#      "event"`, closed, carrying the very labels these queries key on. Left in, each pass finds
+#      the previous pass's event beads, acts on them, and writes more - a chain that grows one link
+#      per pass, forever (ah-9gm). Never label an event bead.
+#
+# Epics and events are excluded TWICE, on purpose: `--exclude-type epic,event` on the `bd` call
+# does the work, and the `jq` guard keeps the answer right under a `bd` whose `--exclude-type` does
+# not know `event`. A belt and a brace, because being wrong here is invisible.
+#
+# It fails LOUDLY - non-zero, a message on stderr, nothing on stdout - when `bd` fails or prints
+# something that is not JSON. A reader of this output is deciding what has shipped or what needs
+# verifying, and an empty array that really means "the query broke" is the worst possible answer.
+#
+# Not in scope: Moira's `bd list --external-ref gh-<n> --all` lookup, which is a different question
+# (one bead by external ref, across every status), and the fleet view's own `bd list`, which
+# deliberately fetches every status with no exclusions and partitions the one list in elisp.
+
+set -euo pipefail
+
+# The issue types that are never work. `--print-excluded-types` prints these so
+# `emacs/cerebro-test.el` can hold the panel's own list to this one and stop the two drifting.
+excluded_types=("epic" "event")
+
+usage() {
+  echo "usage: work-beads [--status <list>] [--closed-after <when>] | work-beads --print-excluded-types" >&2
+  exit 2
+}
+
+status="closed"
+closed_after=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --status)
+      status="${2:-}"; [[ -n "$status" ]] || usage; shift 2 ;;
+    --closed-after)
+      closed_after="${2:-}"; [[ -n "$closed_after" ]] || usage; shift 2 ;;
+    --print-excluded-types)
+      printf '%s\n' "${excluded_types[@]}"; exit 0 ;;
+    *)
+      echo "work-beads: unknown argument '$1'" >&2
+      usage ;;
+  esac
+done
+
+excluded_csv="$(IFS=,; echo "${excluded_types[*]}")"
+
+argv=(bd list --status "$status" --exclude-type "$excluded_csv" --json)
+[[ -n "$closed_after" ]] && argv=(bd list --status "$status" --closed-after "$closed_after" --exclude-type "$excluded_csv" --json)
+
+if ! raw="$("${argv[@]}")"; then
+  echo "work-beads: bd failed: ${argv[*]}" >&2
+  exit 1
+fi
+
+# The same list again in jq - see the header for why both.
+if ! out="$(printf '%s' "$raw" | jq --arg excluded "$excluded_csv" \
+      '($excluded | split(",")) as $types | [.[] | select(.issue_type as $t | ($types | index($t)) == null)]' 2>/dev/null)"; then
+  echo "work-beads: bd printed something that is not JSON: ${argv[*]}" >&2
+  exit 1
+fi
+
+printf '%s\n' "$out"

@@ -1511,6 +1511,13 @@ thread, and \"nothing left to do\" here.")
   (cl-some (lambda (label) (member label cerebro-verification-settled))
            (cerebro--bead-labels bead)))
 
+(defconst cerebro-skipped-issue-types '("epic" "event")
+  "Issue types that are bookkeeping rather than work, and so never shown.
+The shell has the same list, in `scripts/work-beads', which is where the
+reasoning is written down for every reader of closed beads (ah-cg1);
+`cerebro-test/the-panel-skips-exactly-what-work-beads-excludes' holds the
+two to each other.")
+
 (defun cerebro--partition-beads (beads)
   "Split BEADS into the five lists the panel shows.
 
@@ -1537,7 +1544,8 @@ work."
          ;; change: verification -> passed"). An event carries the very labels
          ;; these rules key on, so without this three of them appeared as
          ;; merged work - one per verification ever recorded.
-         ((member (alist-get 'issue_type bead) '("epic" "event")) nil)
+         ;; `scripts/work-beads' owns the same list on the shell side.
+         ((member (alist-get 'issue_type bead) cerebro-skipped-issue-types) nil)
          ((equal status "in_progress") (push bead claimed))
          ((equal status "open")
           (let ((labels (cerebro--bead-labels bead)))

@@ -119,21 +119,28 @@ waiting on them — possibly for a long time.
 Closed beads that either carry no `verification:*` label at all, or carry `verification:failed`:
 
 ```bash
-bd list --status closed --exclude-type event --json | jq -r '.[]
-  | select(.issue_type != "event")
+.claude/cerebro/scripts/work-beads | jq -r '.[]
   | select(([.labels[]? | select(startswith("verification:"))] | length == 0)
            or ([.labels[]?] | index("verification:failed")))
   | .id'
 ```
 
-Both filters on purpose — the flag is what does the work; the `jq` guard makes the query safe under a
-`bd` whose `--exclude-type` does not know `event`. **Why the exclusion exists at all**: `bd set-state
+`work-beads` is the one place the harness asks "which closed beads are real work" — it always passes
+the status it means, and excludes epics and bd's own `event` beads twice over (see its header for
+why both). The `jq` here is your question alone: which of that work still wants a verdict.
+
+**Why the event exclusion exists at all**: `bd set-state
 <id> verification=<x>` — the command you use for every verdict — writes an **event bead** as its
 audit record (`issue_type: "event"`, closed, unlabelled), one more per verdict you record. Without
 this exclusion, each pass would find the previous pass's own event beads in the work list, label them
 (as `not-needed`, since they have no commit and touch nothing), which writes another event bead
 recording *that* label — a chain that grows one link per pass, forever (ah-9gm). **Never label an
 event bead** — a chain that already exists from before this fix is harmless and is left alone.
+
+**Closed epics are excluded too**, which they were not before `work-beads` (ah-cg1). An epic has no
+diff of its own — its work is entirely in the children you already see — so it could only ever be
+marked `not-needed`, and every one of those markings writes another event bead. Four closed epics
+were sitting in this list when the script replaced the query.
 
 `verification:failed` is kept **through the rebuild** — a bead reopened by a failed verdict closes
 again when the rework merges, still carrying that label, which is exactly what makes it a candidate a
@@ -143,13 +150,13 @@ second time. Nothing else about the query changes for a reopened bead; it is jus
 
 Detect it before running the query above: no bead anywhere carries a `verification:*` label. Check
 **closed** beads — a `verification:*` label is only ever applied to a closed one, and `bd list --json`
-with no `--status` flag defaults to open beads only. Omitting `--status closed` here always reads zero
-and reports "first pass" even after hundreds of beads have already been labelled — seen live on
-2026-08-16, with 118 closed beads already carrying labels and this check still reading zero. Always
-pass `--status closed`:
+with no `--status` flag defaults to open beads only. A query without `--status closed` always reads
+zero here and reports "first pass" even after hundreds of beads have already been labelled — seen
+live on 2026-08-16, with 118 closed beads already carrying labels and this check still reading zero.
+`work-beads` always passes it, which is why this goes through the script too:
 
 ```bash
-bd list --status closed --json | jq -r '[.[] | .labels[]? | select(startswith("verification:"))] | length'
+.claude/cerebro/scripts/work-beads | jq -r '[.[] | .labels[]? | select(startswith("verification:"))] | length'
 ```
 
 Zero means this is the first pass. There are closed beads from before this role existed, and

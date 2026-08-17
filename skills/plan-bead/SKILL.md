@@ -191,10 +191,12 @@ never again. It is the only way a bead is ever ranked, and an unranked bead is n
 planning at all (see *Choosing what to plan*), so a pass you skip is a pass in which every bead
 filed since the last one stays unplannable for as long as this session lives.
 
-It is short after the first pass, and that is the point: each pass covers only the beads that have
-arrived at P4 **since your last pass**. A bead the navigator already ranked is settled, and one they
-declined to rank is not asked about twice — so a wake-up with nothing new arrived is a wake-up with
-no triage to do, and you go straight on to the buffer.
+It is short after the first pass, and that is the point: the query above still returns every open
+P4 every time — nothing records a watermark — so what shortens is what you **ask about**. Ask only
+about the beads in it you have not already put to the navigator this session. A bead they already
+ranked has left the list; one they declined to rank has not, and is not asked about twice. So a
+wake-up whose query returns nothing you have not already raised is a wake-up with no triage to do,
+and you go straight on to the buffer.
 
 ## P0 pre-empts the buffer
 

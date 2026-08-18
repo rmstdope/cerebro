@@ -7,6 +7,11 @@ what it costs.
 The agents' own instructions live in `.claude/skills/plan-bead/`, `.claude/skills/implement-bead/`
 and `.claude/skills/beads-workflow/`. You do not need to read those to operate this.
 
+![The Cerebro fleet: five human roles, six agent roles, the bead board and the fleet view](cerebro-fleet.svg)
+
+*The whole thing on one page. Regenerate with `python3 docs/cerebro-fleet.py` when a role or a flow
+changes — the SVG is generated, not drawn by hand.*
+
 ## The idea
 
 A **planner** turns rough beads into plans. A **builder** builds them. They are separate sessions

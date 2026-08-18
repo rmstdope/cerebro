@@ -1,6 +1,11 @@
 # Cerebro
 An AI harness consisting of agents, skills and scripts. Preferably run within emacs
 
+![The Cerebro fleet](docs/cerebro-fleet.svg)
+
+Six agent roles, one bead board, and the humans they answer to — the same picture lives in
+[docs/agent-workflow.md](docs/agent-workflow.md), which is the operating guide behind it.
+
 ## Use As a Git Submodule
 
 If you want to consume these skills from another repository, add this repository as a submodule under `.claude/cerebro`:

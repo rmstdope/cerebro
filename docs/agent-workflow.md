@@ -1,30 +1,120 @@
 # Running the agent workflow
 
-Work on this repository is split between two kinds of agent session. This is the human's guide to
-running them: what to start, what you will be asked, where to look when something wants you, and
-what it costs.
+This is the human's guide to running the fleet: what to start, what each agent will ask you for,
+where to look when something wants you, and what it costs. You are "the navigator" throughout — the
+agents' word for the one person every user-facing decision belongs to.
 
-The agents' own instructions live in `.claude/skills/plan-bead/`, `.claude/skills/implement-bead/`
-and `.claude/skills/beads-workflow/`. You do not need to read those to operate this.
+The agents' own instructions live in `.claude/cerebro/agents/<role>.md`, and for the three roles that
+have one, in `.claude/cerebro/skills/`: `plan-bead`, `implement-bead` and the shared
+`beads-workflow`. The verifier, the reviewer and the architect carry their whole job in their agent
+file. You do not need to read any of it to operate this.
 
-![The Cerebro fleet: five human roles, six agent roles, the bead board and the fleet view](cerebro-fleet.svg)
+![The Cerebro fleet: the humans it answers to, seven agent roles, the bead board and the fleet view](cerebro-fleet.svg)
 
 *The whole thing on one page. Regenerate with `python3 docs/cerebro-fleet.py` when a role or a flow
 changes — the SVG is generated, not drawn by hand.*
 
 ## The idea
 
-A **planner** turns rough beads into plans. A **builder** builds them. They are separate sessions
-because they need different things from you: planning needs your judgement on anything a player will
-see, and building needs nothing at all if the plan is good.
-
-The handover is one label. A bead is *planned* or it is not.
+Work is tracked in **beads** (`bd`), not in GitHub issues. A bead moves through the fleet one label
+at a time, and each handover is a label rather than a conversation:
 
 ```
-  unplanned  ──►  planner claims  ──►  planned  ──►  builder claims  ──►  merged, closed
-                        │                                   │
-                        └──────── needs you ◄───────────────┘
+  unplanned ──► planning ──► planned ──► claimed ──► merged ──► verified
+                   │            │           │           │           │
+              a planner    ready for   an implementer  a PR    Psylocke and
+              holds it     anyone      is building it  merged  you looked at it
+                   └──────────── needs you ◄───────────┘
 ```
+
+Two rules hold that together, and both are load-bearing:
+
+- **A planner never claims.** Claiming means *an implementer is building this*. A planner takes the
+  `planning` label instead, which says the same thing about planning while leaving the bead open,
+  unassigned and free for anyone to pick up if that session dies.
+- **Closed is not terminal.** A failed verification reopens a bead at P0 and sends it round again.
+
+## Who is in the fleet
+
+Seven roles. Six are interactive sessions you talk to; the seventh is the implementer, of which
+there are twelve on the roster.
+
+| Agent | Role | Runs on | What it is for |
+|---|---|---|---|
+| **Xavier**, **Beast** | `planner` | Opus / high | Turn unplanned beads into plans an implementer can build unattended |
+| **Cerebro** | `orchestrator` | Opus / medium | Watches the fleet, reports on it, stops implementers, cuts releases |
+| **Moira** | `user-feedback` | Sonnet | Owns the GitHub issue inbox: acknowledges, triages into beads, keeps reporters told |
+| **Psylocke** | `verifier` | Sonnet | Puts merged work in front of you and records your verdict |
+| **Cypher** | `reviewer` | Opus / high | Reviews pull requests that came from outside the fleet |
+| **Forge** | `architect` | Opus / xhigh | Reads the shape of the codebase and files what it is costing |
+| twelve X-Men | `implementer` | Sonnet | One planned bead each, built test-first, to a merged PR |
+
+`scripts/roster` is the one declaration of that list — name, role and kind, one line each. Everything
+else derives from it: the fleet view, the launcher, and the state files.
+
+## The fleet view is the console
+
+```
+M-x cerebro
+```
+
+Everything below can be done from a terminal, and almost nobody does. The Emacs fleet view lists
+every agent on the roster with its state, the bead or PR it is on, and how long it has been there.
+
+| Key | Does |
+|---|---|
+| `s` | start the agent on this row, in an Emacs-owned `vterm` session |
+| `k` | kill it, confirming harder when it is mid-bead |
+| `f` | tell an implementer to finish — mid-bead it completes the bead first, idle it stops at once |
+| `RET` | focus the detail window, to type to the agent shown there |
+| `TAB` | cycle list → beads → detail → list |
+| `n` / `p` | next / previous row |
+
+Under the list, the **bead panel** answers the questions you actually ask about the queue — Claimed,
+Planned unclaimed, Being planned, Unplanned, Merged unverified — with `0`–`4`, `+`/`-` and `u` to
+re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exact `bd close` or
+`bd reclaim` it maps to, after confirming.
+
+Two things it does for you without being asked: it starts `prune-worktrees.sh --watch` alongside the
+buffer (see *Leftover worktrees*), and it replaces an implementer that reports itself `done` with a
+fresh session.
+
+**Reading a row.** Green `●` is working, yellow `●` is idle, a bold yellow `?` is an agent waiting on
+*you*, green `◍` is done and about to be replaced, grey `○` is dead. The State column names the
+**phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `triage`/`plan` for
+a planner; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
+Moira and Cerebro (`release` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
+timers — time on the bead, time in this phase — so three implementers sitting in `review` says
+Copilot is slow, and one in `ci` for an hour says something is stuck.
+
+A row is only as alive as its process: the state file's pid must still be running **and** its command
+line must still name that agent. Pids get recycled, and a state file left behind by a finished
+session used to come back green hours later once the operating system handed its number to something
+else.
+
+## Starting an agent
+
+Every session starts the same way, whatever the role:
+
+```bash
+.claude/cerebro/scripts/launch <Name>          # or run-planner, run-beast, run-psylocke, run-cypher,
+                                               # run-orchestrator, run-user-feedback, run-forge,
+                                               # run-implementer <Name>
+```
+
+`launch` is the one place a session is born. It stamps the session with that agent's own `bd`
+identity (so two implementers cannot silently claim as one another), re-syncs the skill and agent
+symlinks, reads the model and effort from the agent's own definition, turns on Remote Control so you
+can steer the session from claude.ai or the Claude app, and installs the hooks that keep the state
+file honest while an agent has a question open. Pressing `s` in the fleet view runs exactly this.
+
+**Changing what the fleet runs on** is one file, and it lives in *your project* rather than inside
+the `.claude/cerebro` submodule — so it is yours, uncommitted, and no other consumer of the harness
+inherits it. Copy `.claude/cerebro/models.conf.example` to `.cerebro/models.conf` and uncomment a
+line. Keys are an agent's name, a role, or `default`, most specific first, so `default fable` moves
+everybody and `Beast sonnet` moves one planner — which is the cheap way to compare two models on the
+same queue. It takes effect at the next launch; a session already running keeps the model it started
+with, and the launcher says which key it matched when it starts one.
 
 ## Starting a planner — there are two of them
 
@@ -35,22 +125,21 @@ the rate, and Cerebro will say so on its sweep.
 
 What they divide, and how:
 
-- **Candidates**, by the `planning` label. A planner takes the label before it researches anything
-  and pushes it at once, so the other sees the bead as spoken for. There is no lease and nothing to
-  reclaim: if a planning session dies, the label is all it leaves, and any planner can pick that bead
-  up next pass.
-- **Abandoned labels**, at the top of every pass. The `planning` label is not a claim and has no
-  lease, so nothing reclaims it: a planning session that is killed mid-bead leaves its candidate
-  labelled, and a labelled bead is excluded from every candidate query — lost rather than pending.
-  Each planner now frees, on every pass and every wake-up, any `planning` label that no live planner
-  names in its own state file, and says which it freed. Three beads sat stranded for a day before
-  this existed. You can see them yourself in the fleet view: **Being planned** with both planner rows
-  idle is the shape of it.
+- **Candidates**, by the `planning` label. A planner names the bead in its own state file, takes the
+  label, and pushes at once — in that order, so the other planner can tell a live candidate from an
+  abandoned one. If a planning session dies, the label is all it leaves: no lease, nothing to
+  reclaim.
+- **Abandoned labels**, at the top of every pass. A labelled bead is excluded from every candidate
+  query, so a label left by a killed session is *lost* work rather than pending work. Each planner
+  frees, on every pass and every wake-up, any `planning` label that no live planner names in its own
+  state file, and says which it freed. Three beads sat stranded for a day before this existed. You
+  can see them yourself in the fleet view: **Being planned** populated with both planner rows idle is
+  the shape of it.
 - **The buffer**, by counting `planned` beads only — what an idle implementer could actually claim.
   Both planners may therefore fill at the same time, which is what a second planner is *for*; the
   overshoot is at most one bead each. Counting `planning` too was tried and starved the queue: two
-  held candidates were enough to make a small fleet's target look met, and both planners slept over
-  a queue of two.
+  held candidates were enough to make a small fleet's target look met, and both planners slept over a
+  queue of two.
 - **The triage pass belongs to Xavier alone** — the first planner on the roster. It is the one part
   of the role that is not divisible, because what a session remembers asking lives in its own context
   and nowhere on the bead: two triaging planners means being walked through the same P4 backlog
@@ -61,70 +150,32 @@ before adding the second: if Xavier's row spends most of its time on `asking` ra
 the queue is bounded by your answers, and a second planner adds a second row waiting on you rather
 than more plans. If he is mostly `working`, the second one buys you throughput directly.
 
-One session, in its own terminal:
-
-```
-claude --model opus         # the skill will tell you if it is on something else
-/plan-bead
-```
-
-**Changing what the fleet runs on** is one file, and it lives in *your project* rather than inside
-the `.claude/cerebro` submodule — so it is yours, uncommitted, and no other consumer of the harness
-inherits it. Copy `.claude/cerebro/models.conf.example` to `.cerebro/models.conf` and uncomment a
-line. Keys are
-an agent's name, a role, or `default`, most specific first, so `default fable` moves everybody and
-`Beast sonnet` moves one planner — which is the cheap way to compare two models on the same queue.
-It takes effect at the next launch; a session already running keeps the model it started with, and
-the launcher says which key it matched when it starts one.
-
-It takes the next unplanned bead that is not blocked, researches it, and writes a plan into the
-bead. Then the next one, and the next.
+A pass runs in this order: free abandoned labels, plan every unplanned P0 whatever the queue looks
+like, then fill the buffer to twice the number of running implementers (never fewer than four), then
+sleep ten minutes and look again.
 
 **It will interrupt you**, and this is the part worth your attention. Anything a player sees —
 layout, wording, what a control is called, what happens on a click — is yours to decide, not the
 agent's. It will propose, usually with a self-contained HTML mockup you can open in a browser, and
 wait for you to choose. Architecture, file layout, test shape and ordering it decides by itself.
 
-If you walk away mid-question, it parks that bead and moves to one with no user-facing surface, so
-the queue keeps filling. It will not guess on your behalf.
+If you walk away mid-question, it parks that bead with a `human` label and moves to one with no
+user-facing surface, so the queue keeps filling. It will not guess on your behalf.
 
 ## Starting builders
 
-**You** start builders — one session each, from the Emacs fleet view (`s`) or a terminal. What runs
-alongside them is an **orchestrator**: one interactive session, in its own terminal, that watches the
-fleet, reports on it, and stops builders for you. It cannot start one, because starting one means
-starting a session and it has no way to do that.
-
-```
-claude --agent orchestrator --name Cerebro --permission-mode auto
-```
-
-The orchestrator is always called **Cerebro** — it finds the mutants and points them at the work.
-
-It starts nothing on its own, and it cannot start an implementer for you at all — starting one means
-starting a session, which only you can do: press `s` on that name in the Emacs fleet view, or run
-`.claude/cerebro/scripts/run-implementer <name>` in a terminal. Cerebro sweeps away any worktrees left behind by a
-previous run, greets you, tells you what the queue looks like, and waits. Then you talk to it in
-whatever words you like:
-
-```
-how are they doing?
-what is waiting on me?
-take Storm down
-```
-
-There is no flag that puts a running implementer to work, and there used to be. **A running
-implementer is a working one**: it claims the next planned bead as soon as it comes up. If you want
-another builder, start another session.
+**You** start builders — one session each, `s` in the fleet view or `run-implementer <name>` in a
+terminal. There is no flag that puts a running implementer to work: **a running implementer is a
+working one**, and it claims the next planned bead as soon as one exists. If you want another
+builder, start another session.
 
 Implementers are named after X-Men — Cyclops, Storm, Wolverine, Rogue, and on down the roster — so
 that a fleet of them can be talked about without anyone counting session hashes.
 
-Each implementer takes a planned bead, creates its own git worktree, works through the plan
-test-first, opens a PR, answers the Copilot review, waits for CI, merges and cleans up. Then it
-reports itself `done` and **that session ends**: a fresh one starts in its place for the next bead.
-They run on Sonnet, each with its own context, and the fleet keeps replacing them until told to
-stop.
+Each takes a planned bead, creates its own git worktree, works through the plan test-first, opens a
+PR, answers the Copilot review, waits for CI, merges and cleans up. Then it reports itself `done` and
+**that session ends**: the fleet view starts a fresh one in its place for the next bead. They run on
+Sonnet, each with its own context.
 
 The replacement is the point. One bead fills a session with a plan, a diff, a review and three CI
 runs, and nothing can clear that from the inside — so instead of clearing it, the session is thrown
@@ -132,52 +183,61 @@ away and a clean one takes the next bead.
 
 They are interactive sessions, so you can watch one work and type to it. If it hits a question only
 you can answer it will ask, and show as `asking` in the fleet view. Answer it and it carries on. If
-you are away, it is told to give up after fifteen minutes and hands the bead to your queue instead —
-so a fleet left alone overnight drains the queue rather than sitting blocked on you.
-
-The fleet view's State column names the **phase** an implementer is actually in — `build`, `gate`
-(the fast local checks — lint, typecheck, unit, cargo fmt/clippy; no machine-wide lock any more),
-`review`, `ci`, `rebase` (catching a `BEHIND` branch up on GitHub, or resolving a real conflict
-locally), `merge` — rather than one undifferentiated `working` for however long the bead takes. The
-Bead/Phase column shows both timers side by side, time on the bead and time in the current phase, so
-three implementers all sitting in `review` says Copilot is slow and one stuck in `ci` for an hour
-says something is stuck.
-
-**This is not implementer-only any more.** Since `ah-2n3.2` the interactive agents write the
-same state file and show the same way: a planner's row says `triage` or `plan`, Psylocke's says
-`prepare` or `verify`, Moira's and Cerebro's say `sweep` (Cerebro's also `release`), Forge's says
-`daily` or `weekly` — and any one of them can show `?`, bold, when it is the one waiting on you
-rather than an implementer. Answer it the same way. A session started by hand outside the fleet view
-still shows `up` with no phase, since it has never written a file.
+you are away, it is told to give up after fifteen minutes (`cerebro-answer-timeout`, 900 seconds) and
+hand the bead to your queue instead — so a fleet left alone overnight drains the queue rather than
+sitting blocked on you.
 
 **Two or three is a sensible number on one machine.** More is not faster: every merge makes every
 other open PR stale, so each of them pays for a `BEHIND` catch-up and a fresh CI run — and CI is
 where the browser suites actually run now, in parallel jobs implementers no longer serialize behind
 locally. The orchestrator will say so if you ask for more, once, and then do as it is told.
 
+### The orchestrator
+
+**Cerebro** is one interactive session that watches the fleet, reports on it, stops implementers and
+cuts releases. It starts nothing — not even an implementer, because starting one means starting a
+session, and only you can do that.
+
+```bash
+.claude/cerebro/scripts/run-orchestrator
+```
+
+Then you talk to it in whatever words you like:
+
+```
+how are they doing?
+what is waiting on me?
+take Storm down
+cut a minor release
+```
+
+It is called Cerebro because it finds the mutants and points them at the work. Since the fleet view
+took over the timed sweeps, what is left for a Cerebro session is release cutting, diagnosing a stuck
+implementer, and anything needing a forced reassignment — which is why most days you will not run one
+at all.
+
 ### What "take one down" means
 
-It means *finish*, not *stop now* — for a builder mid-bead. The orchestrator writes a stop flag; for
-one that has claimed something it is read when the implementer reports itself done — bead merged,
-closed, worktree gone — and no fresh session starts in its place. So a builder that has just claimed
-something will be a while yet. That is deliberate: killing one mid-bead leaves a claimed bead, a
-worktree and an open PR for you to unpick by hand. An **idle** builder — between beads, nothing
-claimed — is the one exception: it stops at once, since there is nothing in flight to finish, so
-there is nothing to strand by ending it now.
+It means *finish*, not *stop now* — for a builder mid-bead. Pressing `f` in the fleet view (or asking
+Cerebro) writes a stop flag; for one that has claimed something it is read when the implementer
+reports itself done — bead merged, closed, worktree gone — and no fresh session starts in its place.
+So a builder that has just claimed something will be a while yet. That is deliberate: killing one
+mid-bead leaves a claimed bead, a worktree and an open PR for you to unpick by hand. An **idle**
+builder — between beads, nothing claimed — is the one exception: it stops at once, since there is
+nothing in flight to strand.
 
 The implementer never reads the flag itself, and cannot end itself either. It says it is done; the
-supervisor decides whether a replacement starts.
+fleet view decides whether a replacement starts.
 
-If you genuinely want one gone this second, say so and the orchestrator will stop it — and then you
-have that cleanup to do.
-
-Changed your mind before it noticed? Deleting the flag cancels the instruction:
+Changed your mind before it noticed? `f` again offers to clear the flag, or:
 
 ```bash
 rm .cerebro/state/<name>.stop
 ```
 
 — or just press `s`; a stale flag is cleared on start.
+
+If you genuinely want one gone this second, `k` — and then you have that cleanup to do.
 
 ### What the builders learned
 
@@ -190,22 +250,22 @@ ls docs/retrospectives/ 2>/dev/null || echo "nothing recorded yet"
 ```
 
 Each file says what happened, why if the agent established it, what it cost, and the specific change
-that would prevent it. Agents record; they do not act on these — changing the rules, the skills or
-CI is yours. Read the *Seen before* line: a finding on its third bead is one the fleet keeps paying
-for.
+that would prevent it. Agents record; they do not act on these — changing the rules, the skills or CI
+is yours. Read the *Seen before* line: a finding on its third bead is one the fleet keeps paying for.
 
 They are committed, so they survive the machine and the session that wrote them. That is why they
-live under `docs/` rather than beside the state files in `.cerebro/state/`, which is gitignored
-as live state.
+live under `docs/` rather than beside the state files in `.cerebro/`, which is gitignored as live
+state.
 
 ### Leftover worktrees
 
-Builders work in `.cerebro/worktrees/<bead>` and remove the tree when they finish. One that crashes,
-or whose bead somebody else merged, leaves it behind — and a stray tree holding `main` makes the next
+Agents work in `.cerebro/worktrees/<bead>` and remove the tree when they finish. One that crashes, or
+whose bead somebody else merged, leaves it behind — and a stray tree holding `main` makes the next
 agent's `git checkout main` fail for no visible reason.
 
-Cerebro sweeps them: once when it starts, then every ten minutes. You can run the same sweep yourself
-at any time:
+**The fleet view sweeps them**: opening `M-x cerebro` starts `prune-worktrees.sh --watch` in the
+background, which prunes every ten minutes for as long as the buffer lives. You can run the same
+sweep yourself at any time:
 
 ```bash
 .claude/cerebro/scripts/prune-worktrees.sh --dry-run   # say what would go
@@ -218,6 +278,10 @@ why. Note that it asks GitHub whether the branch's PR merged, rather than lookin
 main — with `--squash` merges the commits are never there, so the naive check would keep every
 worktree for ever.
 
+Creating one is owned too: `scripts/prepare-worktree` is the single recipe every role uses, because
+`git worktree add` does not initialise the `.claude/cerebro` submodule and five implementers hit
+exactly that before the step had an owner.
+
 ### When a builder gets slow or vague
 
 An implementer's context grows with every bead it finishes, and nothing can clear it from the inside.
@@ -225,29 +289,50 @@ It is told to re-read plans rather than recall them, and to tell you when it sta
 weight. When it does — or when its reports get woolly — take it down and start a fresh one. That is
 the cure, and it is why the fleet is yours to manage rather than automatic.
 
+## The issue inbox
+
+GitHub issues are the **external** inbox — everything from outside the fleet — and **Moira** owns
+them:
+
+```bash
+.claude/cerebro/scripts/run-user-feedback
+```
+
+One pass over the open issues, then a ten-minute sleep, then another. On each pass she acknowledges
+anything new so a reporter is never left wondering whether it arrived, brings you each issue that has
+no bead yet with a recommendation — bead, question to the reporter, or close — and for the ones that
+do have a bead, brings the issue's status comments up to date with what the bead is actually doing,
+closing anything that has shipped.
+
+She never plans and never implements: what leaves her hands is a bead at P4, unranked, for a planner
+to triage with you like anything else. She is the only agent that speaks to people outside the
+project, which is why the wording of what she posts is hers to get right and yours to correct.
+
 ## Reviewing what comes from outside
 
 Anyone can open a pull request. The fleet's own work is planned, built, reviewed by Copilot and
 merged by the implementer that built it — none of which applies to a contributor who holds no bead
-and has read none of that. **Cypher** (`run-cypher`) is the path for those.
+and has read none of that. **Cypher** is the path for those:
+
+```bash
+.claude/cerebro/scripts/run-cypher
+```
 
 One session, interactive, and it works a PR at a time:
 
 - **It picks up open, non-draft PRs whose author is not you**, and re-reviews one when its head sha
-  changes — a contributor who pushes a fix is asking for another look, one who pushes nothing is
-  not.
-- **It reads the diff before it runs anything.** An external branch is untrusted code: `pnpm
-  install` runs lifecycle scripts, a test file executes, `build.rs` executes, a workflow change runs
-  in CI. If the PR touches any of those, Cypher asks you before building, and it builds only in its
-  own worktree.
+  changes — a contributor who pushes a fix is asking for another look, one who pushes nothing is not.
+- **It reads the diff before it runs anything.** An external branch is untrusted code: `pnpm install`
+  runs lifecycle scripts, a test file executes, `build.rs` executes, a workflow change runs in CI. If
+  the PR touches any of those, Cypher asks you before building, and it builds only in its own
+  worktree.
 - **It reviews on five questions**: does the change do what it says, does it fit the architecture,
   are the regression tests enough (would they have failed before the change), what does it cost the
   application and the CI, and the rest a reviewer owes a project — dependencies, secrets, error
   handling, docs, scope.
 - **It shows you every user-visible change, running.** Same discipline as Psylocke: prepare
-  everything first, warm the build, check the port, ask whether you are ready, brief you, launch,
-  and record your verdict in your words. A PR that touches nothing a player sees skips this in one
-  line.
+  everything first, warm the build, check the port, ask whether you are ready, brief you, launch, and
+  record your verdict in your words. A PR that touches nothing a player sees skips this in one line.
 - **It posts one review comment per pass** — never an approval, never a merge, never a push to the
   contributor's branch — ranked so a defect and a naming preference are not the same class, and then
   tells you what it recommends. **You merge.**
@@ -264,37 +349,34 @@ that the merged result actually does what it was supposed to, until **Psylocke**
 .claude/cerebro/scripts/run-psylocke
 ```
 
-One interactive session, like the planner and the orchestrator, and for the same reason: she has to
-put a running application in front of you and wait for your verdict, which a `--print` session cannot
-do. She walks beads closed since her last pass, works out on her own which ones touched anything a
-player could see — a change to `.claude/`, `docs/`, or CI is marked and skipped without ever bothering
-you — and for the rest, prepares everything she can before she asks for your time: what the bead
-claimed, which shell to launch (web or desktop), which fixture report to load, and what you should
-look for.
+She walks beads closed since her last pass, works out on her own which ones touched anything a player
+could see — a change to `.claude/`, `docs/`, or CI is marked and skipped without ever bothering you —
+and for the rest, prepares everything she can before she asks for your time: what the bead claimed,
+which shell to launch (web or desktop), which fixture report to load, and what you should look for.
 
 **She only ever asks when she is ready to hand you something to run.** Say yes and she briefs you,
 launches the app and waits for one of three verdicts:
 
 - **Passed.** The bead is marked verified and that is the end of it.
 - **Passed, with a follow-up.** It works; something small about it is worth a look later. She files
-  that as an ordinary new bead — unranked, for the planner to triage with you next time round — and
+  that as an ordinary new bead — unranked, for a planner to triage with you next time round — and
   still marks the original passed.
 - **Failed.** She reopens the bead **at P0**, records what you saw, and asks one more thing: was the
   *plan* wrong, or was the *build* wrong? A build failure goes straight back to the implementers as
-  ordinary rework against the same design. A plan failure goes to the planner first, who reads what
-  you saw and revises the existing design rather than starting from nothing.
+  ordinary rework against the same design. A plan failure goes to a planner first, who reads what you
+  saw and revises the existing design rather than starting from nothing.
 
-If you are not free when she asks, the bead simply waits — nothing is blocked, and she offers it again
-next pass rather than escalating it to your queue.
+If you are not free when she asks, the bead simply waits — nothing is blocked, and she offers it
+again next pass rather than escalating it to your queue.
 
 **A bead she cannot verify does not block anything.** An unverified bead never stops a release; when
 the orchestrator cuts one, it names whatever has not yet had a person look at it and leaves the
 decision to you. Verification is information, not a gate.
 
-**What it costs**: a verification is a few minutes of your time per bead, on top of whatever it took
-you to build one in the first place — starting the app, loading the report she names, and telling her
-what you saw. It runs on a ten-minute cycle like the other passive sessions, so it will sit quietly
-between beads rather than pestering you.
+**What it costs**: a few minutes of your time per bead, on top of whatever it took to build one in
+the first place — starting the app, loading the report she names, and telling her what you saw. She
+sleeps **five minutes** between passes, so a bead that merges while you are at lunch is offered soon
+after you are back.
 
 She verifies in her own worktree, `.cerebro/worktrees/psylocke`, reset to `origin/main` immediately
 before every use — never the shared checkout, and never a build started before she fetched. She tells
@@ -305,10 +387,10 @@ build, she writes a retrospective of her own, the same way an implementer does.
 
 ## Starting the architect
 
-Nobody else in the fleet reads the *shape* of the code. A planner plans one bead, an implementer builds
-one bead, Copilot reviews that one diff, Psylocke checks that one merged bead does what it claimed —
-and across fifty merges nobody asks whether the codebase got harder to change along the way.
-**Forge** is that reader:
+Nobody else in the fleet reads the *shape* of the code. A planner plans one bead, an implementer
+builds one bead, Copilot reviews that one diff, Psylocke checks that one merged bead does what it
+claimed — and across fifty merges nobody asks whether the codebase got harder to change along the
+way. **Forge** is that reader:
 
 ```bash
 .claude/cerebro/scripts/run-forge
@@ -325,12 +407,16 @@ whether recent work left something worth revisiting. It costs you nothing until 
 becomes an ordinary `Refactoring:`-titled bead at P4, unranked, for the planners to bring to you like
 anything else in the backlog. Forge never fixes anything itself, and it only files a finding that
 names a cost already being paid today — a defect fixed twice in the same place, a change that had to
-touch several files, a retrospective that names a structural reason something cost time — never a bare
-principle or a "could be cleaner."
+touch several files, a retrospective that names a structural reason something cost time — never a
+bare principle or a "could be cleaner."
 
 Its watermark (the last commit it read, and the date of its last weekly sweep) lives in bd memory
-rather than in the checkout, so it survives a lost or replaced machine: `bd recall bishop-watermark`
-shows you where it last left off, and losing a checkout loses nothing.
+rather than in the checkout, so it survives a lost or replaced machine:
+
+```bash
+bd recall bishop-watermark      # the keys kept the old name when Bishop was renamed to Forge
+bd recall bishop-weekly
+```
 
 ## Your queue
 
@@ -340,18 +426,22 @@ Everything waiting on you, from every agent and every terminal, in one place:
 bd human list
 ```
 
-Beads arrive there for four reasons: a plan turned out to be wrong in a way the builder must not
-decide; a plan was missing something; the Copilot review never came; or CI stayed red after three
-attempts. The bead says which in its notes.
+Beads arrive there for five reasons: a plan turned out to be wrong in a way the builder must not
+decide; a plan was missing something; a user-facing question went unanswered while a planner was
+working on it; the Copilot review never came; or CI stayed red after three attempts. The bead says
+which in its notes.
 
 To put one back into circulation after you have answered:
 
 ```bash
 bd update <id> --add-label planned --remove-label human    # back to the builders
-bd update <id> --remove-label human                        # back to the planner
+bd update <id> --remove-label human                        # back to a planner
 ```
 
 ## Watching without interfering
+
+The fleet view is the short answer — the agent list, the bead panel and the sweeps in one buffer. In
+a terminal:
 
 ```bash
 bd ready --label planned      # what builders can pick up
@@ -359,6 +449,7 @@ bd list --status in_progress  # who is on what
 bd human list                 # waiting on you
 gh pr list                    # what is in flight
 git worktree list             # which agent is in which directory
+cat .cerebro/state/*.json     # what each agent says it is doing
 ```
 
 The one thing not to do is work in `.cerebro/worktrees/` yourself — those belong to running agents,
@@ -371,8 +462,8 @@ Honest numbers from building this repository's own harness:
 - **A bead is an hour or more**, most of it CI. The code is usually the short part.
 - **Expect a `BEHIND` branch on nearly every merge.** With several agents, a PR that sat through one
   review round has usually been overtaken, and the rules require catching it up (on GitHub, not
-  locally — see *Starting builders* above) plus a fresh CI cycle before it can merge. That is
-  deliberate: a green run on a stale tree is evidence about a tree that will never exist.
+  locally) plus a fresh CI cycle before it can merge. That is deliberate: a green run on a stale tree
+  is evidence about a tree that will never exist.
 - **Copilot reviews about four PRs in five**, sometimes minutes late, and never marks one approved.
   When it does not review, the builder leaves the PR open and tells you rather than merging.
 - **One review per bead**, requested when the PR opens and never again. Fixes and rebases move the
@@ -381,6 +472,9 @@ Honest numbers from building this repository's own harness:
   describes the PR as it opened, which is worth knowing when you read one later.
 - **Nothing merges unreviewed and nothing merges red.** The `main` ruleset enforces the second on the
   server; the first is the agents following the rule.
+- **Interactive agents cost tokens while they sleep**, a little: each wakes on its own cadence
+  (planners and Moira every ten minutes, Psylocke every five) and a quiet pass is a few `bd` and `gh`
+  calls. Sessions you are not using are worth ending.
 
 ## When something goes wrong
 
@@ -394,7 +488,24 @@ git worktree prune
 ```
 
 Only ever by `--id`. Without it, that command reaps every stale claim on the machine, including from
-an agent that is merely busy.
+an agent that is merely busy. The fleet view's **Sweeps** section finds these for you and `x` runs
+the exact command after confirming.
+
+**A bead is stuck in "Being planned" and nobody is planning it.** A killed planning session leaves
+its `planning` label behind, and a labelled bead is invisible to every planner. Starting either
+planner clears it on the next pass, and says which it freed. By hand:
+
+```bash
+bd update <id> --remove-label planning && bd dolt push
+```
+
+**A row says an agent is up when it is not.** State files are written by the agent and removed by the
+fleet view when it ends a session; one left behind by a crash is ignored as soon as its pid is dead
+or belongs to something else. If a row is still wrong, delete the file:
+
+```bash
+rm .cerebro/state/<name>.state.json
+```
 
 **Two agents want the same ports.** Each builder picks a block of three (4173, 4183, 4193, …) and
 checks it is free first. A collision fails loudly rather than testing the wrong bundle, but it stalls
@@ -408,11 +519,15 @@ rm -rf target/debug/incremental            # the cheap few gigabytes back
 ```
 
 **A bead keeps coming back to you.** That usually means the plan is wrong rather than the builder is:
-send it to the planner (`--remove-label human`, leave `planned` off) rather than to another builder.
+send it to a planner (`--remove-label human`, leave `planned` off) rather than to another builder.
 
 ## What agents never decide
 
-- Anything a player sees. That is the whole reason the planner talks to you.
+- Anything a player sees. That is the whole reason the planners talk to you, and why Psylocke and
+  Cypher put a running application in front of you rather than describing it.
+- Whether to merge something red, stale, or unreviewed — and for a PR from outside, whether to merge
+  it at all.
 - Whether to take a bead off another agent, beyond the narrow crashed-agent case above.
+- What a bead is worth: priorities are recommended, never set, with one standing exception the
+  navigator granted in advance — a bead reopened by a failed verification goes to P0 without asking.
 - Anything outside a planned bead — a change to these rules, to the workflow, or to CI.
-- Whether to merge something red, stale, or unreviewed.

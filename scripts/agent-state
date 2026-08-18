@@ -14,6 +14,7 @@
 #   build gate review ci rebase merge          (an implementer)
 #   triage plan                                (a planner: Xavier, Beast)
 #   prepare verify                             (Psylocke)
+#   read check walk report                     (Cypher)
 #   sweep                                      (Moira)
 #   sweep release                              (Cerebro)
 #   daily weekly                               (Forge)
@@ -35,7 +36,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  echo "usage: agent-state <name> <idle|working|asking|done> [--bead <id>] [--phase <build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly>] --pid <pid>" >&2
+  echo "usage: agent-state <name> <idle|working|asking|done> [--bead <id>] [--phase <build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly|read|check|walk|report>] --pid <pid>" >&2
   exit 2
 }
 
@@ -86,9 +87,9 @@ esac
 
 if [[ -n "$phase" ]]; then
   case "$phase" in
-    build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly) ;;
+    build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly|read|check|walk|report) ;;
     *)
-      echo "agent-state: unknown phase '$phase' (build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly)" >&2
+      echo "agent-state: unknown phase '$phase' (build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly|read|check|walk|report)" >&2
       exit 2 ;;
   esac
   # A phase is only meaningful with a bead in flight - writing one into an idle or done file would

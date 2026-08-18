@@ -296,15 +296,18 @@ fails to parse, renders as the empty string."
 
 (defconst cerebro--phases
   '("build" "gate" "review" "ci" "rebase" "merge"
-    "triage" "plan" "prepare" "verify" "sweep" "release" "daily" "weekly")
+    "triage" "plan" "prepare" "verify" "sweep" "release" "daily" "weekly"
+    "read" "check" "walk" "report")
   "The phase vocabulary. Mirrors scripts/agent-state.
 
 Not divided by role in code - the fleet list shows whatever word a state
 file carries, in the State column, and a wrong word for the role in that
 column is not worth a per-role table in Elisp any more than in the script.
 By role, for reference: `build gate review ci rebase merge' belong to an
-implementer; `triage plan' to Xavier; `prepare verify' to Psylocke; `sweep',
-or `sweep release', to Moira and Cerebro; `daily weekly' to Forge.")
+implementer; `triage plan' to a planner; `prepare verify' to Psylocke; `sweep',
+or `sweep release', to Moira and Cerebro; `daily weekly' to Forge; and
+`read check walk report' to Cypher, whose work item is a pull request
+rather than a bead.")
 
 (defun cerebro--in-flight-p (state)
   "Whether STATE means a bead is still in flight under it."

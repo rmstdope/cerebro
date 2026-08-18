@@ -42,7 +42,7 @@ Sync symlinks into a consumer repo (run from that repo, not this one):
 
 ## The agent fleet these files describe
 
-Six roles, each an agent definition in `agents/`; most are backed by a skill in `skills/`. A role is
+Seven roles, each an agent definition in `agents/`; most are backed by a skill in `skills/`. A role is
 not a session count — **`planner` is held by two agents, Xavier and Beast** (`scripts/roster --role
 planner`), which is the one place a name and a role stop being interchangeable:
 
@@ -72,6 +72,15 @@ planner`), which is the one place a name and a role stop being interchangeable:
   `agents/verifier.md`. Walks beads merged since her last pass, judges which touched the application,
   prepares each verification before ever asking for the navigator's time, then briefs, launches and
   records their verdict. A failed verdict reopens the bead at P0 and sends it back to the fleet.
+- **Cypher** (`reviewer`, Opus/high) — loads no separate skill; its whole job lives in
+  `agents/reviewer.md`. Reviews **pull requests from outside the fleet** — anyone may open one — on
+  five questions: does it do what it says, does it fit the architecture, are the regression tests
+  enough, what does it cost the application and CI, and everything else a reviewer owes a project
+  (dependencies, secrets, error handling, docs, scope). Interactive by design: **every piece of user
+  experience the PR touches is looked at by the navigator, in the running application, before Cypher
+  recommends anything.** It comments and recommends; merging, approving and closing stay the
+  navigator's. It reviews a PR again when the head sha changes, and never touches the fleet's own
+  PRs, which have Copilot and the implementer's own gate.
 - **Forge** (`architect`, Opus/xhigh) — loads no separate skill either; its whole job lives
   in `agents/architect.md`. One sweep per session: reads what merged since its last sweep (daily) or
   the whole codebase (weekly), and files a `Refactoring:` bead at P4 for each smell that names a cost
@@ -118,6 +127,14 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   describes what it does when one comes back — Psylocke reopens it, a planner amends the plan if the
   plan was wrong, an implementer picks it up like any other P0, and Moira tells the reporter it was
   taken back. A change to any one of those has to keep the others consistent with it.
+- **An external PR is untrusted code, and reviewing it by building it runs it.** `agents/reviewer.md`
+  makes Cypher read the diff — `package.json` scripts, lockfiles, `build.rs`, `.github/`, test files
+  — *before* it builds or tests anything, ask the navigator when the PR changes any of them, and run
+  only in `.cerebro/worktrees/cypher`, never the shared checkout. It never pushes to a contributor's
+  branch and never commits in that worktree.
+- **The reviewer gates nothing by itself.** Cypher's review is a recommendation on somebody else's
+  PR; the navigator merges. Implementers are unaffected — their path is still Copilot plus the
+  standing approval in the consumer's CLAUDE.md.
 - **Forge files, never fixes.** It never edits `packages/`, `crates/`, `apps/` or `emacs/`, and a
   finding that cannot name a cost already being paid — a repeated fix, a change that touched several
   files, a retrospective, a misread module — is not filed at all.

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Checked, then synced, before every launch: `claude` is on PATH, this checkout is a
+# Checked, then synced, before every launch: `claude` is on PATH, the consumer's checkout
+# is current with origin/main so the session reads today's instructions rather than a
+# days-old copy of them (ah-puoj), this checkout is a
 # consumer's .claude/cerebro (sync and the submodule check are skipped otherwise - a
 # standalone clone has nothing to link into and no agent files of its own to check),
 # the submodule bump actually brought in this role's agent file, and the link it
@@ -38,6 +40,49 @@ parent="$consumer/.claude"                                    # .claude, in a co
 # layout it checks for is satisfied by construction) - require that $consumer is also a git
 # working tree's own toplevel, which a mere ~/.claude is not.
 [[ "$(git -C "$consumer" rev-parse --show-toplevel 2>/dev/null)" == "$consumer" ]] || exit 0
+
+# The tree these instructions are read from - CLAUDE.md, and the skills, which are symlinks into
+# whatever the submodule is pinned to here - is never refreshed by anything (ah-puoj). A session
+# started on a stale one describes a repository that no longer exists and cannot find that out. So
+# bring the checkout current when that can be done without writing over anybody's work, and refuse
+# when it cannot. This runs *before* the agent-file check below on purpose: a stale submodule is why
+# that check fires today, and its own message says so, so refreshing first turns that failure into a
+# success rather than a second error.
+#
+# Untracked files never block this: the consumer routinely carries some, and refusing on them would
+# refuse every launch.
+git -C "$consumer" fetch --quiet origin main 2>/dev/null || true   # offline is not staleness
+target="$(git -C "$consumer" rev-parse --verify --quiet FETCH_HEAD 2>/dev/null || echo "")"
+# Both sides are expanded before the test is evaluated, so `rev-parse HEAD` runs even when $target
+# is empty - hence the separate guard rather than one && condition, for a consumer with no commits.
+head=""
+[[ -n "$target" ]] && head="$(git -C "$consumer" rev-parse --verify --quiet HEAD 2>/dev/null || echo "")"
+if [[ -n "$target" && -n "$head" && "$head" != "$target" ]]; then
+  branch="$(git -C "$consumer" rev-parse --abbrev-ref HEAD)"
+  ahead="$(git -C "$consumer" rev-list --count "$target..HEAD" 2>/dev/null || echo 0)"
+  behind="$(git -C "$consumer" rev-list --count "HEAD..$target" 2>/dev/null || echo 0)"
+  if [[ "$branch" != "main" ]]; then
+    echo "cerebro: the checkout is on branch $branch, not main - the fleet's instructions are read from main; switch back before starting $name" >&2
+    exit 2
+  fi
+  if [[ -n "$(git -C "$consumer" status --porcelain --untracked-files=no)" ]]; then
+    echo "cerebro: the checkout is $behind commits behind origin/main and has uncommitted changes - commit or stash them, then git merge --ff-only origin/main, before starting $name" >&2
+    exit 2
+  fi
+  if [[ "$ahead" != "0" ]]; then
+    echo "cerebro: main has $ahead commits origin/main does not - push or reset them before starting $name" >&2
+    exit 2
+  fi
+  # The submodule is the file the skills are actually read through, so it moves with the branch - but
+  # somebody editing cerebro in place (which is how this check was built) must never be clobbered.
+  if [[ -d "$parent/cerebro/.git" || -f "$parent/cerebro/.git" ]] \
+     && [[ -n "$(git -C "$parent/cerebro" status --porcelain --untracked-files=no)" ]]; then
+    echo "cerebro: .claude/cerebro has uncommitted changes - commit or stash them before starting $name" >&2
+    exit 2
+  fi
+  git -C "$consumer" merge --ff-only "$target" --quiet
+  git -C "$consumer" submodule update --init --recursive --quiet
+fi
 
 if [[ ! -f "$parent/cerebro/agents/$role.md" ]]; then
   echo "cerebro: .claude/cerebro/agents/$role.md is missing - the submodule is behind; run git submodule update --init --recursive and try again" >&2

@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+#
+# Proves scripts/launch-preflight brings a consumer's checkout current before a session reads its
+# instructions from it, and refuses rather than writes when it cannot (ah-puoj). A session started
+# on a stale checkout reads CLAUDE.md and skills describing a repository that no longer exists, and
+# has no way to discover that.
+#
+# Every assertion runs against a fabricated consumer under `mktemp -d`, with its own `origin` - never
+# the checkout this is run from, which this feature would otherwise fast-forward as a side effect of
+# testing it (ah-dy4x is the same lesson from tests/launchers.sh).
+#
+# No framework: plain bash, set -euo pipefail, exit non-zero on the first failed assertion. Run from
+# the submodule root:
+#
+#     bash tests/launch-preflight.sh
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+fail() {
+  echo "FAIL: $1" >&2
+  exit 1
+}
+
+pass() {
+  echo "ok - $1"
+}
+
+work_dir="$(mktemp -d)"
+stub_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir" "$stub_dir"' EXIT
+
+# launch-preflight refuses before anything else when `claude` is not on PATH, and these cases are
+# about the checkout rather than the install. The stub is never executed - the preflight only looks
+# it up - but it must exist for any case to get past the first guard.
+cat > "$stub_dir/claude" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$stub_dir/claude"
+
+git_q() { git -c user.name=test -c user.email=test@example.com "$@"; }
+
+# --- a throwaway consumer with an origin it can be behind -----------------------------------------
+#
+# Each case builds its own: reusing one leaks an earlier case's fast-forward into a later one, and
+# the failure then reads as a logic bug in the script rather than in the fixture.
+#
+# make_consumer <name>  ->  echoes the consumer path; "$work_dir/<name>-up" is a clone of the same
+# origin, which a case pushes to when it wants the consumer to be behind.
+make_consumer() {
+  local name="$1"
+  local origin="$work_dir/$name-origin.git"
+  local consumer="$work_dir/$name"
+  local seed="$work_dir/$name-seed"
+
+  git init -q --bare -b main "$origin"
+  git init -q -b main "$seed"
+  echo one > "$seed/file.txt"
+  git_q -C "$seed" add file.txt
+  git_q -C "$seed" commit -q -m init
+  git_q -C "$seed" push -q "$origin" main
+
+  git clone -q "$origin" "$consumer"
+  mkdir -p "$consumer/.claude"
+  cp -R "$repo_root" "$consumer/.claude/cerebro"
+  rm -rf "$consumer/.claude/cerebro/.git"
+  git clone -q "$origin" "$work_dir/$name-up"
+  echo "$consumer"
+}
+
+# Adds <n> commits to the consumer's origin, so the consumer is behind by that many.
+advance_origin() {
+  local name="$1" n="$2" up="$work_dir/$1-up" i
+  for ((i = 0; i < n; i++)); do
+    echo "upstream $i" >> "$up/file.txt"
+    git_q -C "$up" commit -q -am "upstream $i"
+  done
+  git_q -C "$up" push -q origin main
+}
+
+# Runs the preflight the way a launcher does: from the consumer's own copy, so consumer-root resolves
+# to the fixture and nothing outside $work_dir is ever looked at.
+run_preflight() {
+  local consumer="$1"
+  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/launch-preflight" planner Xavier
+}
+
+head_of() { git -C "$1" rev-parse HEAD; }
+# The remote's real tip, read from the remote itself: the consumer's own origin/main ref is
+# exactly what a stale checkout has not fetched, so asserting against it would assert nothing.
+origin_head_of() { git -C "$1" ls-remote origin main | cut -f1; }
+
+# --- a current checkout launches ------------------------------------------------------------------
+c="$(make_consumer current)"
+before="$(head_of "$c")"
+run_preflight "$c" || fail "current: expected exit 0"
+[[ "$(head_of "$c")" == "$before" ]] || fail "current: HEAD moved"
+pass "a current checkout launches"
+
+# --- a behind but clean checkout is fast-forwarded ------------------------------------------------
+c="$(make_consumer behind)"
+advance_origin behind 2
+run_preflight "$c" || fail "behind: expected exit 0"
+[[ "$(head_of "$c")" == "$(origin_head_of "$c")" ]] \
+  || fail "behind: expected HEAD to be fast-forwarded to origin/main"
+pass "a behind but clean checkout is fast-forwarded"
+
+# --- an untracked file does not stop it -----------------------------------------------------------
+#
+# The consumer carries untracked files routinely (an unstaged agent definition, a scratch note);
+# refusing on them would refuse every launch, which is a worse failure than the one being fixed.
+c="$(make_consumer untracked)"
+advance_origin untracked 1
+echo scratch > "$c/scratch.txt"
+run_preflight "$c" || fail "untracked: expected exit 0"
+[[ "$(head_of "$c")" == "$(origin_head_of "$c")" ]] || fail "untracked: expected a fast-forward"
+[[ -f "$c/scratch.txt" ]] || fail "untracked: the untracked file was removed"
+pass "an untracked file does not stop it"
+
+# --- a dirty checkout is refused, and left exactly as it was ---------------------------------------
+c="$(make_consumer dirty)"
+advance_origin dirty 1
+echo "my edit" >> "$c/file.txt"
+before="$(head_of "$c")"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "dirty: expected exit 2, got $status"
+echo "$out" | grep -q "uncommitted changes" || fail "dirty: expected a message naming the changes, got: $out"
+[[ "$(head_of "$c")" == "$before" ]] || fail "dirty: HEAD moved"
+grep -q "my edit" "$c/file.txt" || fail "dirty: the edit was lost"
+pass "a dirty checkout is refused, and the edit survives"
+
+# --- a diverged checkout is refused ----------------------------------------------------------------
+c="$(make_consumer diverged)"
+advance_origin diverged 1
+echo mine > "$c/mine.txt"
+git_q -C "$c" add mine.txt
+git_q -C "$c" commit -q -m mine
+before="$(head_of "$c")"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "diverged: expected exit 2, got $status"
+echo "$out" | grep -q "origin/main does not" || fail "diverged: expected a message naming the commits, got: $out"
+[[ "$(head_of "$c")" == "$before" ]] || fail "diverged: HEAD moved"
+pass "a diverged checkout is refused, and the commit survives"
+
+# --- a checkout on another branch is refused --------------------------------------------------------
+c="$(make_consumer branch)"
+advance_origin branch 1
+git -C "$c" switch -q -c wip
+before="$(head_of "$c")"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "branch: expected exit 2, got $status"
+echo "$out" | grep -q "wip" || fail "branch: expected a message naming the branch, got: $out"
+[[ "$(head_of "$c")" == "$before" ]] || fail "branch: HEAD moved"
+pass "a checkout on another branch is refused"
+
+# --- a dirty submodule is refused, and its work survives ---------------------------------------------
+#
+# Somebody editing cerebro in place is exactly how this feature was built, and updating the submodule
+# under them would throw that work away.
+c="$(make_consumer submodule)"
+advance_origin submodule 1
+git init -q -b main "$c/.claude/cerebro"
+git_q -C "$c/.claude/cerebro" add -A
+git_q -C "$c/.claude/cerebro" commit -q -m "cerebro"
+echo "# work in progress" >> "$c/.claude/cerebro/scripts/launch-preflight"
+before="$(head_of "$c")"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "submodule: expected exit 2, got $status"
+echo "$out" | grep -q "uncommitted changes" || fail "submodule: expected a message naming the changes, got: $out"
+[[ "$(head_of "$c")" == "$before" ]] || fail "submodule: HEAD moved"
+grep -q "work in progress" "$c/.claude/cerebro/scripts/launch-preflight" \
+  || fail "submodule: the in-progress edit was lost"
+pass "a dirty submodule is refused, and its work survives"
+
+# --- no remote is not a failure ----------------------------------------------------------------------
+#
+# Offline, or a fresh clone with no origin, is not a staleness this can fix.
+c="$(make_consumer noremote)"
+git -C "$c" remote remove origin
+before="$(head_of "$c")"
+run_preflight "$c" || fail "no remote: expected exit 0"
+[[ "$(head_of "$c")" == "$before" ]] || fail "no remote: HEAD moved"
+pass "a checkout with no remote launches"
+
+# --- a standalone clone is untouched -------------------------------------------------------------------
+standalone="$work_dir/x/cerebro"
+mkdir -p "$work_dir/x"
+cp -R "$repo_root" "$standalone"
+rm -rf "$standalone/.git"
+PATH="$stub_dir:$PATH" bash "$standalone/scripts/launch-preflight" planner Xavier \
+  || fail "standalone: expected exit 0"
+pass "a standalone clone is untouched"
+
+echo "all launch-preflight tests passed"

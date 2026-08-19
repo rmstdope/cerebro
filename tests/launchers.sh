@@ -6,6 +6,10 @@
 # a second implementer claiming an already-held bead fails instead of silently aliasing into the
 # first (see ah-rnz).
 #
+# Every assertion runs against a fabricated consumer under `mktemp -d`, never the checkout this is
+# run from: the suite used to read that machine's uncommitted `.cerebro/models.conf` and write
+# symlinks into its `.claude/` (ah-dy4x). Nothing here should ever touch the enclosing tree.
+#
 # No framework: plain bash, set -euo pipefail, exit non-zero on the first failed assertion. Run from
 # the submodule root:
 #
@@ -39,20 +43,41 @@ done
 STUB
 chmod +x "$stub_dir/claude"
 
-run_launcher() {
-  # Runs a launcher with the stub claude first on PATH, and never lets a real `claude` be found even
-  # if the stub exec somehow failed to intercept it.
-  PATH="$stub_dir:$PATH" bash "$repo_root/scripts/$1" "${@:2}"
-}
+# --- the one consumer any assertion ever sees ---------------------------------------------------
+#
+# Every launcher case used to run `$repo_root/scripts/...` - the real submodule inside the real
+# enclosing checkout - so the suite asserted against that machine's uncommitted
+# `.cerebro/models.conf`, was red on the navigator's machine and green in CI, and *wrote symlinks
+# into their `.claude/`* as a side effect of running (ah-dy4x). A throwaway consumer removes all
+# three at once: no models.conf unless a case writes one, no dependence on where the suite is run
+# from, and every write lands in a temp directory.
+#
+# `git init` matters: launch-preflight compares `git rev-parse --show-toplevel` against the consumer
+# and skips its checks entirely when they differ, so a fixture that is not a working tree would make
+# these cases silently assert nothing.
+fixture_dir="$(mktemp -d)"
+trap 'rm -rf "$stub_dir" "$fixture_dir"' EXIT
+git init -q "$fixture_dir"
+mkdir -p "$fixture_dir/.claude"
+cp -R "$repo_root" "$fixture_dir/.claude/cerebro"
+rm -rf "$fixture_dir/.claude/cerebro/.git"
+fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
 
 run_launcher_at() {
-  # Like run_launcher, but against a launcher living at an arbitrary scripts directory — used to
-  # prove a launcher syncs the symlinks of the consumer repo it is actually running from, not this
-  # checkout (ah-cuc).
+  # Runs a launcher living at an arbitrary scripts directory, with the stub claude first on PATH and
+  # never letting a real `claude` be found even if the stub exec somehow failed to intercept it.
+  # `consumer-root` resolves from the launcher's own location, so the scripts directory is what
+  # decides which consumer is written to - which is why this is the only way a launcher is run here.
   local scripts_dir="$1"
   local name="$2"
   shift 2
   PATH="$stub_dir:$PATH" bash "$scripts_dir/$name" "$@"
+}
+
+run_launcher() {
+  # Against the fabricated consumer, never the enclosing one. `run_launcher_at` already existed for
+  # exactly this (ah-cuc); this makes it the only way in.
+  run_launcher_at "$fixture_scripts" "$@"
 }
 
 model_of() {
@@ -285,8 +310,12 @@ echo "$out" | grep -q '^BEADS_ACTOR=' && fail "run-implementer bishop: should ne
 pass "run-implementer bishop exits 2, never reaches the stub"
 
 # --- a launcher syncs the consumer repo's links before starting a session (ah-cuc) ---
+#
+# A consumer of its own, deliberately: this case asserts a link that did *not* exist beforehand, and
+# the cases below it write `.cerebro/models.conf`, which the fixture above must never have. Two temp
+# directories is the test being honest, not duplication - what had to go is the *enclosing* checkout.
 consumer_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$consumer_dir"' EXIT
+trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir"' EXIT
 git init -q "$consumer_dir"
 mkdir -p "$consumer_dir/.claude"
 cp -R "$repo_root" "$consumer_dir/.claude/cerebro"
@@ -384,13 +413,13 @@ pass "a blocked sync aborts the launch before the stub is reached"
 # reaches launch-preflight's own `claude` check - so this cannot pass on a machine that
 # happens to have `claude` installed under /usr/bin or /bin.
 no_claude_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$consumer_dir" "$no_claude_dir"' EXIT
+trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir" "$no_claude_dir"' EXIT
 ln -s "$(command -v dirname)" "$no_claude_dir/dirname"
 # launch-preflight is exec'd directly (its own `#!/usr/bin/env bash' shebang), so `env'
 # needs to find `bash' under this PATH too, not only the shell invoking launch below.
 ln -s "$(command -v bash)" "$no_claude_dir/bash"
 set +e
-out="$(PATH="$no_claude_dir" "$(command -v bash)" "$repo_root/scripts/launch" Forge 2>&1)"
+out="$(PATH="$no_claude_dir" "$(command -v bash)" "$fixture_scripts/launch" Forge 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "launch Forge (claude missing): expected exit 2, got $status"
@@ -399,8 +428,11 @@ echo "$out" | grep -q "claude is not on PATH" \
 pass "launch Forge refuses with one line when claude is not on PATH"
 
 # --- submodule behind: the role's agent file never arrived, refused before any sync (ah-bri) ---
+#
+# Its own consumer again: this one has an agent file removed from its copy of the submodule, so it
+# cannot share a consumer with anything that expects a complete one.
 consumer_dir2="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$no_claude_dir" "$consumer_dir" "$consumer_dir2"' EXIT
+trap 'rm -rf "$stub_dir" "$fixture_dir" "$no_claude_dir" "$consumer_dir" "$consumer_dir2"' EXIT
 git init -q "$consumer_dir2"
 mkdir -p "$consumer_dir2/.claude"
 cp -R "$repo_root" "$consumer_dir2/.claude/cerebro"

@@ -56,12 +56,12 @@ chmod +x "$stub_dir/claude"
 # and skips its checks entirely when they differ, so a fixture that is not a working tree would make
 # these cases silently assert nothing.
 fixture_dir="$(mktemp -d)"
+trap 'rm -rf "$stub_dir" "$fixture_dir"' EXIT
 git init -q "$fixture_dir"
 mkdir -p "$fixture_dir/.claude"
 cp -R "$repo_root" "$fixture_dir/.claude/cerebro"
 rm -rf "$fixture_dir/.claude/cerebro/.git"
 fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
-trap 'rm -rf "$stub_dir" "$fixture_dir"' EXIT
 
 run_launcher_at() {
   # Runs a launcher living at an arbitrary scripts directory, with the stub claude first on PATH and

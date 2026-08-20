@@ -3130,3 +3130,71 @@ shell can remove it between a check and the delete."
 
 (provide 'cerebro-test)
 ;;; cerebro-test.el ends here
+
+;; ---------------------------------------------------------------------------
+;; ah-hiib.2: the History section - a renderer over `scripts/fleet-history --summary'
+
+(ert-deftest cerebro-test/history-section-renders-what-is-running-now ()
+  "Per agent, the state it is in and how long it has been there. The rows come
+from the script; nothing here shells out or computes a duration."
+  (let ((lines (cerebro--history-section
+                '(((agent . "Cyclops") (state . "working") (count . 12)
+                   (total_min . 300) (median_min . 20) (max_min . 90) (open_min . 21))
+                  ((agent . "Storm") (state . "asking") (count . 3)
+                   (total_min . 330) (median_min . 20) (max_min . 300) (open_min . 300))))))
+    (should (equal "History" (substring-no-properties (car lines))))
+    (should (= 3 (length lines)))
+    (should (string-match-p "Cyclops" (nth 1 lines)))
+    (should (string-match-p "working" (nth 1 lines)))
+    (should (string-match-p "21m" (nth 1 lines)))))
+
+(ert-deftest cerebro-test/history-section-marks-an-interval-that-has-run-long ()
+  "The point of the whole family: an interval past what is typical for that
+state is marked, and one merely past the median is not - the median is
+exceeded half the time by construction, so marking on it would mark half of
+every ordinary day."
+  (let* ((lines (cerebro--history-section
+                 '(((agent . "Cyclops") (state . "working") (median_min . 20) (open_min . 21)
+                    (count . 12) (total_min . 300) (max_min . 90))
+                   ((agent . "Storm") (state . "asking") (median_min . 20) (open_min . 300)
+                    (count . 3) (total_min . 330) (max_min . 300)))))
+         (typical (substring-no-properties (nth 1 lines)))
+         (long (substring-no-properties (nth 2 lines))))
+    (should-not (string-match-p "long" typical))
+    (should (string-match-p "long" long))
+    (should (string-match-p "median 20m" long))))
+
+(ert-deftest cerebro-test/history-section-shows-nothing-at-all-when-nothing-is-running ()
+  "No rows, or rows with nothing open, render no header and no line - the same
+judgement `cerebro--sweep-section' makes, and for the same reason: a section
+printing \"(none)\" every five minutes is noise."
+  (should (null (cerebro--history-section nil)))
+  (should (null (cerebro--history-section
+                 '(((agent . "Cyclops") (state . "working") (count . 12)
+                    (total_min . 300) (median_min . 20) (max_min . 90) (open_min . nil)))))))
+
+(ert-deftest cerebro-test/history-does-not-recompute-inside-its-interval ()
+  "The tick is five seconds and a log can be large, so the History section runs
+the script on a cadence of its own. A second tick inside that interval must not
+re-run it."
+  (should (cerebro--due-p nil cerebro-history-refresh-seconds 1000.0))
+  (should-not (cerebro--due-p 1000.0 cerebro-history-refresh-seconds
+                              (+ 1000.0 (- cerebro-history-refresh-seconds 1))))
+  (should (cerebro--due-p 1000.0 cerebro-history-refresh-seconds
+                          (+ 1000.0 cerebro-history-refresh-seconds))))
+
+(ert-deftest cerebro-test/history-keeps-the-last-rows-when-the-script-does-not-answer ()
+  "A corrupt log or a missing script leaves the section as it was rather than
+replacing a real answer with an empty one - the same rule the sweeps follow."
+  (let ((buffer (get-buffer-create "*cerebro-test-history-no-answer*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                  ((symbol-function 'cerebro--request-history)
+                   (lambda (_root callback) (funcall callback nil) 'started)))
+          (with-current-buffer buffer
+            (cerebro-beads-mode)
+            (setq cerebro--history-rows '(((agent . "Cyclops") (state . "working") (open_min . 5))))
+            (cerebro--history buffer)
+            (should (equal cerebro--history-rows
+                           '(((agent . "Cyclops") (state . "working") (open_min . 5)))))))
+      (kill-buffer buffer))))

@@ -472,7 +472,7 @@ still has to say how much work is really in it."
        (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
 
 (defun cerebro--bead-panel (claimed planned being-planned unplanned merged width max
-                                    &optional sweep-findings)
+                                    &optional sweep-findings history-rows)
   "The whole panel as a list of lines.
 
 The order work moves in, read backwards, and it stops where the fleet's part
@@ -491,7 +491,11 @@ Verified work is not here. Neither is anything nobody can pick up. See
 
 SWEEP-FINDINGS, when given, adds a Sweeps section at the bottom (see
 `cerebro--sweep-section') - what the claims and epics sweeps found, each
-one a candidate for `x' rather than something already decided."
+one a candidate for `x' rather than something already decided.
+
+HISTORY-ROWS, when given, adds a History section below that (see
+`cerebro--history-section') - what each agent is doing right now, how long
+it has been doing it, and whether that is long by its own standards."
   (append (cerebro--bead-section "Claimed" claimed width max) (list "")
           (cerebro--bead-section "Planned, unclaimed" planned width max) (list "")
           (cerebro--bead-section "Being planned" being-planned width max) (list "")
@@ -501,7 +505,9 @@ one a candidate for `x' rather than something already decided."
           (cerebro--bead-section "Merged, unverified" merged width max
                                  #'cerebro--sort-recent)
           (let ((sweep-lines (cerebro--sweep-section sweep-findings)))
-            (when sweep-lines (cons "" sweep-lines)))))
+            (when sweep-lines (cons "" sweep-lines)))
+          (let ((history-lines (cerebro--history-section history-rows)))
+            (when history-lines (cons "" history-lines)))))
 
 ;;; The Sweeps section (ah-4ao): claims and epics found by the sweep scripts
 
@@ -539,6 +545,54 @@ for a sweep that found nothing."
   (when findings
     (cons (propertize "Sweeps" 'face 'bold)
           (mapcar (lambda (f) (cerebro--sweep-line (car f) (cdr f))) findings))))
+
+;;; The History section (ah-hiib.2): how long the fleet has been where it is
+
+(defvar cerebro-history-long-multiple 2
+  "How many times its own median an open interval must reach to be marked long.
+
+Not one. An interval is past the median half the time by construction, so a
+mark that fired on the median would fire on half of every ordinary day and
+stop meaning anything. Twice the typical stretch in that state is a genuine
+outlier and is worth a word.")
+
+(defun cerebro--history-row-line (row)
+  "One History line for ROW, one summary row from `scripts/fleet-history', or
+nil when that row has nothing running.
+
+Only the open interval is shown: the aggregates are what say whether it is
+unusual, not what the navigator is being told. A row whose open_min is null
+describes a state the agent is not in at the moment, and has no line."
+  (let-alist row
+    (when .open_min
+      (let* ((median (and .median_min (> .median_min 0) .median_min))
+             (long (and median (>= .open_min (* cerebro-history-long-multiple median))))
+             (text (format "  %s %s %sm%s"
+                           .agent .state (round .open_min)
+                           (if long (format " - long, median %sm" (round median)) ""))))
+        (if long (propertize text 'face 'warning) text)))))
+
+(defun cerebro--history-section (rows)
+  "Lines for the History section. ROWS is the parsed summary output of
+`scripts/fleet-history': one row per agent and state, each carrying that
+pair's count, total, median and longest, plus open_min when the agent is in
+that state right now.
+
+A pure function - it renders what the script computed and computes nothing
+itself, which is what keeps this off the five-second tick and testable
+without a subprocess.
+
+An agent whose session ended without a final transition keeps an open
+interval and so keeps a line, growing. That is not a defect to filter out:
+an interval nobody closed is exactly the shape a stall has, and one that has
+been open for a day says so in the only place anybody is looking.
+
+Nil - no header, nothing at all - when nothing is running, exactly as
+`cerebro--sweep-section' does and for the same reason: a section saying
+\"(none)\" every five minutes is the noise `orchestrator.md' warns against."
+  (let ((lines (delq nil (mapcar #'cerebro--history-row-line rows))))
+    (when lines
+      (cons (propertize "History" 'face 'bold) lines))))
 
 (defun cerebro--live-implementer-names (repo-root)
   "Implementer names with a live session right now, in REPO-ROOT.
@@ -680,6 +734,27 @@ something that is not JSON. Returns `busy' if a sweep is already out."
                               (and (not (eq epics-parsed cerebro--parse-failed))
                                    (list (cerebro--findings-from
                                           repo-root claims-parsed epics-parsed))))))))))))))
+
+(defun cerebro--request-history (repo-root callback)
+  "Run `scripts/fleet-history --summary' without blocking; CALLBACK gets the
+parsed rows when it answered with JSON, and nil when it did not - the script
+missing, a corrupt log, or a timeout. Returns `busy' if one is already out.
+
+All the arithmetic is the script's: the panel is a renderer, so a large log
+can never be read on the five-second tick and a terminal question and this
+section can never disagree about what a duration is."
+  (cerebro--run-async
+   'fleet-history repo-root
+   (list (expand-file-name (cerebro--script "fleet-history") repo-root) "--summary")
+   (lambda (out)
+     (funcall callback
+              (and out
+                   (let ((parsed (cerebro--try-parse-json out)))
+                     (and (not (eq parsed cerebro--parse-failed))
+                          ;; Wrapped, so "answered with nothing" survives the
+                          ;; trip as distinct from "did not answer" - the
+                          ;; caller keeps its last rows only for the latter.
+                          (list parsed))))))))
 
 (defun cerebro--finding-at-point ()
   "The sweep finding on this line, or nil."
@@ -1830,7 +1905,8 @@ does."
             (beads (or cerebro--beads (list nil nil nil nil nil)))
             (lines (apply #'cerebro--bead-panel
                           (append beads (list width cerebro-beads-per-section)
-                                  (list cerebro--sweep-findings))))
+                                  (list cerebro--sweep-findings)
+                                  (list cerebro--history-rows))))
             ;; By id, not by position: the panel redraws every thirty seconds
             ;; and a bead landing above the selected one would otherwise slide
             ;; the mark onto whatever row took its line.
@@ -1910,6 +1986,45 @@ out is left to finish rather than joined by a second - see
                (setq cerebro--sweep-findings (car answer))))
            (cerebro--draw-beads buffer)))))))
 
+(defvar cerebro-history-refresh-seconds 300
+  "How often the History section re-runs `scripts/fleet-history'.
+
+Five minutes: it reads a log that may hold weeks of transitions, and the
+distribution it computes moves slowly, while the fleet tick is five seconds.
+Recomputing on the tick would make the whole fleet view stutter, and it
+would be blamed on Emacs.")
+
+(defvar-local cerebro--history-rows nil
+  "The summary rows as of the last `cerebro--history', or nil before the first.
+What `cerebro--draw-beads' renders the History section from - the render
+never gathers this itself, for the reason in `cerebro-history-refresh-seconds'.")
+
+(defvar-local cerebro--history-at nil
+  "`float-time' of the last timed history refresh of this panel, or nil.")
+
+(defvar-local cerebro--history-requested-at nil
+  "`float-time' of the history run now in flight, or nil when none is.")
+
+(defun cerebro--history (buffer)
+  "Re-run `scripts/fleet-history' for BUFFER without blocking; when it answers,
+keep the rows and redraw.
+
+A run that does not answer leaves the last rows standing: a corrupt log or a
+missing script must not quietly replace real numbers with an empty section,
+which would say every agent is idle when the query simply broke."
+  (when (and (buffer-live-p buffer)
+             (not (with-current-buffer buffer cerebro--history-requested-at)))
+    (with-current-buffer buffer (setq cerebro--history-requested-at (float-time)))
+    (let ((root (with-current-buffer buffer (cerebro--repo-root))))
+      (cerebro--request-history
+       root
+       (lambda (answer)
+         (when (buffer-live-p buffer)
+           (with-current-buffer buffer
+             (setq cerebro--history-requested-at nil)
+             (when answer (setq cerebro--history-rows (car answer))))
+           (cerebro--draw-beads buffer)))))))
+
 (defvar cerebro-beads-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
@@ -1967,8 +2082,10 @@ buffer on its own cadences once the fleet buffer's tick is running (ah-6uo)."
         ;; errors synchronously (program missing) must not stop the fleet
         ;; view opening.
         (with-demoted-errors "cerebro: %S" (cerebro--sweep buffer))
+        (with-demoted-errors "cerebro: %S" (cerebro--history buffer))
         (with-demoted-errors "cerebro: %S" (cerebro--beads-render buffer))
-        (setq cerebro--swept-at (float-time))))
+        (setq cerebro--swept-at (float-time)
+              cerebro--history-at (float-time))))
     buffer))
 
 ;;; The buffer
@@ -2121,6 +2238,9 @@ avoid by coupling them the way an earlier version did (a sweep costs no
     (when (cerebro--due-p cerebro--swept-at cerebro-sweep-refresh-seconds seconds)
       (setq cerebro--swept-at seconds)
       (cerebro--sweep panel))
+    (when (cerebro--due-p cerebro--history-at cerebro-history-refresh-seconds seconds)
+      (setq cerebro--history-at seconds)
+      (cerebro--history panel))
     (when (cerebro--due-p cerebro--beads-rendered-at cerebro-beads-refresh-seconds seconds)
       (setq cerebro--beads-rendered-at seconds)
       (cerebro--beads-render panel))))

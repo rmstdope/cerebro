@@ -5,7 +5,10 @@
 #
 #     .claude/cerebro/scripts/sweep-stalled.sh --json
 #
-# This script never mutates anything - no `bd`, no git write of any kind. Like its two siblings it
+# This script never mutates anything a decision could rest on - no `bd`, no working tree or checkout
+# touched, no ref moved. It does run `git fetch origin main`, exactly as `sweep-claims.sh` does,
+# which updates that one remote-tracking ref and nothing else; measuring against a stale
+# `origin/main` would be measuring against a branch point that has moved. Like its two siblings it
 # only gathers facts, so that a pure elisp function (`cerebro--stalled-finding') can turn them into
 # a decision and a human confirms that decision before anything runs. Keeping this file read-only
 # is what makes that guarantee checkable at a glance: the only path to a `bd unclaim' is the

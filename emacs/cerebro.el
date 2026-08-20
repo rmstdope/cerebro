@@ -561,9 +561,9 @@ be swept as one Emacs started."
 
 (defun cerebro--live-session-states (repo-root)
   "The (NAME . STATE-SYMBOL) alist for every implementer with a live session
-in REPO-ROOT. A name is present exactly when its pid is alive, whatever its
-state file says - including when the file will not parse at all, in which
-case the state is nil and the name is still there.
+in REPO-ROOT. A name is present exactly when its state file parses and its pid is alive,
+whatever that file says about state - a file with no `state\=' key, or one
+this version does not recognise, still puts the name here with a nil state.
 
 `cerebro--live-implementer-names\=' is the same read without the states;
 `cerebro--findings-from\=' derives both from one call to this."
@@ -1037,9 +1037,9 @@ already nudges it; there is no age to judge; or the age is inside the
 threshold - which includes every bead sitting in CI.
 
 Membership is tested with `assoc\=', not by the state being non-nil: a live
-session whose state file will not parse has a nil state and must still count
-as live, or an unreadable file would become a finding against a working
-implementer."
+session whose state file carries no `state\=' key reaches here with a nil
+state and must still count as live, or a half-written file would become a
+finding against a working implementer."
   (ignore now)
   (let-alist candidate
     (let ((state (cdr (assoc .assignee live-states))))

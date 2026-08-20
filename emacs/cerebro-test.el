@@ -2390,9 +2390,10 @@ the threshold exists to tolerate."
                  '(unclaim "ah-x1"))))
 
 (ert-deftest cerebro-test/stalled-finding-counts-an-unreadable-state-file-as-live ()
-  "A live session whose state file will not parse has a nil state, and must
-still count as live - testing the state rather than membership would turn a
-corrupt file into a finding against a working implementer."
+  "A live session that reaches here with a nil state - its state file parsed
+but carries no `state\=' key, or one this version does not recognise - must
+still count as live. Testing the state rather than membership would turn a
+half-written file into a finding against a working implementer."
   (should (equal (cerebro--stalled-finding
                   (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300)
                   '(("Cyclops" . nil)) (current-time))

@@ -161,3 +161,58 @@ jq -n \
   }' > "$tmp_file"
 
 mv -f "$tmp_file" "$out_file"
+
+# --- The transition log (ah-hiib.1) -------------------------------------------------------------
+# Every invocation appends one line to the shared, append-only .cerebro/state/transitions.jsonl,
+# so the fleet keeps a record of what it did rather than only what it is doing. `changed` is true
+# when state or bead differs from the previous file, which is what lets a reader tell "still
+# working" (a run of changed:false lines) from "no longer reporting" (no lines at all). `from` is
+# null on an agent's very first write: a fresh session is not a transition.
+#
+# The log is under .cerebro/, which is git-ignored, so it is LOCAL TO THIS MACHINE and does not
+# survive a fresh clone. It is an operational record, not project history.
+#
+# Atomicity: `>>` opens with O_APPEND, so the kernel positions every write at the current end of
+# file and two agents appending at once cannot overwrite one another; the line is built by a single
+# `jq -c -n` and emitted by a single `printf`, so one line is one write(2) and cannot be split by
+# another writer. That holds for the local disk the fleet runs on; it is not a promise about NFS.
+#
+# Deliberately last, and deliberately unable to fail: the state file above is what the fleet view
+# reads, and an agent must never be brought down by a full disk or an unwritable log. The `|| true`
+# under `set -e` is the point, not an oversight.
+log_file="$out_dir/transitions.jsonl"
+log_max_bytes=5242880          # 5 MB, then one generation is kept as transitions.1.jsonl
+
+{
+  log_size="$(wc -c < "$log_file" 2>/dev/null | tr -d ' ' || true)"
+  if [[ -n "${log_size:-}" && "$log_size" -gt "$log_max_bytes" ]]; then
+    mv -f "$log_file" "$out_dir/transitions.1.jsonl"
+  fi
+
+  changed=false
+  if [[ "$prev_state" != "$state" || "$prev_bead" != "$bead" ]]; then
+    changed=true
+  fi
+
+  line="$(jq -c -n \
+    --arg ts "$now" \
+    --arg agent "$name" \
+    --arg from "$prev_state" \
+    --arg to "$state" \
+    --arg phase "$phase" \
+    --arg bead "$bead" \
+    --arg pid "$pid" \
+    --argjson changed "$changed" \
+    '{
+      ts: $ts,
+      agent: $agent,
+      from: (if $from == "" then null else $from end),
+      to: $to,
+      phase: (if $phase == "" then null else $phase end),
+      bead: (if $bead == "" then null else $bead end),
+      pid: ($pid | tonumber),
+      changed: $changed
+    }')"
+
+  printf '%s\n' "$line" >> "$log_file"
+} 2>/dev/null || true

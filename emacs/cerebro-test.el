@@ -2349,7 +2349,81 @@ close inside ten minutes is one still mid-cleanup."
 leave it rather than guess."
   (should (null (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" nil)))))
 
-(ert-deftest cerebro-test/finding-command-covers-only-the-three-shapes ()
+(defun cerebro-test--stalled-candidate (id assignee age &optional source branch)
+  `((id . ,id) (assignee . ,assignee) (title . "a bead")
+    (branch . ,branch)
+    (progress_age_min . ,age)
+    (progress_source . ,(or source "commit"))))
+
+(ert-deftest cerebro-test/stalled-finding-leaves-a-bead-no-live-session-holds ()
+  "A claim whose session is gone is the claims sweep's case, not this one's -
+offering it here as well would put two lines in front of the navigator for
+one bead."
+  (should (null (cerebro--stalled-finding
+                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300)
+                 nil (current-time)))))
+
+(ert-deftest cerebro-test/stalled-finding-leaves-an-asking-session ()
+  "`asking' means blocked and said so; `cerebro--supervise-action' already
+nudges it, and two mechanisms firing on one session is noise."
+  (should (null (cerebro--stalled-finding
+                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300)
+                 '(("Cyclops" . asking)) (current-time)))))
+
+(ert-deftest cerebro-test/stalled-finding-leaves-a-bead-inside-the-threshold ()
+  "Forty minutes of silence is a bead sitting in CI, which is exactly what
+the threshold exists to tolerate."
+  (should (null (cerebro--stalled-finding
+                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 40)
+                 '(("Cyclops" . working)) (current-time)))))
+
+(ert-deftest cerebro-test/stalled-finding-leaves-a-bead-with-no-age ()
+  "No age is no evidence - leave it rather than guess."
+  (should (null (cerebro--stalled-finding
+                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" nil)
+                 '(("Cyclops" . working)) (current-time)))))
+
+(ert-deftest cerebro-test/stalled-finding-offers-a-live-session-past-the-threshold ()
+  (should (equal (cerebro--stalled-finding
+                  (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300)
+                  '(("Cyclops" . working)) (current-time))
+                 '(unclaim "ah-x1"))))
+
+(ert-deftest cerebro-test/stalled-finding-counts-an-unreadable-state-file-as-live ()
+  "A live session whose state file will not parse has a nil state, and must
+still count as live - testing the state rather than membership would turn a
+corrupt file into a finding against a working implementer."
+  (should (equal (cerebro--stalled-finding
+                  (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300)
+                  '(("Cyclops" . nil)) (current-time))
+                 '(unclaim "ah-x1"))))
+
+(ert-deftest cerebro-test/stalled-label-names-which-measurement-it-used ()
+  "Commit and claim mean different things to a reader, so the line says
+which one the age came from."
+  (should (string-match-p
+           "no commit for 300m"
+           (cerebro--sweep-label '(unclaim "ah-x1")
+                                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300))))
+  (should (string-match-p
+           "no start for 300m"
+           (cerebro--sweep-label '(unclaim "ah-x1")
+                                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300 "claim")))))
+
+(ert-deftest cerebro-test/findings-from-returns-all-three-sweeps ()
+  "The stalled sweep is wired in beside the other two, and each keeps its
+own behaviour."
+  (cl-letf (((symbol-function 'cerebro--live-session-states)
+             (lambda (_root) '(("Cyclops" . working)))))
+    (let ((findings (cerebro--findings-from
+                     "/repo"
+                     (list (cerebro-test--claim-candidate "ah-c1" "Storm" nil nil nil nil 30))
+                     (list (cerebro-test--epic-candidate "ah-e1" 30))
+                     (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300)))))
+      (should (equal (mapcar #'cdr findings)
+                     '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")))))))
+
+(ert-deftest cerebro-test/finding-command-covers-only-the-known-shapes ()
   "This function is the complete list of destructive commands the fleet
 view can run - so its total output range has to be pinned, not just its
 happy path."
@@ -2359,6 +2433,11 @@ happy path."
                  '("bd" "reclaim" "--id" "ah-x1" "--older-than" "10m")))
   (should (equal (cerebro--finding-command '(epic-close "ah-e1") "/repo")
                  '("bd" "close" "ah-e1")))
+  ;; `bd unclaim', not `bd reclaim --older-than': reclaim's window is about a
+  ;; session that is gone, and would refuse a bead whose lease is still being
+  ;; heartbeated by the very session that has stopped moving.
+  (should (equal (cerebro--finding-command '(unclaim "ah-x1") "/repo")
+                 '("bd" "unclaim" "ah-x1")))
   (should (null (cerebro--finding-command nil "/repo")))
   (should-error (cerebro--finding-command '(unknown-shape "ah-x1") "/repo")))
 

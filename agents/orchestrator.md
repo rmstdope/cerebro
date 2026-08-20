@@ -505,6 +505,48 @@ on its way out, the same as any other bead (see `implement-bead`). Neither of th
 — the "all children closed, nothing closed in the last ten minutes" test above already leaves a
 parent alone for as long as one child is genuinely open, reopened or not.
 
+## Claims held by a session that has stopped moving
+
+**The fleet view detects these too** (`ah-4xm4`), on the same ten-minute timer as the other two:
+`sweep-stalled.sh` reports how long every `in_progress` bead has gone without a sign of progress,
+the Sweeps section shows a line once that passes an hour, and `x` runs the `bd unclaim` shown, on
+confirmation. `cerebro--stalled-finding` enforces the guards below; this prose is what it was built
+from.
+
+The fourth thing a sweep looks for, and the one the other three cannot see. The claims sweep above
+keys on a *dead* session — `assignee` off the live roster, plus an expired lease. An implementer
+that ended its turn waiting for something that never came is neither: its pid exists, so it counts
+as live and the claims sweep steps over it, and its lease is heartbeated or expires under a name
+that is still on the roster. Over the 72 hours to 2026-08-20 four such beads held 21.7 hours of
+claim between them — nearly as much as the entire working fleet spent on the 36 beads that ran
+cleanly — and nothing noticed any of them.
+
+**The signal is progress, not elapsed time.** A bead legitimately sits quiet for forty minutes in
+CI. What separates that from a parked one is time since the last commit on the bead's own branch,
+measured `origin/main..HEAD` from a worktree under `.cerebro/worktrees/`, falling back to the claim
+itself (`started_at`) when the branch has no commit of its own yet. Every one of those 36 clean
+beads made its first commit 6 to 36 minutes after being claimed; the four parked ones sat 2.3 hours
+or more. Sixty minutes separates them with no false positive in that window, which is where
+`cerebro--stalled-minutes` comes from.
+
+Three guards, each of which is a case the sweep must stay out of:
+
+- **Nobody live holds it.** That is the claims sweep's bead, not this one's; offering it here as
+  well would put two lines in front of the navigator for one bead.
+- **The session is `asking`.** It is blocked and it said so, and `cerebro--supervise-action` already
+  nudges it after fifteen minutes. Two mechanisms firing on one session is noise.
+- **No age to judge, or an age inside the hour.** Including every bead sitting in CI.
+
+`bd unclaim`, not `bd reclaim --older-than`: reclaim's window is about a session that is *gone*, and
+would refuse a bead whose lease the stalled session is still heartbeating.
+
+**What this buys, and what it does not.** Unclaiming releases the bead so another session can take
+it. It does **not** answer whatever question the stalled implementer was stuck on, and it does not
+end that session — the implementer keeps whatever it was holding, and the navigator may still want
+to look at its terminal. Nor does a released bead become throughput on its own: it is only worth
+something when there is a session free to pick it up. Report every claim you released, and say which
+implementer was on it, so the navigator can go and see what it was waiting for.
+
 ## Staying alive between questions
 
 **Retired by `ah-4ao`.** The fleet view (`emacs/cerebro.el`) now runs the worktree, claims and epics

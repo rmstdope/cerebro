@@ -298,4 +298,116 @@ state="$(jq -r '.state' "$f")"; [[ "$state" == "working" ]] \
 rm -rf "$tmp"
 pass "from-a-worktree-copy-writes-to-the-shared-checkout"
 
+# --- transition-log: a transition appends one line to the log (ah-hiib.1) ---
+log_file() {
+  printf '%s/.cerebro/state/transitions.jsonl' "$1"
+}
+
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 42
+l="$(log_file "$tmp")"
+[[ -f "$l" ]] || fail "transition-log-appends: no log written"
+[[ "$(wc -l < "$l" | tr -d ' ')" == "1" ]] || fail "transition-log-appends: expected one line"
+jq -e . "$l" >/dev/null || fail "transition-log-appends: line does not parse as JSON"
+[[ "$(jq -r '.agent' "$l")" == "Cyclops" ]] || fail "transition-log-appends: agent"
+[[ "$(jq -r '.to' "$l")" == "working" ]] || fail "transition-log-appends: to"
+[[ "$(jq -r '.phase' "$l")" == "build" ]] || fail "transition-log-appends: phase"
+[[ "$(jq -r '.bead' "$l")" == "ah-f9c" ]] || fail "transition-log-appends: bead"
+[[ "$(jq -r '.pid' "$l")" == "42" ]] || fail "transition-log-appends: pid"
+jq -r '.ts' "$l" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+  || fail "transition-log-appends: ts is not ISO-8601 Z"
+rm -rf "$tmp"
+pass "transition-log-appends"
+
+# --- transition-log: the first write records a null from ---
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops idle --pid 42
+l="$(log_file "$tmp")"
+[[ "$(jq -r '.from' "$l")" == "null" ]] || fail "transition-log-first-from-null: from=$(jq -r '.from' "$l")"
+[[ "$(jq -r '.changed' "$l")" == "true" ]] || fail "transition-log-first-from-null: changed should be true"
+rm -rf "$tmp"
+pass "transition-log-first-from-null"
+
+# --- transition-log: a state change records both states ---
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops idle --pid 42
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 42
+l="$(log_file "$tmp")"
+[[ "$(wc -l < "$l" | tr -d ' ')" == "2" ]] || fail "transition-log-records-both-states: expected two lines"
+last="$(tail -1 "$l")"
+[[ "$(jq -r '.from' <<<"$last")" == "idle" ]] || fail "transition-log-records-both-states: from"
+[[ "$(jq -r '.to' <<<"$last")" == "working" ]] || fail "transition-log-records-both-states: to"
+[[ "$(jq -r '.changed' <<<"$last")" == "true" ]] || fail "transition-log-records-both-states: changed"
+rm -rf "$tmp"
+pass "transition-log-records-both-states"
+
+# --- transition-log: a repeat records changed false ---
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 42
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 42
+l="$(log_file "$tmp")"
+[[ "$(wc -l < "$l" | tr -d ' ')" == "2" ]] || fail "transition-log-repeat-changed-false: expected two lines"
+last="$(tail -1 "$l")"
+[[ "$(jq -r '.changed' <<<"$last")" == "false" ]] || fail "transition-log-repeat-changed-false: changed"
+[[ "$(jq -r '.from' <<<"$last")" == "working" ]] || fail "transition-log-repeat-changed-false: from"
+rm -rf "$tmp"
+pass "transition-log-repeat-changed-false"
+
+# --- transition-log: a phase-only change is recorded ---
+# `since` deliberately ignores a phase change; the log must not.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 42
+run_state "$tmp" Cyclops working --bead ah-f9c --phase ci --pid 42
+l="$(log_file "$tmp")"
+last="$(tail -1 "$l")"
+[[ "$(jq -r '.phase' <<<"$last")" == "ci" ]] || fail "transition-log-phase-only: phase"
+[[ "$(jq -r '.changed' <<<"$last")" == "false" ]] || fail "transition-log-phase-only: state and bead did not change"
+rm -rf "$tmp"
+pass "transition-log-phase-only"
+
+# --- transition-log: an unwritable log still writes the state file ---
+# The log is deliberately unable to fail the script: the state file is what the fleet view reads.
+tmp="$(new_fixture)"
+mkdir -p "$tmp/.cerebro/state/transitions.jsonl"    # a directory where the log wants to be
+set +e
+out="$(run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 42 2>&1)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "transition-log-never-fatal: exit $status"
+[[ -z "$out" ]] || fail "transition-log-never-fatal: printed '$out'"
+f="$(state_file "$tmp" Cyclops)"
+[[ "$(jq -r '.state' "$f")" == "working" ]] || fail "transition-log-never-fatal: state file not written"
+rm -rf "$tmp"
+pass "transition-log-never-fatal"
+
+# --- transition-log: concurrent writes leave whole lines ---
+# Distinct agent names, two calls each: 20 concurrent appends to the one shared log, with no two
+# writers sharing a state file (that file's own write is per-agent and not what this pins).
+tmp="$(new_fixture)"
+for n in Cyclops Storm Wolverine Rogue Gambit Nightcrawler Colossus Iceman Jubilee Phoenix; do
+  ( run_state "$tmp" "$n" working --bead ah-f9c --phase build --pid 42
+    run_state "$tmp" "$n" idle --pid 42 ) &
+done
+wait
+l="$(log_file "$tmp")"
+[[ "$(wc -l < "$l" | tr -d ' ')" == "20" ]] || fail "transition-log-concurrent: expected 20 lines, got $(wc -l < "$l")"
+jq -c . "$l" >/dev/null || fail "transition-log-concurrent: a line does not parse as JSON"
+rm -rf "$tmp"
+pass "transition-log-concurrent"
+
+# --- transition-log: an oversized log is rotated, once ---
+tmp="$(new_fixture)"
+mkdir -p "$tmp/.cerebro/state"
+l="$(log_file "$tmp")"
+head -c 6000000 /dev/zero | tr '\0' 'x' > "$l"
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 42
+[[ -f "$tmp/.cerebro/state/transitions.1.jsonl" ]] || fail "transition-log-rotates: no rotated generation"
+[[ "$(wc -l < "$l" | tr -d ' ')" == "1" ]] || fail "transition-log-rotates: new log should hold one line"
+# One generation only: rotating again replaces it rather than accumulating.
+head -c 6000000 /dev/zero | tr '\0' 'x' > "$l"
+run_state "$tmp" Cyclops idle --pid 42
+[[ ! -f "$tmp/.cerebro/state/transitions.2.jsonl" ]] || fail "transition-log-rotates: a second generation was kept"
+rm -rf "$tmp"
+pass "transition-log-rotates"
+
 echo "All agent-state tests passed."

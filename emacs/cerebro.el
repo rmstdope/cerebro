@@ -518,7 +518,11 @@ it from."
        (format "reclaim %s — %s gone, not on main" id .assignee))
       (`(epic-close ,id)
        (format "close %s — all children closed %sm ago" id
-               .minutes_since_last_child_closed)))))
+               .minutes_since_last_child_closed))
+      (`(unclaim ,id)
+       (format "unclaim %s — %s stalled, no %s for %sm" id .assignee
+               (if (equal .progress_source "commit") "commit" "start")
+               .progress_age_min)))))
 
 (defun cerebro--sweep-line (label finding)
   "One propertized Sweeps line: LABEL, carrying FINDING the way a bead row
@@ -553,6 +557,25 @@ be swept as one Emacs started."
                                     (cerebro--state-file-path repo-root name)))
                            (pid (and parsed (alist-get 'pid parsed))))
                       (and pid (cerebro--session-alive-p pid name) name)))
+                  roster))))
+
+(defun cerebro--live-session-states (repo-root)
+  "The (NAME . STATE-SYMBOL) alist for every implementer with a live session
+in REPO-ROOT. A name is present exactly when its state file parses and its pid is alive,
+whatever that file says about state - a file with no `state\=' key, or one
+this version does not recognise, still puts the name here with a nil state.
+
+`cerebro--live-implementer-names\=' is the same read without the states;
+`cerebro--findings-from\=' derives both from one call to this."
+  (let ((roster (cerebro--roster repo-root)))
+    (delq nil
+          (mapcar (lambda (name)
+                    (let* ((parsed (cerebro--read-state-file
+                                    (cerebro--state-file-path repo-root name)))
+                           (pid (and parsed (alist-get 'pid parsed)))
+                           (state (and parsed (alist-get 'state parsed))))
+                      (and pid (cerebro--session-alive-p pid name)
+                           (cons name (and state (intern state))))))
                   roster))))
 
 (defvar cerebro-subprocess-timeout-seconds 120
@@ -639,12 +662,17 @@ garbage is not `bd' or a sweep script having answered."
                          :null-object nil :false-object nil)
     (error cerebro--parse-failed)))
 
-(defun cerebro--findings-from (repo-root claims epics)
-  "The sweep findings (LABEL . FINDING) from CLAIMS and EPICS, the parsed
-JSON of the two sweep scripts. Computed at answer time (called from
-`cerebro--request-sweeps's callback) so `live-names' describes the fleet
-when the findings are shown, not when the scripts were kicked off."
-  (let* ((live-names (cerebro--live-implementer-names repo-root))
+(defun cerebro--findings-from (repo-root claims epics stalled)
+  "The sweep findings (LABEL . FINDING) from CLAIMS, EPICS and STALLED, the
+parsed JSON of the three sweep scripts. Computed at answer time (called from
+`cerebro--request-sweeps\='s callback) so the live fleet is the one described
+when the findings are shown, not the one that existed when the scripts were
+kicked off.
+
+The claims sweep wants names and the stalled sweep wants states, and both
+come from one read of the state files rather than two walks of them."
+  (let* ((live-states (cerebro--live-session-states repo-root))
+         (live-names (mapcar #'car live-states))
          (now (current-time)))
     (append
      (delq nil (mapcar (lambda (c)
@@ -654,32 +682,49 @@ when the findings are shown, not when the scripts were kicked off."
      (delq nil (mapcar (lambda (e)
                          (let ((finding (cerebro--epic-finding e)))
                            (and finding (cons (cerebro--sweep-label finding e) finding))))
-                       epics)))))
+                       epics))
+     (delq nil (mapcar (lambda (c)
+                         (let ((finding (cerebro--stalled-finding c live-states now)))
+                           (and finding (cons (cerebro--sweep-label finding c) finding))))
+                       stalled)))))
+
+(defconst cerebro--sweep-scripts
+  '((sweep-claims . "sweep-claims.sh")
+    (sweep-epics . "sweep-epics.sh")
+    (sweep-stalled . "sweep-stalled.sh"))
+  "The sweep scripts, in the order they are run, keyed by their
+`cerebro--run-async\=' key. Their parsed output reaches
+`cerebro--findings-from\=' as arguments in this same order.")
 
 (defun cerebro--request-sweeps (repo-root callback)
-  "Run the claims and epics sweep scripts without blocking, one after the
-other; CALLBACK gets the (LABEL . FINDING) list when both have answered, or
-nil when either did not - including either script exiting zero but printing
-something that is not JSON. Returns `busy' if a sweep is already out."
-  (cerebro--run-async
-   'sweep-claims repo-root
-   (list (expand-file-name (cerebro--script "sweep-claims.sh") repo-root) "--json")
-   (lambda (claims-out)
-     (if (null claims-out)
-         (funcall callback nil)
-       (let ((claims-parsed (cerebro--try-parse-json claims-out)))
-         (if (eq claims-parsed cerebro--parse-failed)
+  "Run the sweep scripts without blocking, one after the other; CALLBACK gets
+the (LABEL . FINDING) list when all of them have answered, or nil when any
+did not - including a script exiting zero but printing something that is not
+JSON, in which case no later script is started at all. Returns `busy\=' if a
+sweep is already out.
+
+List-driven rather than hand-nested: the scripts are identical in shape, and
+a callback nest one level deep per script stops being readable at three."
+  (cerebro--request-sweeps-1 repo-root cerebro--sweep-scripts nil callback))
+
+(defun cerebro--request-sweeps-1 (repo-root remaining acc callback)
+  "Run REMAINING sweep scripts in order, collecting parsed output onto ACC
+\(reversed), then call CALLBACK. See `cerebro--request-sweeps\='."
+  (if (null remaining)
+      (funcall callback (list (apply #'cerebro--findings-from repo-root (nreverse acc))))
+    (let ((key (caar remaining))
+          (script (cdar remaining)))
+      (cerebro--run-async
+       key repo-root
+       (list (expand-file-name (cerebro--script script) repo-root) "--json")
+       (lambda (out)
+         (if (null out)
              (funcall callback nil)
-           (cerebro--run-async
-            'sweep-epics repo-root
-            (list (expand-file-name (cerebro--script "sweep-epics.sh") repo-root) "--json")
-            (lambda (epics-out)
-              (funcall callback
-                       (and epics-out
-                            (let ((epics-parsed (cerebro--try-parse-json epics-out)))
-                              (and (not (eq epics-parsed cerebro--parse-failed))
-                                   (list (cerebro--findings-from
-                                          repo-root claims-parsed epics-parsed))))))))))))))
+           (let ((parsed (cerebro--try-parse-json out)))
+             (if (eq parsed cerebro--parse-failed)
+                 (funcall callback nil)
+               (cerebro--request-sweeps-1 repo-root (cdr remaining)
+                                          (cons parsed acc) callback)))))))))
 
 (defun cerebro--finding-at-point ()
   "The sweep finding on this line, or nil."
@@ -969,6 +1014,42 @@ otherwise (epic-close ID)."
         (list 'epic-close .id)
       nil)))
 
+(defconst cerebro--stalled-minutes 60
+  "Minutes without a commit past which a claim is offered as stalled.
+
+Empirical, not chosen (ah-4xm4): across the 72 hours to 2026-08-20 every
+one of the 36 beads that ran cleanly made its first commit 6 to 36 minutes
+after being claimed, and the four that parked sat 2.3 hours or more. Sixty
+separates them with no false positive in that window - and it is well clear
+of a long CI wait, which is the legitimate reason a working bead is quiet.")
+
+(defun cerebro--stalled-finding (candidate live-states now)
+  "Pure. What the stalled sweep should offer for CANDIDATE, or nil.
+
+CANDIDATE is one parsed object from `sweep-stalled.sh --json\='. LIVE-STATES
+is an alist of (NAME . STATE-SYMBOL) for sessions whose pid is alive. NOW is
+unused, taken for symmetry with `cerebro--claim-finding\='.
+
+Returns nil or (unclaim ID). Nil covers four cases: nobody live holds it
+\(a dead claim is the claims sweep\='s, not this one\='s); the session is
+`asking\=', so it is blocked and has said so and `cerebro--supervise-action\='
+already nudges it; there is no age to judge; or the age is inside the
+threshold - which includes every bead sitting in CI.
+
+Membership is tested with `assoc\=', not by the state being non-nil: a live
+session whose state file carries no `state\=' key reaches here with a nil
+state and must still count as live, or a half-written file would become a
+finding against a working implementer."
+  (ignore now)
+  (let-alist candidate
+    (let ((state (cdr (assoc .assignee live-states))))
+      (cond
+       ((null (assoc .assignee live-states)) nil)
+       ((eq state 'asking) nil)
+       ((null .progress_age_min) nil)
+       ((> .progress_age_min cerebro--stalled-minutes) (list 'unclaim .id))
+       (t nil)))))
+
 (defun cerebro--finding-command (finding repo-root)
   "The exact argv for FINDING, or nil for nil.
 
@@ -984,6 +1065,10 @@ sweep pipeline; the command itself carries no path, since it is run with
     (`(close ,id ,reason) (list "bd" "close" id "--reason" reason))
     (`(reclaim ,id) (list "bd" "reclaim" "--id" id "--older-than" "10m"))
     (`(epic-close ,id) (list "bd" "close" id))
+    ;; `bd unclaim', not `bd reclaim --older-than': reclaim is for a claim whose
+    ;; session is gone, and its window would refuse a bead whose lease is still
+    ;; being heartbeated. This finding is about a session alive and not moving.
+    (`(unclaim ,id) (list "bd" "unclaim" id))
     (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure

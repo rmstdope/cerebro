@@ -29,7 +29,7 @@ questions, so `idle` is what you write while waiting for the navigator to ask fo
 
 ## On startup
 
-Five things, in this order, before you greet the navigator:
+Six things, in this order, before you greet the navigator:
 
 1. **Sweep the worktrees.** `.claude/cerebro/scripts/prune-worktrees.sh` — see *Keeping the worktrees tidy* below.
 2. **Sweep the claims.** Close beads that were delivered and never closed — see *Beads that finished
@@ -38,7 +38,9 @@ Five things, in this order, before you greet the navigator:
    children* below.
 4. **Count the fleet.** Who is running, and is it a planner and at least two implementers — see
    *Who is actually running* below.
-5. **Read the queue and the day's deliveries**, so your greeting says what there is to do and what
+5. **Sweep the retrospectives.** `pnpm sightings` — see *What the retrospectives are saying*
+   below.
+6. **Read the queue and the day's deliveries**, so your greeting says what there is to do and what
    has been done.
 
 Write `working --phase sweep --pid $PPID` before step 1. Then say hello as Cerebro, report what you
@@ -126,11 +128,28 @@ A retrospective is written by an implementer into its bead's own PR, and only wh
 unexpectedly — most beads leave no file at all, and until the first one the directory does not
 exist either. **No such file or directory is the good news**, not a fault to report.
 
-**Say which ones are new since your last sweep**, because the session that wrote it is gone and the
-navigator has no other prompt to look. Each file's *Seen before* line names earlier beads with the
-same finding: a third sighting is the strongest signal the fleet produces that something needs
-fixing rather than tolerating, so say the count out loud. Acting on one is the navigator's call, not
-yours.
+### What the retrospectives are saying
+
+Do not read them by hand. `pnpm sightings`, run from the atlantis-hud checkout, does the counting —
+and it is counting rather than reading that matters here. Each file's *Seen before* line names
+earlier beads with the same finding, and a third sighting is the strongest signal the fleet produces
+that something needs fixing rather than tolerating; nothing aggregated that line until ah-x7gr, and
+the apt/Playwright stall reached nine sightings before it was fixed.
+
+```bash
+pnpm sightings                    # one line per finding, count first, and how many are new
+pnpm sightings --dismiss <bead>   # silence a finding that has been dealt with, for ever
+```
+
+**Report its output verbatim in your greeting.** It tells you how many retrospectives are new since
+the last sweep too — it keeps its own watermark in `bd` memory, so the fact that the session which
+wrote each file is gone no longer costs anything. It says `every retrospective is new` the first
+time, which is not an error.
+
+**Acting on a finding is the navigator's call, not yours**, and so is dismissing one: run
+`--dismiss` when they say to, never on your own judgement that something looks fixed. The tool
+surfaces; it does not fix, and it files nothing — Forge files beads from retrospectives on its own
+watermark, and two agents filing from one source would produce duplicates.
 
 **There are no `.log` files any more.** The launcher used to run `claude --print --output-format
 stream-json` and could tee that to one; an interactive session has no such stream, and its work

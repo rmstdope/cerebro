@@ -3174,14 +3174,62 @@ printing \"(none)\" every five minutes is noise."
                     (total_min . 300) (median_min . 20) (max_min . 90) (open_min . nil)))))))
 
 (ert-deftest cerebro-test/history-does-not-recompute-inside-its-interval ()
-  "The tick is five seconds and a log can be large, so the History section runs
-the script on a cadence of its own. A second tick inside that interval must not
-re-run it."
-  (should (cerebro--due-p nil cerebro-history-refresh-seconds 1000.0))
-  (should-not (cerebro--due-p 1000.0 cerebro-history-refresh-seconds
-                              (+ 1000.0 (- cerebro-history-refresh-seconds 1))))
-  (should (cerebro--due-p 1000.0 cerebro-history-refresh-seconds
-                          (+ 1000.0 cerebro-history-refresh-seconds))))
+  "The tick is five seconds and the log can be large, so the History section
+runs the script on a cadence of its own.
+
+Driven through `cerebro--refresh-panel-when-due' rather than by asserting
+`cerebro--due-p' directly: the gate is the thing that can be got wrong, and a
+test of the predicate alone would pass just as happily with the gate deleted
+and the script run sixty times a minute."
+  (let ((history-calls 0))
+    (cl-letf (((symbol-function 'cerebro--beads-render) (lambda (_buffer) nil))
+              ((symbol-function 'cerebro--sweep) (lambda (_buffer) nil))
+              ((symbol-function 'cerebro--history) (lambda (_buffer) (cl-incf history-calls))))
+      (let ((panel (generate-new-buffer " *cerebro-test-history-cadence*")))
+        (unwind-protect
+            (with-current-buffer panel
+              (cerebro-beads-mode)
+              ;; Nothing run yet, so it is due.
+              (cerebro--refresh-panel-when-due panel 1000.0)
+              (should (= history-calls 1))
+              ;; A tick five seconds later, and one a second short of the
+              ;; interval: neither re-runs it.
+              (cerebro--refresh-panel-when-due panel 1005.0)
+              (cerebro--refresh-panel-when-due
+               panel (+ 1000.0 (- cerebro-history-refresh-seconds 1)))
+              (should (= history-calls 1))
+              ;; And one past it does.
+              (cerebro--refresh-panel-when-due
+               panel (+ 1000.0 cerebro-history-refresh-seconds))
+              (should (= history-calls 2)))
+          (kill-buffer panel))))))
+
+(ert-deftest cerebro-test/history-rows-reach-the-panel ()
+  "The wiring, end to end: rows kept on the buffer are what the panel draws."
+  (let ((lines (cerebro--bead-panel
+                nil nil nil nil nil 100 3 nil
+                '(((agent . "Cyclops") (state . "working") (count . 2) (total_min . 10)
+                   (median_min . 5) (max_min . 6) (open_min . 40))))))
+    (should (cl-some (lambda (l) (string-match-p "History" (substring-no-properties l))) lines))
+    (should (cl-some (lambda (l) (string-match-p "Cyclops working 40m" (substring-no-properties l)))
+                     lines))))
+
+(ert-deftest cerebro-test/history-an-empty-answer-clears-the-rows ()
+  "The other half of the rule below: an answer of \"nothing is running\" must
+replace the rows, or a section frozen at what was true five minutes ago outlives
+the fleet it describes. Only the absence of an answer preserves them."
+  (let ((buffer (get-buffer-create "*cerebro-test-history-empty-answer*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                  ((symbol-function 'cerebro--draw-beads) (lambda (_buffer) nil))
+                  ((symbol-function 'cerebro--request-history)
+                   (lambda (_root callback) (funcall callback (list nil)) 'started)))
+          (with-current-buffer buffer
+            (cerebro-beads-mode)
+            (setq cerebro--history-rows '(((agent . "Cyclops") (state . "working") (open_min . 5))))
+            (cerebro--history buffer)
+            (should (null cerebro--history-rows))))
+      (kill-buffer buffer))))
 
 (ert-deftest cerebro-test/history-keeps-the-last-rows-when-the-script-does-not-answer ()
   "A corrupt log or a missing script leaves the section as it was rather than

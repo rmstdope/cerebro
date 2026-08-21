@@ -562,10 +562,16 @@ nil when that row has nothing running.
 
 Only the open interval is shown: the aggregates are what say whether it is
 unusual, not what the navigator is being told. A row whose open_min is null
-describes a state the agent is not in at the moment, and has no line."
+describes a state the agent is not in at the moment, and has no line.
+
+A state nothing has yet finished in has no median, and so is never marked
+long however far it runs. That is the script's answer, not a gap here:
+there is nothing to call it long against, and a first interval judged
+against itself would be marked always or never depending on the arithmetic
+rather than on the fleet."
   (let-alist row
     (when .open_min
-      (let* ((median (and .median_min (> .median_min 0) .median_min))
+      (let* ((median (and (numberp .median_min) (> .median_min 0) .median_min))
              (long (and median (>= .open_min (* cerebro-history-long-multiple median))))
              (text (format "  %s %s %sm%s"
                            .agent .state (round .open_min)
@@ -582,10 +588,10 @@ A pure function - it renders what the script computed and computes nothing
 itself, which is what keeps this off the five-second tick and testable
 without a subprocess.
 
-An agent whose session ended without a final transition keeps an open
-interval and so keeps a line, growing. That is not a defect to filter out:
-an interval nobody closed is exactly the shape a stall has, and one that has
-been open for a day says so in the only place anybody is looking.
+An agent that has finished, or whose session died and left an interval
+nobody will ever close, has no line: `scripts/fleet-history' treats `done'
+as terminal and drops an interval open beyond a day. What is left is what
+is actually running, which is what the section claims to show.
 
 Nil - no header, nothing at all - when nothing is running, exactly as
 `cerebro--sweep-section' does and for the same reason: a section saying

@@ -53,8 +53,7 @@ new_fixture() {
 
 # The fixture clock. Every fabricated timestamp below is expressed against it, so an assertion
 # about an open interval's length is exact rather than racing the wall clock.
-now_iso="2026-08-20T18:00:00Z"
-now_epoch="1787335200"
+now_epoch="1787335200"   # 2026-08-21T18:00:00Z
 
 # Minutes before the fixture clock, as an ISO timestamp.
 # `date` cannot format an arbitrary epoch the same way on macOS and on the CI runner (-r against
@@ -128,7 +127,8 @@ tmp="$(new_fixture)"
 } > "$tmp/.cerebro/state/transitions.jsonl"
 
 out="$(run "$tmp" --json)"
-[[ "$(jq -r 'length' <<<"$out")" == 2 ]] || fail "two heartbeats extend one interval; expected 2 intervals, got $(jq -r 'length' <<<"$out")"
+# One interval, not three: the two heartbeats extend it, and the closing `done` is terminal.
+[[ "$(jq -r 'length' <<<"$out")" == 1 ]] || fail "two heartbeats extend one interval; expected 1 interval, got $(jq -r 'length' <<<"$out")"
 [[ "$(jq -r '.[0].minutes' <<<"$out")" == "60" ]] || fail "the interval spans the heartbeats, got $(jq -r '.[0].minutes' <<<"$out")"
 rm -rf "$tmp"
 pass "a changed-false line does not end an interval"
@@ -237,22 +237,27 @@ tmp="$(new_fixture)"
 } > "$tmp/.cerebro/state/transitions.jsonl"
 
 set +e
-out="$(run "$tmp" --json 2>/dev/null)"
+err="$(run "$tmp" --json 2>&1 >/dev/null)"
 status=$?
+out="$(run "$tmp" --json 2>/dev/null)"
 set -e
 [[ "$status" -ne 0 ]] || fail "a corrupt line must exit non-zero"
 [[ -z "$out" ]] || fail "and print nothing on stdout: an empty array that really means 'the query broke' is the worst possible answer"
+# The message, not merely the status: without this the assertion passes on any unrelated crash.
+grep -q "could not read the transition log" <<<"$err" || fail "and say what is wrong, got: $err"
 rm -rf "$tmp"
 pass "a corrupt line exits non-zero with nothing on stdout"
 
 # --- a missing log exits non-zero ---------------------------------------------------------------
 tmp="$(new_fixture)"
 set +e
-out="$(run "$tmp" --json 2>/dev/null)"
+err="$(run "$tmp" --json 2>&1 >/dev/null)"
 status=$?
+out="$(run "$tmp" --json 2>/dev/null)"
 set -e
 [[ "$status" -ne 0 ]] || fail "no log at all must exit non-zero, not read as a quiet fleet"
 [[ -z "$out" ]] || fail "and print nothing on stdout"
+grep -q "no transition log" <<<"$err" || fail "and say the record is missing, got: $err"
 rm -rf "$tmp"
 pass "a missing log exits non-zero"
 
@@ -271,5 +276,100 @@ set -e
 [[ "$status" -eq 2 ]] || fail "a mode is required: --json or --summary"
 rm -rf "$tmp"
 pass "an unknown argument is refused"
+
+# --- the aggregates describe finished intervals only -------------------------------------------
+# The whole point of the summary is to say whether what is happening NOW is unusual. Aggregate the
+# open interval into the very median it is about to be compared against and it cannot be: a stall
+# raises its own baseline until it clears the bar it set. With one interval it is worse than
+# useless - median equals open by construction, so no duration on earth could ever be called long.
+tmp="$(new_fixture)"
+{
+  line "$(ago 700)" Cyclops working review ah-aaa
+  line "$(ago 695)" Cyclops asking  review ah-aaa
+  line "$(ago 690)" Cyclops working review ah-aaa
+  line "$(ago 685)" Cyclops asking  review ah-aaa    # and there it stays: 685m, against a 5m norm
+} > "$tmp/.cerebro/state/transitions.jsonl"
+
+row="$(run "$tmp" --summary | jq -c '.[] | select(.state == "asking")')"
+[[ "$(jq -r '.count' <<<"$row")" == "1" ]] || fail "one FINISHED asking interval, got $(jq -r '.count' <<<"$row")"
+[[ "$(jq -r '.median_min' <<<"$row")" == "5" ]] || fail "the median is of what finished - 5m, not 345m, got $(jq -r '.median_min' <<<"$row")"
+[[ "$(jq -r '.max_min' <<<"$row")" == "5" ]] || fail "and so is the longest, got $(jq -r '.max_min' <<<"$row")"
+[[ "$(jq -r '.open_min' <<<"$row")" == "685" ]] || fail "the open interval is reported beside them, not inside them"
+rm -rf "$tmp"
+pass "the aggregates describe finished intervals only"
+
+# --- a state seen only once has no median to judge it by ----------------------------------------
+tmp="$(new_fixture)"
+line "$(ago 300)" Storm asking review ah-bbb > "$tmp/.cerebro/state/transitions.jsonl"
+row="$(run "$tmp" --summary | jq -c '.[0]')"
+[[ "$(jq -r '.count' <<<"$row")" == "0" ]] || fail "nothing has finished yet, got count $(jq -r '.count' <<<"$row")"
+[[ "$(jq -r '.median_min' <<<"$row")" == "null" ]] || fail "so there is no median - saying otherwise would let the open interval judge itself"
+[[ "$(jq -r '.open_min' <<<"$row")" == "300" ]] || fail "and it is still reported as running"
+rm -rf "$tmp"
+pass "a state seen only once has no median to judge it by"
+
+# --- an agent that finished is not still running ------------------------------------------------
+# `done` is the end of a session, not a state an agent sits in. Left open, a bead delivered last
+# September is reported as having been in progress ever since.
+tmp="$(new_fixture)"
+{
+  line "$(ago 200)" Cyclops working merge ah-aaa
+  line "$(ago 190)" Cyclops done    ""    ah-aaa
+} > "$tmp/.cerebro/state/transitions.jsonl"
+
+out="$(run "$tmp" --json)"
+[[ "$(jq -r 'length' <<<"$out")" == "1" ]] || fail "the finished session leaves one interval, not two, got $(jq -r 'length' <<<"$out")"
+[[ "$(jq -r '.[0].state' <<<"$out")" == "working" ]] || fail "and it is the work, not the ending"
+[[ "$(jq -r '[.[] | select(.open)] | length' <<<"$out")" == "0" ]] || fail "nothing of a finished session is still running"
+rm -rf "$tmp"
+pass "an agent that finished is not still running"
+
+# --- an abandoned interval is a dead session, not a stall ---------------------------------------
+# Silence is not evidence of death - an agent writes only when something changes, and a three-hour
+# build is exactly the stretch this exists to measure, so a long open interval must survive. But
+# nothing sits in one state for a day, and a session killed at the terminal leaves an interval
+# nobody will ever close: unbounded, one run a year ago is reported for ever as running and the
+# panel fills with the dead.
+tmp="$(new_fixture)"
+{
+  line "$(ago 20000)" Beast   idle    ""     ""
+  line "$(ago 200)"   Cyclops working build  ah-aaa
+} > "$tmp/.cerebro/state/transitions.jsonl"
+
+out="$(run "$tmp" --json --since 30d)"
+[[ "$(jq -r '[.[] | select(.agent == "Beast")] | length' <<<"$out")" == "0" ]] || fail "an agent open for a fortnight is a dead session, got $(jq -c '.' <<<"$out")"
+[[ "$(jq -r '[.[] | select(.agent == "Cyclops")] | length' <<<"$out")" == "1" ]] || fail "and a genuinely long stretch is NOT dropped - it is the stall this tool is for"
+[[ "$(jq -r '.[0].minutes' <<<"$out")" == "200" ]] || fail "with its full length"
+rm -rf "$tmp"
+pass "an abandoned interval is a dead session, not a stall"
+
+# --- --since takes an ISO timestamp as well as a span -------------------------------------------
+tmp="$(new_fixture)"
+{
+  line "$(ago 600)" Cyclops working build ah-aaa
+  line "$(ago 30)"  Cyclops working ci    ah-aaa
+} > "$tmp/.cerebro/state/transitions.jsonl"
+
+out="$(run "$tmp" --json --since "$(ago 45)")"
+[[ "$(jq -r 'length' <<<"$out")" == "2" ]] || fail "an ISO --since is understood, got $(jq -r 'length' <<<"$out")"
+set +e
+err="$(run "$tmp" --json --since "next tuesday" 2>&1 >/dev/null)"
+status=$?
+set -e
+[[ "$status" -eq 2 ]] || fail "and something that is neither is refused"
+grep -q "ISO-8601" <<<"$err" || fail "naming what it wanted, got: $err"
+rm -rf "$tmp"
+pass "--since takes an ISO timestamp as well as a span"
+
+# --- a flag swallowing the next flag is refused -------------------------------------------------
+tmp="$(new_fixture)"
+line "$(ago 10)" Cyclops working build ah-aaa > "$tmp/.cerebro/state/transitions.jsonl"
+set +e
+run "$tmp" --agent --json >/dev/null 2>&1
+status=$?
+set -e
+[[ "$status" -eq 2 ]] || fail "--agent --json is a typo, not an agent called '--json'"
+rm -rf "$tmp"
+pass "a flag swallowing the next flag is refused"
 
 echo "all fleet-history assertions passed"

@@ -21,7 +21,8 @@
 #                    created detached. Present and detached: fetched, hard-reset and cleaned to
 #                    <ref>. Present and on a branch: refused, naming the branch, tree untouched -
 #                    a `reset --hard` here would destroy whatever that branch is holding.
-#   --from <ref>     what to branch from, or reset to. Defaults to origin/main.
+#   --from <ref>     what to branch from, or reset to. Defaults to origin/<the consumer's default
+#                    branch>, as scripts/default-branch resolves it.
 #   --with-wasm      also build the wasm bundle the browser suites need, inside the tree, after
 #                    everything else below. Most beads never run those suites, so this stays a
 #                    flag rather than always-on cost.
@@ -38,7 +39,7 @@ set -euo pipefail
 
 path=""
 branch=""
-from_ref="origin/main"
+from_ref=""            # resolved below, once script_dir is known; an explicit --from still wins
 with_wasm=0
 
 usage() {
@@ -71,6 +72,13 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 consumer="$("$script_dir/consumer-root")"
 
+# The branch is resolved rather than assumed (ah-qled.3): this script's hardcoded `origin/main` was
+# the loud failure of the three - two unguarded fetches under `set -euo pipefail`, so on a consumer
+# whose branch is `trunk` worktree creation aborted and no bead could be started at all.
+default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch=""
+[[ -n "$default_branch" ]] || default_branch="main"
+[[ -n "$from_ref" ]] || from_ref="origin/$default_branch"
+
 # Normalise to a path relative to the consumer root, without requiring it to exist yet - a
 # fresh --branch tree's parent directory may not either. Accept either form on input.
 case "$path" in
@@ -91,7 +99,7 @@ fi
 
 abs_path="$consumer/$rel_path"
 
-git -C "$consumer" fetch origin main >&2
+git -C "$consumer" fetch origin "$default_branch" >&2
 
 if [[ -n "$branch" ]]; then
   if [[ -e "$abs_path" ]]; then
@@ -108,7 +116,7 @@ else
       echo "prepare-worktree: $rel_path is on branch '$held_branch', not detached - refusing to reset a tree that may hold work" >&2
       exit 2
     fi
-    git -C "$abs_path" fetch origin main >&2
+    git -C "$abs_path" fetch origin "$default_branch" >&2
     git -C "$abs_path" reset --hard "$from_ref" >&2
     git -C "$abs_path" clean -fd >&2
   fi

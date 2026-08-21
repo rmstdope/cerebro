@@ -6,16 +6,18 @@
 #     .claude/cerebro/scripts/sweep-stalled.sh --json
 #
 # This script never mutates anything a decision could rest on - no `bd`, no working tree or checkout
-# touched, no ref moved. It does run `git fetch origin main`, exactly as `sweep-claims.sh` does,
+# touched, no ref moved. It does run `git fetch origin <the consumer's default branch>`, exactly as
+# `sweep-claims.sh' does,
 # which updates that one remote-tracking ref and nothing else; measuring against a stale
-# `origin/main` would be measuring against a branch point that has moved. Like its two siblings it
+# remote-tracking ref would be measuring against a branch point that has moved. Like its two siblings it
 # only gathers facts, so that a pure elisp function (`cerebro--stalled-finding') can turn them into
 # a decision and a human confirms that decision before anything runs. Keeping this file read-only
 # is what makes that guarantee checkable at a glance: the only path to a `bd unclaim' is the
 # confirmed one in `cerebro.el', never this script.
 #
 # `sweep-claims.sh' answers the opposite question and cannot be reused for this one: its
-# `commit_age_min' is measured against `origin/main', and only once the work has already landed.
+# `commit_age_min' is measured against the default branch on origin, and only once the work has
+# already landed.
 # What a stalled claim needs is progress on a branch that has *not* landed.
 #
 # One object per `in_progress` bead:
@@ -29,7 +31,7 @@
 #
 # Two traps this file exists downstream of:
 #
-#   * Progress is measured with `git log origin/main..HEAD', never bare `HEAD'. A freshly created
+#   * Progress is measured with `git log origin/<default branch>..HEAD', never bare `HEAD'. A freshly created
 #     branch points at the commit it forked from, whose timestamp is main's and may be hours old -
 #     bare `HEAD' would report every new claim as stalled the moment main happened to be stale.
 #   * The branch is matched on `<id>-', with the trailing hyphen. Without it `ah-t65' also matches
@@ -49,7 +51,12 @@ repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
   exit 1
 }
 
-if ! git -C "$repo_root" fetch --quiet origin main 2>/dev/null; then
+# The branch is resolved rather than assumed (ah-qled.3) - a consumer whose branch is not called
+# `main` used to get "could not reach origin" here, which fails closed but blocks the sweep entirely.
+default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch=""
+[[ -n "$default_branch" ]] || default_branch="main"
+
+if ! git -C "$repo_root" fetch --quiet origin "$default_branch" 2>/dev/null; then
   echo '{"error": "could not reach origin; refusing to guess whether a branch has moved"}'
   exit 1
 fi
@@ -94,7 +101,7 @@ while IFS= read -r bead; do
   progress_source=null
 
   if [[ -n "$worktree" ]]; then
-    committed_at="$(git -C "$worktree" log origin/main..HEAD -1 --format='%ct' 2>/dev/null || true)"
+    committed_at="$(git -C "$worktree" log "origin/$default_branch..HEAD" -1 --format='%ct' 2>/dev/null || true)"
     if [[ -n "$committed_at" ]]; then
       progress_age_min=$(( (now_epoch - committed_at) / 60 ))
       progress_source='"commit"'

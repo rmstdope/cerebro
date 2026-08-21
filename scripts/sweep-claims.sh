@@ -22,7 +22,8 @@
 #   verification_failed   the bead carries `verification:failed` - Psylocke reopened it, and its old
 #                          commits are already on main, so `on_main` below proves nothing about
 #                          whether the rework has landed. Never sweep-closed.
-#   on_main               a commit matching "(<id>): " is on `origin/main`, discounting any
+#   on_main               a commit matching "(<id>): " is on the default branch at origin,
+#                          discounting any
 #                          `docs(<id>): mockup` commit - that lands while the bead is still being
 #                          planned and is not delivery.
 #   commit_age_min         minutes since that commit, or null if `on_main` is false
@@ -57,7 +58,12 @@ repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
   exit 1
 }
 
-if ! git -C "$repo_root" fetch --quiet origin main 2>/dev/null; then
+# The branch is resolved rather than assumed (ah-qled.3) - a consumer whose branch is not called
+# `main` used to get "could not reach origin" here, which fails closed but blocks the sweep entirely.
+default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch=""
+[[ -n "$default_branch" ]] || default_branch="main"
+
+if ! git -C "$repo_root" fetch --quiet origin "$default_branch" 2>/dev/null; then
   echo '{"error": "could not reach origin; refusing to guess whether a claim landed"}'
   exit 1
 fi
@@ -93,7 +99,7 @@ while IFS= read -r bead; do
   fi
 
   # The colon and parens matter: bare "$id" also matches "$id.8", a child of this bead.
-  match_commits="$(git -C "$repo_root" log origin/main --grep "($id):" -F --oneline 2>/dev/null || true)"
+  match_commits="$(git -C "$repo_root" log "origin/$default_branch" --grep "($id):" -F --oneline 2>/dev/null || true)"
   non_mockup="$(printf '%s\n' "$match_commits" | grep -vF "docs($id): mockup" || true)"
 
   docs_only=false

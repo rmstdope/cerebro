@@ -21,7 +21,7 @@
 #      touched. The second path is the pre-`.cerebro/`-move location — nothing else sweeps it, and a
 #      2.1 GB tree sat there, registered and invisible, until ah-gdp added it here.
 #   2. The working tree is clean — no modified files, no untracked ones.
-#   3. Its branch holds no commit that `origin/main` does not already have.
+#   3. Its branch holds no commit that the default branch on origin does not already have.
 #   4. Nothing has changed in it for a while (see STALE_MINUTES), so a tree that was created moments
 #      ago and has not been written to yet is left alone.
 #
@@ -29,7 +29,7 @@
 # destroying a line of anybody's work: the commits are on main and there is nothing uncommitted.
 #
 # One named exception, at **either** path: `psylocke` is kept by name, unconditionally, ahead of all
-# four checks. It is Psylocke's own verification tree (ah-p31) — reset hard to `origin/main` before
+# four checks. It is Psylocke's own verification tree (ah-p31) — reset hard to the default branch before
 # every use rather than merged, so it never satisfies "holds no commit main lacks" the way a normal
 # agent worktree does, and there is nothing in it to lose by keeping it either way.
 #
@@ -83,9 +83,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 repo_root="$("$script_dir/consumer-root" --shared)" || exit 1
 
+# The branch is resolved rather than assumed (ah-qled.3): with `main` hardcoded, a consumer whose
+# branch is called anything else got "could not reach origin" and no sweep ever ran.
+default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch=""
+[ -n "$default_branch" ] || default_branch="main"
+
 # Whether everything in this worktree is already on main.
 #
-# Two tests, because one is not enough. `origin/main..HEAD` empty catches a branch that was never
+# Two tests, because one is not enough. `origin/<default branch>..HEAD` empty catches a branch that was never
 # committed to or was merged by fast-forward — but **this repository merges with `--squash`**, which
 # writes a brand new commit, so a squash-merged branch's own commits are never reachable from main
 # and that test alone would keep every worktree for ever. ah-6xq.8 was the case that found this: PR
@@ -97,7 +102,7 @@ repo_root="$("$script_dir/consumer-root" --shared)" || exit 1
 landed_on_main() {
   local tree="$1" branch
 
-  [ "$(git -C "$tree" rev-list --count origin/main..HEAD 2>/dev/null || echo 1)" = "0" ] && return 0
+  [ "$(git -C "$tree" rev-list --count "origin/$default_branch..HEAD" 2>/dev/null || echo 1)" = "0" ] && return 0
 
   branch="$(git -C "$tree" symbolic-ref --quiet --short HEAD 2>/dev/null)" || return 1
   [ -n "$branch" ] || return 1
@@ -135,9 +140,9 @@ reclaim_cold_target() {
 sweep() {
   git -C "$repo_root" worktree prune
 
-  # One fetch per sweep: rule 3 compares against origin/main, and a stale ref would call an already
+  # One fetch per sweep: rule 3 compares against the default branch, and a stale ref would call an already
   # merged branch unmerged and keep every worktree for ever.
-  git -C "$repo_root" fetch --quiet origin main 2>/dev/null || {
+  git -C "$repo_root" fetch --quiet origin "$default_branch" 2>/dev/null || {
     echo "prune-worktrees: could not reach origin; skipping this sweep rather than guessing"
     return 0
   }
@@ -155,7 +160,7 @@ sweep() {
     name="$(basename "$tree")"
 
     if [ "$name" = "psylocke" ]; then
-      reason="it is Psylocke's verification tree, reset to origin/main before every use (ah-p31)"
+      reason="it is Psylocke's verification tree, reset to origin/$default_branch before every use (ah-p31)"
       reclaim_cold_target "$tree" "$name"
     elif [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
       reason="it has uncommitted or untracked changes"

@@ -46,20 +46,34 @@ minutes_ago() {
     || date -u -r $(( $(date -u +%s) - secs )) +%Y-%m-%dT%H:%M:%SZ
 }
 
-# --- a throwaway consumer with an origin, whose main is deliberately hours old ----------------
+# --- a throwaway consumer with an origin, whose default branch is deliberately hours old -------
+#
+# THE BRANCH IS A PARAMETER, and it is deliberately not `main` (ah-qled.3): while the fixture said
+# `main` and the script said `main` the two agreed, and no assertion here could catch a consumer
+# whose branch is called anything else - which is precisely the bug this suite failed to see. Every
+# case below now runs against a `trunk` consumer, so all of them pin the resolution as well as
+# whatever they were pinning before.
+#
+# It is declared in cerebro-project.conf rather than left to detection because this fixture builds
+# its remote with `git remote add`, which leaves refs/remotes/origin/HEAD unset - ordinary, and
+# exactly the case the resolver falls through on.
+branch="trunk"
+
 origin="$work_dir/origin.git"
 git init -q --bare "$origin"
 
 consumer="$work_dir/repo"
 mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q -b main "$consumer"
-ln -s "$repo_root/scripts/consumer-root" "$consumer/.claude/cerebro/scripts/consumer-root"
-ln -s "$repo_root/scripts/sweep-stalled.sh" "$consumer/.claude/cerebro/scripts/sweep-stalled.sh"
+git init -q -b "$branch" "$consumer"
+for s in consumer-root project-conf default-branch sweep-stalled.sh; do
+  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
+done
+printf 'default_branch %s\n' "$branch" > "$consumer/.claude/cerebro-project.conf"
 old_date="$(minutes_ago 300)"
 GIT_AUTHOR_DATE="$old_date" GIT_COMMITTER_DATE="$old_date" \
   git_c -C "$consumer" commit -q --allow-empty -m "init"
 git_c -C "$consumer" remote add origin "$origin"
-git_c -C "$consumer" push -q -u origin main
+git_c -C "$consumer" push -q -u origin "$branch"
 
 # ah-aaa: a branch that committed two minutes ago.
 git_c -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-aaa" -b ah-aaa-recent
@@ -123,7 +137,7 @@ pass "a branch with no commit measures from the claim"
 
 # --- a fresh branch is not stalled by main's commit date --------------------------------------
 # main's only commit is five hours old and ah-ccc-fresh points straight at it. Measuring bare HEAD
-# rather than origin/main..HEAD would report this just-claimed bead as 300 minutes stale.
+# rather than origin/$branch..HEAD would report this just-claimed bead as 300 minutes stale.
 (( $(field ah-ccc progress_age_min) < 30 )) \
   || fail "ah-ccc: progress_age_min was $(field ah-ccc progress_age_min) - main's date leaked in"
 pass "a fresh branch is not stalled by main's commit date"

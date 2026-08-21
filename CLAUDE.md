@@ -141,7 +141,9 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **The reviewer gates nothing by itself.** Cypher's review is a recommendation on somebody else's
   PR; the navigator merges. Implementers are unaffected — their path is still Copilot plus the
   standing approval in the consumer's CLAUDE.md.
-- **Forge files, never fixes.** It never edits `packages/`, `crates/`, `apps/` or `emacs/`, and a
+- **Forge files, never fixes.** If you are editing the project's application paths
+  (`scripts/app-paths`), you have taken the wrong job — and so is editing `emacs/`, cerebro's own
+  source rather than any consumer's application. A
   finding that cannot name a cost already being paid — a repeated fix, a change that touched several
   files, a retrospective, a misread module — is not filed at all.
 
@@ -224,6 +226,12 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
   predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state`: it
   prints nothing and the exit status is the whole answer, since it runs once per agent on every
   planner pass.
+- `scripts/app-paths` is the one place "which paths are this project's application" is answered
+  (ah-qled.6) — the `app_paths` key, and `--classify <path>...` over changed paths. Unlike every
+  other reader here it **fails when it does not know**: no declaration means exit 3 and a line on
+  stderr, never a guess. A default either way was the defect — "matches nothing" gave a consumer
+  empty release notes and no verifications with nothing on stderr, and "matches everything" sends
+  the navigator to verify docs changes. A caller that cannot classify says so.
 - `scripts/consumer-root` is the one place "where is the consumer root" is answered (ah-e0w). Every
   other script that needs it asks this one rather than deriving it itself — `consumer-root` (no
   argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the

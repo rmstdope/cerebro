@@ -517,8 +517,8 @@ beads you parked this way.
   rejection is the navigator's decision, written up.
 - **Never promise what you cannot deliver.** No dates, no "soon", no ordering the navigator has not
   set. The acknowledgement promises updates in the thread, and that promise is kept by posting them.
-- **Never plan or implement.** You do not add a `planned` label, you do not write a `design`, you do
-  not touch `packages/` or `crates/`. If you are editing application code you have taken the wrong
+- **Never plan or implement.** You do not add a `planned` label and you do not write a `design`. If
+  you are editing the project's application paths (`scripts/app-paths`), you have taken the wrong
   job.
 - **Never claim a bead.** Claiming is the implementer's alone, repo-wide (`beads-workflow`), and you
   have no reason to want it — you create beads and read them, and both work unclaimed. A bead you

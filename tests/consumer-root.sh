@@ -72,6 +72,52 @@ echo "$out" | grep -q "is not <consumer>/.claude/cerebro/scripts" \
   || fail "standalone: expected the guard's message, got: $out"
 pass "refuses when there is no consumer above .claude/cerebro/scripts"
 
+# --- cerebro mounted somewhere other than .claude/cerebro (ah-ohc2) ---
+#
+# A consumer that vendors cerebro as a submodule at `vendor/cerebro` gets no answer at all from the
+# path arithmetic above: three levels up is the consumer, but `<consumer>/.claude/cerebro` does not
+# resolve back to this checkout. `git rev-parse --show-superproject-working-tree` is purpose-built
+# for exactly this question and answers regardless of the mount's depth or name.
+#
+# A REAL submodule, not a copied directory: the probe answers for a submodule and nothing else, so
+# an arbitrarily-placed non-submodule copy stays unsupported (see the header of scripts/consumer-root).
+cerebro_src="$work_dir/cerebro-src"
+mkdir -p "$cerebro_src/scripts"
+cp "$repo_root/scripts/consumer-root" "$cerebro_src/scripts/consumer-root"
+cp "$repo_root/scripts/roster" "$cerebro_src/scripts/roster"
+git init -q "$cerebro_src"
+git -C "$cerebro_src" -c user.name=test -c user.email=test@example.com add -A
+git -C "$cerebro_src" -c user.name=test -c user.email=test@example.com commit -q -m "cerebro"
+
+alt="$work_dir/alt"
+git init -q "$alt"
+git -C "$alt" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
+git -C "$alt" -c user.name=test -c user.email=test@example.com \
+  -c protocol.file.allow=always submodule add -q "$cerebro_src" vendor/cerebro
+
+alt_root="$(cd "$alt" && pwd -P)"
+alt_out="$("$alt/vendor/cerebro/scripts/consumer-root")"
+[[ "$alt_out" == "$alt_root" ]] || fail "alternative mount: expected $alt_root, got $alt_out"
+pass "a submodule mounted at vendor/cerebro resolves its consumer"
+
+alt_shared="$("$alt/vendor/cerebro/scripts/consumer-root" --shared)"
+[[ "$alt_shared" == "$alt_root" ]] || fail "alternative mount --shared: expected $alt_root, got $alt_shared"
+pass "--shared answers from an alternative mount too"
+
+# --- the standard mount still resolves with no git on PATH ---
+#
+# The bare `consumer-root` uses no external command today, and tests/launchers.sh runs a launcher
+# with a PATH of `dirname` and `bash` alone. The superproject probe must be tried and its failure
+# swallowed, never made mandatory.
+bare_path_dir="$work_dir/bare-path"
+mkdir -p "$bare_path_dir"
+ln -s "$(command -v dirname)" "$bare_path_dir/dirname"
+ln -s "$(command -v bash)" "$bare_path_dir/bash"
+bare_out="$(PATH="$bare_path_dir" "$(command -v bash)" "$consumer/.claude/cerebro/scripts/consumer-root")"
+[[ "$bare_out" == "$(cd "$consumer" && pwd -P)" ]] \
+  || fail "narrowed PATH: expected $consumer, got $bare_out"
+pass "the standard mount resolves with PATH narrowed to dirname and bash - git stayed optional"
+
 # --- a consumer layout that is not a git tree: plain still works, --shared refuses ---
 plain_consumer="$work_dir/plain"
 mkdir -p "$plain_consumer/.claude/cerebro/scripts"

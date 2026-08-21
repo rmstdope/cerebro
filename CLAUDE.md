@@ -237,8 +237,11 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
   argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the
   worktree's own submodule) and `consumer-root --shared` for the main working tree every worktree of
   the repository shares, which is where the fleet view reads state files and where the sweeps look.
-  Both climb from `${BASH_SOURCE[0]}`, so `.claude/cerebro/scripts` stays a load-bearing location —
-  moving it breaks the climb. To test a change, build a throwaway consumer repo rather than running
+  Both start from `${BASH_SOURCE[0]}`: first asking git which working tree holds this checkout as a
+  submodule (`--show-superproject-working-tree`, which answers at any mount — ah-ohc2), then falling
+  back to the `../../..` climb, which needs no git and is what keeps the launchers' narrowed-PATH
+  guarantee true at the standard mount. So `.claude/cerebro/scripts` is load-bearing only for a
+  consumer that vendors cerebro as a plain copy; a submodule may be mounted anywhere. To test a change, build a throwaway consumer repo rather than running
   the script here (it will refuse: there is no `.claude/` above this tree).
 - `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
   asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a
@@ -292,7 +295,10 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
   takes implementer names in file order). It is **tracked**, beside `.claude/cerebro-project.conf`,
   not under the git-ignored `.cerebro/`: which agents exist is a fact every clone needs. `roster`
   finds it by path arithmetic and **must never call `consumer-root`**, which shells out to `git` —
-  the launchers' narrowed-PATH guarantee (`dirname` and `bash` alone) depends on it. A role only the
+  the launchers' narrowed-PATH guarantee (`dirname` and `bash` alone) depends on it. It has a second
+  candidate for a submodule mounted elsewhere (`<superproject>/.claude/cerebro-roster`, ah-ohc2),
+  tried only when `git` is on PATH and skipped in silence when it is not, which is what leaves that
+  guarantee intact. A role only the
   consumer declares needs `<consumer>/.claude/agents/<role>.md`; `scripts/launch` prefers that
   directory over the submodule's, and `launch-preflight` says which of the two causes is missing
   rather than always blaming the submodule.

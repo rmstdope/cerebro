@@ -89,16 +89,49 @@ set -e
 rm -rf "$tmp"
 pass "rejects-unknown-state"
 
-# --- rejects-unknown-phase ---
+# --- accepts-a-consumer-phase-word (ah-qled.5.2) ---
+# The phase vocabulary is a shape, not a closed list: a consumer that adds a role of its own
+# invents a word for it, and this script must record it rather than refusing to write at all.
 tmp="$(new_fixture)"
-set +e
-out="$(run_state "$tmp" Cyclops working --bead ah-f9c --phase launch --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "rejects-unknown-phase: expected exit 2, got $status"
-[[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "rejects-unknown-phase: file was written"
+run_state "$tmp" Cyclops working --bead ah-f9c --phase index --pid 1
+f="$(state_file "$tmp" Cyclops)"
+phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "index" ]] || fail "accepts-a-consumer-phase-word: phase=$phase"
 rm -rf "$tmp"
-pass "rejects-unknown-phase"
+pass "accepts-a-consumer-phase-word"
+
+# --- accepts-a-hyphenated-phase-word (ah-qled.5.2) ---
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead ah-f9c --phase deep-clean --pid 1
+f="$(state_file "$tmp" Cyclops)"
+phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "deep-clean" ]] \
+  || fail "accepts-a-hyphenated-phase-word: phase=$phase"
+rm -rf "$tmp"
+pass "accepts-a-hyphenated-phase-word"
+
+# --- a-shipped-phase-word-still-works (ah-qled.5.2) ---
+tmp="$(new_fixture)"
+run_state "$tmp" Xavier working --bead ah-f9c --phase plan --pid 1
+f="$(state_file "$tmp" Xavier)"
+phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "plan" ]] || fail "a-shipped-phase-word-still-works: phase=$phase"
+rm -rf "$tmp"
+pass "a-shipped-phase-word-still-works"
+
+# --- rejects-malformed-phase (ah-qled.5.2) ---
+# A malformed word is still a typo worth catching at the call: lower-case letters, digits and
+# hyphens, starting with a letter and not ending with one.
+for bad in 'Plan Bead' 'Plan' '-plan' 'plan-' '' '2plan' 'plan_b'; do
+  tmp="$(new_fixture)"
+  set +e
+  out="$(run_state "$tmp" Cyclops working --bead ah-f9c --phase "$bad" --pid 1 2>&1)"
+  status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "rejects-malformed-phase: '$bad' expected exit 2, got $status"
+  [[ "$out" == *"cerebro--phases"* ]] \
+    || fail "rejects-malformed-phase: '$bad' message does not point at cerebro--phases: $out"
+  [[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "rejects-malformed-phase: '$bad' wrote a file"
+  rm -rf "$tmp"
+done
+pass "rejects-malformed-phase"
 
 # --- rejects-phase-with-idle ---
 tmp="$(new_fixture)"

@@ -2245,15 +2245,17 @@ can claim it, whatever else the bead says."
 (ert-deftest cerebro-test/bd-list-argv-covers-every-status-briefly ()
   "Five statuses in one call: the partition can only be complete if the
 list it partitions is. `--brief' drops the free-form text nothing here
-renders."
-  (dolist (status '("open" "in_progress" "blocked" "deferred" "closed"))
-    (should (cl-some (lambda (a) (string-match-p status a)) cerebro--bd-list-argv)))
-  ;; No type exclusion: an epic has to land in Other, not vanish.
-  (should-not (member "--exclude-type" cerebro--bd-list-argv))
-  (should (member "--brief" cerebro--bd-list-argv))
-  (should (member "--json" cerebro--bd-list-argv))
-  (should (equal (car cerebro--bd-list-argv) "bd"))
-  (should (equal (nth 1 cerebro--bd-list-argv) "list")))
+renders.  A function rather than a constant since ah-qled.9, so that a
+changed `cerebro-bd-program' reaches it."
+  (let ((argv (cerebro--bd-list-argv)))
+    (dolist (status '("open" "in_progress" "blocked" "deferred" "closed"))
+      (should (cl-some (lambda (a) (string-match-p status a)) argv)))
+    ;; No type exclusion: an epic has to land in Other, not vanish.
+    (should-not (member "--exclude-type" argv))
+    (should (member "--brief" argv))
+    (should (member "--json" argv))
+    (should (equal (car argv) "bd"))
+    (should (equal (nth 1 argv) "list"))))
 
 (ert-deftest cerebro-test/the-panel-skips-exactly-what-work-beads-excludes ()
   "The two owners of \"which issue types are not work\" cannot drift apart.
@@ -3330,9 +3332,9 @@ replacing a real answer with an empty one - the same rule the sweeps follow."
 ;; ---------------------------------------------------------------------------
 ;; ah-hiib.3: `waiting' - the monitor owns the cadence, the role owns the policy
 
-(defun cerebro-test--waiting (&optional name since wake-at external)
+(defun cerebro-test--waiting (&optional name since wake-at external role)
   "An interactive agent in `waiting', for the wake tests."
-  (make-cerebro-agent :name (or name "Moira") :role "user-feedback"
+  (make-cerebro-agent :name (or name "Moira") :role (or role "user-feedback")
                               :kind 'interactive :state 'waiting :bead nil
                               :since (or since "2026-08-14T09:20:00Z")
                               :wake-at wake-at :external external))
@@ -3593,3 +3595,174 @@ waiting, both the bookkeeping and the fleet view's mark go."
                                                      root)))
        (cerebro--supervise (list agent) root cerebro-test--now)
        (should (equal (funcall sent) '(ended)))))))
+
+;; ---------------------------------------------------------------------------
+;; ah-qled.9: the project-shaped facts are settings, not constants
+
+(ert-deftest cerebro-test/bd-program-is-a-setting-defaulting-to-bd ()
+  "The beads executable is reachable from `M-x customize', not a literal.
+Default is today's literal: this bead changes where a value can be set,
+never what it is."
+  (should (equal (default-value 'cerebro-bd-program) "bd"))
+  (should (get 'cerebro-bd-program 'custom-type)))
+
+(ert-deftest cerebro-test/bd-program-reaches-every-argv ()
+  "A changed `cerebro-bd-program' reaches every place cerebro spells `bd'.
+Seven argv positions were bare literals; a consumer with a wrapper or
+another install name got a permanently empty panel with no way in."
+  (let ((cerebro-bd-program "my-bd"))
+    (should (equal (car (cerebro--bd-list-argv)) "my-bd"))
+    (dolist (finding '((close "ah-1" "done")
+                       (reclaim "ah-1")
+                       (epic-close "ah-1")
+                       (unclaim "ah-1")))
+      (should (equal (car (cerebro--finding-command finding "/tmp")) "my-bd")))
+    (should (equal (car (cerebro--bd-push-argv)) "my-bd"))))
+
+(ert-deftest cerebro-test/the-vocabulary-and-thresholds-are-settings ()
+  "The labels, issue types and thresholds cerebro partitions on are the
+project's, not universals - so each is a `defcustom', and each default is
+exactly today's literal."
+  (dolist (pair '((cerebro-verification-settled
+                   . ("verification:passed" "verification:not-needed"))
+                  (cerebro-planned-label . "planned")
+                  (cerebro-planning-label . "planning")
+                  (cerebro-skipped-issue-types . ("epic" "event"))
+                  (cerebro-priority-floor . 4)
+                  (cerebro-stalled-minutes . 60)
+                  (cerebro-sweep-stale-minutes . 10)))
+    (should (get (car pair) 'custom-type))
+    (should (equal (default-value (car pair)) (cdr pair)))))
+
+(ert-deftest cerebro-test/the-threshold-docstrings-keep-their-measurement ()
+  "A `defcustom' with a bare number loses the reason it was ever right."
+  (should (string-match-p "36 beads" (documentation-property
+                                      'cerebro-stalled-minutes 'variable-documentation)))
+  (should (string-match-p "orchestrator\\.md" (documentation-property
+                                               'cerebro-sweep-stale-minutes
+                                               'variable-documentation))))
+
+(ert-deftest cerebro-test/a-changed-planned-label-repartitions-the-panel ()
+  "The panel buckets on `cerebro-planned-label', not on the word `planned'."
+  (let ((cerebro-planned-label "ready")
+        (cerebro-planning-label "drafting"))
+    (pcase-let ((`(,_claimed ,planned ,being-planned ,unplanned ,_merged)
+                 (cerebro--partition-beads
+                  '(((id . "a") (status . "open") (issue_type . "task") (labels . ("ready")))
+                    ((id . "b") (status . "open") (issue_type . "task") (labels . ("drafting")))
+                    ((id . "c") (status . "open") (issue_type . "task") (labels . ("planned")))))))
+      (should (equal (mapcar (lambda (b) (alist-get 'id b)) planned) '("a")))
+      (should (equal (mapcar (lambda (b) (alist-get 'id b)) being-planned) '("b")))
+      (should (equal (mapcar (lambda (b) (alist-get 'id b)) unplanned) '("c"))))))
+
+(ert-deftest cerebro-test/the-mount-point-is-one-setting-feeding-both-sites ()
+  "Mounted anywhere but `.claude/cerebro', `M-x cerebro' simply errored:
+the path was hardcoded at the launcher directory and again at the search
+for the repository root."
+  (should (equal (default-value 'cerebro-submodule-path) ".claude/cerebro"))
+  (should (get 'cerebro-submodule-path 'custom-type))
+  (let ((cerebro-submodule-path "vendor/cerebro"))
+    (should (equal (cerebro--script-directory) "vendor/cerebro/scripts"))
+    (should (string-suffix-p "vendor/cerebro/scripts/run-planner"
+                             (cerebro--script "run-planner")))
+    ;; And the root search looks for the mount where it now lives.
+    (let* ((root (make-temp-file "cerebro-mount" t))
+           (default-directory (file-name-as-directory root)))
+      (make-directory (expand-file-name "vendor/cerebro" root) t)
+      (should (equal (file-truename (cerebro--repo-root))
+                     (file-truename (file-name-as-directory root)))))))
+
+(ert-deftest cerebro-test/wake-intervals-are-keyed-on-role-and-still-honour-a-name ()
+  "The five-minute override belonged to a role, not to the agent called
+`Psylocke' - a consumer's verifier may be called anything. Name still wins
+where one is given, most-specific-first, the way `models.conf' resolves."
+  (should (equal (default-value 'cerebro-wake-intervals) '(("verifier" . 300))))
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals '(("verifier" . 300))))
+    (should (equal (cerebro-wake-interval "Betsy" "verifier") 300))
+    (should (equal (cerebro-wake-interval "Betsy" "planner") 600))
+    ;; No role known (an external agent, a torn state file): the default.
+    (should (equal (cerebro-wake-interval "Betsy") 600)))
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals '(("verifier" . 300) ("Betsy" . 120))))
+    (should (equal (cerebro-wake-interval "Betsy" "verifier") 120))))
+
+(ert-deftest cerebro-test/wake-due-p-reads-the-agents-role ()
+  "The role-keyed interval has to reach the decision that uses it."
+  (let ((cerebro-wake-interval-default 3600)
+        (cerebro-wake-intervals '(("verifier" . 300))))
+    (should (cerebro--wake-due-p
+             (cerebro-test--waiting "Betsy" "2026-08-14T09:15:00Z" nil nil "verifier")
+             cerebro-test--now))))
+
+;; ah-qled.9: the columns are computed from the data, not configured
+
+(ert-deftest cerebro-test/column-widths-match-todays-table-for-todays-fleet ()
+  "Computed, not configured - and for this fleet the computation has to
+produce exactly the table that is there today, or the promotion pass has
+changed behaviour."
+  (should (equal (cerebro--column-widths
+                  '("Xavier" "Cerebro" "Psylocke" "Wolverine")
+                  '("planner" "orchestrator" "verifier" "implementer")
+                  '("ah-qled.9" "ah-t65"))
+                 '(14 13 10 10 10)))
+  (should (= (cerebro--width-for '(14 13 10 10 10)) 59)))
+
+(ert-deftest cerebro-test/column-widths-grow-for-a-long-name-or-a-long-id ()
+  "A consumer's names and ids are not this project's. The Bead column is 10
+because of `ah-dzj.1.1.1.1'; a nested child one level deeper must widen it
+rather than being truncated away."
+  (let ((wide (cerebro--column-widths '("Multiple-Man-Duplicate-7")
+                                       '("technical-debt-sweeper")
+                                       '("ah-dzj.1.1.1.1.1"))))
+    (should (> (nth 0 wide) 14))
+    (should (> (nth 1 wide) 13))
+    (should (> (nth 3 wide) 10))
+    ;; And the layout widens with them, or the table would overflow its window.
+    (should (> (cerebro--width-for wide) 59))))
+
+(ert-deftest cerebro-test/a-wider-bead-column-shows-the-whole-id ()
+  "The width the table was given is the width the cell truncates to."
+  (let* ((agent (make-cerebro-agent :name "Storm" :role "implementer"
+                                    :kind 'implementer :state 'working
+                                    :bead "ah-dzj.1.1.1.1.1"
+                                    :since "2026-08-14T09:20:00Z"))
+         (row (cerebro--entry agent cerebro-test--now nil nil 16)))
+    (should (equal (substring-no-properties (aref (nth 1 row) 3))
+                   "ah-dzj.1.1.1.1.1"))))
+
+(ert-deftest cerebro-test/no-prose-names-one-particular-consumer ()
+  "`C-h m' shows every user the mode docstring, and `runImplementer.ts' is a
+file in neither repository - a dangling reference implying a Node consumer."
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name "emacs/cerebro.el"))
+    (goto-char (point-min))
+    (should-not (search-forward "atlantis-hud" nil t))
+    (goto-char (point-min))
+    (should-not (search-forward "runImplementer" nil t))))
+
+(ert-deftest cerebro-test/the-nudge-names-no-label-and-no-skill ()
+  "It is typed into a live session, so it must not name this project's
+beads label or the skill it happens to keep the hand-back in."
+  (should-not (string-match-p "human" cerebro--nudge-message))
+  (should-not (string-match-p "implement-bead" cerebro--nudge-message))
+  ;; It still has to say the two things it is for: stop waiting, and finish.
+  (should (string-match-p "\\[cerebro\\]" cerebro--nudge-message)))
+
+(ert-deftest cerebro-test/every-public-constant-left-is-a-buffer-name ()
+  "The audit ah-qled.9 closes, kept closed.
+
+A `defconst' whose name is public (`cerebro-', not `cerebro--') is one a
+consumer can see and cannot set - which is exactly the shape every project
+fact promoted here used to have. The three left are Emacs buffer names, an
+internal detail with nothing project-shaped in them; anything else appearing
+in this list is a fact that wants a `defcustom'."
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name "emacs/cerebro.el"))
+    (goto-char (point-min))
+    (let (public)
+      (while (re-search-forward "^(defconst \\(cerebro-[^-][^ \n]*\\)" nil t)
+        (push (match-string 1) public))
+      (should (equal (sort public #'string<)
+                     '("cerebro-bead-buffer-name" "cerebro-beads-buffer-name"
+                       "cerebro-buffer-name"))))))

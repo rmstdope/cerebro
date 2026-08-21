@@ -43,10 +43,28 @@
   :group 'tools
   :prefix "cerebro-")
 
+(defcustom cerebro-bd-program "bd"
+  "The beads executable cerebro runs the panel and the sweeps from.
+
+A consumer may install it under another name, or behind a wrapper that
+adds a flag or a path.  This is the *program*, not the command language:
+cerebro speaks beads, and it does so in `scripts/work-beads\=',
+`scripts/sweep-claims.sh\=', `scripts/sweep-epics.sh\=' and every agent
+document as well as here, so a different tracker is a far larger change
+than a setting and is deliberately out of scope."
+  :type 'string
+  :group 'cerebro)
+
 (defconst cerebro-buffer-name "*cerebro*")
 
-(defconst cerebro-list-width 59
-  "Columns for the left column of the layout.
+(defvar cerebro-list-width 59
+  "Columns for the left column of the layout, recomputed on every revert.
+
+Derived rather than configured (ah-qled.9): `cerebro--column-widths\=' sizes
+the table from the roster actually in front of it and the bead ids actually
+being shown, and `cerebro--width-for\=' turns those into this.  59 is what
+this project\='s own fleet produces, and is the value here until the first
+render replaces it.
 
 The agent table is 14+13+10+10+10 plus one column of padding = 58; this is
 59 so the table is strictly narrower than the window, which is what keeps
@@ -396,7 +414,46 @@ string when neither is."
   "TEXT in bold when EMPHASIZE, otherwise TEXT unchanged."
   (if emphasize (propertize text 'face 'bold) text))
 
-(defun cerebro--entry (agent now &optional flagged unanswered)
+(defconst cerebro--column-minimums '(14 13 10 10 10)
+  "The floor for each column: Agent, Role, State, Bead, Bead/Phase.
+
+This project\='s table, kept as the floor so a short roster still gets a
+readable one rather than columns that hug their own contents.")
+
+(defun cerebro--column-widths (names roles bead-ids)
+  "Pure.  The five column widths for a fleet of NAMES filling ROLES, showing
+BEAD-IDS.
+
+Computed rather than configured: the widths are a fact about the data, and
+four more settings would be four more things a consumer has to discover
+before its own longer names stopped being truncated.  Agent allows two
+columns for the state glyph and its space; Role and Bead one for the gap to
+the next column.  State is a fixed vocabulary and Bead/Phase a pair of
+elapsed times, so neither is derived from anything a consumer varies."
+  (let ((longest (lambda (strings) (apply #'max 0 (mapcar #'length strings)))))
+    (list (max (nth 0 cerebro--column-minimums) (+ 2 (funcall longest names)))
+          (max (nth 1 cerebro--column-minimums) (+ 1 (funcall longest roles)))
+          (nth 2 cerebro--column-minimums)
+          (max (nth 3 cerebro--column-minimums) (+ 1 (funcall longest bead-ids)))
+          (nth 4 cerebro--column-minimums))))
+
+(defun cerebro--width-for (widths)
+  "Columns the layout\='s left window needs for a table of WIDTHS.
+
+One for `tabulated-list-padding\=', and one more so the table is strictly
+narrower than its window - a table exactly as wide as its window loses its
+last column to Emacs\='s `$\=' truncation marker (ah-lyc)."
+  (+ (apply #'+ widths) 2))
+
+(defun cerebro--table-format (widths)
+  "WIDTHS as a `tabulated-list-format\=' vector."
+  (vector (list "Agent" (nth 0 widths) nil)
+          (list "Role" (nth 1 widths) nil)
+          (list "State" (nth 2 widths) nil)
+          (list "Bead" (nth 3 widths) nil)
+          (list "Bead/Phase" (nth 4 widths) nil)))
+
+(defun cerebro--entry (agent now &optional flagged unanswered bead-width)
   "AGENT as a `tabulated-list-entries' element, evaluated at NOW.
 
 FLAGGED, when non-nil, means a stop flag is set for AGENT: the state column
@@ -420,10 +477,10 @@ answer either of its pokes: the state column gains a \" !\" suffix, which is
 where the poke stops rather than being retried on every tick for ever
 \(`cerebro--poke-decision', ah-hiib.3).
 
-The Bead column is 10 columns wide; an external agent shows \"—\" rather than
-the wordier \"(external)\", and a real bead id longer than 10 (a nested child
-bead, e.g. \"ah-dzj.1.1.1.1\") truncates with an ellipsis rather than pushing
-the rest of the row right - see ah-lyc."
+BEAD-WIDTH is what the Bead column was sized to (`cerebro--column-widths\=',
+default 10).  An external agent shows \"—\" rather than the wordier
+\"(external)\", and an id longer than the column truncates with an ellipsis
+rather than pushing the rest of the row right - see ah-lyc."
   (let* ((state (cerebro-agent-state agent))
          (external (cerebro-agent-external agent))
          (in-flight (cerebro--in-flight-p state))
@@ -443,7 +500,8 @@ the rest of the row right - see ah-lyc."
          (bead-col (cerebro--emphasize
                     (cond (external "—")
                           ((cerebro-agent-bead agent)
-                           (truncate-string-to-width (cerebro-agent-bead agent) 10 nil nil "…"))
+                           (truncate-string-to-width (cerebro-agent-bead agent)
+                                                    (or bead-width 10) nil nil "…"))
                           (t ""))
                     attention))
          (for-col (cerebro--emphasize
@@ -896,7 +954,7 @@ keypress's worth of intent would be its own kind of noise."
            (command-string (mapconcat #'identity argv " ")))
       (when (y-or-n-p (format "run: %s ? " command-string))
         (if (cerebro--run-sweep-command repo-root argv)
-            (let ((pushed (cerebro--run-sweep-command repo-root '("bd" "dolt" "push"))))
+            (let ((pushed (cerebro--run-sweep-command repo-root (cerebro--bd-push-argv))))
               (cerebro--beads-render (current-buffer))
               (if pushed
                   (message "ran: %s" command-string)
@@ -938,13 +996,20 @@ the drift a self-timing agent produces and this poll removes."
   :type 'integer
   :group 'cerebro)
 
-(defcustom cerebro-wake-intervals '(("Psylocke" . 300))
-  "Per-name overrides of `cerebro-wake-interval-default\=', as (NAME . SECONDS).
+(defcustom cerebro-wake-intervals '(("verifier" . 300))
+  "Overrides of `cerebro-wake-interval-default\=', as (KEY . SECONDS).
 
-Psylocke alone, at five minutes: her own prose asks for five, and the log
-agrees - 90 idle intervals, median 4.7 min - because a bead can merge, wait
-and still be waiting when the navigator asks what happened to it.  Every
-other role measured at ten and takes the default."
+KEY is a role or an agent name, and a name-keyed entry wins over a
+role-keyed one - most-specific-first, the way `models.conf\=' resolves a
+model.  Roles come from `scripts/roster\=', so a role key holds for whatever
+a consumer calls the agent that fills it.
+
+The verifier alone, at five minutes: Psylocke\='s own prose asks for five, and
+the log agrees - 90 idle intervals, median 4.7 min - because a bead can
+merge, wait and still be waiting when the navigator asks what happened to
+it.  Every other role measured at ten and takes the default.  It was keyed
+on the name \"Psylocke\" until ah-qled.9, which is a name a consumer\='s fleet
+need not have."
   :type '(alist :key-type string :value-type integer)
   :group 'cerebro)
 
@@ -958,9 +1023,15 @@ construction, sitting at its prompt."
   :type 'integer
   :group 'cerebro)
 
-(defun cerebro-wake-interval (name)
-  "Seconds NAME may wait before the poll wakes it."
-  (or (cdr (assoc name cerebro-wake-intervals)) cerebro-wake-interval-default))
+(defun cerebro-wake-interval (name &optional role)
+  "Seconds the agent called NAME, filling ROLE, may wait before it is woken.
+
+NAME first, then ROLE, then `cerebro-wake-interval-default\=': the more
+specific key wins, so a fleet that wants one agent on a different cadence
+from the rest of its role says so by name."
+  (or (cdr (assoc name cerebro-wake-intervals))
+      (and role (cdr (assoc role cerebro-wake-intervals)))
+      cerebro-wake-interval-default))
 
 (defun cerebro--wake-due-p (agent now)
   "Pure.  Whether AGENT, a `waiting\=' role, should be woken at NOW.
@@ -976,7 +1047,8 @@ not nudge an `asking\=' implementer: a poke lands as keystrokes in a live
 session."
   (let* ((asked (cerebro--seconds-until (cerebro-agent-wake-at agent) now))
          (waited (cerebro--seconds-since (cerebro-agent-since agent) now))
-         (interval (cerebro-wake-interval (cerebro-agent-name agent))))
+         (interval (cerebro-wake-interval (cerebro-agent-name agent)
+                                          (cerebro-agent-role agent))))
     (and (or (and asked (<= asked 0))
              (and waited (>= waited interval)))
          t)))
@@ -1071,17 +1143,30 @@ everything: every answer here ends in Emacs acting on a session it owns."
 
 ;;; ah-vcf.3: the pure start/kill/launch decisions
 
-(defconst cerebro--script-directory ".claude/cerebro/scripts"
+(defcustom cerebro-submodule-path ".claude/cerebro"
+  "Where cerebro is mounted, relative to the consumer repository root.
+
+Cerebro is consumed as a git submodule, and this is the one place its
+mount point is written down: it is both where the launchers are found and
+what `cerebro--repo-root\=' searches upwards for.  A consumer mounting it
+at, say, \"vendor/cerebro\" sets this and needs nothing else.
+
+`githooks/sync-if-changed.sh\=' carries the same assumption on the shell
+side, and takes the path as an argument for it."
+  :type 'string
+  :group 'cerebro)
+
+(defun cerebro--script-directory ()
   "Where the launchers live, relative to the consumer repository root.
 
-Cerebro is consumed as a submodule mounted at `.claude/cerebro\', and the
-launchers moved there with the agents and skills they start.  A bare
-\"scripts/run-planner\" would resolve to the consumer\'s own scripts
-directory, which no longer has one.")
+The launchers moved into the submodule with the agents and skills they
+start.  A bare \"scripts/run-planner\" would resolve to the consumer\'s own
+scripts directory, which no longer has one."
+  (concat cerebro-submodule-path "/scripts"))
 
 (defun cerebro--script (name)
   "The path to launcher NAME, relative to the repository root."
-  (concat cerebro--script-directory "/" name))
+  (concat (cerebro--script-directory) "/" name))
 
 (defun cerebro--launch-command (agent)
   "The command that launches AGENT: `scripts/launch' and the agent's name,
@@ -1193,13 +1278,18 @@ than the row going `up' for a moment and then silently `dead' (ah-bri)."
 
 ;;; Sweep findings (ah-4ao): turning `sweep-claims.sh'/`sweep-epics.sh' facts into a decision
 
-(defconst cerebro--sweep-stale-minutes 10
+(defcustom cerebro-sweep-stale-minutes 10
   "Minutes past which a claim's delivery, or an epic's last child close, is
 old enough to act on rather than mid-cleanup.
 
 Matches `agents/orchestrator.md's own claims and epics sweeps: an
 implementer closes what it just finished within seconds, so anything
-fresher than this is an agent still tidying up, not one that is gone.")
+fresher than this is an agent still tidying up, not one that is gone.
+
+This project's number, not a universal: a consumer whose implementers tidy
+up more slowly wants a larger one."
+  :type 'integer
+  :group 'cerebro)
 
 (defun cerebro--claim-finding (candidate live-names now)
   "Pure. What the claims sweep should offer for CANDIDATE, or nil.
@@ -1233,11 +1323,11 @@ accepted, on a claim that was never actually abandoned."
      (.verification_failed nil)
      ((member .assignee live-names) nil)
      (.on_main
-      (if (and .commit_age_min (> .commit_age_min cerebro--sweep-stale-minutes))
+      (if (and .commit_age_min (> .commit_age_min cerebro-sweep-stale-minutes))
           (list 'close .id
                 (format "Delivered in PR; closed by the fleet view, %s did not" .assignee))
         nil))
-     ((and .lease_age_min (> .lease_age_min cerebro--sweep-stale-minutes))
+     ((and .lease_age_min (> .lease_age_min cerebro-sweep-stale-minutes))
       (list 'reclaim .id))
      (t nil))))
 
@@ -1248,22 +1338,27 @@ CANDIDATE is one parsed object from `sweep-epics.sh --json' - already
 known eligible (every child closed) by the script's own `bd epic status
 --eligible-only'. The only question left here is staleness: nil when
 `minutes_since_last_child_closed' is absent (nothing to act on) or under
-`cerebro--sweep-stale-minutes' (an implementer is still mid-cleanup),
+`cerebro-sweep-stale-minutes' (an implementer is still mid-cleanup),
 otherwise (epic-close ID)."
   (let-alist candidate
     (if (and .minutes_since_last_child_closed
-             (> .minutes_since_last_child_closed cerebro--sweep-stale-minutes))
+             (> .minutes_since_last_child_closed cerebro-sweep-stale-minutes))
         (list 'epic-close .id)
       nil)))
 
-(defconst cerebro--stalled-minutes 60
+(defcustom cerebro-stalled-minutes 60
   "Minutes without a commit past which a claim is offered as stalled.
 
 Empirical, not chosen (ah-4xm4): across the 72 hours to 2026-08-20 every
 one of the 36 beads that ran cleanly made its first commit 6 to 36 minutes
 after being claimed, and the four that parked sat 2.3 hours or more. Sixty
 separates them with no false positive in that window - and it is well clear
-of a long CI wait, which is the legitimate reason a working bead is quiet.")
+of a long CI wait, which is the legitimate reason a working bead is quiet.
+
+That measurement is this project's own, not a universal: a consumer whose
+builds take an hour gets false stalled findings until this is raised."
+  :type 'integer
+  :group 'cerebro)
 
 (defun cerebro--stalled-finding (candidate live-states now)
   "Pure. What the stalled sweep should offer for CANDIDATE, or nil.
@@ -1289,7 +1384,7 @@ finding against a working implementer."
        ((null (assoc .assignee live-states)) nil)
        ((eq state 'asking) nil)
        ((null .progress_age_min) nil)
-       ((> .progress_age_min cerebro--stalled-minutes) (list 'unclaim .id))
+       ((> .progress_age_min cerebro-stalled-minutes) (list 'unclaim .id))
        (t nil)))))
 
 (defun cerebro--finding-command (finding repo-root)
@@ -1304,25 +1399,26 @@ sweep pipeline; the command itself carries no path, since it is run with
   (ignore repo-root)
   (pcase finding
     ('nil nil)
-    (`(close ,id ,reason) (list "bd" "close" id "--reason" reason))
-    (`(reclaim ,id) (list "bd" "reclaim" "--id" id "--older-than" "10m"))
-    (`(epic-close ,id) (list "bd" "close" id))
+    (`(close ,id ,reason) (list cerebro-bd-program "close" id "--reason" reason))
+    (`(reclaim ,id) (list cerebro-bd-program "reclaim" "--id" id "--older-than" "10m"))
+    (`(epic-close ,id) (list cerebro-bd-program "close" id))
     ;; `bd unclaim', not `bd reclaim --older-than': reclaim is for a claim whose
     ;; session is gone, and its window would refuse a bead whose lease is still
     ;; being heartbeated. This finding is about a session alive and not moving.
-    (`(unclaim ,id) (list "bd" "unclaim" id))
+    (`(unclaim ,id) (list cerebro-bd-program "unclaim" id))
     (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure
 
 (defun cerebro--repo-root ()
   "The repository root above `default-directory', or an error.
-Located by `.claude/cerebro' (the submodule mount, present in every
-consumer from clone time) rather than by `.cerebro/state', which
+Located by `cerebro-submodule-path\=' (the submodule mount, present in
+every consumer from clone time) rather than by `.cerebro/state', which
 may not exist yet on a fresh machine - `agent-state' and
 `cerebro--write-stop-flag' both create it on first write."
-  (or (locate-dominating-file default-directory ".claude/cerebro")
-      (error "cerebro: no .claude/cerebro found above %s" default-directory)))
+  (or (locate-dominating-file default-directory cerebro-submodule-path)
+      (error "cerebro: no %s found above %s (see `cerebro-submodule-path')"
+             cerebro-submodule-path default-directory)))
 
 (defvar-local cerebro--fleet-cache nil
   "The parsed roster, once read; buffer-local so a revert does not re-shell out.")
@@ -1345,7 +1441,7 @@ may not exist yet on a fresh machine - `agent-state' and
   (cerebro--fleet-interactive (cerebro--fleet repo-root)))
 
 (defun cerebro--state-file-path (repo-root name)
-  "Where NAME's status file lives, mirroring `statePath' in runImplementer.ts."
+  "Where NAME's status file lives, matching `scripts/agent-state'."
   (expand-file-name (format ".cerebro/state/%s.state.json" name) repo-root))
 
 (defun cerebro--read-state-file (path)
@@ -1691,13 +1787,16 @@ for ever.  Cleared with the record above when the role transitions.")
 
 (defconst cerebro--nudge-message
   (concat "[cerebro] Nobody answered within the timeout. Do not keep waiting: "
-          "put the question and everything you have found into the bead, "
-          "label it `human', release your claim, and finish the run - "
-          "the hand-back in the implement-bead skill.")
-  "What an implementer is told when its question goes unanswered.
+          "put the question and everything you have found into the work item, "
+          "hand it back for a person to decide, exactly as your own instructions describe, "
+          "and finish the run.")
+  "What an interactive agent is told when its question goes unanswered.
 
-It names the hand-back rather than describing it, so the skill stays the
-one place that says how a bead is handed back.")
+It names neither a tracker label nor a skill, for the same reason
+`cerebro--poke-message\=' names no pass: the words go into a live session, and
+how a work item is handed back is the agent\='s own instructions to state, not
+the fleet view\='s.  Saying it in cerebro\='s words would be a second, quieter
+copy of a policy that must have exactly one owner.")
 
 (defun cerebro--nudge (agent)
   "Type `cerebro--nudge-message' into AGENT's session."
@@ -1831,12 +1930,20 @@ timescales - a claim, a plan, a merge are minutes apart - and each refresh
 is three subprocesses, so a five-second cadence would buy nothing but load.
 `g' refreshes on demand.")
 
-(defconst cerebro--bd-list-argv
-  '("bd" "list" "--status" "open,in_progress,blocked,deferred,closed" "--json" "--brief")
+(defun cerebro--bd-push-argv ()
+  "The argv for pushing the bead database to its remote.
+
+`dolt push\=' is a beads feature rather than a project fact, so only the
+program is configurable here."
+  (list cerebro-bd-program "dolt" "push"))
+
+(defun cerebro--bd-list-argv ()
   "The one `bd' call the panel is drawn from. `--brief' drops the free-form
 text nothing here renders (1.95 MB to 199 KB on this backlog); every status
 by name and no `--exclude-type', as before - the partition is only complete
-if the list it partitions is.")
+if the list it partitions is."
+  (list cerebro-bd-program "list" "--status"
+        "open,in_progress,blocked,deferred,closed" "--json" "--brief"))
 
 (defun cerebro--request-beads (repo-root callback)
   "Ask `bd' for the panel's beads without blocking; CALLBACK gets the four
@@ -1845,7 +1952,7 @@ nil when `bd' did not answer - including `bd' exiting zero but printing
 something that is not JSON, which is not a valid empty answer either.
 Returns what `cerebro--run-async' returns."
   (cerebro--run-async
-   'beads repo-root cerebro--bd-list-argv
+   'beads repo-root (cerebro--bd-list-argv)
    (lambda (out)
      (funcall callback
               (and out
@@ -1863,7 +1970,7 @@ columns of bead however wide it is."
   (condition-case nil
       (with-temp-buffer
         (let ((default-directory (file-name-as-directory repo-root)))
-          (when (zerop (call-process "bd" nil t nil "show" id))
+          (when (zerop (call-process cerebro-bd-program nil t nil "show" id))
             (buffer-string))))
     (error nil)))
 
@@ -1877,7 +1984,7 @@ merged P0 - so these sections answer \"what just happened\" instead."
           (string> (or (alist-get 'updated_at a) "")
                    (or (alist-get 'updated_at b) "")))))
 
-(defconst cerebro-verification-settled '("verification:passed" "verification:not-needed")
+(defcustom cerebro-verification-settled '("verification:passed" "verification:not-needed")
   "Labels meaning a merged bead needs nothing further from anybody.
 
 `verification:passed' is a human having checked it; `not-needed' is the
@@ -1888,7 +1995,12 @@ them under Verified.
 Note this is deliberately NOT how `agents/user-feedback.md' talks to a
 reporter: there a `not-needed' bead never shows VERIFIED, because nobody
 confirmed anything. The word means \"a person checked it\" on an issue
-thread, and \"nothing left to do\" here.")
+thread, and \"nothing left to do\" here.
+
+This project's label vocabulary; a consumer that settles verification some
+other way sets its own here."
+  :type '(repeat string)
+  :group 'cerebro)
 
 (defun cerebro--bead-labels (bead)
   "The labels on BEAD, as a list of strings."
@@ -1899,12 +2011,30 @@ thread, and \"nothing left to do\" here.")
   (cl-some (lambda (label) (member label cerebro-verification-settled))
            (cerebro--bead-labels bead)))
 
-(defconst cerebro-skipped-issue-types '("epic" "event")
+(defcustom cerebro-skipped-issue-types '("epic" "event")
   "Issue types that are bookkeeping rather than work, and so never shown.
 The shell has the same list, in `scripts/work-beads', which is where the
 reasoning is written down for every reader of closed beads (ah-cg1);
 `cerebro-test/the-panel-skips-exactly-what-work-beads-excludes' holds the
-two to each other.")
+two to each other - so both sides move together."
+  :type '(repeat string)
+  :group 'cerebro)
+
+(defcustom cerebro-planned-label "planned"
+  "The label meaning a bead has a plan and an implementer may claim it.
+
+This project's word for it; the panel's Planned section is whatever a
+consumer calls the same thing."
+  :type 'string
+  :group 'cerebro)
+
+(defcustom cerebro-planning-label "planning"
+  "The label a planner holds a bead under while it writes the plan.
+
+Open, unclaimable by anybody else, and shown in its own section rather
+than among the unplanned backlog."
+  :type 'string
+  :group 'cerebro)
 
 (defun cerebro--partition-beads (beads)
   "Split BEADS into the five lists the panel shows.
@@ -1943,8 +2073,8 @@ work."
              ;; mid-write - or left behind by a planner that forgot the
              ;; removal - carries both. Pickable wins, because an implementer
              ;; can claim it whatever else the bead says.
-             ((member "planned" labels) (push bead planned))
-             ((member "planning" labels) (push bead being-planned))
+             ((member cerebro-planned-label labels) (push bead planned))
+             ((member cerebro-planning-label labels) (push bead being-planned))
              (t (push bead unplanned)))))
          ((equal status "closed")
           ;; Settled means nothing further is wanted from anybody - verified
@@ -1956,8 +2086,13 @@ work."
     (list (nreverse claimed) (nreverse planned) (nreverse being-planned)
           (nreverse unplanned) (nreverse merged))))
 
-(defconst cerebro-priority-floor 4
-  "The least urgent priority `bd' takes; 0 is the most urgent.")
+(defcustom cerebro-priority-floor 4
+  "The least urgent priority `bd\=' takes; 0 is the most urgent.
+
+This project's backlog floor: a consumer whose tracker ranks differently
+sets its own."
+  :type 'integer
+  :group 'cerebro)
 
 (defun cerebro--nudged-priority (priority delta)
   "PRIORITY moved by DELTA, clamped to the range `bd' accepts.
@@ -1971,7 +2106,7 @@ not roll a bead round to P0."
   (condition-case nil
       (with-temp-buffer
         (let ((default-directory (file-name-as-directory repo-root)))
-          (zerop (call-process "bd" nil t nil "update" id
+          (zerop (call-process cerebro-bd-program nil t nil "update" id
                                "--priority" (number-to-string priority)))))
     (error nil)))
 
@@ -2454,12 +2589,24 @@ Does nothing when BUFFER is dead."
          (agents (cerebro--derive roster interactive states
                                           #'cerebro--session-alive-p args owned)))
     (setq cerebro--agents agents)
-    (setq tabulated-list-entries
-          (mapcar (lambda (a)
-                    (cerebro--entry a now
-                                    (cerebro--stop-flag-p repo-root (cerebro-agent-name a))
-                                    (member (cerebro-agent-name a) cerebro--unanswered-pokes)))
-                  agents))))
+    ;; The table is sized to what is in front of it, every revert: a roster
+    ;; gains an agent, a bead id gets deeper, and the columns follow (ah-qled.9).
+    (let ((widths (cerebro--column-widths
+                   (mapcar #'cerebro-agent-name agents)
+                   (mapcar #'cerebro-agent-role agents)
+                   (delq nil (mapcar #'cerebro-agent-bead agents)))))
+      (setq cerebro-list-width (cerebro--width-for widths))
+      (let ((format (cerebro--table-format widths)))
+        (unless (equal tabulated-list-format format)
+          (setq tabulated-list-format format)
+          (tabulated-list-init-header)))
+      (setq tabulated-list-entries
+            (mapcar (lambda (a)
+                      (cerebro--entry a now
+                                      (cerebro--stop-flag-p repo-root (cerebro-agent-name a))
+                                      (member (cerebro-agent-name a) cerebro--unanswered-pokes)
+                                      (nth 3 widths)))
+                    agents)))))
 
 ;;; The prune watcher (ah-4ao): `prune-worktrees.sh --watch' moves here from Cerebro
 
@@ -2847,11 +2994,12 @@ would have taken TAB from every vterm the navigator has, fleet or not.
   "Keymap for `cerebro-mode'.")
 
 (define-derived-mode cerebro-mode tabulated-list-mode "Cerebro"
-  "Major mode listing the atlantis-hud agent fleet.
+  "Major mode listing the agent fleet of the repository it is opened in.
 
 \\{cerebro-mode-map}"
-  (setq tabulated-list-format
-        [("Agent" 14 nil) ("Role" 13 nil) ("State" 10 nil) ("Bead" 10 nil) ("Bead/Phase" 10 nil)])
+  ;; A starting shape only: `cerebro--revert' resizes it from the roster and
+  ;; the bead ids actually being shown on every render (ah-qled.9).
+  (setq tabulated-list-format (cerebro--table-format cerebro--column-minimums))
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (add-hook 'tabulated-list-revert-hook #'cerebro--revert nil t)

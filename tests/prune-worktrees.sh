@@ -62,8 +62,17 @@ git init -q --bare "$origin"
 consumer="$work_dir/repo"
 mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/scripts"
 git init -q -b main "$consumer"
-ln -s "$repo_root/scripts/consumer-root" "$consumer/.claude/cerebro/scripts/consumer-root"
-ln -s "$repo_root/scripts/prune-worktrees.sh" "$consumer/.claude/cerebro/scripts/prune-worktrees.sh"
+for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
+  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
+done
+
+# What this consumer is willing to have reclaimed. Declared rather than assumed since ah-qled.4:
+# `reclaim_dirs` defaults to EMPTY, so an unconfigured consumer never has a directory deleted. Every
+# assertion below is about what happens once a consumer HAS opted in, which is what this line does;
+# tests/project-sweeps.sh owns the opted-out case.
+cat > "$consumer/.claude/cerebro-project.conf" <<'CONF'
+reclaim_dirs target
+CONF
 
 # The one number: the consumer's own build floor, which this sweep must reuse rather than invent a
 # second one beside it.

@@ -63,6 +63,12 @@ repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
 default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch=""
 [[ -n "$default_branch" ]] || default_branch="main"
 
+# How a commit subject names the bead it delivers, and which such subjects are not deliveries. Both
+# substitute `{id}`; see where they are used below for why substitution rather than a prefix.
+commit_ref_pattern="$("$script_dir/project-conf" commit_ref_pattern '({id}):' 2>/dev/null || echo '({id}):')"
+[[ -n "$commit_ref_pattern" ]] || commit_ref_pattern='({id}):'
+non_delivery_commit_pattern="$("$script_dir/project-conf" non_delivery_commit_pattern 2>/dev/null || true)"
+
 if ! git -C "$repo_root" fetch --quiet origin "$default_branch" 2>/dev/null; then
   echo '{"error": "could not reach origin; refusing to guess whether a claim landed"}'
   exit 1
@@ -98,9 +104,24 @@ while IFS= read -r bead; do
     fi
   fi
 
-  # The colon and parens matter: bare "$id" also matches "$id.8", a child of this bead.
-  match_commits="$(git -C "$repo_root" log "origin/$default_branch" --grep "($id):" -F --oneline 2>/dev/null || true)"
-  non_mockup="$(printf '%s\n' "$match_commits" | grep -vF "docs($id): mockup" || true)"
+  # How this consumer's commits name the bead they deliver. The default `({id}):` is the
+  # Conventional-Commits scope this repository uses, and the colon and parens matter: bare "$id"
+  # also matches "$id.8", a child of this bead.
+  #
+  # `{id}` is SUBSTITUTED, not concatenated as a prefix (ah-qled.4). A consumer whose subjects read
+  # `PROJ-9 done:` or put the id anywhere but the front could not be expressed by a prefix, so the
+  # sweep read `on_main:false` for every bead and silently did nothing at all.
+  match_pattern="${commit_ref_pattern//\{id\}/$id}"
+  match_commits="$(git -C "$repo_root" log "origin/$default_branch" --grep "$match_pattern" -F --oneline 2>/dev/null || true)"
+
+  # What in this consumer's history is NOT a delivery — here, `plan-bead`'s mockup commit. It
+  # DEFAULTS TO EMPTY, because excluding a subject nobody else writes is this project's convention
+  # rather than a fact about sweeping claims; a consumer that wants it declares it.
+  if [[ -n "$non_delivery_commit_pattern" ]]; then
+    non_mockup="$(printf '%s\n' "$match_commits" | grep -vF "${non_delivery_commit_pattern//\{id\}/$id}" || true)"
+  else
+    non_mockup="$match_commits"
+  fi
 
   docs_only=false
   on_main=false

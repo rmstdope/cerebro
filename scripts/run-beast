@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# Starts Beast, the second planner: a name for `scripts/launch Beast`, kept for the same reason
-# `run-planner` is - the docs and the navigator's fingers know these. Everything it does lives in
-# `launch`; nothing here may grow.
-#
-# There is no `run-planner2`: the shims are named after agents, and Xavier and Beast are two agents
-# holding one role. `run-planner` therefore means Xavier and nothing else.
-exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/launch" Beast "$@"

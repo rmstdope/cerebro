@@ -103,9 +103,7 @@ else.
 Every session starts the same way, whatever the role:
 
 ```bash
-.claude/cerebro/scripts/launch <Name>          # or run-planner, run-beast, run-psylocke, run-cypher,
-                                               # run-orchestrator, run-user-feedback, run-forge,
-                                               # run-implementer <Name>
+.claude/cerebro/scripts/launch <Name>          # every agent, by its own name
 ```
 
 `launch` is the one place a session is born. It stamps the session with that agent's own `bd`
@@ -170,7 +168,7 @@ user-facing surface, so the queue keeps filling. It will not guess on your behal
 
 ## Starting builders
 
-**You** start builders — one session each, `s` in the fleet view or `run-implementer <name>` in a
+**You** start builders — one session each, `s` in the fleet view or `launch <Name>` in a
 terminal. There is no flag that puts a running implementer to work: **a running implementer is a
 working one**, and it claims the next planned bead as soon as one exists. If you want another
 builder, start another session.
@@ -205,7 +203,7 @@ cuts releases. It starts nothing — not even an implementer, because starting o
 session, and only you can do that.
 
 ```bash
-.claude/cerebro/scripts/run-orchestrator
+.claude/cerebro/scripts/launch Cerebro
 ```
 
 Then you talk to it in whatever words you like:
@@ -301,7 +299,7 @@ GitHub issues are the **external** inbox — everything from outside the fleet �
 them:
 
 ```bash
-.claude/cerebro/scripts/run-user-feedback
+.claude/cerebro/scripts/launch Moira
 ```
 
 One pass over the open issues, then a ten-minute sleep, then another. On each pass she acknowledges
@@ -321,7 +319,7 @@ merged by the implementer that built it — none of which applies to a contribut
 and has read none of that. **Cypher** is the path for those:
 
 ```bash
-.claude/cerebro/scripts/run-cypher
+.claude/cerebro/scripts/launch Cypher
 ```
 
 One session, interactive, and it works a PR at a time:
@@ -352,7 +350,7 @@ Every step so far — plan, build, review, merge — is an agent judging its own
 that the merged result actually does what it was supposed to, until **Psylocke**:
 
 ```bash
-.claude/cerebro/scripts/run-psylocke
+.claude/cerebro/scripts/launch Psylocke
 ```
 
 She walks beads closed since her last pass, works out on her own which ones touched anything a player
@@ -399,7 +397,7 @@ claimed — and across fifty merges nobody asks whether the codebase got harder 
 way. **Forge** is that reader:
 
 ```bash
-.claude/cerebro/scripts/run-forge
+.claude/cerebro/scripts/launch Forge
 ```
 
 Unlike every other interactive session here, Forge does **one sweep and stops** — it works out for

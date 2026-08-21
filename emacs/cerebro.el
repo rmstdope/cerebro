@@ -1160,7 +1160,7 @@ side, and takes the path as an argument for it."
   "Where the launchers live, relative to the consumer repository root.
 
 The launchers moved into the submodule with the agents and skills they
-start.  A bare \"scripts/run-planner\" would resolve to the consumer\'s own
+start.  A bare \"scripts/launch\" would resolve to the consumer\'s own
 scripts directory, which no longer has one."
   (concat cerebro-submodule-path "/scripts"))
 
@@ -1689,7 +1689,7 @@ believes about it (ah-5pp)."
     (with-current-buffer buffer (cerebro-session-mode 1))
     (when (eq (cerebro-agent-kind agent) 'implementer)
       ;; What was started, not what it will do: whether it claims straight away
-      ;; is the launcher's behaviour, and an older `run-implementer'
+      ;; is the launcher's behaviour, and an older `launch'
       ;; still waits on the retired `.go' flag first.  Promising a claim here
       ;; would make that look like a fault in the fleet view.
       (message "%s started - watch its state in the list"

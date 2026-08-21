@@ -26,18 +26,14 @@ git submodule update --remote --merge .claude/cerebro
 Each agent is started by a script of its own, run from the consumer repository root:
 
 ```bash
-.claude/cerebro/scripts/run-planner              # Xavier
-.claude/cerebro/scripts/run-orchestrator         # Cerebro
-.claude/cerebro/scripts/run-user-feedback        # Moira
-.claude/cerebro/scripts/run-psylocke             # Psylocke, the verifier
-.claude/cerebro/scripts/run-forge                # Forge, the architect, one sweep per session
-.claude/cerebro/scripts/run-implementer Cyclops  # one implementer, named from a closed roster
-.claude/cerebro/scripts/run-implementer --roster # the implementer names, one per line
+.claude/cerebro/scripts/launch <Name>            # any agent, by name - the one way to start one
 .claude/cerebro/scripts/roster                   # the fleet: name, role, kind - one line per agent
-.claude/cerebro/scripts/launch <Name>            # what every run-* script is a name for
+.claude/cerebro/scripts/roster --implementers    # the implementer names, one per line
 ```
 
-The `run-*` scripts are shims over `launch`; the roster is the one place the fleet is declared.
+Every agent starts the same way, by its own name: `launch Xavier`, `launch Cyclops`, `launch Forge`.
+There are no per-role launcher scripts - the roster is the one place the fleet is declared, and
+`launch` is the one place a session is started.
 
 Every session starts with Remote Control on and is listed under its agent's name at
 [claude.ai/code](https://claude.ai/code) and in the Claude app, so an agent can be read and steered

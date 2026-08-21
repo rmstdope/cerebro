@@ -199,7 +199,8 @@ or docs-only PR — say so in one line and skip this section, the same way the v
 When it is:
 
 1. **Prepare everything before you ask for a minute.** Reset the worktree, warm the build
-   (`pnpm --filter @atlantis/browser-core build:wasm` is minutes on a cold cache), work out what
+   (`prepare-worktree --prewarm` runs whatever the project declared, and is minutes on a cold
+   cache), work out what
    fixture report to load, and know what you are asking them to look at and how to tell right from
    wrong.
 2. **Check the port is free** before starting a server — `lsof -nP -iTCP:5173 -sTCP:LISTEN` (web),

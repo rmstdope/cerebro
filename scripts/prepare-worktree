@@ -8,13 +8,14 @@
 # before anyone gave the step an owner. This script is that owner: implement-bead and
 # agents/verifier.md both call it instead of copying the recipe.
 #
-# usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--with-wasm]
+# usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--prewarm] [--dry-run]
 #
 #   --path <dir>    where the worktree goes, relative to the consumer root or an absolute path
-#                    under it. Required. Must resolve under <consumer>/.cerebro/worktrees/ - `bd`
-#                    and cargo both find their configuration by walking up, so a worktree outside
-#                    the repository silently gets its own empty bead database and its own
-#                    multi-gigabyte build directory.
+#                    under it. Required. Must resolve under <consumer>/.cerebro/worktrees/ - tools
+#                    resolve their configuration by walking up from where they are run, so a
+#                    worktree outside the repository silently gets its own empty configuration
+#                    instead of the project's (`bd`'s bead database and cargo's build directory are
+#                    two that have cost time here).
 #   --branch <name>  create a fresh worktree on a new branch (an implementer's own tree). <dir>
 #                    must not already exist - reusing another bead's tree is how work gets lost.
 #   (no --branch)    create, or reuse, the one detached, resettable tree (Psylocke's). Missing:
@@ -23,15 +24,23 @@
 #                    a `reset --hard` here would destroy whatever that branch is holding.
 #   --from <ref>     what to branch from, or reset to. Defaults to origin/<the consumer's default
 #                    branch>, as scripts/default-branch resolves it.
-#   --with-wasm      also build the wasm bundle the browser suites need, inside the tree, after
-#                    everything else below. Most beads never run those suites, so this stays a
-#                    flag rather than always-on cost.
+#   --prewarm        also run the project's `prewarm' command inside the tree, after everything
+#                    else below - whatever build a project wants warmed before its heavier suites
+#                    run. Most beads never need it, so this stays a flag rather than always-on
+#                    cost, and with no `prewarm' declared it is a no-op with one line on stderr
+#                    rather than an error: a consumer with nothing to prewarm has made no mistake.
+#                    `--with-wasm' is the old spelling, kept as a working alias.
+#   --dry-run        print the commands that would run, run none of them, and still print the path
+#                    and sha. What lets the commands be asserted without owning them, and lets an
+#                    agent say what it is about to do in a tree it does not own.
 #
 # Every check this script owns exits 2 with one line on stderr naming what is wrong. In both
 # modes, once the tree exists, it always then:
 #   1. git -C <path> submodule update --init --recursive   - the missing line this bead is about.
-#   2. (cd <path> && pnpm install --frozen-lockfile)        - a fresh tree has no node_modules.
-#   3. --with-wasm only: (cd <path> && pnpm --filter @atlantis/browser-core build:wasm)
+#   2. whatever the project declared as `install' (project-conf), or nothing if it declared none
+#      and none can be detected - most repositories have nothing to install into a fresh tree, and
+#      that must be a no-op rather than a failure.
+#   3. --prewarm only: whatever the project declared as `prewarm'. Never inferred.
 # and finally prints, on stdout, the tree's path and its current short sha - the sha is what a
 # verification is supposed to say out loud, and an implementer wants to know what it branched
 # from. This script never `cd`s its caller; the path it prints is for the caller's own `cd`.
@@ -40,10 +49,11 @@ set -euo pipefail
 path=""
 branch=""
 from_ref=""            # resolved below, once script_dir is known; an explicit --from still wins
-with_wasm=0
+prewarm_wanted=0
+dry_run=0
 
 usage() {
-  echo "usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--with-wasm]" >&2
+  echo "usage: prepare-worktree --path <dir> [--branch <name>] [--from <ref>] [--prewarm] [--dry-run]" >&2
   exit 2
 }
 
@@ -58,8 +68,12 @@ while [[ $# -gt 0 ]]; do
     --from)
       [[ $# -ge 2 ]] || usage
       from_ref="$2"; shift 2 ;;
-    --with-wasm)
-      with_wasm=1; shift ;;
+    --prewarm|--with-wasm)
+      # `--with-wasm' was this flag's first name, back when the only thing anyone prewarmed was
+      # one repository's wasm bundle. Kept as an alias so nothing in flight breaks.
+      prewarm_wanted=1; shift ;;
+    --dry-run)
+      dry_run=1; shift ;;
     *)
       usage ;;
   esac
@@ -123,10 +137,40 @@ else
 fi
 
 git -C "$abs_path" submodule update --init --recursive >&2
-(cd "$abs_path" && pnpm install --frozen-lockfile >&2)
 
-if [[ "$with_wasm" -eq 1 ]]; then
-  (cd "$abs_path" && pnpm --filter @atlantis/browser-core build:wasm >&2)
+# What runs inside the tree is what the project declared, never what this script assumes. Absent
+# is a NO-OP, not a failure: most repositories have nothing to install into a fresh worktree, and
+# under `set -euo pipefail' an assumed `pnpm install' took the whole script down before it could
+# print the path its caller was waiting for. `prewarm' is never detected - project-conf says why.
+install_cmd="$("$script_dir/project-conf" install 2>/dev/null)"
+prewarm_cmd="$("$script_dir/project-conf" prewarm 2>/dev/null)"
+
+# Deliberately UNQUOTED, both here and below: the value is a whole command line - `pnpm install
+# --frozen-lockfile' - and must word-split into a command and its arguments. project-conf reads it
+# as one `rest' running to the end of the line for exactly this reason. The limitation that falls
+# out of it: a value whose arguments need embedded quoting cannot be expressed this way. `eval'
+# would allow it and is not worth the exposure in a script that runs whatever a tracked file says,
+# so a consumer needing quoting points the key at a script of their own instead.
+if [[ -n "$install_cmd" ]]; then
+  if [[ "$dry_run" -eq 1 ]]; then
+    echo "prepare-worktree: would install with: $install_cmd" >&2
+  else
+    (cd "$abs_path" && $install_cmd >&2)
+  fi
+else
+  echo "prepare-worktree: no install declared or detected - installing nothing" >&2
+fi
+
+if [[ "$prewarm_wanted" -eq 1 ]]; then
+  if [[ -n "$prewarm_cmd" ]]; then
+    if [[ "$dry_run" -eq 1 ]]; then
+      echo "prepare-worktree: would prewarm with: $prewarm_cmd" >&2
+    else
+      (cd "$abs_path" && $prewarm_cmd >&2)
+    fi
+  else
+    echo "prepare-worktree: no prewarm declared - prewarming nothing" >&2
+  fi
 fi
 
 sha="$(git -C "$abs_path" rev-parse --short HEAD)"

@@ -376,8 +376,9 @@ cd <repo>/.cerebro/worktrees/<id>
 ```
 
 It prints the tree's path and its short sha on stdout; it does not `cd` for you, so the second line
-above is still yours to run. Pass `--with-wasm` here only if you already know this bead will run the
-browser suites — the smoke instructions below say when that first fails without it.
+above is still yours to run. Pass `--prewarm` here only if you already know this bead will run the
+suites that need the project's prewarmed build — the gate instructions below say when that first
+fails without it.
 
 Worktrees must stay under `.cerebro/worktrees/`; the script refuses anything else, naming why. `bd`
 and cargo both find their configuration by walking up, so a worktree outside the repository silently
@@ -415,10 +416,10 @@ Follow the plan's increments in order, each opening with its named failing test.
 the merge, so running them locally by default only bought "catch it before the reviewer sees it" at
 a cost — a few minutes, serialized, behind a machine-wide lock — that stopped being worth it once the
 fleet ran several implementers at once. Run the full **`pnpm run check`** by choice when you suspect a
-smoke or PWA regression; expect the lock in that case, same as before. A fresh worktree has no wasm
-build, and the first `test:smoke` fails on `Could not resolve "./wasm/atlantis_core.js"` — pass
-`--with-wasm` when you prepared the tree, or run `pnpm --filter @atlantis/browser-core build:wasm`
-now.
+smoke or PWA regression; expect the lock in that case, same as before. A fresh worktree carries
+nothing the project declared as its `prewarm` build, so a suite that needs one fails on a missing
+artefact rather than on anything you wrote — pass `--prewarm` when you prepared the tree, or run
+`scripts/project-conf prewarm` and run what it names, now.
 
 `test:native` is **not** in `pnpm run check:fast` or `pnpm run check` and needs a Linux runner, and
 now runs in CI only when the diff touches a native-shaped path (the Rust core, its Tauri wrappers,

@@ -221,9 +221,10 @@ judged.**
 
 ```bash
 # Before EVERY verification, whether or not the tree existed a minute ago — creates it detached on
-# first use, resets it to origin/main on every use after: submodule init and pnpm install both run
-# inside, so what five implementer retrospectives paid for one at a time is paid once, here.
-.claude/cerebro/scripts/prepare-worktree --path .cerebro/worktrees/psylocke --with-wasm
+# first use, resets it to origin/main on every use after: submodule init and whatever the project
+# declared as its install both run inside, so what five implementer retrospectives paid for one at
+# a time is paid once, here.
+.claude/cerebro/scripts/prepare-worktree --path .cerebro/worktrees/psylocke --prewarm
 ```
 
 The sha it prints on stdout is the one you say out loud.
@@ -243,9 +244,9 @@ The sha it prints on stdout is the one you say out loud.
   be theirs. Waiting on the navigator is a question: the sandwich applies here too, `asking --bead
   <id> --phase verify` before you say it and `working --bead <id> --phase verify` the moment they
   say when. A session stuck on a port while its row reads `working` is one nobody knows to unblock.
-- **Build after the reset, never before it.** `--with-wasm` above does exactly that — the wasm build
-  runs inside `prepare-worktree` after the reset, never before it, which is what makes the warm build
-  the right build.
+- **Build after the reset, never before it.** `--prewarm` above does exactly that — the project's
+  prewarm build runs inside `prepare-worktree` after the reset, never before it, which is what makes
+  the warm build the right build.
 - **The sweep keeps this tree** (`prune-worktrees.sh` keeps `.cerebro/worktrees/psylocke` by name); if
   it is nevertheless gone, the command above recreates it and the cold build is the cost — say so and
   carry on.
@@ -266,8 +267,8 @@ you can ahead of the question:
     (Tauri v2; its own `beforeDevCommand` starts vite on 4174 with `--strictPort`). Without
     `--features desktop-runtime` this builds the stub `main`, which exits at once — a cold Tauri
     build thrown away and the navigator summoned to look at nothing.
-  - Both need the wasm build warm, which `--with-wasm` on `prepare-worktree` above already did,
-    after the reset — never build it again after the navigator has said yes.
+  - Both need the project's prewarm build warm, which `--prewarm` on `prepare-worktree` above
+    already did, after the reset — never build it again after the navigator has said yes.
 - **What to load.** `tests/fixtures/reports/README.md` names the consecutive-turn report pairs and
   how they are named; pick the pair that exercises what the bead changed.
 - **A briefing**, in advance: what you are checking, and how to tell success from failure in terms

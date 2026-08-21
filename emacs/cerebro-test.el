@@ -3748,3 +3748,21 @@ beads label or the skill it happens to keep the hand-back in."
   (should-not (string-match-p "implement-bead" cerebro--nudge-message))
   ;; It still has to say the two things it is for: stop waiting, and finish.
   (should (string-match-p "\\[cerebro\\]" cerebro--nudge-message)))
+
+(ert-deftest cerebro-test/every-public-constant-left-is-a-buffer-name ()
+  "The audit ah-qled.9 closes, kept closed.
+
+A `defconst' whose name is public (`cerebro-', not `cerebro--') is one a
+consumer can see and cannot set - which is exactly the shape every project
+fact promoted here used to have. The three left are Emacs buffer names, an
+internal detail with nothing project-shaped in them; anything else appearing
+in this list is a fact that wants a `defcustom'."
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name "emacs/cerebro.el"))
+    (goto-char (point-min))
+    (let (public)
+      (while (re-search-forward "^(defconst \\(cerebro-[^-][^ \n]*\\)" nil t)
+        (push (match-string 1) public))
+      (should (equal (sort public #'string<)
+                     '("cerebro-bead-buffer-name" "cerebro-beads-buffer-name"
+                       "cerebro-buffer-name"))))))

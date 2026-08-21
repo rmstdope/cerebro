@@ -3618,3 +3618,39 @@ another install name got a permanently empty panel with no way in."
                        (unclaim "ah-1")))
       (should (equal (car (cerebro--finding-command finding "/tmp")) "my-bd")))
     (should (equal (car (cerebro--bd-push-argv)) "my-bd"))))
+
+(ert-deftest cerebro-test/the-vocabulary-and-thresholds-are-settings ()
+  "The labels, issue types and thresholds cerebro partitions on are the
+project's, not universals - so each is a `defcustom', and each default is
+exactly today's literal."
+  (dolist (pair '((cerebro-verification-settled
+                   . ("verification:passed" "verification:not-needed"))
+                  (cerebro-planned-label . "planned")
+                  (cerebro-planning-label . "planning")
+                  (cerebro-skipped-issue-types . ("epic" "event"))
+                  (cerebro-priority-floor . 4)
+                  (cerebro-stalled-minutes . 60)
+                  (cerebro-sweep-stale-minutes . 10)))
+    (should (get (car pair) 'custom-type))
+    (should (equal (default-value (car pair)) (cdr pair)))))
+
+(ert-deftest cerebro-test/the-threshold-docstrings-keep-their-measurement ()
+  "A `defcustom' with a bare number loses the reason it was ever right."
+  (should (string-match-p "36 beads" (documentation-property
+                                      'cerebro-stalled-minutes 'variable-documentation)))
+  (should (string-match-p "orchestrator\\.md" (documentation-property
+                                               'cerebro-sweep-stale-minutes
+                                               'variable-documentation))))
+
+(ert-deftest cerebro-test/a-changed-planned-label-repartitions-the-panel ()
+  "The panel buckets on `cerebro-planned-label', not on the word `planned'."
+  (let ((cerebro-planned-label "ready")
+        (cerebro-planning-label "drafting"))
+    (pcase-let ((`(,_claimed ,planned ,being-planned ,unplanned ,_merged)
+                 (cerebro--partition-beads
+                  '(((id . "a") (status . "open") (issue_type . "task") (labels . ("ready")))
+                    ((id . "b") (status . "open") (issue_type . "task") (labels . ("drafting")))
+                    ((id . "c") (status . "open") (issue_type . "task") (labels . ("planned")))))))
+      (should (equal (mapcar (lambda (b) (alist-get 'id b)) planned) '("a")))
+      (should (equal (mapcar (lambda (b) (alist-get 'id b)) being-planned) '("b")))
+      (should (equal (mapcar (lambda (b) (alist-get 'id b)) unplanned) '("c"))))))

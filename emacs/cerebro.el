@@ -1205,13 +1205,18 @@ than the row going `up' for a moment and then silently `dead' (ah-bri)."
 
 ;;; Sweep findings (ah-4ao): turning `sweep-claims.sh'/`sweep-epics.sh' facts into a decision
 
-(defconst cerebro--sweep-stale-minutes 10
+(defcustom cerebro-sweep-stale-minutes 10
   "Minutes past which a claim's delivery, or an epic's last child close, is
 old enough to act on rather than mid-cleanup.
 
 Matches `agents/orchestrator.md's own claims and epics sweeps: an
 implementer closes what it just finished within seconds, so anything
-fresher than this is an agent still tidying up, not one that is gone.")
+fresher than this is an agent still tidying up, not one that is gone.
+
+This project's number, not a universal: a consumer whose implementers tidy
+up more slowly wants a larger one."
+  :type 'integer
+  :group 'cerebro)
 
 (defun cerebro--claim-finding (candidate live-names now)
   "Pure. What the claims sweep should offer for CANDIDATE, or nil.
@@ -1245,11 +1250,11 @@ accepted, on a claim that was never actually abandoned."
      (.verification_failed nil)
      ((member .assignee live-names) nil)
      (.on_main
-      (if (and .commit_age_min (> .commit_age_min cerebro--sweep-stale-minutes))
+      (if (and .commit_age_min (> .commit_age_min cerebro-sweep-stale-minutes))
           (list 'close .id
                 (format "Delivered in PR; closed by the fleet view, %s did not" .assignee))
         nil))
-     ((and .lease_age_min (> .lease_age_min cerebro--sweep-stale-minutes))
+     ((and .lease_age_min (> .lease_age_min cerebro-sweep-stale-minutes))
       (list 'reclaim .id))
      (t nil))))
 
@@ -1260,22 +1265,27 @@ CANDIDATE is one parsed object from `sweep-epics.sh --json' - already
 known eligible (every child closed) by the script's own `bd epic status
 --eligible-only'. The only question left here is staleness: nil when
 `minutes_since_last_child_closed' is absent (nothing to act on) or under
-`cerebro--sweep-stale-minutes' (an implementer is still mid-cleanup),
+`cerebro-sweep-stale-minutes' (an implementer is still mid-cleanup),
 otherwise (epic-close ID)."
   (let-alist candidate
     (if (and .minutes_since_last_child_closed
-             (> .minutes_since_last_child_closed cerebro--sweep-stale-minutes))
+             (> .minutes_since_last_child_closed cerebro-sweep-stale-minutes))
         (list 'epic-close .id)
       nil)))
 
-(defconst cerebro--stalled-minutes 60
+(defcustom cerebro-stalled-minutes 60
   "Minutes without a commit past which a claim is offered as stalled.
 
 Empirical, not chosen (ah-4xm4): across the 72 hours to 2026-08-20 every
 one of the 36 beads that ran cleanly made its first commit 6 to 36 minutes
 after being claimed, and the four that parked sat 2.3 hours or more. Sixty
 separates them with no false positive in that window - and it is well clear
-of a long CI wait, which is the legitimate reason a working bead is quiet.")
+of a long CI wait, which is the legitimate reason a working bead is quiet.
+
+That measurement is this project's own, not a universal: a consumer whose
+builds take an hour gets false stalled findings until this is raised."
+  :type 'integer
+  :group 'cerebro)
 
 (defun cerebro--stalled-finding (candidate live-states now)
   "Pure. What the stalled sweep should offer for CANDIDATE, or nil.
@@ -1301,7 +1311,7 @@ finding against a working implementer."
        ((null (assoc .assignee live-states)) nil)
        ((eq state 'asking) nil)
        ((null .progress_age_min) nil)
-       ((> .progress_age_min cerebro--stalled-minutes) (list 'unclaim .id))
+       ((> .progress_age_min cerebro-stalled-minutes) (list 'unclaim .id))
        (t nil)))))
 
 (defun cerebro--finding-command (finding repo-root)
@@ -1897,7 +1907,7 @@ merged P0 - so these sections answer \"what just happened\" instead."
           (string> (or (alist-get 'updated_at a) "")
                    (or (alist-get 'updated_at b) "")))))
 
-(defconst cerebro-verification-settled '("verification:passed" "verification:not-needed")
+(defcustom cerebro-verification-settled '("verification:passed" "verification:not-needed")
   "Labels meaning a merged bead needs nothing further from anybody.
 
 `verification:passed' is a human having checked it; `not-needed' is the
@@ -1908,7 +1918,12 @@ them under Verified.
 Note this is deliberately NOT how `agents/user-feedback.md' talks to a
 reporter: there a `not-needed' bead never shows VERIFIED, because nobody
 confirmed anything. The word means \"a person checked it\" on an issue
-thread, and \"nothing left to do\" here.")
+thread, and \"nothing left to do\" here.
+
+This project's label vocabulary; a consumer that settles verification some
+other way sets its own here."
+  :type '(repeat string)
+  :group 'cerebro)
 
 (defun cerebro--bead-labels (bead)
   "The labels on BEAD, as a list of strings."
@@ -1919,12 +1934,30 @@ thread, and \"nothing left to do\" here.")
   (cl-some (lambda (label) (member label cerebro-verification-settled))
            (cerebro--bead-labels bead)))
 
-(defconst cerebro-skipped-issue-types '("epic" "event")
+(defcustom cerebro-skipped-issue-types '("epic" "event")
   "Issue types that are bookkeeping rather than work, and so never shown.
 The shell has the same list, in `scripts/work-beads', which is where the
 reasoning is written down for every reader of closed beads (ah-cg1);
 `cerebro-test/the-panel-skips-exactly-what-work-beads-excludes' holds the
-two to each other.")
+two to each other - so both sides move together."
+  :type '(repeat string)
+  :group 'cerebro)
+
+(defcustom cerebro-planned-label "planned"
+  "The label meaning a bead has a plan and an implementer may claim it.
+
+This project's word for it; the panel's Planned section is whatever a
+consumer calls the same thing."
+  :type 'string
+  :group 'cerebro)
+
+(defcustom cerebro-planning-label "planning"
+  "The label a planner holds a bead under while it writes the plan.
+
+Open, unclaimable by anybody else, and shown in its own section rather
+than among the unplanned backlog."
+  :type 'string
+  :group 'cerebro)
 
 (defun cerebro--partition-beads (beads)
   "Split BEADS into the five lists the panel shows.
@@ -1963,8 +1996,8 @@ work."
              ;; mid-write - or left behind by a planner that forgot the
              ;; removal - carries both. Pickable wins, because an implementer
              ;; can claim it whatever else the bead says.
-             ((member "planned" labels) (push bead planned))
-             ((member "planning" labels) (push bead being-planned))
+             ((member cerebro-planned-label labels) (push bead planned))
+             ((member cerebro-planning-label labels) (push bead being-planned))
              (t (push bead unplanned)))))
          ((equal status "closed")
           ;; Settled means nothing further is wanted from anybody - verified
@@ -1976,8 +2009,13 @@ work."
     (list (nreverse claimed) (nreverse planned) (nreverse being-planned)
           (nreverse unplanned) (nreverse merged))))
 
-(defconst cerebro-priority-floor 4
-  "The least urgent priority `bd' takes; 0 is the most urgent.")
+(defcustom cerebro-priority-floor 4
+  "The least urgent priority `bd\=' takes; 0 is the most urgent.
+
+This project's backlog floor: a consumer whose tracker ranks differently
+sets its own."
+  :type 'integer
+  :group 'cerebro)
 
 (defun cerebro--nudged-priority (priority delta)
   "PRIORITY moved by DELTA, clamped to the range `bd' accepts.

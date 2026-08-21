@@ -130,13 +130,14 @@ run_prune() { (cd "$consumer" && env "$@" bash "$prune" 2>&1); }
 # 1. THE SAFETY PROPERTY: with no `reclaim_dirs`, nothing is ever deleted
 # =================================================================================================
 make_tree ah-cold 5000 .cerebro target node_modules
-make_tree psylocke 5000 .cerebro target
+make_tree psylocke 5000 .cerebro target node_modules
 
 gb_free 5   # hard against the 8 GB floor: maximum pressure
 out="$(run_prune PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=1)"
 present "$consumer/.cerebro/worktrees/ah-cold/target" \
         "$consumer/.cerebro/worktrees/ah-cold/node_modules" \
         "$consumer/.cerebro/worktrees/psylocke/target" \
+        "$consumer/.cerebro/worktrees/psylocke/node_modules" \
   || fail "an unconfigured consumer had a directory reclaimed: $out"
 grep -qi "reclaim" <<<"$out" && fail "it spoke of reclaiming with no reclaim_dirs declared: $out"
 pass "with no reclaim_dirs declared, nothing is reclaimed at any age or under any pressure"
@@ -157,19 +158,21 @@ mkdir -p "$consumer/.cerebro/worktrees/ah-cold/src"
 echo keep > "$consumer/.cerebro/worktrees/ah-cold/src/main.rs"
 find "$consumer/.cerebro/worktrees/ah-cold/src" -exec touch -h -t "$(stamp_for 5000)" {} +
 
-gb_free 40   # roomy: only the outer COLD_TARGET_MINUTES bound is in play, and psylocke is its target
-out="$(run_prune PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=1)"
-[ -d "$consumer/.cerebro/worktrees/psylocke/target" ] \
-  && fail "the declared dir was not reclaimed from the kept tree: $out"
-present "$consumer/.cerebro/worktrees/ah-cold/src/main.rs" \
-  || fail "an undeclared directory was reclaimed: $out"
-pass "a declared directory is reclaimed and an undeclared one is left alone"
-
-# Both declared names go, not just the first.
-make_tree ah-two 5000 .cerebro target node_modules
+# Roomy on purpose: only the outer COLD_TARGET_MINUTES bound is in play, and the verifier's tree —
+# psylocke, on the built-in roster this fixture has not yet overridden — is what it reclaims from.
+# That is the one path that walks EVERY declared directory rather than picking a single coldest one,
+# so it is where "all of them, not just the first" can be asserted at all.
 gb_free 40
 out="$(run_prune PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=1)"
-pass "the fixture accepts more than one declared directory"
+[ -d "$consumer/.cerebro/worktrees/psylocke/target" ] \
+  && fail "the first declared dir was not reclaimed from the kept tree: $out"
+[ -d "$consumer/.cerebro/worktrees/psylocke/node_modules" ] \
+  && fail "only the first declared dir went — the second was never reclaimed: $out"
+grep -q "psylocke/target" <<<"$out" || fail "the log did not name target: $out"
+grep -q "psylocke/node_modules" <<<"$out" || fail "the log did not name node_modules: $out"
+present "$consumer/.cerebro/worktrees/ah-cold/src/main.rs" \
+  || fail "an undeclared directory was reclaimed: $out"
+pass "every declared directory is reclaimed, not just the first, and an undeclared one is left alone"
 
 # =================================================================================================
 # 3. The verifier is found on the roster, not named in the source

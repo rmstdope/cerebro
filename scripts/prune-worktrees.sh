@@ -265,22 +265,22 @@ reclaim_cold_target() {
   [ "${#reclaim_dirs[@]}" -gt 0 ] || return 0
 
   for dir in "${reclaim_dirs[@]}"; do
-  target="$tree/$dir"
-  [ -d "$target" ] || continue
-  # Any file or directory touched within the window, not just target/'s own mtime: a build in
-  # progress only bumps that the moment a new top-level entry lands, and stays unchanged while
-  # every later write lands in a subdirectory that already exists — `-maxdepth 0` alone
-  # misclassified an actively-building tree as cold. `-print -quit` stops at the first match.
-  [ -z "$(find "$target" -mmin "-$COLD_TARGET_MINUTES" -print -quit 2>/dev/null)" ] || continue
+    target="$tree/$dir"
+    [ -d "$target" ] || continue
+    # Any file or directory touched within the window, not just target/'s own mtime: a build in
+    # progress only bumps that the moment a new top-level entry lands, and stays unchanged while
+    # every later write lands in a subdirectory that already exists — `-maxdepth 0` alone
+    # misclassified an actively-building tree as cold. `-print -quit` stops at the first match.
+    [ -z "$(find "$target" -mmin "-$COLD_TARGET_MINUTES" -print -quit 2>/dev/null)" ] || continue
 
-  size_gb="$(du -sk "$target" 2>/dev/null | awk '{printf "%.1f", $1 / 1024 / 1024}')"
+    size_gb="$(du -sk "$target" 2>/dev/null | awk '{printf "%.1f", $1 / 1024 / 1024}')"
 
-  if $dry_run; then
-    echo "prune-worktrees: would reclaim $name/$dir ($size_gb GB, cold for over $COLD_TARGET_MINUTES minutes)"
-  else
-    rm -rf "$target"
-    echo "prune-worktrees: reclaimed $name/$dir ($size_gb GB, cold for over $COLD_TARGET_MINUTES minutes)"
-  fi
+    if $dry_run; then
+      echo "prune-worktrees: would reclaim $name/$dir ($size_gb GB, cold for over $COLD_TARGET_MINUTES minutes)"
+    else
+      rm -rf "$target"
+      echo "prune-worktrees: reclaimed $name/$dir ($size_gb GB, cold for over $COLD_TARGET_MINUTES minutes)"
+    fi
   done
 }
 

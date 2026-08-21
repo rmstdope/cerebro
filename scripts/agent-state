@@ -155,15 +155,23 @@ mkdir -p "$out_dir"
 out_file="$out_dir/$name.state.json"
 tmp_file="$out_file.tmp"
 
-now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# One reading of the clock, from which both timestamps below are derived. Two `date` calls would
+# straddle a second boundary now and then, and `wake_at` is written as an absolute time that a
+# reader takes to be exactly `--wake-in` seconds after `since` - a skew there is a wake a second
+# early or late for ever, and a flaky test.
+now_epoch="$(date -u +%s)"
 
 # `date -r <epoch>` is BSD/macOS and `date -d @<epoch>` is GNU; each rejects the other's form, so
 # try both rather than assuming which fleet machine this is.
+iso_at() {
+  date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ
+}
+
+now="$(iso_at "$now_epoch")"
+
 wake_at=""
 if [[ -n "$wake_in" ]]; then
-  wake_epoch=$(( $(date -u +%s) + wake_in ))
-  wake_at="$(date -u -r "$wake_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-             || date -u -d "@$wake_epoch" +%Y-%m-%dT%H:%M:%SZ)"
+  wake_at="$(iso_at $((now_epoch + wake_in)))"
 fi
 
 prev="$(jq -c '.' "$out_file" 2>/dev/null || true)"

@@ -885,6 +885,14 @@ look like a broken worker; a persisted setting's old default must be migrated ra
 
 If the bead touches one of those, say so and say what to do about it.
 
+**Never ask for an effect-level test in `packages/shared`.** That package has no jsdom by decision
+(ah-nass): its component tests render with `renderToStaticMarkup`, which runs no effects, attaches
+no refs and fires no timers, and shows a zustand store only its module-load default. A plan that
+names a `*.test.tsx` there and asks it to observe something an effect did is asking for a test the
+harness cannot run — four beads paid about half an hour each discovering that. Plan the rule into a
+pure module and put the test on that instead; `packages/shared/src/testing/README.md` has the
+pattern and its worked example, and store state goes through `testing/renderWithStoreState`.
+
 ### Everything you cite must exist
 
 **Open every file you name and check every symbol you quote before the plan claims it.** A path that

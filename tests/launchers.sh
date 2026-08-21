@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Proves the fleet's roster and launcher: `scripts/roster` is the one declaration of who is on the
-# fleet, `scripts/launch` is the one place a session is started, and every `run-*` shim is a name
-# for it. Also proves every launched session stamps its session with a distinct bd actor identity, so
+# fleet and `scripts/launch` is the one place - and, since ah-qled.5.3, the only way - a session is
+# started. Also proves every launched session stamps its session with a distinct bd actor identity, so
 # a second implementer claiming an already-held bead fails instead of silently aliasing into the
 # first (see ah-rnz).
 #

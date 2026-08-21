@@ -266,9 +266,10 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
   `cerebro--script-directory` in `cerebro.el`, and every doc that tells someone what to type. The
   launchers themselves take no view — they are `exec claude …` and work from anywhere — so a wrong
   path here fails at `s` in the fleet view, not at the script.
-- `scripts/launch <Name>` starts **one interactive session** — every `run-*` script is a shim over
-  it. Nothing loops, nothing polls a flag, nothing writes a state file: the agent writes its own
-  state, and `cerebro--supervise` owns the cadence. Adding a loop back to `launch` would put two
+- `scripts/launch <Name>` starts **one interactive session**, and is the only way one is started
+  (ah-qled.5.3 removed the seven `run-*` shims that used to name it). Nothing loops, nothing polls
+  a flag, nothing writes a state file: the agent writes its own state, and `cerebro--supervise`
+  owns the cadence. Adding a loop back to `launch` would put two
   supervisors on one session. The one file it does touch is the symlinks, via
   `scripts/launch-preflight`, right before it execs — see above.
 - Emacs backup files (`*.el~`, `*.md~`, `*.sh~`) are committed alongside the originals; ignore them
@@ -290,8 +291,7 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
 - **The fleet is declared once, in `scripts/roster`.** Adding a role is one line there plus
   `agents/<role>.md` (and a skill if it has one); `launch`, `agent-state`, `cerebro.el` and the tests
   read the roster, and the model and effort come from the agent file's frontmatter. The only per-role
-  facts still written by hand are the phase words in `scripts/agent-state` and `cerebro--phases`, and
-  the `run-*` shim if you want a named entry point.
+  facts still written by hand are the phase words in `scripts/agent-state` and `cerebro--phases`.
 
 # Test driven development
 

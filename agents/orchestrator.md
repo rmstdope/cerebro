@@ -384,7 +384,7 @@ lease, Moira claims nothing at all, and you claim nothing either. So `in_progres
 possibilities rather than four — which is what makes the lease check below decisive.
 
 **The assignee name now tells you who claimed a bead — but only for a claim made from a launched
-session.** The one launcher, `scripts/launch` (behind every `run-*` name; see ah-rnz), exports
+session.** The one launcher, `scripts/launch` (the only way a session starts; see ah-rnz), exports
 `BEADS_ACTOR=<agent name>` before starting its session, so a claim made from one is stamped with the
 roster name that made it: `assignee: Cyclops` means Cyclops's session claimed it, full stop.
 An assignee that is **not a name on `scripts/roster`** now specifically means a claim made by hand,

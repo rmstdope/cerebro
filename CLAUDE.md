@@ -291,7 +291,8 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
 - **The fleet is declared once, in `scripts/roster`.** Adding a role is one line there plus
   `agents/<role>.md` (and a skill if it has one); `launch`, `agent-state`, `cerebro.el` and the tests
   read the roster, and the model and effort come from the agent file's frontmatter. The only per-role
-  facts still written by hand are the phase words in `scripts/agent-state` and `cerebro--phases`.
+  facts still written by hand are the phase words in `cerebro--phases` (`scripts/agent-state` accepts
+  any well-formed word since ah-qled.5.2, so the list lives in one place).
 
 # Test driven development
 

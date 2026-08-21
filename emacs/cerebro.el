@@ -950,13 +950,20 @@ the drift a self-timing agent produces and this poll removes."
   :type 'integer
   :group 'cerebro)
 
-(defcustom cerebro-wake-intervals '(("Psylocke" . 300))
-  "Per-name overrides of `cerebro-wake-interval-default\=', as (NAME . SECONDS).
+(defcustom cerebro-wake-intervals '(("verifier" . 300))
+  "Overrides of `cerebro-wake-interval-default\=', as (KEY . SECONDS).
 
-Psylocke alone, at five minutes: her own prose asks for five, and the log
-agrees - 90 idle intervals, median 4.7 min - because a bead can merge, wait
-and still be waiting when the navigator asks what happened to it.  Every
-other role measured at ten and takes the default."
+KEY is a role or an agent name, and a name-keyed entry wins over a
+role-keyed one - most-specific-first, the way `models.conf\=' resolves a
+model.  Roles come from `scripts/roster\=', so a role key holds for whatever
+a consumer calls the agent that fills it.
+
+The verifier alone, at five minutes: Psylocke\='s own prose asks for five, and
+the log agrees - 90 idle intervals, median 4.7 min - because a bead can
+merge, wait and still be waiting when the navigator asks what happened to
+it.  Every other role measured at ten and takes the default.  It was keyed
+on the name \"Psylocke\" until ah-qled.9, which is a name a consumer\='s fleet
+need not have."
   :type '(alist :key-type string :value-type integer)
   :group 'cerebro)
 
@@ -970,9 +977,15 @@ construction, sitting at its prompt."
   :type 'integer
   :group 'cerebro)
 
-(defun cerebro-wake-interval (name)
-  "Seconds NAME may wait before the poll wakes it."
-  (or (cdr (assoc name cerebro-wake-intervals)) cerebro-wake-interval-default))
+(defun cerebro-wake-interval (name &optional role)
+  "Seconds the agent called NAME, filling ROLE, may wait before it is woken.
+
+NAME first, then ROLE, then `cerebro-wake-interval-default\=': the more
+specific key wins, so a fleet that wants one agent on a different cadence
+from the rest of its role says so by name."
+  (or (cdr (assoc name cerebro-wake-intervals))
+      (and role (cdr (assoc role cerebro-wake-intervals)))
+      cerebro-wake-interval-default))
 
 (defun cerebro--wake-due-p (agent now)
   "Pure.  Whether AGENT, a `waiting\=' role, should be woken at NOW.
@@ -988,7 +1001,8 @@ not nudge an `asking\=' implementer: a poke lands as keystrokes in a live
 session."
   (let* ((asked (cerebro--seconds-until (cerebro-agent-wake-at agent) now))
          (waited (cerebro--seconds-since (cerebro-agent-since agent) now))
-         (interval (cerebro-wake-interval (cerebro-agent-name agent))))
+         (interval (cerebro-wake-interval (cerebro-agent-name agent)
+                                          (cerebro-agent-role agent))))
     (and (or (and asked (<= asked 0))
              (and waited (>= waited interval)))
          t)))

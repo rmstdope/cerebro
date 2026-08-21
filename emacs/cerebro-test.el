@@ -3332,9 +3332,9 @@ replacing a real answer with an empty one - the same rule the sweeps follow."
 ;; ---------------------------------------------------------------------------
 ;; ah-hiib.3: `waiting' - the monitor owns the cadence, the role owns the policy
 
-(defun cerebro-test--waiting (&optional name since wake-at external)
+(defun cerebro-test--waiting (&optional name since wake-at external role)
   "An interactive agent in `waiting', for the wake tests."
-  (make-cerebro-agent :name (or name "Moira") :role "user-feedback"
+  (make-cerebro-agent :name (or name "Moira") :role (or role "user-feedback")
                               :kind 'interactive :state 'waiting :bead nil
                               :since (or since "2026-08-14T09:20:00Z")
                               :wake-at wake-at :external external))
@@ -3671,3 +3671,26 @@ for the repository root."
       (make-directory (expand-file-name "vendor/cerebro" root) t)
       (should (equal (file-truename (cerebro--repo-root))
                      (file-truename (file-name-as-directory root)))))))
+
+(ert-deftest cerebro-test/wake-intervals-are-keyed-on-role-and-still-honour-a-name ()
+  "The five-minute override belonged to a role, not to the agent called
+`Psylocke' - a consumer's verifier may be called anything. Name still wins
+where one is given, most-specific-first, the way `models.conf' resolves."
+  (should (equal (default-value 'cerebro-wake-intervals) '(("verifier" . 300))))
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals '(("verifier" . 300))))
+    (should (equal (cerebro-wake-interval "Betsy" "verifier") 300))
+    (should (equal (cerebro-wake-interval "Betsy" "planner") 600))
+    ;; No role known (an external agent, a torn state file): the default.
+    (should (equal (cerebro-wake-interval "Betsy") 600)))
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals '(("verifier" . 300) ("Betsy" . 120))))
+    (should (equal (cerebro-wake-interval "Betsy" "verifier") 120))))
+
+(ert-deftest cerebro-test/wake-due-p-reads-the-agents-role ()
+  "The role-keyed interval has to reach the decision that uses it."
+  (let ((cerebro-wake-interval-default 3600)
+        (cerebro-wake-intervals '(("verifier" . 300))))
+    (should (cerebro--wake-due-p
+             (cerebro-test--waiting "Betsy" "2026-08-14T09:15:00Z" nil nil "verifier")
+             cerebro-test--now))))

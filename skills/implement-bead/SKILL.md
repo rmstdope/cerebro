@@ -419,7 +419,7 @@ fleet ran several implementers at once. Run the full **`pnpm run check`** by cho
 smoke or PWA regression; expect the lock in that case, same as before. A fresh worktree carries
 nothing the project declared as its `prewarm` build, so a suite that needs one fails on a missing
 artefact rather than on anything you wrote — pass `--prewarm` when you prepared the tree, or run
-`scripts/project-conf prewarm` and run what it names, now.
+`.claude/cerebro/scripts/project-conf prewarm` and run what it names, now.
 
 `test:native` is **not** in `pnpm run check:fast` or `pnpm run check` and needs a Linux runner, and
 now runs in CI only when the diff touches a native-shaped path (the Rust core, its Tauri wrappers,

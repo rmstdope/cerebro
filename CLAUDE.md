@@ -276,6 +276,17 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
 - The state directory was `.claude/implementers/` until ah-2n3.1, and its writer was
   `scripts/implementer-state`; a shim at that old script name survives one release, `exec`ing
   `scripts/agent-state` with a deprecation line on stderr.
+- **A consumer declares its own fleet in `<consumer>/.claude/cerebro-roster`** (ah-qled.5.1) — same
+  `NAME  ROLE` shape as the `TABLE=` heredoc in `scripts/roster`, `#` comments and blank lines
+  ignored, `KIND` still derived. When it exists and is non-empty it **replaces** the built-in table
+  rather than merging with it, because file order is load-bearing (first planner triages; Cerebro
+  takes implementer names in file order). It is **tracked**, beside `.claude/cerebro-project.conf`,
+  not under the git-ignored `.cerebro/`: which agents exist is a fact every clone needs. `roster`
+  finds it by path arithmetic and **must never call `consumer-root`**, which shells out to `git` —
+  the launchers' narrowed-PATH guarantee (`dirname` and `bash` alone) depends on it. A role only the
+  consumer declares needs `<consumer>/.claude/agents/<role>.md`; `scripts/launch` prefers that
+  directory over the submodule's, and `launch-preflight` says which of the two causes is missing
+  rather than always blaming the submodule.
 - **The fleet is declared once, in `scripts/roster`.** Adding a role is one line there plus
   `agents/<role>.md` (and a skill if it has one); `launch`, `agent-state`, `cerebro.el` and the tests
   read the roster, and the model and effort come from the agent file's frontmatter. The only per-role

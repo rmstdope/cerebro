@@ -67,7 +67,23 @@ kind_of() {
   fi
 }
 
-print_all() {
+# Where a consumer declares its own fleet, if it does. Found by path arithmetic - this script lives
+# at <consumer>/.claude/cerebro/scripts/roster - and DELIBERATELY NOT by calling `consumer-root',
+# which shells out to `git': `roster' needs no external command beyond `dirname', and
+# tests/launchers.sh runs a launcher with a PATH of `dirname' and `bash' alone to keep it that way.
+# Tidying this into that seam would break that guarantee with nothing to say so.
+#
+# The file is TRACKED (beside .claude/cerebro-project.conf), not under the git-ignored `.cerebro/':
+# which agents exist is a fact every clone needs, and a git-ignored one would vanish on a fresh
+# clone and silently revert the fleet to the names below.
+#
+# It REPLACES this table rather than merging with it. File order is load-bearing - `plan-bead' gives
+# the P4 triage pass to the first planner listed, and Cerebro takes the next unused implementer name
+# in file order - and a merged order is nobody's decision.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONSUMER_ROSTER="$here/../../cerebro-roster"
+
+parse_rows() {
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     case "$line" in
@@ -76,7 +92,26 @@ print_all() {
     read -r name role _ <<<"$line"
     [[ -z "$name" ]] && continue
     printf '%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")"
-  done <<<"$TABLE"
+  done
+}
+
+print_all() {
+  # One parser for both sources: the consumer file has the same NAME ROLE shape, so a second reader
+  # would only be a second thing to drift.
+  #
+  # A consumer file that yields no rows falls back, not only an empty one: a file of nothing but
+  # comments has as much to say about the fleet as an absent one, and taking it at its word would
+  # leave `roster' silent, every `launch <Name>' answering "not on the roster", and the fleet view
+  # empty - with the file that caused it looking, to its author, like a fleet.
+  local rows=""
+  if [[ -f "$CONSUMER_ROSTER" ]]; then
+    rows="$(parse_rows < "$CONSUMER_ROSTER")"
+  fi
+  if [[ -n "$rows" ]]; then
+    printf '%s\n' "$rows"
+  else
+    parse_rows <<<"$TABLE"
+  fi
 }
 
 case "${1:-}" in

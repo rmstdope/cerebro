@@ -74,9 +74,14 @@ export BEADS_ACTOR="$name"
 # ah-bri: refuse with one line if it cannot, instead of exiting silently.
 "$here/launch-preflight" "$role" "$name"
 
-agents_dir="$here/../agents"
-model="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="model:"{print $2; exit}' "$agents_dir/$role.md")"
-effort="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="effort:"{print $2; exit}' "$agents_dir/$role.md")"
+# The consumer's own `.claude/agents/' first, the submodule's second. The consumer directory is
+# tracked and already holds a symlink into the submodule for every role cerebro ships, so this one
+# path answers for both a shipped role and a role only this consumer declares (ah-qled.5.1) - the
+# fallback is for a consumer whose symlinks have not been synced yet.
+agent_file="$here/../../agents/$role.md"
+[[ -f "$agent_file" ]] || agent_file="$here/../agents/$role.md"
+model="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="model:"{print $2; exit}' "$agent_file")"
+effort="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="effort:"{print $2; exit}' "$agent_file")"
 
 # The agent definition carries the model the role was *written* for; `.cerebro/models.conf` in the
 # consumer is where a navigator changes their mind about it without editing a submodule they share

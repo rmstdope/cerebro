@@ -84,8 +84,26 @@ if [[ -n "$target" && -n "$head" && "$head" != "$target" ]]; then
   git -C "$consumer" submodule update --init --recursive --quiet
 fi
 
-if [[ ! -f "$parent/cerebro/agents/$role.md" ]]; then
-  echo "cerebro: .claude/cerebro/agents/$role.md is missing - the submodule is behind; run git submodule update --init --recursive and try again" >&2
+# A role cerebro does not ship is not the same failure as a submodule that is behind, and saying
+# the second when the first happened sends the navigator to a command that cannot help (ah-qled.5.1).
+# Three cases:
+#   the consumer supplies .claude/agents/<role>.md   - a consumer-only role; nothing is wrong
+#   the consumer's own roster declares the role      - it owes an agent file, and is told so
+#   neither                                          - the submodule really is behind
+if [[ ! -f "$parent/cerebro/agents/$role.md" && ! -f "$parent/agents/$role.md" ]]; then
+  declared_by_consumer=""
+  if [[ -s "$parent/cerebro-roster" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in \#*) continue ;; esac
+      read -r _ row_role _ <<<"$line"
+      [[ "$row_role" == "$role" ]] && { declared_by_consumer=1; break; }
+    done < "$parent/cerebro-roster"
+  fi
+  if [[ -n "$declared_by_consumer" ]]; then
+    echo "cerebro: .claude/cerebro-roster declares the role $role, but cerebro does not ship agents/$role.md and there is no .claude/agents/$role.md either - write that file before starting $name" >&2
+  else
+    echo "cerebro: .claude/cerebro/agents/$role.md is missing - the submodule is behind; run git submodule update --init --recursive and try again" >&2
+  fi
   exit 2
 fi
 

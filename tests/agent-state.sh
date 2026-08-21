@@ -384,7 +384,12 @@ pass "transition-log-never-fatal"
 # Distinct agent names, two calls each: 20 concurrent appends to the one shared log, with no two
 # writers sharing a state file (that file's own write is per-agent and not what this pins).
 tmp="$(new_fixture)"
-for n in Cyclops Storm Wolverine Rogue Gambit Nightcrawler Colossus Iceman Jubilee Phoenix; do
+# The names come from the roster rather than being spelled out, so a consumer with its own fleet
+# runs this case too (ah-qled.5.1). Ten of them: 20 concurrent appends is what this pins.
+concurrent_names="$("$repo_root/scripts/roster" --implementers | sed -n 1,10p)"
+[[ "$(printf '%s\n' "$concurrent_names" | grep -c .)" == "10" ]] \
+  || fail "transition-log-concurrent: the roster names fewer than ten implementers"
+for n in $concurrent_names; do
   ( run_state "$tmp" "$n" working --bead ah-f9c --phase build --pid 42
     run_state "$tmp" "$n" idle --pid 42 ) &
 done

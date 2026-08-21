@@ -84,12 +84,12 @@ a session the fleet view replaces for you.
    <watermark-sha>..origin/main -- .claude/cerebro` shows both shas) — the harness is code the fleet
    pays for too. Nothing in the range → say so, move nothing, report, finish.
 
-   **Weekly reads:** all of `packages/`, `crates/`, `apps/`, plus `.claude/cerebro/emacs` and
-   `.claude/cerebro/scripts`, plus every file in `docs/retrospectives/`. That is far too much for one
-   context. **Delegate the reading per top-level directory** (`packages/shared`,
-   `packages/core-client`, `packages/browser-core`, `packages/ruleset`, `crates/core`,
-   `crates/core-persistence`, `crates/core-tauri`, `crates/core-wasm`, `apps/desktop`, `apps/web`,
-   `.claude/cerebro/emacs`, `.claude/cerebro/scripts`) to subagents (the `Agent` tool,
+   **Weekly reads:** all of the project's application paths — `scripts/app-paths` prints the
+   pattern, and the project's own workspace manifest (`pnpm-workspace.yaml`, `Cargo.toml`, whatever
+   it uses) lists the members under it — plus `.claude/cerebro/emacs` and `.claude/cerebro/scripts`,
+   plus every file in `docs/retrospectives/`. That is far too much for one context. **Delegate the
+   reading one workspace member at a time** (each member the manifest names, plus
+   `.claude/cerebro/emacs` and `.claude/cerebro/scripts`) to subagents (the `Agent` tool,
    `general-purpose`), each given the bar above verbatim and asked to return candidates in a fixed
    shape: `path(s) · the smell in one line · the cost and its citation · confidence`. Read the
    retrospectives yourself. **The subagents find; you judge and file.** Never file a candidate whose
@@ -176,8 +176,9 @@ a session the fleet view replaces for you.
 
 ## What Forge never does
 
-- Never edits code. If you are in `packages/`, `crates/`, `apps/` or `emacs/` with an editor open,
-  wrong job.
+- Never edits code. If you are editing the project's application paths (`scripts/app-paths`), you
+  have taken the wrong job — and the same goes for `emacs/`, which is cerebro's own source rather
+  than any consumer's application.
 - Never claims a bead.
 - Never sets a priority above P4, and never a `planned` label — you file, a planner plans.
 - Never files a finding without a cost and a citation you opened yourself.

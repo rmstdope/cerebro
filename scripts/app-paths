@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Where THIS consumer's application lives, in one place instead of the seven copies of
+# `^(packages|crates|apps)/` that were spread across six files (ah-qled.6):
+#
+#     app-paths                        ->  ^(packages|crates|apps)/
+#     app-paths --classify <path>...   ->  application | invisible
+#
+# The pattern is the `app_paths' key in <consumer>/.claude/cerebro-project.conf: an extended regular
+# expression, anchored by the consumer as it sees fit, matched against each changed path as `git
+# show --stat' prints it (repository-relative, no leading `./').
+#
+# "application" means a player of the consumer's product could see the change; "invisible" means the
+# fleet talking to itself - `.claude/', `docs/', `scripts/', `tests/', `.github/', config. ONE
+# application path among many makes the whole change application-touching, which is why several
+# paths may be passed at once.
+#
+# UNLIKE `project-conf' AND `default-branch', THIS ONE FAILS WHEN IT DOES NOT KNOW - exit 3, one
+# line on stderr, nothing on stdout. That asymmetry is the entire point of the bead. The defect
+# being ended here was silent: a consumer whose application lives in `src/' had every bead
+# classified as invisible, so release notes came out empty and every verification was skipped, with
+# nothing on stderr to say why. A default of "matches nothing" reproduces that exactly; a default of
+# "matches everything" sends the navigator to verify every docs change. There is no safe guess, so
+# there is no guess: a caller that cannot get an answer must say so to whoever is reading it.
+#
+# Callers run under `set -euo pipefail', so a non-zero exit takes them down unless they ask for it.
+# That is deliberate too - "I could not classify this bead" is a thing to report, not to swallow:
+#
+#     if ! kind="$(app-paths --classify $paths)"; then
+#       # say so in the pass report; do not quietly mark the bead invisible
+#     fi
+#
+# Whichever branch was taken is printed to STDERR, never stdout, the way `project-conf' does it: a
+# caller doing `p="$(app-paths)"' must get the pattern and nothing else.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+usage() {
+  echo "usage: app-paths [--classify <path>...]" >&2
+  exit 2
+}
+
+mode="pattern"
+if [[ "${1:-}" == "--classify" ]]; then
+  mode="classify"
+  shift
+  [[ $# -gt 0 ]] || usage
+elif [[ $# -gt 0 ]]; then
+  usage
+fi
+
+pattern="$("$here/project-conf" app_paths 2>/dev/null)" || pattern=""
+if [[ -z "$pattern" ]]; then
+  echo "app-paths: no app_paths in .claude/cerebro-project.conf - cannot classify anything as" \
+       "application-touching or invisible. Declare app_paths (an extended regex over" \
+       "repository-relative paths) and try again." >&2
+  exit 3
+fi
+
+if [[ "$mode" == "pattern" ]]; then
+  echo "app-paths: cerebro-project.conf -> $pattern" >&2
+  printf '%s\n' "$pattern"
+  exit 0
+fi
+
+# One application path is enough: a change that touches the application at all is one a player may
+# see, whatever else it touches alongside.
+for path in "$@"; do
+  if printf '%s\n' "$path" | grep -Eq "$pattern"; then
+    echo "app-paths: $path matches $pattern" >&2
+    printf 'application\n'
+    exit 0
+  fi
+done
+
+echo "app-paths: nothing matches $pattern" >&2
+printf 'invisible\n'
+exit 0

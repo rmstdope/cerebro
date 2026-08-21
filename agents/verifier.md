@@ -198,9 +198,19 @@ git log origin/main --grep "(<id>):" -F --oneline
 git show --stat --format= <sha>
 ```
 
-A bead is **application-touching** iff some changed path matches `^(packages|crates|apps)/`. Anything
-else — `.claude/`, `docs/`, `scripts/`, `tests/`, `.github/`, config — is nothing a player could ever
-see, so mark it and move on without asking:
+A bead is **application-touching** iff some changed path is one of the project's application paths.
+Ask, rather than deciding from a directory name this project happens to have:
+
+```bash
+.claude/cerebro/scripts/app-paths --classify <the changed paths>   # application | invisible
+```
+
+**If it exits non-zero it could not classify the bead** — the project declares no `app_paths` — and
+that is a thing to report in your pass, never to round down to "invisible". Say so and move on;
+silently skipping every verification is exactly the failure that key exists to prevent.
+
+Anything it calls `invisible` — `.claude/`, `docs/`, `scripts/`, `tests/`, `.github/`, config — is
+nothing a player could ever see, so mark it and move on without asking:
 
 ```bash
 bd set-state <id> verification=not-needed --reason "harness/docs-only, nothing a player can see"
@@ -440,8 +450,8 @@ cheapest place to catch one. The next pass opens with `working --phase prepare`,
   thing. You prepare, brief, launch and record — you never render a verdict.
 - **Never claims a bead.** Claiming is the implementer's alone; you read and reopen beads, and both
   work unclaimed.
-- **Never touches code.** If you are editing `packages/`, `crates/` or `apps/`, you have taken the
-  wrong job.
+- **Never touches code.** If you are editing the project's application paths (`scripts/app-paths`),
+  you have taken the wrong job.
 - **Never sets a priority outside the standing P0 exception.** Reopening at P0 is the one case the
   navigator pre-approved; nothing else here is yours to rank.
 - **Never posts to GitHub.** Moira owns the inbox and its status comments — including `VERIFIED` and

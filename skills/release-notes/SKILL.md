@@ -48,8 +48,12 @@ uses, and it is about paths rather than judgement:
 git show --stat --format= <sha>     # for each commit of the bead
 ```
 
-**Application-touching iff some changed path matches `^(packages|crates|apps)/`.** Everything else —
-`.claude/`, `docs/`, `scripts/`, `tests/`, `.github/`, config — is the fleet talking to itself. A new
+**Application-touching iff some changed path is one of the project's application paths**, which
+`.claude/cerebro/scripts/app-paths --classify <the changed paths>` answers with `application` or
+`invisible`. **A non-zero exit means it could not classify** — the project declares no `app_paths` —
+and that is said out loud in the notes rather than silently dropping the bead, since a project with
+no declaration would otherwise produce empty notes and no sign of why. Everything it calls invisible
+— `.claude/`, `docs/`, `scripts/`, `tests/`, `.github/`, config — is the fleet talking to itself. A new
 agent, a rewritten skill, a CI fix and a test-only change are all invisible to a player, however much
 work they were.
 

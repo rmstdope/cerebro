@@ -192,7 +192,8 @@ Two budgets, and a change can blow either.
 recommend anything.** Not a screenshot you describe, not your reading of the diff: the application,
 running, in front of them.
 
-A PR is user-experience-touching iff some changed path matches `^(packages|crates|apps)/` and the
+A PR is user-experience-touching iff some changed path is one of the project's application paths —
+`.claude/cerebro/scripts/app-paths --classify <changed paths>` answers `application` — and the
 change reaches the screen. A refactor behind an unchanged surface is not, and neither is a test-only
 or docs-only PR — say so in one line and skip this section, the same way the verifier does.
 

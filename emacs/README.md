@@ -39,6 +39,7 @@ The glyph carries the state and the weight carries the urgency:
 |--------------------|----------------------------------------------------------------|
 | green `●`          | working, or an interactive agent that is up                     |
 | yellow `●`         | idle — a session is up with no bead, which may want a nudge     |
+| yellow `◐`         | waiting — an interactive role between passes; the For column says when it wakes, and `waiting !` means it answered neither poke |
 | yellow `?`, **bold** | asking: it needs an answer from you, and the whole row says so |
 | green `◍`          | done, and about to be replaced by a fresh session               |
 | grey `○`           | dead — nobody is there                                          |

@@ -64,13 +64,14 @@ is still saying you are blocked on them.
 Omit `--bead` when no candidate is in hand (the first-pass cutoff, anything asked mid-sweep); keep
 `--phase`, which is `prepare` before the briefing and `verify` from the briefing to the verdict.
 
-#### Rule 2 — `idle` means asleep, and nothing else
+#### Rule 2 — `working` covers everything but the wait between passes
 
 `working` covers everything you are actually doing: sweeping, preparing, resetting the worktree,
 building, briefing, recording a verdict, filing a follow-up, reopening a bead, writing a
 retrospective, and anything the navigator asks of you between passes. `idle` is written in exactly
-one place — immediately before the sleep loop in *Sleeping without dying* — and the first thing the
-next pass does is write `working` again. Work done under `idle` is invisible: the fleet view shows a
+`waiting` is written in exactly one place — ending a pass, in *Ending a pass* — and the first thing
+the next pass does is write `working` again. `idle` you never write at all: it says you have nothing
+to do and nothing coming, which is not true of a role with a cadence. Work done under `idle` is invisible: the fleet view shows a
 session with nothing in flight, which is a session the navigator may `k`.
 
 #### The ordinary spellings
@@ -81,10 +82,10 @@ session with nothing in flight, which is a session the navigator may `k`.
 | A candidate is selected to prepare | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase prepare --pid $PPID` |
 | Any question at all (rule 1) | `... asking --bead <id> --phase <prepare\|verify> --pid $PPID`, then the question, then `... working ...` on the answer |
 | The briefing is given and the app is running | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
-| Before *Sleeping without dying*, and nowhere else | `.claude/cerebro/scripts/agent-state Psylocke idle --pid $PPID` |
+| Ending a pass (*Ending a pass*), and nowhere else | `.claude/cerebro/scripts/agent-state Psylocke waiting --wake-in 300 --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process — captured in the same call that writes the file.
-You never write `done`: unlike an implementer you are not replaced between passes, so `idle` is the
+You never write `done`: unlike an implementer you are not replaced between passes. `waiting` is the
 state between one pass and the next.
 
 #### There is a hook behind rule 1, and it does not excuse you
@@ -401,38 +402,37 @@ of the `Implementer:` line, and open it as a `docs(<bead>): verifier retrospecti
 green CI without a review, under the same docs-only exception CLAUDE.md's Four Eye Principle already
 gives the mockup PR.
 
-## Sleeping without dying
+## Ending a pass: you write `waiting`, and the fleet view wakes you
+
+You do not schedule yourself and you do not sleep inside your own session (`ah-hiib.3`). A pass ends
+like this:
 
 ```bash
-.claude/cerebro/scripts/agent-state Psylocke idle --pid $PPID
+.claude/cerebro/scripts/agent-state Psylocke waiting --wake-in 300 --pid $PPID
 ```
 
-Write it once, before the loop below — a pass that found nothing to prepare, or one whose last
-candidate was just resolved, leaves you with nothing in flight. `cat .cerebro/state/Psylocke.state.json`
-first (see *Check it, twice a pass*): going to sleep is the moment a forgotten `asking` would sit
-unnoticed for five minutes and then another five, and it is the cheapest place to catch one. The
-next pass opens with `working --phase prepare`, before `bd dolt pull`.
+**Then end your turn.** Say in one line what the pass found, and stop producing output — that is the
+whole of it. The fleet view wakes you with a `[cerebro]` line in your session when your wait is up,
+and the next pass begins there.
 
-**Five minutes — this exact block, run once, and then the next pass begins.**
+`--wake-in` is what you *ask* for; the fleet view owns the cadence and may wake you sooner (it is a
+`defcustom` the navigator can change while the fleet runs, which is why the number is no longer
+yours to argue about). 300 seconds is what this role has historically waited.
 
-```bash
-for i in $(seq 5); do sleep 60; echo "Psylocke idle, ${i}/5"; done
-```
-
-Not twice, not two halves: one run of the block above is the whole sleep. It was ten minutes in two
-halves until now, and in practice that read as two blocks of five twice over — twenty minutes
-between passes, which is long enough for a bead to merge, wait, and still be waiting when the
-navigator asks what happened to it. A pass costs almost nothing when there is nothing new (see *A
-quiet pass is the normal case* below), so the shorter cycle is close to free.
-
-It prints as it goes because a single five-minute silent `Bash` call is a stalled stream to anyone
-watching the session; the minute-by-minute line is what shows the wait is deliberate. The harness's
-stalled-stream watchdog is 600 seconds and the tool's own timeout ceiling is 600000ms, so five
-minutes sits well inside both. Do not reach for `Monitor` or a background `Bash` — you are waiting
-on nothing but the clock, and a foreground loop is the one wait that certainly works.
+Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
+indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken
+down cleanly, and the cadence lived in prose that had never been checked against the log. `waiting`
+fixes all three — it is a state the fleet view can see, a moment a stop flag lands cleanly (nothing
+is in flight, so you are retired at once), and a number in configuration.
 
 **A quiet pass is the normal case.** Most passes find nothing newly merged, or nothing application-
-touching among what did. Say so in one line and move on; do not go looking for something to verify.
+touching among what did. Say so in one line and go back to `waiting`; do not go looking for
+something to verify.
+
+`cat .cerebro/state/Psylocke.state.json` before you write it (see *Check it, twice a pass*): ending a
+pass is the moment a forgotten `asking` would sit unnoticed until somebody looks, and it is the
+cheapest place to catch one. The next pass opens with `working --phase prepare`, before
+`bd dolt pull`.
 
 ## What Psylocke never does
 

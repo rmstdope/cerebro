@@ -77,9 +77,15 @@ re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exa
 
 Two things it does for you without being asked: it starts `prune-worktrees.sh --watch` alongside the
 buffer (see *Leftover worktrees*), and it replaces an implementer that reports itself `done` with a
-fresh session.
+fresh session.  It also owns the **cadence of the interactive roles** (ah-hiib.3): they no
+longer sleep inside their own sessions, they write `waiting` and end their turn, and the poll wakes
+them — `cerebro-wake-interval-default` (ten minutes) and `cerebro-wake-intervals` (Psylocke at five)
+are `M-x customize` variables you can change while the fleet runs. The For column of a waiting row
+counts down to its wake; `waiting !` means it answered neither of the two pokes and wants looking at.
+And a stop flag on a waiting role takes it down at once, which is what was impossible while it slept.
 
-**Reading a row.** Green `●` is working, yellow `●` is idle, a bold yellow `?` is an agent waiting on
+**Reading a row.** Green `●` is working, yellow `●` is idle, yellow `◐` is an interactive role
+`waiting` between passes, a bold yellow `?` is an agent waiting on
 *you*, green `◍` is done and about to be replaced, grey `○` is dead. The State column names the
 **phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `triage`/`plan` for
 a planner; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for

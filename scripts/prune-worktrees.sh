@@ -70,11 +70,11 @@
 # is untouched — its branch, its commits and its PR survive, and it pays one cold rebuild. When the
 # disk is roomy nothing is reclaimed and nobody pays that rebuild for nothing.
 #
-# The floor is **not a second number**. It is `FREE_SPACE_FLOOR_GB` from the consumer's own
-# `scripts/diskPreflight.ts`, which already defines "not enough room to build" and is what refuses
-# to start a bead; a threshold of this script's own would drift from it and the two would disagree
-# at the worst possible moment. A consumer without that file gets no pressure path at all — only
-# the outer bound — rather than a number this script made up.
+# The floor is **not a second number**. It is `disk_floor_gb` from the consumer's own
+# `.claude/cerebro-project.conf`, which already defines "not enough room to build" and is what
+# `disk-preflight` refuses to start a bead below; a threshold of this script's own would drift from
+# it and the two would disagree at the worst possible moment. A consumer that declares no floor
+# gets no pressure path at all — only the outer bound — rather than a number this script made up.
 #
 # The verifier is exempt from the pressure path (its tree is a tenth the size of an implementer's, so
 # reclaiming it costs a verification and buys nothing) but not from the outer bound below.
@@ -216,19 +216,17 @@ free_space_gb() {
   df -Pk "$repo_root" 2>/dev/null | awk 'NR == 2 { printf "%d", $4 / 1024 / 1024 }'
 }
 
-# The fleet's build floor, read from the consumer rather than restated here. Empty when the
-# consumer has no `scripts/diskPreflight.ts`, which disables the pressure path rather than
-# inventing a number for it. `FREE_SPACE_FLOOR_GB` in the environment wins, for a consumer that
-# keeps its floor somewhere else.
+# The fleet's build floor, read from the consumer's own declaration rather than restated here.
+# Empty when the consumer declares no `disk_floor_gb`, which disables the pressure path rather than
+# inventing a number for it — the same absence `disk-preflight` reads as "no preflight at all", so
+# the two agree even about not knowing. `FREE_SPACE_FLOOR_GB` in the environment wins, for a
+# consumer that keeps its floor somewhere else.
 build_floor_gb() {
-  local declared
   if [ -n "${FREE_SPACE_FLOOR_GB:-}" ]; then
     echo "$FREE_SPACE_FLOOR_GB"
     return 0
   fi
-  declared="$(sed -n 's/.*FREE_SPACE_FLOOR_GB *= *\([0-9][0-9]*\).*/\1/p' \
-    "$repo_root/scripts/diskPreflight.ts" 2>/dev/null | head -1)"
-  echo "$declared"
+  "$script_dir/project-conf" disk_floor_gb 2>/dev/null
 }
 
 # How cold a build tree is, as the largest window in a ladder within which nothing was written —
@@ -303,7 +301,7 @@ reclaim_under_pressure() {
 
   free_gb="$(free_space_gb)"
   [ -n "$free_gb" ] || return 0
-  # The same test diskPreflight makes — headroom is *more* than the floor — so the two can never
+  # The same test disk-preflight makes — headroom is *more* than the floor — so the two can never
   # disagree about whether there is room to build.
   [ "$free_gb" -gt "$floor_gb" ] && return 0
 

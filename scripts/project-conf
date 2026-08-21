@@ -17,6 +17,12 @@
 # needs. A file under the ignored .cerebro/ vanishes on a fresh clone, and every new machine then
 # silently skips the step - surfacing much later as a confusing failure inside somebody's worktree.
 #
+# Two keys are worth naming here because their ABSENCE is meaningful rather than merely a default:
+#
+#   disk_floor_gb  — GB of free disk below which a bead must not start. ABSENT means no disk
+#                    preflight runs at all, and prune-worktrees.sh loses its pressure path.
+#   retro_dir      — where the fleet's retrospectives live, read by retro-sightings.
+#
 # THIS NEVER FAILS on absence. A missing file, a missing key and an unreadable file all exit 0 with
 # the default, because callers run under `set -euo pipefail' where a non-zero exit for "no such
 # key" takes the caller down instead of letting it fall back. Only a missing <key> argument - a

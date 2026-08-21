@@ -360,7 +360,7 @@ Check there is room before starting — a build that runs out of disk fails insi
 message that reads like a code fault:
 
 ```bash
-pnpm exec tsx scripts/diskPreflight.ts    # prints what it found; non-zero means do not start
+.claude/cerebro/scripts/disk-preflight    # prints what it found; non-zero means do not start
 ```
 
 Never check out `main` — another agent usually holds it. `scripts/prepare-worktree` is the one

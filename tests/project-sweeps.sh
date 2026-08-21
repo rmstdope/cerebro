@@ -87,13 +87,14 @@ for s in consumer-root project-conf default-branch roster \
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
 
-cat > "$consumer/scripts/diskPreflight.ts" <<'TS'
-export const FREE_SPACE_FLOOR_GB = 8;
-TS
 
 conf="$consumer/.claude/cerebro-project.conf"
+# Every case declares the same build floor, which is where the floor lives since ah-qled.7.2 - it
+# used to be read out of a consumer's TypeScript. The pressure path is off entirely without it, so
+# it belongs with `default_branch' in the preamble rather than in each case; the one case that is
+# ABOUT its absence writes the file itself.
 write_conf() {
-  { printf 'default_branch %s\n' "$branch"; cat; } > "$conf"
+  { printf 'default_branch %s\n' "$branch"; printf 'disk_floor_gb 8\n'; cat; } > "$conf"
 }
 write_conf </dev/null
 
@@ -354,5 +355,24 @@ present "$consumer/.cerebro/worktrees/ah-dry/target" \
         "$consumer/.cerebro/worktrees/ah-dry/node_modules" \
   || fail "--dry-run reclaimed something: $out"
 pass "--dry-run names what it would take and takes nothing"
+
+# =================================================================================================
+# 7. A consumer that declares no build floor loses the PRESSURE path, keeping only the outer bound
+# =================================================================================================
+#
+# The floor is the consumer's own `disk_floor_gb` (ah-qled.7.2) and its absence is meaningful: the
+# same absence `disk-preflight` reads as "no preflight at all". Neither invents a number, so the two
+# can never disagree - not even about not knowing.
+printf 'default_branch %s\nreclaim_dirs target\n' "$branch" > "$conf"
+make_tree ah-nofloor 5000 .cerebro target
+gb_free 1   # as much pressure as this fixture can produce
+out="$(cd "$consumer" && PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=100000 bash "$prune" 2>&1)"
+present "$consumer/.cerebro/worktrees/ah-nofloor/target" \
+  || fail "with no disk_floor_gb declared, the pressure path took a build tree anyway: $out"
+pass "no declared floor disables the pressure path rather than inventing a number for it"
+
+# The outer bound is untouched by any of this: it never asks what the disk looks like, so a floor it
+# cannot read cannot disable it. See reclaim_cold_target, which the psylocke exception above already
+# exercises.
 
 echo "all project-sweeps assertions passed"

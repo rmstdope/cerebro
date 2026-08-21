@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Whether there is room to build, asked before the work starts rather than during it:
+#
+#     disk-preflight        # prints what it found; non-zero means do not start
+#
+# Running out of disk does not announce itself. The failure lands in the linker or the code
+# generator and reads like a fault in the code being compiled, so an agent goes and tries to fix
+# code that was never wrong. This is written from experience: the disk reached 100% capacity with
+# 2.0 GiB free while three worktrees each kept a build tree of their own, and eleven retrospectives
+# name that floor since.
+#
+# THE FLOOR IS THE CONSUMER'S, not cerebro's. `disk_floor_gb' in .claude/cerebro-project.conf is
+# what "not enough room to build" means for this project, and `prune-worktrees.sh' reads the very
+# same key - a number of cerebro's own would drift from it and the two would disagree at the worst
+# possible moment. A CONSUMER THAT DECLARES NONE GETS NO PREFLIGHT: exit 0, silently, rather than
+# being refused a bead by a threshold nobody chose. `FREE_SPACE_FLOOR_GB' in the environment still
+# wins, for a consumer that keeps its floor somewhere else.
+#
+# Ported from the consumer's scripts/diskPreflight.ts (ah-qled.7.2, cerebro#58 §2), which lived in
+# ATLANTIS-HUD's scripts/ and was reached through its package manager, so a consumer adopting the
+# fleet got a skill instruction that could not run.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+root="$("$here/consumer-root" --shared 2>/dev/null)" || root=""
+root="${root:-$PWD}"
+
+floor="${FREE_SPACE_FLOOR_GB:-}"
+if [ -z "$floor" ]; then
+  floor="$("$here/project-conf" disk_floor_gb 2>/dev/null)"
+fi
+# Nothing declared, so nothing to enforce - and nothing said about it either. A preflight that
+# printed "no floor declared" on every bead would be noise in front of every run.
+[ -n "$floor" ] || exit 0
+
+# `df -Pk', never `df -h': `-h' rounds, and its unit suffix varies by platform.
+free_gb="$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { printf "%.4f", $4 / 1024 / 1024 }')"
+[ -n "$free_gb" ] || exit 0
+
+# Truncated, never rounded: 4.96 rounded to one decimal is "5.0", and "5.0 GB free, below the 5 GB
+# floor" argues with itself at exactly the moment someone needs to believe it. A refusal must never
+# overstate what is there.
+truncate_gb() {
+  awk -v v="$1" 'BEGIN { printf "%g\n", int(v * 10) / 10 }'
+}
+
+# What could be reclaimed, and where. Every worktree builds its own tree (ah-gdp), so what fills a
+# nearly-full disk is several of those rather than one a single clean would empty - and the
+# directories worth reclaiming are the consumer's own declaration (`reclaim_dirs', empty by
+# default), never a guess.
+reclaim_dirs="$("$here/project-conf" reclaim_dirs 2>/dev/null)"
+trees=""
+tree_count=0
+total_kb=0
+if [ -n "$reclaim_dirs" ]; then
+  candidates="$root"
+  for parent in "$root/.cerebro/worktrees" "$root/.claude/worktrees"; do
+    [ -d "$parent" ] || continue
+    for tree in "$parent"/*; do
+      [ -d "$tree" ] && candidates="$candidates
+$tree"
+    done
+  done
+  while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    for name in $reclaim_dirs; do
+      target="$dir/$name"
+      [ -d "$target" ] || continue
+      kb="$(du -sk "$target" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+      [ -n "$kb" ] || continue
+      total_kb=$((total_kb + kb))
+      tree_count=$((tree_count + 1))
+      size="$(truncate_gb "$(awk -v kb="$kb" 'BEGIN { printf "%.4f", kb / 1024 / 1024 }')")"
+      # Relative to the repository root: the absolute paths are long enough to bury the sizes they
+      # exist to make checkable. Each tree names its own size, so a total that disagrees with
+      # reality is visible where it is printed (ah-kdgc).
+      trees="${trees:+$trees, }${target#$root/} ($size GB)"
+    done
+  done <<< "$candidates"
+fi
+
+free_shown="$(truncate_gb "$free_gb")"
+if awk -v f="$free_gb" -v floor="$floor" 'BEGIN { exit !(f > floor) }'; then
+  # Strictly greater, the same test prune-worktrees.sh makes, so the two can never disagree about
+  # whether there is room to build.
+  echo "disk: $free_shown GB free, above the $floor GB floor."
+else
+  echo "disk: $free_shown GB free, below the $floor GB floor needed to build."
+  echo "A build that runs out of space fails inside the linker and reads like a code error."
+fi
+
+if [ "$tree_count" -gt 0 ]; then
+  total="$(truncate_gb "$(awk -v kb="$total_kb" 'BEGIN { printf "%.4f", kb / 1024 / 1024 }')")"
+  noun="build trees"
+  [ "$tree_count" -eq 1 ] && noun="build tree"
+  # Named outright rather than pointed at a sweep: eleven retrospectives say the old advice sent
+  # the reader to prune-worktrees.sh, which under a full fleet reclaims nothing because every tree
+  # belongs to a live agent.
+  echo "$total GB sits in $tree_count $noun: $trees."
+  echo "Offline reclaims that are always safe: ~/.cargo/registry/src, target/debug/incremental, ~/Library/Caches/Mozilla.sccache."
+fi
+
+awk -v f="$free_gb" -v floor="$floor" 'BEGIN { exit !(f > floor) }'

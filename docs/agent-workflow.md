@@ -520,7 +520,7 @@ blocks.
 **The disk fills.** The Rust build tree is shared by every worktree and still grows:
 
 ```bash
-pnpm exec tsx scripts/diskPreflight.ts     # what is free, and whether it is enough
+.claude/cerebro/scripts/disk-preflight     # what is free, and whether it is enough
 rm -rf target/debug/incremental            # the cheap few gigabytes back
 ```
 

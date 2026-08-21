@@ -72,13 +72,9 @@ done
 # tests/project-sweeps.sh owns the opted-out case.
 cat > "$consumer/.claude/cerebro-project.conf" <<'CONF'
 reclaim_dirs target
+disk_floor_gb 8
 CONF
 
-# The one number: the consumer's own build floor, which this sweep must reuse rather than invent a
-# second one beside it.
-cat > "$consumer/scripts/diskPreflight.ts" <<'TS'
-export const FREE_SPACE_FLOOR_GB = 8;
-TS
 
 git_c -C "$consumer" add -A
 git_c -C "$consumer" commit -q -m "init"

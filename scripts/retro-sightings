@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# What the fleet's retrospectives are saying, counted rather than read by hand:
+#
+#     retro-sightings [--threshold N] [--dir <corpus>]
+#     retro-sightings --dismiss <bead>
+#
+# Every retrospective ends on a `**Seen before.**' paragraph naming earlier beads that hit the same
+# thing - deliberately, because a third sighting is the strongest evidence the fleet produces that
+# something needs fixing rather than tolerating. Nothing aggregated that line, so the apt/Playwright
+# stall reached nine sightings before it was fixed, two days after sighting three.
+#
+# CITATIONS ARE A GRAPH and a finding is one of its connected components. That is what makes the
+# transitive case harmless - a bead naming both its predecessor and everything its predecessor
+# named adds only edges that were already implied - and what turns ten bead ids about one full disk
+# into one finding of ten rather than ten findings. Grouping by citation PAIR gives four findings
+# for a chain of five and looks entirely plausible; do not.
+#
+# The corpus is read as text with anchored patterns rather than parsed as markdown - the label is
+# uniform at column 0 in every entry, and the payload after it is free prose no parser would help
+# with. The prose has four traps, each handled where it arises: paragraphs wrap, a `None found'
+# paragraph may name beads as COUNTER-examples, citations are transitive, and ids are written bare,
+# backticked or as paths.
+#
+# Ported from the consumer's scripts/retroSightings.ts (ah-qled.7.2, cerebro#58 §2): reading the
+# fleet's own practice is cerebro's job, and a consumer adopting the fleet got an agent instruction
+# that resolved through ATLANTIS-HUD's package.json. bash + awk because `awk' already appears in
+# eight scripts here and `node' in none, so the port adds no dependency. `roster''s builtins-only
+# rule is roster's alone - it exists because tests/launchers.sh narrows PATH to prove the LAUNCH
+# path survives a broken environment, and a report Cerebro runs on demand is nowhere near it.
+#
+# It surfaces; it does not fix. Every hour it saves depends on the navigator acting on what it shows.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+threshold=3
+corpus_dir=""
+dismiss=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --threshold) threshold="${2:-3}"; shift 2 ;;
+    --dir) corpus_dir="${2:-}"; shift 2 ;;
+    --dismiss) dismiss="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,4p' "$0"; exit 0 ;;
+    *) echo "retro-sightings: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+done
+
+# --dir is what the tests feed a fixture corpus; without it the corpus is where the consumer says
+# its retrospectives live, which `retro_dir' already declares.
+if [ -z "$corpus_dir" ]; then
+  root="$("$here/consumer-root" --shared 2>/dev/null)" || root=""
+  retro_dir="$("$here/project-conf" retro_dir docs/retrospectives 2>/dev/null)"
+  corpus_dir="${root:+$root/}${retro_dir:-docs/retrospectives}"
+fi
+
+# The repository the corpus lives in, or nothing - a fixture directory is not one, and neither is a
+# consumer that keeps its retrospectives outside the checkout.
+git_root="$(git -C "$corpus_dir" rev-parse --show-toplevel 2>/dev/null)" || git_root=""
+
+# A `bd' memory, or nothing: `bd recall' exits 1 for a key never written, which is not an error.
+recall() {
+  command -v bd > /dev/null 2>&1 || return 0
+  bd recall "$1" 2>/dev/null || true
+}
+
+# `--key' is never omitted: a bare argument recalls instead of storing.
+remember() {
+  command -v bd > /dev/null 2>&1 || return 0
+  bd remember "$2" --key "$1" > /dev/null 2>&1 || true
+}
+
+# The bead id shape, from the project rather than restated here. `ah' is the fallback because a
+# consumer without `bd' still has retrospectives named after its beads.
+prefix="$(bd config get issue_prefix 2>/dev/null || true)"
+prefix="${prefix%-}"
+prefix="${prefix:-ah}"
+
+work_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir"' EXIT
+
+# Every retrospective, from the working tree and from the default branch both. Several files from
+# the interesting window are not in the working tree at HEAD, so listing only the directory loses
+# exactly the sightings this exists to count. `git checkout' is never used: the checkout is shared
+# with the navigator and with every other agent.
+files=()
+if [ -d "$corpus_dir" ]; then
+  while IFS= read -r file; do
+    files+=("$file")
+  done < <(find "$corpus_dir" -maxdepth 1 -name '*.md' ! -name 'README.md' | LC_ALL=C sort)
+fi
+
+if [ -n "$git_root" ]; then
+  relative="${corpus_dir#$git_root/}"
+  branch="$("$here/default-branch" 2>/dev/null || echo main)"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    [ "${path##*/}" = "README.md" ] && continue
+    [ "${path##*.}" = "md" ] || continue
+    [ -f "$git_root/$path" ] && continue
+    # Only what the working tree no longer has, materialised under a name the parser reads the
+    # same way as a file on disk.
+    if git -C "$git_root" show "origin/$branch:$path" > "$work_dir/${path##*/}" 2>/dev/null; then
+      files+=("$work_dir/${path##*/}")
+    fi
+  done < <(git -C "$git_root" ls-tree -r --name-only "origin/$branch" -- "$relative/" 2>/dev/null || true)
+fi
+
+dismissed="$(recall retro-dismissed | tr '\n' ' ')"
+
+# How many beads wrote a retrospective since the last sweep's watermark, or nothing at all when
+# there is no watermark - which is not the same as zero and is said differently.
+watermark="$(recall retro-watermark)"
+new_count=""
+if [ -n "$watermark" ] && [ -n "$git_root" ]; then
+  sha="${watermark%% *}"
+  new_count="$(git -C "$git_root" diff --name-only "$sha..origin/$branch" -- "$relative/" 2>/dev/null \
+    | sed -n 's#.*/##p' | sed -n "s/^\($prefix-[a-z0-9]\{1,\}\(\.[0-9]\{1,\}\)\{0,1\}\).*/\1/p" \
+    | LC_ALL=C sort -u | grep -c . || true)"
+fi
+
+report() {
+  awk -v threshold="$threshold" \
+      -v prefix="$prefix" \
+      -v dismissed=" $dismissed " \
+      -v dismiss_target="$dismiss" \
+      -v new_count="$new_count" \
+      -f "$here/retro-sightings.awk" "$@"
+}
+
+if [ "${#files[@]}" -eq 0 ]; then
+  files=(/dev/null)
+fi
+
+if [ -n "$dismiss" ]; then
+  found="$(report "${files[@]}")"
+  if [ -z "$found" ]; then
+    # Loudly, rather than remembering an id that silences nothing: a dismissal that quietly does not
+    # apply leaves the navigator believing a finding was dealt with.
+    echo "no finding contains $dismiss" >&2
+    exit 1
+  fi
+  remember retro-dismissed "$(printf '%s %s' "$dismissed" "$dismiss" | tr -s ' ' | sed 's/^ //;s/ $//')"
+  echo "dismissed the finding containing $dismiss ($found sightings)"
+  echo "it will stay hidden even as more beads join it"
+  exit 0
+fi
+
+report "${files[@]}"
+
+# After printing, never before: a session that dies mid-sweep then re-reads a range rather than
+# skipping it silently.
+if [ -n "$git_root" ]; then
+  head_sha="$(git -C "$git_root" rev-parse "origin/$branch" 2>/dev/null || true)"
+  [ -n "$head_sha" ] && remember retro-watermark "$head_sha $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
+exit 0

@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# One project fact, read from the consumer's own tracked declaration:
+#
+#     project-conf <key> [default]
+#
+# The file is <consumer>/.claude/cerebro-project.conf, in the shape cerebro#58 §1 specifies:
+#
+#     key value          one per line, the value running to the END of the line
+#     # a comment        everything from a `#' on is a comment, WHEREVER it starts
+#
+# Because the comment strip runs wherever the `#' appears, A VALUE CAN NEVER CONTAIN `#'. That is
+# deliberate - it is what keeps `default_branch main  # for now' from naming a branch "main # for
+# now" - and it is stated here rather than left to be discovered.
+#
+# TRACKED, not under .cerebro/. `.cerebro/models.conf' is a personal preference and rightly
+# git-ignored; how a project installs itself and what its gate is called are facts EVERY clone
+# needs. A file under the ignored .cerebro/ vanishes on a fresh clone, and every new machine then
+# silently skips the step - surfacing much later as a confusing failure inside somebody's worktree.
+#
+# THIS NEVER FAILS on absence. A missing file, a missing key and an unreadable file all exit 0 with
+# the default, because callers run under `set -euo pipefail' where a non-zero exit for "no such
+# key" takes the caller down instead of letting it fall back. Only a missing <key> argument - a
+# programming error in the caller, not a fact about the consumer - exits non-zero.
+#
+# Whichever branch was taken is printed to STDERR, never stdout, the way `launch' says out loud
+# which models.conf line it matched: a caller doing `x="$(project-conf install)"' must get the
+# value and nothing else, and a step silently skipped is otherwise a mystery three days later.
+set -euo pipefail
+
+key="${1:-}"
+default="${2:-}"
+if [[ -z "$key" ]]; then
+  echo "usage: project-conf <key> [default]" >&2
+  exit 2
+fi
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# --shared, matching how `launch' reads models.conf and how `agent-state' resolves its state
+# directory: the fleet's configuration is one answer for the checkout, not one per worktree.
+root="$("$here/consumer-root" --shared 2>/dev/null)" || root=""
+conf="${root:+$root/.claude/cerebro-project.conf}"
+
+# The value for $key, or nothing. Two columns, NOT models.conf's three: `read -r k m e' would split
+# `install pnpm install --frozen-lockfile' into a command and its arguments, so the value is read
+# as one `rest' running to the end of the line.
+lookup() {
+  local line k rest
+  [[ -n "$conf" && -f "$conf" && -r "$conf" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # This file is TRACKED, unlike models.conf, so it will be edited on Windows checkouts. Strip
+    # the carriage return before anything else: it is not in IFS, so `read' leaves it on the tail
+    # of the value, and `npm ci\r' and a branch named `main\r' both fail invisibly.
+    line="${line%$'\r'}"
+    line="${line%%#*}"
+    read -r k rest <<<"$line"
+    [[ -n "$k" ]] || continue
+    if [[ "$k" == "$key" ]]; then
+      printf '%s\n' "$rest"
+      return 0
+    fi
+  done < "$conf"
+}
+
+value="$(lookup)"
+if [[ -n "$value" ]]; then
+  echo "project-conf: cerebro-project.conf -> $key" >&2
+  printf '%s\n' "$value"
+  exit 0
+fi
+
+# Detect, never guess - and only where detection is safe. `prewarm' is deliberately absent from
+# this table and always will be: nothing could infer `pnpm --filter @atlantis/browser-core
+# build:wasm', and a wrong guess costs minutes in every worktree.
+if [[ "$key" == "install" && -n "$root" ]]; then
+  for probe in "pnpm-lock.yaml:pnpm install --frozen-lockfile" \
+               "package-lock.json:npm ci" \
+               "yarn.lock:yarn install --immutable"; do
+    lockfile="${probe%%:*}"
+    command="${probe#*:}"
+    if [[ -f "$root/$lockfile" ]]; then
+      echo "project-conf: install detected from $lockfile" >&2
+      printf '%s\n' "$command"
+      exit 0
+    fi
+  done
+fi
+
+if [[ -n "$default" ]]; then
+  echo "project-conf: $key unset -> the default" >&2
+  printf '%s\n' "$default"
+else
+  echo "project-conf: $key unset, and no default" >&2
+fi
+exit 0

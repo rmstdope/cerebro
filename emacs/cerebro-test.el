@@ -1434,8 +1434,8 @@ lists by it, which emptied them completely.  That was caught by rendering
 against the real database rather than here, which is why the guard is now a
 test."
   (let ((line (cerebro--bead-line
-               (cerebro-test--bead "ah-13o" 1 "Resizable split" "henrik@kurelid.se") 62)))
-    (should-not (string-match-p "henrik" line))
+               (cerebro-test--bead "ah-13o" 1 "Resizable split" "owner@example.com") 62)))
+    (should-not (string-match-p "example\\.com" line))
     (should (string-match-p "Resizable split" line))))
 
 (ert-deftest cerebro-test/beads-sort-by-priority-then-id ()
@@ -2322,16 +2322,17 @@ ten minutes is one still mid-cleanup, not a dead one."
 
 (ert-deftest cerebro-test/claim-finding-leaves-a-lease-not-yet-stale ()
   "`assignee' not being on the roster is not evidence of anything by
-itself - \"Henrik Kurelid\" is a live claim held by hand exactly as often
-as it is a crashed session, and only the lease tells the two apart. A bead
+itself - a name that is not on `scripts/roster' is a live claim held by
+hand exactly as often as it is a crashed session, and only the lease tells
+the two apart. A bead
 this function has just claimed, whose own session sets no `BEADS_ACTOR',
 must not be offered for reclaim the moment its assignee reads as a human
 name - which is the bug this test was written to catch."
   (should (null (cerebro--claim-finding
-                 (cerebro-test--claim-candidate "ah-x1" "Henrik Kurelid" nil nil nil nil 3)
+                 (cerebro-test--claim-candidate "ah-x1" "A Human" nil nil nil nil 3)
                  nil (current-time))))
   (should (null (cerebro--claim-finding
-                 (cerebro-test--claim-candidate "ah-x1" "Henrik Kurelid" nil nil nil nil nil)
+                 (cerebro-test--claim-candidate "ah-x1" "A Human" nil nil nil nil nil)
                  nil (current-time)))))
 
 (defun cerebro-test--epic-candidate (id minutes)

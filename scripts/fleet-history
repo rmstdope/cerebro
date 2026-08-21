@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+#
+# Reads the fleet's transition log (.cerebro/state/transitions.jsonl, written by scripts/agent-state
+# since ah-hiib.1) and answers the one thing the log itself cannot: HOW LONG. The log is
+# transitions; every question anyone has ever asked of it - how long an implementer holds a bead,
+# how long agents actually wait at `asking`, how often a role goes idle, which agent is the outlier
+# this week, whether anything is stalled right now - is about durations. Turning transitions into
+# intervals is this script's whole job (ah-hiib.2).
+#
+#     scripts/fleet-history --json    [--since <when>] [--agent <name>]
+#     scripts/fleet-history --summary [--since <when>] [--agent <name>]
+#
+#   --json     one object per interval, on stdout, as a JSON array:
+#
+#     {"agent":"Cyclops","state":"working","phase":"review","bead":"ah-gfzu",
+#      "from_ts":"2026-08-20T17:04:11Z","to_ts":"2026-08-20T17:26:02Z","minutes":21.8,"open":false}
+#
+#     `state` is the state the agent was IN for that stretch, `phase` and `bead` what it carried
+#     when the stretch began. AN OPEN INTERVAL IS STILL RUNNING: the last interval of each agent
+#     has no successor, so it is emitted with "open":true, a null `to_ts`, and `minutes` measured
+#     to now. It is the interval that answers "is anything stalled right now", which is why it is
+#     reported rather than dropped - but do not average it in unknowingly, because it has not
+#     finished happening.
+#
+#   --summary  one row per (agent, state), as a JSON array: `count`, `total_min`, `median_min`,
+#     `max_min`, and `open_min` - the length of that agent's currently-open interval when it is in
+#     this state, null otherwise. MEDIAN, not mean: one nine-hour park (ah-rpnb) moves a mean far
+#     enough to make any threshold set from it useless, and a threshold is what these numbers are
+#     for.
+#
+#     THE FOUR AGGREGATES DESCRIBE FINISHED INTERVALS ONLY; `open_min` sits beside them, never
+#     inside them. They exist to answer "is what is happening now unusual", and an open interval
+#     folded into the median it is about to be compared against raises its own baseline until it
+#     clears the bar it set: an agent stuck eleven hours against a five-minute norm reads as
+#     perfectly typical. With one interval it is worse - the median IS the open interval, so no
+#     duration could ever be called long. A state nothing has finished in has `count` 0 and a null
+#     median, which is the honest answer: there is nothing yet to judge it against.
+#
+#   --since <when>   an ISO-8601 UTC timestamp (2026-08-20T00:00:00Z) or a plain span - `90m`,
+#     `24h`, `7d`. Default `7d`. THE FILTER IS APPLIED AFTER PAIRING, never before, so an interval
+#     that started before the window is reported with its true length instead of being truncated
+#     into looking short - which is the exact bias this script exists to remove.
+#
+#     An open interval always overlaps the window, since it runs to now, so `--since` never drops
+#     one. What does is the staleness bound below.
+#
+# A DEAD SESSION IS NOT A STALL. An agent only writes when something changes, so silence is no
+# evidence of death - an implementer can build for three hours without a line, and that stretch is
+# precisely what this is for. But nothing legitimately sits in one state for a day, and a session
+# killed at the terminal leaves an interval nobody will ever close: without a bound, one run of an
+# agent a year ago is reported for ever as currently running and the History panel fills with the
+# dead. So an open interval longer than STALE_OPEN_HOURS below is dropped as a session that ended
+# rather than a wait in progress. It is a bound, not a judgement: the transitions themselves are
+# still in the log for anyone who wants them.
+#
+#   --agent <name>   one agent only. This is the outlier question, which previously needed a
+#     GitHub API crawl.
+#
+# BOTH LOG GENERATIONS ARE READ, OLDEST FIRST. agent-state rotates on size and keeps one
+# generation as transitions.1.jsonl; read only the current file and every window reaching past a
+# rotation silently loses its older half, which reads as an agent that simply was not running -
+# the most misleading possible answer from a tool built to measure absence.
+#
+# The pairing rules, each of which is an assertion in tests/fleet-history.sh:
+#   - Lines are sorted by `ts` and grouped by `agent`; each interval runs from one boundary line to
+#     the next boundary line of the same agent.
+#   - A `changed:false` line is a HEARTBEAT, not a boundary. It is evidence the agent is still
+#     reporting, and it EXTENDS the interval it falls inside. Treat it as a transition and one long
+#     interval becomes a run of tiny ones, and every stall disappears.
+#   - A null `from` IS a boundary even when `changed` is false: it means a fresh session, and the
+#     time before it belongs to the session that ended. Carrying an interval across it invents time
+#     an agent never spent.
+#   - `done` is TERMINAL. An implementer writing it has finished and is about to be replaced, so it
+#     closes the session rather than opening an interval nobody will ever close: left open, a bead
+#     delivered last September is reported as having been in progress ever since.
+#
+# It fails LOUDLY - non-zero, a message on stderr, NOTHING on stdout - when a log line will not
+# parse or no log exists at all. A caller deciding whether anything has stalled must never read a
+# broken query as "all clear"; that is `scripts/work-beads`' rule and the reason for it is the same.
+#
+# The log is under .cerebro/, which is git-ignored, so it is local to this machine and starts empty
+# in a fresh clone. See scripts/agent-state's own header for where each field comes from.
+#
+# ---------------------------------------------------------------------------------------------
+# Answering a question these two modes did not anticipate - read the log directly. The field names
+# above are the log's own, so a `jq` one-liner needs nothing from this script:
+#
+#   # the longest wait at `asking` this week, and who was waiting
+#   scripts/fleet-history --json --since 7d \
+#     | jq -r 'map(select(.state == "asking")) | max_by(.minutes) | "\(.agent) \(.minutes)m \(.bead)"'
+#
+#   # everything one agent spent its time on, longest first
+#   scripts/fleet-history --json --agent Cyclops \
+#     | jq -r 'sort_by(-.minutes)[] | "\(.minutes)m \(.state)/\(.phase // "-") \(.bead // "-")"'
+#
+#   # anything running longer than an hour RIGHT NOW - the stall question
+#   scripts/fleet-history --json \
+#     | jq -r '.[] | select(.open and .minutes > 60) | "\(.agent) \(.state) \(.minutes)m"'
+#
+#   # straight off the raw log, no script at all: every transition of one bead
+#   jq -c 'select(.bead == "ah-hiib.2")' .cerebro/state/transitions.1.jsonl .cerebro/state/transitions.jsonl
+#
+# FLEET_HISTORY_NOW, an epoch-seconds override for "now", exists for tests/fleet-history.sh alone -
+# an assertion about an open interval's length has to be exact rather than racing the wall clock.
+# ---------------------------------------------------------------------------------------------
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "usage: fleet-history --json|--summary [--since <when>] [--agent <name>]" >&2
+  exit 2
+}
+
+mode=""
+since_arg="7d"
+agent=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json)    mode="json"; shift ;;
+    --summary) mode="summary"; shift ;;
+    # `[[ $2 != --* ]]` so `--agent --json` is the typo it is rather than an agent called
+    # `--json`, which would silently answer about nobody.
+    --since)
+      since_arg="${2:-}"; [[ -n "$since_arg" && "$since_arg" != --* ]] || usage; shift 2 ;;
+    --agent)
+      agent="${2:-}"; [[ -n "$agent" && "$agent" != --* ]] || usage; shift 2 ;;
+    *)
+      echo "fleet-history: unknown argument '$1'" >&2
+      usage ;;
+  esac
+done
+
+[[ -n "$mode" ]] || usage
+
+# How long an interval may stay open before it is read as a session that ended rather than a wait
+# in progress. See the header. A day: an overnight `asking` still shows, and nothing else here
+# legitimately runs that long.
+STALE_OPEN_HOURS="${FLEET_HISTORY_STALE_OPEN_HOURS:-24}"
+
+now="${FLEET_HISTORY_NOW:-$(date -u +%s)}"
+
+# `--since` as an epoch. A span is arithmetic; anything else is handed to jq as ISO-8601, which is
+# the format the log itself uses, so the two can never disagree about what a timestamp means.
+if [[ "$since_arg" =~ ^([0-9]+)([smhd])$ ]]; then
+  count="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[2]}"
+  case "$unit" in
+    s) seconds=$((count)) ;;
+    m) seconds=$((count * 60)) ;;
+    h) seconds=$((count * 3600)) ;;
+    d) seconds=$((count * 86400)) ;;
+  esac
+  since=$((now - seconds))
+elif ! since="$(jq -r --arg t "$since_arg" '$t | fromdateiso8601' <<<'null' 2>/dev/null)"; then
+  echo "fleet-history: --since wants an ISO-8601 UTC timestamp (2026-08-20T00:00:00Z) or a span (90m, 24h, 7d), not '$since_arg'" >&2
+  exit 2
+fi
+
+repo_root="$("$script_dir/consumer-root" --shared)"
+state_dir="$repo_root/.cerebro/state"
+
+# The rotated generation FIRST - see the header. Both are optional individually; neither present is
+# a failure, because a caller asking what the fleet has been doing must be told the record is
+# missing rather than handed an empty answer that looks like a quiet week.
+logs=()
+if [[ -f "$state_dir/transitions.1.jsonl" ]]; then logs+=("$state_dir/transitions.1.jsonl"); fi
+if [[ -f "$state_dir/transitions.jsonl" ]]; then logs+=("$state_dir/transitions.jsonl"); fi
+
+if [[ ${#logs[@]} -eq 0 ]]; then
+  echo "fleet-history: no transition log under $state_dir - nothing has written one on this machine yet" >&2
+  exit 1
+fi
+
+# Built into a variable and only printed on success, so a jq that dies half way through cannot
+# leave a partial array on stdout for somebody to parse.
+if ! out="$(cat "${logs[@]}" | jq -s -R \
+      --argjson now "$now" \
+      --argjson since "$since" \
+      --argjson stale_open_minutes "$((STALE_OPEN_HOURS * 60))" \
+      --arg agent "$agent" \
+      --arg mode "$mode" '
+
+  def round1: . * 10 | round / 10;
+
+  def median:
+    sort as $s | ($s | length) as $n
+    | if $n == 0 then null
+      elif $n % 2 == 1 then $s[($n - 1) / 2]
+      else ($s[$n / 2 - 1] + $s[$n / 2]) / 2
+      end;
+
+  # One agent every line of whose log has already been sorted by ts, folded into intervals.
+  def pair:
+    reduce .[] as $l ({acc: [], cur: null};
+      if .cur == null then .cur = $l
+      elif ($l.changed == true) or ($l.from == null) then
+        (.acc += [{
+            agent: .cur.agent, state: .cur.to, phase: .cur.phase, bead: .cur.bead,
+            from_ts: .cur.ts, to_ts: $l.ts,
+            minutes: (($l._e - .cur._e) / 60 | round1), open: false
+          }]
+         | .cur = $l)
+      else .
+      end)
+    # The tail. `done` is terminal - the session ended there - so it opens nothing.
+    | .acc + (if .cur == null or .cur.to == "done" then []
+              else [{
+                agent: .cur.agent, state: .cur.to, phase: .cur.phase, bead: .cur.bead,
+                from_ts: .cur.ts, to_ts: null,
+                minutes: (($now - .cur._e) / 60 | round1), open: true
+              }]
+              end);
+
+  [ split("\n")[] | select(length > 0) | fromjson ]
+  | map(select($agent == "" or .agent == $agent))
+  | map(. + {_e: (.ts | fromdateiso8601)})
+  | group_by(.agent)
+  | map(sort_by(._e) | pair)
+  | add // []
+
+  # AFTER the pairing, never before: an interval that started outside the window is still reported,
+  # with its true length, as long as it was still running inside it. An open interval runs to now,
+  # so it always is - what removes an abandoned one is the staleness bound, not the window.
+  | map(select((if .open then $now else (.to_ts | fromdateiso8601) end) >= $since))
+  | map(select((.open | not) or (.minutes <= $stale_open_minutes)))
+  | sort_by(.from_ts, .agent)
+
+  | if $mode == "json" then .
+    else
+      group_by([.agent, .state])
+      | map(
+          # Finished intervals alone, so the open one is never measured against itself.
+          (map(select(.open | not)) | map(.minutes)) as $done
+          | {
+              agent: .[0].agent,
+              state: .[0].state,
+              count: ($done | length),
+              total_min: (if ($done | length) == 0 then 0 else ($done | add | round1) end),
+              median_min: (if ($done | length) == 0 then null else ($done | median | round1) end),
+              max_min: (if ($done | length) == 0 then null else ($done | max | round1) end),
+              open_min: (map(select(.open)) | if length > 0 then (.[0].minutes) else null end)
+            })
+      | sort_by(.agent, .state)
+    end
+')"; then
+  # jq has already said what it choked on, on stderr - it is not swallowed, because a line with a
+  # valid-JSON but non-Z timestamp, a jq that is not installed, and a genuinely corrupt line all
+  # look identical from here, and an operator at 2am gets no clue from a catch-all. This line only
+  # says where to look. Nothing has reached stdout: the answer is built into $out first.
+  echo "fleet-history: could not read the transition log (${logs[*]})" >&2
+  exit 1
+fi
+
+printf '%s\n' "$out"

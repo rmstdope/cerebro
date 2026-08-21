@@ -27,6 +27,18 @@ pass() {
   echo "ok - $1"
 }
 
+# The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
+# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
+# elisp, editor droppings - so the fixture was neither hermetic nor cheap (ah-qled.11). `emacs/` is
+# deliberately absent: no bash suite reads it, and it is the largest thing in the tree.
+copy_cerebro_into() {
+  local dest="$1" d
+  mkdir -p "$dest"
+  for d in scripts agents skills hooks; do
+    [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$dest/"
+  done
+}
+
 work_dir="$(mktemp -d)"
 stub_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir" "$stub_dir"' EXIT
@@ -70,8 +82,7 @@ make_consumer() {
 
   git clone -q "$origin" "$consumer"
   mkdir -p "$consumer/.claude"
-  cp -R "$repo_root" "$consumer/.claude/cerebro"
-  rm -rf "$consumer/.claude/cerebro/.git"
+  copy_cerebro_into "$consumer/.claude/cerebro"
   git clone -q "$origin" "$work_dir/$name-up"
   echo "$consumer"
 }
@@ -268,8 +279,7 @@ pass "an unreachable origin stays quiet"
 # --- a standalone clone is untouched -------------------------------------------------------------------
 standalone="$work_dir/x/cerebro"
 mkdir -p "$work_dir/x"
-cp -R "$repo_root" "$standalone"
-rm -rf "$standalone/.git"
+copy_cerebro_into "$standalone"
 PATH="$stub_dir:$PATH" bash "$standalone/scripts/launch-preflight" planner Xavier \
   || fail "standalone: expected exit 0"
 pass "a standalone clone is untouched"

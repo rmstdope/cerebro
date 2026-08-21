@@ -28,6 +28,18 @@ pass() {
   echo "ok - $1"
 }
 
+# The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
+# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
+# elisp, editor droppings - so the fixture was neither hermetic nor cheap (ah-qled.11). `emacs/` is
+# deliberately absent: no bash suite reads it, and it is the largest thing in the tree.
+copy_cerebro_into() {
+  local dest="$1" d
+  mkdir -p "$dest"
+  for d in scripts agents skills hooks; do
+    [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$dest/"
+  done
+}
+
 # A stub `claude` on PATH ahead of the real one, so a launcher's `exec claude ...` runs this instead
 # of starting a real session. It prints the environment and args it was handed, which is exactly what
 # these assertions need and nothing a real session would do.
@@ -59,8 +71,7 @@ fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$stub_dir" "$fixture_dir"' EXIT
 git init -q "$fixture_dir"
 mkdir -p "$fixture_dir/.claude"
-cp -R "$repo_root" "$fixture_dir/.claude/cerebro"
-rm -rf "$fixture_dir/.claude/cerebro/.git"
+copy_cerebro_into "$fixture_dir/.claude/cerebro"
 fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
 # A consumer that runs implementers must declare a fast gate, or launch-preflight refuses them
 # (ah-qled.7.1). The fixture declares one for the same reason a real consumer does: nothing here
@@ -195,8 +206,7 @@ pass "roster --bogus exits 2"
 roster_consumer="$(mktemp -d)"
 git init -q "$roster_consumer"
 mkdir -p "$roster_consumer/.claude"
-cp -R "$repo_root" "$roster_consumer/.claude/cerebro"
-rm -rf "$roster_consumer/.claude/cerebro/.git"
+copy_cerebro_into "$roster_consumer/.claude/cerebro"
 roster_at="$roster_consumer/.claude/cerebro/scripts/roster"
 consumer_roster_file="$roster_consumer/.claude/cerebro-roster"
 
@@ -438,8 +448,7 @@ consumer_dir="$(mktemp -d)"
 trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir"' EXIT
 git init -q "$consumer_dir"
 mkdir -p "$consumer_dir/.claude"
-cp -R "$repo_root" "$consumer_dir/.claude/cerebro"
-rm -rf "$consumer_dir/.claude/cerebro/.git"
+copy_cerebro_into "$consumer_dir/.claude/cerebro"
 # A gate, for the same reason the fixture above declares one: the implementer cases below would
 # otherwise be refused at launch (ah-qled.7.1).
 printf 'gate_fast make check\n' > "$consumer_dir/.claude/cerebro-project.conf"
@@ -558,8 +567,7 @@ consumer_dir2="$(mktemp -d)"
 trap 'rm -rf "$stub_dir" "$fixture_dir" "$no_claude_dir" "$consumer_dir" "$consumer_dir2"' EXIT
 git init -q "$consumer_dir2"
 mkdir -p "$consumer_dir2/.claude"
-cp -R "$repo_root" "$consumer_dir2/.claude/cerebro"
-rm -rf "$consumer_dir2/.claude/cerebro/.git"
+copy_cerebro_into "$consumer_dir2/.claude/cerebro"
 rm -f "$consumer_dir2/.claude/cerebro/agents/architect.md"
 set +e
 out="$(run_launcher_at "$consumer_dir2/.claude/cerebro/scripts" launch Forge 2>&1)"

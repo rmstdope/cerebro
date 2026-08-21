@@ -207,4 +207,21 @@ out="$("$project_conf" nonexistent_key 2>/dev/null)"
 [[ -z "$out" ]] || fail "fallback stdout: expected nothing, got '$out'"
 pass "a fallback path puts nothing on stdout"
 
+# --- release_watch: ABSENT means "there is nothing to watch after tagging", which is an ordinary
+# --- state, not a misconfiguration. The whole rule rests on this exiting 0 and printing nothing:
+# --- a reader that made an unknown key non-zero would turn every consumer's release into a failure.
+set +e
+out="$("$project_conf" release_watch 2>/dev/null)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "release_watch absent: expected exit 0, got $status"
+[[ -z "$out" ]] || fail "release_watch absent: expected nothing, got '$out'"
+pass "an undeclared release_watch prints nothing and exits 0"
+
+# --- and a declared one names the workflow ---
+printf 'release_watch  Release\n' > "$conf"
+out="$("$project_conf" release_watch 2>/dev/null)"
+[[ "$out" == "Release" ]] || fail "release_watch declared: expected 'Release', got '$out'"
+pass "a declared release_watch names the workflow"
+
 echo "all project-conf tests passed"

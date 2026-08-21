@@ -127,7 +127,8 @@ pass "under pressure the coldest kept tree's target/ is reclaimed, and only that
 
 # --- 3. it says what it did, and why ------------------------------------------------------------
 echo "$out" | grep -q "ah-cold/target" || fail "the log did not name the tree: $out"
-echo "$out" | grep -qE "[0-9]" || fail "the log named no size: $out"
+echo "$out" | grep -qE "\([0-9][0-9.]*[BKMGT]? freed," \
+  || fail "the log named no size for what it freed: $out"
 echo "$out" | grep -q "5 GB free" || fail "the log did not name the free space that triggered it: $out"
 echo "$out" | grep -q "8 GB floor" || fail "the log did not name the floor it was measured against: $out"
 echo "$out" | grep -qE "cold for over (30|60) minutes" || fail "the log did not say how cold it was: $out"

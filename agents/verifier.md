@@ -246,11 +246,12 @@ The sha it prints on stdout is the one you say out loud.
   --is-ancestor <bead's commit> HEAD` (the commit you already found with `git log origin/main --grep
   "(<id>):" -F`). Non-zero → say "`<id>` is not in `origin/main` yet at `<sha>`", leave the bead
   `verification:pending`, and move on; there is nothing to verify.
-- **Nothing already serving.** Before starting a server: `lsof -nP -iTCP:5173 -sTCP:LISTEN` (web) /
-  `lsof -nP -iTCP:4174 -sTCP:LISTEN` (desktop's vite). Exit 1 with no output means nothing is
-  listening — the port is free. Anything listening → **refuse to start and refuse to reuse it**: tell
-  the navigator the port and the pid ("something is already serving on 5173 (pid 41210); I will not
-  verify against a server I did not start — stop it and say when"), and wait. Never kill it — it may
+- **Nothing already serving.** Before starting a server, check the port that target declares —
+  `project-conf launch_<name>_port` — with `lsof -nP -iTCP:<port> -sTCP:LISTEN`. Exit 1 with no
+  output means nothing is listening: the port is free. Anything listening → **refuse to start and
+  refuse to reuse it**: tell the navigator the port and the pid ("something is already serving on
+  <port> (pid 41210); I will not verify against a server I did not start — stop it and say when"),
+  and wait. Never kill it — it may
   be theirs. Waiting on the navigator is a question: the sandwich applies here too, `asking --bead
   <id> --phase verify` before you say it and `working --bead <id> --phase verify` the moment they
   say when. A session stuck on a port while its row reads `working` is one nobody knows to unblock.
@@ -270,17 +271,32 @@ you can ahead of the question:
   decisions* — what was supposed to change, from the player's side.
 - **Where it landed.** The PR(s) and commit(s) via the `git log` above.
 - **What to run**, always from `.cerebro/worktrees/psylocke`, reset per *The tree you verify in*
-  above. Desktop or web, or both in turn when the change genuinely differs between them:
-  - Web: `(cd .cerebro/worktrees/psylocke && pnpm --filter @atlantis/web dev)` (vite, default port
-    5173).
-  - Desktop: `(cd .cerebro/worktrees/psylocke && pnpm --filter @atlantis/desktop exec tauri dev --features desktop-runtime)`
-    (Tauri v2; its own `beforeDevCommand` starts vite on 4174 with `--strictPort`). Without
-    `--features desktop-runtime` this builds the stub `main`, which exits at once — a cold Tauri
-    build thrown away and the navigator summoned to look at nothing.
-  - Both need the project's prewarm build warm, which `--prewarm` on `prepare-worktree` above
-    already did, after the reset — never build it again after the navigator has said yes.
-- **What to load.** `tests/fixtures/reports/README.md` names the consecutive-turn report pairs and
-  how they are named; pick the pair that exercises what the bead changed.
+  above. **The project declares how it is started; you never work it out.** The targets are an index
+  and a flat key per target, so read the index and iterate it:
+
+  ```bash
+  .claude/cerebro/scripts/project-conf launch_targets          # e.g. `web desktop'
+  .claude/cerebro/scripts/project-conf launch_<name>           # the command to run
+  .claude/cerebro/scripts/project-conf launch_<name>_port      # the port it will serve on
+  ```
+
+  Run one target, or each in turn when the change genuinely differs between them. **Run the command
+  exactly as declared, from the verification worktree** — a flag you drop because it looks redundant
+  may be the one that builds the real binary rather than a stub that exits at once, and the symptom
+  of that is a broken-looking application rather than a lost flag. The notes beside each key in the
+  consumer's `.claude/cerebro-project.conf` are comment lines: read them, they are there for you.
+
+  **With no `launch_targets` declared, ask the navigator how to run the application** — sandwiched,
+  `asking --bead <id> --phase verify` before you say it. **Never improvise a command**, and never
+  quietly report there was nothing to verify: a guessed command is the one failure this whole
+  declaration exists to prevent, and a silent skip means nobody ever looks at the application.
+  Offer to write what they tell you into the consumer's conf, so the next pass does not ask again.
+- **A warm build.** `--prewarm` on `prepare-worktree` above already ran whatever the project
+  declared as its `prewarm` build, after the reset — never build it again once the navigator has
+  said yes. A project that declares none has nothing to warm, and that is an ordinary state.
+- **What to load.** `project-conf fixtures_doc` names the file describing the project's fixtures, if
+  it has one; read it and pick the fixture that exercises what the bead changed. **Unset means the
+  step is skipped** — do not go looking for fixtures the project never said it had.
 - **A briefing**, in advance: what you are checking, and how to tell success from failure in terms
   the navigator can act on without reading the bead themselves.
 

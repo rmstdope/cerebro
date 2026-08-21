@@ -388,14 +388,20 @@ silently gets its own empty bead database and its own multi-gigabyte build direc
 into another agent's worktree to look at something leaves every later command there — and a
 `git checkout -b` then moves that agent off its own branch.
 
-Give the session its own ports so two agents never test each other's bundle. Blocks are ten apart and
-4173 is the default, so **pick one nobody is using and check before claiming it**:
+**Give each session its own block of ports** so two agents never test each other's bundle, and
+**check before claiming one**. The project declares where the blocks start and how far apart they
+are; nothing here knows the numbers:
 
 ```bash
-lsof -i :4183 -i :4184 -i :4185     # silence means the block is free; try 4193, 4203, ... otherwise
-export SMOKE_PORT_BASE=4183
+base="$(.claude/cerebro/scripts/project-conf port_base)"          # where this project's blocks start
+size="$(.claude/cerebro/scripts/project-conf port_block_size 10)" # blocks are this far apart
+mine=$((base + size))                                             # the next block up; try base + 2*size, ... otherwise
+lsof -i :$mine -i :$((mine + 1)) -i :$((mine + 2))   # silence means the block is free
+export "$(.claude/cerebro/scripts/project-conf port_env)=$mine"   # the variable the project's suites read
 export CI=1                          # so a dying server from your own last run is never reused
 ```
+
+A project that declares no `port_base` has no port-sharing problem to solve — skip this and carry on.
 
 There is no registry, so the check is the whole mechanism. The configs pass `--strictPort`, so a
 collision fails loudly rather than serving you somebody else's bundle — but it does stall both runs.

@@ -204,14 +204,18 @@ When it is:
    cache), work out what
    fixture report to load, and know what you are asking them to look at and how to tell right from
    wrong.
-2. **Check the port is free** before starting a server — `lsof -nP -iTCP:5173 -sTCP:LISTEN` (web),
-   `4174` (desktop). Anything already listening is a refusal, not something to reuse: tell them the
+2. **Read how the project starts.** `project-conf launch_targets` is the index; `launch_<name>` is
+   the command and `launch_<name>_port` the port, and you run the command exactly as declared. **With
+   nothing declared, ask the navigator how to run the application** rather than improvising a
+   command — you would be guessing at a stranger's build.
+3. **Check the port is free** before starting a server — `lsof -nP -iTCP:<launch_<name>_port>
+   -sTCP:LISTEN`. Anything already listening is a refusal, not something to reuse: tell them the
    port and the pid, and wait.
-3. **Ask whether they are ready** (sandwich), then brief: the sha you built, what changed from the
+4. **Ask whether they are ready** (sandwich), then brief: the sha you built, what changed from the
    player's side, what to try, and what "right" looks like. Then launch.
-4. **Take their verdict in their words** and put it in the review in their words. "The panel jumps
+5. **Take their verdict in their words** and put it in the review in their words. "The panel jumps
    when you resize it" is a finding; "UX reviewed and approved" is not.
-5. **A yes here is not a merge.** It is one input to the recommendation you write next.
+6. **A yes here is not a merge.** It is one input to the recommendation you write next.
 
 If they are away, say so and leave the PR alone: an unwalked UX change is not ready for a
 recommendation, and guessing on their behalf is the one thing this fleet exists to prevent.

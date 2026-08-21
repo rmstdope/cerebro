@@ -511,9 +511,11 @@ or belongs to something else. If a row is still wrong, delete the file:
 rm .cerebro/state/<name>.state.json
 ```
 
-**Two agents want the same ports.** Each builder picks a block of three (4173, 4183, 4193, …) and
-checks it is free first. A collision fails loudly rather than testing the wrong bundle, but it stalls
-both — give them different blocks.
+**Two agents want the same ports.** Each builder picks a block of three and checks it is free
+first — the blocks start at the project's `port_base` and are `port_block_size` apart, both read from
+`.claude/cerebro-project.conf`, so the numbers live with the project rather than in this page. A
+collision fails loudly rather than testing the wrong bundle, but it stalls both — give them different
+blocks.
 
 **The disk fills.** The Rust build tree is shared by every worktree and still grows:
 

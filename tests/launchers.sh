@@ -62,6 +62,12 @@ mkdir -p "$fixture_dir/.claude"
 cp -R "$repo_root" "$fixture_dir/.claude/cerebro"
 rm -rf "$fixture_dir/.claude/cerebro/.git"
 fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
+# A consumer that runs implementers must declare a fast gate, or launch-preflight refuses them
+# (ah-qled.7.1). The fixture declares one for the same reason a real consumer does: nothing here
+# ever runs it - the stub `claude` is what these cases assert against - but without it every
+# implementer case below would be refused before reaching the stub.
+printf 'gate_fast make check\ngate_full make check-all\n' \
+  > "$fixture_dir/.claude/cerebro-project.conf"
 
 run_launcher_at() {
   # Runs a launcher living at an arbitrary scripts directory, with the stub claude first on PATH and
@@ -434,6 +440,9 @@ git init -q "$consumer_dir"
 mkdir -p "$consumer_dir/.claude"
 cp -R "$repo_root" "$consumer_dir/.claude/cerebro"
 rm -rf "$consumer_dir/.claude/cerebro/.git"
+# A gate, for the same reason the fixture above declares one: the implementer cases below would
+# otherwise be refused at launch (ah-qled.7.1).
+printf 'gate_fast make check\n' > "$consumer_dir/.claude/cerebro-project.conf"
 
 out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Forge)"
 echo "$out" | grep -q '^ARG:--agent$' || fail "launch Forge (consumer): stub was not reached: $out"

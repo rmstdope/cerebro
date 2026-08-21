@@ -123,6 +123,24 @@ if [[ ! -f "$parent/cerebro/agents/$role.md" && ! -f "$parent/agents/$role.md" ]
   exit 2
 fi
 
+# An implementer with no gate has nothing to run before it opens a PR (ah-qled.7.1). `implement-bead'
+# names no tool any more - it says "run the fast gate", which is `gate_fast' in the consumer's own
+# tracked .claude/cerebro-project.conf - so a project that declares none, and in which none can be
+# detected, would have its implementers improvising a gate and reporting green off it. Refuse at
+# launch instead, loudly and immediately, naming the gate rather than the submodule (ah-qled.5.1).
+#
+# ONLY an implementer. A planner, a verifier or the orchestrator has no gate to run, and refusing
+# them would take the whole fleet down over a key that does not concern them. The role IS the kind
+# here: `roster' derives `implementer' from exactly this value and nothing else, so asking it again
+# would only add a second place for the two to disagree.
+if [[ "$role" == "implementer" ]]; then
+  gate_fast="$("$script_dir/project-conf" gate_fast 2>/dev/null)" || gate_fast=""
+  if [[ -z "$gate_fast" ]]; then
+    echo "cerebro: this project declares no fast gate, and none could be detected - an implementer has nothing to run before it opens a PR. Add a line like 'gate_fast <command>' (and 'gate_full <command>') to .claude/cerebro-project.conf before starting $name" >&2
+    exit 2
+  fi
+fi
+
 "$script_dir/sync-symlinks.sh" >/dev/null
 
 # Defensive only: after a successful sync above, the link this checks for cannot be

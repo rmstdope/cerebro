@@ -82,7 +82,7 @@ hand.
 |---|---|
 | *Picking up*, the empty-queue poll | `.claude/cerebro/scripts/agent-state <name> idle --pid $PPID` |
 | *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
-| *Building*, before `pnpm run check:fast` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
+| *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
 | *The review*, after `gh pr edit --add-reviewer @copilot` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
 | *The review*, once every comment is answered and resolved | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
 | *Red CI* | stays `ci` |
@@ -235,7 +235,7 @@ A complete example:
 
 ## The browser suite passed locally and failed in CI
 
-**What happened.** `pnpm test:browser` was green on this machine three times. The same commit failed
+**What happened.** The project's browser suite was green on this machine three times. The same commit failed
 twice in CI on `smoke (web, 2, 2)`, both times on a timeout in the map-drag spec.
 **Why.** Not established. The CI runner is slower and the spec waits on a fixed 500ms, but I did not
 prove that is the cause.
@@ -366,8 +366,8 @@ pnpm exec tsx scripts/diskPreflight.ts    # prints what it found; non-zero means
 Never check out `main` — another agent usually holds it. `scripts/prepare-worktree` is the one
 script that makes a tree: it fetches `origin/main`, branches, and — the step five retrospectives
 paid for one at a time before this script existed — initialises the `.claude/cerebro` submodule and
-runs `pnpm install --frozen-lockfile` inside the new tree, so the first `agent-state` write and the
-first `pnpm run lint` both find what they need instead of failing for a reason that has nothing to
+runs the project's declared `install` inside the new tree, so the first `agent-state` write and the
+first gate run both find what they need instead of failing for a reason that has nothing to
 do with the bead:
 
 ```bash
@@ -381,8 +381,8 @@ suites that need the project's prewarmed build — the gate instructions below s
 fails without it.
 
 Worktrees must stay under `.cerebro/worktrees/`; the script refuses anything else, naming why. `bd`
-and cargo both find their configuration by walking up, so a worktree outside the repository silently
-gets its own empty bead database and its own multi-gigabyte build directory.
+and most build tools find their configuration by walking up, so a worktree outside the repository
+silently gets its own empty bead database and its own multi-gigabyte build directory.
 
 **Check `pwd` before any git command.** A shell keeps its directory between commands, so one `cd`
 into another agent's worktree to look at something leaves every later command there — and a
@@ -406,28 +406,38 @@ collision fails loudly rather than serving you somebody else's bundle — but it
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID
 ```
 
-Write it once, before you run `pnpm run check:fast` for the first time — `gate` is still the word for
+Write it once, before you run the fast gate for the first time — `gate` is still the word for
 this step even though there is no machine-wide lock behind it any more.
 
-Follow the plan's increments in order, each opening with its named failing test. Run
-**`pnpm run check:fast`** before opening the PR — lint, typecheck, the touched packages' unit tests,
-`cargo fmt --check`, `cargo clippy`. It is not the browser suites: `test:smoke`, `build:web` and
-`test:pwa` duplicate what CI's parallel jobs are about to run anyway, and CI is what actually gates
-the merge, so running them locally by default only bought "catch it before the reviewer sees it" at
-a cost — a few minutes, serialized, behind a machine-wide lock — that stopped being worth it once the
-fleet ran several implementers at once. Run the full **`pnpm run check`** by choice when you suspect a
-smoke or PWA regression; expect the lock in that case, same as before. A fresh worktree carries
-nothing the project declared as its `prewarm` build, so a suite that needs one fails on a missing
-artefact rather than on anything you wrote — pass `--prewarm` when you prepared the tree, or run
+Follow the plan's increments in order, each opening with its named failing test. **Run the fast gate
+before opening the PR.** The command is the project's, not this skill's — ask for it, and run exactly
+what it names:
+
+```bash
+.claude/cerebro/scripts/project-conf gate_fast     # the fast gate, and what to run
+.claude/cerebro/scripts/project-conf gate_full     # everything the project has
+```
+
+A project declares those in its tracked `.claude/cerebro-project.conf`; where it has not, the reader
+may detect one and will say on stderr that it did — read that line, because a gate the harness chose
+is not one the project vouched for. If neither answers, you should never have been started: the
+launch preflight refuses an implementer with no fast gate.
+
+**The distinction between the two is the project's to make, and it is worth respecting.** The fast
+gate is deliberately *not* everything: it is what the project judged worth paying for on every
+change, and CI is what actually gates the merge. The full gate is the rest, and it is yours to run by
+choice when you suspect a regression in a surface the fast gate skips — expect it to be slower, and
+possibly serialized behind a lock. A fresh worktree carries nothing the project declared as its
+`prewarm` build, so a suite that needs one fails on a missing artefact rather than on anything you
+wrote — pass `--prewarm` when you prepared the tree, or run
 `.claude/cerebro/scripts/project-conf prewarm` and run what it names, now.
 
-`test:native` is **not** in `pnpm run check:fast` or `pnpm run check` and needs a Linux runner, and
-now runs in CI only when the diff touches a native-shaped path (the Rust core, its Tauri wrappers,
-the desktop shell, `packages/core-client/`, `tests/native/`, `wdio.conf.ts`, a workflow file, or
-`package.json`/`pnpm-lock.yaml`/`Cargo.toml`/`Cargo.lock`). With no local browser or native run by
-default, a red `smoke`, `pwa` or `native` job in CI is the *first* sign of that class of regression
-rather than a surprise — read it as the gate doing its job, not as something that slipped past a
-check that used to catch it locally.
+A project may also have a suite in neither gate — one needing a runner this machine has not got, run
+in CI only when the diff touches the paths it covers (`.claude/cerebro/scripts/app-paths` is where
+this fleet's application paths are declared). With no local browser or platform run by default, a red
+job of that kind in CI is the *first* sign of that class of regression rather than a surprise — read
+it as the gate doing its job, not as something that slipped past a check that used to catch it
+locally.
 
 ## When the plan is wrong
 
@@ -515,9 +525,9 @@ Three fix attempts. Diagnose, fix, push — and read the failure before believin
 identical connection errors is infrastructure, not a defect.
 
 A suspected flake gets the job re-run instead, capped at two re-runs, and only after you have
-reproduced it locally once — reproducing locally means running that suite directly
-(`pnpm run test:smoke`, `pnpm run test:pwa`, `pnpm run test:native` for the specific spec), not the
-whole `pnpm run check`. Without that cap, "it was a flake" is an unbounded loop that ends with a
+reproduced it locally once — reproducing locally means running that one suite directly, by whatever
+command the project runs it with, for the specific spec: the full gate, or the project's own suite
+for the surface in question, rather than everything. Without that cap, "it was a flake" is an unbounded loop that ends with a
 genuinely broken timing test merged.
 
 On exhaustion, leave the PR open, escalate, move on.
@@ -659,15 +669,16 @@ into it.
 
 ## Traps this repository has already paid for
 
-- **The PWA suite after the smoke suite.** Smoke rebuilds `apps/web/dist` with the service worker
-  disabled, so `test:pwa` straight afterwards fails with page timeouts and no worker. `pnpm run
-  check` (the full run, chosen when a smoke/PWA regression is suspected — `check:fast` skips both)
-  orders `build:web` before `test:pwa` for exactly this reason. Rebuild; do not "fix" the worker.
-- **A leftover preview server.** Without `CI=1`, Playwright reuses an existing server — including
-  your own dying one from the previous run — and tests the bundle it is serving. That produced a
-  "65 passed" and a "40 passed" run of a 138-test suite before anyone noticed.
-- **`pnpm run test:smoke -- --project=web`** forwards the `--`, which Playwright reads as a
-  positional filter: it matches no spec after building and serving, and looks exactly like a hang.
+- **One suite's build clobbering another's.** Where two of a project's suites build the same
+  artefact differently, running them in the wrong order fails the second one for a reason that is
+  not a defect — which is why a project's full gate orders them as it does. Run the gate; do not
+  "fix" what the previous suite left behind.
+- **A leftover preview server.** Without `CI=1`, a browser runner reuses an existing server —
+  including your own dying one from the previous run — and tests the bundle it is serving. That
+  produced a "65 passed" and a "40 passed" run of a 138-test suite before anyone noticed.
+- **`--` forwarded into a test runner.** A package-manager script passes `--` through, and a runner
+  that reads what follows as a positional filter then matches no spec at all, after building and
+  serving — which looks exactly like a hang rather than a mistake.
 - **WebKit's driver** answers `""` for text it considers clipped, so a Chromium assertion can pass
   while the native shell shows nothing. `native` is the job that tells you.
 - **A stale lease is not an abandoned agent** unless it is genuinely stale — see `beads-workflow`

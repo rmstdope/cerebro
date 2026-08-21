@@ -85,6 +85,57 @@ if [[ "$key" == "install" && -n "$root" ]]; then
   done
 fi
 
+# The gates (ah-qled.7.1). `gate_fast' and `gate_full' are command lines like `install', and the
+# fleet refuses to start an implementer without a fast one - so a project that plainly has a gate
+# but has not declared one is worth detecting rather than refusing. It is a CONVENIENCE ONLY, and
+# it says so on stderr: an agent about to trust a green result should know the harness chose the
+# command instead of the project naming it.
+if [[ ( "$key" == "gate_fast" || "$key" == "gate_full" ) && -n "$root" ]]; then
+  # The script names each gate is looked for under, most specific first. A fast gate is the
+  # project's own cheap pass; a full gate is everything it has.
+  if [[ "$key" == "gate_fast" ]]; then
+    scripts="check:fast check test"
+    targets="check test"
+  else
+    scripts="check test"
+    targets="check test"
+  fi
+
+  # Which runner, from the lockfile - the same evidence the `install' detection above trusts.
+  runner=""
+  [[ -f "$root/pnpm-lock.yaml" ]] && runner="pnpm"
+  [[ -z "$runner" && -f "$root/yarn.lock" ]] && runner="yarn"
+  [[ -z "$runner" && -f "$root/package.json" ]] && runner="npm"
+
+  if [[ -n "$runner" && -f "$root/package.json" ]]; then
+    for script in $scripts; do
+      # Deliberately crude, and deliberately not a JSON parser: bash 3.2 with builtins is the whole
+      # toolbox here, and a false positive is announced rather than silent.
+      if grep -q "\"$script\"[[:space:]]*:" "$root/package.json"; then
+        echo "project-conf: $key detected from package.json ($script)" >&2
+        printf '%s\n' "$runner run $script"
+        exit 0
+      fi
+    done
+  fi
+
+  if [[ -f "$root/Makefile" ]]; then
+    for target in $targets; do
+      if grep -q "^$target:" "$root/Makefile"; then
+        echo "project-conf: $key detected from Makefile ($target)" >&2
+        printf '%s\n' "make $target"
+        exit 0
+      fi
+    done
+  fi
+
+  if [[ -f "$root/Cargo.toml" ]]; then
+    echo "project-conf: $key detected from Cargo.toml" >&2
+    printf '%s\n' "cargo test"
+    exit 0
+  fi
+fi
+
 if [[ -n "$default" ]]; then
   echo "project-conf: $key unset -> the default" >&2
   printf '%s\n' "$default"

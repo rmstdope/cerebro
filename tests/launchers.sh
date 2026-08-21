@@ -580,17 +580,27 @@ IFS=$'\t' read -r entry_name entry_role entry_kind <<<"$entry_out"
 [[ -n "$(model_of reviewer)" ]] || fail "agents/reviewer.md: declares no model:"
 pass "the roster's reviewer resolves to a reviewer/interactive row, with an agent file declaring a model"
 
-# `agent-state` is checked here rather than run: it writes to a consumer root, which these tests do
-# not have. The phase vocabulary is a list in one `case`, and a role whose words are missing from it
-# cannot write its state at all - the failure ah-2n3.2 was written to prevent.
-for phase in read check walk report; do
-  grep -q "|$phase|" "$repo_root/scripts/agent-state" \
-    || grep -q "|$phase)" "$repo_root/scripts/agent-state" \
-    || fail "scripts/agent-state: phase '$phase' is not in the accepted vocabulary"
+# Every phase word a shipped agent or skill actually tells an agent to use must be in the fleet
+# view's reference list. `agent-state` no longer refuses an unknown word (ah-qled.5.2), so this is
+# no longer a legality check - it is a drift check, and the drift it catches is real: an agent that
+# starts using a new phase and never says so leaves `cerebro--phases' describing a fleet that has
+# moved on, and that list is the only prose saying which words belong to which role.
+used="$(grep -oh -- '--phase [a-z][a-z0-9-]*' "$repo_root"/agents/*.md "$repo_root"/skills/*/SKILL.md \
+        | awk '{print $2}' | sort -u)"
+[[ -n "$used" ]] || fail "phase drift: found no --phase words at all - the grep has stopped matching"
+while IFS= read -r phase; do
   grep -q "\"$phase\"" "$repo_root/emacs/cerebro.el" \
-    || fail "emacs/cerebro.el: phase '$phase' is missing from cerebro--phases"
-done
-pass "the reviewer's phases (read check walk report) are accepted by agent-state and known to cerebro.el"
+    || fail "emacs/cerebro.el: phase '$phase' is used by an agent file but missing from cerebro--phases"
+done <<<"$used"
+pass "every phase a shipped agent uses is in cerebro--phases"
+
+# Under a shape check there is nothing else forcing the reference list to exist at all, and an empty
+# one would pass every other assertion in this file.
+phases_block="$(awk '/^\(defconst cerebro--phases/{f=1} f{print} f&&/^  "/{exit}' "$repo_root/emacs/cerebro.el")"
+[[ -n "$phases_block" ]] || fail "emacs/cerebro.el: cerebro--phases is gone"
+phase_count="$(grep -o '"[a-z][a-z0-9-]*"' <<<"$phases_block" | wc -l | tr -d ' ')"
+[[ "$phase_count" -gt 0 ]] || fail "emacs/cerebro.el: cerebro--phases is empty"
+pass "cerebro--phases still exists and is non-empty ($phase_count words)"
 
 # --- agents/architect.md exists with the right frontmatter ---
 [[ -f "$repo_root/agents/architect.md" ]] || fail "agents/architect.md does not exist"

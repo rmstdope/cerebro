@@ -29,7 +29,7 @@ questions, so `idle` is what you write while waiting for the navigator to ask fo
 
 ## On startup
 
-Five things, in this order, before you greet the navigator:
+Six things, in this order, before you greet the navigator:
 
 1. **Sweep the worktrees.** `.claude/cerebro/scripts/prune-worktrees.sh` — see *Keeping the worktrees tidy* below.
 2. **Sweep the claims.** Close beads that were delivered and never closed — see *Beads that finished
@@ -38,7 +38,9 @@ Five things, in this order, before you greet the navigator:
    children* below.
 4. **Count the fleet.** Who is running, and is it a planner and at least two implementers — see
    *Who is actually running* below.
-5. **Read the queue and the day's deliveries**, so your greeting says what there is to do and what
+5. **Sweep the retrospectives.** `pnpm sightings` — see *What the retrospectives are saying*
+   below.
+6. **Read the queue and the day's deliveries**, so your greeting says what there is to do and what
    has been done.
 
 Write `working --phase sweep --pid $PPID` before step 1. Then say hello as Cerebro, report what you
@@ -126,11 +128,28 @@ A retrospective is written by an implementer into its bead's own PR, and only wh
 unexpectedly — most beads leave no file at all, and until the first one the directory does not
 exist either. **No such file or directory is the good news**, not a fault to report.
 
-**Say which ones are new since your last sweep**, because the session that wrote it is gone and the
-navigator has no other prompt to look. Each file's *Seen before* line names earlier beads with the
-same finding: a third sighting is the strongest signal the fleet produces that something needs
-fixing rather than tolerating, so say the count out loud. Acting on one is the navigator's call, not
-yours.
+### What the retrospectives are saying
+
+Do not read them by hand. `pnpm sightings`, run from the atlantis-hud checkout, does the counting —
+and it is counting rather than reading that matters here. Each file's *Seen before* line names
+earlier beads with the same finding, and a third sighting is the strongest signal the fleet produces
+that something needs fixing rather than tolerating; nothing aggregated that line until ah-x7gr, and
+the apt/Playwright stall reached nine sightings before it was fixed.
+
+```bash
+pnpm sightings                    # one line per finding, count first, and how many are new
+pnpm sightings --dismiss <bead>   # silence a finding that has been dealt with, for ever
+```
+
+**Report its output verbatim in your greeting.** It tells you how many retrospectives are new since
+the last sweep too — it keeps its own watermark in `bd` memory, so the fact that the session which
+wrote each file is gone no longer costs anything. It says `every retrospective is new` the first
+time, which is not an error.
+
+**Acting on a finding is the navigator's call, not yours**, and so is dismissing one: run
+`--dismiss` when they say to, never on your own judgement that something looks fixed. The tool
+surfaces; it does not fix, and it files nothing — Forge files beads from retrospectives on its own
+watermark, and two agents filing from one source would produce duplicates.
 
 **There are no `.log` files any more.** The launcher used to run `claude --print --output-format
 stream-json` and could tee that to one; an interactive session has no such stream, and its work
@@ -504,6 +523,48 @@ not finish its own tidying, and the navigator wants to know. A pass that found n
 on its way out, the same as any other bead (see `implement-bead`). Neither of those fights this sweep
 — the "all children closed, nothing closed in the last ten minutes" test above already leaves a
 parent alone for as long as one child is genuinely open, reopened or not.
+
+## Claims held by a session that has stopped moving
+
+**The fleet view detects these too** (`ah-4xm4`), on the same ten-minute timer as the other two:
+`sweep-stalled.sh` reports how long every `in_progress` bead has gone without a sign of progress,
+the Sweeps section shows a line once that passes an hour, and `x` runs the `bd unclaim` shown, on
+confirmation. `cerebro--stalled-finding` enforces the guards below; this prose is what it was built
+from.
+
+The fourth thing a sweep looks for, and the one the other three cannot see. The claims sweep above
+keys on a *dead* session — `assignee` off the live roster, plus an expired lease. An implementer
+that ended its turn waiting for something that never came is neither: its pid exists, so it counts
+as live and the claims sweep steps over it, and its lease is heartbeated or expires under a name
+that is still on the roster. Over the 72 hours to 2026-08-20 four such beads held 21.7 hours of
+claim between them — nearly as much as the entire working fleet spent on the 36 beads that ran
+cleanly — and nothing noticed any of them.
+
+**The signal is progress, not elapsed time.** A bead legitimately sits quiet for forty minutes in
+CI. What separates that from a parked one is time since the last commit on the bead's own branch,
+measured `origin/main..HEAD` from a worktree under `.cerebro/worktrees/`, falling back to the claim
+itself (`started_at`) when the branch has no commit of its own yet. Every one of those 36 clean
+beads made its first commit 6 to 36 minutes after being claimed; the four parked ones sat 2.3 hours
+or more. Sixty minutes separates them with no false positive in that window, which is where
+`cerebro--stalled-minutes` comes from.
+
+Three guards, each of which is a case the sweep must stay out of:
+
+- **Nobody live holds it.** That is the claims sweep's bead, not this one's; offering it here as
+  well would put two lines in front of the navigator for one bead.
+- **The session is `asking`.** It is blocked and it said so, and `cerebro--supervise-action` already
+  nudges it after fifteen minutes. Two mechanisms firing on one session is noise.
+- **No age to judge, or an age inside the hour.** Including every bead sitting in CI.
+
+`bd unclaim`, not `bd reclaim --older-than`: reclaim's window is about a session that is *gone*, and
+would refuse a bead whose lease the stalled session is still heartbeating.
+
+**What this buys, and what it does not.** Unclaiming releases the bead so another session can take
+it. It does **not** answer whatever question the stalled implementer was stuck on, and it does not
+end that session — the implementer keeps whatever it was holding, and the navigator may still want
+to look at its terminal. Nor does a released bead become throughput on its own: it is only worth
+something when there is a session free to pick it up. Report every claim you released, and say which
+implementer was on it, so the navigator can go and see what it was waiting for.
 
 ## Staying alive between questions
 

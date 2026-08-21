@@ -34,8 +34,8 @@
 #                          this script does not recognise) reports null here rather than a guess.
 #
 # `lease_age_min` exists because `assignee' alone cannot tell a dead implementer from a live claim
-# held by hand or by a session this script's roster does not know about: "Henrik Kurelid" (or any
-# name off the roster) is not a `pid'-tracked session and never will be, but the bead can be very
+# held by hand or by a session this script's roster does not know about: a name that is not on
+# `scripts/roster' is not a `pid'-tracked session and never will be, but the bead can be very
 # much in flight under it. `agents/orchestrator.md's own rule is "an expired lease with no live
 # agent behind it" - not "an unfamiliar name" - and the elisp guard keys on this field, not on
 # `assignee' membership, for exactly that reason.

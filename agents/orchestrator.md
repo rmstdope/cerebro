@@ -314,9 +314,10 @@ detached at a commit already on main), when all of these hold:
 - it has no uncommitted or untracked changes (`git -C <path> status --porcelain` is empty), or its
   only such changes are build output and caches (`node_modules/`, `target/`, `dist/`).
 
-**Never `.claude/worktrees/psylocke`**, whatever the tests say: Psylocke's tree is reset to main
-between passes rather than merged, so it always looks abandoned and never is (see
-`docs/cerebro-jobs.md`).
+**Never `psylocke`, at either path** — `.cerebro/worktrees/psylocke` or `.claude/worktrees/psylocke`
+— whatever the tests say: Psylocke's tree is reset to main between passes rather than merged, so it
+always looks abandoned and never is (see `.claude/cerebro/docs/cerebro-jobs.md`).
+`prune-worktrees.sh` keeps it by name at either path for the same reason.
 
 Then `git worktree remove <path>` and `git worktree prune`. A tree that fails the third test is
 somebody's unpushed work: leave it, and say whose tree it is and what it holds, because that is a
@@ -386,11 +387,11 @@ possibilities rather than four — which is what makes the lease check below dec
 session.** The one launcher, `scripts/launch` (behind every `run-*` name; see ah-rnz), exports
 `BEADS_ACTOR=<agent name>` before starting its session, so a claim made from one is stamped with the
 roster name that made it: `assignee: Cyclops` means Cyclops's session claimed it, full stop.
-`assignee: Henrik Kurelid` (or any name off the roster) now specifically means a claim made by hand,
+An assignee that is **not a name on `scripts/roster`** now specifically means a claim made by hand,
 outside a launched session — still check the lease before touching it, since a claim from before this
 change, or from a stale session started off the old launchers, predates the naming and carries none
-of this guarantee. Two of the navigator's own beads were found stale this way on 2026-08-14 —
-`ah-r2e` and `ah-52b`, both `in_progress` under a human name, both with leases expired and last
+of this guarantee. Two beads held under such a name were found stale this way on 2026-08-14 —
+`ah-r2e` and `ah-52b`, both `in_progress`, both with leases expired and last
 heartbeat ten hours gone, neither held by any process in `ListAgents` or `pgrep`.
 
 So a human-looking assignee is not license to skip a bead in the sweep — check the lease before

@@ -38,7 +38,8 @@ Six things, in this order, before you greet the navigator:
    children* below.
 4. **Count the fleet.** Who is running, and is it a planner and at least two implementers — see
    *Who is actually running* below.
-5. **Sweep the retrospectives.** `pnpm sightings` — see *What the retrospectives are saying*
+5. **Sweep the retrospectives.** `.claude/cerebro/scripts/retro-sightings` — see *What the
+   retrospectives are saying*
    below.
 6. **Read the queue and the day's deliveries**, so your greeting says what there is to do and what
    has been done.
@@ -130,15 +131,16 @@ exist either. **No such file or directory is the good news**, not a fault to rep
 
 ### What the retrospectives are saying
 
-Do not read them by hand. `pnpm sightings`, run from the atlantis-hud checkout, does the counting —
+Do not read them by hand. `.claude/cerebro/scripts/retro-sightings`, run from the checkout, does
+the counting —
 and it is counting rather than reading that matters here. Each file's *Seen before* line names
 earlier beads with the same finding, and a third sighting is the strongest signal the fleet produces
 that something needs fixing rather than tolerating; nothing aggregated that line until ah-x7gr, and
 the apt/Playwright stall reached nine sightings before it was fixed.
 
 ```bash
-pnpm sightings                    # one line per finding, count first, and how many are new
-pnpm sightings --dismiss <bead>   # silence a finding that has been dealt with, for ever
+.claude/cerebro/scripts/retro-sightings                    # one line per finding, count first, and how many are new
+.claude/cerebro/scripts/retro-sightings --dismiss <bead>   # silence a finding that has been dealt with, for ever
 ```
 
 **Report its output verbatim in your greeting.** It tells you how many retrospectives are new since

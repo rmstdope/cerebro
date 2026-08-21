@@ -306,10 +306,10 @@ pass "an implementer whose project declares a gate launches"
 # --- implement-bead names no tool -------------------------------------------------------------------
 #
 # The bead's own acceptance: the skill an implementer reads in a Python project must not tell it to
-# run pnpm or cargo. :363's disk preflight is ah-qled.7.2's and may remain.
+# run pnpm or cargo. The disk preflight was the last of them and became a cerebro script of its own
+# in ah-qled.7.2, so there is nothing left to exempt.
 hits="$(grep -nE "pnpm|cargo" "$repo_root/skills/implement-bead/SKILL.md" || true)"
-leftover="$(echo "$hits" | grep -v "diskPreflight" || true)"
-[[ -z "$leftover" ]] || fail "implement-bead still names a tool: $leftover"
-pass "implement-bead names no build tool but the disk preflight"
+[[ -z "$hits" ]] || fail "implement-bead still names a tool: $hits"
+pass "implement-bead names no build tool at all"
 
 echo "all launch-preflight tests passed"

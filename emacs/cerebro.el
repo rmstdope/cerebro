@@ -43,6 +43,18 @@
   :group 'tools
   :prefix "cerebro-")
 
+(defcustom cerebro-bd-program "bd"
+  "The beads executable cerebro runs the panel and the sweeps from.
+
+A consumer may install it under another name, or behind a wrapper that
+adds a flag or a path.  This is the *program*, not the command language:
+cerebro speaks beads, and it does so in `scripts/work-beads\=',
+`scripts/sweep-claims.sh\=', `scripts/sweep-epics.sh\=' and every agent
+document as well as here, so a different tracker is a far larger change
+than a setting and is deliberately out of scope."
+  :type 'string
+  :group 'cerebro)
+
 (defconst cerebro-buffer-name "*cerebro*")
 
 (defconst cerebro-list-width 59
@@ -896,7 +908,7 @@ keypress's worth of intent would be its own kind of noise."
            (command-string (mapconcat #'identity argv " ")))
       (when (y-or-n-p (format "run: %s ? " command-string))
         (if (cerebro--run-sweep-command repo-root argv)
-            (let ((pushed (cerebro--run-sweep-command repo-root '("bd" "dolt" "push"))))
+            (let ((pushed (cerebro--run-sweep-command repo-root (cerebro--bd-push-argv))))
               (cerebro--beads-render (current-buffer))
               (if pushed
                   (message "ran: %s" command-string)
@@ -1304,13 +1316,13 @@ sweep pipeline; the command itself carries no path, since it is run with
   (ignore repo-root)
   (pcase finding
     ('nil nil)
-    (`(close ,id ,reason) (list "bd" "close" id "--reason" reason))
-    (`(reclaim ,id) (list "bd" "reclaim" "--id" id "--older-than" "10m"))
-    (`(epic-close ,id) (list "bd" "close" id))
+    (`(close ,id ,reason) (list cerebro-bd-program "close" id "--reason" reason))
+    (`(reclaim ,id) (list cerebro-bd-program "reclaim" "--id" id "--older-than" "10m"))
+    (`(epic-close ,id) (list cerebro-bd-program "close" id))
     ;; `bd unclaim', not `bd reclaim --older-than': reclaim is for a claim whose
     ;; session is gone, and its window would refuse a bead whose lease is still
     ;; being heartbeated. This finding is about a session alive and not moving.
-    (`(unclaim ,id) (list "bd" "unclaim" id))
+    (`(unclaim ,id) (list cerebro-bd-program "unclaim" id))
     (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure
@@ -1831,12 +1843,20 @@ timescales - a claim, a plan, a merge are minutes apart - and each refresh
 is three subprocesses, so a five-second cadence would buy nothing but load.
 `g' refreshes on demand.")
 
-(defconst cerebro--bd-list-argv
-  '("bd" "list" "--status" "open,in_progress,blocked,deferred,closed" "--json" "--brief")
+(defun cerebro--bd-push-argv ()
+  "The argv for pushing the bead database to its remote.
+
+`dolt push\=' is a beads feature rather than a project fact, so only the
+program is configurable here."
+  (list cerebro-bd-program "dolt" "push"))
+
+(defun cerebro--bd-list-argv ()
   "The one `bd' call the panel is drawn from. `--brief' drops the free-form
 text nothing here renders (1.95 MB to 199 KB on this backlog); every status
 by name and no `--exclude-type', as before - the partition is only complete
-if the list it partitions is.")
+if the list it partitions is."
+  (list cerebro-bd-program "list" "--status"
+        "open,in_progress,blocked,deferred,closed" "--json" "--brief"))
 
 (defun cerebro--request-beads (repo-root callback)
   "Ask `bd' for the panel's beads without blocking; CALLBACK gets the four
@@ -1845,7 +1865,7 @@ nil when `bd' did not answer - including `bd' exiting zero but printing
 something that is not JSON, which is not a valid empty answer either.
 Returns what `cerebro--run-async' returns."
   (cerebro--run-async
-   'beads repo-root cerebro--bd-list-argv
+   'beads repo-root (cerebro--bd-list-argv)
    (lambda (out)
      (funcall callback
               (and out
@@ -1863,7 +1883,7 @@ columns of bead however wide it is."
   (condition-case nil
       (with-temp-buffer
         (let ((default-directory (file-name-as-directory repo-root)))
-          (when (zerop (call-process "bd" nil t nil "show" id))
+          (when (zerop (call-process cerebro-bd-program nil t nil "show" id))
             (buffer-string))))
     (error nil)))
 
@@ -1971,7 +1991,7 @@ not roll a bead round to P0."
   (condition-case nil
       (with-temp-buffer
         (let ((default-directory (file-name-as-directory repo-root)))
-          (zerop (call-process "bd" nil t nil "update" id
+          (zerop (call-process cerebro-bd-program nil t nil "update" id
                                "--priority" (number-to-string priority)))))
     (error nil)))
 

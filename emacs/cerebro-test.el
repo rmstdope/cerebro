@@ -2245,15 +2245,17 @@ can claim it, whatever else the bead says."
 (ert-deftest cerebro-test/bd-list-argv-covers-every-status-briefly ()
   "Five statuses in one call: the partition can only be complete if the
 list it partitions is. `--brief' drops the free-form text nothing here
-renders."
-  (dolist (status '("open" "in_progress" "blocked" "deferred" "closed"))
-    (should (cl-some (lambda (a) (string-match-p status a)) cerebro--bd-list-argv)))
-  ;; No type exclusion: an epic has to land in Other, not vanish.
-  (should-not (member "--exclude-type" cerebro--bd-list-argv))
-  (should (member "--brief" cerebro--bd-list-argv))
-  (should (member "--json" cerebro--bd-list-argv))
-  (should (equal (car cerebro--bd-list-argv) "bd"))
-  (should (equal (nth 1 cerebro--bd-list-argv) "list")))
+renders.  A function rather than a constant since ah-qled.9, so that a
+changed `cerebro-bd-program' reaches it."
+  (let ((argv (cerebro--bd-list-argv)))
+    (dolist (status '("open" "in_progress" "blocked" "deferred" "closed"))
+      (should (cl-some (lambda (a) (string-match-p status a)) argv)))
+    ;; No type exclusion: an epic has to land in Other, not vanish.
+    (should-not (member "--exclude-type" argv))
+    (should (member "--brief" argv))
+    (should (member "--json" argv))
+    (should (equal (car argv) "bd"))
+    (should (equal (nth 1 argv) "list"))))
 
 (ert-deftest cerebro-test/the-panel-skips-exactly-what-work-beads-excludes ()
   "The two owners of \"which issue types are not work\" cannot drift apart.
@@ -3593,3 +3595,26 @@ waiting, both the bookkeeping and the fleet view's mark go."
                                                      root)))
        (cerebro--supervise (list agent) root cerebro-test--now)
        (should (equal (funcall sent) '(ended)))))))
+
+;; ---------------------------------------------------------------------------
+;; ah-qled.9: the project-shaped facts are settings, not constants
+
+(ert-deftest cerebro-test/bd-program-is-a-setting-defaulting-to-bd ()
+  "The beads executable is reachable from `M-x customize', not a literal.
+Default is today's literal: this bead changes where a value can be set,
+never what it is."
+  (should (equal (default-value 'cerebro-bd-program) "bd"))
+  (should (get 'cerebro-bd-program 'custom-type)))
+
+(ert-deftest cerebro-test/bd-program-reaches-every-argv ()
+  "A changed `cerebro-bd-program' reaches every place cerebro spells `bd'.
+Seven argv positions were bare literals; a consumer with a wrapper or
+another install name got a permanently empty panel with no way in."
+  (let ((cerebro-bd-program "my-bd"))
+    (should (equal (car (cerebro--bd-list-argv)) "my-bd"))
+    (dolist (finding '((close "ah-1" "done")
+                       (reclaim "ah-1")
+                       (epic-close "ah-1")
+                       (unclaim "ah-1")))
+      (should (equal (car (cerebro--finding-command finding "/tmp")) "my-bd")))
+    (should (equal (car (cerebro--bd-push-argv)) "my-bd"))))

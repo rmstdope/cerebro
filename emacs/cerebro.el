@@ -1083,17 +1083,30 @@ everything: every answer here ends in Emacs acting on a session it owns."
 
 ;;; ah-vcf.3: the pure start/kill/launch decisions
 
-(defconst cerebro--script-directory ".claude/cerebro/scripts"
+(defcustom cerebro-submodule-path ".claude/cerebro"
+  "Where cerebro is mounted, relative to the consumer repository root.
+
+Cerebro is consumed as a git submodule, and this is the one place its
+mount point is written down: it is both where the launchers are found and
+what `cerebro--repo-root\=' searches upwards for.  A consumer mounting it
+at, say, \"vendor/cerebro\" sets this and needs nothing else.
+
+`githooks/sync-if-changed.sh\=' carries the same assumption on the shell
+side, and takes the path as an argument for it."
+  :type 'string
+  :group 'cerebro)
+
+(defun cerebro--script-directory ()
   "Where the launchers live, relative to the consumer repository root.
 
-Cerebro is consumed as a submodule mounted at `.claude/cerebro\', and the
-launchers moved there with the agents and skills they start.  A bare
-\"scripts/run-planner\" would resolve to the consumer\'s own scripts
-directory, which no longer has one.")
+The launchers moved into the submodule with the agents and skills they
+start.  A bare \"scripts/run-planner\" would resolve to the consumer\'s own
+scripts directory, which no longer has one."
+  (concat cerebro-submodule-path "/scripts"))
 
 (defun cerebro--script (name)
   "The path to launcher NAME, relative to the repository root."
-  (concat cerebro--script-directory "/" name))
+  (concat (cerebro--script-directory) "/" name))
 
 (defun cerebro--launch-command (agent)
   "The command that launches AGENT: `scripts/launch' and the agent's name,
@@ -1339,12 +1352,13 @@ sweep pipeline; the command itself carries no path, since it is run with
 
 (defun cerebro--repo-root ()
   "The repository root above `default-directory', or an error.
-Located by `.claude/cerebro' (the submodule mount, present in every
-consumer from clone time) rather than by `.cerebro/state', which
+Located by `cerebro-submodule-path\=' (the submodule mount, present in
+every consumer from clone time) rather than by `.cerebro/state', which
 may not exist yet on a fresh machine - `agent-state' and
 `cerebro--write-stop-flag' both create it on first write."
-  (or (locate-dominating-file default-directory ".claude/cerebro")
-      (error "cerebro: no .claude/cerebro found above %s" default-directory)))
+  (or (locate-dominating-file default-directory cerebro-submodule-path)
+      (error "cerebro: no %s found above %s (see `cerebro-submodule-path')"
+             cerebro-submodule-path default-directory)))
 
 (defvar-local cerebro--fleet-cache nil
   "The parsed roster, once read; buffer-local so a revert does not re-shell out.")

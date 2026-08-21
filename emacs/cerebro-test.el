@@ -3654,3 +3654,20 @@ exactly today's literal."
       (should (equal (mapcar (lambda (b) (alist-get 'id b)) planned) '("a")))
       (should (equal (mapcar (lambda (b) (alist-get 'id b)) being-planned) '("b")))
       (should (equal (mapcar (lambda (b) (alist-get 'id b)) unplanned) '("c"))))))
+
+(ert-deftest cerebro-test/the-mount-point-is-one-setting-feeding-both-sites ()
+  "Mounted anywhere but `.claude/cerebro', `M-x cerebro' simply errored:
+the path was hardcoded at the launcher directory and again at the search
+for the repository root."
+  (should (equal (default-value 'cerebro-submodule-path) ".claude/cerebro"))
+  (should (get 'cerebro-submodule-path 'custom-type))
+  (let ((cerebro-submodule-path "vendor/cerebro"))
+    (should (equal (cerebro--script-directory) "vendor/cerebro/scripts"))
+    (should (string-suffix-p "vendor/cerebro/scripts/run-planner"
+                             (cerebro--script "run-planner")))
+    ;; And the root search looks for the mount where it now lives.
+    (let* ((root (make-temp-file "cerebro-mount" t))
+           (default-directory (file-name-as-directory root)))
+      (make-directory (expand-file-name "vendor/cerebro" root) t)
+      (should (equal (file-truename (cerebro--repo-root))
+                     (file-truename (file-name-as-directory root)))))))

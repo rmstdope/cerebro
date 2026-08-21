@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Checked, then synced, before every launch: `claude` is on PATH, the consumer's checkout
-# is current with origin/main so the session reads today's instructions rather than a
+# is current with the fleet's default branch on origin (scripts/default-branch) so the session
+# reads today's instructions rather than a
 # days-old copy of them (ah-puoj), this checkout is a
 # consumer's .claude/cerebro (sync and the submodule check are skipped otherwise - a
 # standalone clone has nothing to link into and no agent files of its own to check),
@@ -51,8 +52,23 @@ parent="$consumer/.claude"                                    # .claude, in a co
 #
 # Untracked files never block this: the consumer routinely carries some, and refusing on them would
 # refuse every launch.
-git -C "$consumer" fetch --quiet origin main 2>/dev/null || true   # offline is not staleness
-target="$(git -C "$consumer" rev-parse --verify --quiet FETCH_HEAD 2>/dev/null || echo "")"
+# The branch is resolved, never assumed: on a consumer whose branch is `trunk` the old
+# `fetch origin main` failed, `|| true` swallowed it, $target stayed empty and this entire block was
+# skipped - so launches kept working while ah-puoj's guarantee had silently stopped holding.
+branch_name="$("$script_dir/default-branch" 2>/dev/null)" || branch_name=""
+[[ -n "$branch_name" ]] || branch_name="main"
+
+# OFFLINE IS NOT STALENESS, but "origin has no such branch" is not offline either, and telling them
+# apart is the other half of the fix: renaming alone would leave a misconfigured consumer unguarded
+# in exactly the same silence, one layer further in. So a failed fetch asks whether origin was
+# reachable at all - if it was, the branch is the problem and it is said out loud.
+target=""
+if git -C "$consumer" fetch --quiet origin "$branch_name" 2>/dev/null; then
+  target="$(git -C "$consumer" rev-parse --verify --quiet FETCH_HEAD 2>/dev/null || echo "")"
+fi
+if [[ -z "$target" ]] && git -C "$consumer" ls-remote --quiet origin >/dev/null 2>&1; then
+  echo "cerebro: origin has no branch $branch_name, so the checkout could not be checked for staleness - set default_branch in .claude/cerebro-project.conf before starting $name" >&2
+fi
 # Both sides are expanded before the test is evaluated, so `rev-parse HEAD` runs even when $target
 # is empty - hence the separate guard rather than one && condition, for a consumer with no commits.
 head=""
@@ -61,16 +77,16 @@ if [[ -n "$target" && -n "$head" && "$head" != "$target" ]]; then
   branch="$(git -C "$consumer" rev-parse --abbrev-ref HEAD)"
   ahead="$(git -C "$consumer" rev-list --count "$target..HEAD" 2>/dev/null || echo 0)"
   behind="$(git -C "$consumer" rev-list --count "HEAD..$target" 2>/dev/null || echo 0)"
-  if [[ "$branch" != "main" ]]; then
-    echo "cerebro: the checkout is on branch $branch, not main - the fleet's instructions are read from main; switch back before starting $name" >&2
+  if [[ "$branch" != "$branch_name" ]]; then
+    echo "cerebro: the checkout is on branch $branch, not $branch_name - the fleet's instructions are read from $branch_name; switch back before starting $name" >&2
     exit 2
   fi
   if [[ -n "$(git -C "$consumer" status --porcelain --untracked-files=no)" ]]; then
-    echo "cerebro: the checkout is $behind commits behind origin/main and has uncommitted changes - commit or stash them, then git merge --ff-only origin/main, before starting $name" >&2
+    echo "cerebro: the checkout is $behind commits behind origin/$branch_name and has uncommitted changes - commit or stash them, then git merge --ff-only origin/$branch_name, before starting $name" >&2
     exit 2
   fi
   if [[ "$ahead" != "0" ]]; then
-    echo "cerebro: main has $ahead commits origin/main does not - push or reset them before starting $name" >&2
+    echo "cerebro: $branch_name has $ahead commits origin/$branch_name does not - push or reset them before starting $name" >&2
     exit 2
   fi
   # The submodule is the file the skills are actually read through, so it moves with the branch - but

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# The branch this consumer's fleet reads from, in one place instead of the `main` that used to be
+# hardcoded fifteen times across five scripts (ah-qled.3):
+#
+#     default-branch          ->  develop
+#
+# Three answers, and the order is the whole design - CONFIGURED BEATS DETECTED, DETECTED BEATS
+# ASSUMED:
+#
+#   1. `default_branch` in <consumer>/.claude/cerebro-project.conf. An explicit declaration wins
+#      because a consumer that HAS a `main` and does its work on `develop` is exactly the case
+#      detection answers wrongly.
+#   2. `git symbolic-ref --short refs/remotes/origin/HEAD`, minus its `origin/` prefix.
+#   3. `main`.
+#
+# Step 2 failing is ORDINARY, not exceptional: `git clone` sets refs/remotes/origin/HEAD, but a
+# remote added with `git remote add` has none until somebody runs `git remote set-head`. So it
+# falls through quietly rather than saying anything about it.
+#
+# THIS NEVER FAILS, exactly as `project-conf` never fails, and for a sharper reason than symmetry:
+# `launch` runs `launch-preflight` before it ever reaches `claude`, and tests/launchers.sh runs
+# that path with a PATH holding only `dirname` and `bash`. With no `git` on PATH at all this must
+# still print `main` and exit 0 - a resolver that failed hard there would take every launcher down
+# with it.
+#
+# Whichever branch was taken is printed to STDERR, never stdout, the way `project-conf` does it: a
+# caller doing `b="$(default-branch)"` must get the branch name and nothing else.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# 1. configured
+configured="$("$here/project-conf" default_branch 2>/dev/null)" || configured=""
+if [[ -n "$configured" ]]; then
+  echo "default-branch: cerebro-project.conf -> $configured" >&2
+  printf '%s\n' "$configured"
+  exit 0
+fi
+
+# 2. detected. --shared, matching project-conf: the fleet's branch is one answer for the checkout,
+# not one per worktree. Either lookup may fail (a standalone clone has no consumer, and --shared
+# needs git), and neither is a problem worth a word.
+root="$("$here/consumer-root" --shared 2>/dev/null)" \
+  || root="$("$here/consumer-root" 2>/dev/null)" \
+  || root=""
+if [[ -n "$root" ]] && command -v git >/dev/null 2>&1; then
+  head_ref="$(git -C "$root" symbolic-ref --short --quiet refs/remotes/origin/HEAD 2>/dev/null || echo "")"
+  if [[ -n "$head_ref" ]]; then
+    echo "default-branch: origin/HEAD -> ${head_ref#origin/}" >&2
+    printf '%s\n' "${head_ref#origin/}"
+    exit 0
+  fi
+fi
+
+# 3. assumed
+echo "default-branch: no declaration and no origin/HEAD -> main" >&2
+printf '%s\n' "main"
+exit 0

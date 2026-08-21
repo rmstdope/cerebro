@@ -47,20 +47,26 @@ git_q() { git -c user.name=test -c user.email=test@example.com "$@"; }
 # Each case builds its own: reusing one leaks an earlier case's fast-forward into a later one, and
 # the failure then reads as a logic bug in the script rather than in the fixture.
 #
-# make_consumer <name>  ->  echoes the consumer path; "$work_dir/<name>-up" is a clone of the same
-# origin, which a case pushes to when it wants the consumer to be behind.
+# make_consumer <name> [branch]  ->  echoes the consumer path; "$work_dir/<name>-up" is a clone of
+# the same origin, which a case pushes to when it wants the consumer to be behind.
+#
+# The branch is a PARAMETER, and that is the point of ah-qled.3: while every fixture said `main` and
+# every script said `main`, the two agreed and no test here could catch a consumer whose branch is
+# called anything else. Cases that do not care pass nothing and get `main`, so what they assert is
+# unchanged; the `trunk` case below is what the parameter exists for.
 make_consumer() {
   local name="$1"
+  local branch="${2:-main}"
   local origin="$work_dir/$name-origin.git"
   local consumer="$work_dir/$name"
   local seed="$work_dir/$name-seed"
 
-  git init -q --bare -b main "$origin"
-  git init -q -b main "$seed"
+  git init -q --bare -b "$branch" "$origin"
+  git init -q -b "$branch" "$seed"
   echo one > "$seed/file.txt"
   git_q -C "$seed" add file.txt
   git_q -C "$seed" commit -q -m init
-  git_q -C "$seed" push -q "$origin" main
+  git_q -C "$seed" push -q "$origin" "$branch"
 
   git clone -q "$origin" "$consumer"
   mkdir -p "$consumer/.claude"
@@ -70,14 +76,15 @@ make_consumer() {
   echo "$consumer"
 }
 
-# Adds <n> commits to the consumer's origin, so the consumer is behind by that many.
+# Adds <n> commits to the consumer's origin, so the consumer is behind by that many. It pushes
+# whatever branch the clone is on, so it needs no branch argument of its own.
 advance_origin() {
   local name="$1" n="$2" up="$work_dir/$1-up" i
   for ((i = 0; i < n; i++)); do
     echo "upstream $i" >> "$up/file.txt"
     git_q -C "$up" commit -q -am "upstream $i"
   done
-  git_q -C "$up" push -q origin main
+  git_q -C "$up" push -q origin HEAD
 }
 
 # Runs the preflight the way a launcher does: from the consumer's own copy, so consumer-root resolves
@@ -90,7 +97,7 @@ run_preflight() {
 head_of() { git -C "$1" rev-parse HEAD; }
 # The remote's real tip, read from the remote itself: the consumer's own origin/main ref is
 # exactly what a stale checkout has not fetched, so asserting against it would assert nothing.
-origin_head_of() { git -C "$1" ls-remote origin main | cut -f1; }
+origin_head_of() { git -C "$1" ls-remote origin "$(git -C "$1" rev-parse --abbrev-ref HEAD)" | cut -f1; }
 
 # --- a current checkout launches ------------------------------------------------------------------
 c="$(make_consumer current)"
@@ -195,6 +202,66 @@ before="$(head_of "$c")"
 run_preflight "$c" || fail "no remote: expected exit 0"
 [[ "$(head_of "$c")" == "$before" ]] || fail "no remote: HEAD moved"
 pass "a checkout with no remote launches"
+
+# --- a consumer whose branch is not main is still guarded (ah-qled.3) ----------------------------
+#
+# The bead itself. On a `trunk` consumer the old `fetch origin main` failed, `|| true` swallowed it,
+# $target stayed empty and the WHOLE staleness block was skipped - so the launch succeeded and
+# ah-puoj's guarantee had quietly stopped holding, with nothing on stderr to say so.
+c="$(make_consumer trunkclean trunk)"
+advance_origin trunkclean 2
+run_preflight "$c" || fail "trunk: expected exit 0"
+[[ "$(head_of "$c")" == "$(origin_head_of "$c")" ]] \
+  || fail "trunk: expected HEAD to be fast-forwarded to origin/trunk"
+pass "a behind checkout on a trunk consumer is fast-forwarded"
+
+# --- the wrong-branch refusal names the resolved branch, not main ---------------------------------
+#
+# The messages are prose a human acts on: a `trunk` consumer told to "switch back to main" is being
+# sent to a branch that does not exist.
+c="$(make_consumer trunkbranch trunk)"
+advance_origin trunkbranch 1
+git -C "$c" switch -q -c wip
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "trunk branch: expected exit 2, got $status"
+echo "$out" | grep -q "trunk" || fail "trunk branch: expected the message to name trunk, got: $out"
+echo "$out" | grep -q "not main" && fail "trunk branch: the message still says main, got: $out"
+pass "the wrong-branch refusal names the resolved branch"
+
+# --- fetch succeeded, but there is no such branch: SAY SO ------------------------------------------
+#
+# The half a rename alone would leave undone. A consumer declaring a `default_branch` its origin does
+# not have looks exactly like a current checkout today - which is the silent-guard failure again, one
+# layer further in.
+c="$(make_consumer missingbranch main)"
+echo "default_branch nosuchbranch" > "$c/.claude/cerebro-project.conf"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "missing branch: expected the launch to proceed, got $status"
+echo "$out" | grep -q "nosuchbranch" \
+  || fail "missing branch: expected a line on stderr naming the branch, got: $out"
+pass "a branch that does not exist on origin is reported rather than skipped in silence"
+
+# --- an unreachable origin stays quiet -------------------------------------------------------------
+#
+# The other half of that pair, and asserting one without the other proves nothing: OFFLINE IS NOT
+# STALENESS, so this must stay as silent as it has always been.
+c="$(make_consumer unreachable main)"
+git -C "$c" remote set-url origin "$work_dir/no-such-origin.git"
+before="$(head_of "$c")"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "unreachable: expected exit 0, got $status"
+[[ -z "$out" ]] || fail "unreachable: expected no output - offline is not staleness - got: $out"
+[[ "$(head_of "$c")" == "$before" ]] || fail "unreachable: HEAD moved"
+pass "an unreachable origin stays quiet"
 
 # --- a standalone clone is untouched -------------------------------------------------------------------
 standalone="$work_dir/x/cerebro"

@@ -3694,3 +3694,39 @@ where one is given, most-specific-first, the way `models.conf' resolves."
     (should (cerebro--wake-due-p
              (cerebro-test--waiting "Betsy" "2026-08-14T09:15:00Z" nil nil "verifier")
              cerebro-test--now))))
+
+;; ah-qled.9: the columns are computed from the data, not configured
+
+(ert-deftest cerebro-test/column-widths-match-todays-table-for-todays-fleet ()
+  "Computed, not configured - and for this fleet the computation has to
+produce exactly the table that is there today, or the promotion pass has
+changed behaviour."
+  (should (equal (cerebro--column-widths
+                  '("Xavier" "Cerebro" "Psylocke" "Wolverine")
+                  '("planner" "orchestrator" "verifier" "implementer")
+                  '("ah-qled.9" "ah-t65"))
+                 '(14 13 10 10 10)))
+  (should (= (cerebro--width-for '(14 13 10 10 10)) 59)))
+
+(ert-deftest cerebro-test/column-widths-grow-for-a-long-name-or-a-long-id ()
+  "A consumer's names and ids are not this project's. The Bead column is 10
+because of `ah-dzj.1.1.1.1'; a nested child one level deeper must widen it
+rather than being truncated away."
+  (let ((wide (cerebro--column-widths '("Multiple-Man-Duplicate-7")
+                                       '("technical-debt-sweeper")
+                                       '("ah-dzj.1.1.1.1.1"))))
+    (should (> (nth 0 wide) 14))
+    (should (> (nth 1 wide) 13))
+    (should (> (nth 3 wide) 10))
+    ;; And the layout widens with them, or the table would overflow its window.
+    (should (> (cerebro--width-for wide) 59))))
+
+(ert-deftest cerebro-test/a-wider-bead-column-shows-the-whole-id ()
+  "The width the table was given is the width the cell truncates to."
+  (let* ((agent (make-cerebro-agent :name "Storm" :role "implementer"
+                                    :kind 'implementer :state 'working
+                                    :bead "ah-dzj.1.1.1.1.1"
+                                    :since "2026-08-14T09:20:00Z"))
+         (row (cerebro--entry agent cerebro-test--now nil nil 16)))
+    (should (equal (substring-no-properties (aref (nth 1 row) 3))
+                   "ah-dzj.1.1.1.1.1"))))

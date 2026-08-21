@@ -57,8 +57,14 @@ than a setting and is deliberately out of scope."
 
 (defconst cerebro-buffer-name "*cerebro*")
 
-(defconst cerebro-list-width 59
-  "Columns for the left column of the layout.
+(defvar cerebro-list-width 59
+  "Columns for the left column of the layout, recomputed on every revert.
+
+Derived rather than configured (ah-qled.9): `cerebro--column-widths\=' sizes
+the table from the roster actually in front of it and the bead ids actually
+being shown, and `cerebro--width-for\=' turns those into this.  59 is what
+this project\='s own fleet produces, and is the value here until the first
+render replaces it.
 
 The agent table is 14+13+10+10+10 plus one column of padding = 58; this is
 59 so the table is strictly narrower than the window, which is what keeps
@@ -408,7 +414,46 @@ string when neither is."
   "TEXT in bold when EMPHASIZE, otherwise TEXT unchanged."
   (if emphasize (propertize text 'face 'bold) text))
 
-(defun cerebro--entry (agent now &optional flagged unanswered)
+(defconst cerebro--column-minimums '(14 13 10 10 10)
+  "The floor for each column: Agent, Role, State, Bead, Bead/Phase.
+
+This project\='s table, kept as the floor so a short roster still gets a
+readable one rather than columns that hug their own contents.")
+
+(defun cerebro--column-widths (names roles bead-ids)
+  "Pure.  The five column widths for a fleet of NAMES filling ROLES, showing
+BEAD-IDS.
+
+Computed rather than configured: the widths are a fact about the data, and
+four more settings would be four more things a consumer has to discover
+before its own longer names stopped being truncated.  Agent allows two
+columns for the state glyph and its space; Role and Bead one for the gap to
+the next column.  State is a fixed vocabulary and Bead/Phase a pair of
+elapsed times, so neither is derived from anything a consumer varies."
+  (let ((longest (lambda (strings) (apply #'max 0 (mapcar #'length strings)))))
+    (list (max (nth 0 cerebro--column-minimums) (+ 2 (funcall longest names)))
+          (max (nth 1 cerebro--column-minimums) (+ 1 (funcall longest roles)))
+          (nth 2 cerebro--column-minimums)
+          (max (nth 3 cerebro--column-minimums) (+ 1 (funcall longest bead-ids)))
+          (nth 4 cerebro--column-minimums))))
+
+(defun cerebro--width-for (widths)
+  "Columns the layout\='s left window needs for a table of WIDTHS.
+
+One for `tabulated-list-padding\=', and one more so the table is strictly
+narrower than its window - a table exactly as wide as its window loses its
+last column to Emacs\='s `$\=' truncation marker (ah-lyc)."
+  (+ (apply #'+ widths) 2))
+
+(defun cerebro--table-format (widths)
+  "WIDTHS as a `tabulated-list-format\=' vector."
+  (vector (list "Agent" (nth 0 widths) nil)
+          (list "Role" (nth 1 widths) nil)
+          (list "State" (nth 2 widths) nil)
+          (list "Bead" (nth 3 widths) nil)
+          (list "Bead/Phase" (nth 4 widths) nil)))
+
+(defun cerebro--entry (agent now &optional flagged unanswered bead-width)
   "AGENT as a `tabulated-list-entries' element, evaluated at NOW.
 
 FLAGGED, when non-nil, means a stop flag is set for AGENT: the state column
@@ -432,10 +477,10 @@ answer either of its pokes: the state column gains a \" !\" suffix, which is
 where the poke stops rather than being retried on every tick for ever
 \(`cerebro--poke-decision', ah-hiib.3).
 
-The Bead column is 10 columns wide; an external agent shows \"—\" rather than
-the wordier \"(external)\", and a real bead id longer than 10 (a nested child
-bead, e.g. \"ah-dzj.1.1.1.1\") truncates with an ellipsis rather than pushing
-the rest of the row right - see ah-lyc."
+BEAD-WIDTH is what the Bead column was sized to (`cerebro--column-widths\=',
+default 10).  An external agent shows \"—\" rather than the wordier
+\"(external)\", and an id longer than the column truncates with an ellipsis
+rather than pushing the rest of the row right - see ah-lyc."
   (let* ((state (cerebro-agent-state agent))
          (external (cerebro-agent-external agent))
          (in-flight (cerebro--in-flight-p state))
@@ -455,7 +500,8 @@ the rest of the row right - see ah-lyc."
          (bead-col (cerebro--emphasize
                     (cond (external "—")
                           ((cerebro-agent-bead agent)
-                           (truncate-string-to-width (cerebro-agent-bead agent) 10 nil nil "…"))
+                           (truncate-string-to-width (cerebro-agent-bead agent)
+                                                    (or bead-width 10) nil nil "…"))
                           (t ""))
                     attention))
          (for-col (cerebro--emphasize
@@ -2540,12 +2586,24 @@ Does nothing when BUFFER is dead."
          (agents (cerebro--derive roster interactive states
                                           #'cerebro--session-alive-p args owned)))
     (setq cerebro--agents agents)
-    (setq tabulated-list-entries
-          (mapcar (lambda (a)
-                    (cerebro--entry a now
-                                    (cerebro--stop-flag-p repo-root (cerebro-agent-name a))
-                                    (member (cerebro-agent-name a) cerebro--unanswered-pokes)))
-                  agents))))
+    ;; The table is sized to what is in front of it, every revert: a roster
+    ;; gains an agent, a bead id gets deeper, and the columns follow (ah-qled.9).
+    (let ((widths (cerebro--column-widths
+                   (mapcar #'cerebro-agent-name agents)
+                   (mapcar #'cerebro-agent-role agents)
+                   (delq nil (mapcar #'cerebro-agent-bead agents)))))
+      (setq cerebro-list-width (cerebro--width-for widths))
+      (let ((format (cerebro--table-format widths)))
+        (unless (equal tabulated-list-format format)
+          (setq tabulated-list-format format)
+          (tabulated-list-init-header)))
+      (setq tabulated-list-entries
+            (mapcar (lambda (a)
+                      (cerebro--entry a now
+                                      (cerebro--stop-flag-p repo-root (cerebro-agent-name a))
+                                      (member (cerebro-agent-name a) cerebro--unanswered-pokes)
+                                      (nth 3 widths)))
+                    agents)))))
 
 ;;; The prune watcher (ah-4ao): `prune-worktrees.sh --watch' moves here from Cerebro
 
@@ -2936,8 +2994,9 @@ would have taken TAB from every vterm the navigator has, fleet or not.
   "Major mode listing the atlantis-hud agent fleet.
 
 \\{cerebro-mode-map}"
-  (setq tabulated-list-format
-        [("Agent" 14 nil) ("Role" 13 nil) ("State" 10 nil) ("Bead" 10 nil) ("Bead/Phase" 10 nil)])
+  ;; A starting shape only: `cerebro--revert' resizes it from the roster and
+  ;; the bead ids actually being shown on every render (ah-qled.9).
+  (setq tabulated-list-format (cerebro--table-format cerebro--column-minimums))
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (add-hook 'tabulated-list-revert-hook #'cerebro--revert nil t)

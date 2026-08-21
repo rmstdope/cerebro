@@ -5,7 +5,7 @@
 # the seven `run-*` shims that used to name it are gone (ah-qled.5.3). They were kept "because the
 # docs and the navigator's fingers know them", and both halves of that had stopped being true — the
 # Emacs fleet view calls this script by name for every agent, and the documentation had drifted onto
-# a shim (`run-bishop`) that had not existed since the architect was renamed Forge.
+# a shim named for the architect's retired name, which had not existed since that rename.
 #
 # So an agent is named, never a role, and who exists is `scripts/roster` and nothing else. A name
 # that is not on it is refused here, with the roster's own names printed — including a name this

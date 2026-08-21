@@ -406,7 +406,7 @@ pass "launch with no argument exits 2"
 #
 # `launch <Name>` is the only way a session is started. The seven `run-*` shims existed "because the
 # docs and the navigator's fingers know them" - and the docs had drifted off them a rename ago
-# (CLAUDE.md still named `run-bishop`, which stopped existing when Bishop became Forge). The fleet
+# (CLAUDE.md still named a shim for the architect's retired name, gone since that rename). The fleet
 # view has called `launch` directly since ah-qled.5.1, so nothing but a hand-typed command was left.
 shim_found="$(find "$repo_root/scripts" -maxdepth 1 -name 'run-*' -print)"
 [[ -z "$shim_found" ]] || fail "scripts/: a run-* shim survives: $shim_found"

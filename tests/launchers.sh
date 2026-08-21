@@ -232,12 +232,17 @@ set -e
 [[ $status -eq 2 ]] || fail "consumer roster --entry Xavier: expected exit 2, got $status"
 pass "consumer roster: all four modes read it, and KIND is still derived"
 
-# An empty file says nothing, so the built-in table answers.
+# An empty file says nothing, so the built-in table answers - and so does a file of nothing but
+# comments, which has as much to say about the fleet as an absent one. Taking that at its word would
+# leave the fleet empty everywhere, with the file looking like a fleet to whoever wrote it.
 : > "$consumer_roster_file"
 [[ "$("$roster_at")" == "$roster_out" ]] \
   || fail "consumer roster: an empty file should fall back to the built-in table"
+printf '# a fleet I have not written yet\n\n' > "$consumer_roster_file"
+[[ "$("$roster_at")" == "$roster_out" ]] \
+  || fail "consumer roster: a comments-only file should fall back, got: $("$roster_at")"
 rm -f "$consumer_roster_file"
-pass "consumer roster: an empty consumer file falls back to the built-in table"
+pass "consumer roster: an empty or comments-only consumer file falls back to the built-in table"
 
 # The dependency guarantee: `roster` must find the consumer by path arithmetic, never by calling
 # `consumer-root`, which shells out to git. tests/launchers.sh already runs a launcher with a PATH

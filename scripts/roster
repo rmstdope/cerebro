@@ -98,8 +98,17 @@ parse_rows() {
 print_all() {
   # One parser for both sources: the consumer file has the same NAME ROLE shape, so a second reader
   # would only be a second thing to drift.
-  if [[ -s "$CONSUMER_ROSTER" ]]; then
-    parse_rows < "$CONSUMER_ROSTER"
+  #
+  # A consumer file that yields no rows falls back, not only an empty one: a file of nothing but
+  # comments has as much to say about the fleet as an absent one, and taking it at its word would
+  # leave `roster' silent, every `launch <Name>' answering "not on the roster", and the fleet view
+  # empty - with the file that caused it looking, to its author, like a fleet.
+  local rows=""
+  if [[ -f "$CONSUMER_ROSTER" ]]; then
+    rows="$(parse_rows < "$CONSUMER_ROSTER")"
+  fi
+  if [[ -n "$rows" ]]; then
+    printf '%s\n' "$rows"
   else
     parse_rows <<<"$TABLE"
   fi

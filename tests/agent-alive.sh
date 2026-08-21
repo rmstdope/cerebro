@@ -95,26 +95,35 @@ run_alive "$tmp" Cyclops \
 pass "alive-for-a-live-pid-that-names-the-agent"
 
 # --- dead-for-a-live-pid-whose-name-is-only-a-prefix ---
-# One agent's live session, named in another agent's state file: alive as Cyclops, dead as Beast.
-# This is the everyday form of the identity check - a pid is alive for exactly one name.
-write_state "$tmp" Beast "{\"state\":\"working\",\"pid\":$fake_pid}"
-if run_alive "$tmp" Beast; then
-  fail "dead-for-a-live-pid-whose-name-is-only-a-prefix: matched --name Cyclops as Beast"
+# One agent's live session, named in another agent's state file: alive as Cyclops, dead as the
+# planner below. This is the everyday form of the identity check - a pid is alive for exactly one
+# name. Both the present name and the absent one are taken from the roster rather than spelled out,
+# so a consumer with its own fleet still runs these cases (ah-qled.5.1).
+# `sed -n 1p' rather than `head -n 1': head closes the pipe on its first line, and under
+# `set -o pipefail' roster's EPIPE would then kill this suite rather than name a planner.
+prefix_name="$("$repo_root/scripts/roster" --role planner | sed -n 1p)"
+[[ -n "$prefix_name" ]] || fail "prefix-name: the roster names no planner"
+suffixed_name="${prefix_name}ly"
+write_state "$tmp" "$prefix_name" "{\"state\":\"working\",\"pid\":$fake_pid}"
+if run_alive "$tmp" "$prefix_name"; then
+  fail "dead-for-a-live-pid-whose-name-is-only-a-prefix: matched --name Cyclops as $prefix_name"
 fi
 pass "dead-for-a-live-pid-whose-name-is-only-a-prefix"
 
 # The case the word boundary itself is about, and the one that fails without it: a live pid whose
-# args carry the name with something appended. `Beast' is on the roster; `Beastly' is not a session
-# of Beast's, and `--name Beast' must not match inside it.
-printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-beastly"
-chmod +x "$tmp/fake-beastly"
-bash "$tmp/fake-beastly" --name Beastly &
-beastly_pid=$!
-strays+=("$beastly_pid")
-for child in $(pgrep -P "$beastly_pid" 2>/dev/null || true); do strays+=("$child"); done
-write_state "$tmp" Beast "{\"state\":\"working\",\"pid\":$beastly_pid}"
-if run_alive "$tmp" Beast; then
-  fail "dead-for-a-live-pid-with-the-name-as-a-prefix-of-its-own: matched --name Beastly as Beast"
+# args carry the name with something appended. The name is taken from the roster rather than spelled
+# out, so a consumer with its own fleet still runs this case (ah-qled.5.1): `$prefix_name' is on the
+# roster, `$prefix_name'ly is not a session of its, and `--name $prefix_name' must not match inside
+# it.
+printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-suffixed"
+chmod +x "$tmp/fake-suffixed"
+bash "$tmp/fake-suffixed" --name "$suffixed_name" &
+suffixed_pid=$!
+strays+=("$suffixed_pid")
+for child in $(pgrep -P "$suffixed_pid" 2>/dev/null || true); do strays+=("$child"); done
+write_state "$tmp" "$prefix_name" "{\"state\":\"working\",\"pid\":$suffixed_pid}"
+if run_alive "$tmp" "$prefix_name"; then
+  fail "dead-for-a-live-pid-with-the-name-as-a-prefix-of-its-own: matched --name $suffixed_name as $prefix_name"
 fi
 pass "dead-for-a-live-pid-with-the-name-as-a-prefix-of-its-own"
 

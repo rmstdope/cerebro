@@ -170,6 +170,127 @@ set -e
 [[ $status -eq 2 ]] || fail "roster --bogus: expected exit 2, got $status"
 pass "roster --bogus exits 2"
 
+# --- a consumer declares its own fleet (ah-qled.5.1) --------------------------------------------
+#
+# `scripts/roster` is the one declaration of the fleet, but the X-Men in its `TABLE=` heredoc are
+# cerebro's branding rather than any consumer's. A consumer that wants other names, more
+# implementers, or a role cerebro does not ship writes them to a *tracked* file of its own -
+# `<consumer>/.claude/cerebro-roster` - and roster reads that instead of the built-in table.
+#
+# Tracked, and beside `.claude/cerebro-project.conf`, rather than under the git-ignored `.cerebro/`:
+# which agents exist is a fact every clone needs, and a git-ignored file would vanish on a fresh
+# clone with the fleet silently reverting to the X-Men.
+# Cleaned up at the end of this block rather than by the EXIT trap: the cases below rewrite that
+# trap with their own directories, and a name added here would be dropped from it again.
+roster_consumer="$(mktemp -d)"
+git init -q "$roster_consumer"
+mkdir -p "$roster_consumer/.claude"
+cp -R "$repo_root" "$roster_consumer/.claude/cerebro"
+rm -rf "$roster_consumer/.claude/cerebro/.git"
+roster_at="$roster_consumer/.claude/cerebro/scripts/roster"
+consumer_roster_file="$roster_consumer/.claude/cerebro-roster"
+
+# With no file of its own, a consumer gets cerebro's own fleet, byte for byte.
+[[ "$("$roster_at")" == "$roster_out" ]] \
+  || fail "consumer roster: absent file should leave the built-in table alone"
+pass "consumer roster: a missing consumer file falls back to the built-in table"
+
+cat > "$consumer_roster_file" <<'ROSTER'
+# a consumer's own fleet: comments and blank lines are ignored
+
+Ada           planner
+Grace         planner
+Hopper        orchestrator
+
+Turing        implementer
+Lovelace      implementer
+ROSTER
+
+expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nHopper\torchestrator\tinteractive\nTuring\timplementer\timplementer\nLovelace\timplementer\timplementer')"
+[[ "$("$roster_at")" == "$expected_rows" ]] \
+  || fail "consumer roster: expected the consumer's rows in file order, got: $("$roster_at")"
+pass "consumer roster: replaces the built-in table, in file order, past comments and blanks"
+
+# It replaces rather than merges: a name from the built-in table must not survive alongside it, or
+# file order - which decides which planner triages and which implementer name Cerebro takes next -
+# would be nobody's decision.
+"$roster_at" | grep -q "Xavier" && fail "consumer roster: the built-in table was merged in, not replaced"
+pass "consumer roster: the built-in table is replaced, not merged"
+
+[[ "$("$roster_at" --implementers)" == "$(printf 'Turing\nLovelace')" ]] \
+  || fail "consumer roster --implementers: got $("$roster_at" --implementers)"
+[[ "$("$roster_at" --role planner)" == "$(printf 'Ada\nGrace')" ]] \
+  || fail "consumer roster --role planner: got $("$roster_at" --role planner)"
+[[ "$("$roster_at" --role planner | sed -n 1p)" == "Ada" ]] \
+  || fail "consumer roster --role planner: file order not preserved"
+[[ "$("$roster_at" --entry Grace)" == "$(printf 'Grace\tplanner\tinteractive')" ]] \
+  || fail "consumer roster --entry Grace: got $("$roster_at" --entry Grace)"
+set +e
+"$roster_at" --entry Xavier >/dev/null 2>&1
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "consumer roster --entry Xavier: expected exit 2, got $status"
+pass "consumer roster: all four modes read it, and KIND is still derived"
+
+# An empty file says nothing, so the built-in table answers.
+: > "$consumer_roster_file"
+[[ "$("$roster_at")" == "$roster_out" ]] \
+  || fail "consumer roster: an empty file should fall back to the built-in table"
+rm -f "$consumer_roster_file"
+pass "consumer roster: an empty consumer file falls back to the built-in table"
+
+# The dependency guarantee: `roster` must find the consumer by path arithmetic, never by calling
+# `consumer-root`, which shells out to git. tests/launchers.sh already runs a launcher with a PATH
+# of `dirname` and `bash` alone; roster has to survive the same.
+bare_path_dir="$(mktemp -d)"
+ln -s "$(command -v dirname)" "$bare_path_dir/dirname"
+ln -s "$(command -v bash)" "$bare_path_dir/bash"
+out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at")"
+[[ "$out" == "$roster_out" ]] || fail "roster under a narrowed PATH: got: $out"
+printf 'Ada  planner\n' > "$consumer_roster_file"
+out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at")"
+[[ "$out" == "$(printf 'Ada\tplanner\tinteractive')" ]] \
+  || fail "roster under a narrowed PATH with a consumer file: got: $out"
+rm -f "$consumer_roster_file"
+pass "roster reads the consumer file with PATH narrowed to dirname and bash - no git crept in"
+
+# --- a consumer-only role launches, and a role with no file anywhere is refused by its right name -
+mkdir -p "$roster_consumer/.claude/agents"
+cat > "$roster_consumer/.claude/agents/archivist.md" <<'AGENT'
+---
+model: sonnet
+---
+The consumer's own role, shipped by nobody but this repository.
+AGENT
+cat > "$consumer_roster_file" <<'ROSTER'
+Ada           archivist
+Turing        implementer
+ROSTER
+out="$(run_launcher_at "$roster_consumer/.claude/cerebro/scripts" launch Ada)"
+echo "$out" | grep -A1 '^ARG:--agent$' | grep -q '^ARG:archivist$' \
+  || fail "launch Ada (consumer-only role): expected --agent archivist, got: $out"
+echo "$out" | grep -A1 '^ARG:--model$' | grep -q '^ARG:sonnet$' \
+  || fail "launch Ada (consumer-only role): expected the consumer agent file's model, got: $out"
+pass "a consumer-only role resolves its agent file from the consumer and launches"
+
+cat > "$consumer_roster_file" <<'ROSTER'
+Ada           archivist
+Grace         librarian
+ROSTER
+set +e
+out="$(run_launcher_at "$roster_consumer/.claude/cerebro/scripts" launch Grace 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "launch Grace (no agent file anywhere): expected exit 2, got $status"
+echo "$out" | grep -q "librarian" \
+  || fail "launch Grace: the message should name the role, got: $out"
+echo "$out" | grep -q "cerebro-roster" \
+  || fail "launch Grace: the message should name the consumer roster as the cause, got: $out"
+echo "$out" | grep -q "the submodule is behind" \
+  && fail "launch Grace: a consumer-declared role is not a stale submodule, got: $out"
+pass "a consumer-declared role with no agent file anywhere is refused by its right cause"
+rm -rf "$roster_consumer" "$bare_path_dir"
+
 # --- launch, generically over every roster row ---
 
 while IFS=$'\t' read -r name role kind; do
@@ -257,13 +378,26 @@ pass "launch with no argument exits 2"
 
 # --- shims ---
 
-SHIMS=(run-planner run-beast run-orchestrator run-user-feedback run-psylocke run-forge run-cypher)
-SHIM_NAMES=(Xavier Beast Cerebro Moira Psylocke Forge Cypher)
+# The shims are named after agents, so which agent each one starts is derivable from the roster
+# rather than spelled out beside it: SHIM<TAB>ROLE<TAB>N means "the Nth name holding ROLE, in file
+# order". The names themselves used to sit here as a second array - the very drift `scripts/roster`
+# exists to prevent, reintroduced inside its own suite (ah-qled.5.1).
+SHIMS=(run-planner:planner:1 run-beast:planner:2 run-orchestrator:orchestrator:1
+       run-user-feedback:user-feedback:1 run-psylocke:verifier:1 run-forge:architect:1
+       run-cypher:reviewer:1)
+
+nth_of_role() {
+  # $1 = role, $2 = 1-based position in file order
+  "$repo_root/scripts/roster" --role "$1" | sed -n "$2p"
+}
 
 i=0
 while [[ $i -lt ${#SHIMS[@]} ]]; do
-  shim="${SHIMS[$i]}"
-  actor="${SHIM_NAMES[$i]}"
+  entry="${SHIMS[$i]}"
+  shim="${entry%%:*}"
+  rest="${entry#*:}"
+  actor="$(nth_of_role "${rest%%:*}" "${rest##*:}")"
+  [[ -n "$actor" ]] || fail "$shim: the roster names nobody for ${rest%%:*} #${rest##*:}"
   out="$(run_launcher "$shim")"
   echo "$out" | grep -q "^BEADS_ACTOR=${actor}\$" || fail "$shim: expected BEADS_ACTOR=$actor, got: $out"
   echo "$out" | grep -A1 '^ARG:--name$' | grep -q "^ARG:${actor}\$" || fail "$shim: expected --name $actor, got: $out"

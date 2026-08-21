@@ -264,8 +264,42 @@ out="$("$gate_conf" gate_full 2>/dev/null)"
 [[ "$out" == "npm run check" ]] || fail "detected gate_full: expected 'npm run check', got '$out'"
 pass "the full gate is detected too"
 
-# --- neither declared nor detectable yields nothing: the refusal's input ---
+# --- the runner comes from the lockfile: pnpm and yarn, not only npm ---
+rm "$gate_repo/package-lock.json"
+touch "$gate_repo/pnpm-lock.yaml"
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "pnpm run check:fast" ]] || fail "pnpm runner: expected 'pnpm run check:fast', got '$out'"
+rm "$gate_repo/pnpm-lock.yaml"
+touch "$gate_repo/yarn.lock"
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "yarn run check:fast" ]] || fail "yarn runner: expected 'yarn run check:fast', got '$out'"
+rm "$gate_repo/yarn.lock"
+touch "$gate_repo/package-lock.json"
+pass "the runner is taken from the lockfile"
+
+# --- a Makefile target is detected, and announced ---
 rm "$gate_repo/package.json"
+cat > "$gate_repo/Makefile" <<'MAKE'
+check:
+	true
+MAKE
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "make check" ]] || fail "Makefile gate: expected 'make check', got '$out'"
+err="$("$gate_conf" gate_fast 2>&1 >/dev/null)"
+echo "$err" | grep -q "detected" || fail "Makefile gate: expected stderr to say it was detected, got: $err"
+pass "a Makefile target is detected, and announced"
+
+# --- a cargo project falls back to cargo test ---
+rm "$gate_repo/Makefile"
+echo '[package]' > "$gate_repo/Cargo.toml"
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "cargo test" ]] || fail "cargo gate: expected 'cargo test', got '$out'"
+err="$("$gate_conf" gate_fast 2>&1 >/dev/null)"
+echo "$err" | grep -q "detected" || fail "cargo gate: expected stderr to say it was detected, got: $err"
+rm "$gate_repo/Cargo.toml"
+pass "a cargo project falls back to cargo test"
+
+# --- neither declared nor detectable yields nothing: the refusal's input ---
 set +e
 out="$("$gate_conf" gate_fast 2>/dev/null)"
 status=$?

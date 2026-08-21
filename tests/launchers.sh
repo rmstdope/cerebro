@@ -223,6 +223,16 @@ pass "consumer roster: the built-in table is replaced, not merged"
 
 [[ "$("$roster_at" --implementers)" == "$(printf 'Turing\nLovelace')" ]] \
   || fail "consumer roster --implementers: got $("$roster_at" --implementers)"
+# The same rule the built-in table is held to, asserted against a fleet that shares no name with
+# it: --implementers is exactly the implementer-kind rows and nothing else. This is the assertion
+# ah-qled.5.3 exists for - it used to be a grep for the literal name Forge, which says nothing
+# about any consumer's fleet.
+while IFS=$'\t' read -r c_name _ c_kind; do
+  if [[ "$c_kind" != "implementer" ]]; then
+    "$roster_at" --implementers | grep -qx "$c_name" \
+      && fail "consumer roster --implementers: contains $c_name, whose kind is $c_kind"
+  fi
+done <<<"$("$roster_at")"
 [[ "$("$roster_at" --role planner)" == "$(printf 'Ada\nGrace')" ]] \
   || fail "consumer roster --role planner: got $("$roster_at" --role planner)"
 [[ "$("$roster_at" --role planner | sed -n 1p)" == "Ada" ]] \

@@ -56,6 +56,14 @@ repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
 default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch=""
 [[ -n "$default_branch" ]] || default_branch="main"
 
+# How this consumer names the branch a bead is built on, as a glob with `{id}` substituted into it.
+# The default `{id}-*` is today's convention. It is substituted rather than concatenated (ah-qled.4)
+# because a consumer branching `feature/PROJ-123-…` cannot be expressed by a prefix — and got
+# `branch:null` for every bead, so every live claim was measured from its claim time and read as
+# stalled.
+branch_pattern="$("$script_dir/project-conf" branch_pattern '{id}-*' 2>/dev/null || echo '{id}-*')"
+[[ -n "$branch_pattern" ]] || branch_pattern='{id}-*'
+
 if ! git -C "$repo_root" fetch --quiet origin "$default_branch" 2>/dev/null; then
   echo '{"error": "could not reach origin; refusing to guess whether a branch has moved"}'
   exit 1
@@ -88,9 +96,11 @@ while IFS= read -r bead; do
 
   branch=null
   worktree=""
+  # Unquoted on the right of `==`: it is a glob, and quoting it would make it a literal.
+  id_branch_glob="${branch_pattern//\{id\}/$id}"
   while IFS=$'\t' read -r wt_path wt_branch; do
     [[ -z "$wt_branch" ]] && continue
-    if [[ "$wt_branch" == "$id-"* ]]; then
+    if [[ "$wt_branch" == $id_branch_glob ]]; then
       branch="$(jq -n --arg b "$wt_branch" '$b')"
       worktree="$wt_path"
       break

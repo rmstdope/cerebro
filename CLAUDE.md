@@ -274,8 +274,8 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
 - Emacs backup files (`*.el~`, `*.md~`, `*.sh~`) are committed alongside the originals; ignore them
   and never edit them.
 - The state directory was `.claude/implementers/` until ah-2n3.1, and its writer was
-  `scripts/implementer-state`; a shim at that old script name survives one release, `exec`ing
-  `scripts/agent-state` with a deprecation line on stderr.
+  `scripts/implementer-state`. Both names are gone: `scripts/agent-state` is the writer, and the
+  rename shim was removed once a release of the consumer had carried it (ah-qled.5.3).
 - **A consumer declares its own fleet in `<consumer>/.claude/cerebro-roster`** (ah-qled.5.1) — same
   `NAME  ROLE` shape as the `TABLE=` heredoc in `scripts/roster`, `#` comments and blank lines
   ignored, `KIND` still derived. When it exists and is non-empty it **replaces** the built-in table

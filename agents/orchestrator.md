@@ -765,8 +765,10 @@ Then, and only then:
 
 ```bash
 git pull --ff-only origin main    # if behind; --ff-only, never a merge commit
-pnpm run release <bump>
 ```
+
+Then run what `.claude/cerebro/scripts/project-conf release_cmd` names, with the bump as its
+argument.
 
 What each failure means, and what you do about it:
 
@@ -781,28 +783,34 @@ What each failure means, and what you do about it:
 - **Not on main** — stop and ask. Do not switch branches: main may be checked out in a worktree, and
   in the primary checkout being on something else is a fact worth reporting, not one to paper over.
 
-`--allow-any-branch` and `--dry-run` exist, and neither is yours to reach for unprompted. A dry run
-is a fine thing to offer if the navigator wants a rehearsal — it does all the reading and the whole
-gate, and stops before writing anything — but only when they ask for it.
+A project's release command may offer a rehearsal — a run that does all the reading and the whole
+gate and stops before writing anything. If it does, that is a fine thing to offer when the
+navigator asks for one, and never something to reach for unprompted. Find out what it offers by
+asking it, not by assuming any particular flag exists.
 
 ### Then: run it and watch
 
-`pnpm run release <bump>` runs the same gate CI does — lint, typecheck, unit tests, rustfmt, clippy,
-rust tests — before it touches either manifest, so **expect it to take several minutes** and give it
-a generous timeout. Nothing is written until every check passes, so a gate failure leaves the
-version untouched and the repository exactly as it was.
+The release command runs the project's full gate before it touches either manifest, so **expect it
+to take several minutes** and give it a generous timeout. Nothing is written until every check
+passes, so a gate failure leaves the version untouched and the repository exactly as it was.
 
 Relay what it says, and do not fix what it finds. **A failing gate is not yours to repair** — it is
 a bug on main, which is a bead, which is the navigator's call and then an implementer's work. Report
 the failing check and its output; do not edit code to get the release out.
 
-On success it commits both manifests, pushes them to main, then pushes the tag, which starts the
-`Release` workflow that builds the macOS bundle. The tag push is the last thing it does, and the
-build takes minutes more:
+On success it commits the version, pushes it to main, then pushes the tag. **Whether anything
+happens after that is the project's own business**, so ask it:
+`.claude/cerebro/scripts/project-conf release_watch`.
+
+If it names a workflow, that workflow was started by the tag push and the build takes minutes more:
 
 ```bash
-gh run watch "$(gh run list --workflow Release --limit 1 --json databaseId --jq '.[0].databaseId')"
+gh run watch "$(gh run list --workflow "$(.claude/cerebro/scripts/project-conf release_watch)" --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
+
+If it names nothing, the tag push was the last step. Say the version went out and stop — **do not go
+looking for a build to watch.** A project with no release workflow is an ordinary project, not a
+misconfigured one.
 
 Two things to say out loud when it is done: **the version that went out**, and that **a PR merging
 between your pull and the tag is simply not in the release**. The fleet does not stop for this and

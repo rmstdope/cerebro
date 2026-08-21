@@ -53,10 +53,11 @@ by hand:
 | A bead gets the `planning` label | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID` |
 | Every interview question while planning it | `.claude/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase plan --pid $PPID`, and `working` again once answered |
 | The P0 check (*P0 pre-empts the buffer*) | stays `working --phase plan`, same as any other bead being planned |
-| Before *Sleeping without dying* | `.claude/cerebro/scripts/agent-state <your-name> idle --pid $PPID` |
+| Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process. You never write `done`: you are not replaced between
-beads, so `idle` is the state between one pass and the next. Writing another planner's name here
+beads. `waiting` is the state between one pass and the next — never `idle`, which says you have
+nothing to do and nothing coming. Writing another planner's name here
 puts your work on their row and hides your own, so the navigator sees one busy planner and one that
 has apparently died.
 
@@ -353,19 +354,31 @@ costs their hold on the queue, and they may never learn it happened. That holds 
 is away too, which is the case it was decided for: leave the beads unranked, report them, and go
 idle rather than picking one and announcing it afterwards.
 
-### Sleeping without dying
+### Ending a pass: you write `waiting`, and the fleet view wakes you
 
-Ten minutes is longer than a single `Bash` call may safely run: the tool's own timeout tops out at
-600000ms, and the harness kills a run whose stream has been silent for 600 seconds. So sleep in two
-five-minute halves that say something each minute:
+You do not schedule yourself and you do not sleep inside your own session (`ah-hiib.3`). A pass ends
+like this:
 
 ```bash
-.claude/cerebro/scripts/agent-state <your-name> idle --pid $PPID
-for i in $(seq 5); do sleep 60; echo "planner idle, ${i}/5 of this half"; done
+.claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID
 ```
 
-Twice, then re-read the buffer. Do not reach for `Monitor` or a background `Bash` — you are waiting
-on nothing but the clock, and a foreground loop is the one wait that certainly works.
+**Then end your turn.** Say in one line what the pass found, and stop producing output — that is the
+whole of it. The fleet view wakes you with a `[cerebro]` line in your session when your wait is up,
+and the next pass begins there.
+
+`--wake-in` is what you *ask* for; the fleet view owns the cadence and may wake you sooner (it is a
+`defcustom` the navigator can change while the fleet runs, which is why the number is no longer
+yours to argue about). 600 seconds is what this role has historically waited.
+
+Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
+indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken
+down cleanly, and the cadence lived in prose that had never been checked against the log. `waiting`
+fixes all three — it is a state the fleet view can see, a moment a stop flag lands cleanly (nothing
+is in flight, so you are retired at once), and a number in configuration.
+
+**A quiet pass is the normal case.** A buffer that is already full is a pass with nothing to do. Say so in
+one line and go back to `waiting`; the next pass re-reads the buffer.
 
 ## Choosing what to plan
 

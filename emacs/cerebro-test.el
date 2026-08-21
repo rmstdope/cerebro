@@ -3326,3 +3326,270 @@ replacing a real answer with an empty one - the same rule the sweeps follow."
             (should (equal cerebro--history-rows
                            '(((agent . "Cyclops") (state . "working") (open_min . 5)))))))
       (kill-buffer buffer))))
+
+;; ---------------------------------------------------------------------------
+;; ah-hiib.3: `waiting' - the monitor owns the cadence, the role owns the policy
+
+(defun cerebro-test--waiting (&optional name since wake-at external)
+  "An interactive agent in `waiting', for the wake tests."
+  (make-cerebro-agent :name (or name "Moira") :role "user-feedback"
+                              :kind 'interactive :state 'waiting :bead nil
+                              :since (or since "2026-08-14T09:20:00Z")
+                              :wake-at wake-at :external external))
+
+(ert-deftest cerebro-test/derives-waiting-from-an-interactive-state-file ()
+  "`waiting' is the state a role writes when it has ended its turn."
+  (let ((agent (cerebro--derive-from-state
+                "Moira" "user-feedback" 'interactive
+                '((state . "waiting") (bead . nil) (since . "2026-08-14T09:20:00Z")
+                  (wake_at . "2026-08-14T09:30:00Z") (pid . 42))
+                t)))
+    (should (eq (cerebro-agent-state agent) 'waiting))
+    (should (equal (cerebro-agent-wake-at agent) "2026-08-14T09:30:00Z"))))
+
+(ert-deftest cerebro-test/waiting-from-an-implementer-is-unknown ()
+  "`scripts/agent-state' refuses it from an implementer, so a file that carries
+one anyway is a bug rather than a cadence - the same treatment `done' from an
+interactive name already gets."
+  (should (eq (cerebro-agent-state
+               (cerebro--derive-from-state "Cyclops" "implementer" 'implementer
+                                           '((state . "waiting") (pid . 42)) t))
+              'unknown)))
+
+(ert-deftest cerebro-test/wake-due-p-before-after-and-missing ()
+  "The role asks for a time; the monitor decides. Due when either the role's own
+`wake_at' has passed or the monitor's own interval has, and never on a file that
+said neither."
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals nil))
+    ;; Ten minutes before its wake: left alone.
+    (should (null (cerebro--wake-due-p
+                   (cerebro-test--waiting nil "2026-08-14T09:29:00Z" "2026-08-14T09:40:00Z")
+                   cerebro-test--now)))
+    ;; Past it: due.
+    (should (cerebro--wake-due-p
+             (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:29:00Z")
+             cerebro-test--now))
+    ;; Exactly on it: due.
+    (should (cerebro--wake-due-p
+             (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:30:00Z")
+             cerebro-test--now))
+    ;; No `wake_at' and no `since' - a torn file says nothing, and nothing is a
+    ;; deadline that has not expired. Built by hand rather than through the
+    ;; helper, whose `since' default would supply the very timestamp the file
+    ;; is missing.
+    (should (null (cerebro--wake-due-p
+                   (make-cerebro-agent :name "Moira" :kind 'interactive :state 'waiting)
+                   cerebro-test--now)))
+    (should (null (cerebro--wake-due-p
+                   (make-cerebro-agent :name "Moira" :kind 'interactive :state 'waiting
+                                               :since "not-a-timestamp" :wake-at "also-not")
+                   cerebro-test--now)))))
+
+(ert-deftest cerebro-test/the-monitor-may-wake-a-role-earlier-than-it-asked ()
+  "Cadence belongs to the fleet view: a role asking for an hour is woken on the
+configured interval instead, which is what makes the `defcustom' authoritative
+without editing an agent document or restarting a session."
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals nil))
+    (should (cerebro--wake-due-p
+             (cerebro-test--waiting "Moira" "2026-08-14T09:15:00Z" "2026-08-14T10:15:00Z")
+             cerebro-test--now)))
+  ;; ...and a longer interval leaves the same agent alone.
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals '(("Moira" . 3600))))
+    (should (null (cerebro--wake-due-p
+                   (cerebro-test--waiting "Moira" "2026-08-14T09:15:00Z" "2026-08-14T10:15:00Z")
+                   cerebro-test--now)))))
+
+(ert-deftest cerebro-test/the-interval-comes-from-the-custom-variable ()
+  (let ((cerebro-wake-intervals '(("Psylocke" . 300)))
+        (cerebro-wake-interval-default 600))
+    (should (equal (cerebro-wake-interval "Psylocke") 300))
+    (should (equal (cerebro-wake-interval "Moira") 600))))
+
+(ert-deftest cerebro-test/supervise-pokes-a-waiting-role-past-its-wake ()
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals nil))
+    (should (eq (cerebro--supervise-action
+                 (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:20:00Z")
+                 nil cerebro-test--now)
+                'poke))))
+
+(ert-deftest cerebro-test/supervise-leaves-a-waiting-role-alone-before-its-wake ()
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals nil))
+    (should (null (cerebro--supervise-action
+                   (cerebro-test--waiting nil "2026-08-14T09:29:00Z" "2026-08-14T09:40:00Z")
+                   nil cerebro-test--now)))))
+
+(ert-deftest cerebro-test/supervise-retires-a-waiting-role-under-a-stop-flag ()
+  "The behaviour that is impossible while a role sleeps inside its own session:
+a waiting role holds no bead, no claim and no worktree, so the flag lands
+cleanly and now, whether or not its wake is due."
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals nil))
+    (should (eq (cerebro--supervise-action
+                 (cerebro-test--waiting nil "2026-08-14T09:29:00Z" "2026-08-14T09:40:00Z")
+                 t cerebro-test--now)
+                'retire))
+    (should (eq (cerebro--supervise-action
+                 (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:20:00Z")
+                 t cerebro-test--now)
+                'retire))))
+
+(ert-deftest cerebro-test/an-external-waiting-role-is-never-poked ()
+  "`cerebro--nudge' types into a buffer `cerebro--session' resolves, and a
+session started in somebody's own terminal has none."
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals nil))
+    (should (null (cerebro--supervise-action
+                   (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:20:00Z"
+                                          t)
+                   nil cerebro-test--now)))
+    (should (null (cerebro--supervise-action
+                   (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:20:00Z"
+                                          t)
+                   t cerebro-test--now)))))
+
+(ert-deftest cerebro-test/an-implementer-never-reaches-the-waiting-arm ()
+  "The kind guard is per-arm now, and this is the half it must keep excluding:
+an implementer has no cadence, and `waiting' from one is `unknown' anyway."
+  (let ((agent (make-cerebro-agent :name "Cyclops" :role "implementer"
+                                           :kind 'implementer :state 'waiting
+                                           :since "2026-08-14T09:00:00Z"
+                                           :wake-at "2026-08-14T09:20:00Z")))
+    (should (null (cerebro--supervise-action agent nil cerebro-test--now)))
+    (should (null (cerebro--supervise-action agent t cerebro-test--now)))))
+
+(ert-deftest cerebro-test/an-interactive-role-is-still-never-restarted-or-nudged ()
+  "The docstring's warning, pinned: making the guard per-arm must not let
+`restart', `retire' or `nudge' reach a role whose mockup conversation with the
+navigator would be destroyed by it."
+  (dolist (state '(done asking working idle))
+    (let ((agent (make-cerebro-agent :name "Xavier" :role "planner" :kind 'interactive
+                                             :state state :bead "ah-f9c"
+                                             :since "2026-08-14T08:00:00Z")))
+      (should (null (cerebro--supervise-action agent nil cerebro-test--now)))
+      (should (null (cerebro--supervise-action agent t cerebro-test--now))))))
+
+;; --- the poke does not silently fail --------------------------------------
+
+(ert-deftest cerebro-test/a-poke-is-sent-once-then-resent-once-then-surfaced ()
+  "Acknowledgement is the role's own next transition: while it is still
+`waiting' on the same `wake_at', it has not answered. One re-send after the
+grace period, and then a line the navigator can see rather than a poke on every
+five-second tick for ever."
+  (let ((cerebro-poke-grace 60))
+    ;; Nothing sent yet for this wake.
+    (should (eq (cerebro--poke-decision nil "2026-08-14T09:20:00Z" cerebro-test--now) 'send))
+    ;; Sent 30s ago: inside the grace period, so wait.
+    (should (null (cerebro--poke-decision '("2026-08-14T09:20:00Z" "2026-08-14T09:29:30Z" 1)
+                                          "2026-08-14T09:20:00Z" cerebro-test--now)))
+    ;; Sent 90s ago and still waiting: re-send, once.
+    (should (eq (cerebro--poke-decision '("2026-08-14T09:20:00Z" "2026-08-14T09:28:30Z" 1)
+                                        "2026-08-14T09:20:00Z" cerebro-test--now)
+                'send))
+    ;; Two already sent and it is still there: stop, and say so.
+    (should (eq (cerebro--poke-decision '("2026-08-14T09:20:00Z" "2026-08-14T09:28:30Z" 2)
+                                        "2026-08-14T09:20:00Z" cerebro-test--now)
+                'surface))))
+
+(ert-deftest cerebro-test/a-new-wake-starts-the-poke-count-again ()
+  "A role that answered and went back to waiting is a fresh wake, not a
+continuation of the one it already answered - otherwise the second wait of a
+session that once needed a re-send would never be poked at all."
+  (let ((cerebro-poke-grace 60))
+    (should (eq (cerebro--poke-decision '("2026-08-14T09:20:00Z" "2026-08-14T09:28:30Z" 2)
+                                        "2026-08-14T09:45:00Z" cerebro-test--now)
+                'send))))
+
+(ert-deftest cerebro-test/a-waiting-role-shows-its-state-and-when-it-wakes ()
+  "Distinguishable in the fleet view from `idle' - which for an implementer
+means safe to retire - and from a hung session, which shows no wake at all."
+  (let* ((agent (cerebro-test--waiting nil "2026-08-14T09:20:00Z" "2026-08-14T09:35:00Z"))
+         (row (nth 1 (cerebro--entry agent cerebro-test--now))))
+    (should (equal (aref row 2) "waiting"))
+    ;; Ten minutes waiting, five to go.
+    (should (equal (aref row 4) "10m →5m"))))
+
+(ert-deftest cerebro-test/a-role-that-did-not-answer-its-poke-is-marked ()
+  (let* ((agent (cerebro-test--waiting nil "2026-08-14T09:20:00Z" "2026-08-14T09:25:00Z"))
+         (row (nth 1 (cerebro--entry agent cerebro-test--now nil 'unanswered))))
+    (should (equal (aref row 2) "waiting !"))))
+
+(defun cerebro-test--poke-fixture (agent body)
+  "Run BODY with a temp repo-root and `cerebro--poke' recording into `sent'."
+  (let ((root (make-temp-file "cerebro-poke" t))
+        (sent '()))
+    (unwind-protect
+        (with-temp-buffer
+          (cl-letf (((symbol-function 'cerebro--poke)
+                     (lambda (a) (push (cerebro-agent-name a) sent)))
+                    ((symbol-function 'cerebro--end-session)
+                     (lambda (&rest _) (push 'ended sent))))
+            (funcall body root (lambda () sent) agent)))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/supervise-sends-a-poke-once-per-tick-not-per-poll ()
+  "The poll runs every five seconds; the poke is bounded to one send, one
+re-send after the grace period, and then a line in the fleet view."
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals nil)
+        (cerebro-poke-grace 60))
+    (cerebro-test--poke-fixture
+     (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:20:00Z")
+     (lambda (root sent agent)
+       ;; First tick: sent.
+       (cerebro--supervise (list agent) root cerebro-test--now)
+       (should (equal (funcall sent) '("Moira")))
+       ;; Five seconds later, still waiting on the same wake: inside the grace
+       ;; period, so nothing more is typed into the session.
+       (cerebro--supervise (list agent) root
+                           (time-add cerebro-test--now 5))
+       (should (equal (funcall sent) '("Moira")))
+       ;; Past the grace period and still waiting: one re-send.
+       (cerebro--supervise (list agent) root
+                           (time-add cerebro-test--now 90))
+       (should (equal (funcall sent) '("Moira" "Moira")))
+       ;; Still nothing. It is not poked a third time - it is surfaced.
+       (cerebro--supervise (list agent) root
+                           (time-add cerebro-test--now 200))
+       (should (equal (funcall sent) '("Moira" "Moira")))
+       (should (member "Moira" cerebro--unanswered-pokes))))))
+
+(ert-deftest cerebro-test/a-role-that-answers-clears-its-poke-record ()
+  "Acknowledgement is the role's own next transition: once it is no longer
+waiting, both the bookkeeping and the fleet view's mark go."
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals nil)
+        (cerebro-poke-grace 60))
+    (cerebro-test--poke-fixture
+     (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:20:00Z")
+     (lambda (root sent agent)
+       (cerebro--supervise (list agent) root cerebro-test--now)
+       (cerebro--supervise (list agent) root (time-add cerebro-test--now 90))
+       (cerebro--supervise (list agent) root (time-add cerebro-test--now 200))
+       (should (member "Moira" cerebro--unanswered-pokes))
+       ;; It woke up and got on with a pass.
+       (let ((working (make-cerebro-agent :name "Moira" :role "user-feedback"
+                                                  :kind 'interactive :state 'working
+                                                  :phase "sweep"
+                                                  :since "2026-08-14T09:31:00Z")))
+         (cerebro--supervise (list working) root (time-add cerebro-test--now 300)))
+       (should-not (member "Moira" cerebro--unanswered-pokes))
+       (should-not (assoc "Moira" cerebro--pokes))
+       (should (equal (funcall sent) '("Moira" "Moira")))))))
+
+(ert-deftest cerebro-test/supervise-retires-a-waiting-role-rather-than-poking-it ()
+  (let ((cerebro-wake-interval-default 600)
+        (cerebro-wake-intervals nil))
+    (cerebro-test--poke-fixture
+     (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:20:00Z")
+     (lambda (root sent agent)
+       (write-region "" nil (expand-file-name ".cerebro/state/Moira.stop"
+                                              (progn (make-directory
+                                                      (expand-file-name ".cerebro/state" root) t)
+                                                     root)))
+       (cerebro--supervise (list agent) root cerebro-test--now)
+       (should (equal (funcall sent) '(ended)))))))

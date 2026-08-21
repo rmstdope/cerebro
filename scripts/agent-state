@@ -7,9 +7,18 @@
 #
 #     .claude/cerebro/scripts/agent-state <name> <state> [--bead <id>] [--phase <phase>] --pid <pid>
 #
-# <state> is one of: idle working asking done - the only field cerebro--supervise-action reads.
-# `done` is an implementer's state alone: an interactive agent has no bead to finish and is never
-# replaced between beads, so this script refuses `done` from an interactive name.
+# <state> is one of: idle working asking waiting done - the only field cerebro--supervise-action
+# reads. Two of them belong to one kind of agent only, and this script refuses the other kind:
+#   `done`    is an implementer's state alone: an interactive agent has no bead to finish and is
+#             never replaced between beads.
+#   `waiting` is an interactive agent's state alone (ah-hiib.3): the agent has finished a pass, ENDED
+#             ITS TURN, and expects the fleet view to wake it. An implementer is replaced between
+#             beads and has no cadence of its own, so it has nothing to wait for.
+#
+# `waiting` takes --wake-in <seconds>, which is required with it and invalid without it, and is
+# recorded as `wake_at` - an absolute ISO-8601 timestamp, so a reader needs no clock arithmetic and
+# no assumption about when the file was written. It is what the agent ASKS for; the fleet view owns
+# the cadence and is free to wake it earlier.
 # <phase>, only meaningful with `working` or `asking`, is one of:
 #   build gate review ci rebase merge          (an implementer)
 #   triage plan                                (a planner: Xavier, Beast)
@@ -36,7 +45,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  echo "usage: agent-state <name> <idle|working|asking|done> [--bead <id>] [--phase <build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly|read|check|walk|report>] --pid <pid>" >&2
+  echo "usage: agent-state <name> <idle|working|asking|waiting|done> [--bead <id>] [--phase <build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly|read|check|walk|report>] [--wake-in <seconds>] --pid <pid>" >&2
   exit 2
 }
 
@@ -48,6 +57,7 @@ shift 2
 bead=""
 phase=""
 pid=""
+wake_in=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -57,6 +67,8 @@ while [[ $# -gt 0 ]]; do
       phase="${2:-}"; shift 2 ;;
     --pid)
       pid="${2:-}"; shift 2 ;;
+    --wake-in)
+      wake_in="${2:-}"; shift 2 ;;
     *)
       echo "agent-state: unknown argument '$1'" >&2
       exit 2 ;;
@@ -74,6 +86,12 @@ is_interactive=""
 
 case "$state" in
   idle|working|asking) ;;
+  waiting)
+    if [[ -z "$is_interactive" ]]; then
+      echo "agent-state: waiting is an interactive agent's state; an implementer is replaced between beads and has no cadence of its own" >&2
+      exit 2
+    fi
+    ;;
   done)
     if [[ -n "$is_interactive" ]]; then
       echo "agent-state: done is an implementer's state; an interactive agent writes idle when it has nothing to do" >&2
@@ -81,7 +99,7 @@ case "$state" in
     fi
     ;;
   *)
-    echo "agent-state: unknown state '$state' (idle|working|asking|done)" >&2
+    echo "agent-state: unknown state '$state' (idle|working|asking|waiting|done)" >&2
     exit 2 ;;
 esac
 
@@ -102,6 +120,23 @@ if [[ -n "$phase" ]]; then
   esac
 fi
 
+# --wake-in and `waiting` imply one another: a wait with no wake is one nothing will ever end, and a
+# wake time on any other state describes a cadence the agent is not in.
+if [[ "$state" == waiting ]]; then
+  if [[ -z "$wake_in" ]]; then
+    echo "agent-state: --wake-in is required with waiting" >&2
+    exit 2
+  fi
+elif [[ -n "$wake_in" ]]; then
+  echo "agent-state: --wake-in is only valid with waiting, not '$state'" >&2
+  exit 2
+fi
+
+if [[ -n "$wake_in" ]] && ! [[ "$wake_in" =~ ^[1-9][0-9]*$ ]]; then
+  echo "agent-state: --wake-in takes a positive whole number of seconds, not '$wake_in'" >&2
+  exit 2
+fi
+
 if [[ -z "$pid" ]]; then
   echo "agent-state: --pid is required (pass \$PPID)" >&2
   exit 2
@@ -120,7 +155,24 @@ mkdir -p "$out_dir"
 out_file="$out_dir/$name.state.json"
 tmp_file="$out_file.tmp"
 
-now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# One reading of the clock, from which both timestamps below are derived. Two `date` calls would
+# straddle a second boundary now and then, and `wake_at` is written as an absolute time that a
+# reader takes to be exactly `--wake-in` seconds after `since` - a skew there is a wake a second
+# early or late for ever, and a flaky test.
+now_epoch="$(date -u +%s)"
+
+# `date -r <epoch>` is BSD/macOS and `date -d @<epoch>` is GNU; each rejects the other's form, so
+# try both rather than assuming which fleet machine this is.
+iso_at() {
+  date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ
+}
+
+now="$(iso_at "$now_epoch")"
+
+wake_at=""
+if [[ -n "$wake_in" ]]; then
+  wake_at="$(iso_at $((now_epoch + wake_in)))"
+fi
 
 prev="$(jq -c '.' "$out_file" 2>/dev/null || true)"
 
@@ -151,12 +203,14 @@ jq -n \
   --arg since "$since" \
   --arg phase_since "$phase_since" \
   --arg pid "$pid" \
+  --arg wake_at "$wake_at" \
   '{
     state: $state,
     phase: (if $phase == "" then null else $phase end),
     bead: (if $bead == "" then null else $bead end),
     since: $since,
     phase_since: (if $phase_since == "" then null else $phase_since end),
+    wake_at: (if $wake_at == "" then null else $wake_at end),
     pid: ($pid | tonumber)
   }' > "$tmp_file"
 

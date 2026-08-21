@@ -32,10 +32,11 @@ file is (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, ne
 |---|---|
 | A pass starts | `.claude/cerebro/scripts/agent-state Moira working --phase sweep --pid $PPID` |
 | Every triage question — *A new issue* and *A closed issue with an open bead* | `.claude/cerebro/scripts/agent-state Moira asking --phase sweep --pid $PPID`, and `working --phase sweep` again the moment the answer is in |
-| Before *Sleeping without dying* | `.claude/cerebro/scripts/agent-state Moira idle --pid $PPID` |
+| Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/agent-state Moira waiting --wake-in 600 --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process. You never write `done`: you are not replaced between
-passes, so `idle` is the state between one pass and the next.
+passes. `waiting` is the state between one pass and the next — never `idle`, which says you have
+nothing to do and nothing coming.
 
 Take them **oldest first** — a reporter who has waited longest is served first. For each one:
 
@@ -75,24 +76,28 @@ Then say what you did — how many issues you looked at, which you acknowledged 
 which were triaged, which status comments you posted, which issues you closed, and any closed issue
 whose bead is still open — and sleep.
 
-### Sleeping without dying
+### Ending a pass: you write `waiting`, and the fleet view wakes you
+
+You do not schedule yourself and you do not sleep inside your own session (`ah-hiib.3`). A pass ends
+like this:
 
 ```bash
-.claude/cerebro/scripts/agent-state Moira idle --pid $PPID
+.claude/cerebro/scripts/agent-state Moira waiting --wake-in 600 --pid $PPID
 ```
 
-Write it once, before the loop below.
+**Then end your turn.** Say in one line what the pass found, and stop producing output — that is the
+whole of it. The fleet view wakes you with a `[cerebro]` line in your session when your wait is up,
+and the next pass begins there.
 
-Ten minutes, in two five-minute halves that print as they go. A single ten-minute silent `Bash` call
-sits on the harness's 600-second stalled-stream watchdog, and the tool's own timeout ceiling is
-600000ms:
+`--wake-in` is what you *ask* for; the fleet view owns the cadence and may wake you sooner (it is a
+`defcustom` the navigator can change while the fleet runs, which is why the number is no longer
+yours to argue about). 600 seconds is what this role has historically waited.
 
-```bash
-for i in $(seq 5); do sleep 60; echo "Moira idle, ${i}/5 of this half"; done
-```
-
-Twice, then start the next pass. Do not reach for `Monitor` or a background `Bash` — you are waiting
-on nothing but the clock, and a foreground loop is the one wait that certainly works.
+Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
+indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken
+down cleanly, and the cadence lived in prose that had never been checked against the log. `waiting`
+fixes all three — it is a state the fleet view can see, a moment a stop flag lands cleanly (nothing
+is in flight, so you are retired at once), and a number in configuration.
 
 **A quiet pass is the normal case.** Most of the time there are no new issues and no bead has moved,
 and the right report is one line saying so. Do not go looking for something to do.

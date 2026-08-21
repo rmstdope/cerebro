@@ -410,4 +410,93 @@ run_state "$tmp" Cyclops idle --pid 42
 rm -rf "$tmp"
 pass "transition-log-rotates"
 
+# --- ah-hiib.3: `waiting` - a role that has ended its turn and expects to be woken ---
+
+# --- waiting-records-a-wake-at ---
+tmp="$(new_fixture)"
+run_state "$tmp" Moira waiting --wake-in 600 --pid 42
+f="$(state_file "$tmp" Moira)"
+[[ -f "$f" ]] || fail "waiting-records-a-wake-at: no state file written"
+state="$(jq -r '.state' "$f")"; [[ "$state" == "waiting" ]] || fail "waiting-records-a-wake-at: state=$state"
+wake_at="$(jq -r '.wake_at' "$f")"
+[[ "$wake_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+  || fail "waiting-records-a-wake-at: wake_at=$wake_at"
+since="$(jq -r '.since' "$f")"
+# 600 seconds later than `since`, to the second: the script computes one from the other.
+since_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$since")"
+wake_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$wake_at")"
+[[ $((wake_epoch - since_epoch)) -eq 600 ]] \
+  || fail "waiting-records-a-wake-at: wake_at is $((wake_epoch - since_epoch))s after since, wanted 600"
+rm -rf "$tmp"
+pass "waiting-records-a-wake-at"
+
+# --- a-state-that-is-not-waiting-has-a-null-wake-at ---
+tmp="$(new_fixture)"
+run_state "$tmp" Moira working --phase sweep --pid 42
+[[ "$(jq -r '.wake_at' "$(state_file "$tmp" Moira)")" == "null" ]] \
+  || fail "a-state-that-is-not-waiting-has-a-null-wake-at: wake_at was set"
+rm -rf "$tmp"
+pass "a-state-that-is-not-waiting-has-a-null-wake-at"
+
+# --- waiting-is-refused-from-an-implementer ---
+tmp="$(new_fixture)"
+set +e
+out="$(run_state "$tmp" Cyclops waiting --wake-in 600 --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "waiting-is-refused-from-an-implementer: expected exit 2, got $status"
+grep -q "waiting is an interactive agent's state" <<<"$out" \
+  || fail "waiting-is-refused-from-an-implementer: wrong message, got: $out"
+[[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "waiting-is-refused-from-an-implementer: file was written"
+rm -rf "$tmp"
+pass "waiting-is-refused-from-an-implementer"
+
+# --- waiting-without-wake-in-is-refused ---
+tmp="$(new_fixture)"
+set +e
+out="$(run_state "$tmp" Moira waiting --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "waiting-without-wake-in-is-refused: expected exit 2, got $status"
+grep -q -- "--wake-in is required with waiting" <<<"$out" \
+  || fail "waiting-without-wake-in-is-refused: wrong message, got: $out"
+[[ -f "$(state_file "$tmp" Moira)" ]] && fail "waiting-without-wake-in-is-refused: file was written"
+rm -rf "$tmp"
+pass "waiting-without-wake-in-is-refused"
+
+# --- wake-in-is-refused-without-waiting ---
+tmp="$(new_fixture)"
+set +e
+out="$(run_state "$tmp" Moira idle --wake-in 600 --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "wake-in-is-refused-without-waiting: expected exit 2, got $status"
+grep -q -- "--wake-in is only valid with waiting" <<<"$out" \
+  || fail "wake-in-is-refused-without-waiting: wrong message, got: $out"
+rm -rf "$tmp"
+pass "wake-in-is-refused-without-waiting"
+
+# --- wake-in-must-be-a-positive-integer ---
+tmp="$(new_fixture)"
+for bad in 0 -5 soon 6.5; do
+  set +e
+  out="$(run_state "$tmp" Moira waiting --wake-in "$bad" --pid 1 2>&1)"
+  status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "wake-in-must-be-a-positive-integer: '$bad' gave exit $status"
+done
+rm -rf "$tmp"
+pass "wake-in-must-be-a-positive-integer"
+
+# --- waiting-is-logged-like-any-other-state ---
+tmp="$(new_fixture)"
+run_state "$tmp" Moira working --phase sweep --pid 42
+run_state "$tmp" Moira waiting --wake-in 300 --pid 42
+line="$(tail -1 "$tmp/.cerebro/state/transitions.jsonl")"
+[[ "$(jq -r '.to' <<<"$line")" == "waiting" ]] || fail "waiting-is-logged-like-any-other-state: to=$(jq -r '.to' <<<"$line")"
+[[ "$(jq -r '.from' <<<"$line")" == "working" ]] || fail "waiting-is-logged-like-any-other-state: from wrong"
+[[ "$(jq -r '.changed' <<<"$line")" == "true" ]] || fail "waiting-is-logged-like-any-other-state: changed wrong"
+rm -rf "$tmp"
+pass "waiting-is-logged-like-any-other-state"
+
 echo "All agent-state tests passed."

@@ -103,12 +103,20 @@ exact block.
 ## You do not stop on your own
 
 Planning a bead is not the end of your session. Count the buffer again, and either plan the next one
-or sleep and re-check — the cycle in `plan-bead` runs until the navigator tells you otherwise. There
-is no flag to read and no launcher waiting on you; when you have nothing to do, say so and sleep.
+or end the pass and be woken — the cycle in `plan-bead` runs until the navigator tells you
+otherwise. There is no flag to read and no launcher waiting on you; when you have nothing to do, say
+so in one line and end the pass.
 
-Sleep by blocking in the foreground, in five-minute halves that print as they go. You are a top-level
-session, so that works — but a single ten-minute silent call sits on the harness's 600-second
-stalled-stream watchdog, and the `Bash` timeout ceiling is 600000ms.
+**Ending a pass is `waiting`, and then ending your turn** (`ah-hiib.3`) — never a sleep loop inside
+your own session:
+
+```bash
+.claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID
+```
+
+The fleet view wakes you with a `[cerebro]` line when your wait is up, and owns the cadence: the
+number you pass is what you ask for, not what you get. `plan-bead`'s *Ending a pass* has the whole
+of it and the reasons.
 
 ## What you never do
 

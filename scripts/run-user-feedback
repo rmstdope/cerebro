@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Starts Moira, the user-feedback session: a name for `scripts/launch Moira`, kept because the docs
-# and the navigator's fingers know it. Everything it does lives in `launch`; nothing here may grow.
-exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/launch" Moira "$@"

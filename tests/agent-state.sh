@@ -25,8 +25,7 @@ pass() {
 # A fixture tree with its own scripts/ directory, symlinked to the real scripts, so
 # agent-state's own root-derivation (via scripts/consumer-root --shared) resolves inside
 # the fixture rather than the real repo. roster is symlinked alongside it because agent-state
-# consults it for the fleet. implementer-state (the deprecation shim) is symlinked too, so a
-# caller still using the old name is exercised the same way a real consumer would hit it.
+# consults it for the fleet.
 # A git repo, since consumer-root --shared asks git for the main .git directory.
 new_fixture() {
   local tmp
@@ -36,7 +35,6 @@ new_fixture() {
   mkdir -p "$tmp/.claude/cerebro/scripts"
   ln -s "$repo_root/scripts/roster" "$tmp/.claude/cerebro/scripts/roster"
   ln -s "$repo_root/scripts/agent-state" "$tmp/.claude/cerebro/scripts/agent-state"
-  ln -s "$repo_root/scripts/implementer-state" "$tmp/.claude/cerebro/scripts/implementer-state"
   ln -s "$repo_root/scripts/consumer-root" "$tmp/.claude/cerebro/scripts/consumer-root"
   printf '%s' "$tmp"
 }
@@ -206,17 +204,6 @@ leftover="$(find "$tmp/.cerebro/state" -name '*.tmp' 2>/dev/null)"
 [[ -z "$leftover" ]] || fail "no-tmp-left-behind: found $leftover"
 rm -rf "$tmp"
 pass "no-tmp-left-behind"
-
-# --- shim-writes-same-file-and-warns ---
-tmp="$(new_fixture)"
-out="$("$tmp/.claude/cerebro/scripts/implementer-state" Cyclops working --bead ah-f9c --phase build --pid 1 2>&1)"
-f="$(state_file "$tmp" Cyclops)"
-[[ -f "$f" ]] || fail "shim-writes-same-file-and-warns: no state file written"
-state="$(jq -r '.state' "$f")"; [[ "$state" == "working" ]] || fail "shim-writes-same-file-and-warns: state=$state"
-grep -q "renamed to agent-state" <<<"$out" \
-  || fail "shim-writes-same-file-and-warns: no deprecation line, got: $out"
-rm -rf "$tmp"
-pass "shim-writes-same-file-and-warns"
 
 # --- ah-2n3.2: the five interactive agents write the same file ---
 

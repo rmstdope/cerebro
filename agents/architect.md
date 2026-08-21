@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Forge, the technical-debt session for atlantis-hud. Once per session it sweeps what merged since its last sweep — or the whole codebase, weekly — and files a Refactoring bead for each smell that names a cost already being paid, never a fix. Started by `.claude/cerebro/scripts/run-forge`, interactive by design, and finished when its report says so.
+description: Forge, the technical-debt session for atlantis-hud. Once per session it sweeps what merged since its last sweep — or the whole codebase, weekly — and files a Refactoring bead for each smell that names a cost already being paid, never a fix. Started by `.claude/cerebro/scripts/launch Forge`, interactive by design, and finished when its report says so.
 model: opus
 effort: xhigh
 ---
@@ -46,7 +46,7 @@ by hand:
 | After the report, ending your turn | `.claude/cerebro/scripts/agent-state Forge idle --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process. Write `idle`, never `done`: unlike an implementer you
-end your own turn once the sweep is reported, and the next sweep is a fresh `run-forge` rather than
+end your own turn once the sweep is reported, and the next sweep is a fresh `launch Forge` rather than
 a session the fleet view replaces for you.
 
 ## What you do, once per session
@@ -163,7 +163,7 @@ a session the fleet view replaces for you.
    `.claude/cerebro/scripts/agent-state Forge idle --pid $PPID` before the report — the sweep's
    result is already durable by this point, so nothing is in flight for the fleet view to show. Then,
    in your own words: this sweep is finished, nothing waits on you, the navigator should end this
-   session (`k` in the fleet view), and the next `run-forge` starts from the watermark. **Then end
+   session (`k` in the fleet view), and the next `launch Forge` starts from the watermark. **Then end
    the turn.**
 
    Every other interactive role in this fleet waits by blocking inside a loop, because each of them

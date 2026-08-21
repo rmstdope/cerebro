@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# Renamed to agent-state in ah-2n3.1 (the file it writes is every agent's now, not only an
-# implementer's). Kept for one release so an implementer whose session began before the rename
-# keeps writing; remove after the next release tag.
-echo "implementer-state: renamed to agent-state; update the caller" >&2
-exec "$(dirname "${BASH_SOURCE[0]}")/agent-state" "$@"

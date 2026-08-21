@@ -1312,10 +1312,10 @@ ownership is the better evidence."
   "The launchers live in cerebro, which a consumer mounts at .claude/cerebro.
 
 They used to live in the consumer's own scripts/, which is why the paths
-here changed - a bare `scripts/run-planner' resolves to the consumer's
+here changed - a bare `scripts/launch' resolves to the consumer's
 directory, where there is no longer anything by that name."
-  (should (equal (cerebro--script "run-planner") ".claude/cerebro/scripts/run-planner"))
-  (should (string-prefix-p ".claude/cerebro/scripts/" (cerebro--script "run-implementer"))))
+  (should (equal (cerebro--script "launch") ".claude/cerebro/scripts/launch"))
+  (should (string-prefix-p ".claude/cerebro/scripts/" (cerebro--script "roster"))))
 
 ;; ---------------------------------------------------------------------------
 ;; Reading the list at a glance
@@ -3664,8 +3664,8 @@ for the repository root."
   (should (get 'cerebro-submodule-path 'custom-type))
   (let ((cerebro-submodule-path "vendor/cerebro"))
     (should (equal (cerebro--script-directory) "vendor/cerebro/scripts"))
-    (should (string-suffix-p "vendor/cerebro/scripts/run-planner"
-                             (cerebro--script "run-planner")))
+    (should (string-suffix-p "vendor/cerebro/scripts/launch"
+                             (cerebro--script "launch")))
     ;; And the root search looks for the mount where it now lives.
     (let* ((root (make-temp-file "cerebro-mount" t))
            (default-directory (file-name-as-directory root)))

@@ -1,6 +1,6 @@
 ---
 name: implementer
-description: An implementation session for atlantis-hud. Takes one planned bead, builds it under TDD, gets it reviewed and merged, and reports itself done. Interactive, so the navigator can watch and answer; started from the Emacs fleet view (`s`) or by `.claude/cerebro/scripts/run-implementer <name>`, which gives it its name. The fleet view ends it when its bead is done and starts a fresh session for the next one.
+description: An implementation session for atlantis-hud. Takes one planned bead, builds it under TDD, gets it reviewed and merged, and reports itself done. Interactive, so the navigator can watch and answer; started from the Emacs fleet view (`s`) or by `.claude/cerebro/scripts/launch <Name>`, which gives it its name. The fleet view ends it when its bead is done and starts a fresh session for the next one.
 model: sonnet
 ---
 

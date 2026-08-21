@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Proves the fleet's roster and launcher: `scripts/roster` is the one declaration of who is on the
-# fleet, `scripts/launch` is the one place a session is started, and every `run-*` shim is a name
-# for it. Also proves every launched session stamps its session with a distinct bd actor identity, so
+# fleet and `scripts/launch` is the one place - and, since ah-qled.5.3, the only way - a session is
+# started. Also proves every launched session stamps its session with a distinct bd actor identity, so
 # a second implementer claiming an already-held bead fails instead of silently aliasing into the
 # first (see ah-rnz).
 #
@@ -124,8 +124,12 @@ implementers_out="$("$repo_root/scripts/roster" --implementers)"
 expected_implementers="$(printf '%s\n' "$roster_out" | awk -F'\t' '$3 == "implementer" {print $1}')"
 [[ "$implementers_out" == "$expected_implementers" ]] \
   || fail "roster --implementers: does not match the implementer-kind rows"
-printf '%s\n' "$implementers_out" | grep -qx "Forge" \
-  && fail "roster --implementers: contains an interactive name"
+while IFS=$'\t' read -r name _ kind; do
+  if [[ "$kind" != "implementer" ]]; then
+    printf '%s\n' "$implementers_out" | grep -qx "$name" \
+      && fail "roster --implementers: contains $name, whose kind is $kind"
+  fi
+done <<<"$roster_out"
 pass "roster --implementers matches the implementer rows and excludes interactive names"
 
 # --role exists for the one question a role with more than one agent raises: which of them is it?
@@ -219,6 +223,16 @@ pass "consumer roster: the built-in table is replaced, not merged"
 
 [[ "$("$roster_at" --implementers)" == "$(printf 'Turing\nLovelace')" ]] \
   || fail "consumer roster --implementers: got $("$roster_at" --implementers)"
+# The same rule the built-in table is held to, asserted against a fleet that shares no name with
+# it: --implementers is exactly the implementer-kind rows and nothing else. This is the assertion
+# ah-qled.5.3 exists for - it used to be a grep for the literal name Forge, which says nothing
+# about any consumer's fleet.
+while IFS=$'\t' read -r c_name _ c_kind; do
+  if [[ "$c_kind" != "implementer" ]]; then
+    "$roster_at" --implementers | grep -qx "$c_name" \
+      && fail "consumer roster --implementers: contains $c_name, whose kind is $c_kind"
+  fi
+done <<<"$("$roster_at")"
 [[ "$("$roster_at" --role planner)" == "$(printf 'Ada\nGrace')" ]] \
   || fail "consumer roster --role planner: got $("$roster_at" --role planner)"
 [[ "$("$roster_at" --role planner | sed -n 1p)" == "Ada" ]] \
@@ -371,8 +385,15 @@ status=$?
 set -e
 [[ $status -eq 2 ]] || fail "launch Nobody: expected exit 2, got $status"
 echo "$out" | grep -q "not on the roster" || fail "launch Nobody: wrong message, got: $out"
+# ...and the roster's own names, so the reader learns what they may type without opening a file.
+# This is also the whole answer for a name the fleet has *retired*: a renamed agent gets no courtesy
+# redirect, because the roster is the one answer to who exists (ah-qled.5.3).
+while IFS=$'\t' read -r roster_name _ _; do
+  echo "$out" | grep -qx "$roster_name" \
+    || fail "launch Nobody: the refusal should list the roster name $roster_name, got: $out"
+done <<<"$roster_out"
 echo "$out" | grep -q '^BEADS_ACTOR=' && fail "launch Nobody: should never have reached the stub"
-pass "launch Nobody exits 2, names it not on the roster, never reaches the stub"
+pass "launch Nobody exits 2, names it not on the roster, lists every roster name, never reaches the stub"
 
 set +e
 out="$(run_launcher launch 2>&1)"
@@ -381,72 +402,26 @@ set -e
 [[ $status -eq 2 ]] || fail "launch (no argument): expected exit 2, got $status"
 pass "launch with no argument exits 2"
 
-# --- shims ---
+# --- no launcher shim survives -------------------------------------------------------------------
+#
+# `launch <Name>` is the only way a session is started. The seven `run-*` shims existed "because the
+# docs and the navigator's fingers know them" - and the docs had drifted off them a rename ago
+# (CLAUDE.md still named a shim for the architect's retired name, gone since that rename). The fleet
+# view has called `launch` directly since ah-qled.5.1, so nothing but a hand-typed command was left.
+shim_found="$(find "$repo_root/scripts" -maxdepth 1 -name 'run-*' -print)"
+[[ -z "$shim_found" ]] || fail "scripts/: a run-* shim survives: $shim_found"
+pass "no run-* launcher shim survives; launch <Name> is the only entry point"
 
-# The shims are named after agents, so which agent each one starts is derivable from the roster
-# rather than spelled out beside it: SHIM<TAB>ROLE<TAB>N means "the Nth name holding ROLE, in file
-# order". The names themselves used to sit here as a second array - the very drift `scripts/roster`
-# exists to prevent, reintroduced inside its own suite (ah-qled.5.1).
-SHIMS=(run-planner:planner:1 run-beast:planner:2 run-orchestrator:orchestrator:1
-       run-user-feedback:user-feedback:1 run-psylocke:verifier:1 run-forge:architect:1
-       run-cypher:reviewer:1)
+# BEADS_ACTOR through `launch` for an implementer. The generic roster loop above covers every row,
+# but this was previously the only place the implementer case was named, and it is the guarantee
+# that a second claim on a held bead fails instead of aliasing into the first (ah-rnz).
+first_implementer="$("$repo_root/scripts/roster" --implementers | sed -n 1p)"
+[[ -n "$first_implementer" ]] || fail "roster --implementers: the roster names no implementer"
+out="$(run_launcher launch "$first_implementer")"
+echo "$out" | grep -q "^BEADS_ACTOR=${first_implementer}\$" \
+  || fail "launch $first_implementer: expected BEADS_ACTOR=$first_implementer, got: $out"
+pass "launch $first_implementer sets BEADS_ACTOR=$first_implementer"
 
-nth_of_role() {
-  # $1 = role, $2 = 1-based position in file order
-  "$repo_root/scripts/roster" --role "$1" | sed -n "$2p"
-}
-
-i=0
-while [[ $i -lt ${#SHIMS[@]} ]]; do
-  entry="${SHIMS[$i]}"
-  shim="${entry%%:*}"
-  rest="${entry#*:}"
-  actor="$(nth_of_role "${rest%%:*}" "${rest##*:}")"
-  [[ -n "$actor" ]] || fail "$shim: the roster names nobody for ${rest%%:*} #${rest##*:}"
-  out="$(run_launcher "$shim")"
-  echo "$out" | grep -q "^BEADS_ACTOR=${actor}\$" || fail "$shim: expected BEADS_ACTOR=$actor, got: $out"
-  echo "$out" | grep -A1 '^ARG:--name$' | grep -q "^ARG:${actor}\$" || fail "$shim: expected --name $actor, got: $out"
-  pass "$shim sets BEADS_ACTOR=$actor and --name $actor"
-  i=$((i + 1))
-done
-
-out="$(run_launcher run-implementer Cyclops)"
-echo "$out" | grep -q '^BEADS_ACTOR=Cyclops$' || fail "run-implementer Cyclops: expected BEADS_ACTOR=Cyclops, got: $out"
-pass "run-implementer Cyclops sets BEADS_ACTOR=Cyclops"
-
-roster_implementers="$("$repo_root/scripts/roster" --implementers)"
-run_implementer_roster="$(run_launcher run-implementer --roster)"
-[[ -n "$run_implementer_roster" ]] || fail "run-implementer --roster: empty output"
-[[ "$run_implementer_roster" == "$roster_implementers" ]] \
-  || fail "run-implementer --roster: does not match scripts/roster --implementers"
-pass "run-implementer --roster matches scripts/roster --implementers"
-
-set +e
-out="$(run_launcher run-implementer storm 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "run-implementer storm: expected exit 2, got $status"
-echo "$out" | grep -q "Storm" || fail "run-implementer storm: expected the message to name Storm, got: $out"
-echo "$out" | grep -q '^BEADS_ACTOR=' && fail "run-implementer storm: should never have reached the stub"
-pass "run-implementer storm still exits 2 and names Storm, without reaching the stub"
-
-set +e
-out="$(run_launcher run-implementer Forge 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "run-implementer Forge: expected exit 2, got $status"
-echo "$out" | grep -q "not an implementer" || fail "run-implementer Forge: wrong message, got: $out"
-echo "$out" | grep -q "launch Forge" || fail "run-implementer Forge: expected the message to name launch Forge, got: $out"
-echo "$out" | grep -q '^BEADS_ACTOR=' && fail "run-implementer Forge: should never have reached the stub"
-pass "run-implementer Forge exits 2, names launch Forge, without reaching the stub"
-
-set +e
-out="$(run_launcher run-implementer bishop 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "run-implementer bishop: expected exit 2, got $status"
-echo "$out" | grep -q '^BEADS_ACTOR=' && fail "run-implementer bishop: should never have reached the stub"
-pass "run-implementer bishop exits 2, never reaches the stub"
 
 # --- a launcher syncs the consumer repo's links before starting a session (ah-cuc) ---
 #
@@ -591,13 +566,19 @@ echo "$out" | grep -q '^ARG:--agent$' \
 pass "launch Forge refuses when the submodule never brought its agent file in"
 
 # --- the reviewer role: on the roster, with phases agent-state accepts ---
-entry_out="$("$repo_root/scripts/roster" --entry Cypher)"
-[[ "$entry_out" == "$(printf 'Cypher\treviewer\tinteractive')" ]] \
-  || fail "roster --entry Cypher: expected reviewer/interactive, got: $entry_out"
+reviewer_name="$("$repo_root/scripts/roster" --role reviewer | sed -n 1p)"
+[[ -n "$reviewer_name" ]] || fail "roster --role reviewer: the roster names no reviewer"
+entry_out="$("$repo_root/scripts/roster" --entry "$reviewer_name")"
+IFS=$'\t' read -r entry_name entry_role entry_kind <<<"$entry_out"
+[[ "$entry_name" == "$reviewer_name" ]] \
+  || fail "roster --entry $reviewer_name: first field is $entry_name"
+[[ "$entry_role" == "reviewer" ]] \
+  || fail "roster --entry $reviewer_name: second field is $entry_role, expected reviewer"
+[[ "$entry_kind" == "interactive" ]] \
+  || fail "roster --entry $reviewer_name: third field is $entry_kind, expected interactive"
 [[ -f "$repo_root/agents/reviewer.md" ]] || fail "agents/reviewer.md does not exist"
-grep -qx 'model: opus' "$repo_root/agents/reviewer.md" \
-  || fail "agents/reviewer.md: expected a line 'model: opus'"
-pass "Cypher is on the roster as the reviewer, with an agent file declaring its model"
+[[ -n "$(model_of reviewer)" ]] || fail "agents/reviewer.md: declares no model:"
+pass "the roster's reviewer resolves to a reviewer/interactive row, with an agent file declaring a model"
 
 # `agent-state` is checked here rather than run: it writes to a consumer root, which these tests do
 # not have. The phase vocabulary is a list in one `case`, and a role whose words are missing from it
@@ -613,10 +594,8 @@ pass "the reviewer's phases (read check walk report) are accepted by agent-state
 
 # --- agents/architect.md exists with the right frontmatter ---
 [[ -f "$repo_root/agents/architect.md" ]] || fail "agents/architect.md does not exist"
-grep -qx 'model: opus' "$repo_root/agents/architect.md" \
-  || fail "agents/architect.md: expected a line 'model: opus'"
-grep -qx 'effort: xhigh' "$repo_root/agents/architect.md" \
-  || fail "agents/architect.md: expected a line 'effort: xhigh'"
-pass "agents/architect.md exists with model: opus and effort: xhigh"
+[[ -n "$(model_of architect)" ]] || fail "agents/architect.md: declares no model:"
+[[ -n "$(effort_of architect)" ]] || fail "agents/architect.md: declares no effort:"
+pass "agents/architect.md exists and declares both a model and an effort"
 
 echo "all launcher tests passed"

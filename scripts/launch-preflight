@@ -7,7 +7,7 @@
 # the submodule bump actually brought in this role's agent file, and the link it
 # produces resolves. Every launcher runs this immediately before `exec claude`
 # (ah-cuc), so a session that cannot start says why instead of exiting silently
-# (ah-bri) - `run-bishop` used to go `up` for half a second and then `dead` with
+# (ah-bri) - a launcher used to go `up` for half a second and then `dead` with
 # nothing to read anywhere when `agents/architect.md` was missing.
 #
 # usage: launch-preflight <role> <name>
@@ -16,7 +16,7 @@
 #
 # Every check this script owns - claude on PATH, the submodule carrying the role's agent
 # file - exits 2 with one line on stderr naming what is wrong and the command that fixes
-# it, the same exit code run-implementer already uses for a usage error. The sync it runs
+# it, the same exit code `launch` already uses for a usage error. The sync it runs
 # afterwards is not one of those checks: a sync failure is sync-symlinks.sh's own to
 # report, so its exit status and stderr come through unchanged, whatever they are.
 set -euo pipefail

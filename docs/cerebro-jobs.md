@@ -57,7 +57,7 @@ that is kept by name because it is reset rather than merged.
   without being closed" and "Keeping the worktrees tidy"). Same guards, no keypress: this is the
   reading a session is for.
 
-Nothing here changes: start a session with `.claude/cerebro/scripts/run-orchestrator` exactly as
+Nothing here changes: start a session with `.claude/cerebro/scripts/launch Cerebro` exactly as
 before, for exactly these four things.
 
 ## Retired with the sessionless design

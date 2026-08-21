@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 #
 # `launch <Name> [claude args...]` is the only place a session is started and the only place
-# `BEADS_ACTOR`, `launch-preflight` and the model/effort come together. Every `run-*` script is a
-# name for this — kept because the docs and the navigator's fingers know them — but nothing in them
-# does anything of its own any more: this is where that used to live, six times over, and where it
-# drifted (ah-rnz, and this bead's own *Context*).
+# `BEADS_ACTOR`, `launch-preflight` and the model/effort come together. It is also the only *way*:
+# the seven `run-*` shims that used to name it are gone (ah-qled.5.3). They were kept "because the
+# docs and the navigator's fingers know them", and both halves of that had stopped being true — the
+# Emacs fleet view calls this script by name for every agent, and the documentation had drifted onto
+# a shim named for the architect's retired name, which had not existed since that rename.
+#
+# So an agent is named, never a role, and who exists is `scripts/roster` and nothing else. A name
+# that is not on it is refused here, with the roster's own names printed — including a name this
+# fleet has retired, which gets no courtesy redirect: the roster is the answer to who exists.
 #
 # The prompt below deliberately restates nothing about the role: the agent definition
 # (`agents/<role>.md`) is the instruction, and a second copy here is exactly what went stale before.

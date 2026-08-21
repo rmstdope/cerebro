@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-# Starts Xavier, the first planner: a name for `scripts/launch Xavier`, kept because the docs and
-# the navigator's fingers know it. Beast holds the same role and has its own shim, `run-beast` -
-# this one is Xavier's alone. Everything either does lives in `launch`; nothing here may grow.
-exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/launch" Xavier "$@"

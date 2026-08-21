@@ -1441,7 +1441,7 @@ may not exist yet on a fresh machine - `agent-state' and
   (cerebro--fleet-interactive (cerebro--fleet repo-root)))
 
 (defun cerebro--state-file-path (repo-root name)
-  "Where NAME's status file lives, mirroring `statePath' in runImplementer.ts."
+  "Where NAME's status file lives, matching `scripts/agent-state'."
   (expand-file-name (format ".cerebro/state/%s.state.json" name) repo-root))
 
 (defun cerebro--read-state-file (path)
@@ -1787,13 +1787,16 @@ for ever.  Cleared with the record above when the role transitions.")
 
 (defconst cerebro--nudge-message
   (concat "[cerebro] Nobody answered within the timeout. Do not keep waiting: "
-          "put the question and everything you have found into the bead, "
-          "label it `human', release your claim, and finish the run - "
-          "the hand-back in the implement-bead skill.")
-  "What an implementer is told when its question goes unanswered.
+          "put the question and everything you have found into the work item, "
+          "hand it back for a person to decide, exactly as your own instructions describe, "
+          "and finish the run.")
+  "What an interactive agent is told when its question goes unanswered.
 
-It names the hand-back rather than describing it, so the skill stays the
-one place that says how a bead is handed back.")
+It names neither a tracker label nor a skill, for the same reason
+`cerebro--poke-message\=' names no pass: the words go into a live session, and
+how a work item is handed back is the agent\='s own instructions to state, not
+the fleet view\='s.  Saying it in cerebro\='s words would be a second, quieter
+copy of a policy that must have exactly one owner.")
 
 (defun cerebro--nudge (agent)
   "Type `cerebro--nudge-message' into AGENT's session."
@@ -2991,7 +2994,7 @@ would have taken TAB from every vterm the navigator has, fleet or not.
   "Keymap for `cerebro-mode'.")
 
 (define-derived-mode cerebro-mode tabulated-list-mode "Cerebro"
-  "Major mode listing the atlantis-hud agent fleet.
+  "Major mode listing the agent fleet of the repository it is opened in.
 
 \\{cerebro-mode-map}"
   ;; A starting shape only: `cerebro--revert' resizes it from the roster and

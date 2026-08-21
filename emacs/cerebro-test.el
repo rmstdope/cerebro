@@ -3730,3 +3730,21 @@ rather than being truncated away."
          (row (cerebro--entry agent cerebro-test--now nil nil 16)))
     (should (equal (substring-no-properties (aref (nth 1 row) 3))
                    "ah-dzj.1.1.1.1.1"))))
+
+(ert-deftest cerebro-test/no-prose-names-one-particular-consumer ()
+  "`C-h m' shows every user the mode docstring, and `runImplementer.ts' is a
+file in neither repository - a dangling reference implying a Node consumer."
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name "emacs/cerebro.el"))
+    (goto-char (point-min))
+    (should-not (search-forward "atlantis-hud" nil t))
+    (goto-char (point-min))
+    (should-not (search-forward "runImplementer" nil t))))
+
+(ert-deftest cerebro-test/the-nudge-names-no-label-and-no-skill ()
+  "It is typed into a live session, so it must not name this project's
+beads label or the skill it happens to keep the hand-back in."
+  (should-not (string-match-p "human" cerebro--nudge-message))
+  (should-not (string-match-p "implement-bead" cerebro--nudge-message))
+  ;; It still has to say the two things it is for: stop waiting, and finish.
+  (should (string-match-p "\\[cerebro\\]" cerebro--nudge-message)))

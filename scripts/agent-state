@@ -19,17 +19,15 @@
 # recorded as `wake_at` - an absolute ISO-8601 timestamp, so a reader needs no clock arithmetic and
 # no assumption about when the file was written. It is what the agent ASKS for; the fleet view owns
 # the cadence and is free to wake it earlier.
-# <phase>, only meaningful with `working` or `asking`, is one of:
-#   build gate review ci rebase merge          (an implementer)
-#   triage plan                                (a planner: Xavier, Beast)
-#   prepare verify                             (Psylocke)
-#   read check walk report                     (Cypher)
-#   sweep                                      (Moira)
-#   sweep release                              (Cerebro)
-#   daily weekly                               (Forge)
-# The vocabulary is not checked per-role - any of the words above is accepted from any name, the
-# same trade cerebro.el's `cerebro--phases` makes: a wrong word in the State column is not worth a
-# per-role table in bash.
+# <phase>, only meaningful with `working` or `asking`, is any lower-case word: letters, digits and
+# hyphens, starting with a letter. It is NOT a closed set - a consumer that adds a role of its own
+# invents a word for it and this script must record it, which is what the old eighteen-way case
+# prevented (ah-qled.5.2).
+#
+# The words THIS fleet uses are listed once, in `cerebro--phases' (emacs/cerebro.el), together with
+# which role each belongs to. That list is a reference rather than a gate: the vocabulary is not
+# checked per role - any word is accepted from any name - so a wrong word in the State column is
+# still not worth a per-role table in bash.
 # --pid is required and is never defaulted from this script's own parentage: pass the caller's
 # $PPID (the claude process), not $$ (this script's own shell) - a guessed pid shows an agent
 # as dead and starts a second session over it.
@@ -45,7 +43,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  echo "usage: agent-state <name> <idle|working|asking|waiting|done> [--bead <id>] [--phase <build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly|read|check|walk|report>] [--wake-in <seconds>] --pid <pid>" >&2
+  echo "usage: agent-state <name> <idle|working|asking|waiting|done> [--bead <id>] [--phase <word>] [--wake-in <seconds>] --pid <pid>" >&2
   exit 2
 }
 
@@ -56,6 +54,7 @@ shift 2
 
 bead=""
 phase=""
+phase_given=0
 pid=""
 wake_in=""
 
@@ -64,7 +63,7 @@ while [[ $# -gt 0 ]]; do
     --bead)
       bead="${2:-}"; shift 2 ;;
     --phase)
-      phase="${2:-}"; shift 2 ;;
+      phase="${2:-}"; phase_given=1; shift 2 ;;
     --pid)
       pid="${2:-}"; shift 2 ;;
     --wake-in)
@@ -103,13 +102,14 @@ case "$state" in
     exit 2 ;;
 esac
 
-if [[ -n "$phase" ]]; then
-  case "$phase" in
-    build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly|read|check|walk|report) ;;
-    *)
-      echo "agent-state: unknown phase '$phase' (build|gate|review|ci|rebase|merge|triage|plan|prepare|verify|sweep|release|daily|weekly|read|check|walk|report)" >&2
-      exit 2 ;;
-  esac
+if [[ $phase_given -eq 1 ]]; then
+  # A shape, not a closed list (ah-qled.5.2): the words this fleet uses live in `cerebro--phases'
+  # (emacs/cerebro.el), and a consumer's own role is free to invent one. What is still refused is a
+  # malformed word, which is a typo rather than a vocabulary anyone chose.
+  if [[ ! "$phase" =~ ^[a-z][a-z0-9-]*$ || "$phase" == *- ]]; then
+    echo "agent-state: phase '$phase' is not a phase word (lower-case letters, digits and hyphens; see cerebro--phases in emacs/cerebro.el for the ones this fleet uses)" >&2
+    exit 2
+  fi
   # A phase is only meaningful with a bead in flight - writing one into an idle or done file would
   # leave the state file internally inconsistent (a phase with no bead being worked).
   case "$state" in

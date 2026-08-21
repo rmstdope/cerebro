@@ -345,7 +345,13 @@ fails to parse, renders as the empty string."
   '("build" "gate" "review" "ci" "rebase" "merge"
     "triage" "plan" "prepare" "verify" "sweep" "release" "daily" "weekly"
     "read" "check" "walk" "report")
-  "The phase vocabulary. Mirrors scripts/agent-state.
+  "The phase vocabulary this fleet uses.
+
+`scripts/agent-state' no longer enforces it - any lower-case word is
+accepted, so that a consumer adding a role of its own can report state at
+all (ah-qled.5.2).  This list is what *these* agents use, kept in step with
+them by tests/launchers.sh, and it is the only place saying which words
+belong to which role.
 
 Not divided by role in code - the fleet list shows whatever word a state
 file carries, in the State column, and a wrong word for the role in that

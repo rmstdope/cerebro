@@ -85,11 +85,19 @@ pass "a main consumer behaves exactly as before"
 #
 # The resolver supplies the DEFAULT for --from, and must not override a caller that named a ref.
 c="$(make_consumer explicit trunk)"
+# `other` must DIVERGE from origin/trunk, or the assertion cannot fail: straight after the clone
+# every ref points at the same `init` commit, so a worktree made from either lands on it and the
+# case would pass whether --from was honoured or ignored.
 git_q -C "$c" branch other
+git_q -C "$c" commit -q --allow-empty -m "on other"
+git_q -C "$c" branch -f other HEAD
+git_q -C "$c" reset -q --hard HEAD~1
 run_prepare "$c" --path .cerebro/worktrees/ah-3 --branch ah-3-work --from other >/dev/null \
   || fail "explicit: prepare-worktree failed with an explicit --from"
 [[ "$(git -C "$c/.cerebro/worktrees/ah-3" rev-parse HEAD)" == "$(git -C "$c" rev-parse other)" ]] \
   || fail "explicit: --from was ignored"
+[[ "$(git -C "$c/.cerebro/worktrees/ah-3" rev-parse HEAD)" != "$(git -C "$c" rev-parse origin/trunk)" ]] \
+  || fail "explicit: the worktree is at origin/trunk, so --from proved nothing"
 pass "an explicit --from still wins over the resolved branch"
 
 echo "all prepare-worktree tests passed"

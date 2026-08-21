@@ -223,5 +223,89 @@ printf 'release_watch  Release\n' > "$conf"
 out="$("$project_conf" release_watch 2>/dev/null)"
 [[ "$out" == "Release" ]] || fail "release_watch declared: expected 'Release', got '$out'"
 pass "a declared release_watch names the workflow"
+# --- a declared gate is read whole, arguments included (ah-qled.7.1) ---
+#
+# The gate is a COMMAND LINE, exactly as `install' is: whatever the consumer declared runs to the
+# end of the line, so a value with flags in it must survive intact.
+cat >> "$conf" <<'CONF'
+gate_fast      pnpm run check:fast
+gate_full      pnpm run check
+CONF
+out="$("$project_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "pnpm run check:fast" ]] || fail "gate_fast: expected the whole command, got '$out'"
+out="$("$project_conf" gate_full 2>/dev/null)"
+[[ "$out" == "pnpm run check" ]] || fail "gate_full: expected the whole command, got '$out'"
+pass "a declared gate is read whole"
+
+# --- a detected gate SAYS it was detected (ah-qled.1's rule) ---
+#
+# Detection is a convenience, never a silent one: an agent about to trust a green result should know
+# the harness chose the command rather than the project declaring it.
+gate_repo="$work_dir/gaterepo"
+mkdir -p "$gate_repo/.claude/cerebro/scripts"
+git init -q "$gate_repo"
+git -C "$gate_repo" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
+for s in consumer-root project-conf; do
+  ln -s "$repo_root/scripts/$s" "$gate_repo/.claude/cerebro/scripts/$s"
+done
+gate_conf="$gate_repo/.claude/cerebro/scripts/project-conf"
+cat > "$gate_repo/package.json" <<'JSON'
+{ "name": "x", "scripts": { "check:fast": "eslint .", "check": "eslint . && vitest run" } }
+JSON
+touch "$gate_repo/package-lock.json"
+
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "npm run check:fast" ]] || fail "detected gate_fast: expected 'npm run check:fast', got '$out'"
+err="$("$gate_conf" gate_fast 2>&1 >/dev/null)"
+echo "$err" | grep -q "detected" || fail "detected gate_fast: expected stderr to say it was detected, got: $err"
+pass "a detected gate says it was detected"
+
+out="$("$gate_conf" gate_full 2>/dev/null)"
+[[ "$out" == "npm run check" ]] || fail "detected gate_full: expected 'npm run check', got '$out'"
+pass "the full gate is detected too"
+
+# --- the runner comes from the lockfile: pnpm and yarn, not only npm ---
+rm "$gate_repo/package-lock.json"
+touch "$gate_repo/pnpm-lock.yaml"
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "pnpm run check:fast" ]] || fail "pnpm runner: expected 'pnpm run check:fast', got '$out'"
+rm "$gate_repo/pnpm-lock.yaml"
+touch "$gate_repo/yarn.lock"
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "yarn run check:fast" ]] || fail "yarn runner: expected 'yarn run check:fast', got '$out'"
+rm "$gate_repo/yarn.lock"
+touch "$gate_repo/package-lock.json"
+pass "the runner is taken from the lockfile"
+
+# --- a Makefile target is detected, and announced ---
+rm "$gate_repo/package.json"
+cat > "$gate_repo/Makefile" <<'MAKE'
+check:
+	true
+MAKE
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "make check" ]] || fail "Makefile gate: expected 'make check', got '$out'"
+err="$("$gate_conf" gate_fast 2>&1 >/dev/null)"
+echo "$err" | grep -q "detected" || fail "Makefile gate: expected stderr to say it was detected, got: $err"
+pass "a Makefile target is detected, and announced"
+
+# --- a cargo project falls back to cargo test ---
+rm "$gate_repo/Makefile"
+echo '[package]' > "$gate_repo/Cargo.toml"
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+[[ "$out" == "cargo test" ]] || fail "cargo gate: expected 'cargo test', got '$out'"
+err="$("$gate_conf" gate_fast 2>&1 >/dev/null)"
+echo "$err" | grep -q "detected" || fail "cargo gate: expected stderr to say it was detected, got: $err"
+rm "$gate_repo/Cargo.toml"
+pass "a cargo project falls back to cargo test"
+
+# --- neither declared nor detectable yields nothing: the refusal's input ---
+set +e
+out="$("$gate_conf" gate_fast 2>/dev/null)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "undetectable gate: expected exit 0, got $status"
+[[ -z "$out" ]] || fail "undetectable gate: expected nothing, got '$out'"
+pass "a gate that is neither declared nor detectable yields nothing"
 
 echo "all project-conf tests passed"

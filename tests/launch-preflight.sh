@@ -91,7 +91,9 @@ advance_origin() {
 # to the fixture and nothing outside $work_dir is ever looked at.
 run_preflight() {
   local consumer="$1"
-  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/launch-preflight" planner Xavier
+  local role="${2:-planner}"
+  local name="${3:-Xavier}"
+  PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/launch-preflight" "$role" "$name"
 }
 
 head_of() { git -C "$1" rev-parse HEAD; }
@@ -271,5 +273,43 @@ rm -rf "$standalone/.git"
 PATH="$stub_dir:$PATH" bash "$standalone/scripts/launch-preflight" planner Xavier \
   || fail "standalone: expected exit 0"
 pass "a standalone clone is untouched"
+
+# --- an implementer with no fast gate is refused (ah-qled.7.1) ------------------------------------
+#
+# The bead: implement-bead names no tool any more, so an implementer with no declared and no
+# detectable gate has nothing to run before it opens a PR - and an agent with nothing to run
+# improvises. A loud refusal at launch beats a green report nobody earned.
+c="$(make_consumer nogate)"
+set +e
+out="$(run_preflight "$c" implementer Cyclops 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "no gate: expected exit 2, got $status"
+echo "$out" | grep -q "gate_fast" || fail "no gate: expected the message to name gate_fast, got: $out"
+echo "$out" | grep -q "submodule is behind" && fail "no gate: the message blames the submodule, got: $out"
+pass "an implementer with no fast gate is refused, and the message names the gate"
+
+# --- a planner with no fast gate still launches ----------------------------------------------------
+#
+# A planner, a verifier or the orchestrator has no gate to run; refusing them would take the whole
+# fleet down over a key that does not concern them.
+c="$(make_consumer nogateplanner)"
+run_preflight "$c" planner Xavier || fail "no gate, planner: expected exit 0"
+pass "a planner with no fast gate still launches"
+
+# --- an implementer with a declared gate launches --------------------------------------------------
+c="$(make_consumer withgate)"
+echo "gate_fast make check" > "$c/.claude/cerebro-project.conf"
+run_preflight "$c" implementer Cyclops || fail "declared gate: expected exit 0"
+pass "an implementer whose project declares a gate launches"
+
+# --- implement-bead names no tool -------------------------------------------------------------------
+#
+# The bead's own acceptance: the skill an implementer reads in a Python project must not tell it to
+# run pnpm or cargo. :363's disk preflight is ah-qled.7.2's and may remain.
+hits="$(grep -nE "pnpm|cargo" "$repo_root/skills/implement-bead/SKILL.md" || true)"
+leftover="$(echo "$hits" | grep -v "diskPreflight" || true)"
+[[ -z "$leftover" ]] || fail "implement-bead still names a tool: $leftover"
+pass "implement-bead names no build tool but the disk preflight"
 
 echo "all launch-preflight tests passed"

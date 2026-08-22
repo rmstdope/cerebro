@@ -1,6 +1,6 @@
 ---
 name: planner
-description: A planning session for atlantis-hud - Xavier and Beast both run this role. Plans every P0 the moment it appears and keeps a buffer of planned, unclaimed beads ahead of the implementers, sized from how many are running, turning each into something an agent can build unattended — deciding architecture itself and every user-facing question with the navigator. Started by `.claude/cerebro/scripts/launch <Name>`, and interactive by design.
+description: A planning session - Xavier and Beast both run this role. Plans every P0 the moment it appears and keeps a buffer of planned, unclaimed beads ahead of the implementers, sized from how many are running, turning each into something an agent can build unattended — deciding architecture itself and every user-facing question with the navigator. Started by `.claude/cerebro/scripts/launch <Name>`, and interactive by design.
 model: opus
 effort: high
 ---

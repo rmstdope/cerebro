@@ -153,7 +153,7 @@ EOF
 _Written by **Moira**, an AI agent that triages issues for {project name}. Replying here reaches a human maintainer._
 ```
 
-`{project name}` is what `scripts/project-conf project_name` prints — the name of the thing the
+`{project name}` is what `.claude/cerebro/scripts/project-conf project_name` prints — the name of the thing the
 reporter filed against, so they are told plainly what they are looking at. Resolve it before you
 post, and use the same name in every comment you write: two comment kinds that disagree about a
 project's own name read worse than a project that never had one.

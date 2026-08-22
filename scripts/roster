@@ -80,8 +80,22 @@ kind_of() {
 # It REPLACES this table rather than merging with it. File order is load-bearing - `plan-bead' gives
 # the P4 triage pass to the first planner listed, and Cerebro takes the next unused implementer name
 # in file order - and a merged order is nobody's decision.
+#
+# Two candidate paths, first hit wins (ah-ohc2). The arithmetic comes FIRST and needs no git, so the
+# standard mount keeps working under the narrowed PATH above. The second is for a consumer that
+# vendors cerebro as a submodule somewhere else - `vendor/cerebro', a sibling checkout - and is
+# tried only when `git' is actually there, skipped in silence when it is not. Under the narrowed
+# PATH the second candidate simply does not resolve and roster falls back to the built-in table,
+# which is exactly what tests/launchers.sh asserts: DO NOT "simplify" this into a hard git
+# dependency or a call to `consumer-root', or that guarantee goes with it.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONSUMER_ROSTER="$here/../../cerebro-roster"
+if [[ ! -f "$CONSUMER_ROSTER" ]] && command -v git >/dev/null 2>&1; then
+  superproject="$(git -C "$here" rev-parse --show-superproject-working-tree 2>/dev/null)" || superproject=""
+  if [[ -n "$superproject" && -f "$superproject/.claude/cerebro-roster" ]]; then
+    CONSUMER_ROSTER="$superproject/.claude/cerebro-roster"
+  fi
+fi
 
 parse_rows() {
   while IFS= read -r line; do

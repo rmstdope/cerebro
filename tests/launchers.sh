@@ -289,6 +289,35 @@ out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at")"
 rm -f "$consumer_roster_file"
 pass "roster reads the consumer file with PATH narrowed to dirname and bash - no git crept in"
 
+# --- a consumer roster at a mount other than .claude/cerebro (ah-ohc2) ---------------------------
+#
+# `roster' finds a consumer's file by path arithmetic (`../../cerebro-roster'), which answers only
+# for the standard mount. A consumer that vendors cerebro as a submodule elsewhere gets its own
+# roster too, from a SECOND candidate: `<superproject>/.claude/cerebro-roster', tried only when git
+# is on PATH and skipped silently when it is not - which is what keeps the narrowed-PATH guarantee
+# above true. Candidate order matters: the arithmetic first, so the standard mount never needs git.
+alt_cerebro="$(mktemp -d)/cerebro-src"
+mkdir -p "$alt_cerebro/scripts"
+cp "$repo_root/scripts/roster" "$alt_cerebro/scripts/roster"
+git init -q "$alt_cerebro"
+git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com add -A
+git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com commit -q -m cerebro
+
+alt_consumer="$(mktemp -d)/alt"
+git init -q "$alt_consumer"
+git -C "$alt_consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
+git -C "$alt_consumer" -c user.name=test -c user.email=test@example.com \
+  -c protocol.file.allow=always submodule add -q "$alt_cerebro" vendor/cerebro
+alt_roster_at="$alt_consumer/vendor/cerebro/scripts/roster"
+
+[[ "$("$alt_roster_at")" == "$roster_out" ]] \
+  || fail "alternative mount with no consumer file: expected the built-in table"
+mkdir -p "$alt_consumer/.claude"
+printf 'Ada  planner\nTuring  implementer\n' > "$alt_consumer/.claude/cerebro-roster"
+[[ "$("$alt_roster_at")" == "$(printf 'Ada\tplanner\tinteractive\nTuring\timplementer\timplementer')" ]] \
+  || fail "alternative mount: expected the consumer's roster, got: $("$alt_roster_at")"
+pass "roster finds a consumer file from a submodule mounted at vendor/cerebro"
+
 # --- a consumer-only role launches, and a role with no file anywhere is refused by its right name -
 mkdir -p "$roster_consumer/.claude/agents"
 cat > "$roster_consumer/.claude/agents/archivist.md" <<'AGENT'

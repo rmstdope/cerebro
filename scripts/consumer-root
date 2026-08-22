@@ -9,13 +9,51 @@
 #                            sweeps look. Right for anything the fleet reads or that reasons about
 #                            the whole repository. From the main checkout both answers are equal.
 #
-# Exit 1 with a message when this checkout is not mounted at <consumer>/.claude/cerebro (a
-# standalone clone of cerebro has no consumer), or when --shared is asked outside a git tree.
+# The mount may be <consumer>/.claude/cerebro or, for a consumer that vendors cerebro as a SUBMODULE
+# somewhere else entirely (vendor/cerebro, tools/cerebro, ...), wherever it put it - see the two
+# resolution steps below. A vendored *copy* that is not a submodule is only found at the standard
+# mount, and is otherwise unsupported.
+#
+# Exit 1 with a message when neither answers (a standalone clone of cerebro has no consumer), or
+# when --shared is asked outside a git tree.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-enclosing="$(cd "$script_dir/../../.." 2>/dev/null && pwd -P)" || enclosing=""
-if [[ -z "$enclosing" || "$(cd "$enclosing/.claude/cerebro" 2>/dev/null && pwd -P)" != "$(cd "$script_dir/.." && pwd -P)" ]]; then
+
+# Two ways of answering, tried in order (ah-ohc2).
+#
+# 1. The path arithmetic, which needs no git: this script lives at
+#    <consumer>/.claude/cerebro/scripts, and the round trip back through `.claude/cerebro' is what
+#    rejects a standalone clone of cerebro - whatever changes here must keep rejecting one, or this
+#    would start answering with somebody's home directory.
+#
+#    It goes FIRST for two reasons. The bare form of this script uses no external command today, and
+#    tests/launchers.sh runs a launcher with a PATH of `dirname' and `bash' alone: asking git first
+#    would put git on the standard mount's path for no gain. And the probe below answers about
+#    whatever repository this checkout belongs to - for a plain (non-submodule) COPY at the standard
+#    mount that is the consumer's own repo, so a consumer that is itself a submodule of something
+#    else would resolve to its grandparent. The validated arithmetic cannot make that mistake.
+#    `scripts/roster' orders its two candidates the same way, and for the same reasons.
+#
+# 2. Ask git which working tree contains this checkout as a submodule.
+#    `--show-superproject-working-tree' is purpose-built for exactly that question and answers
+#    however deep the mount is and whatever it is called, so a consumer that vendors cerebro at
+#    `vendor/cerebro' or `tools/cerebro' gets a fleet like any other. Its failure is SWALLOWED: git
+#    may not be on PATH at all, and that must leave the standard mount working rather than failing.
+#
+#    It answers for a real SUBMODULE and nothing else. A vendored *copy* outside the standard mount
+#    is still unsupported: nothing here can find it, and inventing a marker-file search for a case
+#    nobody has is not the answer.
+candidate="$(cd "$script_dir/../../.." 2>/dev/null && pwd -P)" || candidate=""
+if [[ -n "$candidate" && "$(cd "$candidate/.claude/cerebro" 2>/dev/null && pwd -P)" == "$(cd "$script_dir/.." && pwd -P)" ]]; then
+  enclosing="$candidate"
+else
+  enclosing="$(git -C "$script_dir" rev-parse --show-superproject-working-tree 2>/dev/null)" || enclosing=""
+  if [[ -n "$enclosing" ]]; then
+    enclosing="$(cd "$enclosing" 2>/dev/null && pwd -P)" || enclosing=""
+  fi
+fi
+if [[ -z "$enclosing" ]]; then
   echo "consumer-root: $script_dir is not <consumer>/.claude/cerebro/scripts" >&2
   exit 1
 fi

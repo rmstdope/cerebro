@@ -292,18 +292,58 @@ pass "the claim, epic and stalled sweeps come back clean on a trunk-branched con
 run_at prune-worktrees.sh --dry-run >/dev/null || fail "prune-worktrees.sh: non-zero exit"
 pass "prune-worktrees.sh sweeps a consumer whose worktrees hold nothing to reclaim"
 
+# --- a consumer that vendors cerebro somewhere else entirely (ah-ohc2) ----------------------------
+#
+# Everything above is a consumer at the standard mount, `<consumer>/.claude/cerebro'. This one keeps
+# cerebro as a submodule at `vendor/cerebro' and must still get its consumer root, its project facts
+# and its own fleet.
+#
+# A REAL submodule, not a copied directory, and that is the supported shape rather than a
+# convenience of the fixture: the resolution asks git which working tree contains this checkout as a
+# submodule, which answers for a submodule and nothing else. An arbitrarily-PLACED copy - vendored
+# by hand, outside the standard mount - is still unsupported, and scripts/consumer-root says so.
+# (The stub this replaced sketched a plain `mkdir -p vendor/cerebro'; that is the unsupported case.)
+cerebro_src="$work_dir/cerebro-src"
+mkdir -p "$cerebro_src"
+for d in scripts agents skills hooks; do
+  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$cerebro_src/"
+done
+git init -q "$cerebro_src"
+git_q -C "$cerebro_src" add -A
+git_q -C "$cerebro_src" commit -q -m "cerebro"
+
+alt="$work_dir/alt"
+git init -q -b "$branch" "$alt"
+git_q -C "$alt" commit -q --allow-empty -m init
+git_q -C "$alt" -c protocol.file.allow=always submodule add -q "$cerebro_src" vendor/cerebro
+alt_root="$(cd "$alt" && pwd -P)"
+alt_scripts="$alt/vendor/cerebro/scripts"
+
+run_alt() { PATH="$stub_dir:$PATH" bash "$alt_scripts/$@"; }
+
+[[ "$(run_alt consumer-root)" == "$alt_root" ]] \
+  || fail "an alternative mount point: got $(run_alt consumer-root), wanted $alt_root"
+[[ "$(run_alt consumer-root --shared)" == "$alt_root" ]] \
+  || fail "an alternative mount point --shared: got $(run_alt consumer-root --shared)"
+pass "consumer-root resolves a consumer that vendors cerebro at vendor/cerebro"
+
+mkdir -p "$alt/.claude"
+printf 'project_name Vendored\ngate_fast true\n' > "$alt/.claude/cerebro-project.conf"
+[[ "$(run_alt project-conf project_name 2>/dev/null)" == "Vendored" ]] \
+  || fail "project-conf from an alternative mount: got $(run_alt project-conf project_name 2>/dev/null)"
+pass "project facts are the consumer's from an alternative mount, with no change to project-conf"
+
+printf 'Ada  planner\nTuring  implementer\n' > "$alt/.claude/cerebro-roster"
+[[ "$(run_alt roster)" == "$(printf 'Ada\tplanner\tinteractive\nTuring\timplementer\timplementer')" ]] \
+  || fail "roster from an alternative mount: got $(run_alt roster)"
+pass "the consumer's own fleet is found from an alternative mount"
+
+
 # --- not yet: each of these is a bead, and a red assertion here would block the repository ---------
 #
 # ah-qled.7.2 (in progress) - the disk check and the retrospective sweep read the consumer's own
 # `disk_floor_gb' and `retro_dir' rather than this project's values.
 #   run_at disk-preflight >/dev/null || fail "disk-preflight: refused the consumer"
 #   [[ "$(run_at retro-sightings "a symptom")" == *"doc/retro"* ]] || fail "retro-sightings: not the consumer's retro_dir"
-#
-# ah-ohc2 - cerebro mounted anywhere but `<consumer>/.claude/cerebro'. `consumer-root' derives the
-# consumer by fixed path arithmetic and `roster' finds `../../cerebro-roster' the same way, so a
-# consumer that vendors cerebro elsewhere gets "not <consumer>/.claude/cerebro/scripts" and no
-# fleet at all.
-#   alt="$work_dir/alt"; mkdir -p "$alt/vendor/cerebro"
-#   [[ "$(bash "$alt/vendor/cerebro/scripts/consumer-root")" == "$alt" ]] || fail "an alternative mount point"
 
 echo "all consumer-fixture assertions passed"

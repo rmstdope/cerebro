@@ -18,8 +18,12 @@
 # Safe means **nothing can be lost**, which is a stronger and simpler test than "nobody is using it":
 #
 #   1. It is under `.cerebro/worktrees/` or `.claude/worktrees/`. The main checkout is never
-#      touched. The second path is the pre-`.cerebro/`-move location — nothing else sweeps it, and a
-#      2.1 GB tree sat there, registered and invisible, until ah-gdp added it here.
+#      touched. **`.cerebro/worktrees/` is where worktrees live** — it is the one canonical home,
+#      and everything that makes a tree here makes it there (ah-aln5). `.claude/worktrees/` is the
+#      pre-`.cerebro/`-move location, recognised here for one reason only: so a tree left behind by
+#      that move can still be SWEPT. Nothing else sweeps it, and a 2.1 GB tree sat there, registered
+#      and invisible, until ah-gdp added it here. **It is not a second home to write to**, and once
+#      no pre-move tree survives, this arm can go.
 #   2. The working tree is clean — no modified files, no untracked ones.
 #   3. Its branch holds no commit that the default branch on origin does not already have.
 #   4. Nothing has changed in it for a while (see STALE_MINUTES), so a tree that was created moments
@@ -28,10 +32,13 @@
 # Fail any one and it stays, with the reason printed. Together they mean the directory can go without
 # destroying a line of anybody's work: the commits are on main and there is nothing uncommitted.
 #
-# One named exception, at **either** path: **the fleet's verifier** is kept by name, unconditionally,
-# ahead of all four checks. It is the verification tree (ah-p31) — reset hard to the default branch
-# before every use rather than merged, so it never satisfies "holds no commit main lacks" the way a
-# normal agent worktree does, and there is nothing in it to lose by keeping it either way.
+# One named exception, **at the canonical path only** (ah-aln5): **the fleet's verifier** is kept by
+# name, unconditionally, ahead of all four checks — when its tree is where worktrees live. The same
+# name under the legacy path is a pre-move leftover, and is judged by rules 2-4 like any other tree.
+#
+# The exception exists because it is the verification tree (ah-p31) — reset hard to the default
+# branch before every use rather than merged, so it never satisfies "holds no commit main lacks" the
+# way a normal agent worktree does, and there is nothing in it to lose by keeping it either way.
 #
 # Which name that is comes from `scripts/roster --role verifier` rather than from a literal here
 # (ah-qled.4). A literal `psylocke` in the control flow of a destructive script means a consumer that
@@ -146,15 +153,21 @@ declared_reclaim_dirs="$("$script_dir/project-conf" reclaim_dirs 2>/dev/null || 
 merged_check="$("$script_dir/project-conf" merged_check gh 2>/dev/null || echo gh)"
 [ -n "$merged_check" ] || merged_check="gh"
 
-# The name of the tree kept unconditionally at either path, taken from the roster rather than
-# written here. Empty when the fleet has no verifier, which grants the exception to nobody.
+# The name of the tree kept unconditionally, taken from the roster rather than written here. Empty
+# when the fleet has no verifier, which grants the exception to nobody.
 verifier_name="$("$script_dir/roster" --role verifier 2>/dev/null | head -1 || true)"
 verifier_lc="$(printf '%s' "$verifier_name" | tr '[:upper:]' '[:lower:]')"
 
 is_verifier_tree() {
-  # $1 = the worktree's basename. Case-insensitive, as the lowercased literal it replaces was.
+  # $1 = the worktree's basename, $2 = its full path. Case-insensitive on the name, as the
+  # lowercased literal it replaces was — and CANONICAL PATH ONLY (ah-aln5). The verifier's tree
+  # lives in `.cerebro/worktrees/`; a tree of the same name under `.claude/worktrees/` is a
+  # pre-move leftover nothing has used since, and granting it the exception meant this script
+  # protected 350 MB of stale worktree from itself, for ever. It is now judged by rules 2-4 like
+  # any other tree — which is a narrowing of the EXCEPTION, never of rule 1's recognition.
   [ -n "$verifier_lc" ] || return 1
-  [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$verifier_lc" ]
+  [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$verifier_lc" ] || return 1
+  case "$2" in "$repo_root"/.cerebro/worktrees/*) return 0 ;; *) return 1 ;; esac
 }
 
 # Whether everything in this worktree is already on main.
@@ -360,7 +373,7 @@ sweep() {
     local name reason=""
     name="$(basename "$tree")"
 
-    if is_verifier_tree "$name"; then
+    if is_verifier_tree "$name" "$tree"; then
       reason="it is $verifier_name's verification tree, reset to origin/$default_branch before every use (ah-p31)"
       reclaim_cold_target "$tree" "$name"
     elif [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
@@ -374,7 +387,7 @@ sweep() {
     if [ -n "$reason" ]; then
       echo "prune-worktrees: keeping $name — $reason"
       kept=$((kept + 1))
-      is_verifier_tree "$name" || pressure_candidates+=("$name:$tree")
+      is_verifier_tree "$name" "$tree" || pressure_candidates+=("$name:$tree")
       continue
     fi
 

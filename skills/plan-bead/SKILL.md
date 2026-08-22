@@ -124,7 +124,7 @@ reading of the bead, not against a bare id.
 the inbox for external requests and bug reports, so that ref means somebody outside this fleet hit
 the thing, cared enough to write it up, and is now waiting to hear what happened. Every other P4 bead
 was filed by an agent or by the navigator from inside the project. That is a real difference in
-evidence — a reported defect is one that demonstrably reaches a player, where an agent's tidy-up is a
+evidence — a reported defect is one that demonstrably reaches the audience, where an agent's tidy-up is a
 guess about what might matter — and it is a difference the ranking should reflect.
 
 So, for any candidate with an `external_ref`:
@@ -802,7 +802,7 @@ What that means in practice:
   — every bead fixes or improves something. Say what becomes true.
 - **No internal names** unless the module *is* the subject. A title is read by someone who does not
   know the file layout; `hexMapModel` in a title spends the reader's attention on nothing.
-- **For a bug, the symptom.** What the player sees, not the suspected cause — the cause is a guess
+- **For a bug, the symptom.** What the audience sees, not the suspected cause — the cause is a guess
   until it is investigated, and a title claiming the wrong one misdirects everyone who reads it.
 - **About seventy characters**, and a whole thought. If it needs a colon and a clause to be
   understood, the part before the colon is usually the whole title.

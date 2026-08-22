@@ -158,7 +158,7 @@ A pass runs in this order: free abandoned labels, plan every unplanned P0 whatev
 like, then fill the buffer to twice the number of running implementers (never fewer than four), then
 sleep ten minutes and look again.
 
-**It will interrupt you**, and this is the part worth your attention. Anything a player sees —
+**It will interrupt you**, and this is the part worth your attention. Anything the audience sees —
 layout, wording, what a control is called, what happens on a click — is yours to decide, not the
 agent's. It will propose, usually with a self-contained HTML mockup you can open in a browser, and
 wait for you to choose. Architecture, file layout, test shape and ordering it decides by itself.
@@ -336,7 +336,7 @@ One session, interactive, and it works a PR at a time:
   handling, docs, scope.
 - **It shows you every user-visible change, running.** Same discipline as Psylocke: prepare
   everything first, warm the build, check the port, ask whether you are ready, brief you, launch, and
-  record your verdict in your words. A PR that touches nothing a player sees skips this in one line.
+  record your verdict in your words. A PR that touches nothing the audience sees skips this in one line.
 - **It posts one review comment per pass** — never an approval, never a merge, never a push to the
   contributor's branch — ranked so a defect and a naming preference are not the same class, and then
   tells you what it recommends. **You merge.**
@@ -353,7 +353,7 @@ that the merged result actually does what it was supposed to, until **Psylocke**
 .claude/cerebro/scripts/launch Psylocke
 ```
 
-She walks beads closed since her last pass, works out on her own which ones touched anything a player
+She walks beads closed since her last pass, works out on her own which ones touched anything the audience
 could see — a change to `.claude/`, `docs/`, or CI is marked and skipped without ever bothering you —
 and for the rest, prepares everything she can before she asks for your time: what the bead claimed,
 which shell to launch (web or desktop), which fixture report to load, and what you should look for.
@@ -529,7 +529,7 @@ send it to a planner (`--remove-label human`, leave `planned` off) rather than t
 
 ## What agents never decide
 
-- Anything a player sees. That is the whole reason the planners talk to you, and why Psylocke and
+- Anything the audience sees. That is the whole reason the planners talk to you, and why Psylocke and
   Cypher put a running application in front of you rather than describing it.
 - Whether to merge something red, stale, or unreviewed — and for a PR from outside, whether to merge
   it at all.

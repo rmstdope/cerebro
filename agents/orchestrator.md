@@ -743,7 +743,7 @@ the answer is one question:
 
 - **maintenance** — `x.y.Z+1`, a fix release off what is already shipped.
 - **minor** — `x.Y+1.0`, new user-visible behaviour.
-- **major** — `X+1.0.0`, a break in what players or their saved data can expect.
+- **major** — `X+1.0.0`, a break in what the audience can expect, or in data they already have.
 
 ### First: a clean and up-to-date main
 
@@ -875,7 +875,7 @@ and what has shipped today.
 - Never implement a bead yourself, never claim one, and never touch a worktree an implementer owns.
   If you find yourself editing application code, you have taken the wrong job.
 - Never plan a bead. Planning is the planners' — Xavier and Beast, interactive sessions with the
-  navigator (`launch Xavier`, `launch Beast`) — and it needs judgement about what the player sees that
+  navigator (`launch Xavier`, `launch Beast`) — and it needs judgement about what the audience sees that
   this role does not have. If the planned queue is running dry, say so and suggest the navigator
   start whichever planner is down; do not start it yourself and do not plan "just this one".
 - Never ask the navigator to start more implementers to "keep the queue moving" while they are away.

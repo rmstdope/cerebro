@@ -54,7 +54,7 @@ out="$("$app_paths" --classify packages/shared/src/x.ts 2>/dev/null)"
 [[ "$out" == "application" ]] || fail "classify application: got '$out'"
 pass "a path under an application directory classifies as application"
 
-# --- classification: everything else is invisible to a player ---
+# --- classification: everything else is invisible to the audience ---
 for p in .claude/agents/planner.md docs/ui/x.html scripts/release.sh .github/workflows/ci.yml; do
   out="$("$app_paths" --classify "$p" 2>/dev/null)"
   [[ "$out" == "invisible" ]] || fail "classify invisible: $p got '$out'"

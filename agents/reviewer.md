@@ -138,7 +138,7 @@ The repository has shapes, and a change that ignores them costs more later than 
 - Does it cross a boundary the codebase keeps: the core answering through its published API rather
   than the UI reaching past it, the ruleset owning the vocabulary the UI merely displays.
 - Public API, file formats and persisted settings: does this change one, and is that change
-  backwards-compatible for a player who upgrades?
+  backwards-compatible for anyone who upgrades?
 - Comments where this repository would have them — the *why*, not the *what*.
 
 ### 3. Are the regression tests enough?
@@ -175,9 +175,9 @@ Two budgets, and a change can blow either.
 - **Dependencies.** A new one is a decision, not a detail: is it maintained, how big, what licence,
   and does the repository already have something that does it? Lockfile changes that nobody
   mentioned are worth a question.
-- **Secrets and data.** Keys, tokens, real player data or a fixture that is somebody's actual save.
+- **Secrets and data.** Keys, tokens, real data belonging to the audience, or a fixture that is somebody's actual save.
 - **Error handling.** Failures that vanish into a swallowed exception, `unwrap()` on input that
-  comes from a file a player supplies, a promise nobody awaits.
+  comes from a file the audience supplies, a promise nobody awaits.
 - **Documentation.** If the change alters how somebody uses or runs the thing, does the README, the
   docs page or the skill that describes it change with it?
 - **Scope.** A PR that fixes the bug *and* reformats a file is two reviews wearing one hat; say so
@@ -188,7 +188,7 @@ Two budgets, and a change can blow either.
 
 ## The user experience is the navigator's, always
 
-**Anything in this PR that a player would see, the navigator looks at with their own eyes before you
+**Anything in this PR that the audience would see, the navigator looks at with their own eyes before you
 recommend anything.** Not a screenshot you describe, not your reading of the diff: the application,
 running, in front of them.
 
@@ -212,7 +212,7 @@ When it is:
    -sTCP:LISTEN`. Anything already listening is a refusal, not something to reuse: tell them the
    port and the pid, and wait.
 4. **Ask whether they are ready** (sandwich), then brief: the sha you built, what changed from the
-   player's side, what to try, and what "right" looks like. Then launch.
+   audience's side, what to try, and what "right" looks like. Then launch.
 5. **Take their verdict in their words** and put it in the review in their words. "The panel jumps
    when you resize it" is a finding; "UX reviewed and approved" is not.
 6. **A yes here is not a merge.** It is one input to the recommendation you write next.

@@ -21,6 +21,10 @@
 #      "event"`, closed, carrying the very labels these queries key on. Left in, each pass finds
 #      the previous pass's event beads, acts on them, and writes more - a chain that grows one link
 #      per pass, forever (ah-9gm). Never label an event bead.
+#   4. `bd` answers about the repository it is run in. Every query here passes `-C` with the root
+#      from `consumer-root --shared`, because a caller in an agent worktree is not in the checkout
+#      the fleet reasons about - and a wrong-root answer is an empty list that reads as a quiet day
+#      rather than an error (ah-il8j).
 #
 # Epics and events are excluded TWICE, on purpose: `--exclude-type epic,event` on the `bd` call
 # does the work, and the `jq` guard keeps the answer right under a `bd` whose `--exclude-type` does
@@ -64,8 +68,20 @@ done
 
 excluded_csv="$(IFS=,; echo "${excluded_types[*]}")"
 
-argv=(bd list --status "$status" --exclude-type "$excluded_csv" --json)
-[[ -n "$closed_after" ]] && argv=(bd list --status "$status" --closed-after "$closed_after" --exclude-type "$excluded_csv" --json)
+# The shared checkout every worktree has in common - see scripts/consumer-root's header for the two
+# roots and why a fleet-wide question needs the shared one. Resolved AFTER the argument loop, so
+# `--print-excluded-types`, which answers a question about this script rather than about a database,
+# keeps working with no repository at all. The message goes to stderr and stdout stays empty (see
+# the header): a caller pipes this stdout into `jq`, so a JSON error object there would be read as
+# a list.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
+  echo "work-beads: not in a git repository, or this copy of cerebro has no consumer" >&2
+  exit 1
+}
+
+argv=(bd -C "$repo_root" list --status "$status" --exclude-type "$excluded_csv" --json)
+[[ -n "$closed_after" ]] && argv=(bd -C "$repo_root" list --status "$status" --closed-after "$closed_after" --exclude-type "$excluded_csv" --json)
 
 if ! raw="$("${argv[@]}")"; then
   echo "work-beads: bd failed: ${argv[*]}" >&2

@@ -104,6 +104,27 @@ alt_shared="$("$alt/vendor/cerebro/scripts/consumer-root" --shared)"
 [[ "$alt_shared" == "$alt_root" ]] || fail "alternative mount --shared: expected $alt_root, got $alt_shared"
 pass "--shared answers from an alternative mount too"
 
+# A plain COPY at the standard mount, inside a consumer that is itself a submodule of something
+# else. The superproject probe would answer with the GRANDPARENT here - it reports the superproject
+# of whatever repository this checkout belongs to, and a copied mount belongs to the consumer's own
+# repo - so the validated arithmetic has to come first (Copilot, PR #84).
+grandparent="$work_dir/grandparent"
+git init -q "$grandparent"
+git -C "$grandparent" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
+nested_src="$work_dir/nested-src"
+mkdir -p "$nested_src"
+git init -q "$nested_src"
+git -C "$nested_src" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
+git -C "$grandparent" -c user.name=test -c user.email=test@example.com \
+  -c protocol.file.allow=always submodule add -q "$nested_src" child
+nested="$grandparent/child"
+mkdir -p "$nested/.claude/cerebro/scripts"
+cp "$repo_root/scripts/consumer-root" "$nested/.claude/cerebro/scripts/consumer-root"
+nested_out="$("$nested/.claude/cerebro/scripts/consumer-root")"
+[[ "$nested_out" == "$(cd "$nested" && pwd -P)" ]] \
+  || fail "a copied mount in a nested consumer: expected $nested, got $nested_out"
+pass "a plain copy at the standard mount resolves the consumer, not its grandparent"
+
 # --- the standard mount still resolves with no git on PATH ---
 #
 # The bare `consumer-root` uses no external command today, and tests/launchers.sh runs a launcher

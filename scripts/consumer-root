@@ -22,30 +22,35 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # Two ways of answering, tried in order (ah-ohc2).
 #
-# 1. Ask git which working tree contains this checkout as a submodule.
+# 1. The path arithmetic, which needs no git: this script lives at
+#    <consumer>/.claude/cerebro/scripts, and the round trip back through `.claude/cerebro' is what
+#    rejects a standalone clone of cerebro - whatever changes here must keep rejecting one, or this
+#    would start answering with somebody's home directory.
+#
+#    It goes FIRST for two reasons. The bare form of this script uses no external command today, and
+#    tests/launchers.sh runs a launcher with a PATH of `dirname' and `bash' alone: asking git first
+#    would put git on the standard mount's path for no gain. And the probe below answers about
+#    whatever repository this checkout belongs to - for a plain (non-submodule) COPY at the standard
+#    mount that is the consumer's own repo, so a consumer that is itself a submodule of something
+#    else would resolve to its grandparent. The validated arithmetic cannot make that mistake.
+#    `scripts/roster' orders its two candidates the same way, and for the same reasons.
+#
+# 2. Ask git which working tree contains this checkout as a submodule.
 #    `--show-superproject-working-tree' is purpose-built for exactly that question and answers
 #    however deep the mount is and whatever it is called, so a consumer that vendors cerebro at
-#    `vendor/cerebro' or `tools/cerebro' gets a fleet like any other. Its failure is SWALLOWED and
-#    falls through to 2: the bare form of this script uses no external command today, and
-#    tests/launchers.sh runs a launcher with a PATH of `dirname' and `bash' alone - making git
-#    mandatory here would take that guarantee away with nothing to say so.
+#    `vendor/cerebro' or `tools/cerebro' gets a fleet like any other. Its failure is SWALLOWED: git
+#    may not be on PATH at all, and that must leave the standard mount working rather than failing.
 #
 #    It answers for a real SUBMODULE and nothing else. A vendored *copy* outside the standard mount
 #    is still unsupported: nothing here can find it, and inventing a marker-file search for a case
 #    nobody has is not the answer.
-#
-# 2. The path arithmetic, which needs no git: this script lives at
-#    <consumer>/.claude/cerebro/scripts, and the round trip back through `.claude/cerebro' is what
-#    rejects a standalone clone of cerebro - whatever changes here must keep rejecting one, or this
-#    would start answering with somebody's home directory.
-enclosing="$(git -C "$script_dir" rev-parse --show-superproject-working-tree 2>/dev/null)" || enclosing=""
-if [[ -n "$enclosing" ]]; then
-  enclosing="$(cd "$enclosing" 2>/dev/null && pwd -P)" || enclosing=""
-fi
-if [[ -z "$enclosing" ]]; then
-  candidate="$(cd "$script_dir/../../.." 2>/dev/null && pwd -P)" || candidate=""
-  if [[ -n "$candidate" && "$(cd "$candidate/.claude/cerebro" 2>/dev/null && pwd -P)" == "$(cd "$script_dir/.." && pwd -P)" ]]; then
-    enclosing="$candidate"
+candidate="$(cd "$script_dir/../../.." 2>/dev/null && pwd -P)" || candidate=""
+if [[ -n "$candidate" && "$(cd "$candidate/.claude/cerebro" 2>/dev/null && pwd -P)" == "$(cd "$script_dir/.." && pwd -P)" ]]; then
+  enclosing="$candidate"
+else
+  enclosing="$(git -C "$script_dir" rev-parse --show-superproject-working-tree 2>/dev/null)" || enclosing=""
+  if [[ -n "$enclosing" ]]; then
+    enclosing="$(cd "$enclosing" 2>/dev/null && pwd -P)" || enclosing=""
   fi
 fi
 if [[ -z "$enclosing" ]]; then

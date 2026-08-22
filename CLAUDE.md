@@ -237,11 +237,15 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
   argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the
   worktree's own submodule) and `consumer-root --shared` for the main working tree every worktree of
   the repository shares, which is where the fleet view reads state files and where the sweeps look.
-  Both start from `${BASH_SOURCE[0]}`: first asking git which working tree holds this checkout as a
-  submodule (`--show-superproject-working-tree`, which answers at any mount — ah-ohc2), then falling
-  back to the `../../..` climb, which needs no git and is what keeps the launchers' narrowed-PATH
-  guarantee true at the standard mount. So `.claude/cerebro/scripts` is load-bearing only for a
-  consumer that vendors cerebro as a plain copy; a submodule may be mounted anywhere. To test a change, build a throwaway consumer repo rather than running
+  Both start from `${BASH_SOURCE[0]}`: first the validated `../../..` climb, which needs no git and
+  keeps the launchers' narrowed-PATH guarantee true at the standard mount, then — only if that fails
+  — asking git which working tree holds this checkout as a submodule
+  (`--show-superproject-working-tree`, which answers at any mount — ah-ohc2). That order matters: the
+  probe answers about whatever repository the checkout belongs to, so for a plain *copy* at the
+  standard mount inside a consumer that is itself a submodule it would name the grandparent.
+  `scripts/roster` orders its two candidates the same way for the same reasons. So
+  `.claude/cerebro/scripts` is load-bearing only for a consumer that vendors cerebro as a plain copy;
+  a submodule may be mounted anywhere. To test a change, build a throwaway consumer repo rather than running
   the script here (it will refuse: there is no `.claude/` above this tree).
 - `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
   asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a

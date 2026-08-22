@@ -9,7 +9,7 @@
 # expression, anchored by the consumer as it sees fit, matched against each changed path as `git
 # show --stat' prints it (repository-relative, no leading `./').
 #
-# "application" means a player of the consumer's product could see the change; "invisible" means the
+# "application" means the consumer's audience could see the change; "invisible" means the
 # fleet talking to itself - `.claude/', `docs/', `scripts/', `tests/', `.github/', config. ONE
 # application path among many makes the whole change application-touching, which is why several
 # paths may be passed at once.
@@ -63,7 +63,7 @@ if [[ "$mode" == "pattern" ]]; then
   exit 0
 fi
 
-# One application path is enough: a change that touches the application at all is one a player may
+# One application path is enough: a change that touches the application at all is one the audience may
 # see, whatever else it touches alongside.
 for path in "$@"; do
   if printf '%s\n' "$path" | grep -Eq "$pattern"; then

@@ -210,10 +210,10 @@ that is a thing to report in your pass, never to round down to "invisible". Say 
 silently skipping every verification is exactly the failure that key exists to prevent.
 
 Anything it calls `invisible` — `.claude/`, `docs/`, `scripts/`, `tests/`, `.github/`, config — is
-nothing a player could ever see, so mark it and move on without asking:
+nothing the audience could ever see, so mark it and move on without asking:
 
 ```bash
-bd set-state <id> verification=not-needed --reason "harness/docs-only, nothing a player can see"
+bd set-state <id> verification=not-needed --reason "harness/docs-only, nothing the audience can see"
 bd dolt push
 ```
 
@@ -268,7 +268,7 @@ The navigator's time starts when they say yes, not before. For each candidate, w
 you can ahead of the question:
 
 - **What it claimed.** Read the bead's description, acceptance criteria, and the plan's *User-facing
-  decisions* — what was supposed to change, from the player's side.
+  decisions* — what was supposed to change, from the audience's side.
 - **Where it landed.** The PR(s) and commit(s) via the `git log` above.
 - **What to run**, always from `.cerebro/worktrees/psylocke`, reset per *The tree you verify in*
   above. **The project declares how it is started; you never work it out.** The targets are an index

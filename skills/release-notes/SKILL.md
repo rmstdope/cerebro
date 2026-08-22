@@ -1,13 +1,30 @@
 ---
 name: release-notes
-description: Write the release notes for a release — collect the beads that shipped in it, drop everything a player could never see, and say what changed in terms of what they can now do. Use when a release has been cut and needs notes, or when asked what went out in one.
+description: Write the release notes for a release — collect the beads that shipped in it, drop everything the audience could never see, and say what changed in terms of what they can now do. Use when a release has been cut and needs notes, or when asked what went out in one.
 ---
 
 # Writing release notes
 
 You turn a range of merged work into a short page a person who does not read code can act on. The
-audience is a player of the game, not the fleet that built it: they want to know what they can now
-do that they could not, and what has stopped going wrong.
+audience is whoever uses what this project builds, not the fleet that built it: they want to know
+what they can now do that they could not, and what has stopped going wrong.
+
+**First, read this project's word for them**, and use that word — not "user" — throughout the notes:
+
+```bash
+.claude/cerebro/scripts/project-conf audience_noun user   # "user" when the project declares none
+```
+
+Here it is **player**, and the rest of this skill is written with that word in it: read every
+"player" below as whatever the key gave you. Form the plural by adding *s* and the possessive by
+adding *'s* — `players`, `player's`; `operators`, `operator's`. **A noun with an irregular plural is
+the one case that needs a hand**, and there is no second key for it: write the plural yourself and
+carry on.
+
+This is the one skill that names the audience concretely, and deliberately. Every other role here
+says "the audience", because it is instructing an agent; these notes are the navigator's public
+output, and *"name the areas the way a player would say where they were"* does work that *"the way
+the audience would say"* loses.
 
 **Everything technical is noise here.** No bead ids, no PR numbers, no file or module names, no
 "refactored", "migrated", "wasm", "submodule". If a sentence would only make sense to somebody who

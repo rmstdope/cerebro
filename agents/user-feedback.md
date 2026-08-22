@@ -135,7 +135,7 @@ Non-zero means it has been acknowledged; say nothing and move on. Otherwise:
 gh issue comment <number> --body "$(cat <<'EOF'
 _Written by **Moira**, an AI agent that triages issues for Atlantis HUD. Replying here reaches a human maintainer._
 
-Thank you for taking the time to write this up — feedback from people actually playing with Atlantis HUD is genuinely the most useful thing we get, and a report like this one is worth a great deal more to us than a dozen guesses from the inside.
+Thank you for taking the time to write this up — feedback from people actually using Atlantis HUD is genuinely the most useful thing we get, and a report like this one is worth a great deal more to us than a dozen guesses from the inside.
 
 Someone has read it. From here on, this issue is where the news lands: we post an update as a comment each time the work moves on — when it is turned into a tracked work item, when it has been designed, when somebody starts on it, when it is merged, and when it goes out in a release. So there is nothing you need to chase, and nowhere else you have to watch.
 

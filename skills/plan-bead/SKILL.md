@@ -934,7 +934,7 @@ is theirs. What must not survive this pass:
 produce because it is much shorter. If this pass finds nothing at all, you have almost certainly
 skipped it — the first honest read of a fresh plan usually surfaces two or three open decisions.
 
-Length is not the measure and padding is not the goal: A long plan is long because the work
+Length is not the measure and padding is not the goal: a plan runs long only when the work
 had that many decisions in it, and a genuinely small bead gets a genuinely short plan. The measure is
 whether Sonnet could finish without asking.
 

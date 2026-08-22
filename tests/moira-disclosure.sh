@@ -126,8 +126,8 @@ pass "the ack marker, its once-ever rule, the beads-state markers and adapt-the-
 # --- 10.3 landed first, so what is asserted here is that rebasing over it kept its half.
 flat | grep -qF 'people actually using {project name}' \
   || fail "the shared sentence: it must carry ah-qled.10.3's neutral verb AND this bead's name"
-grep -q 'actually playing' "$moira" \
-  && fail "the shared sentence: 'playing' came back; ah-qled.10.3 removed it"
+# The repo-wide ban on the old verb is ah-qled.10.3's own test, and it greps every file here —
+# including this one — so the word itself must not appear in this file at all.
 pass "the shared sentence at :138 keeps both halves — 10.3's verb and this bead's name"
 
 echo "all moira-disclosure tests passed"

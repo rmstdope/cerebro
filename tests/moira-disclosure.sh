@@ -122,9 +122,12 @@ grep -qF '<!-- beads-state:' "$moira" || fail "the beads-state markers are gone"
 grep -q 'Adapt the wording' "$moira" || fail "the instruction to adapt the wording is gone"
 pass "the ack marker, its once-ever rule, the beads-state markers and adapt-the-wording all stand"
 
-# --- ah-qled.10.3's half of :138 is left alone: that bead takes the verb, this one the name ---
+# --- the sentence at :138 carries BOTH halves: ah-qled.10.3 took the verb, this bead the name.
+# --- 10.3 landed first, so what is asserted here is that rebasing over it kept its half.
+flat | grep -qF 'people actually using {project name}' \
+  || fail "the shared sentence: it must carry ah-qled.10.3's neutral verb AND this bead's name"
 grep -q 'actually playing' "$moira" \
-  || fail "the shared sentence: 'playing' belongs to ah-qled.10.3 and must be left untouched"
-pass "the audience verb at :138 is left for ah-qled.10.3"
+  && fail "the shared sentence: 'playing' came back; ah-qled.10.3 removed it"
+pass "the shared sentence at :138 keeps both halves — 10.3's verb and this bead's name"
 
 echo "all moira-disclosure tests passed"

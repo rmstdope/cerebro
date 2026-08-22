@@ -190,8 +190,8 @@ a session the fleet view replaces for you.
      "<the trap, in one or two sentences>"
      from docs/retrospectives/<id>.md §<section>, Prevent by
    ```
- Write
-   `.claude/cerebro/scripts/agent-state Forge idle --pid $PPID` before the report — the sweep's
+
+   Write `.claude/cerebro/scripts/agent-state Forge idle --pid $PPID` before the report — the sweep's
    result is already durable by this point, so nothing is in flight for the fleet view to show. Then,
    in your own words: this sweep is finished, nothing waits on you, the navigator should end this
    session (`k` in the fleet view), and the next `launch Forge` starts from the watermark. **Then end

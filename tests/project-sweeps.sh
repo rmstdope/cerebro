@@ -186,20 +186,41 @@ ROSTER
 # Oracle's tree at BOTH paths — the exception is by name, not by location — and `psylocke`, who is
 # nobody on this roster and must now be swept like any other tree.
 make_tree oracle 5000 .cerebro target
-# The same basename at the legacy path — the exception is by NAME, not by location — so it needs a
-# branch of its own; two worktrees cannot hold one branch.
+# The same basename at the LEGACY path — and the exception does NOT reach it (ah-aln5). The
+# verifier's tree lives at `.cerebro/worktrees/`; a tree of the same name at the pre-move path is
+# one nothing has used since the move, so it is judged by the ordinary rules like any other tree.
+# It needs a branch of its own; two worktrees cannot hold one branch.
 mkdir -p "$consumer/.claude/worktrees"
 git_c -C "$consumer" worktree add -q "$consumer/.claude/worktrees/oracle" -b oracle-legacy-branch
-echo scratch > "$consumer/.claude/worktrees/oracle/untracked.txt"
+find "$consumer/.claude/worktrees/oracle" -exec touch -h -t "$(stamp_for 5000)" {} +
 
 gb_free 40
 out="$(run_prune PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999)"
-grep -q "keeping oracle" <<<"$out" || fail "the renamed verifier's tree was not kept: $out"
-[ "$(grep -c "keeping oracle —" <<<"$out")" = "2" ] \
-  || fail "the verifier exception did not hold at both paths: $out"
+grep -q "keeping oracle — it is Oracle's verification tree" <<<"$out" \
+  || fail "the renamed verifier's canonical tree was not kept by the exception: $out"
+[ "$(grep -c "keeping oracle —" <<<"$out")" = "1" ] \
+  || fail "the exception was not narrowed to the canonical path: $out"
 grep -q "keeping psylocke — it is" <<<"$out" \
   && fail "psylocke was still exempt by name on a roster that does not list her: $out"
-pass "the verifier exception follows the roster, at either path, and no name literal survives"
+pass "the verifier exception follows the roster, at the canonical path only, and no name literal survives"
+
+# And the legacy tree was not merely un-exempted — it was RECLAIMABLE. Rule 1 still recognises
+# `.claude/worktrees/`, so a clean, landed, cold tree there is removed rather than held for ever.
+# Narrowing rule 1 instead would make it invisible, which is this bead's bug with an extra step.
+[ -d "$consumer/.claude/worktrees/oracle" ] \
+  && fail "the stale legacy tree was seen but never reclaimed: $out"
+pass "a clean, landed, cold tree at the legacy path is reclaimed, not held for ever"
+
+# The ordinary safety rules still apply there. It is removable because it is clean and on main, not
+# because the name exception stopped covering it: put real work in one and it must still be refused.
+git_c -C "$consumer" worktree prune
+git_c -C "$consumer" worktree add -q "$consumer/.claude/worktrees/oracle" -b oracle-legacy-work
+echo scratch > "$consumer/.claude/worktrees/oracle/untracked.txt"
+find "$consumer/.claude/worktrees/oracle" -exec touch -h -t "$(stamp_for 5000)" {} +
+out="$(run_prune PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999)"
+grep -q "keeping oracle — it has uncommitted or untracked changes" <<<"$out" \
+  || fail "a legacy tree holding uncommitted work was not refused: $out"
+pass "a legacy tree with uncommitted work is still refused, by the ordinary rules"
 
 # Case-insensitively, as the code always matched: the roster says `Oracle`, the tree is `oracle`.
 pass "the roster name is matched case-insensitively, as the lowercased literal was"
@@ -216,10 +237,12 @@ present "$consumer/.cerebro/worktrees/oracle" "$consumer/.claude/worktrees/oracl
   || fail "a roster with no verifier deleted a live tree: $out"
 pass "a roster with no verifier grants the exception to nobody and deletes nothing extra"
 
-# `.claude/worktrees/` is still swept. It is NOT vestigial: a live tree sits there in atlantis-hud
-# today (ah-aln5 decides which path is canonical), and dropping it would leave that tree unmanaged.
+# `.claude/worktrees/` is still swept — a transitional guarantee, not a second home. Nothing writes
+# there any more (ah-aln5: `.cerebro/worktrees/` is canonical), but a tree left behind by the move
+# must still be reachable by the sweep, or it is held on disk for ever with nothing able to reclaim
+# it. Once no pre-move tree survives anywhere, dropping this arm is a fair follow-up.
 grep -q "keeping oracle" <<<"$out" || fail ".claude/worktrees/ is no longer swept at all: $out"
-pass ".claude/worktrees/ is still swept, so a live tree there is not left unmanaged"
+pass ".claude/worktrees/ is still swept, so a pre-move tree is not left unmanaged"
 
 # =================================================================================================
 # 4. `merged_check: none` still reclaims — it is not "skip the check"

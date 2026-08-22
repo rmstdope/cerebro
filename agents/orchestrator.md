@@ -316,10 +316,16 @@ detached at a commit already on main), when all of these hold:
 - it has no uncommitted or untracked changes (`git -C <path> status --porcelain` is empty), or its
   only such changes are build output and caches (`node_modules/`, `target/`, `dist/`).
 
-**Never `psylocke`, at either path** — `.cerebro/worktrees/psylocke` or `.claude/worktrees/psylocke`
-— whatever the tests say: Psylocke's tree is reset to main between passes rather than merged, so it
-always looks abandoned and never is (see `.claude/cerebro/docs/cerebro-jobs.md`).
-`prune-worktrees.sh` keeps it by name at either path for the same reason.
+**Never the verifier's tree at `.cerebro/worktrees/`** — whatever the tests say: Psylocke's tree is
+reset to main between passes rather than merged, so it always looks abandoned and never is (see
+`.claude/cerebro/docs/cerebro-jobs.md`). `prune-worktrees.sh` keeps it by name there for the same
+reason.
+
+**`.cerebro/worktrees/` is the one place worktrees live**. `.claude/worktrees/` is the
+pre-move location: `prune-worktrees.sh` still *sweeps* it, so a tree left behind by that move can be
+reclaimed rather than held on disk for ever — but it is **not a second home**, nothing writes there,
+and the verifier exception does **not** reach it. A `psylocke` under `.claude/worktrees/` is a
+leftover, not the verification tree, and is judged like any other tree.
 
 Then `git worktree remove <path>` and `git worktree prune`. A tree that fails the third test is
 somebody's unpushed work: leave it, and say whose tree it is and what it holds, because that is a

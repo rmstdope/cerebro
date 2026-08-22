@@ -111,4 +111,74 @@ run_prepare "$c" --path .cerebro/worktrees/ah-3 --branch ah-3-work --from other 
   || fail "explicit: the worktree is at origin/trunk, so --from proved nothing"
 pass "an explicit --from still wins over the resolved branch"
 
+
+# --- a dry run creates nothing ---------------------------------------------------------------------
+#
+# ah-1rls: `dry_run` used to be consulted only around the install and prewarm commands, so a
+# --dry-run created a real branch and a real worktree - the opposite of what its header promises.
+c="$(make_consumer dryfresh main)"
+before_trees="$(git -C "$c" worktree list)"
+run_prepare "$c" --path .cerebro/worktrees/ah-4 --branch ah-4-work --dry-run >/dev/null 2>&1 \
+  || fail "dry-fresh: a dry run exited non-zero"
+[[ ! -e "$c/.cerebro/worktrees/ah-4" ]] || fail "dry-fresh: --dry-run created a worktree"
+[[ -z "$(git -C "$c" branch --list ah-4-work)" ]] || fail "dry-fresh: --dry-run created a branch"
+[[ "$(git -C "$c" worktree list)" == "$before_trees" ]] || fail "dry-fresh: the worktree list moved"
+pass "a dry run creates neither a worktree nor a branch"
+
+# --- a dry run destroys nothing --------------------------------------------------------------------
+#
+# The reuse path `reset --hard`s and `clean -fd`s, and the tree it exists for is the verifier's. A
+# dry run against it must leave an untracked scratch file and HEAD exactly where they were.
+c="$(make_consumer dryreuse main)"
+run_prepare "$c" --path .cerebro/worktrees/psylocke >/dev/null 2>&1 \
+  || fail "dry-reuse: the real run that sets the fixture up failed"
+scratch="$c/.cerebro/worktrees/psylocke/scratch.txt"
+echo "work in progress" > "$scratch"
+git_q -C "$c/.cerebro/worktrees/psylocke" commit -q --allow-empty -m "local work"
+head_before="$(git -C "$c/.cerebro/worktrees/psylocke" rev-parse HEAD)"
+run_prepare "$c" --path .cerebro/worktrees/psylocke --dry-run >/dev/null 2>&1 \
+  || fail "dry-reuse: a dry run exited non-zero"
+[[ -f "$scratch" ]] || fail "dry-reuse: --dry-run cleaned away an untracked file"
+[[ "$(cat "$scratch")" == "work in progress" ]] || fail "dry-reuse: the untracked file was rewritten"
+[[ "$(git -C "$c/.cerebro/worktrees/psylocke" rev-parse HEAD)" == "$head_before" ]] \
+  || fail "dry-reuse: --dry-run moved HEAD"
+pass "a dry run leaves an existing detached tree untouched"
+
+# --- the stdout contract survives a dry run --------------------------------------------------------
+#
+# Callers parse one line: the path and a short sha. Under --dry-run the tree may not exist, so the
+# sha comes from the ref instead - see the comment beside the rev-parse.
+c="$(make_consumer drycontract main)"
+out="$(run_prepare "$c" --path .cerebro/worktrees/ah-5 --branch ah-5-work --dry-run 2>/dev/null)"
+[[ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" == "1" ]] \
+  || fail "dry-contract: stdout was not exactly one line"
+[[ "${out%% *}" == *"/.cerebro/worktrees/ah-5" ]] || fail "dry-contract: the path is wrong ($out)"
+[[ "${out##* }" == "$(git -C "$c" rev-parse --short origin/main)" ]] \
+  || fail "dry-contract: the sha is not origin/main's"
+pass "a dry run still prints the path and the ref's sha on stdout"
+
+# --- what it would run goes to stderr --------------------------------------------------------------
+err="$(run_prepare "$c" --path .cerebro/worktrees/ah-6 --branch ah-6-work --dry-run 2>&1 >/dev/null)"
+grep -q "would " <<<"$err" || fail "dry-narrate: nothing was narrated on stderr"
+grep -q "worktree add" <<<"$err" || fail "dry-narrate: the worktree add was not printed"
+pass "a dry run narrates the commands it would have run, on stderr"
+
+# --- the refusals still fire under a dry run -------------------------------------------------------
+#
+# They are reads, and reporting them is most of a dry run's value. A dry run that agrees with
+# everything is worse than one that mutates, because it looks fine.
+c="$(make_consumer dryrefuse main)"
+if run_prepare "$c" --path /tmp/elsewhere --dry-run >/dev/null 2>&1; then
+  fail "dry-refuse: a path outside .cerebro/worktrees/ was accepted"
+fi
+run_prepare "$c" --path .cerebro/worktrees/ah-7 --branch ah-7-work >/dev/null 2>&1 \
+  || fail "dry-refuse: the real run that sets the fixture up failed"
+if run_prepare "$c" --path .cerebro/worktrees/ah-7 --branch ah-7-again --dry-run >/dev/null 2>&1; then
+  fail "dry-refuse: an existing path with --branch was accepted"
+fi
+if run_prepare "$c" --path .cerebro/worktrees/ah-7 --dry-run >/dev/null 2>&1; then
+  fail "dry-refuse: a tree on a branch was accepted for reset"
+fi
+pass "every refusal still fires under --dry-run"
+
 echo "all prepare-worktree tests passed"

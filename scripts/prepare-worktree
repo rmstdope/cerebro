@@ -115,28 +115,50 @@ abs_path="$consumer/$rel_path"
 
 git -C "$consumer" fetch origin "$default_branch" >&2
 
+# Every mutation below is behind `dry_run', in the same shape the install and prewarm steps already
+# use (ah-1rls). The CHECKS are not: they are reads, and reporting what a real run would refuse is
+# most of what a dry run is for - one that agrees with everything is worse than one that mutates,
+# because it looks fine.
 if [[ -n "$branch" ]]; then
   if [[ -e "$abs_path" ]]; then
     echo "prepare-worktree: $rel_path already exists - refusing to reuse it for a new branch (pick a different --path or remove the tree first)" >&2
     exit 2
   fi
-  git -C "$consumer" worktree add -b "$branch" "$abs_path" "$from_ref" >&2
+  if [[ "$dry_run" -eq 1 ]]; then
+    echo "prepare-worktree: would run: git -C $consumer worktree add -b $branch $abs_path $from_ref" >&2
+  else
+    git -C "$consumer" worktree add -b "$branch" "$abs_path" "$from_ref" >&2
+  fi
 else
   if [[ ! -e "$abs_path" ]]; then
-    git -C "$consumer" worktree add --detach "$abs_path" "$from_ref" >&2
+    if [[ "$dry_run" -eq 1 ]]; then
+      echo "prepare-worktree: would run: git -C $consumer worktree add --detach $abs_path $from_ref" >&2
+    else
+      git -C "$consumer" worktree add --detach "$abs_path" "$from_ref" >&2
+    fi
   else
     if git -C "$abs_path" symbolic-ref -q HEAD >/dev/null; then
       held_branch="$(git -C "$abs_path" symbolic-ref --short HEAD)"
       echo "prepare-worktree: $rel_path is on branch '$held_branch', not detached - refusing to reset a tree that may hold work" >&2
       exit 2
     fi
-    git -C "$abs_path" fetch origin "$default_branch" >&2
-    git -C "$abs_path" reset --hard "$from_ref" >&2
-    git -C "$abs_path" clean -fd >&2
+    if [[ "$dry_run" -eq 1 ]]; then
+      echo "prepare-worktree: would run: git -C $abs_path fetch origin $default_branch" >&2
+      echo "prepare-worktree: would run: git -C $abs_path reset --hard $from_ref" >&2
+      echo "prepare-worktree: would run: git -C $abs_path clean -fd" >&2
+    else
+      git -C "$abs_path" fetch origin "$default_branch" >&2
+      git -C "$abs_path" reset --hard "$from_ref" >&2
+      git -C "$abs_path" clean -fd >&2
+    fi
   fi
 fi
 
-git -C "$abs_path" submodule update --init --recursive >&2
+if [[ "$dry_run" -eq 1 ]]; then
+  echo "prepare-worktree: would run: git -C $abs_path submodule update --init --recursive" >&2
+else
+  git -C "$abs_path" submodule update --init --recursive >&2
+fi
 
 # What runs inside the tree is what the project declared, never what this script assumes. Absent
 # is a NO-OP, not a failure: most repositories have nothing to install into a fresh worktree, and
@@ -173,5 +195,13 @@ if [[ "$prewarm_wanted" -eq 1 ]]; then
   fi
 fi
 
-sha="$(git -C "$abs_path" rev-parse --short HEAD)"
+# The path-and-sha line is the contract every caller parses, so it survives a dry run - but under
+# --dry-run there may be no tree to read a HEAD from, so the sha comes from the ref instead. It is
+# the sha the tree WOULD be at: for a fresh tree what it would be created at, and for the reuse path
+# what the reset it was just told about would leave it holding.
+if [[ "$dry_run" -eq 1 ]]; then
+  sha="$(git -C "$consumer" rev-parse --short "$from_ref")"
+else
+  sha="$(git -C "$abs_path" rev-parse --short HEAD)"
+fi
 printf '%s %s\n' "$abs_path" "$sha"

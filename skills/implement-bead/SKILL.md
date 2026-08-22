@@ -695,6 +695,12 @@ into it.
   `gh pr view --json mergeable,mergeStateStatus` can already say `CONFLICTING`/`DIRTY` while the
   check state you are about to poll still describes the previous head. Look at the merge state
   before the checks — *Merging* has the loop. Cost a wasted check-state poll here once.
+- **An accessible name is a shared namespace.** A browser suite selects on the names controls
+  expose, so a new control whose name contains — or is contained by — one an existing spec relies on
+  makes that spec match two elements and fail, in a file with nothing to do with your change. Before
+  you push, grep the suite for the words of every name you add. A project may keep a ratchet that
+  holds existing selectors exact; that catches a loose selector, never a new name colliding with an
+  exact one, so it passes while the suite goes red.
 
 Read `<consumer>/.claude/cerebro-traps.md` if it exists — the traps this project has already paid
 for. It is a list of facts, not rules: if the bead touches one, say so and say what to do about it.

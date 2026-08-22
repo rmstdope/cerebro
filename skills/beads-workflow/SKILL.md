@@ -8,7 +8,8 @@ description: How planned work is tracked in this repository with beads (bd) — 
 Planned work lives in **beads** (`bd`), not in GitHub issues. GitHub issues are the inbox for
 external requests and bug reports only.
 
-Bead IDs look like `ah-t65`. Partial IDs work: `bd show t65` finds `ah-t65`.
+Bead IDs look like `<prefix>-t65` — the project's prefix and a short suffix. Partial IDs work:
+`bd show t65` finds the whole id.
 
 ## Daily loop
 
@@ -177,8 +178,8 @@ If `main` is checked out in another git worktree, `git checkout main` fails; use
 
 ## Branch, commit and PR conventions
 
-- Branch: `<bead-id>-short-description`, e.g. `ah-t65-load-multiple-reports`
-- Commit subject: `feat(ah-t65): load multiple reports` (`fix(...)`, `docs(...)`, `chore(...)`)
+- Branch: `<bead-id>-short-description`, e.g. `<bead-id>-render-the-summary-panel`
+- Commit subject: `feat(<bead-id>): render the summary panel` (`fix(...)`, `docs(...)`, `chore(...)`)
 - PR title: the same subject. PR body names the bead, and the originating GitHub issue if one exists.
 - One bead per branch. Merge it before starting the next bead - except a bead escalated to the
   navigator, whose PR stays open by design, since the point is that it must not merge as it stands.
@@ -197,8 +198,8 @@ implementation plan asks of every work package:
 | Inputs it depends on | dependency edges, not prose — see below |
 
 ```bash
-bd create "Load multiple reports" --type feature -p 4 --body-file scope.md \
-  --acceptance "Selecting several .rep files imports them in header order"
+bd create "Load several files at once" --type feature -p 4 --body-file scope.md \
+  --acceptance "Selecting several files imports them in the order their headers give"
 ```
 
 Types used here: `feature`, `bug`, `task`, `epic`.
@@ -369,7 +370,7 @@ as narrowly as it is. Outside that window, still read a stale lease as "nobody h
 the navigator.
 
 ```
-◐ ah-xde · Remove the Classic map theme   [P2 · IN_PROGRESS]
+◐ bd-xde · Remove the deprecated theme    [P2 · IN_PROGRESS]
 Lease: expires in 1 min (heartbeat 3 mins ago)      # an agent actively working, ten minutes in
 ```
 

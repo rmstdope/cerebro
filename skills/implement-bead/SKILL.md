@@ -150,7 +150,7 @@ file when something went wrong is one worth opening.
 
 ### Where it goes
 
-`docs/retrospectives/<bead id>.md` — `docs/retrospectives/ah-t65.md` for bead `ah-t65`.
+`docs/retrospectives/<bead id>.md` — the bead's own id as the file name, and nothing else.
 
 **One retrospective per file, and one file per bead.** Never append to another bead's file and never
 rewrite one: they are the record of runs that are over. If your bead produced two findings, both go
@@ -227,7 +227,7 @@ grep -rl "<a word from your symptom>" docs/retrospectives/ 2>/dev/null || echo "
 A complete example:
 
 ```markdown
-# ah-t65 — retrospective
+# <bead-id> — retrospective
 
 - **Implementer:** Cyclops
 - **Date:** 2026-08-14
@@ -242,7 +242,7 @@ prove that is the cause.
 **Cost.** Two CI cycles and a rebase, about 50 minutes.
 **Prevent by.** The plan's *Validation* section should name which suite covers a map interaction, so
 it is run in CI-like conditions before the PR opens rather than after.
-**Seen before.** ah-t12 — same spec, same job.
+**Seen before.** <an earlier bead id> — same spec, same job.
 ```
 
 Two rules for the writing itself. **Be specific enough to act on**: name the file, the command, the
@@ -591,14 +591,14 @@ GitHub recomputes them, which is what the poll waits out — on either field, no
 - anything else (`MERGEABLE CLEAN`, `MERGEABLE BLOCKED`, `MERGEABLE UNSTABLE`) — the head is worth
   waiting on: `--phase ci`, and wait per *Waiting, without ending your run*.
 
-Observed on ah-k6i.5 (PR #285, 2026-08-15): after a rebase and force-push the PR already read
+Observed here on 2026-08-15: after a rebase and force-push the PR already read
 `CONFLICTING`/`DIRTY`, and the implementer polled check state for a head that would never merge until
 the navigator interrupted. Twenty seconds of `gh pr view` is what that wait cost.
 
 An update (or a resolved rebase) that brings in commits touching nothing the bead's own diff touches
 can still leave nothing new to test beyond what CI already ran — if the resulting diff against main
-is empty, close the PR unmerged rather than merging a no-op (the ah-u3i retrospective's note about an
-empty bump PR after a rebase applies here too).
+is empty, close the PR unmerged rather than merging a no-op — a retrospective here recorded exactly
+that, an empty bump PR after a rebase.
 
 ```bash
 gh pr merge <n> --squash --delete-branch
@@ -692,4 +692,4 @@ into it.
 - **A CI wait against a conflicted head.** After a rebase, a force-push or an `update-branch`,
   `gh pr view --json mergeable,mergeStateStatus` can already say `CONFLICTING`/`DIRTY` while the
   check state you are about to poll still describes the previous head. Look at the merge state
-  before the checks — *Merging* has the loop. Cost once on ah-k6i.5.
+  before the checks — *Merging* has the loop. Cost a wasted check-state poll here once.

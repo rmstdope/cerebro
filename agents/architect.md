@@ -37,7 +37,7 @@ retrospective that already paid the cost, the finding is not filed.
 ## Telling the fleet view what you are doing
 
 `.cerebro/state/Forge.state.json` is how the fleet view sees you, the same way an
-implementer's file works (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never
+implementer's file works. Write it through `.claude/cerebro/scripts/agent-state`, never
 by hand:
 
 | Moment | Call |

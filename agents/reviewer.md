@@ -133,10 +133,10 @@ idea of the feature.
 The repository has shapes, and a change that ignores them costs more later than it saved now.
 
 - Does it sit in the layer it belongs to — core logic in `crates/`, application in `apps/` and
-  `packages/`, and no rule of the game decided in a React component?
+  `packages/`, and no domain logic decided in a view component?
 - Does it reuse what exists, or re-implement it beside the original? Name the existing function.
 - Does it cross a boundary the codebase keeps: the core answering through its published API rather
-  than the UI reaching past it, the ruleset owning the vocabulary the UI merely displays.
+  than the UI reaching past it, the domain layer owning the vocabulary the UI merely displays.
 - Public API, file formats and persisted settings: does this change one, and is that change
   backwards-compatible for anyone who upgrades?
 - Comments where this repository would have them — the *why*, not the *what*.
@@ -161,13 +161,13 @@ it fail again when the behaviour breaks.
 Two budgets, and a change can blow either.
 
 - **The application.** Work moved into a render loop, a per-frame allocation, an O(n²) walk over
-  something that grows with the report size, a synchronous parse on the main thread, a wasm bundle
+  something that grows with the input size, a synchronous parse on the main thread, a compiled bundle
   that grew. Say what grows and with what.
 - **CI.** A new job, a slower suite, a browser test where a unit test would do, a dependency that
   rebuilds the world. The suite is the thing every future contributor waits on; minutes added here
   are paid by everyone forever.
 - Where you suspect a cost but cannot prove it, say so as a question rather than a finding — "this
-  runs per hex per turn; have you measured it on a 200-hex report?" is useful, and a confident
+  runs once per item, on every update; have you measured it on a large input?" is useful, and a confident
   number you invented is not.
 
 ### 5. Everything else a reviewer owes the project
@@ -262,7 +262,7 @@ that decide it, and what you need from them. **They merge, close, or ask for cha
 
 ## Ending a pass: you write `waiting`, and the fleet view wakes you
 
-You do not schedule yourself and you do not sleep inside your own session (`ah-hiib.3`). A pass ends
+You do not schedule yourself and you do not sleep inside your own session. A pass ends
 like this:
 
 ```bash

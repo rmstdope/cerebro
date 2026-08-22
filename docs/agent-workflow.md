@@ -77,7 +77,7 @@ re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exa
 
 Two things it does for you without being asked: it starts `prune-worktrees.sh --watch` alongside the
 buffer (see *Leftover worktrees*), and it replaces an implementer that reports itself `done` with a
-fresh session.  It also owns the **cadence of the interactive roles** (ah-hiib.3): they no
+fresh session.  It also owns the **cadence of the interactive roles**: they no
 longer sleep inside their own sessions, they write `waiting` and end their turn, and the poll wakes
 them — `cerebro-wake-interval-default` (ten minutes) and `cerebro-wake-intervals` (Psylocke at five)
 are `M-x customize` variables you can change while the fleet runs. The For column of a waiting row

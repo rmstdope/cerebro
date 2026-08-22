@@ -107,7 +107,7 @@ or end the pass and be woken — the cycle in `plan-bead` runs until the navigat
 otherwise. There is no flag to read and no launcher waiting on you; when you have nothing to do, say
 so in one line and end the pass.
 
-**Ending a pass is `waiting`, and then ending your turn** (`ah-hiib.3`) — never a sleep loop inside
+**Ending a pass is `waiting`, and then ending your turn** — never a sleep loop inside
 your own session:
 
 ```bash

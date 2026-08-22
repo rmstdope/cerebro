@@ -29,7 +29,7 @@ bd dolt pull
 ### Telling the fleet view what you are doing
 
 `.cerebro/state/Psylocke.state.json` is how the fleet view sees you, exactly as an
-implementer's file is — see `ah-2n3.2`. Write it at every transition, through
+implementer's file is. Write it at every transition, through
 `.claude/cerebro/scripts/agent-state`, never by hand:
 
 **This is the part of your job you are worst at.** Not the verifying — the two lines of bash around
@@ -133,7 +133,7 @@ Pending means "offered to the navigator and not yet answered". Within a pass you
 you offered, because you offered them — skip those, and offer each of them at most once per pass,
 exactly as before. What you must **not** do is trust the label to mean it: pending is written to the
 bead database and outlives the session that wrote it, so a bead a previous session offered and never
-heard back about is an ordinary candidate again and must be picked up (ah-60w). Two beads sat
+heard back about is an ordinary candidate again and must be picked up. Two beads sat
 unverifiable for a day because the query excluded pending outright.
 
 `work-beads` is the one place the harness asks "which closed beads are real work" — it always passes
@@ -145,10 +145,10 @@ why both). The `jq` here is your question alone: which of that work still wants 
 audit record (`issue_type: "event"`, closed, unlabelled), one more per verdict you record. Without
 this exclusion, each pass would find the previous pass's own event beads in the work list, label them
 (as `not-needed`, since they have no commit and touch nothing), which writes another event bead
-recording *that* label — a chain that grows one link per pass, forever (ah-9gm). **Never label an
+recording *that* label — a chain that grows one link per pass, forever. **Never label an
 event bead** — a chain that already exists from before this fix is harmless and is left alone.
 
-**Closed epics are excluded too**, which they were not before `work-beads` (ah-cg1). An epic has no
+**Closed epics are excluded too**, which they were not before `work-beads`. An epic has no
 diff of its own — its work is entirely in the children you already see — so it could only ever be
 marked `not-needed`, and every one of those markings writes another event bead. Four closed epics
 were sitting in this list when the script replaced the query.
@@ -431,7 +431,7 @@ gives the mockup PR.
 
 ## Ending a pass: you write `waiting`, and the fleet view wakes you
 
-You do not schedule yourself and you do not sleep inside your own session (`ah-hiib.3`). A pass ends
+You do not schedule yourself and you do not sleep inside your own session. A pass ends
 like this:
 
 ```bash

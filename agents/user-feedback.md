@@ -26,7 +26,7 @@ gh issue list --state open --json number,title,body,author,createdAt,labels --li
 ### Telling the fleet view what you are doing
 
 `.cerebro/state/Moira.state.json` is how the fleet view sees you, exactly as an implementer's
-file is (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never by hand:
+file is. Write it through `.claude/cerebro/scripts/agent-state`, never by hand:
 
 | Moment | Call |
 |---|---|
@@ -78,7 +78,7 @@ whose bead is still open — and sleep.
 
 ### Ending a pass: you write `waiting`, and the fleet view wakes you
 
-You do not schedule yourself and you do not sleep inside your own session (`ah-hiib.3`). A pass ends
+You do not schedule yourself and you do not sleep inside your own session. A pass ends
 like this:
 
 ```bash
@@ -310,9 +310,9 @@ merged but unshipped, which is MERGED and an ordinary state to sit in for days.
 
 Three things that decide whether this works:
 
-- **`-F` is load-bearing.** Bead ids contain dots — `ah-1is.2` — and without `--fixed-strings` the
+- **`-F` is load-bearing.** Bead ids contain dots — `<parent>.<n>` — and without `--fixed-strings` the
   dot is a regex wildcard.
-- **The parentheses are load-bearing too.** Grepping `ah-1is` alone matches `feat(ah-1is.2)` and
+- **The parentheses are load-bearing too.** Grepping `<parent>` alone matches `feat(<parent>.<n>)` and
   reports a child's release as the parent's. `(<id>)` matches only the bead you asked about.
 - **Fetch the tags first.** `git tag --contains` reads local tags, and a checkout that has not fetched
   since the last release will report a shipped bead as merged for ever.
@@ -349,7 +349,7 @@ precedence table where it no longer fits.
 
 Otherwise post it. Write for the reporter, who does not know what a bead is and does not care.
 
-**Say more than the state.** A status comment that reads "**Planned** — tracked as ah-xyz" is
+**Say more than the state.** A status comment that reads "**Planned** — tracked as `<bead-id>`" is
 technically an update and tells a reporter nothing they can use. Three things earn their place in
 every one of them:
 
@@ -378,7 +378,7 @@ We have worked out what to do about this. The export will open a proper save dia
 
 Nothing needed from you. The next update here will be when somebody starts on it, and the one after that when it has been merged.
 
-Tracked as ah-7pa.
+Tracked as <bead-id>.
 <!-- beads-state:PLANNED -->
 EOF
 )"

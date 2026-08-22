@@ -3,7 +3,7 @@
 An Emacs 28+ package that lists the cerebro agent fleet: `M-x cerebro` (after adding
 this directory to `load-path` and `(require 'cerebro)`) opens a self-refreshing buffer
 showing every agent on `scripts/roster` — with its
-state, and for one working a bead (an implementer, or since ah-2n3.2 one of the interactive agents
+state, and for one working a bead (an implementer, or one of the interactive agents
 mid-verification or mid-triage) the bead it is on and for how long.
 
 It supports a live detail window that follows the list selection, and starting/killing agents
@@ -28,7 +28,7 @@ error instead of failing obscurely.
 
 A session that dies on its own — a launcher refusing because `claude` is missing or the submodule
 never brought its agent file in, or `claude` exiting on its own — leaves its last printed line behind:
-once in the echo area, and in the dead row's placeholder until the next `s` starts it again (ah-bri).
+once in the echo area, and in the dead row's placeholder until the next `s` starts it again.
 A session `k` killed, or one the ten-minute poll ended on purpose, records nothing.
 
 ## Reading a row
@@ -66,18 +66,18 @@ asks about the queue, in the order they are asked:
 
 ```
 Claimed 1
-  ah-13o  P1 Resizable split between the unit and orders panes
+  bd-13o  P1 Resizable split between the two side panes
 
 Planned, unclaimed 0
   (none)
 
 Being planned 2
-  ah-8m0  P1 Fleet-wide question-state hooks
-  ah-2p1  P2 Second planner: the buffer counts pickable work
+  bd-8m0  P1 Fleet-wide question-state hooks
+  bd-2p1  P2 Second planner: the buffer counts pickable work
 
 Unplanned 4
-  ah-3cs  P1 Config option for fixed unit-in-hex pane size
-  ah-4ao  P2 Drive the implementer fleet from the Emacs agent…
+  bd-3cs  P1 Config option for a fixed detail-pane size
+  bd-4ao  P2 Drive the implementer fleet from the Emacs agent…
   +2 more
 
 Merged, unverified 0
@@ -109,8 +109,8 @@ which is the point. The row carries a `↻` so that pile can still say which wor
 than arrived:
 
 ```
-↻ ah-t65  P0 came back from a failed verdict
-  ah-t70  P0 never left
+↻ bd-t65  P0 came back from a failed verdict
+  bd-t70  P0 never left
 ```
 
 The open sections are sorted by priority then id, so P0 reads first and the order does not shuffle
@@ -127,7 +127,7 @@ Re-prioritising is what the panel is for as much as reading it:
 | `u`       | put back the last priority this panel changed — one step        |
 
 The change is immediate, with no confirmation, which is the point during a triage pass — the echo
-area says `ah-3cs: P1 -> P0` and the row re-sorts under the mark. `u` exists because that is also
+area says `bd-3cs: P1 -> P0` and the row re-sorts under the mark. `u` exists because that is also
 how a mis-keyed digit behaves; it is one step rather than a stack, so a second `u` says there is
 nothing to undo instead of quietly redoing the change. Setting the priority a bead already has
 writes nothing and records no undo.

@@ -43,7 +43,7 @@ holding** (*You keep a buffer sized to the fleet*), and **only the first planner
 ## Telling the fleet view what you are doing
 
 `.cerebro/state/<your-name>.state.json` is how the fleet view sees you, the same way an
-implementer's file works (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never
+implementer's file works. Write it through `.claude/cerebro/scripts/agent-state`, never
 by hand:
 
 | Moment | Call |
@@ -133,7 +133,7 @@ So, for any candidate with an `external_ref`:
   feedback. A reported defect in shipped behaviour is a P0 or P1; a reported enhancement is a P2
   rather than the P3 the same idea would get from an agent. This is a lean, not a floor: a genuinely
   cosmetic report is still cosmetic, and inflating everything with a ref destroys the signal.
-- **Name the issue in the question**, not just the bead: `ah-2vy (gh-31, user-reported)`. The
+- **Name the issue in the question**, not just the bead: `<bead-id> (gh-31, user-reported)`. The
   navigator may recognise the reporter or the thread, and that recognition is often the whole
   decision.
 - **Read the issue before recommending**, not only the bead. `gh issue view <n> --comments` — the
@@ -285,7 +285,7 @@ under-full buffer costs an idle implementer, which is the expensive error of the
 
 **How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
 state file under `.cerebro/state/` whose `pid` is alive, minus any implementer whose stop flag
-is set (it finishes its bead and retires, so it will not take another). **Since ah-2n3.2 the
+is set (it finishes its bead and retires, so it will not take another). **The
 interactive agents — every non-implementer row of `scripts/roster`, the other planner included —
 write the same file you do**, so the
 loop below filters to the implementer roster explicitly; without that filter your own file inflates
@@ -298,7 +298,7 @@ the buffer is sized from and puts both planners to sleep over a short queue.
 
 ```bash
 # The shared checkout, never the enclosing tree: from a worktree of your own `.cerebro/state` is
-# the worktree's, while `agent-alive` reads the checkout the fleet actually writes into (ah-e0w),
+# the worktree's, while `agent-alive` reads the checkout the fleet actually writes into,
 # and both halves of this loop must be looking at the same files.
 state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"
 n=0
@@ -356,7 +356,7 @@ idle rather than picking one and announcing it afterwards.
 
 ### Ending a pass: you write `waiting`, and the fleet view wakes you
 
-You do not schedule yourself and you do not sleep inside your own session (`ah-hiib.3`). A pass ends
+You do not schedule yourself and you do not sleep inside your own session. A pass ends
 like this:
 
 ```bash
@@ -558,8 +558,9 @@ Three details that decide whether this works:
 
 - **`select(.dependency_type=="blocks")` is load-bearing.** `dependencies` also carries the
   `parent-child` edge, so without the filter a child demands that its own parent epic be planned —
-  and an epic has children rather than a plan, so you would be stuck for ever. `ah-vp3.2` lists both
-  `ah-vp3.1` (blocks) and `ah-vp3` (parent-child); only the first is a blocker.
+  and an epic has children rather than a plan, so you would be stuck for ever. A child `<parent>.<n>`
+  lists both the sibling that blocks it (blocks) and `<parent>` (parent-child); only the first is a
+  blocker.
 - **`bd show --json` returns an array**, hence the `if type=="array"` — indexing it as an object
   fails with `Cannot index array with string "dependencies"`.
 - **Closed counts as satisfied.** A delivered blocker needs no plan, and a closed bead keeps its
@@ -616,7 +617,7 @@ or a bead's worth of rework — so **be relentless, and expect several rounds.**
   - **the words**, exactly as they will ship — every label, button, heading, empty-state line and
     error message, quoted, not paraphrased;
   - **a narrow window**, since the header already wraps as one unit and a new control joins that;
-  - **what persists** across a reload, a game switch and a new turn.
+  - **what persists** across a reload, a switch of data set, and new data arriving.
 - **Mock the states, not the happy path.** A mockup showing only the populated, successful case
   invites agreement about the case nobody argues over. Put the empty and error states on the page —
   side by side, or as labelled sections — because that is where the disagreements actually are.
@@ -643,8 +644,8 @@ whole step exists to prevent. So, in the same message as the question, never in 
   Label each with the name you use in the options, so the answer and the file cannot be mismatched:
 
   ```
-  Option A — file:///Users/…/scratchpad/ah-t65-sidebar-a.html
-  Option B — file:///Users/…/scratchpad/ah-t65-sidebar-b.html
+  Option A — file:///Users/…/scratchpad/<bead-id>-sidebar-a.html
+  Option B — file:///Users/…/scratchpad/<bead-id>-sidebar-b.html
   ```
 
   The same holds anywhere else a mockup comes up — a follow-up question, a summary, a report that a
@@ -747,7 +748,7 @@ children are P4 with it, and the whole family gets ranked in one question at the
 labels, and you are holding the parent — so each child arrives carrying a `planning` label nobody
 chose. That excludes it from every candidate query, including your own, and makes it look abandoned
 to the other planner, whose reclaim check names only the child you happen to be planning right now
-(ah-3ox, twice in one session).
+(seen twice in one session).
 
 ```bash
 bd update <child> <child> ... --remove-label planning
@@ -801,7 +802,7 @@ What that means in practice:
 - **No vague verbs.** *fix*, *improve*, *update*, *handle*, *support*, *rework* carry no information
   — every bead fixes or improves something. Say what becomes true.
 - **No internal names** unless the module *is* the subject. A title is read by someone who does not
-  know the file layout; `hexMapModel` in a title spends the reader's attention on nothing.
+  know the file layout; `viewModelCache` in a title spends the reader's attention on nothing.
 - **For a bug, the symptom.** What the audience sees, not the suspected cause — the cause is a guess
   until it is investigated, and a title claiming the wrong one misdirects everyone who reads it.
 - **About seventy characters**, and a whole thought. If it needs a colon and a clause to be
@@ -809,14 +810,14 @@ What that means in practice:
 - **Distinct from its siblings.** Two beads called nearly the same thing are two beads somebody will
   merge, duplicate or work twice. Check the neighbours before settling on one.
 
-This repository's own backlog, which is where the rule comes from:
+Titles from a real backlog, which is where the rule comes from:
 
 | Reads cold | Does not |
 |---|---|
-| Roads do not shrink with the map when zooming out | One gate at a time, machine-wide |
-| Remember map zoom level and focus hex across reloads | Export gate stands aside off main |
-| Max number of units settable from the units-in-hex pane | Instructions for the two agent roles |
-| Option to keep the long order format when exporting orders | Load multiple reports / Import lots of reports |
+| Zooming out no longer shrinks the grid lines with it | One gate at a time, machine-wide |
+| Remember the zoom level and the focused item across reloads | Export gate stands aside off main |
+| Row limit settable from the list pane | Instructions for the two agent roles |
+| Option to keep the long format when exporting | Load several files / Import lots of files |
 
 The last pair is two different beads. Neither title distinguishes itself from the other, and that is
 the cost being described.
@@ -851,7 +852,7 @@ round trip through the navigator's queue.
    helpers to build on rather than reinvent. This is what stops a second copy of something. It also
    carries **the design of the code**, because there is no other section that does:
    - **The public surface of anything new**, written out as TypeScript or Rust — exported types,
-     signatures, and what each returns. `ah-jg6.2`'s plan is the shape to copy: a dozen lines of
+     signatures, and what each returns. The shape to copy is a dozen lines of
      `export type` and `export function`, then the decisions bound into them. A named signature is
      the difference between an implementer building your design and building its own.
    - **Where state lives** — which component or module owns it, what derives from it, and what
@@ -885,8 +886,7 @@ look like a broken worker; a persisted setting's old default must be migrated ra
 
 If the bead touches one of those, say so and say what to do about it.
 
-**Never ask for an effect-level test in `packages/shared`.** That package has no jsdom by decision
-(ah-nass): its component tests render with `renderToStaticMarkup`, which runs no effects, attaches
+**Never ask for an effect-level test in `packages/shared`.** That package has no jsdom by decision: its component tests render with `renderToStaticMarkup`, which runs no effects, attaches
 no refs and fires no timers, and shows a zustand store only its module-load default. A plan that
 names a `*.test.tsx` there and asks it to observe something an effect did is asking for a test the
 harness cannot run — four beads paid about half an hour each discovering that. Plan the rule into a
@@ -906,7 +906,7 @@ the real name of the real export — not a plausible one.
 
 **The one exception is a seam a blocker is about to create, and it is labelled as such.** When you
 are planning against work that has not landed, say so in the same breath: "`turnDiff.ts` does not
-exist yet — `ah-jg6.2` creates it with this surface (see its plan)". An implementer can build
+exist yet — `<bead-id>` creates it with this surface (see its plan)". An implementer can build
 against a promise it has been told is a promise; what it cannot do is tell one from a fact.
 
 ### Before you mark it planned, read it as the implementer
@@ -934,7 +934,7 @@ is theirs. What must not survive this pass:
 produce because it is much shorter. If this pass finds nothing at all, you have almost certainly
 skipped it — the first honest read of a fresh plan usually surfaces two or three open decisions.
 
-Length is not the measure and padding is not the goal: `ah-jg6.2`'s plan is long because the work
+Length is not the measure and padding is not the goal: a plan runs long only when the work
 had that many decisions in it, and a genuinely small bead gets a genuinely short plan. The measure is
 whether Sonnet could finish without asking.
 

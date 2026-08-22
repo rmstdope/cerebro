@@ -9,9 +9,13 @@ an Emacs fleet viewer. It is consumed by other repositories as a git submodule a
 whose `scripts/sync-symlinks.sh` symlinks the skills and agents into the consumer's discovery paths.
 
 Almost nothing here executes in this repository. The agents and skills describe a workflow that runs
-in a *consumer* repo (they were extracted from `atlantis-hud` and still name it throughout), and the
-launchers in `scripts/` only make sense from a consumer root, where this repo is mounted at
-`.claude/cerebro`. So a change here is generally not testable by running it in this tree.
+in a *consumer* repo, and the launchers in `scripts/` only make sense from a consumer root, where
+this repo is mounted at `.claude/cerebro`. So a change here is generally not testable by running it
+in this tree.
+
+Every project-specific fact is read from `<consumer>/.claude/cerebro-project.conf`
+(`scripts/project-conf`), and the fleet's names from `<consumer>/.claude/cerebro-roster`
+(`scripts/roster`). Nothing in this repository names a consumer.
 
 ## Commands
 

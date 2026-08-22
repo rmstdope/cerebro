@@ -1,6 +1,6 @@
 ---
 name: release-notes
-description: Write the release notes for a release — collect the beads that shipped in it, drop everything a player could never see, and say what changed in terms of what they can now do. Use when a release has been cut in atlantis-hud and needs notes, or when asked what went out in one.
+description: Write the release notes for a release — collect the beads that shipped in it, drop everything a player could never see, and say what changed in terms of what they can now do. Use when a release has been cut and needs notes, or when asked what went out in one.
 ---
 
 # Writing release notes

@@ -1,6 +1,6 @@
 ---
 name: implement-bead
-description: The implementation role — take one planned bead, build it under TDD, get it reviewed and merged, and finish. Use when running an implementation session in atlantis-hud.
+description: The implementation role — take one planned bead, build it under TDD, get it reviewed and merged, and finish. Use when running an implementation session.
 ---
 
 # Implementing a planned bead

@@ -1,4 +1,11 @@
-# What Cerebro does, and how much of it the fleet view can do instead
+# ADR: what Cerebro does, and how much of it the fleet view can do instead
+
+**Decided:** 2026-05 (`ah-4ao`). **Status:** historical record, kept as written.
+
+This is a decision record about a moment, not a description of the harness as it stands. The PR
+numbers below are drawn from two repositories — the `cerebro` repository itself and the consumer
+repository the fleet was extracted from — so a bare `#229` here is not resolvable from this
+repository alone.
 
 Cerebro is a `claude` session that does almost nothing a model actually has to reason about: it writes a flag to start or stop an implementer, sweeps worktrees, claims and epics on a
 timer, and reports counts. That is `touch`, `pgrep` and a handful of `bd` queries wearing an agent's

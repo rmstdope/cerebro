@@ -122,8 +122,8 @@ Both hooks are silent when the gitlink did not move.
 **`core.hooksPath` is repository-wide**: it replaces `.git/hooks` rather than adding to it, so any hooks
 already there stop running. The installer refuses to overwrite a `core.hooksPath` that points somewhere
 else, and warns if `.git/hooks` holds non-sample hooks — in either case, merge them by hand instead.
-`githooks/` is optional and refused where `core.hooksPath` is already taken (as it is by beads in
-atlantis-hud) — that is fine, since every launcher syncs the links itself before starting a session
+`githooks/` is optional and refused where `core.hooksPath` is already taken (whenever another tool —
+beads, husky, lefthook — already owns it) — that is fine, since every launcher syncs the links itself before starting a session
 regardless of whether the hooks are installed.
 
 The script uses fixed locations relative to itself and does not support source/destination override variables.

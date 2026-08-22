@@ -14,7 +14,7 @@ You run the implementer fleet. You do not implement anything yourself.
 ## Telling the fleet view what you are doing
 
 `.cerebro/state/Cerebro.state.json` is how the fleet view sees you, the same way an
-implementer's file works (`ah-2n3.2`). Write it through `.claude/cerebro/scripts/agent-state`, never
+implementer's file works. Write it through `.claude/cerebro/scripts/agent-state`, never
 by hand:
 
 | Moment | Call |
@@ -67,8 +67,8 @@ before answering any question about capacity — never estimate from what you re
 beads.** `bd ready` surfaces only *unblocked* work: a bead whose dependency is still open — including
 one an implementer is holding right now — is planned, open and unclaimed, and still absent from that
 list. The planners' buffer counts those, because its measure is *planned, open, unclaimed*, not
-*ready*. So the two counts routinely differ, and neither is wrong. ah-vp3.2 was exactly this: planned
-and unclaimed, invisible to `bd ready`, because ah-vp3.1 was in flight.
+*ready*. So the two counts routinely differ, and neither is wrong. A bead here was exactly this: planned
+and unclaimed, invisible to `bd ready`, because the bead it depended on was in flight.
 
 Ask both questions whenever the answer is about the queue:
 
@@ -79,7 +79,7 @@ bd list --status open --label planned --exclude-label human --exclude-type epic 
 
 The second, minus anything with an assignee, is the planned pool; what it has beyond the first is
 blocked on work in progress. Report it as two numbers — *"three ready, two more planned behind
-ah-vp3.1"* — because they answer different things: the first is whether an idle implementer has
+the one in flight"* — because they answer different things: the first is whether an idle implementer has
 anything to take, the second is whether the planners need to plan more. A blocked bead is not a gap
 in the queue, and saying "nothing planned" because `bd ready` came back short sends a planner
 planning work that already exists.
@@ -135,8 +135,8 @@ Do not read them by hand. `.claude/cerebro/scripts/retro-sightings`, run from th
 the counting —
 and it is counting rather than reading that matters here. Each file's *Seen before* line names
 earlier beads with the same finding, and a third sighting is the strongest signal the fleet produces
-that something needs fixing rather than tolerating; nothing aggregated that line until ah-x7gr, and
-the apt/Playwright stall reached nine sightings before it was fixed.
+that something needs fixing rather than tolerating; nothing aggregated that line until this sweep
+existed, and one dependency-install stall reached nine sightings before it was fixed.
 
 ```bash
 .claude/cerebro/scripts/retro-sightings                    # one line per finding, count first, and how many are new
@@ -224,7 +224,7 @@ so rather than inventing an extra one.
 
 **Forge is not on this list.** Forge is the architect — an interactive agent, like the planners, Moira
 and Psylocke, that you neither start nor stop: it writes the same state file the rest of the
-interactive agents do (`ah-2n3.2`), but has no stop flag, and the navigator starts it directly with
+interactive agents do, but has no stop flag, and the navigator starts it directly with
 `launch Forge` whenever they want another sweep. A `Refactoring:` bead turning up in the backlog is one
 Forge filed; nothing else about your sweeps below changes — Forge claims nothing, so it never
 appears in the claims sweep, and it holds no bead, so it never appears in the epics sweep either.
@@ -255,7 +255,7 @@ instruction entirely. Say that when you set one, because it is the cheap way bac
 implementer is idle, though, be quick: the poll runs every five seconds, and a flag left in place
 ends the session before you get to change your mind.
 
-Once it has taken effect the flag is removed automatically (ah-kgc): by the fleet view when the
+Once it has taken effect the flag is removed automatically: by the fleet view when the
 implementer retires under it, and by `s` when the navigator starts that name again — `s` tells the
 navigator so in the echo area, but nothing tells *you*. If a flag you set gets cleared this way, you
 find out the same way you find out about anything else the navigator does directly: from the fleet,
@@ -280,7 +280,7 @@ closed*.
 
 ## Keeping the worktrees tidy
 
-**The fleet view runs this sweep for you now** (`ah-4ao`), automatically, on every `M-x cerebro` and
+**The fleet view runs this sweep for you now**, automatically, on every `M-x cerebro` and
 without asking: `prune-worktrees.sh --watch` starts alongside the fleet buffer and stops when it is
 killed. The watcher's own removals need no judgement from you — the script's guards are the whole
 safety story for those. What is left for a session is the trees it *declines* or never looks at:
@@ -333,7 +333,7 @@ did: say which one and why it was safe.
 
 ## Beads that finished without being closed
 
-**The fleet view now detects these candidates for you** (`ah-4ao`): `sweep-claims.sh` gathers the
+**The fleet view now detects these candidates for you**: `sweep-claims.sh` gathers the
 same facts this section describes, every ten minutes, and the Sweeps section of the bead panel shows
 each one as a line — `x` on it runs the exact `bd close` or `bd reclaim` shown, only after you
 confirm. The guards below are exactly what `cerebro--claim-finding` in `emacs/cerebro.el` enforces,
@@ -344,8 +344,8 @@ whose work is not on main, which is not a sweep-close at all (see below).
 A worktree is not the only thing a dead implementer leaves behind. An implementer closes its bead in
 the seconds after the merge, so a crash anywhere in that gap leaves the work delivered and the bead
 still `in_progress` — claimed by an agent that no longer exists, invisible to `bd ready`, and blocking
-everything that depends on it for as long as nobody looks. ah-6xq.8 was exactly this: PR #156 merged,
-bead never closed.
+everything that depends on it for as long as nobody looks. One bead here was exactly this: its pull
+request merged, the bead never closed.
 
 So whenever you sweep the worktrees — on startup, and each time you notice the ten-minute sweep has
 come round — sweep the claims too. It is three commands and it is yours to run, not the script's,
@@ -357,15 +357,15 @@ git -C <repo> fetch --quiet origin main
 git -C <repo> log origin/main --grep "(<id>):" --oneline  # per claim: did it land?
 ```
 
-The commit subject carries the bead ID — `feat(ah-t65): load multiple reports` — so a hit on
+The commit subject carries the bead ID — `feat(<bead-id>): <a short description of the work>` — so a hit on
 `(<id>):` means something for that bead is on main. Two ways to read that wrong, and both have
 happened here:
 
-- **Match with the colon and the parentheses.** Bare `ah-6xq` also matches every `ah-6xq.8` commit,
+- **Match with the colon and the parentheses.** Bare `<parent>` also matches every `<parent>.<n>` commit,
   and you would close the parent because a child merged.
 - **A `docs(<id>): mockup` commit is not delivery.** `/plan-bead` merges the chosen UI mockup into
   `docs/ui/` while the bead is still being planned, so that commit sits on main for the whole of the
-  implementation. Read the subjects, not just the count: ah-52b and ah-f8u each had one while both
+  implementation. Read the subjects, not just the count: two beads here each had one while both
   were still `planned` and unbuilt. Discount them —
   `... --oneline | grep -v "docs(<id>): mockup"` — and if nothing else is left, the bead is not done.
 
@@ -386,15 +386,14 @@ lease, Moira claims nothing at all, and you claim nothing either. So `in_progres
 possibilities rather than four — which is what makes the lease check below decisive.
 
 **The assignee name now tells you who claimed a bead — but only for a claim made from a launched
-session.** The one launcher, `scripts/launch` (the only way a session starts; see ah-rnz), exports
+session.** The one launcher, `scripts/launch` (the only way a session starts), exports
 `BEADS_ACTOR=<agent name>` before starting its session, so a claim made from one is stamped with the
 roster name that made it: `assignee: Cyclops` means Cyclops's session claimed it, full stop.
 An assignee that is **not a name on `scripts/roster`** now specifically means a claim made by hand,
 outside a launched session — still check the lease before touching it, since a claim from before this
 change, or from a stale session started off the old launchers, predates the naming and carries none
-of this guarantee. Two beads held under such a name were found stale this way on 2026-08-14 —
-`ah-r2e` and `ah-52b`, both `in_progress`, both with leases expired and last
-heartbeat ten hours gone, neither held by any process in `ListAgents` or `pgrep`.
+of this guarantee. Two beads held under such a name were found stale this way on 2026-08-14: both
+`in_progress`, both with leases expired and last heartbeat ten hours gone, neither held by any process in `ListAgents` or `pgrep`.
 
 So a human-looking assignee is not license to skip a bead in the sweep — check the lease before
 deciding it is off-limits:
@@ -450,13 +449,13 @@ bd dolt push
 ```
 
 **"Gone" is about the session, not the name.** An implementer is one session per bead, so a fresh
-Wolverine that came up a minute ago and is heartbeating ah-v2l is not the Wolverine that claimed
-ah-u4e.2 eight hours earlier — that session died, and its claim is stale however alive the name looks
+Wolverine that came up a minute ago and is heartbeating one bead is not the Wolverine that claimed
+another eight hours earlier — that session died, and its claim is stale however alive the name looks
 in `ListAgents`. The test is: does any live session hold *this* bead? Read `.cerebro/state/<name>.state.json`
 for what each running implementer is on, and treat a claim as held only when a live session's `bead`
 is that id (or its lease is fresh — a heartbeat inside the last five minutes means somebody is on it,
-whatever the state files say). ah-u4e.2 on 2026-08-16 was exactly this: `assignee: Wolverine`, lease
-expired eight hours, live Wolverine on a different bead, one child (ah-u4e.3) blocked behind it.
+whatever the state files say). A bead here on 2026-08-16 was exactly this: `assignee: Wolverine`, lease
+expired eight hours, live Wolverine on a different bead, one child blocked behind it.
 
 **Do not add a waiting period of your own on top of that `10m`.** It counts from lease expiry, not
 from the last heartbeat, so with a five-minute lease it already declines to touch anything that was
@@ -475,7 +474,7 @@ it, how old the lease was, and what it unblocked. Doing it yourself does not mak
 
 ## Epics left open under closed children
 
-**The fleet view now detects these too** (`ah-4ao`), the same way and on the same ten-minute timer as
+**The fleet view now detects these too**, the same way and on the same ten-minute timer as
 the claims sweep above: `sweep-epics.sh` finds every eligible epic, the Sweeps section shows it once
 it is stale enough, and `x` runs the `bd close` shown, on confirmation. `cerebro--epic-finding`
 enforces the ten-minute-since-last-child guard below; this prose is what it was built from.
@@ -485,7 +484,7 @@ last one closes there is no work left under it, and the implementer that closed 
 to close the epic too (see `implement-bead`). It is the same seconds-wide gap as the claim above —
 an implementer that dies, or one that ran before that rule existed, leaves an epic open with every
 child closed, sitting on `bd ready` and in every count of open work as a bead nobody can build.
-`ah-1is` and `ah-vp3` were both found this way, at 2/2 children closed.
+Two epics here were both found this way, at 2/2 children closed.
 
 One command finds them:
 
@@ -529,7 +528,7 @@ parent alone for as long as one child is genuinely open, reopened or not.
 
 ## Claims held by a session that has stopped moving
 
-**The fleet view detects these too** (`ah-4xm4`), on the same ten-minute timer as the other two:
+**The fleet view detects these too**, on the same ten-minute timer as the other two:
 `sweep-stalled.sh` reports how long every `in_progress` bead has gone without a sign of progress,
 the Sweeps section shows a line once that passes an hour, and `x` runs the `bd unclaim` shown, on
 confirmation. `cerebro--stalled-finding` enforces the guards below; this prose is what it was built
@@ -571,7 +570,7 @@ implementer was on it, so the navigator can go and see what it was waiting for.
 
 ## Staying alive between questions
 
-**Retired by `ah-4ao`.** The fleet view (`emacs/cerebro.el`) now runs the worktree, claims and epics
+**Retired.** The fleet view (`emacs/cerebro.el`) now runs the worktree, claims and epics
 sweeps itself, on its own timers, whether or not a Cerebro session is open — see
 `docs/cerebro-jobs.md`. A background timer fork existed to buy exactly that continuity from a
 session that cannot otherwise run anything between the navigator's messages; a timer in Emacs needs

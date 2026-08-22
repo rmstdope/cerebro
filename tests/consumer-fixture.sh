@@ -265,7 +265,14 @@ grep -q "would install with" "$install_log" \
   && fail "prepare-worktree: printed an install command in a project with no package manager"
 grep -q "$consumer/.cerebro/worktrees/LEDG-1 " "$work_dir/prepare.out" \
   || fail "prepare-worktree: did not print the tree's path and sha"
+[[ ! -e "$consumer/.cerebro/worktrees/LEDG-1" ]] \
+  || fail "prepare-worktree: --dry-run created the tree it was only describing (ah-1rls)"
 pass "prepare-worktree branches from trunk and installs nothing, saying so"
+
+# ...and then for real, because everything below asks questions of a tree that has to exist. Until
+# ah-1rls the dry run above created it, which is exactly the bug that bead was about.
+run_at prepare-worktree --path .cerebro/worktrees/LEDG-1 --branch LEDG-1-first \
+  >/dev/null 2>&1 || fail "prepare-worktree: non-zero exit on the real run"
 
 # The same two roots, asked from inside a worktree of the consumer: the enclosing tree for anything
 # acting on this tree, the shared checkout for anything the fleet reads.

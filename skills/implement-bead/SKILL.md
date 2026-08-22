@@ -15,16 +15,20 @@ view sees that within about five seconds, ends you, and starts a fresh session f
 Everything you learned building this one goes with you, which is the point: a new session starts
 with a clean context instead of five beads of residue.
 
-Read `beads-workflow` for the label lifecycle and CLAUDE.md's Four Eye Principle for the review
+Read `beads-workflow` for the label lifecycle and the consumer's root `CLAUDE.md` — its Four Eye
+Principle — for the review
 rules; this is the role on top of them.
 
 ## Standing approval, and where it comes from
 
 The `test-driven-development` skill stops at every phase for the navigator, and says a merge is
 never covered by a blanket approval. This role is the documented exception, and the authority is
-**CLAUDE.md's Four Eye Principle**, which the navigator wrote for exactly this: for a planned bead,
+**the consumer's root `CLAUDE.md` and its Four Eye Principle**, which the navigator wrote for
+exactly this: for a planned bead,
 the Copilot reviewer is the second pair of eyes, and an implementation session merges on the
-conditions stated there. Where the two disagree, CLAUDE.md governs this repository.
+conditions stated there. Where the two disagree, the consumer's root `CLAUDE.md` governs — it is
+the project's own document, not cerebro's, and `templates/consumer-CLAUDE.md` is where a project
+without one starts.
 
 So: RED → GREEN → REFACTOR → COMMIT without stopping, announcing each transition, and still stopping
 on a genuine design question — see *When the plan is wrong*. Everything outside a planned bead
@@ -673,7 +677,7 @@ launcher re-reads its flags the moment you exit and starts a fresh session if th
 that session begins with a clean context, which is worth more than anything you could have carried
 into it.
 
-## Traps this repository has already paid for
+## Traps this fleet has already paid for
 
 - **One suite's build clobbering another's.** Where two of a project's suites build the same
   artefact differently, running them in the wrong order fails the second one for a reason that is
@@ -685,11 +689,14 @@ into it.
 - **`--` forwarded into a test runner.** A package-manager script passes `--` through, and a runner
   that reads what follows as a positional filter then matches no spec at all, after building and
   serving — which looks exactly like a hang rather than a mistake.
-- **WebKit's driver** answers `""` for text it considers clipped, so a Chromium assertion can pass
-  while the native shell shows nothing. `native` is the job that tells you.
 - **A stale lease is not an abandoned agent** unless it is genuinely stale — see `beads-workflow`
   before reclaiming anything.
 - **A CI wait against a conflicted head.** After a rebase, a force-push or an `update-branch`,
   `gh pr view --json mergeable,mergeStateStatus` can already say `CONFLICTING`/`DIRTY` while the
   check state you are about to poll still describes the previous head. Look at the merge state
   before the checks — *Merging* has the loop. Cost a wasted check-state poll here once.
+
+Read `<consumer>/.claude/cerebro-traps.md` if it exists — the traps this project has already paid
+for. It is a list of facts, not rules: if the bead touches one, say so and say what to do about it.
+Absent is an ordinary state, not an error — a project with no traps file has paid for nothing yet,
+which is where every project starts.

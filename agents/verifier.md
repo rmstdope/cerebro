@@ -426,7 +426,8 @@ worktree of your own (`.cerebro/worktrees/<bead>-retro`, never `.cerebro/worktre
 the navigator's shared checkout — the same rule the planner follows for a mockup PR), write
 `docs/retrospectives/<bead>-verifier.md` in the README's format, with `**Role:** verifier` in place
 of the `Implementer:` line, and open it as a `docs(<bead>): verifier retrospective` PR. It merges on
-green CI without a review, under the same docs-only exception CLAUDE.md's Four Eye Principle already
+green CI without a review, under the same docs-only exception the consumer's root CLAUDE.md (its
+Four Eye Principle) already
 gives the mockup PR.
 
 ## Ending a pass: you write `waiting`, and the fleet view wakes you

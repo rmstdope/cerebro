@@ -670,7 +670,8 @@ gh pr merge <n> --squash --delete-branch
 
 This only holds while the PR is confined to `docs/` and matches what the navigator saw. Check the
 diff before merging — anything outside `docs/`, or content the navigator has not already seen, is not
-this exception and needs a normal reviewed PR instead (see CLAUDE.md's Four Eye Principle).
+this exception and needs a normal reviewed PR instead (see the consumer's root `CLAUDE.md`
+and its Four Eye Principle).
 
 ### Anything you commit, you commit from a worktree of your own
 
@@ -877,21 +878,15 @@ round trip through the navigator's queue.
 
 ### On traps
 
-The last section is where hard-won knowledge goes, and it is worth real effort. Examples this
-repository has actually paid for: WebKit's driver returns `""` for text it considers clipped, so a
-Chromium-only assertion passes while the native shell is broken; the smoke suite rebuilds the web
-bundle with the service worker disabled, so a PWA run straight afterwards fails with timeouts that
-look like a broken worker; a persisted setting's old default must be migrated rather than clamped;
-`vite preview` without `--strictPort` silently serves somebody else's bundle.
+The last section is where hard-won knowledge goes, and it is worth real effort. The kind of fact
+that belongs here is one a plan cannot be written correctly without: a suite that quietly tests the
+wrong artefact, a driver that lies about what it can see, a default that must be migrated rather
+than clamped.
 
-If the bead touches one of those, say so and say what to do about it.
-
-**Never ask for an effect-level test in `packages/shared`.** That package has no jsdom by decision: its component tests render with `renderToStaticMarkup`, which runs no effects, attaches
-no refs and fires no timers, and shows a zustand store only its module-load default. A plan that
-names a `*.test.tsx` there and asks it to observe something an effect did is asking for a test the
-harness cannot run — four beads paid about half an hour each discovering that. Plan the rule into a
-pure module and put the test on that instead; `packages/shared/src/testing/README.md` has the
-pattern and its worked example, and store state goes through `testing/renderWithStoreState`.
+Read `<consumer>/.claude/cerebro-traps.md` if it exists — the traps this project has already paid
+for. It is a list of facts, not rules: if the bead touches one, say so and say what to do about it.
+Absent is an ordinary state, not an error — a project with no traps file has paid for nothing yet,
+which is where every project starts.
 
 ### Everything you cite must exist
 

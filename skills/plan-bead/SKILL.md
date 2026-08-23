@@ -456,8 +456,16 @@ here:
 bd list --status open --exclude-label planned --exclude-label human \
         --exclude-type epic --json \
   | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
+              | select((.labels // []) | (index("verification:failed") | not)
+                                         or (index("plan:revise") != null))
               | select(.priority==0) | "\(.id)\t\(.title)"'
 ```
+
+**A failed verification is a candidate only when it carries `plan:revise`** — that is what the second
+`select` says. A bead reopened because the *build* was wrong, or handed back by an implementer that
+found nothing left to build, is waiting for Psylocke's second look and is not yours; without this
+filter it comes back every pass. A brand-new P0 that was never planned carries neither label and is
+unaffected, which is why the test is on `verification:failed` rather than on `planned`.
 
 **The held beads are filtered in `jq`, not by `--exclude-label`.** A hold is not one exact string,
 so `bd` cannot express it as an exclusion — see *How two planners stay off each other's work*.
@@ -495,9 +503,18 @@ queue for it is how they learn the urgency landed.
 
 A bead that reaches you carrying `verification:failed`, notes beginning "Verification failed", and a
 full existing `design` (with the interview record still in it) is not new work — it is one Psylocke
-sent back because a person tried the merged result and it did not hold. It reached you unplanned
-because the navigator judged the *plan* wrong, not just the build (a build-only failure never leaves
-`planned`, and never reaches you at all — see `agents/verifier.md`).
+sent back because a person tried the merged result and it did not hold. It reached you because it
+also carries **`plan:revise`**: the label Psylocke sets when the navigator, asked *plan or build*,
+judged the **plan** wrong. That label — not the absence of `planned` — is what makes a reopened bead
+yours (see `agents/verifier.md`).
+
+**A `verification:failed` bead without `plan:revise` is not yours.** Leave it alone; it is waiting
+for Psylocke's second look. The absence of `planned` says only "not ready for an implementer", and it
+comes off for several reasons: an implementer removes it handing a bead back, including one where it
+read the notes and found nothing left to build. That is what produced this rule: a bead the
+navigator had judged *build wrong* arrived wearing exactly the labels of *plan wrong*, on two
+consecutive passes. A planner that had trusted the absence would have rewritten a sound plan, and
+the interview behind it, against a finding that plan had deliberately scoped out.
 
 Read the failure before touching the plan. **Amend the existing design in place; do not rewrite it.**
 Keep all eight headings and the interview record exactly as they are, and revise only the sections
@@ -507,7 +524,14 @@ under *Context*, so the next reader sees why this plan has a second pass. **Neve
 user-facing question the navigator already answered**, unless the failure is about exactly that
 answer — a plan revision is not a second bite at decisions that were already made.
 
-Then re-add `planned` as usual, and go on to the buffer.
+Then re-add `planned` as usual — **and remove `plan:revise` in the same update**, or the bead stays
+a planner candidate for ever:
+
+```bash
+bd update <id> --add-label planned --remove-label plan:revise --remove-label planning:<your-name>
+```
+
+Then go on to the buffer.
 
 ## You keep a buffer sized to the fleet
 
@@ -643,7 +667,11 @@ bd dolt pull
 bd list --exclude-label planned --exclude-label human \
         --exclude-type epic --sort priority --json \
   | jq '[.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
+             | select((.labels // []) | (index("verification:failed") | not)
+                                        or (index("plan:revise") != null))
              | select(.priority != 4)]'
+# ... a failed verification is a candidate only when it carries plan:revise; without that label
+# it is waiting for Psylocke, not for you. See *A reopened bead is a P0 with a plan already*.
 # ... and skip any candidate whose family another planner owns: see *How two planners
 # stay off each other's work*, which is what the jq filter and the label order above obey.
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID

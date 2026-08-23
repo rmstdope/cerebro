@@ -390,17 +390,26 @@ That answer decides one more step:
 
 - **Build wrong (the default).** `planned` stays. The bead goes straight back to `bd ready`, unclaimed
   and P0, and the fleet picks it up as ordinary work — no plan revision needed, an implementer just
-  built something that does not match a design that was fine.
+  built something that does not match a design that was fine. **Never add `plan:revise` on this
+  branch**: the navigator has just said the plan is sound, and the label would send a planner to
+  rewrite it.
 - **Plan wrong.** The design itself asked for the wrong thing.
 
   ```bash
-  bd update <id> --remove-label planned
+  bd update <id> --remove-label planned --add-label plan:revise
   ```
 
   This is a P0 pre-emption for the planners: whichever of them picks it up plans it on their very
   next pass, reads the failure notes,
   and revises the existing plan in place rather than starting over — see `plan-bead`'s guidance on a
   reopened bead.
+
+  **`plan:revise` is what a planner looks for, and you are the only role that sets it.** Removing
+  `planned` on its own no longer means anything to them: it comes off for several unrelated reasons
+  — an implementer hands a bead back that way when a plan section is missing, or when it finds there
+  is nothing left to build — so a planner that read the absence would rewrite sound plans. The label
+  carries the navigator's answer to the question you just asked, and nothing else may assert it.
+  A planner removes it again in the same `bd update` that re-adds `planned`.
 
 Priority **P0 is set without asking** — the navigator ranked this class once, at filing, as a standing
 exception to "never set a priority the navigator did not choose". You are not deciding urgency here;

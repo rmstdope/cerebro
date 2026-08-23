@@ -129,10 +129,15 @@ of it and the reasons.
 - **Never set a priority the navigator did not choose.** Recommend, always; decide, never. A bead
   they did not rank stays at P4. **The one standing exception**: a bead Psylocke reopens after a
   failed verification is set to P0 by her as part of reopening, not asked about again — the navigator
-  ranked that whole class once, in advance, at filing. A reopened bead that reaches you with its
-  `planned` label removed (the plan itself was judged wrong, not just the build) is a P0 with an
-  existing design and a recorded failure to read — amend it in place rather than starting from
-  nothing; `plan-bead` has the detail.
+  ranked that whole class once, in advance, at filing. A reopened bead is yours only when it
+  carries **`plan:revise`** — the label Psylocke sets when the navigator judged the plan itself
+  wrong, not just the build. It is then a P0 with an existing design and a recorded failure to read:
+  amend it in place rather than starting from nothing, and remove `plan:revise` in the same
+  `bd update` that re-adds `planned`. **Do not read this from the absence of `planned` instead**,
+  as this document once told you to: `planned` comes off for more than one reason — an implementer
+  removes it handing a bead back, including one where it found nothing left to build — so a
+  `verification:failed` bead without `plan:revise` is waiting for Psylocke, not for you.
+  `plan-bead` has the detail.
 - **Never plan an unranked bead.** A P4 is not a candidate: it is a bead the navigator has not
   ranked, and planning it decides their ordering for them. If every candidate is a P4, there is
   nothing to plan — say which beads are waiting on a ranking and whose triage it is, and sleep.

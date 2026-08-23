@@ -653,7 +653,8 @@ bd list --exclude-label planned --exclude-label human \
         --exclude-type epic --sort priority --json \
   | jq '[.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
              | select(.priority != 4)]'
-# ... and skip any candidate whose family another planner owns - see below.
+# ... and skip any candidate whose family another planner owns: see *How two planners
+# stay off each other's work*, which is what the jq filter and the label order above obey.
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID
 bd update <id> --add-label planning:<your-name>
 bd dolt push                                       # publish it at once
@@ -662,52 +663,16 @@ bd update <id> --design-file plan.md --add-label planned --remove-label planning
 bd dolt push                                       # or the release is invisible elsewhere
 ```
 
-### A bead from an issue: go and read the issue
-
-**Before you research anything else, if the bead carries a `gh-<n>` external ref, open the thread.**
-
-```bash
-bd show <id> --json | jq -r '.external_ref'    # gh-212, or null
-gh issue view <n> --comments
-```
-
-The bead is a summary somebody wrote once. The thread is where the reporter kept talking — and they
-were asked to: Moira's acknowledgement tells every reporter that a clearer reproduction, a
-screenshot, or what they expected to happen instead is welcome in the thread. That material arrives
-*after* the bead was filed, so it is in exactly the place you would not look if you only read the
-bead.
-
-**Open the screenshots.** An image attached to an issue is often the specification — the layout the
-reporter meant, the state the app was in, the thing that looks wrong — and it says in one picture
-what a paragraph of the bead approximates. Download it and read it rather than inferring from the
-filename:
-
-```bash
-gh issue view <n> --json body,comments --jq '.body, .comments[].body' | grep -oE 'https://[^ )]+\.(png|jpg|jpeg|gif)'
-curl -sL "<url>" -o /tmp/issue-<n>-1.png    # then read the file
-```
-
-What to take from it: a reproduction the bead lacks, the version or platform it happened on, what
-the reporter expected, a later comment narrowing or widening what they meant, and anything a
-maintainer said in the thread that the bead never absorbed. Where the thread changes the shape of
-the work, say so in the plan's *Context* and name the comment — the implementer never sees the
-issue, and a decision whose reason lives in a GitHub thread is a decision it cannot check.
-
-If the thread turns out to contradict the bead, that is a user-facing question and it is the
-navigator's: ask, rather than planning the version you prefer.
+Everything about *how* a candidate is taken — the two labels, family ownership, the order the
+state file and the label are written in, and the check immediately before you write — is in *How two
+planners stay off each other's work*. What follows is which bead to take.
 
 ### Which bead, and in what order
 
 **You never claim a bead.** A claim means *an implementer is building this*, and it is theirs alone —
 `bd update --claim`, `bd ready --claim` and `bd unclaim` are not yours to run. What you take instead
-is the `planning` label, which says the same thing about planning without taking the bead out of the
-fleet's hands: it marks the candidate so the other planner picks a different one, it leaves the bead
-`open` and unassigned, and it costs nothing if this session dies — no stranded claim, no lease for
-anyone to reclaim, nothing for Cerebro's sweep to puzzle over. Exclude it when choosing a candidate,
-above, or you will pick the bead you are already planning.
-
-It is the whole of the coordination between the planners, which is why it is written to disk and
-pushed the moment it is taken rather than kept in your head until the plan is done.
+is your `planning:<your-name>` hold — see *How two planners stay off each other's work* — which the
+candidate query above already excludes, so you never pick the bead you are already planning.
 
 **Highest priority first**, which is what `--sort priority` gives you: P0 before P1, and so on down.
 P0 goes further than being first in this list — it pre-empts the buffer entirely, so an unplanned one
@@ -783,6 +748,40 @@ describing an interface somebody has committed to, instead of guessing at one.
 
 No heartbeats. A lease is a thing a claim has, and you hold a label instead — so a long discussion
 with the navigator, or an hour spent reading code, expires nothing and strands nothing.
+
+### A bead from an issue: go and read the issue
+
+**Before you research anything else, if the bead carries a `gh-<n>` external ref, open the thread.**
+
+```bash
+bd show <id> --json | jq -r '.external_ref'    # gh-212, or null
+gh issue view <n> --comments
+```
+
+The bead is a summary somebody wrote once. The thread is where the reporter kept talking — and they
+were asked to: Moira's acknowledgement tells every reporter that a clearer reproduction, a
+screenshot, or what they expected to happen instead is welcome in the thread. That material arrives
+*after* the bead was filed, so it is in exactly the place you would not look if you only read the
+bead.
+
+**Open the screenshots.** An image attached to an issue is often the specification — the layout the
+reporter meant, the state the app was in, the thing that looks wrong — and it says in one picture
+what a paragraph of the bead approximates. Download it and read it rather than inferring from the
+filename:
+
+```bash
+gh issue view <n> --json body,comments --jq '.body, .comments[].body' | grep -oE 'https://[^ )]+\.(png|jpg|jpeg|gif)'
+curl -sL "<url>" -o /tmp/issue-<n>-1.png    # then read the file
+```
+
+What to take from it: a reproduction the bead lacks, the version or platform it happened on, what
+the reporter expected, a later comment narrowing or widening what they meant, and anything a
+maintainer said in the thread that the bead never absorbed. Where the thread changes the shape of
+the work, say so in the plan's *Context* and name the comment — the implementer never sees the
+issue, and a decision whose reason lives in a GitHub thread is a decision it cannot check.
+
+If the thread turns out to contradict the bead, that is a user-facing question and it is the
+navigator's: ask, rather than planning the version you prefer.
 
 ## What you decide, and what you must not
 

@@ -84,8 +84,9 @@ Merged, unverified 0
   (none)
 ```
 
-**Being planned** is what the planners are holding right now — open beads carrying the `planning`
-label, one per planning session. They are deliberately not folded into either neighbour: Unplanned is
+**Being planned** is what the planners are holding right now — open beads carrying a label starting
+`planning` (`planning:Xavier`, or the bare word from a session older than that spelling), one per
+planning session. They are deliberately not folded into either neighbour: Unplanned is
 work nobody has started, and Planned, unclaimed is work an implementer can take this second, while
 these can be neither claimed nor picked up until the plan lands. Read next to Planned, unclaimed it
 also answers the question a short queue raises — whether the planners are behind, or simply mid-bead.

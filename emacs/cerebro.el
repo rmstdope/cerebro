@@ -2060,12 +2060,33 @@ consumer calls the same thing."
   :group 'cerebro)
 
 (defcustom cerebro-planning-label "planning"
-  "The label a planner holds a bead under while it writes the plan.
+  "The PREFIX of the label a planner holds a bead under while it writes the plan.
 
 Open, unclaimable by anybody else, and shown in its own section rather
-than among the unplanned backlog."
+than among the unplanned backlog.
+
+A prefix rather than the whole label, because a planner names its hold
+after itself - `planning:<name>' - so that a session finishing its own
+bead cannot strip a label another session set.  The bare word is still a
+hold: both spellings are live at once, since a session started before the
+named one existed keeps writing the bare label."
   :type 'string
   :group 'cerebro)
+
+(defun cerebro--holding-label-p (labels)
+  "Non-nil when LABELS carries a planner's hold.
+
+A hold is the bare word, or the word followed by `:' and the planner
+holding it - `planning:Xavier'.  The separator is required rather than a
+bare prefix, so an unrelated label that merely starts with the same
+letters is not mistaken for somebody holding the bead; `planner:<name>',
+which names who plans a family rather than who is holding one bead, is
+excluded by that and by diverging from the word anyway."
+  (let ((held (concat cerebro-planning-label ":")))
+    (seq-some (lambda (label)
+                (or (equal label cerebro-planning-label)
+                    (string-prefix-p held label)))
+              labels)))
 
 (defun cerebro--partition-beads (beads)
   "Split BEADS into the five lists the panel shows.
@@ -2105,7 +2126,7 @@ work."
              ;; removal - carries both. Pickable wins, because an implementer
              ;; can claim it whatever else the bead says.
              ((member cerebro-planned-label labels) (push bead planned))
-             ((member cerebro-planning-label labels) (push bead being-planned))
+             ((cerebro--holding-label-p labels) (push bead being-planned))
              (t (push bead unplanned)))))
          ((equal status "closed")
           ;; Settled means nothing further is wanted from anybody - verified

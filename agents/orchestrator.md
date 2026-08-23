@@ -387,7 +387,7 @@ being worked by hand — is `in_progress` under a human name, and none of this a
 claims held by implementer names are yours to sweep.
 
 **A claim can only ever be an implementer's or a human's.** Claiming belongs to the implementer role
-alone (see `beads-workflow`): a planner marks what it is planning with the `planning` label and holds no
+alone (see `beads-workflow`): a planner marks what it is planning with a `planning:<its own name>` label and holds no
 lease, Moira claims nothing at all, and you claim nothing either. So `in_progress` narrows to two
 possibilities rather than four — which is what makes the lease check below decisive.
 

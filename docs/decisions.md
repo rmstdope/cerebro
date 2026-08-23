@@ -52,7 +52,11 @@ Ids here are from the `atlantis-hud` bead database, the consumer cerebro grew up
 |---|---|
 | `agent-alive` reads the shared checkout, never the enclosing worktree | ah-e0w |
 | `select(.dependency_type=="blocks")` — a child would otherwise demand its parent be planned | ah-vp3, ah-vp3.1, ah-vp3.2 |
-| Children of a split inherit `planning` and must have it removed | ah-3ox |
+| Children of a split inherit the holding label and must have it removed | ah-3ox |
+| One planner owns a whole split family, marked `planner:<name>` on the parent | ah-ywj7 |
+| A hold names its holder (`planning:<name>`) so a finishing session cannot strip another's | ah-ywj7 |
+| Holding labels are read by PREFIX; `bd --exclude-label` is exact, so the filter moved into `jq` | ah-ywj7 |
+| Re-check the hold immediately before writing the design — a backstop that saves the plan, not the interview | ah-ywj7 |
 | The public surface written out as signatures is the shape a plan copies | ah-jg6.2 |
 | Never ask for an effect-level test in a package with no jsdom | ah-nass |
 

@@ -51,8 +51,9 @@ fleet, and when that session ends it strands a lease nobody can account for.
 
 **The planner does not use `bd ready` either.** It may plan a bead whose dependencies are still
 unbuilt — often those are the ones most worth having planned — and `bd ready` hides exactly those. It
-picks from `bd list ... --sort priority`, and marks its candidate with the **`planning`** label
-rather than claiming it: enough to keep a second planning session off the same bead, while leaving it
+picks from `bd list ... --sort priority`, and marks its candidate with a **`planning:<its own
+name>`** label rather than claiming it: enough to keep a second planning session off the same bead,
+while leaving it
 `open`, unassigned and free of any lease. `plan-bead` carries the commands.
 
 The claim is atomic, and a failure means somebody else won the race: take the next bead rather than
@@ -71,8 +72,15 @@ holds nothing but a label.
 | State | How it looks | Who moves it, and how |
 |---|---|---|
 | unplanned | open, no `planned` | — |
-| being planned | open, `planning`, unassigned | planner: add the label, then plan it |
-| planned | open, `planned`, unassigned | planner: write the plan, swap `planning` for `planned` |
+| being planned | open, `planning:<planner>`, unassigned | planner: add the label, then plan it |
+| planned | open, `planned`, unassigned | planner: write the plan, swap its own `planning:` for `planned` |
+
+A **split family is owned by one planner**, marked `planner:<name>` on the parent rather than on any
+child: the children share one design, so a second planner taking one of them writes half a family
+that disagrees with the other half. It is not a hold and not a claim — it says who plans this family,
+survives that planner restarting between beads, and is ignored once the name leaves the roster.
+Everything that reads the holding label matches `planning` by prefix so a named hold and the bare
+word both count; `planner:` is deliberately not caught by that.
 | being implemented | in_progress, implementer holds the lease | the builder pickup above |
 | needs the user | open, unassigned, `human`, **`planned` removed** | either role, on anything it must not decide |
 | parked on a UI answer | open, unassigned, `needs-ui-decision` **and** `human` | planner, when the user is away |
@@ -96,7 +104,7 @@ runs out. That is the exact condition the reclaim rule below exists to repair, m
 deliberately every time an implementer escalates.
 
 **A planner escalating has no claim to release**, so it runs the first and third commands and
-`--remove-label planning` in place of the second. `bd unclaim` on a bead you never claimed is not
+`--remove-label planning:<its own name>` in place of the second. `bd unclaim` on a bead you never claimed is not
 harmless bookkeeping — it is a claim you should not have had in the first place.
 
 A bead parked on a UI answer carries **both** `needs-ui-decision` and `human`, for the same reason:

@@ -150,10 +150,13 @@ of it and the reasons.
 - **Never take a `planning:` label off a bead you did not label.** It is the other planner's
   candidate, and removing it is how one bead gets two plans. Because the label names its holder, this
   is now checkable rather than an honour system: if it does not carry your own name, it is not yours
-  to remove. If one looks stuck, say so; do not tidy it.
+  to remove. The one exception is the reclaim check, which frees a label — named or bare — that no
+  live planner names in its own state file; that is a different act, and the skill has the evidence
+  it needs first. If one merely looks stuck, say so; do not tidy it.
 - **Never take a candidate out of a family another planner owns.** If the parent carries a
   `planner:` label naming a planner still on the roster, skip the whole family and say whose it is —
-  do not wait for it, and do not take "just the one child".
+  do not wait for it, and do not take "just the one child". **Unless it is a P0**, which is planned
+  wherever it lives; say whose family you took it out of.
 - **Never triage when the triage is not yours**, and never assume the other planner did it — say
   whose it is, so the navigator can see who owes them a pass.
 - Never leave your `planning:` label behind you. Remove it — by its exact spelling, since

@@ -74,16 +74,18 @@ holds nothing but a label.
 | unplanned | open, no `planned` | — |
 | being planned | open, `planning:<planner>`, unassigned | planner: add the label, then plan it |
 | planned | open, `planned`, unassigned | planner: write the plan, swap its own `planning:` for `planned` |
+| being implemented | in_progress, implementer holds the lease | the builder pickup above |
+| needs the user | open, unassigned, `human`, **`planned` removed** | either role, on anything it must not decide |
+| parked on a UI answer | open, unassigned, `needs-ui-decision` **and** `human` | planner, when the user is away |
 
 A **split family is owned by one planner**, marked `planner:<name>` on the parent rather than on any
 child: the children share one design, so a second planner taking one of them writes half a family
 that disagrees with the other half. It is not a hold and not a claim — it says who plans this family,
 survives that planner restarting between beads, and is ignored once the name leaves the roster.
-Everything that reads the holding label matches `planning` by prefix so a named hold and the bare
-word both count; `planner:` is deliberately not caught by that.
-| being implemented | in_progress, implementer holds the lease | the builder pickup above |
-| needs the user | open, unassigned, `human`, **`planned` removed** | either role, on anything it must not decide |
-| parked on a UI answer | open, unassigned, `needs-ui-decision` **and** `human` | planner, when the user is away |
+
+A hold is read as **the word `planning`, or the word and a `:` and the holder's name** — never as a
+bare prefix, so an unrelated label that merely starts with those letters is not mistaken for somebody
+holding the bead, and `planner:` is not caught by it either.
 
 The plan lives in the bead's `design` field (`bd update <id> --design-file plan.md`). Read it with
 `bd show <id> --json`: the pretty renderer reflows Markdown and mangles tables.

@@ -161,8 +161,8 @@ stop flag; the bead in flight is unaffected), `RET` focuses the detail window. E
 dependencies except optional **vterm** for live sessions.
 
 Under the list, the bead panel (`RET`, `n`/`p`, digits and `+`/`-`/`u` to reprioritise) partitions
-one `bd` call into Claimed / Planned, unclaimed / **Being planned** (any `planning` label, matched by
-prefix so a named hold counts, which is what a planner holds
+one `bd` call into Claimed / Planned, unclaimed / **Being planned** (the word `planning`, or
+the word and a `:` and the holder's name, which is what a planner holds
 mid-bead — never counted as buffer, since nobody can claim it) / Unplanned / Merged, unverified. It
 also shows a
 **Sweeps** section: the claims and epics sweeps `agents/orchestrator.md` describes, run every ten

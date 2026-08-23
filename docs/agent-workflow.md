@@ -130,9 +130,9 @@ the rate, and Cerebro will say so on its sweep.
 What they divide, and how:
 
 - **Candidates**, by the `planning:<name>` label — and a whole split family by a `planner:<name>`
-  label on its parent, since one design shared between children is worth one planner. Readers of the
-  holding label match it by **prefix**, never as a whole string, so the bare `planning` an older
-  session writes still counts. A planner names the bead in its own state file, takes the
+  label on its parent, since one design shared between children is worth one planner. A hold is read
+  as the word `planning`, or the word and a `:` and the holder's name, so the bare label an older
+  session writes still counts and an unrelated label starting the same way does not. A planner names the bead in its own state file, takes the
   label, and pushes at once — in that order, so the other planner can tell a live candidate from an
   abandoned one. If a planning session dies, the label is all it leaves: no lease, nothing to
   reclaim.
@@ -505,6 +505,11 @@ planner clears it on the next pass, and says which it freed. By hand:
 ```bash
 bd update <id> --remove-label <the exact label, e.g. planning:Xavier> && bd dolt push
 ```
+
+**A family stuck on a planner that has gone** is the other shape of this, and it needs nothing done:
+a `planner:` label on a parent naming somebody no longer on the roster is ignored by every planner
+and overwritten by the next one to take a candidate from that family. It is not freed, and it does
+not need to be.
 
 **A row says an agent is up when it is not.** State files are written by the agent and removed by the
 fleet view when it ends a session; one left behind by a crash is ignored as soon as its pid is dead

@@ -37,7 +37,7 @@ planner's.
 Two planners share the work through labels and nothing else: no lease, no claim, no conversation
 between sessions. Five rules keep that honest, and each is spelled out where it applies — **label
 before you think**, **one planner owns a whole family**, and **check you still hold it before you
-write** (all three in *Choosing what to plan*), **count what the other planner is holding** (*You
+write** (all three in *Choosing what to plan*), **count only what an implementer could claim** (*You
 keep a buffer sized to the fleet*), and **only the first planner triages** (*Then: triage the P4
 backlog*).
 
@@ -220,13 +220,14 @@ here:
 ```bash
 bd list --status open --exclude-label planned --exclude-label human \
         --exclude-type epic --json \
-  | jq -r '.[] | select((.labels // []) | any(startswith("planning")) | not)
+  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
               | select(.priority==0) | "\(.id)\t\(.title)"'
 ```
 
-**The held beads are filtered in `jq`, not by `--exclude-label`.** A hold is
-`planning:<the planner holding it>`, and `bd`'s `--exclude-label` is an exact match — it cannot
-express *any label starting with*. Left as an exclusion it would silently exclude nothing, and hand
+**The held beads are filtered in `jq`, not by `--exclude-label`.** A hold is the word `planning`,
+or the word and a `:` and the planner holding it, and `bd`'s `--exclude-label` matches one exact
+string — it cannot express *either of those*. The `:` is required rather than a bare prefix, so an
+unrelated label starting with the same letters is not read as somebody holding the bead. Left as an exclusion it would silently exclude nothing, and hand
 you a bead the other planner is already writing: the exact failure the named label exists to stop.
 
 **A P0 is planned even inside a family somebody else owns.** Family ownership below is a way of
@@ -408,7 +409,7 @@ bd dolt pull
 # decision by default.
 bd list --exclude-label planned --exclude-label human \
         --exclude-type epic --sort priority --json \
-  | jq '[.[] | select((.labels // []) | any(startswith("planning")) | not)
+  | jq '[.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
              | select(.priority != 4)]'
 # ... and skip any candidate whose family another planner owns - see below.
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID
@@ -453,6 +454,12 @@ reads exactly like "no parent", so a mistake here disables the whole rule silent
 - **The parent's id is `.id`.** The dependency entry *is* the parent bead, embedded whole — there is
   no `depends_on_id` to read.
 
+**The triage queries earlier in this file do not follow those three rules**, and they are known to be
+wrong rather than an alternative worth copying: they pipe `bd list` and select on `.type`, so their
+"not somebody's child" exclusion has never excluded anything. That is filed as its own bead, because
+fixing it means deciding what a per-bead `bd show` costs over a whole backlog. Copy the command
+above, not those.
+
 Confirm it on a bead you know to be a child before trusting a run of empty answers.
 
 Otherwise read the parent's labels for one starting `planner:`:
@@ -466,7 +473,8 @@ bd show <parent> --json \
 
 - **It names another planner who is on that roster** — skip this candidate. Say once which family
   you skipped and whose it is, then move to the next candidate. **Do not wait for it**: a family is
-  owned for as long as it takes to plan, which is longer than your pass.
+  owned for as long as it takes to plan, which is longer than your pass. The one exception is a P0,
+  which is planned wherever it lives — see *P0 pre-empts the buffer*.
 - **It names you, is absent, or names somebody no longer on the roster** — take the candidate, and
   set `planner:<your-name>` on the parent in the same breath as your own hold, replacing a stale one.
 
@@ -588,7 +596,7 @@ looks alive strands exactly the label this loop exists to free. `agent-alive` ch
 ```bash
 # Beads carrying the label, and the bead each live planner says it is on.
 bd list --status open --json \
-  | jq -r '.[] | select((.labels // []) | any(startswith("planning"))) | .id' \
+  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:"))) | .id' \
   | sort > /tmp/labelled
 state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"   # the fleet's, not this worktree's
 for name in $(.claude/cerebro/scripts/roster --role planner); do
@@ -920,8 +928,9 @@ bd dolt push
 ```
 
 In the same breath as the `bd dep add` edges, before you plan any of them. `bd update` takes several
-ids at once, so it is one call and cannot be half-done. The parent keeps its label until you retype
-it as an epic and drop it with the rest.
+ids at once, so it is one call and cannot be half-done. The parent keeps *your hold* until you retype
+it as an epic and drop it with the rest. Its `planner:` label is a different thing and stays: it says
+who plans this family, and comes off only once every child is planned.
 
 The children then queue like anything else, by priority, and a later one may be planned before its
 sibling has been **built** — but never before that sibling has been **planned**, which the `bd dep`
@@ -1104,7 +1113,7 @@ is one no later session will consider, so check that nothing behind you still ha
 
 ```bash
 bd list --status open --json \
-  | jq -r '.[] | select((.labels // []) | any(startswith("planning")))
+  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")))
               | "\(.id)\t\(.title)\t\((.labels // []) | join(","))"'
 ```
 

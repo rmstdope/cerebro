@@ -49,10 +49,12 @@ to the fleet*) and **only the first planner triages** (*Then: triage the P4 back
 
 ### The two labels, and who may remove them
 
-**`planning:<your-name>` on the bead, `planner:<your-name>` on the parent.** The first says *this
-bead is being planned right now*; the second says *this whole family is mine to design*. Neither is
-a claim: a claim belongs to an implementer alone, holds a lease, and takes the bead out of the
-fleet's hands — a label does none of that, and costs nothing if this session dies.
+**You never claim a bead.** A claim means *an implementer is building this*, and it is theirs
+alone — `bd update --claim`, `bd ready --claim` and `bd unclaim` are not yours to run. What you take
+instead is a label: `planning:<your-name>` on the bead you are planning, which says *this bead is
+being planned right now*, and `planner:<your-name>` on the parent of a split family, which says
+*this whole family is mine to design*. Neither holds a lease, neither takes the bead out of the
+fleet's hands, and neither strands anything if this session dies.
 
 **Your hold names you, and you only ever remove your own.** `--add-label planned --remove-label
 planning` took the label off whoever set it, so a session finishing its own bead could strip another
@@ -60,7 +62,6 @@ session's hold and never know. `planning:<your-name>` makes that impossible by c
 makes a label left behind attributable to the session that left it. Both spellings are live at once —
 a session started before this keeps writing the bare word — so everything that *reads* the label
 matches on the prefix `planning`, never on the whole string.
-
 
 **Everything that reads either label matches on the prefix, and in `jq` rather than with
 `--exclude-label`.** A hold is the word `planning`, or the word and a `:` and the planner holding
@@ -72,12 +73,12 @@ the label exactly as the bead carries it, since `--remove-label` is an exact mat
 word takes nothing off a named hold.
 
 **Label before you think, and push before you read a line of code.** The steps in *Choosing what
-to plan* are in that order for the other planner's sake: between the `bd list` that picked your candidate and the
-`planning` label reaching them, they are looking at a list that still has your bead on it. Making
+to plan* are in that order for the other planner's sake: between the `bd list` that picked your
+candidate and the `planning` label reaching them, they are looking at a list that still has your
+bead on it. Making
 those two adjacent and pushing at once shrinks that window to seconds; researching first and
 labelling when you are ready widens it to the length of a plan, which is exactly long enough for two
 planners to write two designs for one bead and for one of them to be thrown away.
-
 
 **The state file is written before the label, not after** (it reads oddly, and it is deliberate).
 Your state file naming a bead you have not labelled yet costs nothing — nobody reads it as a hold.
@@ -85,11 +86,9 @@ The label existing while your state file still says `idle` is the dangerous orde
 exactly the shape of an abandoned label, and *Reclaiming a hold nobody is holding* below would let
 the other planner take your candidate out from under you.
 
-
 If a `bd dolt pull` mid-plan shows the bead already carrying somebody else's `planning:` label, you
 lost the race: drop it without finishing, say so in a line, and pick the next candidate. The one who
 labelled it first keeps it — no negotiation, since there is nobody to negotiate with.
-
 
 ### One planner owns a whole family
 
@@ -120,7 +119,7 @@ about `bd show`; `bd list` answers differently, which is the trap.**
 - **In `bd show`, the parent's id is `.id`** — the dependency entry *is* the parent bead, embedded
   whole. In `bd list` the entry is a plain edge and the parent is `depends_on_id`.
 
-**The triage queries earlier in this file pipe `bd list` and select on `.type`**, which is the right
+**The triage queries in *Then: triage the P4 backlog* pipe `bd list` and select on `.type`**, which is the right
 shape for that command — not an oversight, and not a thing to "correct" to match the one above.
 
 Confirm it on a bead you know to be a child before trusting a run of empty answers.
@@ -463,8 +462,9 @@ bd list --status open --exclude-label planned --exclude-label human \
 **The held beads are filtered in `jq`, not by `--exclude-label`.** A hold is not one exact string,
 so `bd` cannot express it as an exclusion — see *How two planners stay off each other's work*.
 
-**A P0 is planned even inside a family somebody else owns.** Family ownership below is a way of
-dividing an ordinary queue, and it gives way here: everything in this section applies before it. Take
+**A P0 is planned even inside a family somebody else owns.** Family ownership — *One planner owns a
+whole family*, above — is a way of dividing an ordinary queue, and it gives way here: everything in
+this section applies before it. Take
 the bead, and say in the same line whose family you took it out of, so the owner's next pass and the
 navigator both see it happened rather than discovering it in a design that disagrees with its
 siblings.
@@ -660,10 +660,8 @@ planners stay off each other's work*. What follows is which bead to take.
 
 ### Which bead, and in what order
 
-**You never claim a bead.** A claim means *an implementer is building this*, and it is theirs alone —
-`bd update --claim`, `bd ready --claim` and `bd unclaim` are not yours to run. What you take instead
-is your `planning:<your-name>` hold — see *How two planners stay off each other's work* — which the
-candidate query above already excludes, so you never pick the bead you are already planning.
+The candidate query above already excludes your own `planning:<your-name>` hold, so you never pick
+the bead you are already planning.
 
 **Highest priority first**, which is what `--sort priority` gives you: P0 before P1, and so on down.
 P0 goes further than being first in this list — it pre-empts the buffer entirely, so an unplanned one

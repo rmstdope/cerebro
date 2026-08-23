@@ -30,7 +30,7 @@ at a time, and each handover is a label rather than a conversation:
 Two rules hold that together, and both are load-bearing:
 
 - **A planner never claims.** Claiming means *an implementer is building this*. A planner takes the
-  `planning` label instead, which says the same thing about planning while leaving the bead open,
+  `planning:<its own name>` label instead, which says the same thing about planning while leaving the bead open,
   unassigned and free for anyone to pick up if that session dies.
 - **Closed is not terminal.** A failed verification reopens a bead at P0 and sends it round again.
 
@@ -129,19 +129,22 @@ the rate, and Cerebro will say so on its sweep.
 
 What they divide, and how:
 
-- **Candidates**, by the `planning` label. A planner names the bead in its own state file, takes the
+- **Candidates**, by the `planning:<name>` label — and a whole split family by a `planner:<name>`
+  label on its parent, since one design shared between children is worth one planner. A hold is read
+  as the word `planning`, or the word and a `:` and the holder's name, so the bare label an older
+  session writes still counts and an unrelated label starting the same way does not. A planner names the bead in its own state file, takes the
   label, and pushes at once — in that order, so the other planner can tell a live candidate from an
   abandoned one. If a planning session dies, the label is all it leaves: no lease, nothing to
   reclaim.
 - **Abandoned labels**, at the top of every pass. A labelled bead is excluded from every candidate
   query, so a label left by a killed session is *lost* work rather than pending work. Each planner
-  frees, on every pass and every wake-up, any `planning` label that no live planner names in its own
+  frees, on every pass and every wake-up, any `planning:` label that no live planner names in its own
   state file, and says which it freed. Three beads sat stranded for a day before this existed. You
   can see them yourself in the fleet view: **Being planned** populated with both planner rows idle is
   the shape of it.
 - **The buffer**, by counting `planned` beads only — what an idle implementer could actually claim.
   Both planners may therefore fill at the same time, which is what a second planner is *for*; the
-  overshoot is at most one bead each. Counting `planning` too was tried and starved the queue: two
+  overshoot is at most one bead each. Counting held beads too was tried and starved the queue: two
   held candidates were enough to make a small fleet's target look met, and both planners slept over a
   queue of two.
 - **The triage pass belongs to Xavier alone** — the first planner on the roster. It is the one part
@@ -496,12 +499,17 @@ an agent that is merely busy. The fleet view's **Sweeps** section finds these fo
 the exact command after confirming.
 
 **A bead is stuck in "Being planned" and nobody is planning it.** A killed planning session leaves
-its `planning` label behind, and a labelled bead is invisible to every planner. Starting either
+its `planning:` label behind, and a labelled bead is invisible to every planner. Starting either
 planner clears it on the next pass, and says which it freed. By hand:
 
 ```bash
-bd update <id> --remove-label planning && bd dolt push
+bd update <id> --remove-label <the exact label, e.g. planning:Xavier> && bd dolt push
 ```
+
+**A family stuck on a planner that has gone** is the other shape of this, and it needs nothing done:
+a `planner:` label on a parent naming somebody no longer on the roster is ignored by every planner
+and overwritten by the next one to take a candidate from that family. It is not freed, and it does
+not need to be.
 
 **A row says an agent is up when it is not.** State files are written by the agent and removed by the
 fleet view when it ends a session; one left behind by a crash is ignored as soon as its pid is dead

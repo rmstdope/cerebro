@@ -54,12 +54,13 @@ planner`), which is the one place a name and a role stop being interchangeable:
   plans a Sonnet agent could build unattended. Decide architecture themselves; take every
   user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
   builders, sized from how many are running (twice the count, never fewer than four). They divide
-  the work through the `planning` label alone — taken before research and pushed at once (after the
+  the work through the `planning:<name>` label alone, and a whole split family through a
+  `planner:<name>` label on its parent — taken before research and pushed at once (after the
   state file names the bead, which is what makes an abandoned label safe to tell apart from a held
   one), freed again by whichever planner finds it held by nobody, and with
   the P4 **triage pass belonging to the first planner on the roster only**, since two triaging
   sessions interview the navigator twice over the same backlog. The buffer counts `planned` beads
-  and never `planning` ones: a bead being planned is not claimable, and counting it put both
+  and never held ones: a bead being planned is not claimable, and counting it put both
   planners to sleep over a two-bead queue (ah-2p.1).
 - **Cerebro** (`orchestrator`, Opus/medium) — stops implementers on request by writing their stop
   flag; it cannot start one, since that means starting a session. **Starts nothing on its own.** The
@@ -160,7 +161,8 @@ stop flag; the bead in flight is unaffected), `RET` focuses the detail window. E
 dependencies except optional **vterm** for live sessions.
 
 Under the list, the bead panel (`RET`, `n`/`p`, digits and `+`/`-`/`u` to reprioritise) partitions
-one `bd` call into Claimed / Planned, unclaimed / **Being planned** (`planning`, what a planner holds
+one `bd` call into Claimed / Planned, unclaimed / **Being planned** (the word `planning`, or
+the word and a `:` and the holder's name, which is what a planner holds
 mid-bead — never counted as buffer, since nobody can claim it) / Unplanned / Merged, unverified. It
 also shows a
 **Sweeps** section: the claims and epics sweeps `agents/orchestrator.md` describes, run every ten
@@ -216,7 +218,7 @@ would otherwise protect a stale claim from being reclaimed.
 **The shell has the same rule, in `scripts/agent-alive <Name>`** — exit 0 alive, 1 dead, 2 for a
 usage error or a name that is not on the roster, so a typo can never read as "not running". It is
 what `skills/plan-bead/SKILL.md` calls in both places it needs liveness: sizing the buffer from the
-running implementers, and deciding whether a `planning` label is still held. Anything in bash that
+running implementers, and deciding whether a `planning:` label is still held. Anything in bash that
 needs to know whether an agent is up calls this; a bare `kill -0` there is the pre-ah-bqi shape, and
 it makes a dead planner look alive, which strands the very label the reclaim loop exists to free.
 

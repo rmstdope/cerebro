@@ -2303,6 +2303,58 @@ can claim it, whatever else the bead says."
     (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 1 buckets)) '("both")))
     (should-not (nth 2 buckets))))
 
+(ert-deftest cerebro-test/a-named-planning-label-is-being-planned ()
+  "A planner names its hold - `planning:<its own name>' - so a finishing
+session cannot strip a label it did not set. The panel has to recognise the
+hold whoever holds it, or Being planned silently empties: nothing errors, the
+membership test simply stops matching."
+  (let* ((beads (list (cerebro-test--any "held" "open" '("planning:Xavier"))))
+         (buckets (cerebro--partition-beads beads)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 2 buckets))
+                   '("held")))
+    (should-not (nth 1 buckets))
+    (should-not (nth 3 buckets))))
+
+(ert-deftest cerebro-test/a-bare-planning-label-is-still-being-planned ()
+  "The bare spelling is not dropped. Sessions started before the named one
+existed keep writing it, and the panel watches both at once."
+  (let* ((beads (list (cerebro-test--any "bare" "open" '("planning"))))
+         (buckets (cerebro--partition-beads beads)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 2 buckets))
+                   '("bare")))))
+
+(ert-deftest cerebro-test/a-label-that-merely-starts-with-the-word-is-not-a-hold ()
+  "A hold is the word, or the word and a `:' and a name - never a bare prefix.
+`planning-notes' is the near miss that says so: it starts with every letter of
+the holding label and is still not somebody holding the bead. `planner:<name>'
+names who plans a family rather than who holds one bead, and is not a hold
+either; `planned' stays an exact match, so `planned-ish' is not pickable work.
+
+Without the separator each of these would read as a planner holding the bead,
+and it would vanish from the backlog with nobody thinking to look past."
+  (let* ((beads (list (cerebro-test--any "notes" "open" '("planning-notes"))
+                      (cerebro-test--any "owned" "open" '("planner:Xavier"))
+                      (cerebro-test--any "nearly" "open" '("planned-ish"))))
+         (buckets (cerebro--partition-beads beads)))
+    (should-not (nth 1 buckets))
+    (should-not (nth 2 buckets))
+    (should (equal (sort (mapcar (lambda (b) (alist-get 'id b)) (nth 3 buckets))
+                         #'string<)
+                   '("nearly" "notes" "owned")))))
+
+(ert-deftest cerebro-test/a-named-hold-is-recognised-whoever-holds-it ()
+  "Every planner's hold counts, not one hard-coded name, and the panel keeps
+them together in the one section - which is the whole point of reading the
+label by its prefix rather than matching a string."
+  (let* ((beads (list (cerebro-test--any "x" "open" '("planning:Xavier"))
+                      (cerebro-test--any "b" "open" '("planning:Beast"))
+                      (cerebro-test--any "old" "open" '("planning"))))
+         (buckets (cerebro--partition-beads beads)))
+    (should (equal (sort (mapcar (lambda (b) (alist-get 'id b)) (nth 2 buckets))
+                         #'string<)
+                   '("b" "old" "x")))
+    (should-not (nth 3 buckets))))
+
 (ert-deftest cerebro-test/being-planned-renders-its-beads-and-its-count ()
   (let* ((being (list (cerebro-test--any "ah-1" "open" '("planning"))
                       (cerebro-test--any "ah-2" "open" '("planning"))))

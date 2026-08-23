@@ -34,11 +34,19 @@ planner's.
 .claude/cerebro/scripts/roster --role planner      # the planners, in roster order
 ```
 
-Two planners share the work through the `planning` label and nothing else: no lease, no claim, no
-conversation between sessions. Three rules keep that honest, and each is spelled out where it
-applies — **label before you think** (*Choosing what to plan*), **count what the other planner is
-holding** (*You keep a buffer sized to the fleet*), and **only the first planner triages**
-(*Then: triage the P4 backlog*).
+Two planners share the work through labels and nothing else: no lease, no claim, no conversation
+between sessions. Five rules keep that honest, and each is spelled out where it applies — **label
+before you think**, **one planner owns a whole family**, and **check you still hold it before you
+write** (all three in *Choosing what to plan*), **count only what an implementer could claim** (*You
+keep a buffer sized to the fleet*), and **only the first planner triages** (*Then: triage the P4
+backlog*).
+
+The first four exist because the same thing went wrong once and cost the navigator real time: two
+planners took one bead, both interviewed for it, and — with no way to see the questions had already
+been asked — the navigator gave opposite answers to three of them. Nothing was built from the losing
+plan, and that was luck. **None of these rules closes the hole for two unrelated beads**, and the
+skill says so where each one appears; they narrow it, and the last of them saves the plan rather than
+the interview.
 
 ## Telling the fleet view what you are doing
 
@@ -50,7 +58,7 @@ by hand:
 |---|---|
 | The triage pass starts | `.claude/cerebro/scripts/agent-state <your-name> working --phase triage --pid $PPID` |
 | Every triage question | `.claude/cerebro/scripts/agent-state <your-name> asking --phase triage --pid $PPID`, and `working --phase triage` again once answered |
-| A bead gets the `planning` label | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID` |
+| A bead gets your `planning:<your-name>` label | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID` |
 | Every interview question while planning it | `.claude/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase plan --pid $PPID`, and `working` again once answered |
 | The P0 check (*P0 pre-empts the buffer*) | stays `working --phase plan`, same as any other bead being planned |
 | Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID` |
@@ -210,10 +218,23 @@ Check at the top of every pass, after that pass's triage — and check it **befo
 here:
 
 ```bash
-bd list --status open --exclude-label planned --exclude-label planning --exclude-label human \
+bd list --status open --exclude-label planned --exclude-label human \
         --exclude-type epic --json \
-  | jq -r '.[] | select(.priority==0) | "\(.id)\t\(.title)"'
+  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
+              | select(.priority==0) | "\(.id)\t\(.title)"'
 ```
+
+**The held beads are filtered in `jq`, not by `--exclude-label`.** A hold is the word `planning`,
+or the word and a `:` and the planner holding it, and `bd`'s `--exclude-label` matches one exact
+string — it cannot express *either of those*. The `:` is required rather than a bare prefix, so an
+unrelated label starting with the same letters is not read as somebody holding the bead. Left as an exclusion it would silently exclude nothing, and hand
+you a bead the other planner is already writing: the exact failure the named label exists to stop.
+
+**A P0 is planned even inside a family somebody else owns.** Family ownership below is a way of
+dividing an ordinary queue, and it gives way here: everything in this section applies before it. Take
+the bead, and say in the same line whose family you took it out of, so the owner's next pass and the
+navigator both see it happened rather than discovering it in a design that disagrees with its
+siblings.
 
 Anything it returns, plan. All of it, one at a time, before you look at the buffer at all — and if
 that leaves the buffer over its `2m`, that is simply what it costs. The buffer is a floor under the
@@ -386,15 +407,134 @@ one line and go back to `waiting`; the next pass re-reads the buffer.
 bd dolt pull
 # Candidates: never a P4. Unranked is not a rank, and planning one takes the navigator's
 # decision by default.
-bd list --exclude-label planned --exclude-label planning --exclude-label human \
-        --exclude-type epic --sort priority --json | jq '[.[] | select(.priority != 4)]'
+bd list --exclude-label planned --exclude-label human \
+        --exclude-type epic --sort priority --json \
+  | jq '[.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
+             | select(.priority != 4)]'
+# ... and skip any candidate whose family another planner owns - see below.
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID
-bd update <id> --add-label planning
+bd update <id> --add-label planning:<your-name>
 bd dolt push                                       # publish it at once
 # ... research, decide, discuss, write ...
-bd update <id> --design-file plan.md --add-label planned --remove-label planning
+bd update <id> --design-file plan.md --add-label planned --remove-label planning:<your-name>
 bd dolt push                                       # or the release is invisible elsewhere
 ```
+
+**Your hold names you, and you only ever remove your own.** `--add-label planned --remove-label
+planning` took the label off whoever set it, so a session finishing its own bead could strip another
+session's hold and never know. `planning:<your-name>` makes that impossible by construction, and
+makes a label left behind attributable to the session that left it. Both spellings are live at once —
+a session started before this keeps writing the bare word — so everything that *reads* the label
+matches on the prefix `planning`, never on the whole string.
+
+### One planner owns a whole family
+
+**Before you take a candidate, find its parent and read who owns it.** A split family shares one
+design, so two planners on two of its children is the most expensive collision there is: they are not
+merely duplicating an interview, they are answering the *same* design questions separately and
+landing two halves of a family that do not agree with each other.
+
+A bead's parent is a `parent-child` edge in its own `dependencies`, pointing at the parent — there is
+no `parent` field to read:
+
+```bash
+bd show <id> --json \
+  | jq -r '(if type=="array" then .[0] else . end) | (.dependencies // [])[]
+           | select(.dependency_type=="parent-child") | .id'
+```
+
+Nothing printed means the candidate has no parent, and none of this applies — take it.
+
+Three things about that command, each of which makes it return nothing when it is wrong — which
+reads exactly like "no parent", so a mistake here disables the whole rule silently:
+
+- **`bd show`, never `bd list`.** A `bd list --json` bead has no `dependencies` key at all, only a
+  `dependency_count`. Piping a list through this filter yields nothing, for every bead, for ever.
+- **The field is `dependency_type`, not `type`.**
+- **The parent's id is `.id`.** The dependency entry *is* the parent bead, embedded whole — there is
+  no `depends_on_id` to read.
+
+**The triage queries earlier in this file do not follow those three rules**, and they are known to be
+wrong rather than an alternative worth copying: they pipe `bd list` and select on `.type`, so their
+"not somebody's child" exclusion has never excluded anything. That is filed as its own bead, because
+fixing it means deciding what a per-bead `bd show` costs over a whole backlog. Copy the command
+above, not those.
+
+Confirm it on a bead you know to be a child before trusting a run of empty answers.
+
+Otherwise read the parent's labels for one starting `planner:`:
+
+```bash
+bd show <parent> --json \
+  | jq -r '(if type=="array" then .[0] else . end).labels // []
+           | .[] | select(startswith("planner:"))'
+.claude/cerebro/scripts/roster --role planner     # who could legitimately own one
+```
+
+- **It names another planner who is on that roster** — skip this candidate. Say once which family
+  you skipped and whose it is, then move to the next candidate. **Do not wait for it**: a family is
+  owned for as long as it takes to plan, which is longer than your pass. The one exception is a P0,
+  which is planned wherever it lives — see *P0 pre-empts the buffer*.
+- **It names you, is absent, or names somebody no longer on the roster** — take the candidate, and
+  set `planner:<your-name>` on the parent in the same breath as your own hold, replacing a stale one.
+
+```bash
+bd update <parent> --remove-label <the stale planner: label, if there is one> \
+                   --add-label planner:<your-name>
+bd update <id> --add-label planning:<your-name>
+bd dolt push
+# then read it back: two planners can claim an unowned family at the same moment
+bd dolt pull
+bd show <parent> --json \
+  | jq -r '(if type=="array" then .[0] else . end).labels // []
+           | .[] | select(startswith("planner:"))'
+```
+
+**If that read-back shows two names, the one listed first by `scripts/roster --role planner` keeps
+the family** and the other removes its own label and drops the candidate. `--add-label` appends
+rather than replaces, so two planners taking an unowned parent in the same moment both succeed and
+the parent ends up owned by nobody in particular; roster order settles it without negotiation,
+because both sessions read the same file and neither has to wait for the other. Say which way it went
+in one line.
+
+**Drop the `planner:` label when the family no longer needs one.** Ownership exists to keep one
+design in one head while it is being written, so it has done its job once every child is `planned`:
+take it off as you finish the last child, in the same `bd update` that swaps that child's own hold
+for `planned`. Left on for ever it outlives its reason, and a family reopened months later at P0 is
+locked to whichever session happened to plan it first.
+
+```bash
+bd update <parent> --remove-label planner:<your-name>    # every child now planned
+```
+
+A worked example, with two planners running and a family of three children:
+
+> The candidate list offers a child of an epic. `bd show` on the child gives the parent; the parent
+> carries `planner:Beast`, and `roster --role planner` prints `Xavier` and `Beast`. Beast is real and
+> on the roster, so **Xavier skips the whole family** — not just that child — says
+> *"skipping <the epic>'s children; Beast owns that family"*, and takes the next candidate down the
+> list. Beast plans all three children across however many passes it needs, and no interview is ever
+> put to the navigator twice.
+>
+> Had the parent carried `planner:Jubilee`, and `roster --role planner` not listed Jubilee, Xavier
+> would take the child and overwrite the label with `planner:Xavier`. A name that has left the roster
+> cannot lock a family for ever.
+
+**The lookup goes up one level, and that is enough only because each split labels its own parent.**
+A grandchild finds its immediate parent, which a planner splitting that parent will have labelled. A
+family built before this rule existed has no `planner:` label anywhere, so the check finds nothing
+and the candidate is taken — the safe direction, and the same thing that happens for an unowned
+family. If you split a bead that is itself a child, label the new parent as *Too big for one
+increment* says, or the level below it is invisible to this check.
+
+**Ownership is not cleared when a planner is merely not running.** Sessions restart between beads,
+and churning ownership on every restart would hand a family to whoever happened to be up — which is
+the thing this rule exists to prevent. Only a name that has left the roster is ignorable.
+
+**This does nothing for two unrelated beads**, and that is understood rather than overlooked. Two
+planners can still collide on two beads with no parent between them; the named hold and the
+pre-write re-check below are what narrow that, and neither closes it. Families are where the cost is
+worst, so families are what is protected.
 
 **Label before you think, and push before you read a line of code.** The steps above are in
 that order for the other planner's sake: between the `bd list` that picked your candidate and the
@@ -409,9 +549,31 @@ The label existing while your state file still says `idle` is the dangerous orde
 exactly the shape of an abandoned label, and *Reclaiming a label nobody is holding* below would let
 the other planner take your candidate out from under you.
 
-If a `bd dolt pull` mid-plan shows the bead already carrying `planning` from the other session, you
+If a `bd dolt pull` mid-plan shows the bead already carrying somebody else's `planning:` label, you
 lost the race: drop it without finishing, say so in a line, and pick the next candidate. The one who
 labelled it first keeps it — no negotiation, since there is nobody to negotiate with.
+
+**Check that once more immediately before you write the design**, which is the last moment the check
+is still worth anything:
+
+```bash
+bd dolt pull
+bd show <id> --json \
+  | jq -r '(if type=="array" then .[0] else . end).labels // [] | join(" ")'
+```
+
+**Do not write the design** if the bead no longer carries your hold — or if it carries somebody
+else's as well as yours. The second case is the one this change makes likely rather than rare: a
+label names its holder, so two holds can sit on one bead at once, and a session older than the named
+spelling adds the bare word without displacing anything. Two holds means two interviews, whoever
+started first. Writing anyway is what
+overwrites a plan somebody else has just spent an interview on. Say in one line that you lost the
+bead and what you had decided, so the navigator can see an interview was spent rather than a session
+going quiet, and take the next candidate.
+
+This is a **backstop, and it is worth being honest about what it saves.** By the time it fires the
+navigator has already been asked the same questions twice — it rescues the plan, never the
+interview. It is cheap, and it is the thing to reach for last, not the thing that stops collisions.
 
 ### Reclaiming a label nobody is holding
 
@@ -423,7 +585,9 @@ strands work when a session dies, precisely because it is deliberately not a cla
 lease for Cerebro's sweep to reclaim.
 
 A label is **held** when a live planner names that bead in its own state file, and abandoned
-otherwise. That is the same evidence the buffer count uses, read the same way — liveness through
+otherwise. A named hold says one more thing the bare word could not: a `planning:<name>` whose name
+is not on `scripts/roster --role planner` at all is abandoned outright, whatever any state file says
+— the session that set it belongs to a roster that no longer exists. That is the same evidence the buffer count uses, read the same way — liveness through
 `scripts/agent-alive` and never a bare `kill -0`, since pids are recycled and a dead planner that
 looks alive strands exactly the label this loop exists to free. `agent-alive` checks the pid's own
 `--name`, the rule `cerebro--session-alive-p` follows in elisp; the `jq` for the bead stays, because
@@ -431,7 +595,9 @@ looks alive strands exactly the label this loop exists to free. `agent-alive` ch
 
 ```bash
 # Beads carrying the label, and the bead each live planner says it is on.
-bd list --label planning --status open --json | jq -r '.[].id' | sort > /tmp/labelled
+bd list --status open --json \
+  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:"))) | .id' \
+  | sort > /tmp/labelled
 state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"   # the fleet's, not this worktree's
 for name in $(.claude/cerebro/scripts/roster --role planner); do
   f="$state/$name.state.json"
@@ -446,9 +612,13 @@ For each abandoned one, take the label off and say which and why — one line, n
 navigator sees work coming back rather than a queue that silently grew:
 
 ```bash
-bd update <id> --remove-label planning
+bd update <id> --remove-label <the exact label it carries>
 bd dolt push
 ```
+
+Pass the label **exactly as the bead carries it** — `planning:Beast`, or the bare `planning` if that
+is what is there. `--remove-label` is an exact match, so the generic word takes nothing off a named
+hold and the bead stays stranded while you report it freed.
 
 **A just-split family is the one shape that fools this.** A planner mid-split names one child in its
 state file while its siblings carry the label they inherited, so a sibling reads as abandoned when it
@@ -719,13 +889,13 @@ else.
 park the bead and move on:
 
 ```bash
-bd update <id> --add-label needs-ui-decision --add-label human --remove-label planning \
+bd update <id> --add-label needs-ui-decision --add-label human --remove-label planning:<your-name> \
   --append-notes "<the question>"
 bd dolt push
 ```
 
 Both labels, because `bd human list` matches `human` and nothing else, so `needs-ui-decision` alone
-would sit in nobody's queue. `--remove-label planning`, because you are no longer planning it and a
+would sit in nobody's queue. `--remove-label planning:<your-name>`, because you are no longer planning it and a
 later session must be free to pick it up once the navigator has answered. And the push, or no other
 machine learns it was parked.
 
@@ -745,20 +915,22 @@ is about work nobody has weighed yet, and a split epic has already been ranked b
 `bd create --parent <id> -p <the parent's priority>`, and if the parent is itself still P4 the
 children are P4 with it, and the whole family gets ranked in one question at the next triage.
 
-**Take `planning` off every child as you create them.** `bd create --parent` inherits the parent's
+**Take your hold off every child as you create them, and put a `planner:` label on the new parent.** `bd create --parent` inherits the parent's
 labels, and you are holding the parent — so each child arrives carrying a `planning` label nobody
 chose. That excludes it from every candidate query, including your own, and makes it look abandoned
 to the other planner, whose reclaim check names only the child you happen to be planning right now
 (seen twice in one session).
 
 ```bash
-bd update <child> <child> ... --remove-label planning
+bd update <child> <child> ... --remove-label planning:<your-name>
+bd update <id> --add-label planner:<your-name>       # the new parent: this family is yours
 bd dolt push
 ```
 
 In the same breath as the `bd dep add` edges, before you plan any of them. `bd update` takes several
-ids at once, so it is one call and cannot be half-done. The parent keeps its label until you retype
-it as an epic and drop it with the rest.
+ids at once, so it is one call and cannot be half-done. The parent keeps *your hold* until you retype
+it as an epic and drop it with the rest. Its `planner:` label is a different thing and stays: it says
+who plans this family, and comes off only once every child is planned.
 
 The children then queue like anything else, by priority, and a later one may be planned before its
 sibling has been **built** — but never before that sibling has been **planned**, which the `bd dep`
@@ -935,12 +1107,14 @@ whether Sonnet could finish without asking.
 
 ## Finishing one, and the session
 
-Add `planned`, remove `planning`, `bd dolt push`, and say which bead you planned, what the navigator
+Add `planned`, remove your `planning:<your-name>`, `bd dolt push`, and say which bead you planned, what the navigator
 decided, and — if you rewrote it — what the title now says and why. A bead left carrying `planning`
 is one no later session will consider, so check that nothing behind you still has it:
 
 ```bash
-bd list --label planning --status open --json | jq -r '.[] | "\(.id)\t\(.title)"'
+bd list --status open --json \
+  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")))
+              | "\(.id)\t\(.title)\t\((.labels // []) | join(","))"'
 ```
 
 **What this list shows is not all yours.** The other planner's current candidate is on it too, and

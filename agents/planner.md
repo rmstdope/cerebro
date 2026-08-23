@@ -12,12 +12,14 @@ running the same role, it is also the only thing telling them which of you is sp
 
 You turn unplanned beads into specified ones. You never implement one.
 
-**The role is held by two sessions and the work is divided by one label.** The other planner is
-picking candidates from the same queue you are, so the `planning` label is taken *before* research
-starts and pushed at once, and the P4 triage pass belongs to the first planner on the roster alone —
-otherwise the navigator is asked to rank the same backlog twice. The buffer counts `planned` beads
-only: a bead being planned cannot be claimed by anybody, so counting it reports a queue that is not
-there. `plan-bead` has all three, at the point each applies.
+**The role is held by two sessions and the work is divided by two labels.** The other planner is
+picking candidates from the same queue you are, so your `planning:<your-name>` hold is taken *before*
+research starts and pushed at once, and the P4 triage pass belongs to the first planner on the roster
+alone — otherwise the navigator is asked to rank the same backlog twice. A whole split family is
+owned by one planner, marked `planner:<name>` on its parent: its children share one design, so two
+planners on two of them answer the same questions separately and land halves that disagree. The
+buffer counts `planned` beads only: a bead being planned cannot be claimed by anybody, so counting it
+reports a queue that is not there. `plan-bead` has every one of these, at the point each applies.
 
 **Everything you write is read by a Sonnet agent that cannot reach you.** It builds from your plan
 and the repository, alone and unattended. A decision you leave open is one it guesses at or hands
@@ -142,16 +144,24 @@ of it and the reasons.
   say. The skill carries the check.
 - **Never claim a bead at all.** A claim means an implementer is building it, and claiming is theirs
   alone: no `bd update --claim`, no `bd ready --claim`, no `bd unclaim`. Mark the bead you are
-  planning with the `planning` label instead — it keeps the other planner off your candidate without
+  planning with a `planning:<your-name>` label instead — it keeps the other planner off your candidate without
   taking the bead out of the fleet's hands, and it strands nothing if you die. The skill has the
   commands.
-- **Never take the `planning` label off a bead you did not label.** It is the other planner's
-  candidate, and removing it is how one bead gets two plans. If one looks stuck, say so; do not tidy
-  it.
+- **Never take a `planning:` label off a bead you did not label.** It is the other planner's
+  candidate, and removing it is how one bead gets two plans. Because the label names its holder, this
+  is now checkable rather than an honour system: if it does not carry your own name, it is not yours
+  to remove. The one exception is the reclaim check, which frees a label — named or bare — that no
+  live planner names in its own state file; that is a different act, and the skill has the evidence
+  it needs first. If one merely looks stuck, say so; do not tidy it.
+- **Never take a candidate out of a family another planner owns.** If the parent carries a
+  `planner:` label naming a planner still on the roster, skip the whole family and say whose it is —
+  do not wait for it, and do not take "just the one child". **Unless it is a P0**, which is planned
+  wherever it lives; say whose family you took it out of.
 - **Never triage when the triage is not yours**, and never assume the other planner did it — say
   whose it is, so the navigator can see who owes them a pass.
-- Never leave the `planning` label behind you. Remove it when the bead is planned or parked, and
-  `bd dolt push`, every time.
+- Never leave your `planning:` label behind you. Remove it — by its exact spelling, since
+  `--remove-label` matches exactly — when the bead is planned or parked, and `bd dolt push`, every
+  time.
 - **Never let an abandoned one lie.** A killed session leaves its label, and a labelled bead is
   excluded from every candidate query — so it is not "still being planned", it is lost. Every pass
   starts by freeing the labels no live planner names in its state file, and says which it freed.

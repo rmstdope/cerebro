@@ -48,6 +48,58 @@ plan, and that was luck. **None of these rules closes the hole for two unrelated
 skill says so where each one appears; they narrow it, and the last of them saves the plan rather than
 the interview.
 
+## How two planners stay off each other's work
+
+Two planners share the work through labels and nothing else: no lease, no claim, no conversation
+between sessions. This section is where that machinery is stated — the labels, how they are read,
+the order they are written in, who owns a family, the check before you write, and how a hold left
+by a dead session comes back. Everywhere else in this skill gives the command and points here for
+the reason.
+
+### The two labels, and who may remove them
+
+**`planning:<your-name>` on the bead, `planner:<your-name>` on the parent.** The first says *this
+bead is being planned right now*; the second says *this whole family is mine to design*. Neither is
+a claim: a claim belongs to an implementer alone, holds a lease, and takes the bead out of the
+fleet's hands — a label does none of that, and costs nothing if this session dies.
+
+**Your hold names you, and you only ever remove your own.** `--add-label planned --remove-label
+planning` took the label off whoever set it, so a session finishing its own bead could strip another
+session's hold and never know. `planning:<your-name>` makes that impossible by construction, and
+makes a label left behind attributable to the session that left it. Both spellings are live at once —
+a session started before this keeps writing the bare word — so everything that *reads* the label
+matches on the prefix `planning`, never on the whole string.
+
+
+**Everything that reads either label matches on the prefix, and in `jq` rather than with
+`--exclude-label`.** A hold is the word `planning`, or the word and a `:` and the planner holding
+it, and `bd`'s `--exclude-label` matches one exact string — it cannot express *either of those*, so
+left as an exclusion it silently excludes nothing and hands you a bead the other planner is already
+writing. The `:` is required rather than a bare prefix, so an unrelated label starting with the same
+letters is not read as somebody holding the bead. The same care applies when *removing* one: pass
+the label exactly as the bead carries it, since `--remove-label` is an exact match and the generic
+word takes nothing off a named hold.
+
+**Label before you think, and push before you read a line of code.** The steps in *Choosing what
+to plan* are in that order for the other planner's sake: between the `bd list` that picked your candidate and the
+`planning` label reaching them, they are looking at a list that still has your bead on it. Making
+those two adjacent and pushing at once shrinks that window to seconds; researching first and
+labelling when you are ready widens it to the length of a plan, which is exactly long enough for two
+planners to write two designs for one bead and for one of them to be thrown away.
+
+
+**The state file is written before the label, not after** (it reads oddly, and it is deliberate).
+Your state file naming a bead you have not labelled yet costs nothing — nobody reads it as a hold.
+The label existing while your state file still says `idle` is the dangerous order, because that is
+exactly the shape of an abandoned label, and *Reclaiming a label nobody is holding* below would let
+the other planner take your candidate out from under you.
+
+
+If a `bd dolt pull` mid-plan shows the bead already carrying somebody else's `planning:` label, you
+lost the race: drop it without finishing, say so in a line, and pick the next candidate. The one who
+labelled it first keeps it — no negotiation, since there is nobody to negotiate with.
+
+
 ## Telling the fleet view what you are doing
 
 `.cerebro/state/<your-name>.state.json` is how the fleet view sees you, the same way an
@@ -224,11 +276,8 @@ bd list --status open --exclude-label planned --exclude-label human \
               | select(.priority==0) | "\(.id)\t\(.title)"'
 ```
 
-**The held beads are filtered in `jq`, not by `--exclude-label`.** A hold is the word `planning`,
-or the word and a `:` and the planner holding it, and `bd`'s `--exclude-label` matches one exact
-string — it cannot express *either of those*. The `:` is required rather than a bare prefix, so an
-unrelated label starting with the same letters is not read as somebody holding the bead. Left as an exclusion it would silently exclude nothing, and hand
-you a bead the other planner is already writing: the exact failure the named label exists to stop.
+**The held beads are filtered in `jq`, not by `--exclude-label`.** A hold is not one exact string,
+so `bd` cannot express it as an exclusion — see *How two planners stay off each other's work*.
 
 **A P0 is planned even inside a family somebody else owns.** Family ownership below is a way of
 dividing an ordinary queue, and it gives way here: everything in this section applies before it. Take
@@ -420,13 +469,6 @@ bd update <id> --design-file plan.md --add-label planned --remove-label planning
 bd dolt push                                       # or the release is invisible elsewhere
 ```
 
-**Your hold names you, and you only ever remove your own.** `--add-label planned --remove-label
-planning` took the label off whoever set it, so a session finishing its own bead could strip another
-session's hold and never know. `planning:<your-name>` makes that impossible by construction, and
-makes a label left behind attributable to the session that left it. Both spellings are live at once —
-a session started before this keeps writing the bare word — so everything that *reads* the label
-matches on the prefix `planning`, never on the whole string.
-
 ### One planner owns a whole family
 
 **Before you take a candidate, find its parent and read who owns it.** A split family shares one
@@ -534,23 +576,6 @@ the thing this rule exists to prevent. Only a name that has left the roster is i
 planners can still collide on two beads with no parent between them; the named hold and the
 pre-write re-check below are what narrow that, and neither closes it. Families are where the cost is
 worst, so families are what is protected.
-
-**Label before you think, and push before you read a line of code.** The steps above are in
-that order for the other planner's sake: between the `bd list` that picked your candidate and the
-`planning` label reaching them, they are looking at a list that still has your bead on it. Making
-those two adjacent and pushing at once shrinks that window to seconds; researching first and
-labelling when you are ready widens it to the length of a plan, which is exactly long enough for two
-planners to write two designs for one bead and for one of them to be thrown away.
-
-**The state file is written before the label, not after** (it reads oddly, and it is deliberate).
-Your state file naming a bead you have not labelled yet costs nothing — nobody reads it as a hold.
-The label existing while your state file still says `idle` is the dangerous order, because that is
-exactly the shape of an abandoned label, and *Reclaiming a label nobody is holding* below would let
-the other planner take your candidate out from under you.
-
-If a `bd dolt pull` mid-plan shows the bead already carrying somebody else's `planning:` label, you
-lost the race: drop it without finishing, say so in a line, and pick the next candidate. The one who
-labelled it first keeps it — no negotiation, since there is nobody to negotiate with.
 
 **Check that once more immediately before you write the design**, which is the last moment the check
 is still worth anything:

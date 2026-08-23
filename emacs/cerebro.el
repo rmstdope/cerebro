@@ -652,13 +652,30 @@ it from."
       (`(unclaim ,id)
        (format "unclaim %s — %s stalled, no %s for %sm" id .assignee
                (if (equal .progress_source "commit") "commit" "start")
-               .progress_age_min)))))
+               .progress_age_min))
+      ;; `assignee_bead\=' is not a field of `sweep-assignees.sh\='s output - the
+      ;; script reads `bd\=', not the state files, and cannot know it.
+      ;; `cerebro--findings-from\=' enriches the candidate with it before
+      ;; labelling, so this stays a pure formatter like the three arms above.
+      (`(unassign ,id ,_priority)
+       (format "unassign %s — %s is %s" id .assignee
+               (if .assignee_bead (format "on %s" .assignee_bead) "not running"))))))
 
 (defun cerebro--sweep-line (label finding)
   "One propertized Sweeps line: LABEL, carrying FINDING the way a bead row
 carries its id - so `cerebro-sweep-act' acts on what point stands on rather
-than re-deriving it from the text."
-  (propertize label 'cerebro-finding finding))
+than re-deriving it from the text.
+
+A stranded P0 additionally renders in the `warning' face, the same face an
+`asking' session's marker uses. That is the whole of the escalation: the
+line is visibly different from the rest of the section, and there is no new
+face, glyph, popup or sound. The failure this answers (ah-kjfm) is that
+nobody was looking, and a P0 line that reads like the four ordinary ones is
+one nobody presses."
+  (let ((line (propertize label 'cerebro-finding finding)))
+    (pcase finding
+      (`(unassign ,_id 0) (propertize line 'face 'warning))
+      (_ line))))
 
 (defun cerebro--sweep-section (findings)
   "Lines for the Sweeps section. FINDINGS is a list of (LABEL . FINDING).
@@ -728,39 +745,65 @@ Nil - no header, nothing at all - when nothing is running, exactly as
     (when lines
       (cons (propertize "History" 'face 'bold) lines))))
 
-(defun cerebro--live-implementer-names (repo-root)
-  "Implementer names with a live session right now, in REPO-ROOT.
+(defun cerebro--live-sessions (repo-root)
+  "(NAME STATE BEAD) for every implementer with a live session in REPO-ROOT.
 
-By process, not by `cerebro--owned': a session running in the navigator's
-own terminal is just as live as one Emacs started, and just as much not to
-be swept as one Emacs started."
-  (let ((roster (cerebro--roster repo-root)))
-    (delq nil
-          (mapcar (lambda (name)
-                    (let* ((parsed (cerebro--read-state-file
-                                    (cerebro--state-file-path repo-root name)))
-                           (pid (and parsed (alist-get 'pid parsed))))
-                      (and pid (cerebro--session-alive-p pid name) name)))
-                  roster))))
+The single read the three derivations below share; a name is present
+exactly when its state file parses and its pid is alive, whatever that file
+says. A file with no `state\=' or `bead\=' key still puts the name here, with
+a nil in that position - a half-written file is not evidence against a
+working implementer.
 
-(defun cerebro--live-session-states (repo-root)
-  "The (NAME . STATE-SYMBOL) alist for every implementer with a live session
-in REPO-ROOT. A name is present exactly when its state file parses and its pid is alive,
-whatever that file says about state - a file with no `state\=' key, or one
-this version does not recognise, still puts the name here with a nil state.
-
-`cerebro--live-implementer-names\=' is the same read without the states;
-`cerebro--findings-from\=' derives both from one call to this."
+Liveness is `cerebro--session-alive-p\=', which checks the pid\='s own
+`--name\='. A bare pid check would make a recycled pid look like a live
+session, which here would suppress a real finding."
   (let ((roster (cerebro--roster repo-root)))
     (delq nil
           (mapcar (lambda (name)
                     (let* ((parsed (cerebro--read-state-file
                                     (cerebro--state-file-path repo-root name)))
                            (pid (and parsed (alist-get 'pid parsed)))
-                           (state (and parsed (alist-get 'state parsed))))
+                           (state (and parsed (alist-get 'state parsed)))
+                           (bead (and parsed (alist-get 'bead parsed))))
                       (and pid (cerebro--session-alive-p pid name)
-                           (cons name (and state (intern state))))))
+                           (list name (and state (intern state)) bead))))
                   roster))))
+
+(defun cerebro--live-implementer-names (repo-root)
+  "Implementer names with a live session right now, in REPO-ROOT.
+
+By process, not by `cerebro--owned': a session running in the navigator's
+own terminal is just as live as one Emacs started, and just as much not to
+be swept as one Emacs started."
+  (mapcar #'car (cerebro--live-sessions repo-root)))
+
+(defun cerebro--live-session-states (repo-root)
+  "The (NAME . STATE-SYMBOL) alist for every implementer with a live session
+in REPO-ROOT. A name is present exactly when its state file parses and its
+pid is alive, whatever that file says about state - a file with no `state\='
+key, or one this version does not recognise, still puts the name here with
+a nil state.
+
+`cerebro--live-implementer-names\=' is the same read without the states and
+`cerebro--live-session-beads\=' the same read with the beads instead;
+`cerebro--findings-from\=' derives all three from one call to
+`cerebro--live-sessions\='."
+  (mapcar (lambda (session)
+            (cons (nth 0 session) (nth 1 session)))
+          (cerebro--live-sessions repo-root)))
+
+(defun cerebro--live-session-beads (repo-root)
+  "The (NAME . BEAD) alist for every implementer with a live session in
+REPO-ROOT, BEAD being the bead its state file says it is on, or nil.
+
+The third derivation of the one read `cerebro--live-sessions\=' does. The
+assignee sweep needs it because \"alive\" alone cannot tell a session that is
+a moment from claiming this very bead from one building something else -
+and clearing the assignee under the first would be the fleet view fighting
+an implementer."
+  (mapcar (lambda (session)
+            (cons (nth 0 session) (nth 2 session)))
+          (cerebro--live-sessions repo-root)))
 
 (defvar cerebro-subprocess-timeout-seconds 120
   "How long an asynchronous subprocess may run before it is killed and its
@@ -846,17 +889,24 @@ garbage is not `bd' or a sweep script having answered."
                          :null-object nil :false-object nil)
     (error cerebro--parse-failed)))
 
-(defun cerebro--findings-from (repo-root claims epics stalled)
-  "The sweep findings (LABEL . FINDING) from CLAIMS, EPICS and STALLED, the
-parsed JSON of the three sweep scripts. Computed at answer time (called from
-`cerebro--request-sweeps\='s callback) so the live fleet is the one described
-when the findings are shown, not the one that existed when the scripts were
-kicked off.
+(defun cerebro--findings-from (repo-root claims epics stalled assignees)
+  "The sweep findings (LABEL . FINDING) from CLAIMS, EPICS, STALLED and
+ASSIGNEES, the parsed JSON of the four sweep scripts. Computed at answer
+time (called from `cerebro--request-sweeps\='s callback) so the live fleet is
+the one described when the findings are shown, not the one that existed when
+the scripts were kicked off.
 
-The claims sweep wants names and the stalled sweep wants states, and both
-come from one read of the state files rather than two walks of them."
-  (let* ((live-states (cerebro--live-session-states repo-root))
-         (live-names (mapcar #'car live-states))
+The claims sweep wants names, the stalled sweep wants states and the
+assignee sweep wants beads; all three are derived here from one call to
+`cerebro--live-sessions\=', rather than through the three helpers - which
+would walk the roster three times and, worse, take three separate snapshots
+of a fleet that moves, so one sweep could judge a session the next one no
+longer sees."
+  (let* ((sessions (cerebro--live-sessions repo-root))
+         (live-names (mapcar (lambda (x) (nth 0 x)) sessions))
+         (live-states (mapcar (lambda (x) (cons (nth 0 x) (nth 1 x))) sessions))
+         (live-beads (mapcar (lambda (x) (cons (nth 0 x) (nth 2 x))) sessions))
+         (roster (cerebro--roster repo-root))
          (now (current-time)))
     (append
      (delq nil (mapcar (lambda (c)
@@ -870,12 +920,28 @@ come from one read of the state files rather than two walks of them."
      (delq nil (mapcar (lambda (c)
                          (let ((finding (cerebro--stalled-finding c live-states now)))
                            (and finding (cons (cerebro--sweep-label finding c) finding))))
-                       stalled)))))
+                       stalled))
+     (delq nil (mapcar (lambda (c)
+                         (let ((finding (cerebro--assignee-finding c live-beads roster now)))
+                           (and finding
+                                ;; The label wants to say what the assignee is
+                                ;; actually on, which the script cannot know - it
+                                ;; reads `bd\=', not the state files. Enriching the
+                                ;; candidate here keeps `cerebro--sweep-label\=' a
+                                ;; pure two-argument formatter.
+                                (let ((enriched
+                                       (cons (cons 'assignee_bead
+                                                   (cdr (assoc (alist-get 'assignee c)
+                                                               live-beads)))
+                                             c)))
+                                  (cons (cerebro--sweep-label finding enriched) finding)))))
+                       assignees)))))
 
 (defconst cerebro--sweep-scripts
   '((sweep-claims . "sweep-claims.sh")
     (sweep-epics . "sweep-epics.sh")
-    (sweep-stalled . "sweep-stalled.sh"))
+    (sweep-stalled . "sweep-stalled.sh")
+    (sweep-assignees . "sweep-assignees.sh"))
   "The sweep scripts, in the order they are run, keyed by their
 `cerebro--run-async\=' key. Their parsed output reaches
 `cerebro--findings-from\=' as arguments in this same order.")
@@ -1393,6 +1459,48 @@ finding against a working implementer."
        ((> .progress_age_min cerebro-stalled-minutes) (list 'unclaim .id))
        (t nil)))))
 
+(defcustom cerebro-stale-assignee-minutes 10
+  "How long an open bead may carry an assignee no live session is on before
+the sweep offers to clear it.
+
+Ten minutes is one sweep cycle, so a bead is effectively seen twice before
+it is offered - long enough that a claim in flight is never interrupted,
+short enough that a stranded P0 surfaces on the next pass. Five would
+surface on the very next cycle, at some risk of offering a bead an
+implementer is a moment from claiming; thirty would only just have caught
+ah-fjty, which sat 32 minutes."
+  :type 'integer
+  :group 'cerebro)
+
+(defun cerebro--assignee-finding (candidate live-beads roster now)
+  "Pure. What the assignee sweep should offer for CANDIDATE, or nil.
+
+CANDIDATE is one parsed object from `sweep-assignees.sh --json\='. LIVE-BEADS
+is an alist of (NAME . BEAD) for sessions whose pid is alive. ROSTER is the
+implementer roster. NOW is unused, taken for symmetry with the other
+findings.
+
+Returns nil or (unassign ID PRIORITY). Nil covers four cases: the assignee
+is not a roster name, so it was assigned by hand and is not ours to undo;
+the session is alive and on this very bead, so it is about to claim it; the
+bead was touched inside the grace period, so somebody may be attending to
+it; or there is no age to judge.
+
+Note what is absent: there is no \"the session is not alive\" arm, because
+that case falls through to the offer and should. A roster session that is
+not running cannot be about to claim anything.
+
+PRIORITY rides in the finding because `cerebro--sweep-line\=' is given
+nothing but the finding and needs it to shout for a P0."
+  (ignore now)
+  (let-alist candidate
+    (cond
+     ((not (member .assignee roster)) nil)
+     ((equal (cdr (assoc .assignee live-beads)) .id) nil)
+     ((null .age_min) nil)
+     ((< .age_min cerebro-stale-assignee-minutes) nil)
+     (t (list 'unassign .id .priority)))))
+
 (defun cerebro--finding-command (finding repo-root)
   "The exact argv for FINDING, or nil for nil.
 
@@ -1412,6 +1520,10 @@ sweep pipeline; the command itself carries no path, since it is run with
     ;; session is gone, and its window would refuse a bead whose lease is still
     ;; being heartbeated. This finding is about a session alive and not moving.
     (`(unclaim ,id) (list cerebro-bd-program "unclaim" id))
+    ;; Clearing the field, not touching the status: the bead is already `open\='
+    ;; and holds no lease, so there is nothing to unclaim or reclaim. This is
+    ;; the whole write, and this arm is the only place it may live.
+    (`(unassign ,id ,_priority) (list cerebro-bd-program "update" id "--assignee" ""))
     (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure

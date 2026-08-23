@@ -446,19 +446,18 @@ bd show <id> --json \
 Nothing printed means the candidate has no parent, and none of this applies — take it.
 
 Three things about that command, each of which makes it return nothing when it is wrong — which
-reads exactly like "no parent", so a mistake here disables the whole rule silently:
+reads exactly like "no parent", so a mistake here disables the whole rule silently. **All three are
+about `bd show`; `bd list` answers differently, which is the trap.**
 
-- **`bd show`, never `bd list`.** A `bd list --json` bead has no `dependencies` key at all, only a
-  `dependency_count`. Piping a list through this filter yields nothing, for every bead, for ever.
-- **The field is `dependency_type`, not `type`.**
-- **The parent's id is `.id`.** The dependency entry *is* the parent bead, embedded whole — there is
-  no `depends_on_id` to read.
+- **`bd show`, never `bd list`.** The two return different shapes, so a filter written for one finds
+  nothing in the other — silently, for every bead.
+- **In `bd show`, the field is `dependency_type`.** In `bd list` it is `type`, and `dependency_type`
+  is null.
+- **In `bd show`, the parent's id is `.id`** — the dependency entry *is* the parent bead, embedded
+  whole. In `bd list` the entry is a plain edge and the parent is `depends_on_id`.
 
-**The triage queries earlier in this file do not follow those three rules**, and they are known to be
-wrong rather than an alternative worth copying: they pipe `bd list` and select on `.type`, so their
-"not somebody's child" exclusion has never excluded anything. That is filed as its own bead, because
-fixing it means deciding what a per-bead `bd show` costs over a whole backlog. Copy the command
-above, not those.
+**The triage queries earlier in this file pipe `bd list` and select on `.type`**, which is the right
+shape for that command — not an oversight, and not a thing to "correct" to match the one above.
 
 Confirm it on a bead you know to be a child before trusting a run of empty answers.
 

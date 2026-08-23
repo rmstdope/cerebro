@@ -1130,6 +1130,75 @@ what it was told, which is worse than not telling it at all."
         (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
         (should (equal nudged '("Cyclops" "Cyclops")))))))
 
+;; ---------------------------------------------------------------------------
+;; ah-y3j1: one typing path, and the return sent separately from the text
+
+(ert-deftest cerebro-test/typing-into-a-session-sends-the-return-on-its-own ()
+  "The return must not ride in the same terminal read as the text.
+
+Sent back to back they arrive as one burst ending in a carriage return, which
+an Ink-based TUI reads as a paste - and a paste containing a newline lands in
+the composer instead of submitting.  The woken agent then sits on its own wake
+message.  So the text goes now and the return goes on a timer."
+  (let ((typed nil)
+        (returned 0)
+        (scheduled nil)
+        (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'waiting))
+        (cerebro-return-delay 0.3))
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (cl-letf (((symbol-function 'cerebro--session) (lambda (_name) buf))
+                  ((symbol-function 'vterm-send-string) (lambda (s) (push s typed)))
+                  ((symbol-function 'vterm-send-return)
+                   (lambda () (setq returned (1+ returned))))
+                  ((symbol-function 'run-at-time)
+                   (lambda (delay repeat fn) (push (list delay repeat fn) scheduled) nil)))
+          (cerebro--type-into-session agent "hello")
+          (should (equal typed '("hello")))
+          ;; The bug, in one line: today the return has already gone by now.
+          (should (= returned 0))
+          (should (= (length scheduled) 1))
+          (should (equal (nth 0 (car scheduled)) cerebro-return-delay))
+          (funcall (nth 2 (car scheduled)))
+          (should (= returned 1)))))))
+
+(ert-deftest cerebro-test/poke-and-nudge-share-one-typing-path ()
+  "Both callers type through the one helper, and neither types for itself.
+
+This is the second fix that has had to be applied to both call sites; one path
+is what stops them drifting apart a third time."
+  (let ((calls nil)
+        (typed nil)
+        (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'waiting)))
+    (cl-letf (((symbol-function 'cerebro--type-into-session)
+               (lambda (a m) (push (cons (cerebro-agent-name a) m) calls)))
+              ((symbol-function 'vterm-send-string) (lambda (s) (push s typed))))
+      (cerebro--nudge agent)
+      (cerebro--poke agent)
+      (should (equal calls (list (cons "Cyclops" cerebro--poke-message)
+                                 (cons "Cyclops" cerebro--nudge-message))))
+      (should (null typed)))))
+
+(ert-deftest cerebro-test/a-session-killed-before-the-return-is-left-alone ()
+  "A session killed inside the delay must not take the poll down with it.
+
+Three hundred milliseconds is short, but a kill landing exactly there is the
+kind of race that surfaces once a fortnight and never reproduces."
+  (let ((returned 0)
+        (scheduled nil)
+        (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'waiting))
+        (buf (generate-new-buffer " *cerebro-test-session*")))
+    (cl-letf (((symbol-function 'cerebro--session) (lambda (_name) buf))
+              ((symbol-function 'vterm-send-string) (lambda (_s) nil))
+              ((symbol-function 'vterm-send-return)
+               (lambda () (setq returned (1+ returned))))
+              ((symbol-function 'run-at-time)
+               (lambda (delay repeat fn) (push (list delay repeat fn) scheduled) nil)))
+      (cerebro--type-into-session agent "hello")
+      (kill-buffer buf)
+      (funcall (nth 2 (car scheduled)))
+      (should (= returned 0)))))
+
 (ert-deftest cerebro-test/supervise-restart-kills-then-launches ()
   "Restart is a kill and a fresh launch, in that order.
 

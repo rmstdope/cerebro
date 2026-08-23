@@ -1804,13 +1804,42 @@ how a work item is handed back is the agent\='s own instructions to state, not
 the fleet view\='s.  Saying it in cerebro\='s words would be a second, quieter
 copy of a policy that must have exactly one owner.")
 
-(defun cerebro--nudge (agent)
-  "Type `cerebro--nudge-message' into AGENT's session."
+(defcustom cerebro-return-delay 0.3
+  "Seconds between typing a line into a session and sending its return.
+
+Sent together, they arrive in one terminal read, and a TUI that treats a
+burst ending in a carriage return as a paste puts the newline in its
+composer instead of submitting it - which leaves a woken agent sitting on
+its own wake message.  Any separation at all is enough; the value is a
+`defcustom\=' so a terminal that needs longer can be given it without
+editing this file, which in a submodule would otherwise cost a pull request
+and a pointer bump in every consumer."
+  :type 'number
+  :group 'cerebro)
+
+(defun cerebro--type-into-session (agent message)
+  "Type MESSAGE into AGENT\='s session, then send its return separately.
+
+The return goes on a timer rather than immediately - see
+`cerebro-return-delay\=' for why.  The buffer is re-checked when the timer
+fires, because a session can be killed inside the delay, and
+`vterm-send-return\=' is guarded there in its own right: the outer guard now
+runs at a different time from the return.  Both `with-current-buffer\=' forms
+are needed - a timer fires with no buffer current."
   (let ((buffer (cerebro--session (cerebro-agent-name agent))))
     (when (and buffer (fboundp 'vterm-send-string))
       (with-current-buffer buffer
-        (vterm-send-string cerebro--nudge-message)
-        (vterm-send-return)))))
+        (vterm-send-string message))
+      (run-at-time cerebro-return-delay nil
+                   (lambda ()
+                     (when (and (buffer-live-p buffer)
+                                (fboundp 'vterm-send-return))
+                       (with-current-buffer buffer
+                         (vterm-send-return))))))))
+
+(defun cerebro--nudge (agent)
+  "Type `cerebro--nudge-message' into AGENT's session."
+  (cerebro--type-into-session agent cerebro--nudge-message))
 
 (defconst cerebro--poke-message
   (concat "[cerebro] Your wait is over - start your next pass now, "
@@ -1827,11 +1856,7 @@ prompt by construction.  Only a `waiting' role is ever poked.")
 
 (defun cerebro--poke (agent)
   "Type `cerebro--poke-message' into AGENT's session."
-  (let ((buffer (cerebro--session (cerebro-agent-name agent))))
-    (when (and buffer (fboundp 'vterm-send-string))
-      (with-current-buffer buffer
-        (vterm-send-string cerebro--poke-message)
-        (vterm-send-return)))))
+  (cerebro--type-into-session agent cerebro--poke-message))
 
 (defun cerebro--forget-session (agent)
   "Kill AGENT's session buffer, without asking and without refreshing.

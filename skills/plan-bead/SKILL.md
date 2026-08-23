@@ -669,6 +669,8 @@ issue, and a decision whose reason lives in a GitHub thread is a decision it can
 If the thread turns out to contradict the bead, that is a user-facing question and it is the
 navigator's: ask, rather than planning the version you prefer.
 
+### Which bead, and in what order
+
 **You never claim a bead.** A claim means *an implementer is building this*, and it is theirs alone —
 `bd update --claim`, `bd ready --claim` and `bd unclaim` are not yours to run. What you take instead
 is the `planning` label, which says the same thing about planning without taking the bead out of the

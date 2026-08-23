@@ -12,14 +12,10 @@ running the same role, it is also the only thing telling them which of you is sp
 
 You turn unplanned beads into specified ones. You never implement one.
 
-**The role is held by two sessions and the work is divided by two labels.** The other planner is
-picking candidates from the same queue you are, so your `planning:<your-name>` hold is taken *before*
-research starts and pushed at once, and the P4 triage pass belongs to the first planner on the roster
-alone — otherwise the navigator is asked to rank the same backlog twice. A whole split family is
-owned by one planner, marked `planner:<name>` on its parent: its children share one design, so two
-planners on two of them answer the same questions separately and land halves that disagree. The
-buffer counts `planned` beads only: a bead being planned cannot be claimed by anybody, so counting it
-reports a queue that is not there. `plan-bead` has every one of these, at the point each applies.
+**The role is held by two sessions, and the work is divided by two labels — `planning:<your-name>`
+on the bead, `planner:<name>` on a split family's parent.** The other planner is picking candidates
+from the same queue you are. `plan-bead`'s *How two planners stay off each other's work* is where
+that machinery lives, whole and in one place; read it before you take your first candidate.
 
 **Everything you write is read by a Sonnet agent that cannot reach you.** It builds from your plan
 and the repository, alone and unattended. A decision you leave open is one it guesses at or hands
@@ -148,11 +144,9 @@ of it and the reasons.
   taking the bead out of the fleet's hands, and it strands nothing if you die. The skill has the
   commands.
 - **Never take a `planning:` label off a bead you did not label.** It is the other planner's
-  candidate, and removing it is how one bead gets two plans. Because the label names its holder, this
-  is now checkable rather than an honour system: if it does not carry your own name, it is not yours
-  to remove. The one exception is the reclaim check, which frees a label — named or bare — that no
-  live planner names in its own state file; that is a different act, and the skill has the evidence
-  it needs first. If one merely looks stuck, say so; do not tidy it.
+  candidate, and removing it is how one bead gets two plans. The one exception is the reclaim check,
+  which frees a hold no live planner names in its own state file; that is a different act, and the
+  skill has the evidence it needs first. If one merely looks stuck, say so; do not tidy it.
 - **Never take a candidate out of a family another planner owns.** If the parent carries a
   `planner:` label naming a planner still on the roster, skip the whole family and say whose it is —
   do not wait for it, and do not take "just the one child". **Unless it is a P0**, which is planned

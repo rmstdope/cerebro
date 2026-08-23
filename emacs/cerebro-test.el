@@ -2535,19 +2535,6 @@ which one the age came from."
            (cerebro--sweep-label '(unclaim "ah-x1")
                                  (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300 "claim")))))
 
-(ert-deftest cerebro-test/findings-from-returns-all-three-sweeps ()
-  "The stalled sweep is wired in beside the other two, and each keeps its
-own behaviour."
-  (cl-letf (((symbol-function 'cerebro--live-session-states)
-             (lambda (_root) '(("Cyclops" . working)))))
-    (let ((findings (cerebro--findings-from
-                     "/repo"
-                     (list (cerebro-test--claim-candidate "ah-c1" "Storm" nil nil nil nil 30))
-                     (list (cerebro-test--epic-candidate "ah-e1" 30))
-                     (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300)))))
-      (should (equal (mapcar #'cdr findings)
-                     '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")))))))
-
 (ert-deftest cerebro-test/finding-command-covers-only-the-known-shapes ()
   "This function is the complete list of destructive commands the fleet
 view can run - so its total output range has to be pinned, not just its
@@ -2565,6 +2552,147 @@ happy path."
                  '("bd" "unclaim" "ah-x1")))
   (should (null (cerebro--finding-command nil "/repo")))
   (should-error (cerebro--finding-command '(unknown-shape "ah-x1") "/repo")))
+
+;; ---------------------------------------------------------------------------
+;; ah-kjfm: an open bead carrying an assignee no live session backs up
+
+(defun cerebro-test--assignee-candidate (id assignee age &optional priority)
+  `((id . ,id) (assignee . ,assignee) (title . "a stranded bead")
+    (priority . ,(or priority 0))
+    (age_min . ,age)))
+
+(ert-deftest cerebro-test/assignee-finding-leaves-a-name-off-the-roster ()
+  "An assignee that is not a roster name was put there by hand, and undoing
+somebody else's deliberate assignment is not the fleet view's to do."
+  (should (null (cerebro--assignee-finding
+                 (cerebro-test--assignee-candidate "ah-fjty" "henrik" 300)
+                 '(("Cyclops" . "ah-gjq4")) '("Cyclops" "Storm") (current-time)))))
+
+(ert-deftest cerebro-test/assignee-finding-leaves-a-session-alive-on-this-bead ()
+  "A session whose state file says it is on this very bead is a moment from
+claiming it; clearing the assignee under it would achieve nothing and read
+as the fleet view fighting an implementer."
+  (should (null (cerebro--assignee-finding
+                 (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 300)
+                 '(("Cyclops" . "ah-fjty")) '("Cyclops" "Storm") (current-time)))))
+
+(ert-deftest cerebro-test/assignee-finding-leaves-a-bead-inside-the-grace-period ()
+  "A bead somebody touched two minutes ago is one somebody is attending to.
+The sweeps run ten-minutely, so this is seen again on the next pass."
+  (should (null (cerebro--assignee-finding
+                 (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 2)
+                 '(("Cyclops" . "ah-gjq4")) '("Cyclops" "Storm") (current-time)))))
+
+(ert-deftest cerebro-test/assignee-finding-leaves-a-bead-with-no-age ()
+  "No age is no evidence - leave it rather than guess."
+  (should (null (cerebro--assignee-finding
+                 (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" nil)
+                 '(("Cyclops" . "ah-gjq4")) '("Cyclops" "Storm") (current-time)))))
+
+(ert-deftest cerebro-test/assignee-finding-offers-a-session-alive-on-another-bead ()
+  "ah-fjty on 2026-08-23: open at P0, naming Cyclops, while Cyclops built
+ah-gjq4. It sat at the top of `bd ready' for 32 minutes."
+  (should (equal (cerebro--assignee-finding
+                  (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 32)
+                  '(("Cyclops" . "ah-gjq4")) '("Cyclops" "Storm") (current-time))
+                 '(unassign "ah-fjty" 0))))
+
+(ert-deftest cerebro-test/assignee-finding-offers-a-session-that-is-not-running ()
+  "There is deliberately no \"the session is not alive\" guard: a roster
+session that is not running cannot be about to claim anything, so that case
+falls through to the offer and should."
+  (should (equal (cerebro--assignee-finding
+                  (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 32)
+                  nil '("Cyclops" "Storm") (current-time))
+                 '(unassign "ah-fjty" 0))))
+
+(ert-deftest cerebro-test/assignee-finding-carries-the-priority-it-was-given ()
+  "The priority rides in the finding because `cerebro--sweep-line' needs it
+and is given nothing else - see the P0 face below."
+  (should (equal (cerebro--assignee-finding
+                  (cerebro-test--assignee-candidate "ah-zzz" "Cyclops" 32 2)
+                  nil '("Cyclops") (current-time))
+                 '(unassign "ah-zzz" 2))))
+
+(ert-deftest cerebro-test/assignee-label-names-what-the-assignee-is-doing ()
+  "Both lines ship verbatim; the navigator chose this wording."
+  (should (equal (cerebro--sweep-label
+                  '(unassign "ah-fjty" 0)
+                  (cons '(assignee_bead . "ah-gjq4")
+                        (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 32)))
+                 "unassign ah-fjty — Cyclops is on ah-gjq4"))
+  (should (equal (cerebro--sweep-label
+                  '(unassign "ah-fjty" 0)
+                  (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 32))
+                 "unassign ah-fjty — Cyclops is not running")))
+
+(ert-deftest cerebro-test/a-stranded-p0-line-shouts-and-others-do-not ()
+  "The escalation is that a P0 line is visibly different from the rest of
+the section - the same `warning' face an `asking' session's marker uses -
+and nothing more: no new face, no glyph, no popup."
+  (should (eq 'warning
+              (get-text-property 0 'face
+                                 (cerebro--sweep-line "unassign ah-fjty — x"
+                                                      '(unassign "ah-fjty" 0)))))
+  (should-not (get-text-property 0 'face
+                                 (cerebro--sweep-line "unassign ah-zzz — x"
+                                                      '(unassign "ah-zzz" 2))))
+  (should-not (get-text-property 0 'face
+                                 (cerebro--sweep-line "unclaim ah-x1 — x"
+                                                      '(unclaim "ah-x1")))))
+
+(ert-deftest cerebro-test/assignee-finding-command-clears-the-assignee ()
+  "The only place this write may live."
+  (should (equal (cerebro--finding-command '(unassign "ah-fjty" 0) "/repo")
+                 '("bd" "update" "ah-fjty" "--assignee" ""))))
+
+(ert-deftest cerebro-test/live-session-beads-reports-what-each-session-is-on ()
+  "The third derivation of the one state-file read - and the one this sweep
+needs, since \"alive\" alone cannot tell a session about to claim this bead
+from one building something else."
+  (cl-letf (((symbol-function 'cerebro--roster) (lambda (_root) '("Cyclops" "Storm" "Rogue")))
+            ((symbol-function 'cerebro--read-state-file)
+             (lambda (path)
+               (cond ((string-match-p "Cyclops" path)
+                      '((pid . 111) (state . "working") (bead . "ah-gjq4")))
+                     ((string-match-p "Storm" path)
+                      '((pid . 222) (state . "idle")))
+                     (t nil))))
+            ((symbol-function 'cerebro--session-alive-p) (lambda (_pid _name) t)))
+    (should (equal (cerebro--live-session-beads "/repo")
+                   '(("Cyclops" . "ah-gjq4") ("Storm" . nil))))
+    ;; The sibling derivation must be untouched by the refactor that added the
+    ;; one above: `cerebro--claim-finding' and `cerebro--stalled-finding' read
+    ;; it and are deliberately not edited by this bead.
+    (should (equal (cerebro--live-session-states "/repo")
+                   '(("Cyclops" . working) ("Storm" . idle))))
+    (should (equal (cerebro--live-implementer-names "/repo") '("Cyclops" "Storm")))))
+
+(ert-deftest cerebro-test/findings-from-returns-all-four-sweeps ()
+  "The assignee sweep is wired in beside the other three, and the label it
+produces has been enriched with what its assignee is actually on."
+  (cl-letf (((symbol-function 'cerebro--live-session-states)
+             (lambda (_root) '(("Cyclops" . working))))
+            ((symbol-function 'cerebro--live-session-beads)
+             (lambda (_root) '(("Cyclops" . "ah-gjq4"))))
+            ((symbol-function 'cerebro--roster) (lambda (_root) '("Cyclops" "Storm"))))
+    (let ((findings (cerebro--findings-from
+                     "/repo"
+                     (list (cerebro-test--claim-candidate "ah-c1" "Storm" nil nil nil nil 30))
+                     (list (cerebro-test--epic-candidate "ah-e1" 30))
+                     (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300))
+                     (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32)))))
+      (should (equal (mapcar #'cdr findings)
+                     '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")
+                       (unassign "ah-a1" 0))))
+      (should (equal (car (last (mapcar #'car findings)))
+                     "unassign ah-a1 — Cyclops is on ah-gjq4")))))
+
+(ert-deftest cerebro-test/the-assignee-sweep-is-registered-last ()
+  (should (equal (alist-get 'sweep-assignees cerebro--sweep-scripts)
+                 "sweep-assignees.sh"))
+  (should (equal (car (last cerebro--sweep-scripts))
+                 '(sweep-assignees . "sweep-assignees.sh"))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 4: showing sweep findings and acting on them, confirmed

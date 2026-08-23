@@ -574,6 +574,59 @@ to look at its terminal. Nor does a released bead become throughput on its own: 
 something when there is a session free to pick it up. Report every claim you released, and say which
 implementer was on it, so the navigator can go and see what it was waiting for.
 
+## Open beads carrying an assignee nobody backs up
+
+**The fleet view detects these too**, on the same ten-minute timer as the other three:
+`sweep-assignees.sh` reports every `open` bead that still names an assignee, the Sweeps section
+shows a line once that has stood for ten minutes, and `x` runs the `bd update <id> --assignee ""`
+shown, on confirmation. `cerebro--assignee-finding` enforces the guards below; this prose is what it
+was built from.
+
+The fifth thing a sweep looks for, and the most damaging of the family, because it strands the
+*highest-priority* work specifically. A bead reopened by a failed verification comes back
+`status=open` — **no lease** — but still naming its old assignee, and an open bead carrying an
+assignee is then never taken by `bd ready --claim`. It sits at the top of the queue looking
+perfectly healthy while every implementer walks past it.
+
+It happened twice within half an hour on 2026-08-23, and both times to a **P0**: each bead named an
+implementer that was demonstrably building something else at the time. One of them sat 32 minutes
+while the session it named finished a different bead and then took a **P1** below it. Both were
+found only because a planner read `bd ready` by hand. Nothing in the fleet was looking, which is why a
+stranded **P0**'s Sweeps line renders in the `warning` face — the same face an `asking` session's
+`?` marker uses. That is the whole of the escalation: the line is visibly different from the four
+ordinary ones, and there is no new glyph, popup or sound.
+
+The line ships in one of two forms, and says what the assignee is doing rather than what the bead
+costs:
+
+```
+unassign <id> — Cyclops is on <the bead it is actually building>
+unassign <id> — Cyclops is not running
+```
+
+Four guards, each of which is a case the sweep must stay out of:
+
+- **The bead is `in_progress`.** It is never emitted at all: a live claim is the claims and stalled
+  sweeps' business, and emitting it here would put two lines in front of the navigator for one bead.
+- **The assignee is not a roster name.** Somebody assigned it by hand, and undoing a deliberate
+  assignment is not the fleet view's to do.
+- **A live session is on this very bead.** It is a moment from claiming it; clearing the assignee
+  under it would achieve nothing and read as the fleet view fighting an implementer.
+- **The bead was touched inside `cerebro-stale-assignee-minutes`** (ten, one sweep cycle, so a bead
+  is effectively seen twice before it is offered). A bead somebody has just touched is one somebody
+  is attending to. The clock is `updated_at`, and an edit resets it — which is right, and is also
+  the only clock available: an open bead has no lease to measure from.
+
+Note what is *not* a guard: the assignee's session not running at all. A roster session that is not
+running cannot be about to claim anything, so that case falls straight through to the offer.
+
+**What this buys, and what it does not.** Clearing the assignee makes the bead pickable, which on
+the reopen path is the difference between a P0 being built and a P0 being walked past. It does
+**not** answer why the assignee was left behind in the first place — whether that is `bd`, the
+reopen path in `agents/verifier.md`, or an implementer's own exit is a separate question and a
+better fix. This sweep is a net, not a cure. Report every assignee you cleared and who it named, so
+the navigator can see the pattern rather than only its symptom.
+
 ## Staying alive between questions
 
 **Retired.** The fleet view (`emacs/cerebro.el`) now runs the worktree, claims and epics

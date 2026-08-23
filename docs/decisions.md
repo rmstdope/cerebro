@@ -87,3 +87,25 @@ Ids here are from the `atlantis-hud` bead database, the consumer cerebro grew up
 | Rule it established | Bead |
 |---|---|
 | The fleet view owns the cadence of the interactive roles | ah-hiib.3 |
+
+## ah-kjfm — the assignee sweep, and why a stranded P0 shouts
+
+`agents/orchestrator.md`'s *Open beads carrying an assignee nobody backs up* comes from two P0s
+stranded on 2026-08-23, within half an hour of each other:
+
+| Bead | Assignee on file | What that session was actually doing |
+|---|---|---|
+| `ah-fjty` | `Cyclops` | building `ah-gjq4` |
+| `ah-t2pn.3` | `Wolverine` | building `ah-1ad6.1` |
+
+Both had been reopened by a failed verification, which returns a bead to `status=open` — no lease —
+while leaving its old assignee in place. `ah-fjty` then sat 32 minutes at the top of `bd ready`
+while Cyclops finished a bead and took a P1 below it. Both were found only because a planner read
+`bd ready` by hand, and both were cleared by hand with the navigator's approval.
+
+The navigator chose, against `docs/ui/ah-kjfm-sweep.html`: the sweep confirms like the other four
+rather than acting on its own, so every destructive path stays in `cerebro--finding-command`; but a
+stranded **P0**'s line renders in the `warning` face, because the failure being fixed is that nobody
+was looking and a line nobody presses strands the P0 just as silently. `cerebro-stale-assignee-minutes`
+is 10 — one sweep cycle, so a bead is seen twice before it is offered; 30 would only just have caught
+`ah-fjty` at 32 minutes.

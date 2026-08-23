@@ -2671,10 +2671,11 @@ from one building something else."
 (ert-deftest cerebro-test/findings-from-returns-all-four-sweeps ()
   "The assignee sweep is wired in beside the other three, and the label it
 produces has been enriched with what its assignee is actually on."
-  (cl-letf (((symbol-function 'cerebro--live-session-states)
-             (lambda (_root) '(("Cyclops" . working))))
-            ((symbol-function 'cerebro--live-session-beads)
-             (lambda (_root) '(("Cyclops" . "ah-gjq4"))))
+  ;; `cerebro--live-sessions' is stubbed, not the three helpers that derive
+  ;; from it: `cerebro--findings-from' must reach the state files exactly
+  ;; once, so all four sweeps judge one snapshot of a fleet that moves.
+  (cl-letf (((symbol-function 'cerebro--live-sessions)
+             (lambda (_root) '(("Cyclops" working "ah-gjq4"))))
             ((symbol-function 'cerebro--roster) (lambda (_root) '("Cyclops" "Storm"))))
     (let ((findings (cerebro--findings-from
                      "/repo"
@@ -2687,6 +2688,21 @@ produces has been enriched with what its assignee is actually on."
                        (unassign "ah-a1" 0))))
       (should (equal (car (last (mapcar #'car findings)))
                      "unassign ah-a1 — Cyclops is on ah-gjq4")))))
+
+(ert-deftest cerebro-test/findings-from-reads-the-state-files-once ()
+  "Four sweeps, one snapshot. Deriving through the three helpers instead
+would walk the roster three times and take three separate readings of a
+fleet that moves between them - so one sweep could judge a session the next
+no longer sees."
+  (let ((reads 0))
+    (cl-letf (((symbol-function 'cerebro--live-sessions)
+               (lambda (_root) (setq reads (1+ reads)) '(("Cyclops" working "ah-gjq4"))))
+              ((symbol-function 'cerebro--roster) (lambda (_root) '("Cyclops"))))
+      (cerebro--findings-from
+       "/repo" nil nil
+       (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300))
+       (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32)))
+      (should (equal reads 1)))))
 
 (ert-deftest cerebro-test/the-assignee-sweep-is-registered-last ()
   (should (equal (alist-get 'sweep-assignees cerebro--sweep-scripts)

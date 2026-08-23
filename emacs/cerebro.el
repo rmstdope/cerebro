@@ -897,11 +897,15 @@ the one described when the findings are shown, not the one that existed when
 the scripts were kicked off.
 
 The claims sweep wants names, the stalled sweep wants states and the
-assignee sweep wants beads; all three come from one read of the state files
-rather than three walks of them."
-  (let* ((live-states (cerebro--live-session-states repo-root))
-         (live-names (mapcar #'car live-states))
-         (live-beads (cerebro--live-session-beads repo-root))
+assignee sweep wants beads; all three are derived here from one call to
+`cerebro--live-sessions\=', rather than through the three helpers - which
+would walk the roster three times and, worse, take three separate snapshots
+of a fleet that moves, so one sweep could judge a session the next one no
+longer sees."
+  (let* ((sessions (cerebro--live-sessions repo-root))
+         (live-names (mapcar (lambda (x) (nth 0 x)) sessions))
+         (live-states (mapcar (lambda (x) (cons (nth 0 x) (nth 1 x))) sessions))
+         (live-beads (mapcar (lambda (x) (cons (nth 0 x) (nth 2 x))) sessions))
          (roster (cerebro--roster repo-root))
          (now (current-time)))
     (append

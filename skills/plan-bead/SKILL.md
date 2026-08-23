@@ -34,19 +34,8 @@ planner's.
 .claude/cerebro/scripts/roster --role planner      # the planners, in roster order
 ```
 
-Two planners share the work through labels and nothing else: no lease, no claim, no conversation
-between sessions. Five rules keep that honest, and each is spelled out where it applies — **label
-before you think**, **one planner owns a whole family**, and **check you still hold it before you
-write** (all three in *Choosing what to plan*), **count only what an implementer could claim** (*You
-keep a buffer sized to the fleet*), and **only the first planner triages** (*Then: triage the P4
-backlog*).
-
-The first four exist because the same thing went wrong once and cost the navigator real time: two
-planners took one bead, both interviewed for it, and — with no way to see the questions had already
-been asked — the navigator gave opposite answers to three of them. Nothing was built from the losing
-plan, and that was luck. **None of these rules closes the hole for two unrelated beads**, and the
-skill says so where each one appears; they narrow it, and the last of them saves the plan rather than
-the interview.
+**A planner takes a bead by naming itself on it, and never touches a bead named for anyone else.**
+How that works is the next section.
 
 ## How two planners stay off each other's work
 
@@ -54,7 +43,9 @@ Two planners share the work through labels and nothing else: no lease, no claim,
 between sessions. This section is where that machinery is stated — the labels, how they are read,
 the order they are written in, who owns a family, the check before you write, and how a hold left
 by a dead session comes back. Everywhere else in this skill gives the command and points here for
-the reason.
+the reason. Two further rules belong to the same story but are stated where they apply, because
+neither is about the labels: **count only what an implementer could claim** (*You keep a buffer sized
+to the fleet*) and **only the first planner triages** (*Then: triage the P4 backlog*).
 
 ### The two labels, and who may remove them
 

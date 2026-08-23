@@ -105,6 +105,11 @@ assigned to an agent that has walked away — invisible to `bd ready`, and stran
 runs out. That is the exact condition the reclaim rule below exists to repair, manufactured
 deliberately every time an implementer escalates.
 
+**One exception, and `implement-bead` is where it is written in full:** a bead already carrying
+`verification:failed`, handed back because there is nothing left to implement, drops the
+`--add-label human` and keeps everything else. It belongs on Psylocke's list rather than in the
+navigator's queue. Nothing here ever adds `plan:revise`; only the verifier sets that.
+
 **A planner escalating has no claim to release**, so it runs the first and third commands and
 `--remove-label planning:<its own name>` in place of the second. `bd unclaim` on a bead you never claimed is not
 harmless bookkeeping — it is a claim you should not have had in the first place.

@@ -325,7 +325,26 @@ bd unclaim <id>
 bd dolt push
 ```
 
-All three, and this is the **hand-back block** referred to throughout. After it, remove the worktree
+All three, and this is the **hand-back block** referred to throughout.
+
+**One variation, and it is about where the bead goes next.** A bead carrying `verification:failed`
+that you are handing back because there is **nothing left to implement** — you read the failure
+notes and the surface the navigator asked for is already there, or another bead carries it — drops
+the `human`:
+
+```bash
+bd update <id> --remove-label planned --append-notes "<why there is nothing to build>"
+bd unclaim <id>
+bd dolt push
+```
+
+`verification:failed` is what builds Psylocke's list, and a failed verification with nothing left to
+build wants her second look, not the navigator's queue; adding `human` parks it in front of a person
+who has nothing to decide. It has happened, and the bead had to be moved back by hand.
+
+**Never add `plan:revise` in either case.** Whether the plan was wrong is the navigator's answer to
+Psylocke's question, asked at the verdict, and it is not an implementer's to assert — the label is
+hers alone to set, and it is what sends the bead to a planner. After it, remove the worktree
 if one exists (see *Finishing*) and write `.claude/cerebro/scripts/agent-state <name> done
 --bead <id> --pid $PPID` last, exactly as a merged bead does — a hand-back is a complete run too.
 `bd update` sets no status, so

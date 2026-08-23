@@ -106,9 +106,10 @@ runs out. That is the exact condition the reclaim rule below exists to repair, m
 deliberately every time an implementer escalates.
 
 **One exception, and `implement-bead` is where it is written in full:** a bead already carrying
-`verification:failed`, handed back because there is nothing left to implement, drops the
-`--add-label human` and keeps everything else. It belongs on Psylocke's list rather than in the
-navigator's queue. Nothing here ever adds `plan:revise`; only the verifier sets that.
+`verification:failed`, handed back because there is nothing left to implement, is **closed** rather
+than escalated — a closed bead still carrying `verification:failed` is what the verifier's work list
+is built from, and left open it reaches no role at all. Nothing here ever adds `plan:revise`; only
+the verifier sets that.
 
 **A planner escalating has no claim to release**, so it runs the first and third commands and
 `--remove-label planning:<its own name>` in place of the second. `bd unclaim` on a bead you never claimed is not

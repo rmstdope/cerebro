@@ -393,4 +393,61 @@ grep -q 'scripts/roster' <<<"$out" \
 $out"
 pass "a retired worktree path in a script fires the rule naming the file"
 
+# --- a grep or an awk that fails is an advisory naming the rule, never an `ok' ------------------
+#
+# A rule whose grep exits 2 - a bad pattern, an exempt pattern read as an option - used to report
+# itself clean, because `|| true' cannot tell a no-match from a grep that never ran (cb-u5e). The
+# failure is simulated with a shim first on PATH: the real tool, unless the arguments carry the
+# marker in $LINT_BREAK_GREP, in which case it prints a message and exits 2 the way grep does. A
+# real bad pattern is not used because the platforms disagree about awk (gawk is fatal on a bad
+# dynamic regex, BSD awk is not), and the class under test is the exit status, not the regex.
+shim_dir="$work_dir/shim"
+mkdir -p "$shim_dir"
+real_grep="$(command -v grep)"
+real_awk="$(command -v awk)"
+cat > "$shim_dir/grep" <<SHIM
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ -n "\${LINT_BREAK_GREP:-}" && "\$a" == *"\$LINT_BREAK_GREP"* ]]; then
+    echo "grep: simulated failure for the suite" >&2
+    exit 2
+  fi
+done
+exec "$real_grep" "\$@"
+SHIM
+cat > "$shim_dir/awk" <<SHIM
+#!/usr/bin/env bash
+if [[ -n "\${LINT_BREAK_AWK:-}" ]]; then
+  echo "awk: simulated failure for the suite" >&2
+  exit 2
+fi
+exec "$real_awk" "\$@"
+SHIM
+chmod +x "$shim_dir/grep" "$shim_dir/awk"
+
+# The marker is `)?scripts/work-beads': it occurs in the work-beads-status row's hit pattern and
+# nowhere else a grep argument can come from. NOT the bare `work-beads' - the shim compares every
+# argument, and the file list is arguments too, so a marker that is also a path would break every
+# rule that reads that file.
+set +e
+out="$(LINT_BREAK_GREP=')?scripts/work-beads' PATH="$shim_dir:$PATH" bash "$lint" "$fixture" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "lint with a failing grep: expected exit 1, got $status
+$out"
+grep -q 'ADVISORY: rule work-beads-status could not be checked - its hit grep exited 2' <<<"$out" \
+  || fail "lint with a failing grep: no advisory names the rule and the step
+$out"
+if grep -q 'ok - rule work-beads-status: clean' <<<"$out"; then
+  fail "lint with a failing grep: the rule still reported itself clean
+$out"
+fi
+grep -q -e 'ok - rule bead-id: clean' -e 'ADVISORY: ' <<<"$out" \
+  || fail "lint with a failing grep: the other rules stopped reporting
+$out"
+tail -n1 <<<"$out" | grep -q '^lint: 1 rule(s) could not be run - fix scripts/lint' \
+  || fail "lint with a failing grep: the verdict does not say the lint is broken
+$out"
+pass "a grep that fails is an advisory naming the rule and the step, and the verdict says so"
+
 echo "all lint assertions passed"

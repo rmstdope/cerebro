@@ -158,23 +158,51 @@ tree_files() {
                     -o -type f ! -name '*~' -print | sed 's#^\./##' | grep -vx 'scripts/lint' | sort)"
 }
 
+# A rule's grep or awk exited with something other than 0 (hits) or 1 (none): the lint failed to
+# check itself. That is an advisory naming the rule and the step, never an `ok' - `|| true' could
+# not tell "matched nothing" from "never ran", and one rule reported itself clean for a planted
+# violation because its exempt pattern began with `--' and grep read it as an option (cb-u5e).
+# The tool's own message goes to stderr as it always would; only the verdict is this function's.
+unchecked=0
+unchecked() {
+  local name="$1" step="$2" rc="$3"
+  unchecked=$((unchecked + 1))
+  advisory "rule $name could not be checked - its $step exited $rc; the lint is broken, not the tree"
+}
+
 tree_rule() {
   local name="$1" icase="$2" re="$3" path_re="$4" path_x="$5" line_x="$6" msg="$7"
-  local files hits iflag=""
+  local files hits rc f iflag=""
+  local file_list=()
   tree_files
   [[ "$icase" == i ]] && iflag="-i"
   # Every pattern goes through -e: a row's exempt pattern may begin with `--', which grep would
-  # otherwise read as an option and then match nothing at all, silently.
-  files="$(grep -E -e "$path_re" <<<"$all_files" || true)"
-  [[ "$path_x" != - && -n "$files" ]] && files="$(grep -vE -e "$path_x" <<<"$files" || true)"
+  # otherwise read as an option and then match nothing at all, silently. Every grep's status is
+  # read: 0 hits, 1 none, anything else is the lint failing to run this rule, and `unchecked'
+  # says so instead of `ok'. `(( rc > 1 ))' rather than `!= 0' because 1 is grep's ordinary
+  # "no line selected" and is the common case for a clean rule.
+  files="$(grep -E -e "$path_re" <<<"$all_files")"; rc=$?
+  (( rc > 1 )) && { unchecked "$name" "path grep" "$rc"; return; }
+  if [[ "$path_x" != - && -n "$files" ]]; then
+    files="$(grep -vE -e "$path_x" <<<"$files")"; rc=$?
+    (( rc > 1 )) && { unchecked "$name" "path-exempt grep" "$rc"; return; }
+  fi
   if [[ -z "$files" ]]; then
     advisory "rule $name reads no file at all - its path pattern has stopped matching"
     return
   fi
-  # -H because a rule whose path pattern selects one file would otherwise print no name; -I skips
-  # binaries; -- so a path is never read as a flag.
-  hits="$(tr '\n' '\0' <<<"$files" | xargs -0 grep -nHI $iflag -E -e "$re" -- 2>/dev/null || true)"
-  [[ "$line_x" != - && -n "$hits" ]] && hits="$(grep -vE -e "$line_x" <<<"$hits" || true)"
+  # The files as arguments, not through xargs: xargs folds every non-zero grep into its own 123,
+  # so a batch with no match and a grep that failed read the same. A read loop rather than
+  # mapfile, which the navigator's bash 3.2 does not have. -H because a rule whose path pattern
+  # selects one file would otherwise print no name; -I skips binaries; -- so a path is never read
+  # as a flag. stderr is left alone: a failing grep's own message is the diagnosis.
+  while IFS= read -r f; do file_list+=("$f"); done <<<"$files"
+  hits="$(grep -nHI $iflag -E -e "$re" -- "${file_list[@]}")"; rc=$?
+  (( rc > 1 )) && { unchecked "$name" "hit grep" "$rc"; return; }
+  if [[ "$line_x" != - && -n "$hits" ]]; then
+    hits="$(grep -vE -e "$line_x" <<<"$hits")"; rc=$?
+    (( rc > 1 )) && { unchecked "$name" "line-exempt grep" "$rc"; return; }
+  fi
   if [[ -n "$hits" ]]; then
     advisory "$msg" "$hits"
   else
@@ -555,6 +583,8 @@ grep -q -- 'lint --plan' skills/plan-bead/SKILL.md 2>/dev/null \
 
 if [[ $status -eq 0 ]]; then
   echo "lint: clean"
+elif (( unchecked > 0 )); then
+  echo "lint: $unchecked rule(s) could not be run - fix scripts/lint in this pull request; other advisories above are not failures"
 else
   echo "lint: advisories above are not failures - a deliberate change updates scripts/lint in the same pull request"
 fi

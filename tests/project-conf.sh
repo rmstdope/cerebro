@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Proves scripts/project-conf reads <consumer>/.claude/cerebro-project.conf: the tracked file in
+# Proves scripts/project-conf reads <consumer>/.cerebro/project.conf: the tracked file in
 # which a consumer declares its own project facts (ah-qled.1, cerebro#58 §1).
 #
 # The whole point of this reader is that it NEVER fails - callers run under `set -euo pipefail`, so
@@ -31,13 +31,13 @@ trap 'rm -rf "$work_dir"' EXIT
 
 # --- a throwaway consumer repo, the way tests/consumer-root.sh builds one ---
 consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
+mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/.cerebro"
 git init -q "$consumer"
 git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
 for s in consumer-root project-conf; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
-conf="$consumer/.claude/cerebro-project.conf"
+conf="$consumer/.cerebro/project.conf"
 project_conf="$consumer/.claude/cerebro/scripts/project-conf"
 
 cat > "$conf" <<'CONF'
@@ -131,7 +131,7 @@ fi
 
 # --- detection: `install` is inferred from a lockfile when unconfigured ---
 detect_consumer="$work_dir/detect"
-mkdir -p "$detect_consumer/.claude/cerebro/scripts"
+mkdir -p "$detect_consumer/.claude/cerebro/scripts" "$detect_consumer/.cerebro"
 git init -q "$detect_consumer"
 for s in consumer-root project-conf; do
   ln -s "$repo_root/scripts/$s" "$detect_consumer/.claude/cerebro/scripts/$s"
@@ -163,7 +163,7 @@ echo "$err" | grep -q "pnpm-lock.yaml" \
 pass "the branch taken by detection is said out loud, on stderr"
 
 # --- a configured install beats detection ---
-echo "install make bootstrap" > "$detect_consumer/.claude/cerebro-project.conf"
+echo "install make bootstrap" > "$detect_consumer/.cerebro/project.conf"
 out="$("$detect_conf" install 2>/dev/null)"
 [[ "$out" == "make bootstrap" ]] || fail "configured beats detected: got '$out'"
 pass "a configured install beats detection"
@@ -186,12 +186,12 @@ pass "calling it with no key is a usage error"
 # --- Windows checkouts, and a trailing \r turns `npm ci' into `npm ci\r' and `main' into a branch
 # --- that does not exist - invisibly, in every message.
 crlf_consumer="$work_dir/crlf"
-mkdir -p "$crlf_consumer/.claude/cerebro/scripts"
+mkdir -p "$crlf_consumer/.claude/cerebro/scripts" "$crlf_consumer/.cerebro"
 git init -q "$crlf_consumer"
 for s in consumer-root project-conf; do
   ln -s "$repo_root/scripts/$s" "$crlf_consumer/.claude/cerebro/scripts/$s"
 done
-printf 'install npm ci\r\nproject_name Atlantis HUD\r\n' > "$crlf_consumer/.claude/cerebro-project.conf"
+printf 'install npm ci\r\nproject_name Atlantis HUD\r\n' > "$crlf_consumer/.cerebro/project.conf"
 out="$("$crlf_consumer/.claude/cerebro/scripts/project-conf" install 2>/dev/null)"
 [[ "$out" == "npm ci" ]] || fail "CRLF: expected 'npm ci' with no carriage return, got '$(printf %s "$out" | cat -v)'"
 pass "a CRLF file yields a value with no carriage return"
@@ -307,5 +307,35 @@ set -e
 [[ $status -eq 0 ]] || fail "undetectable gate: expected exit 0, got $status"
 [[ -z "$out" ]] || fail "undetectable gate: expected nothing, got '$out'"
 pass "a gate that is neither declared nor detectable yields nothing"
+
+# --- a declaration left at the retired .claude/ path refuses, loudly (cb-epr) ---
+#
+# The one case where this reader FAILS. Absence still exits 0 with the default, because absence is
+# a fact about the consumer; a file sitting at the path the declarations moved away from is a
+# MIGRATION ERROR, and falling back silently is exactly what would leave a consumer running on
+# defaults it never declared.
+old_consumer="$work_dir/oldpath"
+mkdir -p "$old_consumer/.claude/cerebro/scripts" "$old_consumer/.cerebro"
+git init -q "$old_consumer"
+for s in consumer-root project-conf; do
+  ln -s "$repo_root/scripts/$s" "$old_consumer/.claude/cerebro/scripts/$s"
+done
+echo "default_branch trunk" > "$old_consumer/.claude/cerebro-project.conf"
+set +e
+out="$("$old_consumer/.claude/cerebro/scripts/project-conf" default_branch main 2>/tmp/oldpath.err)"
+status=$?
+set -e
+err="$(cat /tmp/oldpath.err)"; rm -f /tmp/oldpath.err
+[[ $status -eq 2 ]] || fail "old path: expected exit 2, got $status"
+[[ -z "$out" ]] || fail "old path: expected nothing on stdout, got '$out'"
+echo "$err" | grep -q "mv .claude/cerebro-project.conf .cerebro/project.conf" \
+  || fail "old path: expected the mv line on stderr, got: $err"
+pass "a conf left at the retired .claude/ path refuses with the mv line"
+
+# --- and once it has moved, the same consumer reads normally again ---
+mv "$old_consumer/.claude/cerebro-project.conf" "$old_consumer/.cerebro/project.conf"
+out="$("$old_consumer/.claude/cerebro/scripts/project-conf" default_branch main 2>/dev/null)"
+[[ "$out" == "trunk" ]] || fail "after the mv: expected 'trunk', got '$out'"
+pass "after the mv, the declaration reads from .cerebro/project.conf"
 
 echo "all project-conf tests passed"

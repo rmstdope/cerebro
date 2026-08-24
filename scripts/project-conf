@@ -3,7 +3,7 @@
 #
 #     project-conf <key> [default]
 #
-# The file is <consumer>/.claude/cerebro-project.conf, in the shape cerebro#58 §1 specifies:
+# The file is <consumer>/.cerebro/project.conf, in the shape cerebro#58 §1 specifies:
 #
 #     key value          one per line, the value running to the END of the line
 #     # a comment        everything from a `#' on is a comment, WHEREVER it starts
@@ -12,10 +12,14 @@
 # deliberate - it is what keeps `default_branch main  # for now' from naming a branch "main # for
 # now" - and it is stated here rather than left to be discovered.
 #
-# TRACKED, not under .cerebro/. `.cerebro/models.conf' is a personal preference and rightly
-# git-ignored; how a project installs itself and what its gate is called are facts EVERY clone
-# needs. A file under the ignored .cerebro/ vanishes on a fresh clone, and every new machine then
-# silently skips the step - surfacing much later as a confusing failure inside somebody's worktree.
+# TRACKED, by a `.gitignore' negation inside the otherwise-ignored .cerebro/ (cb-epr).
+# `.cerebro/models.conf' is a personal preference and rightly ignored; how a project installs itself
+# and what its gate is called are facts EVERY clone needs. An ignored declaration vanishes on a
+# fresh clone, and every new machine then silently skips the step - surfacing much later as a
+# confusing failure inside somebody's worktree.
+#
+# It lived at <consumer>/.claude/cerebro-project.conf until cb-epr. A file still sitting there is
+# the ONE case this script fails on (exit 2, naming the `mv'): see THIS NEVER FAILS below.
 #
 # Two keys are worth naming here because their ABSENCE is meaningful rather than merely a default:
 #
@@ -25,8 +29,10 @@
 #
 # THIS NEVER FAILS on absence. A missing file, a missing key and an unreadable file all exit 0 with
 # the default, because callers run under `set -euo pipefail' where a non-zero exit for "no such
-# key" takes the caller down instead of letting it fall back. Only a missing <key> argument - a
-# programming error in the caller, not a fact about the consumer - exits non-zero.
+# key" takes the caller down instead of letting it fall back. Two things DO exit non-zero, and
+# neither is a fact about the consumer: a missing <key> argument, which is a programming error in
+# the caller; and a declaration left at the retired .claude/ path, which is a migration error - the
+# consumer would otherwise run silently on defaults it never declared (cb-epr).
 #
 # Whichever branch was taken is printed to STDERR, never stdout, the way `launch' says out loud
 # which models.conf line it matched: a caller doing `x="$(project-conf install)"' must get the
@@ -44,7 +50,15 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # --shared, matching how `launch' reads models.conf and how `agent-state' resolves its state
 # directory: the fleet's configuration is one answer for the checkout, not one per worktree.
 root="$("$here/consumer-root" --shared 2>/dev/null)" || root=""
-conf="${root:+$root/.claude/cerebro-project.conf}"
+conf="${root:+$root/.cerebro/project.conf}"
+
+# The migration refusal (cb-epr), before any lookup. Loud rather than a silent fallback: a consumer
+# whose declaration is still at the old path would otherwise read as "no declaration at all".
+old_conf="${root:+$root/.claude/cerebro-project.conf}"
+if [[ -n "$conf" && ! -f "$conf" && -n "$old_conf" && -f "$old_conf" ]]; then
+  echo "project-conf: the declaration has moved - run: mv .claude/cerebro-project.conf .cerebro/project.conf" >&2
+  exit 2
+fi
 
 # The value for $key, or nothing. Two columns, NOT models.conf's three: `read -r k m e' would split
 # `install pnpm install --frozen-lockfile' into a command and its arguments, so the value is read
@@ -69,7 +83,7 @@ lookup() {
 
 value="$(lookup)"
 if [[ -n "$value" ]]; then
-  echo "project-conf: cerebro-project.conf -> $key" >&2
+  echo "project-conf: project.conf -> $key" >&2
   printf '%s\n' "$value"
   exit 0
 fi

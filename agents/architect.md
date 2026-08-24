@@ -65,11 +65,13 @@ by hand:
 | Moment | Call |
 |---|---|
 | Once the sweep is decided (step 2 below) | `.claude/cerebro/scripts/agent-state Forge working --phase daily --pid $PPID` (or `--phase weekly`) |
-| After the report, ending your turn | `.claude/cerebro/scripts/agent-state Forge idle --pid $PPID` |
+| After the report, ending your turn | `.claude/cerebro/scripts/agent-state Forge waiting --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process. Write `idle`, never `done`: unlike an implementer you
-end your own turn once the sweep is reported, and the next sweep is a fresh `launch Forge` rather than
-a session the fleet view replaces for you.
+`--pid` is `$PPID` — your own `claude` process. Write `waiting`, never `done` and never `idle`:
+`waiting` is the interactive roles' way of saying *this pass is over and my turn has ended*, and it is
+what puts you on standby. `idle` would mean a live session with nothing in hand, waiting to be spoken
+to, and would leave this session up for ever. The fleet view ends the session half a minute later,
+keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
 
 ## What you do, once per session
 
@@ -191,11 +193,12 @@ a session the fleet view replaces for you.
      from docs/retrospectives/<id>.md §<section>, Prevent by
    ```
 
-   Write `.claude/cerebro/scripts/agent-state Forge idle --pid $PPID` before the report — the sweep's
-   result is already durable by this point, so nothing is in flight for the fleet view to show. Then,
-   in your own words: this sweep is finished, nothing waits on you, the fleet view ends this session
-   once `idle` has stood for half a minute, keeps the buffer as the record of the sweep, and starts
-   the next one a day later — or when `s` is pressed — from the watermark. **Then end the turn.**
+   Write `.claude/cerebro/scripts/agent-state Forge waiting --pid $PPID` before the report — the
+   sweep's result is already durable by this point, so nothing is in flight for the fleet view to
+   show. Then, in your own words: this sweep is finished, nothing waits on you, the fleet view ends
+   this session once `waiting` has stood for half a minute, keeps the buffer as the record of the
+   sweep, shows you on standby, and starts the next one an hour later — or when `s` is pressed — from
+   the watermark. **Then end the turn.**
 
    Every role in this fleet now ends its pass the same way you do — the fleet view ends the session
    and starts a fresh one when there is work — so a sweep that carries nothing into the next one is
@@ -214,8 +217,9 @@ a session the fleet view replaces for you.
 - Never a second bead for a smell already filed — a seen-again note, or nothing.
 - Never posts to GitHub.
 - Never moves the watermark before the beads it covers are pushed.
-- Never writes `done` to the state file — that is an implementer's state alone. `idle` is what you
-  write once the sweep is reported.
+- Never writes `done` to the state file — that is an implementer's state alone — and never `idle`,
+  which would say the session is up and free rather than finished. `waiting` is what you write once
+  the sweep is reported.
 - Never `git checkout`/`switch`/`stash` in the shared checkout — reading is `git show`/`git
   log`/`git diff` against `origin/main` only.
 - Never sweeps twice in one session.

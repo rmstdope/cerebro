@@ -78,11 +78,11 @@ re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exa
 Two things it does for you without being asked: it starts `prune-worktrees.sh --watch` alongside the
 buffer (see *Leftover worktrees*), and it replaces an implementer that reports itself `done` with a
 fresh session.  It also runs the **interactive roles** the way it runs the
-implementers: a role that writes `waiting` (Forge, `idle`) is ended half a minute later — its buffer
+implementers: a role that writes `waiting` is ended half a minute later — its buffer
 kept, `RET` shows it — and started fresh when its trigger fires: a planner when the planned buffer is
 short, a P0 is unplanned or (the first planner) a P4 wants ranking; Psylocke when a merged bead is
 unverified or a verdict is stale; Moira and Cypher when an issue or an outside PR moved on GitHub,
-and hourly regardless; Forge daily. A role you have not started this Emacs is never started: `s` (or
+and hourly regardless; Forge hourly too. A role you have not started this Emacs is never started: `s` (or
 `autostart` in `roster.conf`) arms it, `k` and `f` disarm it, and none of that is written to any
 file. `cerebro-wake-intervals` is the floor between two starts of one role, changeable while the
 fleet runs.

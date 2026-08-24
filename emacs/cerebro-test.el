@@ -4656,26 +4656,6 @@ the view ends it half a minute later - long enough for that line to land."
                    (cerebro-test--interactive "Moira" "user-feedback" 'waiting)
                    nil cerebro-test--now)))))
 
-(ert-deftest cerebro-test/supervise-ends-an-idle-interactive-role ()
-  "Forge writes `idle' at the end of its sweep rather than `waiting', and it is
-the same end of the same kind of pass."
-  (let ((cerebro-end-grace 30))
-    (should (eq (cerebro--supervise-action
-                 (cerebro-test--interactive "Forge" "architect" 'idle nil
-                                            "2026-08-14T09:29:00Z")
-                 nil cerebro-test--now)
-                'end))
-    (should (null (cerebro--supervise-action
-                   (cerebro-test--interactive "Forge" "architect" 'idle nil
-                                              "2026-08-14T09:29:50Z")
-                   nil cerebro-test--now)))
-    ;; An implementer's `idle' is unchanged: nothing without a flag, retire with.
-    (should (null (cerebro--supervise-action (cerebro-test--supervised 'idle)
-                                             nil cerebro-test--now)))
-    (should (eq (cerebro--supervise-action (cerebro-test--supervised 'idle)
-                                           t cerebro-test--now)
-                'retire))))
-
 (ert-deftest cerebro-test/supervise-retires-an-idle-interactive-role-under-a-stop-flag ()
   "The flag lands at once and whatever the grace says: nothing is in flight."
   (let ((cerebro-end-grace 30))
@@ -4684,6 +4664,29 @@ the same end of the same kind of pass."
                                             "2026-08-14T09:29:59Z")
                  t cerebro-test--now)
                 'retire))))
+
+(ert-deftest cerebro-test/forge-ends-its-sweep-with-waiting-not-idle ()
+  "Forge writes `waiting' at the end of a sweep like every other interactive
+role, so no role ends a pass by writing `idle' any more: the list is the
+mechanism a consumer role would use, and is empty by default."
+  (should (null cerebro-idle-ends-pass-roles))
+  (let ((cerebro-end-grace 30))
+    ;; `waiting' ends it, as it does for every role.
+    (should (eq (cerebro--supervise-action
+                 (cerebro-test--interactive "Forge" "architect" 'waiting nil
+                                            "2026-08-14T09:29:00Z")
+                 nil cerebro-test--now)
+                'end))
+    ;; `idle' no longer does - it means a session with nothing in hand.
+    (should (null (cerebro--supervise-action
+                   (cerebro-test--interactive "Forge" "architect" 'idle nil
+                                              "2026-08-14T09:29:00Z")
+                   nil cerebro-test--now)))))
+
+(ert-deftest cerebro-test/forge-is-woken-hourly ()
+  "The sweep is cheap and its watermark makes an empty one nearly free, so
+Forge comes back every hour rather than once a day."
+  (should (equal (cdr (assoc "architect" cerebro-cadence-triggers)) 3600)))
 
 (ert-deftest cerebro-test/an-idle-orchestrator-is-never-ended ()
   "Cerebro writes `idle' between the navigator's questions - it is not a pass

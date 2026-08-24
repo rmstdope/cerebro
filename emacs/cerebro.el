@@ -1289,12 +1289,13 @@ from the rest of its role says so by name."
       (and role (cdr (assoc role cerebro-wake-intervals)))
       cerebro-wake-interval-default))
 
-(defcustom cerebro-idle-ends-pass-roles '("architect")
+(defcustom cerebro-idle-ends-pass-roles nil
   "Interactive roles whose `idle\=' means \"my pass is over, end me\".
 
-Most interactive roles end a pass by writing `waiting\=' (ah-hiib.3).  Forge
-writes `idle\=' instead, at the end of its sweep (`agents/architect.md'), and
-that is the same end of the same kind of pass.
+Empty by default: every interactive role in this fleet ends a pass by
+writing `waiting\=' (ah-hiib.3), Forge included since it stopped writing
+`idle\=' at the end of its sweep (`agents/architect.md').  The list is the
+mechanism a consumer role would use if it wrote `idle\=' there instead.
 
 Every other role\='s `idle\=' means something quite different: a session with
 nothing in hand, waiting to be spoken to.  Cerebro sits in exactly that
@@ -1410,13 +1411,14 @@ everything: every answer here ends in Emacs acting on a session it owns."
 ;;; cb-5yr: why a role on standby should start now
 
 (defcustom cerebro-cadence-triggers
-  '(("user-feedback" . 3600) ("reviewer" . 3600) ("architect" . 86400))
+  '(("user-feedback" . 3600) ("reviewer" . 3600) ("architect" . 3600))
   "Roles started again after this long on standby whatever else is true.
 
 \(ROLE . SECONDS).  Moira and Cypher hourly, because what they watch moves
 outside this fleet - an issue, somebody else\='s pull request - and a floor is
-what covers whatever the `gh\=' reader could not see.  Forge daily, which is
-the cadence its own sweep is written around.
+what covers whatever the `gh\=' reader could not see.  Forge hourly too: its
+watermark makes a sweep with nothing new in it nearly free, and an hourly
+floor keeps a day's debt from arriving in one lump.
 
 A role absent here starts on its condition alone: a planner and the verifier
 have conditions that are true whenever there is work, so a floor would only

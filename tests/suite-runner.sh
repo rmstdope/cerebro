@@ -258,3 +258,36 @@ first_result="$(grep -nF -- "ok   $work_dir/slow/d-slow.sh (" <<<"$out" | head -
 $out"
 
 pass "suites run N at a time, and --jobs 1 is one at a time"
+
+# --- 7. a suite that is killed rather than exiting is a failure ---
+#
+# The harness's ten-minute output ceiling and a stray `kill' both end a suite without an exit
+# status for the runner to read. A missing result must read as a failure with an empty replay -
+# never as a pass, which is how a killed gate would otherwise merge.
+
+mkdir -p "$work_dir/killed"
+printf '#!/usr/bin/env bash\nkill -9 $$\n' >"$work_dir/killed/f-killed.sh"
+
+run "$work_dir/killed"
+[[ $status -eq 1 ]] || fail "a killed suite: expected exit 1, got $status
+$out"
+grep -qF -- "FAIL $work_dir/killed/f-killed.sh (" <<<"$out" || fail "a killed suite has no 'FAIL' line
+$out"
+grep -qF -- "== output of $work_dir/killed/f-killed.sh ==" <<<"$out" || fail "a killed suite has no replay header
+$out"
+
+# And the path the header actually names: the job that was running the suite is killed too, so no
+# result is ever written. `cat' of a missing .rc prints nothing, which is not 0.
+mkdir -p "$work_dir/vanished"
+printf '#!/usr/bin/env bash\nkill -9 $PPID\nsleep 5\n' >"$work_dir/vanished/g-vanished.sh"
+
+run "$work_dir/vanished"
+[[ $status -eq 1 ]] || fail "a suite whose job vanished: expected exit 1, got $status
+$out"
+grep -qF -- "== output of $work_dir/vanished/g-vanished.sh ==" <<<"$out" \
+  || fail "a suite whose job vanished has no replay header
+$out"
+[[ "$(tail -n 1 <<<"$out")" != "all suites passed" ]] || fail "a suite whose job vanished was reported as a pass
+$out"
+
+pass "a suite that is killed is reported failed, not passed"

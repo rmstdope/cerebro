@@ -1,0 +1,27 @@
+<!doctype html><meta charset="utf-8"><title>cb-eat — Option A: a refused launch disarms the role</title><style>body{background:#1e1e1e;color:#d4d4d4;font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px}h1{font-size:16px;color:#fff}h2{font-size:14px;color:#9cdcfe;margin-top:28px}pre{background:#111;padding:14px;border:1px solid #333;line-height:1.35;white-space:pre}.g{color:#6a9955}.y{color:#d7ba7d}.w{color:#e5a13b;font-weight:bold}.r{color:#f14c4c}.d{color:#777}.b{font-weight:bold}.hd{color:#fff;text-decoration:underline}.echo{background:#000;color:#ddd;padding:6px 14px;border:1px solid #333;margin-top:-1px}.note{color:#aaa;max-width:80ch}.detail{background:#0a0a0a;border:1px solid #333;padding:10px 14px;color:#bbb;margin-top:8px}</style>
+<h1>cb-eat — Option A: a launch that dies at once <b>disarms</b> the role</h1>
+<p class="note">Today: <b>s</b> on Cerebro → the row reads <span class="g">●</span> up for a tick → the launcher refuses (exit 2) → the name is still armed, so the row goes back to <span class="d">◌ standby</span> and the reason is only in the echo area for five seconds. In A, an abnormal exit of a session this view started takes the name <b>out of</b> the armed set: the row is <b>dead</b>, the last line the session printed sits in the Bead/Phase column, and nothing retries until <b>s</b>.</p>
+
+<h2>1. Right after <b>s</b> on Cerebro, with the checkout dirty and behind</h2>
+<pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="r">○</span> Cerebro        orchestrator  <span class="r">dead</span>                  <span class="r">✗ the checkout is 1 commits behind origin/main and has uncommitted changes - commit or…</span>
+<span class="g">●</span> Xavier         planner       plan       cb-eat     22m 4m
+<span class="r">○</span> Beast          planner       <span class="r">dead</span>                  <span class="r">✗ the checkout is 1 commits behind origin/main and has uncommitted changes - commit or…</span>
+<span class="y">?</span> Psylocke       verifier      asking     cb-5yr.1   20m 20m
+<span class="g">●</span> Rogue          implementer   build      cb-u5e     5m 5m</pre>
+<div class="echo">Cerebro exited (code 2): cerebro: the checkout is 1 commits behind origin/main and has uncommitted changes - commit or stash them, then git merge --ff-only origin/main, before starting Cerebro</div>
+<p class="note">Beast is on the same row shape because its own trigger fired at the floor (10 min), was refused the same way, and was disarmed by it — so it stays <b>dead</b> until <b>s</b>. The <b>✗</b> marks the line as the session's last words rather than a phase or an elapsed time; the "cerebro: " prefix the script prints is dropped, and the column truncates with an ellipsis at the window edge (the Bead/Phase column is the last one and already takes what is left).</p>
+
+<h2>2. <b>RET</b> on that row (the detail window)</h2>
+<div class="detail">Cerebro is not running.<br>Its last session ended with:<br>&nbsp;&nbsp;cerebro: the checkout is 1 commits behind origin/main and has uncommitted changes - commit or stash them, then git merge --ff-only origin/main, before starting Cerebro<br>Press s to start it.</div>
+<p class="note">Unchanged from today (this text already exists); what is new is that the row itself tells you to look.</p>
+
+<h2>3. After you commit/stash and press <b>s</b> again — the ordinary shape</h2>
+<pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="g">●</span> Cerebro        orchestrator  sweep                 0m 0m
+<span class="d">◌</span> Beast          planner       standby               → buffer &lt; 4</pre>
+<p class="note">Beast has to be pressed <b>s</b> too in A — a disarmed name is not woken by its trigger. Cost of A: once the underlying cause is fixed, every role that was refused needs one keypress each. Benefit: nothing keeps banging on a closed door every ten minutes, and a row never says "a trigger will bring me back" when it will not.</p>
+
+<h2>4. Narrow window (100 columns)</h2>
+<pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="r">○</span> Cerebro        orchestrator  <span class="r">dead</span>                  <span class="r">✗ the checkout is 1 commits behind origin/mai…</span></pre>

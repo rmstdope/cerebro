@@ -626,11 +626,12 @@ columns for the state glyph and its space; Role and Bead one for the gap to
 the next column.  State is a fixed vocabulary, so it is not derived from
 anything a consumer varies.
 
-Bead/Phase is - FOR-TEXTS is every standby label and exit line the render is
-about to show (cb-eat).  An elapsed-time pair is never longer than the floor
-and need not be passed.  It matters because `tabulated-list\=' truncates every
-column but the last, and the window is sized to the table, so a long text in
-this one is cut at the window edge instead."
+Bead/Phase does vary, and FOR-TEXTS is what it varies with: every standby
+label and exit line the render is about to show (cb-eat).  An elapsed-time
+pair is never longer than the floor and need not be passed.  It matters
+because `tabulated-list\=' truncates every column but the last, and the window
+is sized to the table, so a long text in this one is cut at the window edge
+instead."
   (let ((longest (lambda (strings) (apply #'max 0 (mapcar #'length strings)))))
     (list (max (nth 0 cerebro--column-minimums) (+ 2 (funcall longest names)))
           (max (nth 1 cerebro--column-minimums) (+ 1 (funcall longest roles)))

@@ -134,6 +134,7 @@ whatever the frame has left (was a constant of 20 for eighteen agents)."
   phase                                ; "build"|"gate"|"review"|"ci"|"rebase"|"merge" or nil
   phase-since                          ; ISO-8601 string, or nil
   wake-at                              ; ISO-8601 string when `waiting', else nil
+  sessions                             ; processes of this name in this consumer, or nil
   raw)                                 ; the state file's `state' string verbatim, or nil
 
 (defun cerebro--name-in-args-p (name args)
@@ -203,6 +204,51 @@ by hand, bypassing the launcher - is dropped rather than credited to this
 fleet.  That is the deliberate half of the trade: the scan can no longer
 prove such a session is ours, and claiming it is, is the defect being fixed."
   (seq-filter (lambda (a) (cerebro--root-in-args-p root (list a))) args))
+
+(defun cerebro--consumer-processes (procs root)
+  "Those of PROCS - (PID . ARGS) pairs - that belong to ROOT\='s fleet.
+
+`cerebro--consumer-args\=' over pairs, applying the same
+`cerebro--root-in-args-p\=' test, so a count of one name\='s sessions is a
+count within one consumer and never across two (cb-lzi)."
+  (seq-filter (lambda (proc) (cerebro--root-in-args-p root (list (cdr proc)))) procs))
+
+(defun cerebro--session-pids (name procs)
+  "The pids in PROCS - (PID . ARGS) pairs already narrowed to one consumer by
+`cerebro--consumer-processes\=' - whose ARGS name NAME.
+
+Ascending, so the echo line that prints them is stable from one keypress to
+the next.  `cerebro--name-in-args-p\=' is the whole-word `--name NAME\=' test
+and already ignores `--remote-control NAME\=', which every session also
+carries: counting by a plain substring search would count each session
+twice."
+  (sort (delq nil
+              (mapcar (lambda (proc)
+                        (and (cerebro--name-in-args-p name (list (cdr proc)))
+                             (car proc)))
+                      procs))
+        #'<))
+
+(defun cerebro--apply-session-counts (agents procs)
+  "Pure.  AGENTS with `sessions\=' set from PROCS, this consumer\='s (PID . ARGS).
+
+Applied after derivation rather than inside `cerebro--derive\=', the way
+`cerebro--apply-standby\=' is: `cerebro--derive\=' and its twenty tests take the
+args as a list of strings, and the count needs the pids beside them.  Adding
+the pairs alongside is cheaper than rewriting that signature for no gain."
+  (mapcar (lambda (agent)
+            (setf (cerebro-agent-sessions agent)
+                  (length (cerebro--session-pids (cerebro-agent-name agent) procs)))
+            agent)
+          agents))
+
+(defun cerebro--duplicated-p (agent)
+  "Non-nil when AGENT\='s name has more than one session in this fleet.
+
+nil `sessions\=' reads as one: the count is only set once
+`cerebro--apply-session-counts\=' has run, and a row nobody counted is not a
+duplicate."
+  (> (or (cerebro-agent-sessions agent) 1) 1))
 
 (defun cerebro--derive-from-state (name role kind parsed owned-p)
   "Build one `cerebro-agent' for NAME from a live, parsed state file PARSED.

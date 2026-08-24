@@ -127,6 +127,54 @@ test body cannot compute this itself.")
   (let ((args (list cerebro-test--this-consumer-args)))
     (should (equal (cerebro--consumer-args args "/Users/x/repos/cerebro/") args))))
 
+(defconst cerebro-test--beast-args
+  "claude --agent planner --name Beast --settings /Users/x/repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json"
+  "Another name's session of the fleet rooted at /Users/x/repos/cerebro.")
+
+(defconst cerebro-test--duplicate-procs
+  (list (cons 70687 cerebro-test--this-consumer-args)
+        (cons 32075 cerebro-test--this-consumer-args)
+        (cons 47482 cerebro-test--other-consumer-args)
+        (cons 70688 cerebro-test--beast-args))
+  "A machine's processes as (PID . ARGS): two Xaviers here, one Xavier in
+another consumer, one Beast here.")
+
+(ert-deftest cerebro-test/session-pids-counts-this-consumers-sessions-of-one-name ()
+  "Two sessions of one name is a count, not a yes/no - and another consumer's
+same-named session is not one of them (cb-lzi)."
+  (let ((mine (cerebro--consumer-processes cerebro-test--duplicate-procs
+                                           "/Users/x/repos/cerebro")))
+    (should (equal (cerebro--session-pids "Xavier" mine) '(32075 70687)))
+    (should (equal (cerebro--session-pids "Beast" mine) '(70688)))
+    (should (equal (cerebro--session-pids "Cerebro" mine) nil))
+    ;; The other consumer's fleet counts its own Xavier and none of ours.
+    (should (equal (cerebro--session-pids
+                    "Xavier"
+                    (cerebro--consumer-processes cerebro-test--duplicate-procs
+                                                 "/Users/x/repos/atlantis-hud"))
+                   '(47482)))))
+
+(ert-deftest cerebro-test/apply-session-counts-marks-a-name-with-two-sessions ()
+  (let* ((procs (cerebro--consumer-processes cerebro-test--duplicate-procs
+                                             "/Users/x/repos/cerebro"))
+         (agents (cerebro--derive nil cerebro-test--interactive nil
+                                  #'cerebro-test--never-alive
+                                  (mapcar #'cdr procs) nil))
+         (counted (cerebro--apply-session-counts agents procs))
+         (by-name (lambda (name)
+                    (cl-find name counted :key #'cerebro-agent-name :test #'equal))))
+    (should (= (cerebro-agent-sessions (funcall by-name "Xavier")) 2))
+    (should (= (cerebro-agent-sessions (funcall by-name "Cerebro")) 0))
+    (should (cerebro--duplicated-p (funcall by-name "Xavier")))
+    (should-not (cerebro--duplicated-p (funcall by-name "Cerebro")))
+    (should-not (cerebro--duplicated-p (funcall by-name "Moira")))))
+
+(ert-deftest cerebro-test/duplicated-p-reads-an-uncounted-agent-as-one-session ()
+  "`sessions\=' is nil until `cerebro--apply-session-counts\=' has run, and a row
+that was never counted is not a duplicate."
+  (should-not (cerebro--duplicated-p
+               (cerebro-test--agent "Xavier" "planner" 'interactive 'up))))
+
 (ert-deftest cerebro-test/one-rule-takes-a-root-spelled-with-a-tilde ()
   "A root `locate-dominating-file\=' abbreviated still matches an absolute command line.
 

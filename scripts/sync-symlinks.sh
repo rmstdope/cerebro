@@ -31,6 +31,17 @@ CLAUDE_ROOT="$consumer_root/.claude"
 # ($CLAUDE_ROOT/skills/<name>, $CLAUDE_ROOT/agents/<name>) — hence the leading "../" and no more.
 REL_SOURCE="../${SOURCE_ROOT#"$CLAUDE_ROOT/"}"
 
+# Unless the source root is not below $CLAUDE_ROOT at all, in which case the strip stripped nothing
+# and the line above just glued "../" to the front of an absolute path. That is cerebro serving
+# itself (cb-i3l.1): the mount is a symlink `.claude/cerebro -> ..`, so the source root IS the
+# consumer root. Link through the mount, which resolves there and reads exactly like every other
+# consumer's link - the whole point of mounting by symlink rather than teaching every path here
+# about a second layout.
+if [[ "$REL_SOURCE" == "../$SOURCE_ROOT" \
+      && "$(cd "$CLAUDE_ROOT/cerebro" 2>/dev/null && pwd -P)" == "$SOURCE_ROOT" ]]; then
+  REL_SOURCE="../cerebro"
+fi
+
 # Ensure target subdirectories exist.
 mkdir -p "$CLAUDE_ROOT/skills" "$CLAUDE_ROOT/agents"
 

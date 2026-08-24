@@ -10,9 +10,10 @@
 #                            the whole repository. From the main checkout both answers are equal.
 #
 # The mount may be <consumer>/.claude/cerebro or, for a consumer that vendors cerebro as a SUBMODULE
-# somewhere else entirely (vendor/cerebro, tools/cerebro, ...), wherever it put it - see the two
-# resolution steps below. A vendored *copy* that is not a submodule is only found at the standard
-# mount, and is otherwise unsupported.
+# somewhere else entirely (vendor/cerebro, tools/cerebro, ...), wherever it put it - see the three
+# resolution steps below. It may also be cerebro's own checkout, which mounts itself by symlink to
+# run its fleet on its own source. A vendored *copy* that is not a submodule is only found at the
+# standard mount, and is otherwise unsupported.
 #
 # Exit 1 with a message when neither answers (a standalone clone of cerebro has no consumer), or
 # when --shared is asked outside a git tree.
@@ -20,7 +21,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-# Two ways of answering, tried in order (ah-ohc2).
+# Three ways of answering, tried in order (ah-ohc2, cb-i3l.1).
 #
 # 1. The path arithmetic, which needs no git: this script lives at
 #    <consumer>/.claude/cerebro/scripts, and the round trip back through `.claude/cerebro' is what
@@ -44,6 +45,17 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 #    It answers for a real SUBMODULE and nothing else. A vendored *copy* outside the standard mount
 #    is still unsupported: nothing here can find it, and inventing a marker-file search for a case
 #    nobody has is not the answer.
+#
+# 3. Cerebro serving ITSELF, mounted at `.claude/cerebro` as a symlink back to its own checkout
+#    (cb-i3l.1). This repository develops itself with its own fleet, and neither step above can see
+#    that mount: `pwd -P` resolves the symlink, so the script appears to live at <cerebro>/scripts
+#    and three levels up is nobody's consumer, while the superproject probe answers for submodules
+#    and this is not one. (A submodule of the repository inside itself WOULD satisfy step 1, and is
+#    the wrong answer for a different reason: `git submodule update --init --recursive`, which
+#    `launch-preflight` runs, has no fixed point on a repository that contains itself.)
+#
+#    A standalone clone still has no consumer, and is still refused: what is checked is the round
+#    trip through the mount, which only a checkout that has deliberately mounted itself can make.
 candidate="$(cd "$script_dir/../../.." 2>/dev/null && pwd -P)" || candidate=""
 if [[ -n "$candidate" && "$(cd "$candidate/.claude/cerebro" 2>/dev/null && pwd -P)" == "$(cd "$script_dir/.." && pwd -P)" ]]; then
   enclosing="$candidate"
@@ -51,6 +63,14 @@ else
   enclosing="$(git -C "$script_dir" rev-parse --show-superproject-working-tree 2>/dev/null)" || enclosing=""
   if [[ -n "$enclosing" ]]; then
     enclosing="$(cd "$enclosing" 2>/dev/null && pwd -P)" || enclosing=""
+  fi
+fi
+if [[ -z "$enclosing" ]]; then
+  # 3. This checkout mounted as its own consumer - `.claude/cerebro' resolving back to the very
+  #    tree this script lives in. No git, so the narrowed PATH in tests/launchers.sh still works.
+  own_root="$(cd "$script_dir/.." && pwd -P)"
+  if [[ "$(cd "$own_root/.claude/cerebro" 2>/dev/null && pwd -P)" == "$own_root" ]]; then
+    enclosing="$own_root"
   fi
 fi
 if [[ -z "$enclosing" ]]; then

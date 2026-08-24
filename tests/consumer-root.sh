@@ -158,4 +158,46 @@ echo "$out" | grep -q "is not inside a git working tree" \
   || fail "non-git --shared: expected the guard's message, got: $out"
 pass "--shared refuses when the consumer is not inside a git working tree"
 
+# --- cerebro as its own consumer: .claude/cerebro is a symlink back to the checkout (cb-i3l.1) ---
+#
+# This repository is a harness for other repositories, and its own fleet has to run somewhere. The
+# mount is a committed symlink `.claude/cerebro -> ..`, which makes the path every script already
+# assumes literally exist. The path arithmetic above cannot see it: `pwd -P` resolves the link, so
+# the script appears to live at <cerebro>/scripts and three levels up is nobody's consumer. A
+# submodule of the repository inside itself would have satisfied the arithmetic, but
+# `git submodule update --init --recursive` on a repository containing itself has no fixed point.
+self_consumer="$work_dir/self"
+mkdir -p "$self_consumer/scripts" "$self_consumer/.claude"
+git init -q "$self_consumer"
+cp "$repo_root/scripts/consumer-root" "$self_consumer/scripts/consumer-root"
+chmod +x "$self_consumer/scripts/consumer-root"
+ln -s ".." "$self_consumer/.claude/cerebro"
+git -C "$self_consumer" -c user.name=test -c user.email=test@example.com add -A
+git -C "$self_consumer" -c user.name=test -c user.email=test@example.com commit -q -m "self-consumer"
+
+self_root="$(cd "$self_consumer" && pwd -P)"
+self_out="$("$self_consumer/.claude/cerebro/scripts/consumer-root")"
+[[ "$self_out" == "$self_root" ]] || fail "self-consumer: expected $self_root, got $self_out"
+pass "cerebro mounted in itself by symlink resolves its own checkout"
+
+self_shared="$("$self_consumer/.claude/cerebro/scripts/consumer-root" --shared)"
+[[ "$self_shared" == "$self_root" ]] \
+  || fail "self-consumer --shared: expected $self_root, got $self_shared"
+pass "--shared from a self-consumer's main checkout prints that checkout"
+
+# A worktree of it carries the same committed symlink, which resolves to the WORKTREE - so an
+# implementer building there reads its own branch's skills, not the main checkout's.
+self_wt="$self_consumer/.cerebro/worktrees/wt"
+git -C "$self_consumer" worktree add -q "$self_wt" -b self-wt-branch
+
+self_wt_out="$("$self_wt/.claude/cerebro/scripts/consumer-root")"
+[[ "$self_wt_out" == "$(cd "$self_wt" && pwd -P)" ]] \
+  || fail "self-consumer worktree: expected $self_wt, got $self_wt_out"
+pass "plain, from a self-consumer's worktree, prints the worktree"
+
+self_wt_shared="$("$self_wt/.claude/cerebro/scripts/consumer-root" --shared)"
+[[ "$self_wt_shared" == "$self_root" ]] \
+  || fail "self-consumer worktree --shared: expected $self_root, got $self_wt_shared"
+pass "--shared, from a self-consumer's worktree, prints the main checkout"
+
 echo "all consumer-root tests passed"

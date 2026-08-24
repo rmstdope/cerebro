@@ -228,6 +228,16 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
   agent worktrees (ah-v82). It is ignored wholesale by the consumer's `.gitignore`, never partially,
   because nothing tracked ever lives there. `.claude/` holds only what Claude Code itself discovers
   (`agents/`, `skills/`, `settings.json`) plus this repository's own submodule mount.
+- **This repository is a consumer of itself** (cb-i3l.1). `.claude/cerebro` is a committed symlink
+  back to the checkout, so every path the harness assumes — `.claude/cerebro/scripts/launch`, the
+  `../cerebro/...` links the sync writes — is literally true here, and the fleet runs the *working
+  tree* rather than a pinned sha. A submodule of the repository inside itself would have satisfied
+  `consumer-root` with no code at all, and was rejected for a different reason: `git submodule
+  update --init --recursive`, which `launch-preflight` runs, has no fixed point on a repository that
+  contains itself. Two scripts know about the mount and nothing else does — `consumer-root`, whose
+  third resolution step is the round trip through it, and `sync-symlinks.sh`, which links through
+  the mount when the source root is the consumer root. A worktree carries the same committed
+  symlink, which resolves to the worktree, so an implementer reads its own branch's skills.
 - `scripts/agent-alive <Name>` is the one place bash answers "is this agent up" (see above). A
   predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state`: it
   prints nothing and the exit status is the whole answer, since it runs once per agent on every

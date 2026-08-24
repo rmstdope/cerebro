@@ -1,0 +1,1 @@
+../cerebro/agents/architect.md

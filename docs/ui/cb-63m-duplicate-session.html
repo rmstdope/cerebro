@@ -1,0 +1,36 @@
+<!doctype html><meta charset="utf-8"><title>cb-63m — Option A: marker on the agent row</title><style>body{background:#1e1e1e;color:#d4d4d4;font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px}h1{font-size:16px;color:#fff}h2{font-size:14px;color:#9cdcfe;margin-top:28px}pre{background:#111;padding:14px;border:1px solid #333;line-height:1.35;white-space:pre}.g{color:#6a9955}.y{color:#d7ba7d}.w{color:#e5a13b;font-weight:bold}.d{color:#777}.b{font-weight:bold}.hd{color:#fff;text-decoration:underline}.echo{background:#000;color:#ddd;padding:6px 14px;border:1px solid #333;margin-top:-1px}.note{color:#aaa;max-width:80ch}</style>
+<h1>cb-63m — Option A: a second session shows on the agent's own row</h1>
+<p class="note">The State column gains a <b>×N</b> suffix, in the warning face, when this consumer's fleet has more than one session carrying that name — the same slot the stop-flag <b>■</b> uses. Nothing else moves. Pressing <b>s</b>, <b>k</b> or <b>f</b> on such a row names the pids in the echo area; ending the extra one is done from its own terminal.</p>
+
+<h2>1. Normal — nothing duplicated (unchanged)</h2>
+<pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="g">●</span> Xavier         planner       plan       cb-63m     41m 3m
+<span class="y">◐</span> Beast          planner       waiting               38m
+<span class="y">●</span> Cerebro        orchestrator  idle                  37m
+<span class="g">●</span> Psylocke       verifier      verify     cb-5yr.1   4m 4m
+<span class="y">●</span> Cyclops        implementer   idle                  38m
+<span class="y">●</span> Rogue          implementer   idle                  38m</pre>
+
+<h2>2. One duplicate — a second Xavier of this fleet is running in a terminal</h2>
+<pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="g">●</span> Xavier         planner       plan <span class="w">×2</span>    cb-63m     41m 3m
+<span class="y">◐</span> Beast          planner       waiting               38m
+<span class="y">●</span> Cerebro        orchestrator  idle                  37m
+<span class="g">●</span> Psylocke       verifier      verify     cb-5yr.1   4m 4m
+<span class="y">●</span> Cyclops        implementer   idle                  38m
+<span class="y">●</span> Rogue          implementer   idle                  38m</pre>
+<div class="echo">after <b>s</b>, <b>k</b> or <b>f</b> on that row:&nbsp; Xavier has 2 sessions in this fleet: pid 70687 (this view), pid 32075 — end the extra one from its own terminal</div>
+
+<h2>3. Duplicate on an implementer, and one with a stop flag as well</h2>
+<pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="g">●</span> Xavier         planner       plan       cb-63m     41m 3m
+<span class="y">◐</span> Beast          planner       waiting               38m
+<span class="y">●</span> Cyclops        implementer   idle <span class="w">×2</span>              38m
+<span class="g">●</span> Rogue          implementer   build ■ <span class="w">×2</span> cb-5yr.4   12m 12m</pre>
+<p class="note">Flag first, then the count: the flag is about the bead in flight, the count about the sessions. State is a fixed 10-column field, so "build ■ ×2" is what fits; "working ■ ×2" would be truncated to the column and would show as "working ■ …". The plan widens the State column floor to 12 so every state word fits with both suffixes.</p>
+
+<h2>4. Three sessions, and a session with no state file at all (up)</h2>
+<pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="g">●</span> Xavier         planner       plan <span class="w">×3</span>    cb-63m     41m 3m
+<span class="g">●</span> Cypher         reviewer      up <span class="w">×2</span>     —</pre>
+<p class="note">A name the view knows only from the process scan (no state file) still counts: the count comes from the process list, not from the file.</p>

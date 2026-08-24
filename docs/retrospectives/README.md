@@ -26,3 +26,5 @@ over. A later bead that hits the same thing writes its own file and names this o
     **Seen before.** Other bead ids whose file describes the same thing, or "none found".
 
 Two findings in one run are two `##` sections in that bead's one file.
+
+<!-- cb-ypx docs-only CI proof; this line is removed with the branch. -->

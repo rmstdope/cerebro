@@ -98,6 +98,10 @@ Moira and Cerebro (`release` too); `daily`/`weekly` for Forge. The Bead/Phase co
 timers — time on the bead, time in this phase — so three implementers sitting in `review` says
 Copilot is slow, and one in `ci` for an hour says something is stuck.
 
+A yellow ` ×2` after the state means two sessions of that name are running in this fleet — one of
+them was started outside the view — and `s`, `k` and `f` on that row name both pids instead of
+acting until you have ended the extra one from its own terminal.
+
 ` gh?` on a standby row means `gh` did not answer the fleet view — Moira and Cypher then
 come back hourly only, until it does.
 
@@ -118,7 +122,8 @@ Every session starts the same way, whatever the role:
 identity (so two implementers cannot silently claim as one another), re-syncs the skill and agent
 symlinks, reads the model and effort from the agent's own definition, turns on Remote Control so you
 can steer the session from claude.ai or the Claude app, and installs the hooks that keep the state
-file honest while an agent has a question open. Pressing `s` in the fleet view runs exactly this.
+file honest while an agent has a question open. Pressing `s` in the fleet view runs exactly this. It refuses, with the pid, to start a name whose
+session is already running in this fleet; end that one first.
 
 **Changing what the fleet runs on** is one file, and it lives in *your project* rather than inside
 the `.claude/cerebro` submodule — so no other consumer of the harness inherits it — commit it

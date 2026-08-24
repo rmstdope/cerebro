@@ -314,6 +314,9 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
 Liveness for the interactive agents is the state file first, when one exists for a live pid
 (`cerebro--derive-interactive`), and falls back to scanning system process args for `--name <Name>`
 when it does not — a session started by hand, outside this fleet, has no file and still shows `up`.
+The same scan, kept as (pid . args) pairs (`cerebro--system-processes`), counts how many sessions of
+one name this consumer has (`cerebro--session-pids`), and a count above one shows as ` ×N` on the
+row, with `s`, `k` and `f` naming the pids rather than acting on an ambiguity (cb-63m).
 
 **"A live pid" means the agent's own session, not merely an existing pid.**
 `cerebro--session-alive-p` reads the named pid's command line and requires `--name <Name>` in it,

@@ -80,14 +80,14 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
    ```bash
    bd dolt pull
    git fetch origin main                       # from the consumer root; never checkout or branch here
-   bd recall bishop-watermark                  # "<full sha> <ISO-8601 UTC>", or exit 1 = never swept
+   bd recall forge-watermark                  # "<full sha> <ISO-8601 UTC>", or exit 1 = never swept
    bd recall bishop-weekly                     # "<ISO-8601 UTC>" of the last weekly, or exit 1
    ```
 
    `bd recall <missing-key>` exits 1 — that is the "never swept" branch, not an error.
 
    **The watermark is the whole gate.** The fleet view starts you every hour, and every session
-   reads everything that has landed since `bishop-watermark` — every commit in the range and every
+   reads everything that has landed since `forge-watermark` — every commit in the range and every
    retrospective added in it — however recently the last session ran. There is no separate clock to
    consult: a range that is empty costs a `git log` and a line, and a range that is not is exactly
    the work you exist to do. So an hourly wake over an empty range is the ordinary case, not a
@@ -95,7 +95,7 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
    day.
 
 2. **Decide the sweep, and say which and why, in your first message.** Weekly if `bishop-weekly` is
-   absent or seven or more days old, or if `bishop-watermark` is absent (a first run reads
+   absent or seven or more days old, or if `forge-watermark` is absent (a first run reads
    everything); otherwise daily — which names the *incremental* sweep, the one bounded by the
    watermark, whatever the hour. Say the range: "daily, since `<sha>` (`<n>` commits over `<d>`
    hours)" — and if that is more than two days, say out loud that nobody read main for that long.
@@ -180,7 +180,7 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
    range rather than skipping it (the duplicate check makes re-reading cheap):
 
    ```bash
-   bd remember "$(git rev-parse origin/main) $(date -u +%Y-%m-%dT%H:%M:%SZ)" --key bishop-watermark
+   bd remember "$(git rev-parse origin/main) $(date -u +%Y-%m-%dT%H:%M:%SZ)" --key forge-watermark
    bd remember "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --key bishop-weekly     # weekly sweeps only
    bd dolt push
    ```

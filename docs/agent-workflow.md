@@ -441,8 +441,8 @@ Its watermark (the last commit it read, and the date of its last weekly sweep) l
 rather than in the checkout, so it survives a lost or replaced machine:
 
 ```bash
-bd recall bishop-watermark      # the keys kept the old name when Bishop was renamed to Forge
-bd recall bishop-weekly
+bd recall forge-watermark
+bd recall bishop-weekly         # this key kept the old name when Bishop was renamed to Forge
 ```
 
 ## Your queue

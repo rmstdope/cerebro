@@ -4793,8 +4793,15 @@ seconds into a `user-error' is not a way to say so."
 
 (ert-deftest cerebro-test/start-due-survives-a-launcher-that-cannot-start ()
   "One role that will not start must not stop the others - the rule every
-other loop in this file already follows."
-  (let ((launched nil))
+other loop in this file already follows.
+
+`debug-on-error' is bound off for the same reason the production path never
+runs with it on: `with-demoted-errors' expands to
+`condition-case-unless-debug', which re-signals while debugging - and ERT's
+batch runner turns debugging on for the backtrace.  Emacs 28.2 failed here
+while 30.1 passed on the same commit."
+  (let ((launched nil)
+        (debug-on-error nil))
     (cl-letf (((symbol-function 'cerebro--launch)
                (lambda (a) (if (equal (cerebro-agent-name a) "Psylocke")
                                (error "nope")

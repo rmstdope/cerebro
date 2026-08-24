@@ -1,274 +1,466 @@
 #!/usr/bin/env python3
-"""Generate docs/cerebro-fleet.svg - a comic-panel picture of the Cerebro fleet.
+"""Generate docs/cerebro-fleet.svg - a comic cover of the Cerebro fleet.
 
     python3 docs/cerebro-fleet.py          # from the repository root
 
-The picture is generated rather than hand-drawn because the fleet changes: a role added to
-`scripts/roster` is a line here, not an afternoon in an SVG editor. Nothing runs this
-automatically - regenerate it when a role, a flow or a name changes, and commit both files.
+The picture answers one question: who talks to whom. The navigator is in the middle because every
+user-facing decision is his; the agents stand on the bead board because that is the only way they
+reach each other. A role added to `scripts/roster` is a line here, not an afternoon in an SVG
+editor. Nothing runs this automatically - regenerate it when a role or a flow changes, and commit
+both files.
 
-To look at the result: `rsvg-convert -w 1400 docs/cerebro-fleet.svg -o /tmp/fleet.png`, or just
-open the SVG in a browser.
+To look at the result, open the SVG in a browser. The headline font stack falls back to whatever
+condensed sans the machine has; every plate is sized for the widest of them.
 """
+import math
 import pathlib
 
-W, H = 1860, 1320
-INK = "#17130f"
-PAPER = "#f7ecd6"
-CRIMSON = "#d7263d"
-GOLD = "#f2b705"
-COBALT = "#2f6fd0"
-TEAL = "#159a8c"
-PURPLE = "#7048a8"
-ORANGE = "#ee6a2b"
-SLATE = "#3d4d63"
-SKIN = "#f2c39b"
-SKIN2 = "#cf9463"
+W, H = 2100, 1470
+CX, CY = 1050, 775         # centre of the bead-board ellipse, and of the navigator
+RX, RY = 720, 375          # its radii
+
+INK = "#14110d"
+PAPER = "#fdf3dc"
+CRIMSON = "#e01b39"
+DEEPRED = "#96122a"
+GOLD = "#ffc21a"
+AMBER = "#c98600"
+COBALT = "#1e6fe0"
+NAVY = "#164a99"
+TEAL = "#0fa08f"
+DEEPTEAL = "#0a6b60"
+PURPLE = "#7b3fbf"
+DEEPPURPLE = "#4d2278"
+ORANGE = "#f6791f"
+DEEPORANGE = "#b04708"
+GREEN = "#1f9d4d"
+DEEPGREEN = "#136632"
+SLATE = "#2f3d52"
+STEEL = "#5a6c85"
+WHITE = "#ffffff"
+CREAM = "#ffe9a8"
+
+SKIN = ["#f6cfa8", "#e0a978", "#c2814d", "#8d5a34"]
+FUR = "#5182d8"
+
+HDR = "'Bangers','Luckiest Guy','Impact','Haettenschweiler','Arial Narrow Bold','Arial Black',sans-serif"
+BODY = "'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif"
 
 out = []
 add = out.append
-HDR = "'Bangers','Luckiest Guy','Impact','Haettenschweiler','Arial Black',sans-serif"
-BODY = "'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif"
 
 
 def esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def text(x, y, s, size=22, weight=700, fill=INK, anchor="middle", family="hdr", spacing=0):
+def text(x, y, s, size=22, weight=700, fill=INK, anchor="middle", family="hdr", spacing=0, opacity=1.0):
     fam = HDR if family == "hdr" else BODY
-    add(f'<text x="{x}" y="{y}" font-family="{fam}" font-size="{size}" font-weight="{weight}" '
-        f'fill="{fill}" text-anchor="{anchor}" letter-spacing="{spacing}">{esc(s)}</text>')
+    op = "" if opacity == 1.0 else f' opacity="{opacity}"'
+    add(f'<text x="{x:.1f}" y="{y:.1f}" font-family="{fam}" font-size="{size}" font-weight="{weight}" '
+        f'fill="{fill}" text-anchor="{anchor}" letter-spacing="{spacing}"{op}>{esc(s)}</text>')
 
 
-def plate(cx, y, name, role, colour, w=None):
-    if role is None:                      # name-only plate, for the small squad figures
-        w = w or max(150, int(15 * len(name)) + 30)
-        add(f'<rect x="{cx-w//2+7}" y="{y+7}" width="{w}" height="44" rx="10" fill="{INK}" opacity="0.85"/>')
-        add(f'<rect x="{cx-w//2}" y="{y}" width="{w}" height="44" rx="10" fill="{colour}" stroke="{INK}" stroke-width="4"/>')
-        text(cx, y + 32, name, size=26, fill="#fff", spacing=0.8)
-        return
-    w = w or max(176, int(13.5 * len(name)) + 34, int(8.4 * len(role)) + 34)
-    add(f'<rect x="{cx-w//2+7}" y="{y+7}" width="{w}" height="58" rx="10" fill="{INK}" opacity="0.85"/>')
-    add(f'<rect x="{cx-w//2}" y="{y}" width="{w}" height="58" rx="10" fill="{colour}" stroke="{INK}" stroke-width="4"/>')
-    text(cx, y + 27, name, size=23, fill="#fff", spacing=0.8)
-    text(cx, y + 47, role, size=12.5, fill="#fff", family="body", weight=800, spacing=1.4)
+def pt(angle_deg, fx=1.0, fy=None):
+    """A point on the bead-board ellipse. 0 degrees is the top, going clockwise."""
+    fy = fx if fy is None else fy
+    a = math.radians(angle_deg)
+    return CX + RX * fx * math.sin(a), CY - RY * fy * math.cos(a)
 
 
-def hero(cx, cy, name, role, suit, cape, emblem):
-    """A caped figure with a chest emblem and a name plate under it."""
-    add(f'<path d="M{cx-54},{cy-28} q-36,62 -24,120 l156,0 q12,-58 -24,-120 z" '
-        f'fill="{cape}" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
-    for sx in (-27, 27):
-        add(f'<path d="M{cx+sx},{cy+52} l0,44" stroke="{INK}" stroke-width="18" stroke-linecap="round"/>')
-        add(f'<path d="M{cx+sx},{cy+52} l0,42" stroke="{suit}" stroke-width="9" stroke-linecap="round"/>')
-    add(f'<path d="M{cx-39},{cy-26} q39,-15 78,0 l9,54 q-48,21 -96,0 z" '
-        f'fill="{suit}" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
-    for s in (-1, 1):
-        add(f'<path d="M{cx+40*s},{cy-16} q{34*s},18 {30*s},54" fill="none" stroke="{INK}" stroke-width="17" stroke-linecap="round"/>')
-        add(f'<path d="M{cx+40*s},{cy-16} q{34*s},18 {30*s},54" fill="none" stroke="{suit}" stroke-width="8" stroke-linecap="round"/>')
-    add(f'<circle cx="{cx}" cy="{cy+4}" r="18" fill="{GOLD}" stroke="{INK}" stroke-width="4"/>')
-    text(cx, cy + 12, emblem, size=21, fill=INK)
-    add(f'<circle cx="{cx}" cy="{cy-54}" r="28" fill="{SKIN}" stroke="{INK}" stroke-width="5"/>')
-    add(f'<path d="M{cx-28},{cy-62} q28,-19 56,0 l0,15 q-28,11 -56,0 z" fill="{cape}" stroke="{INK}" stroke-width="4"/>')
-    add(f'<circle cx="{cx-10}" cy="{cy-56}" r="3.8" fill="{INK}"/>')
-    add(f'<circle cx="{cx+10}" cy="{cy-56}" r="3.8" fill="{INK}"/>')
-    add(f'<path d="M{cx-10},{cy-38} q10,8 20,0" fill="none" stroke="{INK}" stroke-width="3.6" stroke-linecap="round"/>')
-    plate(cx, cy + 108, name, role, suit)
+def arc_path(a0, a1, fx=1.0, fy=None, step=2.0):
+    fy = fx if fy is None else fy
+    step = step if a1 >= a0 else -step
+    pts, a = [], a0
+    while (a <= a1 + 1e-6) if step > 0 else (a >= a1 - 1e-6):
+        x, y = pt(a, fx, fy)
+        pts.append(f"{x:.1f},{y:.1f}")
+        a += step
+    return "M" + " L".join(pts)
 
 
-def human(cx, cy, title, colour, prop):
-    """A plain figure - no cape - with the prop that says which job they do."""
-    add(f'<path d="M{cx-48},{cy+96} q0,-66 48,-66 q48,0 48,66 z" fill="{colour}" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
-    add(f'<path d="M{cx},{cy+30} l0,66" stroke="{INK}" stroke-width="4"/>')
-    add(f'<circle cx="{cx}" cy="{cy-8}" r="31" fill="{SKIN2}" stroke="{INK}" stroke-width="5"/>')
-    add(f'<path d="M{cx-31},{cy-16} q31,-32 62,0 q-5,-32 -31,-32 q-26,0 -31,32 z" fill="{INK}"/>')
-    add(f'<circle cx="{cx-11}" cy="{cy-6}" r="3.8" fill="{INK}"/>')
-    add(f'<circle cx="{cx+11}" cy="{cy-6}" r="3.8" fill="{INK}"/>')
-    add(f'<path d="M{cx-10},{cy+12} q10,9 20,0" fill="none" stroke="{INK}" stroke-width="3.6" stroke-linecap="round"/>')
-
-    px, py = cx + 58, cy + 46
-    if prop == "roadmap":
-        add(f'<rect x="{px-30}" y="{py-26}" width="64" height="48" rx="5" fill="#fff" stroke="{INK}" stroke-width="4"/>')
-        add(f'<path d="M{px-20},{py+10} l16,-20 l13,11 l17,-24" fill="none" stroke="{CRIMSON}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>')
-    elif prop == "clipboard":
-        add(f'<rect x="{px-26}" y="{py-28}" width="56" height="54" rx="5" fill="#fff" stroke="{INK}" stroke-width="4"/>')
-        add(f'<rect x="{px-10}" y="{py-35}" width="24" height="13" rx="3" fill="{SLATE}" stroke="{INK}" stroke-width="3"/>')
-        for dy in (-12, 1, 14):
-            add(f'<path d="M{px-16},{py+dy} l36,0" stroke="{INK}" stroke-width="3.6" stroke-linecap="round"/>')
-    elif prop == "blueprint":
-        add(f'<rect x="{px-30}" y="{py-26}" width="64" height="48" rx="4" fill="{COBALT}" stroke="{INK}" stroke-width="4"/>')
-        add(f'<path d="M{px-19},{py+10} l0,-24 l19,0 l0,24 M{px+3},{py+10} l0,-15 l19,0 l0,15" fill="none" stroke="#fff" stroke-width="3.4"/>')
-    elif prop == "magnifier":
-        add(f'<circle cx="{px-2}" cy="{py-12}" r="22" fill="#fff" stroke="{INK}" stroke-width="5"/>')
-        add(f'<path d="M{px+13},{py+4} l18,18" stroke="{INK}" stroke-width="8" stroke-linecap="round"/>')
-        add(f'<path d="M{px-13},{py-12} l9,10 l15,-17" fill="none" stroke="{TEAL}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>')
-    elif prop == "laptop":
-        add(f'<path d="M{px-34},{py+18} l68,0 l11,13 l-90,0 z" fill="#fff" stroke="{INK}" stroke-width="4" stroke-linejoin="round"/>')
-        add(f'<rect x="{px-28}" y="{py-28}" width="56" height="46" rx="4" fill="{SLATE}" stroke="{INK}" stroke-width="4"/>')
-        add(f'<path d="M{px-16},{py-16} l14,11 l-14,11 M{px+4},{py+6} l14,0" fill="none" stroke="#7ee787" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>')
-    elif prop == "headset":
-        add(f'<path d="M{cx-36},{cy-10} q0,-32 36,-32 q36,0 36,32" fill="none" stroke="{INK}" stroke-width="6"/>')
-        for sx in (-45, 27):
-            add(f'<rect x="{cx+sx}" y="{cy-12}" width="18" height="28" rx="7" fill="{ORANGE}" stroke="{INK}" stroke-width="4"/>')
-        add(f'<path d="M{cx+36},{cy+16} q0,22 -22,22" fill="none" stroke="{INK}" stroke-width="4"/>')
-        add(f'<circle cx="{cx+12}" cy="{cy+38}" r="5.5" fill="{INK}"/>')
-    add(f'<rect x="{cx-104}" y="{cy+112}" width="208" height="34" rx="8" fill="#fff" stroke="{INK}" stroke-width="4"/>')
-    text(cx, cy + 136, title, size=16, fill=INK, spacing=0.7)
+def burst(cx, cy, r, colour, spikes=17, inner=0.78, rot=0.0, stroke=None, sw=4, opacity=1.0):
+    pts = []
+    for i in range(spikes * 2):
+        a = rot + i * math.pi / spikes
+        rr = r if i % 2 == 0 else r * inner
+        pts.append(f"{cx + rr * math.sin(a):.1f},{cy - rr * math.cos(a):.1f}")
+    st = f' stroke="{stroke}" stroke-width="{sw}" stroke-linejoin="round"' if stroke else ""
+    op = "" if opacity == 1.0 else f' opacity="{opacity}"'
+    add(f'<polygon points="{" ".join(pts)}" fill="{colour}"{st}{op}/>')
 
 
-def arrow(d, colour=INK, width=6, label=None, lx=0, ly=0, dash=None, marker="end"):
+# ------------------------------------------------------------------ the busts
+def bust(cx, cy, s, spec):
+    """A comic head-and-shoulders, drawn in a 216-unit-wide local box and scaled by s."""
+    suit, dark = spec["suit"], spec["dark"]
+    skin = spec.get("skin", SKIN[0])
+    add(f'<g transform="translate({cx:.1f},{cy:.1f}) scale({s})">')
+
+    add(f'<path d="M-108,116 C-108,44 -70,14 -38,4 L38,4 C70,14 108,44 108,116 Z" '
+        f'fill="{suit}" stroke="{INK}" stroke-width="6" stroke-linejoin="round"/>')
+    add(f'<path d="M-38,4 C-30,44 -14,58 0,58 C14,58 30,44 38,4 L20,0 C14,30 6,38 0,38 '
+        f'C-6,38 -14,30 -20,0 Z" fill="{dark}" stroke="{INK}" stroke-width="4"/>')
+    if spec.get("emblem"):
+        add(f'<circle cx="0" cy="88" r="24" fill="{GOLD}" stroke="{INK}" stroke-width="5"/>')
+        text(0, 98, spec["emblem"], size=27, fill=INK)
+
+    add(f'<path d="M-19,-22 L-19,8 Q0,20 19,8 L19,-22 Z" fill="{skin}" stroke="{INK}" stroke-width="5"/>')
+
+    hair = spec.get("hair")
+    if hair == "long":
+        for sx in (-1, 1):
+            add(f'<path d="M{sx*46},-46 C{sx*64},4 {sx*60},46 {sx*50},66 L{sx*26},58 '
+                f'C{sx*38},30 {sx*40},-6 {sx*34},-30 Z" fill="{spec["hairc"]}" stroke="{INK}" '
+                f'stroke-width="5" stroke-linejoin="round"/>')
+    elif hair == "flow":
+        for sx in (-1, 1):
+            add(f'<path d="M{sx*44},-58 C{sx*100},-32 {sx*96},36 {sx*64},74 L{sx*28},54 '
+                f'C{sx*52},26 {sx*56},-16 {sx*34},-40 Z" fill="{spec["hairc"]}" stroke="{INK}" '
+                f'stroke-width="5" stroke-linejoin="round"/>')
+    elif hair == "fur":
+        for a in range(-150, 151, 25):
+            r = math.radians(a)
+            x0, y0 = 40 * math.sin(r), -44 - 48 * math.cos(r)
+            x1, y1 = 61 * math.sin(r), -44 - 71 * math.cos(r)
+            add(f'<path d="M{x0:.1f},{y0:.1f} L{x1:.1f},{y1:.1f}" stroke="{spec["hairc"]}" '
+                f'stroke-width="14" stroke-linecap="round"/>')
+
+    if hair != "cowl":
+        for sx in (-1, 1):
+            add(f'<ellipse cx="{sx*41}" cy="-40" rx="9" ry="14" fill="{skin}" stroke="{INK}" stroke-width="4.5"/>')
+
+    add(f'<ellipse cx="0" cy="-44" rx="42" ry="49" fill="{skin}" stroke="{INK}" stroke-width="6"/>')
+
+    if hair == "fur":
+        add(f'<path d="M-42,-56 q42,-34 84,0 q-6,-42 -42,-42 q-36,0 -42,42 z" fill="{spec["hairc"]}"/>')
+        for sx in (-1, 1):
+            add(f'<path d="M{sx*30},-78 L{sx*54},-118 L{sx*55},-68 Z" fill="{spec["hairc"]}" '
+                f'stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
+    elif hair == "short":
+        add(f'<path d="M-43,-52 q10,-44 43,-44 q33,0 43,44 q-16,-22 -43,-22 q-27,0 -43,22 z" '
+            f'fill="{spec["hairc"]}" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
+    elif hair in ("long", "flow"):
+        add(f'<path d="M-44,-50 q8,-48 44,-48 q36,0 44,48 q-18,-26 -44,-26 q-26,0 -44,26 z" '
+            f'fill="{spec["hairc"]}" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
+    elif hair == "cowl":
+        add(f'<path d="M-45,-42 q0,-54 45,-54 q45,0 45,54 l0,10 l-21,-6 '
+            f'l-6,-24 l-36,0 l-6,24 l-21,6 z" fill="{spec["hairc"]}" stroke="{INK}" '
+            f'stroke-width="5" stroke-linejoin="round"/>')
+        for sx in (-1, 1):
+            add(f'<path d="M{sx*34},-74 L{sx*78},-116 L{sx*59},-56 Z" fill="{spec["hairc"]}" '
+                f'stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
+    elif hair == "band":
+        add(f'<path d="M-44,-50 q8,-48 44,-48 q36,0 44,48 q-18,-26 -44,-26 q-26,0 -44,26 z" '
+            f'fill="{spec["hairc"]}" stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
+        add(f'<path d="M-46,-68 q46,-22 92,0 l0,15 q-46,-22 -92,0 z" fill="{spec.get("bandc", GOLD)}" '
+            f'stroke="{INK}" stroke-width="4.5"/>')
+
+    mask = spec.get("mask")
+    if mask == "visor":
+        add(f'<path d="M-46,-58 q46,-12 92,0 l0,26 q-46,12 -92,0 z" fill="{DEEPRED}" '
+            f'stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
+        add(f'<path d="M-34,-48 q34,-8 68,0" stroke="{CRIMSON}" stroke-width="8" fill="none" stroke-linecap="round"/>')
+    elif mask == "lenses":
+        add(f'<path d="M-41,-60 q41,-15 82,0 l0,24 q-41,13 -82,0 z" fill="{spec.get("maskc", INK)}" '
+            f'stroke="{INK}" stroke-width="5" stroke-linejoin="round"/>')
+        for sx in (-1, 1):
+            add(f'<path d="M{sx*8},-53 q{sx*15},-6 {sx*26},1 q{sx*-3},15 {sx*-14},14 '
+                f'q{sx*-11},-1 {sx*-12},-15 z" fill="{WHITE}" stroke="{INK}" stroke-width="3"/>')
+    elif mask == "goggles":
+        for sx in (-1, 1):
+            add(f'<circle cx="{sx*19}" cy="-46" r="17" fill="{spec.get("maskc", "#bfe9ff")}" '
+                f'stroke="{INK}" stroke-width="5"/>')
+            add(f'<path d="M{sx*13},-53 q{sx*8},-4 {sx*12},3" stroke="{WHITE}" stroke-width="4.5" '
+                f'fill="none" stroke-linecap="round"/>')
+        add(f'<path d="M-4,-46 l8,0" stroke="{INK}" stroke-width="5"/>')
+        add(f'<path d="M-36,-46 l-10,0 M36,-46 l10,0" stroke="{INK}" stroke-width="5" stroke-linecap="round"/>')
+    elif mask == "bionic":
+        add(f'<circle cx="19" cy="-46" r="16" fill="{GOLD}" stroke="{INK}" stroke-width="5"/>')
+        add(f'<circle cx="19" cy="-46" r="6" fill="{CRIMSON}" stroke="{INK}" stroke-width="3"/>')
+        add(f'<path d="M4,-46 l-10,0" stroke="{INK}" stroke-width="4" stroke-linecap="round"/>')
+        add(f'<path d="M35,-46 l11,-3" stroke="{STEEL}" stroke-width="5" stroke-linecap="round"/>')
+
+    if mask not in ("visor", "lenses", "goggles"):
+        for sx in (-1, 1):
+            if mask == "bionic" and sx > 0:
+                continue
+            add(f'<path d="M{sx*7},-61 q{sx*11},-6 {sx*21},-1" stroke="{INK}" stroke-width="4.5" '
+                f'fill="none" stroke-linecap="round"/>')
+            add(f'<ellipse cx="{sx*17}" cy="-46" rx="9" ry="7.5" fill="{WHITE}" stroke="{INK}" stroke-width="3.5"/>')
+            add(f'<circle cx="{sx*17}" cy="-46" r="4" fill="{INK}"/>')
+
+    if spec.get("beard"):
+        add(f'<path d="M-34,-30 q4,42 34,42 q30,0 34,-42 q-14,26 -34,26 q-20,0 -34,-26 z" '
+            f'fill="{spec["hairc"]}" stroke="{INK}" stroke-width="4.5" stroke-linejoin="round"/>')
+    add(f'<path d="M-12,-16 q12,11 24,0" fill="none" stroke="{INK}" stroke-width="4" stroke-linecap="round"/>')
+    if spec.get("fangs"):
+        add(f'<path d="M-8,-13 l3.5,10 l3.5,-10 M1,-13 l3.5,10 l3.5,-10" fill="{WHITE}" stroke="{INK}" stroke-width="2.5"/>')
+    if spec.get("headset"):
+        add(f'<path d="M-53,-48 q0,-56 53,-56 q53,0 53,56" fill="none" stroke="{INK}" stroke-width="20" stroke-linecap="round"/>')
+        add(f'<path d="M-53,-48 q0,-56 53,-56 q53,0 53,56" fill="none" stroke="{DEEPORANGE}" stroke-width="11" stroke-linecap="round"/>')
+        for sx in (-1, 1):
+            add(f'<rect x="{sx*53-9}" y="-62" width="18" height="32" rx="8" fill="{DEEPORANGE}" '
+                f'stroke="{INK}" stroke-width="4.5"/>')
+        add(f'<path d="M53,-30 q0,27 -27,29" fill="none" stroke="{INK}" stroke-width="4.5"/>')
+        add(f'<circle cx="22" cy="-1" r="6" fill="{INK}"/>')
+    add("</g>")
+
+
+def medallion(cx, cy, r, spec):
+    """A bust inside a ringed disc with a starburst behind it."""
+    s = r / 106.0
+    burst(cx, cy, r * 1.32, spec["dark"], spikes=19, inner=0.86, rot=0.08)
+    burst(cx, cy, r * 1.23, spec["suit"], spikes=19, inner=0.84, rot=0.08, stroke=INK, sw=4)
+    cid = f"clip-{spec['key']}-{int(cx)}"
+    add(f'<circle cx="{cx}" cy="{cy+8}" r="{r}" fill="{INK}" opacity="0.9"/>')
+    add(f'<clipPath id="{cid}"><circle cx="{cx}" cy="{cy}" r="{r-4}"/></clipPath>')
+    add(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="#fffaf0"/>')
+    add(f'<g clip-path="url(#{cid})">')
+    add(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="url(#sky-{spec["key"]})"/>')
+    add(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="url(#halftone)"/>')
+    bust(cx, cy + r * 0.30, s, spec)
+    add("</g>")
+    add(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{INK}" stroke-width="7"/>')
+
+
+def plate(cx, y, name, role, ask, colour, w, nsize=27):
+    """Name, role, and - for an agent - the one thing it comes to the navigator for."""
+    h = 88 if ask else 64
+    add(f'<rect x="{cx-w//2+9}" y="{y+9}" width="{w}" height="{h}" rx="11" fill="{INK}" opacity="0.9"/>')
+    add(f'<rect x="{cx-w//2}" y="{y}" width="{w}" height="{h}" rx="11" fill="{colour}" stroke="{INK}" stroke-width="5"/>')
+    text(cx, y + 32, name, size=nsize, fill=WHITE, spacing=0.8)
+    text(cx, y + 52, role, size=11.5, fill=WHITE, family="body", weight=800, spacing=1.5)
+    if ask:
+        add(f'<path d="M{cx-w//2+16},{y+62} l{w-32},0" stroke="{WHITE}" stroke-width="2.5" opacity="0.5"/>')
+        text(cx, y + 80, ask, size=14, fill=CREAM, family="body", weight=800, spacing=0.2)
+
+
+def balloon(x, y, s, colour=INK, size=15, fill="#fffdf4"):
+    w = int(size * 0.62 * len(s)) + 30
+    h = size + 18
+    add(f'<rect x="{x-w//2+5}" y="{y-h//2+5}" width="{w}" height="{h}" rx="{h//2}" fill="{INK}" opacity="0.3"/>')
+    add(f'<rect x="{x-w//2}" y="{y-h//2}" width="{w}" height="{h}" rx="{h//2}" fill="{fill}" '
+        f'stroke="{colour}" stroke-width="4"/>')
+    text(x, y + size * 0.37, s, size=size, fill=INK, family="body", weight=800, spacing=0.2)
+
+
+def chip(x, y, title, fill, w=152):
+    add(f'<rect x="{x-w//2+7}" y="{y-18}" width="{w}" height="50" rx="10" fill="{INK}" opacity="0.9"/>')
+    add(f'<rect x="{x-w//2}" y="{y-25}" width="{w}" height="50" rx="10" fill="{fill}" stroke="{INK}" stroke-width="5"/>')
+    text(x, y + 8, title, size=21, spacing=0.8)
+
+
+def caption(x, y, w, head, lines, fill=GOLD):
+    h = 34 + 21 * len(lines)
+    add(f'<rect x="{x+7}" y="{y+7}" width="{w}" height="{h}" rx="6" fill="{INK}" opacity="0.9"/>')
+    add(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" fill="{fill}" stroke="{INK}" stroke-width="5"/>')
+    text(x + w // 2, y + 28, head, size=20, spacing=0.8)
+    for i, ln in enumerate(lines):
+        text(x + w // 2, y + 50 + 21 * i, ln, size=13.5, family="body", weight=800, spacing=0.2)
+
+
+def arrow(d, colour=INK, width=7, dash=None, marker="end"):
     dashes = f' stroke-dasharray="{dash}"' if dash else ""
     me = f' marker-end="url(#head-{colour[1:]})"' if marker in ("end", "both") else ""
     ms = f' marker-start="url(#tail-{colour[1:]})"' if marker in ("start", "both") else ""
+    add(f'<path d="{d}" fill="none" stroke="{INK}" stroke-width="{width+6}" stroke-linecap="round"{dashes} opacity="0.9"/>')
     add(f'<path d="{d}" fill="none" stroke="{colour}" stroke-width="{width}" stroke-linecap="round"{dashes}{me}{ms}/>')
-    if label:
-        w = int(8.0 * len(label)) + 22
-        add(f'<rect x="{lx-w//2}" y="{ly-16}" width="{w}" height="29" rx="14" fill="#fffdf6" stroke="{colour}" stroke-width="3"/>')
-        text(lx, ly + 5, label, size=14.5, fill=INK, family="body", weight=800, spacing=0.3)
 
 
-# ---------------------------------------------------------------- canvas
+# ------------------------------------------------------------------ the cast
+CAST = {
+    "moira": dict(key="moira", name="MOIRA", suit=ORANGE, dark=DEEPORANGE, skin=SKIN[0],
+                  hair="long", hairc="#c1440e", headset=True, emblem="M"),
+    "xavier": dict(key="xavier", name="XAVIER", suit=CRIMSON, dark=DEEPRED, skin=SKIN[0],
+                   hair=None, hairc=INK, emblem="X"),
+    "beast": dict(key="beast", name="BEAST", suit=COBALT, dark=NAVY, skin=FUR,
+                  hair="fur", hairc="#2f5fb8", fangs=True, emblem="B"),
+    "cyclops": dict(key="cyclops", name="CYCLOPS", suit=CRIMSON, dark=DEEPRED, skin=SKIN[1],
+                    hair="short", hairc="#6b3a1a", mask="visor"),
+    "storm": dict(key="storm", name="STORM", suit=PURPLE, dark=DEEPPURPLE, skin=SKIN[3],
+                  hair="flow", hairc="#f4f4f4"),
+    "wolvie": dict(key="wolvie", name="WOLVERINE", suit=GOLD, dark=AMBER, skin=SKIN[1],
+                   hair="cowl", hairc=NAVY, mask="lenses", maskc=NAVY),
+    "psylocke": dict(key="psylocke", name="PSYLOCKE", suit=PURPLE, dark=DEEPPURPLE, skin=SKIN[0],
+                     hair="band", hairc="#8b4fd0", bandc=GOLD, mask="lenses", maskc=DEEPPURPLE, emblem="P"),
+    "forge": dict(key="forge", name="FORGE", suit=TEAL, dark=DEEPTEAL, skin=SKIN[2],
+                  hair="band", hairc="#2b1a12", bandc=CRIMSON, mask="bionic", beard=True, emblem="F"),
+    "cypher": dict(key="cypher", name="CYPHER", suit=GREEN, dark=DEEPGREEN, skin=SKIN[0],
+                   hair="short", hairc="#e8c25a", mask="goggles", maskc="#9fe0ff", emblem="Y"),
+    "nav": dict(key="nav", name="YOU", suit=COBALT, dark=NAVY, skin=SKIN[1],
+                hair="short", hairc="#3a2a1c"),
+}
+
+# ------------------------------------------------------------------ canvas
 add("<!-- Generated by docs/cerebro-fleet.py - edit that, not this file. -->")
-add(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
-    f'role="img" aria-label="The Cerebro fleet: the humans it answers to, seven agent roles, the bead board and the fleet view">')
+add(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" '
+    f'aria-label="Comic cover of the Cerebro fleet: the navigator at the centre with a beam to every '
+    f'agent, six agent roles and twelve implementers standing on the bead board, and every handover '
+    f'between agents a label on a bead rather than a conversation">')
 add("<defs>")
-add(f'<pattern id="halftone" width="18" height="18" patternUnits="userSpaceOnUse">'
-    f'<circle cx="4" cy="4" r="2.2" fill="{INK}" opacity="0.10"/></pattern>')
-add('<radialGradient id="burst" cx="52%" cy="40%" r="66%">'
-    f'<stop offset="0%" stop-color="#fffaee"/><stop offset="100%" stop-color="{PAPER}"/></radialGradient>')
-for c in (INK, CRIMSON, COBALT, TEAL, PURPLE, ORANGE, GOLD, SLATE):
-    add(f'<marker id="head-{c[1:]}" viewBox="0 0 12 12" refX="9.5" refY="6" markerWidth="6" markerHeight="6" orient="auto">'
+add(f'<pattern id="halftone" width="16" height="16" patternUnits="userSpaceOnUse">'
+    f'<circle cx="4" cy="4" r="2" fill="{INK}" opacity="0.13"/></pattern>')
+add('<radialGradient id="page" cx="50%" cy="46%" r="70%">'
+    f'<stop offset="0%" stop-color="#fffbf0"/><stop offset="100%" stop-color="{PAPER}"/></radialGradient>')
+for v in CAST.values():
+    add(f'<radialGradient id="sky-{v["key"]}" cx="50%" cy="28%" r="82%">'
+        f'<stop offset="0%" stop-color="#fffdf6"/><stop offset="100%" stop-color="{v["suit"]}" stop-opacity="0.40"/>'
+        f'</radialGradient>')
+for c in (INK, CRIMSON, COBALT, TEAL, PURPLE, ORANGE, GOLD, GREEN, SLATE, DEEPRED):
+    add(f'<marker id="head-{c[1:]}" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="5.5" markerHeight="5.5" orient="auto">'
         f'<path d="M0,0 L12,6 L0,12 z" fill="{c}"/></marker>')
-    add(f'<marker id="tail-{c[1:]}" viewBox="0 0 12 12" refX="2.5" refY="6" markerWidth="6" markerHeight="6" orient="auto">'
+    add(f'<marker id="tail-{c[1:]}" viewBox="0 0 12 12" refX="3" refY="6" markerWidth="5.5" markerHeight="5.5" orient="auto">'
         f'<path d="M12,0 L0,6 L12,12 z" fill="{c}"/></marker>')
 add("</defs>")
 
-add(f'<rect width="{W}" height="{H}" fill="url(#burst)"/>')
-for i in range(-10, 11):
-    add(f'<path d="M980,640 l{i*140},-1200" stroke="{GOLD}" stroke-width="{3 if i % 2 else 6}" opacity="0.13"/>')
+add(f'<rect width="{W}" height="{H}" fill="url(#page)"/>')
+for i in range(-16, 17):
+    add(f'<path d="M{CX},{CY} l{i*150},-1600" stroke="{GOLD}" stroke-width="{3 if i % 2 else 7}" opacity="0.16"/>')
+    add(f'<path d="M{CX},{CY} l{i*150},1600" stroke="{GOLD}" stroke-width="{3 if i % 2 else 7}" opacity="0.16"/>')
 add(f'<rect width="{W}" height="{H}" fill="url(#halftone)"/>')
-add(f'<rect x="24" y="24" width="{W-48}" height="{H-48}" fill="none" stroke="{INK}" stroke-width="12" rx="8"/>')
-add(f'<rect x="44" y="44" width="{W-88}" height="{H-88}" fill="none" stroke="{INK}" stroke-width="3" rx="5"/>')
+add(f'<rect x="20" y="20" width="{W-40}" height="{H-40}" fill="none" stroke="{INK}" stroke-width="13" rx="8"/>')
+add(f'<rect x="42" y="42" width="{W-84}" height="{H-84}" fill="none" stroke="{INK}" stroke-width="3" rx="5"/>')
 
-# ---------------------------------------------------------------- title
-add(f'<path d="M64,66 l1732,0 l-24,92 l-1684,0 z" fill="{CRIMSON}" stroke="{INK}" stroke-width="6" stroke-linejoin="round"/>')
-text(930, 128, "THE CEREBRO FLEET", size=58, fill="#fff", spacing=4)
-text(930, 186, "seven agent roles, one bead board, and the humans they answer to",
-     size=20, family="body", weight=800, fill=INK, spacing=1.4)
+# ------------------------------------------------------------------ masthead
+add(f'<path d="M60,54 l1980,0 l-22,126 l-1936,0 z" fill="{CRIMSON}" stroke="{INK}" stroke-width="7" stroke-linejoin="round"/>')
+add(f'<path d="M60,54 l1980,0 l-6,32 l-1968,0 z" fill="{DEEPRED}" opacity="0.55"/>')
+text(1094, 152, "THE CEREBRO FLEET", size=70, fill=GOLD, spacing=5)
+add(f'<rect x="78" y="66" width="152" height="104" rx="6" fill="{INK}"/>')
+text(154, 104, "No. 1", size=30, fill=GOLD, spacing=1)
+text(154, 130, "ALL-NEW", size=14, fill=WHITE, family="body", weight=800, spacing=1.2)
+text(154, 154, "ALL-AGENTIC", size=14, fill=WHITE, family="body", weight=800, spacing=1.2)
+burst(1952, 116, 86, GOLD, spikes=13, inner=0.7, rot=0.2, stroke=INK, sw=5)
+text(1952, 100, "7 ROLES", size=20, spacing=0.5)
+text(1952, 122, "12 BUILDERS", size=16, spacing=0.5)
+text(1952, 144, "1 HUMAN", size=20, fill=DEEPRED, spacing=0.5)
 
-# ---------------------------------------------------------------- the five pairs
-PAIRS = [
-    (288, "CUSTOMER SUPPORT", ORANGE, "headset", "MOIRA", "USER FEEDBACK", ORANGE, "#a8431a", "M",
-     "issues in, answers out"),
-    (462, "PRODUCT MANAGER", CRIMSON, "roadmap", "XAVIER + BEAST", "PLANNERS", CRIMSON, "#8c1226", "X",
-     "priorities + every UI call"),
-    (636, "PROJECT MANAGER", COBALT, "clipboard", "CEREBRO", "ORCHESTRATOR", COBALT, "#1b4b96", "C",
-     "fleet health, releases"),
-    (810, "ARCHITECT", PURPLE, "blueprint", "FORGE", "ARCHITECT", PURPLE, "#4a2e75", "F",
-     "code-shape findings"),
-    (984, "QUALITY ASSURANCE", TEAL, "magnifier", "PSYLOCKE", "VERIFIER", TEAL, "#0c6b61", "P",
-     "the verdict: pass or fail"),
-    (1158, "OUTSIDE CONTRIBUTOR", "#0f9d58", "laptop", "CYPHER", "REVIEWER", "#0f9d58", "#0a5c37", "Y",
-     "PR in · review out · UX with you"),
-]
-SC = 0.46
-HX, AX = 190, 560          # human / agent centres, in page coordinates
+# ------------------------------------------------------------------ the bead board they all stand on
+quiet = arc_path(160, 302)
+board = arc_path(298, 522)
+add(f'<path d="{quiet}" fill="none" stroke="{INK}" stroke-width="40" stroke-linecap="round"/>')
+add(f'<path d="{quiet}" fill="none" stroke="#e9c96a" stroke-width="28" stroke-linecap="round"/>')
+add(f'<path d="{board}" fill="none" stroke="{INK}" stroke-width="48" stroke-linecap="round"/>')
+add(f'<path d="{board}" fill="none" stroke="{GOLD}" stroke-width="36" stroke-linecap="round"/>')
+add(f'<path d="{board}" fill="none" stroke="#fff3c6" stroke-width="12" stroke-linecap="round" opacity="0.85"/>')
+for a in (313, 353, 400, 452, 500):
+    x0, y0 = pt(a - 4)
+    x1, y1 = pt(a + 4)
+    add(f'<path d="M{x0:.1f},{y0:.1f} L{x1:.1f},{y1:.1f}" stroke="{INK}" stroke-width="8" '
+        f'marker-end="url(#head-{INK[1:]})"/>')
 
-for (cy, htitle, hcol, prop, aname, arole, suit, cape, emblem, label) in PAIRS:
-    add(f'<g transform="translate({HX},{cy}) scale({SC})">')
-    human(0, 0, htitle, hcol, prop)
-    add("</g>")
-    add(f'<g transform="translate({AX},{cy}) scale({SC})">')
-    hero(0, 0, aname, arole, suit, cape, emblem)
-    add("</g>")
-    arrow(f"M{HX+72},{cy-6} L{AX-72},{cy-6}", hcol, 6, label, (HX + AX) // 2, cy - 22, marker="both")
+# a failed verdict, sent round again below and up the right-hand margin - drawn behind everything
+arrow("M1392,1152 C1570,1272 1860,1296 1998,1152 C2062,1010 2010,690 1902,596", CRIMSON, 7, dash="17 12")
 
-# ---------------------------------------------------------------- the bead board
-BX, BY, BW, BH = 800, 250, 300, 850
-add(f'<rect x="{BX+10}" y="{BY+10}" width="{BW}" height="{BH}" rx="16" fill="{INK}" opacity="0.85"/>')
-add(f'<rect x="{BX}" y="{BY}" width="{BW}" height="{BH}" rx="16" fill="#fffdf3" stroke="{INK}" stroke-width="7"/>')
-add(f'<rect x="{BX}" y="{BY}" width="{BW}" height="74" rx="16" fill="{GOLD}" stroke="{INK}" stroke-width="7"/>')
-text(BX + BW // 2, BY + 50, "THE BEAD BOARD", size=27, spacing=1)
-text(BX + BW // 2, BY + 104, "bd — one queue, every agent reads it", size=13.5, family="body", weight=800, spacing=0.4)
-CARDS = [
-    ("UNPLANNED", "filed by anyone", "#efe4cd"),
-    ("PLANNING", "a planner holds it", CRIMSON + "33"),
-    ("PLANNED", "ready to build", "#cde9d5"),
-    ("CLAIMED", "an implementer has it", "#cfe0f7"),
-    ("MERGED", "waiting on a verdict", "#d6f0ec"),
-    ("VERIFIED", "or reopened at P0", "#e6dcf5"),
-]
-for i, (t1, t2, col) in enumerate(CARDS):
-    yy = BY + 136 + i * 116
-    add(f'<rect x="{BX+26}" y="{yy}" width="{BW-52}" height="86" rx="10" fill="{col}" stroke="{INK}" stroke-width="4"/>')
-    text(BX + BW // 2, yy + 36, t1, size=21, spacing=0.8)
-    text(BX + BW // 2, yy + 62, t2, size=13, family="body", weight=700, spacing=0.2)
-    if i < len(CARDS) - 1:
-        add(f'<path d="M{BX+BW//2},{yy+88} l0,22" stroke="{INK}" stroke-width="5" marker-end="url(#head-{INK[1:]})"/>')
+# what Forge files, cutting up the left-hand corridor to the unplanned end of the board
+arrow("M968,1064 C706,1004 606,752 742,462", PURPLE, 6, dash="15 10")
 
-# ---------------------------------------------------------------- the implementer squad
-SX, SY, SW, SH = 1230, 250, 570, 470
-add(f'<rect x="{SX+10}" y="{SY+10}" width="{SW}" height="{SH}" rx="16" fill="{INK}" opacity="0.85"/>')
-add(f'<rect x="{SX}" y="{SY}" width="{SW}" height="{SH}" rx="16" fill="#fff7e3" stroke="{INK}" stroke-width="7"/>')
-add(f'<rect x="{SX}" y="{SY}" width="{SW}" height="74" rx="16" fill="{SLATE}" stroke="{INK}" stroke-width="7"/>')
-text(SX + SW // 2, SY + 50, "THE IMPLEMENTERS  ×12", size=27, fill="#fff", spacing=1)
-SQUAD = [("CYCLOPS", "#c0392b"), ("STORM", "#8e44ad"), ("ROGUE", "#16a085"), ("GAMBIT", "#e08e0b")]
-for i, (nm, col) in enumerate(SQUAD):
-    add(f'<g transform="translate({SX+82+i*134},{SY+232}) scale(0.46)">')
-    hero(0, 0, nm, None, col, INK, nm[0])
-    add("</g>")
-text(SX + SW // 2, SY + 392, "claim one bead · build it test-first in its own worktree",
-     size=15, family="body", weight=800, spacing=0.3)
-text(SX + SW // 2, SY + 420, "open the PR · answer Copilot · merge green · report done",
-     size=15, family="body", weight=800, spacing=0.3)
-text(SX + SW // 2, SY + 448, "then the fleet view retires it and starts a fresh session",
-     size=15, family="body", weight=800, fill=CRIMSON, spacing=0.3)
+# ------------------------------------------------------------------ the beads on the board
+chip(*pt(337), "UNPLANNED", "#efe2c6")
+chip(*pt(23), "PLANNED", "#c3e9cf")
+chip(*pt(90), "MERGED", "#c6dcf7")
+vx, vy = pt(158)
+burst(vx, vy, 78, GREEN, spikes=15, inner=0.8, stroke=INK, sw=5)
+text(vx, vy - 2, "VERIFIED", size=23, fill=WHITE, spacing=0.6)
+text(vx, vy + 22, "a person saw it work", size=11.5, fill=WHITE, family="body", weight=800)
 
-# ---------------------------------------------------------------- the fleet view
-FX, FY, FW, FH = 1230, 790, 570, 310
-add(f'<rect x="{FX+10}" y="{FY+10}" width="{FW}" height="{FH}" rx="16" fill="{INK}" opacity="0.85"/>')
-add(f'<rect x="{FX}" y="{FY}" width="{FW}" height="{FH}" rx="16" fill="{INK}" stroke="{INK}" stroke-width="7"/>')
-text(FX + FW // 2, FY + 46, "M-x cerebro — THE FLEET VIEW", size=24, fill=GOLD, spacing=1)
-ROWS_UI = [("XAVIER", "working", "plan", "#7ee787"), ("PSYLOCKE", "asking", "verify", GOLD),
-           ("CYCLOPS", "working", "review", "#7ee787"), ("ROGUE", "idle", "—", "#8b949e")]
-for i, (nm, st, ph, col) in enumerate(ROWS_UI):
-    yy = FY + 86 + i * 34
-    add(f'<circle cx="{FX+40}" cy="{yy-5}" r="7" fill="{col}"/>')
-    text(FX + 62, yy, nm, size=15, fill="#e6edf3", anchor="start", family="body", weight=800)
-    text(FX + 210, yy, st, size=15, fill=col, anchor="start", family="body", weight=800)
-    text(FX + 330, yy, ph, size=15, fill="#8b949e", anchor="start", family="body", weight=800)
-text(FX + FW // 2, FY + 246, "s starts · k kills · f finishes · one human watching them all",
-     size=14.5, fill="#e6edf3", family="body", weight=800, spacing=0.3)
+# the board's own nameplate, on the quiet stretch of track where nothing is handed over
+bdx, bdy = pt(270)
+add(f'<rect x="{bdx-100:.0f}" y="{bdy-40:.0f}" width="200" height="80" rx="12" fill="{GOLD}" stroke="{INK}" stroke-width="6"/>')
+text(bdx, bdy - 6, "bd", size=34, spacing=1)
+text(bdx, bdy + 22, "THE BEAD BOARD", size=13.5, family="body", weight=800, spacing=0.6)
 
-# ---------------------------------------------------------------- flows between the blocks
-# Into the board, from the three roles that put work on it.
-arrow(f"M{AX+66},300 C700,300 720,320 {BX-8},338", ORANGE, 6, "a bead per issue", 706, 292)
-arrow(f"M{AX+66},480 C700,480 730,430 {BX-8},420", CRIMSON, 6, "planned beads", 700, 452)
-arrow(f"M{AX+66},870 C700,880 660,400 {BX-8},352", PURPLE, 5, "Refactoring: P4", 672, 752, dash="12 9")
+# ------------------------------------------------------------------ the navigator's beams
+NODE_XY = {"planners": (CX, 400), "forge": (CX, 1150),
+           "moira": pt(305), "implementers": pt(55), "psylocke": pt(125), "cypher": pt(235)}
+for kind, (nx, ny) in NODE_XY.items():
+    ux, uy = nx - CX, ny - CY
+    d = math.hypot(ux, uy)
+    arrow(f"M{CX + ux/d*152:.1f},{CY + uy/d*152:.1f} L{nx - ux/d*130:.1f},{ny - uy/d*130:.1f}",
+          CRIMSON, 8, marker="both")
 
-# Out of the board to the squad, and the squad's own loop back through the verifier.
-arrow(f"M{BX+BW+8},520 C1150,520 1160,440 {SX-8},440", GOLD, 7, "claim + build", 1160, 480)
-arrow(f"M{SX+40},{SY+SH+8} C1190,880 1180,1170 1060,1170 L{AX+120},1170 C660,1170 640,1040 {AX+72},1016",
-      TEAL, 6, "merged, unverified", 900, 1140)
-arrow(f"M{AX+66},984 C700,984 740,1010 {BX-8},1000", TEAL, 6, "the verdict", 700, 1014)
-# The reviewer's work item is a pull request, not a bead: nothing of its own reaches the board. What
-# it needs from a human is on its own pair label - the PR comes in, the review goes out, and the user
-# experience is walked through with the navigator in between.
+# ------------------------------------------------------------------ the navigator
+burst(CX, CY, 168, GOLD, spikes=21, inner=0.83, rot=0.13, stroke=INK, sw=5)
+burst(CX, CY, 144, "#fff6d2", spikes=21, inner=0.85, rot=0.13)
+bust(CX, CY + 44, 0.80, CAST["nav"])
+add(f'<path d="M{CX-56},{CY-40} q56,-62 112,0 l0,22 q-56,-46 -112,0 z" fill="{COBALT}" '
+    f'stroke="{INK}" stroke-width="6" stroke-linejoin="round"/>')
+add(f'<path d="M{CX-40},{CY-52} q40,-34 80,0" fill="none" stroke="{GOLD}" stroke-width="6" stroke-linecap="round"/>')
+for sx in (-1, 1):
+    add(f'<path d="M{CX+sx*54},{CY-40} l{sx*16},10" stroke="{INK}" stroke-width="7"/>')
+    add(f'<circle cx="{CX+sx*74}" cy="{CY-32}" r="21" fill="{SLATE}" stroke="{INK}" stroke-width="6"/>')
+    add(f'<circle cx="{CX+sx*74}" cy="{CY-32}" r="8" fill="{GOLD}" stroke="{INK}" stroke-width="3"/>')
+plate(CX, CY + 96, "THE NAVIGATOR", "YOU — AND THERE IS ONLY ONE OF YOU",
+      "M-x cerebro · the fleet view is his console", COBALT, w=408, nsize=30)
 
-# Cerebro and the fleet view, routed under everything rather than across the board.
-arrow(f"M{AX+66},660 C660,660 680,1230 1100,1230 L{FX+120},1230 C{FX+180},1230 {FX+180},{FY+FH+10} {FX+150},{FY+FH+8}",
-      COBALT, 6, "stop flags, a release when asked", 900, 1236, dash="12 9")
-arrow(f"M{FX-8},900 C1160,900 1140,760 {BX+BW+8},760", SLATE, 5, "reads the queue", 1158, 830, dash="6 8")
-arrow(f"M{FX+FW//2},{FY-8} L{FX+FW//2},{SY+SH+8}", SLATE, 5, "starts · kills · retires", FX + FW // 2, 762)
+# ------------------------------------------------------------------ the six around him
+mx, my = NODE_XY["moira"]
+medallion(mx, my, 92, CAST["moira"])
+plate(mx, my - 219, "MOIRA", "USER FEEDBACK · THE ISSUE INBOX", "“bead it, ask them, or close it?”",
+      ORANGE, w=372)
 
-# ---------------------------------------------------------------- footer
-add(f'<path d="M64,1258 l1732,0 l-18,44 l-1696,0 z" fill="{INK}"/>')
-text(930, 1288, "CLOSED IS NOT TERMINAL — a failed verdict reopens the bead at P0 and sends it round again",
-     size=19, family="hdr", weight=700, fill=GOLD, spacing=1)
+px, py = NODE_XY["planners"]
+medallion(px - 96, py, 84, CAST["xavier"])
+medallion(px + 96, py, 84, CAST["beast"])
+plate(px, py - 209, "XAVIER & BEAST", "PLANNERS · THEY TURN WANTS INTO PLANS",
+      "“here are two mockups — which one?”", CRIMSON, w=392)
+
+ix, iy = NODE_XY["implementers"]
+for j, who in enumerate(("cyclops", "storm", "wolvie")):
+    medallion(ix - 122 + j * 122, iy, 76, CAST[who])
+burst(ix + 186, iy - 76, 48, CRIMSON, spikes=13, inner=0.68, rot=0.3, stroke=INK, sw=4)
+text(ix + 186, iy - 67, "x12", size=28, fill=WHITE, spacing=0.5)
+plate(ix, iy - 219, "THE X-MEN", "IMPLEMENTERS · ONE BEAD EACH, THEN A FRESH SESSION",
+      "“only you can answer this one”", SLATE, w=452)
+
+sx_, sy_ = NODE_XY["psylocke"]
+medallion(sx_, sy_, 92, CAST["psylocke"])
+plate(sx_, sy_ + 131, "PSYLOCKE", "VERIFIER · SHE PUTS IT IN FRONT OF YOU",
+      "“it is running — passed or failed?”", PURPLE, w=384)
+
+fx_, fy_ = NODE_XY["forge"]
+medallion(fx_, fy_, 88, CAST["forge"])
+plate(fx_, fy_ + 126, "FORGE", "ARCHITECT · HE READS THE SHAPE OF THE CODE",
+      "“this is what it is costing you”", TEAL, w=414)
+
+cx_, cy_ = NODE_XY["cypher"]
+medallion(cx_, cy_, 92, CAST["cypher"])
+plate(cx_, cy_ + 131, "CYPHER", "REVIEWER · PULL REQUESTS FROM OUTSIDE",
+      "“reviewed. you decide if it lands”", GREEN, w=384)
+
+# ------------------------------------------------------------------ labels that ride on top
+balloon(654, 830, "Refactoring: P4", PURPLE, 15)
+balloon(1706, 1292, "FAILED — REOPENED AT P0", CRIMSON, 15)
+
+
+# ------------------------------------------------------------------ the world outside the fleet
+def outsider(ox, oy, title, colour, glyph, gsize=46):
+    burst(ox, oy - 4, 68, colour, spikes=13, inner=0.74, rot=0.25, stroke=INK, sw=4, opacity=0.55)
+    add(f'<circle cx="{ox}" cy="{oy}" r="53" fill="#fffaf0" stroke="{INK}" stroke-width="6"/>')
+    text(ox, oy + gsize * 0.36, glyph, size=gsize, fill=colour)
+    add(f'<rect x="{ox-98}" y="{oy+64}" width="196" height="36" rx="8" fill="#fffdf4" stroke="{INK}" stroke-width="4"/>')
+    text(ox, oy + 89, title, size=14, family="body", weight=800, spacing=0.4)
+
+
+outsider(160, 404, "ANYONE WITH AN ISSUE", ORANGE, "!", 54)
+arrow(f"M216,440 C300,490 320,502 {mx-110:.0f},{my-48:.0f}", ORANGE, 6)
+outsider(160, 1136, "ANYONE WITH A PATCH", GREEN, "</>", 34)
+arrow(f"M216,1098 C300,1052 320,1040 {cx_-110:.0f},{cy_+44:.0f}", GREEN, 6)
+
+# ------------------------------------------------------------------ the two rules that make it make sense
+caption(74, 198, 390, "NO AGENT TALKS TO ANOTHER",
+        ["Every handover is a label on a bead.", "The board is the only channel they share."])
+caption(1636, 198, 390, "ONE HUMAN, EVERY TIME",
+        ["Only he starts or stops a session —", "and anything a player sees is his call."])
+
+# ------------------------------------------------------------------ footer
+add(f'<path d="M60,1376 l1980,0 l-16,60 l-1948,0 z" fill="{INK}"/>')
+text(1050, 1418, "CLOSED IS NOT TERMINAL — A FAILED VERDICT REOPENS THE BEAD AT P0 AND SENDS IT ROUND AGAIN",
+     size=24, fill=GOLD, spacing=1.4)
 
 add("</svg>")
 svg = "\n".join(out)
 target = pathlib.Path("docs/cerebro-fleet.svg")
+target.parent.mkdir(parents=True, exist_ok=True)
 target.write_text(svg)
 print("wrote", target, len(svg), "bytes")

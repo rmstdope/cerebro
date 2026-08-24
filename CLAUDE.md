@@ -300,7 +300,15 @@ The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebr
 `cerebro--finding-command`, `cerebro--findings-from-snapshot`) and a small set of **impure readers**
 at the bottom (`cerebro--fleet`, `cerebro--roster`, `cerebro--read-state-file`,
 `cerebro--system-processes`, `cerebro--owned`, `cerebro--gather-sweeps`, `cerebro--fleet-snapshot`). The tests only exercise the pure half, passing state in as plain data. Keep
-new logic on the pure side or it becomes untestable.
+new logic on the pure side or it becomes untestable. The one qualification: **each impure reader
+has one ERT case that runs it for real and feeds its output to the pure function that consumes
+it** (the "Reader contracts" section of `emacs/cerebro-test.el`). A pure function tested
+exhaustively against invented inputs can still be wrong about every real one — cb-5yr shipped with
+the liveness rule comparing an abbreviated `~/…` root against absolute command lines, four green
+cases and all of them fed absolute roots (cb-os4). So a value that is a *display* spelling — an
+abbreviated path, a relative path, a formatted time — is normalised by the reader that produces it
+(`cerebro--repo-root` through `cerebro--canonical-root`), never assumed canonical by a comparator,
+and a new reader is not done until its contract case exists.
 
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
 

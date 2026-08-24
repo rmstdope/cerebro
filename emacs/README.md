@@ -240,3 +240,9 @@ Run the tests with:
 ```bash
 emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit
 ```
+
+The suite exercises the pure core on plain data, plus one **reader contract** per impure reader:
+the real reader run against a fixture, its output handed to the pure function that consumes it.
+When you add a reader, add its contract case in the same change — that is the only test that can
+tell "this pure function is right" from "this pure function is right about inputs nobody
+produces".

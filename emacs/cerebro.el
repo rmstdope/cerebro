@@ -137,6 +137,16 @@ whatever the frame has left (was a constant of 20 for eighteen agents)."
   sessions                             ; processes of this name in this consumer, or nil
   raw)                                 ; the state file's `state' string verbatim, or nil
 
+(defun cerebro--canonical-root (root)
+  "ROOT as one spelling: absolute, tilde expanded, one trailing slash.
+
+`locate-dominating-file\=' abbreviates what it returns - \"~/repos/cerebro/\"
+for a checkout under the home directory - and every caller but one expanded
+it on the way to a file name, which hid the abbreviation until it reached
+the one place a root is compared as a *string* (cb-5yr.1).  The reader
+normalises here so no comparator downstream has to know."
+  (file-name-as-directory (expand-file-name root)))
+
 (defun cerebro--name-in-args-p (name args)
   "Non-nil if some string in ARGS names NAME via a whole-word \"--name NAME\"."
   (let ((needle (concat "--name[ \t]+" (regexp-quote name) "\\_>")))
@@ -151,9 +161,10 @@ ROOT may carry a trailing slash (`cerebro--repo-root\=' is a
 appended, so a sibling checkout named for the same prefix is not this
 consumer.
 
-ROOT is expanded first, because that same `locate-dominating-file\=' result
-comes back *abbreviated* - \"~/repos/cerebro/\" for a checkout under the home
-directory, which is where one normally is.  Every other caller expands it on
+ROOT is expanded here too, although `cerebro--repo-root\=' now returns it
+canonical (`cerebro--canonical-root\='): this function is also reached with
+roots that never came from that reader, and the cost of a second
+`expand-file-name\=' is nothing.  Every other caller expands it on
 the way to a file name, so the abbreviation was invisible until it reached
 this function, which is the one place the root is compared as a string: a
 process names `/Users/<you>/repos/...\=' and never `~\=', so nothing matched,
@@ -2230,10 +2241,15 @@ sweep pipeline; the command itself carries no path, since it is run with
 Located by `cerebro-submodule-path\=' (the submodule mount, present in
 every consumer from clone time) rather than by `.cerebro/state', which
 may not exist yet on a fresh machine - `agent-state' and
-`cerebro--write-stop-flag' both create it on first write."
-  (or (locate-dominating-file default-directory cerebro-submodule-path)
-      (error "cerebro: no %s found above %s (see `cerebro-submodule-path')"
-             cerebro-submodule-path default-directory)))
+`cerebro--write-stop-flag' both create it on first write.
+
+Returned canonical - absolute, expanded, slash-terminated - through
+`cerebro--canonical-root\=', because this is the one reader whose raw result
+is a display spelling."
+  (cerebro--canonical-root
+   (or (locate-dominating-file default-directory cerebro-submodule-path)
+       (error "cerebro: no %s found above %s (see `cerebro-submodule-path')"
+              cerebro-submodule-path default-directory))))
 
 (defvar-local cerebro--fleet-cache nil
   "The parsed roster, once read; buffer-local so a revert does not re-shell out.")

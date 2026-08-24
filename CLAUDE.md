@@ -130,7 +130,8 @@ A pull request that touches only `docs/` (except `docs/agent-workflow.md`, which
 place that list lives, with the reason beside each entry, and the three required checks report
 *skipped*, which GitHub counts as green (cb-ypx). Anything else runs the whole matrix, and a push
 to `main` always does. `scripts/lint` check 12 advises when a suite starts reading a path on that
-list.
+list. The two ERT jobs are literal, not a matrix, because a skipped matrix job never expands into
+the per-version check names branch protection requires.
 
 Sync symlinks into a consumer repo (run from that repo, not this one):
 

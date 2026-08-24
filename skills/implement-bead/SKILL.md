@@ -443,14 +443,13 @@ git -C <tree>/.claude/cerebro checkout -b <id>-short-description origin/main
 ```
 
 **Never `git -C .claude/cerebro worktree add`.** It makes a tree registered in the submodule and not
-in the consumer — and for a long time nothing enumerated the submodule's list, so two such trees sat
-on this machine with their merged branches checked out and the janitor never saw either
-(`ah-90gu-cerebro`, `ah-qled.12-cerebro`; ah-apw4). The janitor walks both lists now, but that is
-cleanup for a category this route no longer creates. Given a relative path it also lands the tree
+in the consumer — and for a long time nothing enumerated the submodule's list, so trees made that way
+sat on disk with their merged branches checked out and the janitor never saw one. It walks both
+lists now, but that is cleanup for a category this route no longer creates. Given a relative path it also lands the tree
 *inside* the submodule, which four retrospectives paid for one at a time.
 
-**Do not clone cerebro to a sibling directory either.** The harness classifier refuses it outright
-(`ah-y3j1`) — a dead end with no diagnosis.
+**Do not clone cerebro to a sibling directory either.** The harness classifier refuses it outright —
+a dead end with no diagnosis.
 
 `bd` still works from here, because the tree is inside the consumer: that is why the location matters
 more than the mechanism, and why a clone in `~/repos/` is the wrong shape even where it is allowed.

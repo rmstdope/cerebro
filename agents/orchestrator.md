@@ -327,7 +327,7 @@ reclaimed rather than held on disk for ever — but it is **not a second home**,
 and the verifier exception does **not** reach it. A `psylocke` under `.claude/worktrees/` is a
 leftover, not the verification tree, and is judged like any other tree.
 
-**It walks two worktree lists, not one** (ah-apw4). Besides the consumer's, it walks
+**It walks two worktree lists, not one.** Besides the consumer's, it walks
 `.claude/cerebro`'s — because a worktree of the submodule is registered there and nowhere else, so
 for a long time nothing enumerated one and two sat on this machine with their merged branches still
 checked out. Every rule above applies to such a tree unchanged; only the repository each is asked of

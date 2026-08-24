@@ -419,18 +419,6 @@ file must not read as a deadline that has expired."
                        (time-subtract now (encode-time (iso8601-parse since))))))
       (error nil))))
 
-(defun cerebro--seconds-until (then now)
-  "Seconds from NOW to THEN (an ISO-8601 string, or nil), or nil.
-
-Signed, and that is the whole reason it exists beside
-`cerebro--seconds-since\=': that one clamps at zero, so a timestamp in the
-future and one exactly now are indistinguishable through it.  A deadline
-needs to know which side of it we are on."
-  (when then
-    (condition-case nil
-        (floor (float-time (time-subtract (encode-time (iso8601-parse then)) now)))
-      (error nil))))
-
 (defun cerebro--elapsed (since now)
   "How long ago SINCE (an ISO-8601 string, or nil) was, relative to NOW.
 
@@ -1317,11 +1305,12 @@ in minutes by anyone reading the fleet."
 The string is the reason the echo line carries (`cerebro--start-message\='),
 so it has to say what the navigator would otherwise have to go and look up.
 
-CONTEXT is what `cerebro--trigger-context\=' gathers, plus the three per-agent
-facts its caller adds: `now\=', `ended-at\=', `started-at\=', `floor\=',
-`first-planner-p\=', `live-implementers\=', `planned\=', `p0-unplanned\=' (ids),
-`p4-unranked\=', `merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for no
-answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)).
+CONTEXT is what `cerebro--trigger-context\=' gathers - `now\=',
+`live-implementers\=', `planned\=', `p0-unplanned\=' (ids), `p4-unranked\=',
+`merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for no answer yet,
+`failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) - plus the four per-agent facts
+`cerebro--agent-context\=' adds to it: `ended-at\=', `started-at\=', `floor\=' and
+`first-planner-p\='.
 
 Every rule is gated on the floor first: `cerebro-wake-interval\=' is the
 minimum gap between two *starts* of one role, and without it a role whose

@@ -70,7 +70,7 @@ chmod +x "$stub_dir/claude"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$stub_dir" "$fixture_dir"' EXIT
 git init -q "$fixture_dir"
-mkdir -p "$fixture_dir/.claude"
+mkdir -p "$fixture_dir/.claude" "$fixture_dir/.cerebro"
 copy_cerebro_into "$fixture_dir/.claude/cerebro"
 fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
 # A consumer that runs implementers must declare a fast gate, or launch-preflight refuses them
@@ -78,7 +78,7 @@ fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
 # ever runs it - the stub `claude` is what these cases assert against - but without it every
 # implementer case below would be refused before reaching the stub.
 printf 'gate_fast make check\ngate_full make check-all\n' \
-  > "$fixture_dir/.claude/cerebro-project.conf"
+  > "$fixture_dir/.cerebro/project.conf"
 
 run_launcher_at() {
   # Runs a launcher living at an arbitrary scripts directory, with the stub claude first on PATH and
@@ -203,19 +203,19 @@ pass "roster --bogus exits 2"
 # `scripts/roster` is the one declaration of the fleet, but the X-Men in its `TABLE=` heredoc are
 # cerebro's branding rather than any consumer's. A consumer that wants other names, more
 # implementers, or a role cerebro does not ship writes them to a *tracked* file of its own -
-# `<consumer>/.claude/cerebro-roster` - and roster reads that instead of the built-in table.
+# `<consumer>/.cerebro/roster.conf` - and roster reads that instead of the built-in table.
 #
-# Tracked, and beside `.claude/cerebro-project.conf`, rather than under the git-ignored `.cerebro/`:
-# which agents exist is a fact every clone needs, and a git-ignored file would vanish on a fresh
-# clone with the fleet silently reverting to the X-Men.
+# Tracked, by a `.gitignore` negation inside the otherwise-ignored `.cerebro/` (cb-epr), beside
+# `.cerebro/project.conf`: which agents exist is a fact every clone needs, and an ignored file would
+# vanish on a fresh clone with the fleet silently reverting to the X-Men.
 # Cleaned up at the end of this block rather than by the EXIT trap: the cases below rewrite that
 # trap with their own directories, and a name added here would be dropped from it again.
 roster_consumer="$(mktemp -d)"
 git init -q "$roster_consumer"
-mkdir -p "$roster_consumer/.claude"
+mkdir -p "$roster_consumer/.claude" "$roster_consumer/.cerebro"
 copy_cerebro_into "$roster_consumer/.claude/cerebro"
 roster_at="$roster_consumer/.claude/cerebro/scripts/roster"
-consumer_roster_file="$roster_consumer/.claude/cerebro-roster"
+consumer_roster_file="$roster_consumer/.cerebro/roster.conf"
 
 # With no file of its own, a consumer gets cerebro's own fleet, byte for byte.
 [[ "$("$roster_at")" == "$roster_out" ]] \
@@ -296,11 +296,45 @@ out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at")"
 rm -f "$consumer_roster_file"
 pass "roster reads the consumer file with PATH narrowed to dirname and bash - no git crept in"
 
+# --- a roster left at the retired .claude/ path refuses, loudly (cb-epr) ------------------------
+#
+# The declarations moved to `.cerebro/'. A consumer that bumps the submodule past that move and
+# still has its fleet at `.claude/cerebro-roster' must NOT silently fall back to the built-in table:
+# absence is the documented "run the X-Men" signal, and a stale path would borrow it - nineteen
+# names, most of which the project does not run, with nothing said anywhere.
+printf 'Ada  planner\n' > "$roster_consumer/.claude/cerebro-roster"
+set +e
+out="$("$roster_at" 2>/dev/null)"
+status=$?
+err="$("$roster_at" 2>&1 >/dev/null)"
+set -e
+[[ $status -eq 2 ]] || fail "roster at the old path: expected exit 2, got $status"
+[[ -z "$out" ]] || fail "roster at the old path: expected nothing on stdout, got: $out"
+echo "$err" | grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" \
+  || fail "roster at the old path: expected the mv line on stderr, got: $err"
+pass "a roster left at the retired .claude/ path refuses instead of falling back"
+
+# And it refuses under the narrowed PATH too - the refusal is `[[ -f ]]' and nothing else, so the
+# dirname-and-bash guarantee above survives it.
+set +e
+PATH="$bare_path_dir" "$(command -v bash)" "$roster_at" >/dev/null 2>&1
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "roster at the old path under a narrowed PATH: expected exit 2, got $status"
+pass "the old-path refusal needs no external command"
+
+# The new path wins outright when both exist: only the absence of the new one is a migration error.
+printf 'Turing  implementer\n' > "$consumer_roster_file"
+[[ "$("$roster_at")" == "$(printf 'Turing\timplementer\timplementer')" ]] \
+  || fail "roster with both paths: expected the new one to win, got: $("$roster_at")"
+rm -f "$roster_consumer/.claude/cerebro-roster" "$consumer_roster_file"
+pass "roster: the new path wins when both exist"
+
 # --- a consumer roster at a mount other than .claude/cerebro (ah-ohc2) ---------------------------
 #
-# `roster' finds a consumer's file by path arithmetic (`../../cerebro-roster'), which answers only
+# `roster' finds a consumer's file by path arithmetic (`../../../.cerebro/roster.conf'), which answers only
 # for the standard mount. A consumer that vendors cerebro as a submodule elsewhere gets its own
-# roster too, from a SECOND candidate: `<superproject>/.claude/cerebro-roster', tried only when git
+# roster too, from a SECOND candidate: `<superproject>/.cerebro/roster.conf', tried only when git
 # is on PATH and skipped silently when it is not - which is what keeps the narrowed-PATH guarantee
 # above true. Candidate order matters: the arithmetic first, so the standard mount never needs git.
 alt_cerebro="$(mktemp -d)/cerebro-src"
@@ -319,8 +353,8 @@ alt_roster_at="$alt_consumer/vendor/cerebro/scripts/roster"
 
 [[ "$("$alt_roster_at")" == "$roster_out" ]] \
   || fail "alternative mount with no consumer file: expected the built-in table"
-mkdir -p "$alt_consumer/.claude"
-printf 'Ada  planner\nTuring  implementer\n' > "$alt_consumer/.claude/cerebro-roster"
+mkdir -p "$alt_consumer/.cerebro"
+printf 'Ada  planner\nTuring  implementer\n' > "$alt_consumer/.cerebro/roster.conf"
 [[ "$("$alt_roster_at")" == "$(printf 'Ada\tplanner\tinteractive\nTuring\timplementer\timplementer')" ]] \
   || fail "alternative mount: expected the consumer's roster, got: $("$alt_roster_at")"
 pass "roster finds a consumer file from a submodule mounted at vendor/cerebro"
@@ -355,7 +389,7 @@ set -e
 [[ $status -eq 2 ]] || fail "launch Grace (no agent file anywhere): expected exit 2, got $status"
 echo "$out" | grep -q "librarian" \
   || fail "launch Grace: the message should name the role, got: $out"
-echo "$out" | grep -q "cerebro-roster" \
+echo "$out" | grep -q "roster.conf" \
   || fail "launch Grace: the message should name the consumer roster as the cause, got: $out"
 echo "$out" | grep -q "the submodule is behind" \
   && fail "launch Grace: a consumer-declared role is not a stale submodule, got: $out"
@@ -483,11 +517,11 @@ pass "launch $first_implementer sets BEADS_ACTOR=$first_implementer"
 consumer_dir="$(mktemp -d)"
 trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir"' EXIT
 git init -q "$consumer_dir"
-mkdir -p "$consumer_dir/.claude"
+mkdir -p "$consumer_dir/.claude" "$consumer_dir/.cerebro"
 copy_cerebro_into "$consumer_dir/.claude/cerebro"
 # A gate, for the same reason the fixture above declares one: the implementer cases below would
 # otherwise be refused at launch (ah-qled.7.1).
-printf 'gate_fast make check\n' > "$consumer_dir/.claude/cerebro-project.conf"
+printf 'gate_fast make check\n' > "$consumer_dir/.cerebro/project.conf"
 
 out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Forge)"
 echo "$out" | grep -q '^ARG:--agent$' || fail "launch Forge (consumer): stub was not reached: $out"
@@ -663,7 +697,7 @@ pass "agents/architect.md exists and declares both a model and an effort"
 
 # --- a consumer roster in cerebro's own checkout, mounted in itself (cb-i3l.3) ---------------------
 #
-# The path arithmetic (`../../cerebro-roster') answers for a consumer with a submodule under
+# The path arithmetic (`../../../.cerebro/roster.conf') answers for a consumer with a submodule under
 # `.claude'. It cannot answer for cerebro serving ITSELF: `.claude/cerebro' is a symlink back to the
 # checkout, so the kernel resolves `.claude/cerebro/scripts/../..' to the directory ABOVE the
 # repository, and roster looked for a file beside somebody's clone of it. The consumer file was
@@ -673,7 +707,7 @@ pass "agents/architect.md exists and declares both a model and an effort"
 # A third candidate, tried after the arithmetic and before git, checks the same round trip through
 # the mount that `consumer-root' does. No external command, so the narrowed-PATH guarantee holds.
 self_cerebro="$(mktemp -d)/cerebro"
-mkdir -p "$self_cerebro/.claude"
+mkdir -p "$self_cerebro/.claude" "$self_cerebro/.cerebro"
 copy_cerebro_into "$self_cerebro"
 ln -s ".." "$self_cerebro/.claude/cerebro"
 self_roster_at="$self_cerebro/.claude/cerebro/scripts/roster"
@@ -682,7 +716,7 @@ self_roster_at="$self_cerebro/.claude/cerebro/scripts/roster"
   || fail "self-consumer with no roster file: expected the built-in table"
 pass "self-consumer roster: a missing file falls back to the built-in table"
 
-cat > "$self_cerebro/.claude/cerebro-roster" <<'ROSTER'
+cat > "$self_cerebro/.cerebro/roster.conf" <<'ROSTER'
 # the fleet this checkout runs
 Ada           planner
 Hopper        orchestrator
@@ -698,5 +732,19 @@ pass "self-consumer roster: the checkout's own file replaces the built-in table"
 [[ "$("$self_roster_at" --implementers)" == "Turing" ]] \
   || fail "self-consumer roster: --implementers should read the consumer file too"
 pass "self-consumer roster: every mode reads the same declaration"
+
+# The self-consumer candidate refuses the old path for the same reason (cb-epr): this repository is
+# a consumer of itself, so it is the one that would notice the move last.
+rm -f "$self_cerebro/.cerebro/roster.conf"
+printf 'Ada  planner\n' > "$self_cerebro/.claude/cerebro-roster"
+set +e
+"$self_roster_at" >/dev/null 2>&1
+status=$?
+err="$("$self_roster_at" 2>&1 >/dev/null)"
+set -e
+[[ $status -eq 2 ]] || fail "self-consumer roster at the old path: expected exit 2, got $status"
+echo "$err" | grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" \
+  || fail "self-consumer roster at the old path: expected the mv line, got: $err"
+pass "self-consumer roster: the retired .claude/ path refuses too"
 
 echo "all launcher tests passed"

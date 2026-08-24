@@ -81,7 +81,7 @@ make_consumer() {
   git_q -C "$seed" push -q "$origin" "$branch"
 
   git clone -q "$origin" "$consumer"
-  mkdir -p "$consumer/.claude"
+  mkdir -p "$consumer/.claude" "$consumer/.cerebro"
   copy_cerebro_into "$consumer/.claude/cerebro"
   git clone -q "$origin" "$work_dir/$name-up"
   echo "$consumer"
@@ -250,7 +250,7 @@ pass "the wrong-branch refusal names the resolved branch"
 # not have looks exactly like a current checkout today - which is the silent-guard failure again, one
 # layer further in.
 c="$(make_consumer missingbranch main)"
-echo "default_branch nosuchbranch" > "$c/.claude/cerebro-project.conf"
+echo "default_branch nosuchbranch" > "$c/.cerebro/project.conf"
 set +e
 out="$(run_preflight "$c" 2>&1)"
 status=$?
@@ -309,9 +309,34 @@ pass "a planner with no fast gate still launches"
 
 # --- an implementer with a declared gate launches --------------------------------------------------
 c="$(make_consumer withgate)"
-echo "gate_fast make check" > "$c/.claude/cerebro-project.conf"
+echo "gate_fast make check" > "$c/.cerebro/project.conf"
 run_preflight "$c" implementer Cyclops || fail "declared gate: expected exit 0"
 pass "an implementer whose project declares a gate launches"
+
+# --- a declaration left at the retired .claude/ path is refused, before anything else (cb-epr) ----
+#
+# The declarations moved to `.cerebro/`. This is the earliest and friendliest place to catch a
+# consumer that bumped the submodule past that move: it is also the ONLY place that can catch a
+# stray `cerebro-traps.md`, which no script reads at all - a planner and an implementer read it as
+# prose, so a file left behind would simply go unread, in silence, for ever.
+#
+# It refuses even when the new file exists too: two copies of a declaration is exactly the ambiguity
+# worth one `rm` before anything starts.
+for pair in "cerebro-project.conf:project.conf" "cerebro-roster:roster.conf" "cerebro-traps.md:traps.md"; do
+  old_name="${pair%%:*}"
+  new_name="${pair#*:}"
+  c="$(make_consumer "old-${new_name%%.*}")"
+  echo "gate_fast make check" > "$c/.cerebro/project.conf"
+  : > "$c/.claude/$old_name"
+  set +e
+  out="$(run_preflight "$c" implementer Cyclops 2>&1)"
+  status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "old path $old_name: expected exit 2, got $status"
+  echo "$out" | grep -q "mv .claude/$old_name .cerebro/$new_name" \
+    || fail "old path $old_name: expected the mv line naming both paths, got: $out"
+  pass "a $old_name left at the retired .claude/ path is refused at launch"
+done
 
 # --- implement-bead names no tool -------------------------------------------------------------------
 #

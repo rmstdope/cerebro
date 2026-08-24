@@ -67,52 +67,76 @@ kind_of() {
   fi
 }
 
-# Where a consumer declares its own fleet, if it does. Found by path arithmetic - this script lives
-# at <consumer>/.claude/cerebro/scripts/roster - and DELIBERATELY NOT by calling `consumer-root',
-# which shells out to `git': `roster' needs no external command beyond `dirname', and
-# tests/launchers.sh runs a launcher with a PATH of `dirname' and `bash' alone to keep it that way.
-# Tidying this into that seam would break that guarantee with nothing to say so.
+# Where a consumer declares its own fleet, if it does: <consumer>/.cerebro/roster.conf. Found by
+# path arithmetic - this script lives at <consumer>/.claude/cerebro/scripts/roster - and
+# DELIBERATELY NOT by calling `consumer-root', which shells out to `git': `roster' needs no external
+# command beyond `dirname', and tests/launchers.sh runs a launcher with a PATH of `dirname' and
+# `bash' alone to keep it that way. Tidying this into that seam would break that guarantee with
+# nothing to say so.
 #
-# The file is TRACKED (beside .claude/cerebro-project.conf), not under the git-ignored `.cerebro/':
-# which agents exist is a fact every clone needs, and a git-ignored one would vanish on a fresh
-# clone and silently revert the fleet to the names below.
+# The file is TRACKED (beside .cerebro/project.conf, by a `.gitignore' negation inside the
+# otherwise-ignored .cerebro/ - cb-epr): which agents exist is a fact every clone needs, and an
+# ignored one would vanish on a fresh clone and silently revert the fleet to the names below.
 #
 # It REPLACES this table rather than merging with it. File order is load-bearing - `plan-bead' gives
 # the P4 triage pass to the first planner listed, and Cerebro takes the next unused implementer name
 # in file order - and a merged order is nobody's decision.
 #
-# Two candidate paths, first hit wins (ah-ohc2). The arithmetic comes FIRST and needs no git, so the
-# standard mount keeps working under the narrowed PATH above. The second is for a consumer that
+# Three candidate ROOTS, first hit wins (ah-ohc2). The arithmetic comes FIRST and needs no git, so
+# the standard mount keeps working under the narrowed PATH above. The last is for a consumer that
 # vendors cerebro as a submodule somewhere else - `vendor/cerebro', a sibling checkout - and is
 # tried only when `git' is actually there, skipped in silence when it is not. Under the narrowed
-# PATH the second candidate simply does not resolve and roster falls back to the built-in table,
-# which is exactly what tests/launchers.sh asserts: DO NOT "simplify" this into a hard git
-# dependency or a call to `consumer-root', or that guarantee goes with it.
+# PATH that candidate simply does not resolve and roster falls back to the built-in table, which is
+# exactly what tests/launchers.sh asserts: DO NOT "simplify" this into a hard git dependency or a
+# call to `consumer-root', or that guarantee goes with it.
+#
+# The file lived at <consumer>/.claude/cerebro-roster until cb-epr. At every candidate root, a file
+# still sitting there with none at the new path is a MIGRATION ERROR and exits 2: absence is the
+# documented "run the built-in fleet" signal, and a stale path silently borrowing it is how a
+# consumer would end up running nineteen names it never declared.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONSUMER_ROSTER="$here/../../cerebro-roster"
 
-# Third candidate, between the two: cerebro serving ITSELF (cb-i3l.3). The mount is a symlink
-# `.claude/cerebro -> ..', so the arithmetic above walks THROUGH it - the kernel resolves
-# `.claude/cerebro/scripts/../..' to the directory above the repository - and roster went looking
-# for a file beside somebody's clone. The consumer file was then ignored in silence and the table
-# below used instead, which looks exactly like a working fleet until a name that is not on it fails
-# to launch.
+CONSUMER_ROSTER=""
+OLD_ROSTER=""
+
+# $1 = a candidate consumer root. Sets CONSUMER_ROSTER when the declaration is there, OLD_ROSTER
+# when only the retired path is. Builtins only, like everything else here.
+consider_root() {
+  local candidate="$1"
+  [[ -n "$candidate" ]] || return 0
+  if [[ -f "$candidate/.cerebro/roster.conf" ]]; then
+    CONSUMER_ROSTER="$candidate/.cerebro/roster.conf"
+  elif [[ -z "$OLD_ROSTER" && -f "$candidate/.claude/cerebro-roster" ]]; then
+    OLD_ROSTER="$candidate/.claude/cerebro-roster"
+  fi
+}
+
+consider_root "$here/../../.."
+
+# Second candidate: cerebro serving ITSELF (cb-i3l.3). The mount is a symlink `.claude/cerebro -> ..',
+# so the arithmetic above walks THROUGH it - the kernel resolves `.claude/cerebro/scripts/../..' to
+# the directory above the repository - and roster went looking for a file beside somebody's clone.
+# The consumer file was then ignored in silence and the table below used instead, which looks exactly
+# like a working fleet until a name that is not on it fails to launch.
 #
 # The check is the same round trip `consumer-root' makes, and like everything else above it uses no
 # external command, so the narrowed-PATH guarantee survives. It runs BEFORE git for the same reason
 # the arithmetic does.
-if [[ ! -f "$CONSUMER_ROSTER" ]]; then
+if [[ -z "$CONSUMER_ROSTER" ]]; then
   own_root="$(cd "$here/.." 2>/dev/null && pwd -P)" || own_root=""
   if [[ -n "$own_root" && "$(cd "$own_root/.claude/cerebro" 2>/dev/null && pwd -P)" == "$own_root" ]]; then
-    CONSUMER_ROSTER="$own_root/.claude/cerebro-roster"
+    consider_root "$own_root"
   fi
 fi
 
-if [[ ! -f "$CONSUMER_ROSTER" ]] && command -v git >/dev/null 2>&1; then
+if [[ -z "$CONSUMER_ROSTER" ]] && command -v git >/dev/null 2>&1; then
   superproject="$(git -C "$here" rev-parse --show-superproject-working-tree 2>/dev/null)" || superproject=""
-  if [[ -n "$superproject" && -f "$superproject/.claude/cerebro-roster" ]]; then
-    CONSUMER_ROSTER="$superproject/.claude/cerebro-roster"
-  fi
+  consider_root "$superproject"
+fi
+
+if [[ -z "$CONSUMER_ROSTER" && -n "$OLD_ROSTER" ]]; then
+  echo "roster: the fleet declaration has moved - run: mv .claude/cerebro-roster .cerebro/roster.conf" >&2
+  exit 2
 fi
 
 parse_rows() {

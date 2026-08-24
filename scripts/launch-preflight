@@ -42,6 +42,22 @@ parent="$consumer/.claude"                                    # .claude, in a co
 # working tree's own toplevel, which a mere ~/.claude is not.
 [[ "$(git -C "$consumer" rev-parse --show-toplevel 2>/dev/null)" == "$consumer" ]] || exit 0
 
+# The declarations moved from .claude/ to .cerebro/ (cb-epr). A consumer that bumps the submodule
+# past that move and leaves one behind is stopped here, first and friendliest - and this is the ONLY
+# place a stray `cerebro-traps.md' can be caught at all, since no script reads it: a planner and an
+# implementer read it as prose, so a file left behind would simply go unread, in silence, for ever.
+#
+# It refuses even when the new file exists too: two copies of one declaration is exactly the
+# ambiguity worth one `rm' before anything starts.
+for pair in "cerebro-project.conf:project.conf" "cerebro-roster:roster.conf" "cerebro-traps.md:traps.md"; do
+  old_name="${pair%%:*}"
+  new_name="${pair#*:}"
+  if [[ -f "$parent/$old_name" ]]; then
+    echo "cerebro: the declarations moved to .cerebro/ - run: mv .claude/$old_name .cerebro/$new_name before starting $name" >&2
+    exit 2
+  fi
+done
+
 # The tree these instructions are read from - CLAUDE.md, and the skills, which are symlinks into
 # whatever the submodule is pinned to here - is never refreshed by anything (ah-puoj). A session
 # started on a stale one describes a repository that no longer exists and cannot find that out. So
@@ -67,7 +83,7 @@ if git -C "$consumer" fetch --quiet origin "$branch_name" 2>/dev/null; then
   target="$(git -C "$consumer" rev-parse --verify --quiet FETCH_HEAD 2>/dev/null || echo "")"
 fi
 if [[ -z "$target" ]] && git -C "$consumer" ls-remote --quiet origin >/dev/null 2>&1; then
-  echo "cerebro: origin has no branch $branch_name, so the checkout could not be checked for staleness - set default_branch in .claude/cerebro-project.conf before starting $name" >&2
+  echo "cerebro: origin has no branch $branch_name, so the checkout could not be checked for staleness - set default_branch in .cerebro/project.conf before starting $name" >&2
 fi
 # Both sides are expanded before the test is evaluated, so `rev-parse HEAD` runs even when $target
 # is empty - hence the separate guard rather than one && condition, for a consumer with no commits.
@@ -108,15 +124,15 @@ fi
 #   neither                                          - the submodule really is behind
 if [[ ! -f "$parent/cerebro/agents/$role.md" && ! -f "$parent/agents/$role.md" ]]; then
   declared_by_consumer=""
-  if [[ -s "$parent/cerebro-roster" ]]; then
+  if [[ -s "$consumer/.cerebro/roster.conf" ]]; then
     while IFS= read -r line || [[ -n "$line" ]]; do
       case "$line" in \#*) continue ;; esac
       read -r _ row_role _ <<<"$line"
       [[ "$row_role" == "$role" ]] && { declared_by_consumer=1; break; }
-    done < "$parent/cerebro-roster"
+    done < "$consumer/.cerebro/roster.conf"
   fi
   if [[ -n "$declared_by_consumer" ]]; then
-    echo "cerebro: .claude/cerebro-roster declares the role $role, but cerebro does not ship agents/$role.md and there is no .claude/agents/$role.md either - write that file before starting $name" >&2
+    echo "cerebro: .cerebro/roster.conf declares the role $role, but cerebro does not ship agents/$role.md and there is no .claude/agents/$role.md either - write that file before starting $name" >&2
   else
     echo "cerebro: .claude/cerebro/agents/$role.md is missing - the submodule is behind; run git submodule update --init --recursive and try again" >&2
   fi
@@ -125,7 +141,7 @@ fi
 
 # An implementer with no gate has nothing to run before it opens a PR (ah-qled.7.1). `implement-bead'
 # names no tool any more - it says "run the fast gate", which is `gate_fast' in the consumer's own
-# tracked .claude/cerebro-project.conf - so a project that declares none, and in which none can be
+# tracked .cerebro/project.conf - so a project that declares none, and in which none can be
 # detected, would have its implementers improvising a gate and reporting green off it. Refuse at
 # launch instead, loudly and immediately, naming the gate rather than the submodule (ah-qled.5.1).
 #
@@ -136,7 +152,7 @@ fi
 if [[ "$role" == "implementer" ]]; then
   gate_fast="$("$script_dir/project-conf" gate_fast 2>/dev/null)" || gate_fast=""
   if [[ -z "$gate_fast" ]]; then
-    echo "cerebro: this project declares no fast gate, and none could be detected - an implementer has nothing to run before it opens a PR. Add a line like 'gate_fast <command>' (and 'gate_full <command>') to .claude/cerebro-project.conf before starting $name" >&2
+    echo "cerebro: this project declares no fast gate, and none could be detected - an implementer has nothing to run before it opens a PR. Add a line like 'gate_fast <command>' (and 'gate_full <command>') to .cerebro/project.conf before starting $name" >&2
     exit 2
   fi
 fi

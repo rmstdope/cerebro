@@ -309,4 +309,38 @@ echo "$out" | grep -q "ah-squashed" \
   || fail "an unreachable submodule remote aborted the consumer's half of the sweep: $out"
 pass "a failed submodule fetch skips the submodule half and leaves the consumer's alone"
 
+# --- 13. a self-mounted cerebro is not swept twice ----------------------------------------------
+# When cerebro serves its own fleet, `.claude/cerebro` is a symlink back to the checkout root, so
+# the two roots are the SAME repository and its worktree list would otherwise be walked twice —
+# every tree enumerated once per owner, tallies inflated, and an already-removed tree reported as
+# kept on its second pass.
+selfmount="$work_dir/selfmount"
+mkdir -p "$selfmount/.claude"
+git init -q -b main "$selfmount"
+cat > "$selfmount/.claude/cerebro-project.conf" <<'CONF'
+disk_floor_gb 8
+CONF
+mkdir -p "$selfmount/scripts"
+for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
+  ln -s "$repo_root/scripts/$s" "$selfmount/scripts/$s"
+done
+ln -s ".." "$selfmount/.claude/cerebro"
+git_c -C "$selfmount" add -A
+git_c -C "$selfmount" commit -q -m "init"
+git_c -C "$selfmount" remote add origin "$work_dir/selfmount-origin.git"
+git init -q --bare "$work_dir/selfmount-origin.git"
+git_c -C "$selfmount" push -q -u origin main
+
+self_tree="$selfmount/.cerebro/worktrees/ah-self"
+git_c -C "$selfmount" worktree add -q "$self_tree" -b ah-self-branch
+echo work > "$self_tree/work.txt"
+git_c -C "$self_tree" add -A
+git_c -C "$self_tree" commit -q -m "not merged"
+age "$self_tree"
+
+out="$(cd "$selfmount" && PATH="$sub_stub_dir:$PATH" bash "$selfmount/scripts/prune-worktrees.sh" --dry-run 2>&1)"
+[ "$(echo "$out" | grep -c "ah-self")" = "1" ] \
+  || fail "a self-mounted cerebro enumerated its worktrees twice: $out"
+pass "a self-mounted cerebro is walked once, not twice"
+
 echo "all prune-worktrees assertions passed"

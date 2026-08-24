@@ -188,6 +188,18 @@ is_verifier_tree() {
   case "$2" in "$repo_root"/.cerebro/worktrees/*) return 0 ;; *) return 1 ;; esac
 }
 
+# Whether `.claude/cerebro` resolves to the consumer's own repository rather than to a submodule of
+# it. It does when cerebro serves its own fleet: the path is then a symlink back to the checkout
+# root, and walking "both" lists would walk one list twice — every tree enumerated once per owner,
+# the tallies inflated, and a tree already removed on the first pass reported as kept on the second.
+# Compared by git dir rather than by path, since the symlink makes the paths differ.
+submodule_is_the_consumer() {
+  local a b
+  a="$(git -C "$submodule_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  b="$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
+
 # The default branch of whichever repository owns a worktree — the consumer's for a consumer tree,
 # the submodule's for one of its own.
 owner_default_branch() {
@@ -397,7 +409,7 @@ sweep() {
   # consumer's fetch above returns from the whole sweep because without it nothing can be judged;
   # a cerebro remote that cannot be reached is no reason to leave the consumer's trees unswept.
   local sweep_submodule=false
-  if git -C "$submodule_root" rev-parse --git-dir >/dev/null 2>&1; then
+  if git -C "$submodule_root" rev-parse --git-dir >/dev/null 2>&1 && ! submodule_is_the_consumer; then
     git -C "$submodule_root" worktree prune 2>/dev/null || true
     if git -C "$submodule_root" fetch --quiet origin "$submodule_default_branch" 2>/dev/null; then
       sweep_submodule=true

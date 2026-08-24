@@ -4,7 +4,7 @@
 # must: the exit status is the whole answer, and a mistake can never read as "skip".
 #
 # The list it encodes is a decision - which paths no suite opens - and decisions are advisories
-# (scripts/lint check 11), not tests. What is under test here is the bash the script is: its exit
+# (scripts/lint check 12), not tests. What is under test here is the bash the script is: its exit
 # codes, its fail-safe on an empty diff, and that it names the path that reached the gate.
 #
 # No framework: plain bash, set -euo pipefail, exit non-zero on the first failed assertion. Run

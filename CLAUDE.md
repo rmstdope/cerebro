@@ -128,7 +128,7 @@ A pull request that touches only `docs/` (except `docs/agent-workflow.md`, which
 `README.md`, `LICENSE` or `models.conf.example` runs none of that: `scripts/ci-needed` is the one
 place that list lives, with the reason beside each entry, and the three required checks report
 *skipped*, which GitHub counts as green (cb-ypx). Anything else runs the whole matrix, and a push
-to `main` always does. `scripts/lint` check 11 advises when a suite starts reading a path on that
+to `main` always does. `scripts/lint` check 12 advises when a suite starts reading a path on that
 list.
 
 Sync symlinks into a consumer repo (run from that repo, not this one):

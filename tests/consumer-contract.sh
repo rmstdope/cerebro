@@ -99,4 +99,44 @@ grep -q "138" agents/architect.md \
 
 pass "Forge proposes traps entries against a calibrated bar"
 
+# --- 6. this repository is a consumer too, and carries what the fleet reads (cb-i3l.4) ---
+#
+# Cerebro is now mounted in itself (cb-i3l.1), so its root CLAUDE.md is BOTH documents: the harness
+# notes a contributor reads, and the consumer declaration an agent working here reads. The sections
+# below are the second half, and the Four Eye Principle is the load-bearing one — implement-bead
+# takes an implementer's standing approval to merge from that heading and from nowhere else, so an
+# implementer in this repository builds and then stops at the merge without it.
+
+for heading in "## Four Eye Principle" "## Work tracking" "## Development practices" \
+               "## Where the project declares its facts"; do
+  grep -qF "$heading" CLAUDE.md \
+    || fail "CLAUDE.md has no '$heading' — the fleet reads it here the way it does in any consumer"
+done
+pass "this repository's CLAUDE.md carries the sections the fleet reads"
+
+# The heading alone is not the contract: an empty section under it would satisfy a grep and tell an
+# implementer nothing about when it may merge.
+four_eyes="$(awk '/^## Four Eye Principle$/{f=1;next} /^## /{f=0} f' CLAUDE.md)"
+[[ "$(echo "$four_eyes" | grep -c .)" -ge 3 ]] \
+  || fail "the Four Eye Principle section is empty or nearly so"
+echo "$four_eyes" | grep -qi "green" \
+  || fail "the Four Eye Principle section never says a red check stops a merge"
+pass "the Four Eye Principle section says when an agent may merge, not just that it exists"
+
+# The declarations are files, not prose, and the section has to name the ones this project writes.
+facts="$(awk '/^## Where the project declares its facts$/{f=1;next} /^## /{f=0} f' CLAUDE.md)"
+for f in "cerebro-project.conf" "cerebro-roster" "cerebro-traps.md"; do
+  echo "$facts" | grep -q "$f" || fail "the facts section never names .claude/$f"
+done
+pass "the facts section names each file the fleet reads rather than guessing at"
+
+# Adding the consumer half must not cost the harness half: this file is the only place several of
+# these invariants are written down.
+for heading in "## Commands" "## The agent fleet these files describe" \
+               "### Invariants the agent files encode" "## emacs/cerebro.el" "## Gotchas"; do
+  grep -qF "$heading" CLAUDE.md \
+    || fail "CLAUDE.md lost '$heading' — this bead is an addition, not a rewrite"
+done
+pass "everything CLAUDE.md already documented about the harness is still here"
+
 echo "all consumer-contract assertions passed"

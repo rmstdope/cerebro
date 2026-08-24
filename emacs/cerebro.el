@@ -134,6 +134,7 @@ whatever the frame has left (was a constant of 20 for eighteen agents)."
   phase                                ; "build"|"gate"|"review"|"ci"|"rebase"|"merge" or nil
   phase-since                          ; ISO-8601 string, or nil
   wake-at                              ; ISO-8601 string when `waiting', else nil
+  sessions                             ; processes of this name in this consumer, or nil
   raw)                                 ; the state file's `state' string verbatim, or nil
 
 (defun cerebro--name-in-args-p (name args)
@@ -203,6 +204,74 @@ by hand, bypassing the launcher - is dropped rather than credited to this
 fleet.  That is the deliberate half of the trade: the scan can no longer
 prove such a session is ours, and claiming it is, is the defect being fixed."
   (seq-filter (lambda (a) (cerebro--root-in-args-p root (list a))) args))
+
+(defun cerebro--consumer-processes (procs root)
+  "Those of PROCS - (PID . ARGS) pairs - that belong to ROOT\='s fleet.
+
+`cerebro--consumer-args\=' over pairs, applying the same
+`cerebro--root-in-args-p\=' test, so a count of one name\='s sessions is a
+count within one consumer and never across two (cb-lzi)."
+  (seq-filter (lambda (proc) (cerebro--root-in-args-p root (list (cdr proc)))) procs))
+
+(defun cerebro--session-pids (name procs)
+  "The pids in PROCS - (PID . ARGS) pairs already narrowed to one consumer by
+`cerebro--consumer-processes\=' - whose ARGS name NAME.
+
+Ascending, so the echo line that prints them is stable from one keypress to
+the next.  `cerebro--name-in-args-p\=' is the whole-word `--name NAME\=' test
+and already ignores `--remote-control NAME\=', which every session also
+carries: counting by a plain substring search would count each session
+twice."
+  (sort (delq nil
+              (mapcar (lambda (proc)
+                        (and (cerebro--name-in-args-p name (list (cdr proc)))
+                             (car proc)))
+                      procs))
+        #'<))
+
+(defun cerebro--apply-session-counts (agents procs)
+  "Pure.  AGENTS with `sessions\=' set from PROCS, this consumer\='s (PID . ARGS).
+
+Applied after derivation rather than inside `cerebro--derive\=', the way
+`cerebro--apply-standby\=' is: `cerebro--derive\=' and its twenty tests take the
+args as a list of strings, and the count needs the pids beside them.  Adding
+the pairs alongside is cheaper than rewriting that signature for no gain."
+  (mapcar (lambda (agent)
+            (setf (cerebro-agent-sessions agent)
+                  (length (cerebro--session-pids (cerebro-agent-name agent) procs)))
+            agent)
+          agents))
+
+(defun cerebro--duplicated-p (agent)
+  "Non-nil when AGENT\='s name has more than one session in this fleet.
+
+nil `sessions\=' reads as one: the count is only set once
+`cerebro--apply-session-counts\=' has run, and a row nobody counted is not a
+duplicate."
+  (> (or (cerebro-agent-sessions agent) 1) 1))
+
+(defun cerebro--duplicate-message (name pids file-pid)
+  "Pure.  The echo line for NAME with PIDS when FILE-PID is what its state
+file names, or nil when the file names none of them.
+
+FILE-PID is listed first and tagged, because it is the session every other
+reading of the fleet is about - the row\='s state, its bead, its elapsed time
+all come from that file, so the other pid is the stray.  When the file names
+none of PIDS, nothing is tagged and the order is the ascending one
+`cerebro--session-pids\=' returns.
+
+There is deliberately no \"(this view)\" tag: the vterm buffer\='s process is
+the shell or `claude\=' depending on how it was exec\='d, and a stray started
+later is the one that wrote the file - so which session this Emacs holds
+cannot be established honestly."
+  (let* ((tagged (and file-pid (memq file-pid pids)))
+         (ordered (if tagged (cons file-pid (delq file-pid (copy-sequence pids))) pids)))
+    (format "%s has %d sessions in this fleet: %s — end the extra one from its own terminal"
+            name (length pids)
+            (mapconcat (lambda (pid)
+                         (format "pid %d%s" pid
+                                 (if (and tagged (= pid file-pid)) " (state file)" "")))
+                       ordered ", "))))
 
 (defun cerebro--derive-from-state (name role kind parsed owned-p)
   "Build one `cerebro-agent' for NAME from a live, parsed state file PARSED.
@@ -524,11 +593,16 @@ string when neither is."
   "TEXT in bold when EMPHASIZE, otherwise TEXT unchanged."
   (if emphasize (propertize text 'face 'bold) text))
 
-(defconst cerebro--column-minimums '(14 13 10 10 10)
+(defconst cerebro--column-minimums '(14 13 12 10 10)
   "The floor for each column: Agent, Role, State, Bead, Bead/Phase.
 
 This project\='s table, kept as the floor so a short roster still gets a
-readable one rather than columns that hug their own contents.")
+readable one rather than columns that hug their own contents.
+
+State is 12 rather than 10 because the longest thing it can say is
+`working ■ ×2\=' - a flagged, duplicated session (cb-63m) - and
+`tabulated-list-mode\=' truncates a cell at its column without saying so, so
+a floor short of the vocabulary makes the view lie rather than wrap.")
 
 (defun cerebro--column-widths (names roles bead-ids)
   "Pure.  The five column widths for a fleet of NAMES filling ROLES, showing
@@ -605,7 +679,14 @@ rather than pushing the rest of the row right - see ah-lyc."
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
          (state-col (cerebro--emphasize
                      (concat (cerebro--state-label agent)
-                             (if (and flagged in-flight) " ■" ""))
+                             (if (and flagged in-flight) " ■" "")
+                             ;; Flag first, then the count: the flag is about
+                             ;; the bead in flight, the count about the
+                             ;; session running it (cb-63m).
+                             (if (cerebro--duplicated-p agent)
+                                 (propertize (format " ×%d" (cerebro-agent-sessions agent))
+                                             'face 'warning)
+                               ""))
                      attention))
          (bead-col (cerebro--emphasize
                     (cond (external "—")
@@ -1512,14 +1593,17 @@ reach `launch\=' and `k\=' must have something to say."
   "What `s' should do for AGENT, given OWNED session names.
 
 One of `launch' (start a dead agent), `already-up' (an owned session is
-already running) or `external' (a live session exists outside Emacs -
-refuse rather than launch a second one).
+already running), `external' (a live session exists outside Emacs -
+refuse rather than launch a second one) or `duplicate' (this name already has
+more than one session in this fleet - every other answer would act on an
+ambiguity, so it is checked ahead of all of them, cb-63m).
 
 Ownership is checked *before* the derived state, not after: `cerebro--session'
 is the one place liveness is decided now, so no gap in how a state is
 derived can start a second session over one this Emacs holds (ah-u3i's
 `*fleet: <name>*<2>' double session)."
   (cond
+   ((cerebro--duplicated-p agent) 'duplicate)
    ((member (cerebro-agent-name agent) owned) 'already-up)
    ((not (cerebro--alive-p agent)) 'launch)
    (t 'external)))
@@ -1534,9 +1618,10 @@ definition (ah-kgc): the navigator is saying it should run."
 (defun cerebro--autostart-action (agent owned flagged)
   "What autostart should do for AGENT, given OWNED session names and FLAGGED.
 
-One of `launch\=', `launch-clearing-flag\=', `already-up\=' or `external\=' -
-`cerebro--start-action\=''s three answers, with the flag folded into the
-first.
+One of `launch\=', `launch-clearing-flag\=', `already-up\=', `external\=' or
+`duplicate\=' - `cerebro--start-action\=''s answers, with the flag folded into
+the first.  A duplicated name is never launched by autostart either; the
+answer is inherited rather than repeated.
 
 FLAGGED is whether a stop flag exists for AGENT.  Unlike `s\='
 (`cerebro--start-clears-flag-p\=', implementers only), autostart clears a
@@ -1605,9 +1690,15 @@ role - there is no process to kill, so `k' means the other half of what it
 has always meant for an interactive role: stay down, cb-5yr) or `dead'
 (refuse - nothing to kill).
 
+`duplicate' (this name has more than one session in this fleet) is checked
+ahead of everything, `disarm' included: `k' kills the session this Emacs
+holds, which with two of them need not be the one the navigator is looking
+at, and `disarm' acts on the name rather than on either (cb-63m).
+
 `disarm' is checked ahead of `dead' because a standby row is not alive
 either, and \"nothing to kill\" is the one thing it does not mean."
   (cond
+   ((cerebro--duplicated-p agent) 'duplicate)
    ((eq (cerebro-agent-state agent) 'standby) 'disarm)
    ((not (cerebro--alive-p agent)) 'dead)
    ((not (member (cerebro-agent-name agent) owned)) 'external)
@@ -1618,6 +1709,9 @@ either, and \"nothing to kill\" is the one thing it does not mean."
 
 (defun cerebro--finish-action (agent flag-set)
   "What `f' should do for AGENT given FLAG-SET.
+
+`duplicate' comes first for either kind: a stop flag is per name, and two
+sessions of one name would both read the one flag (cb-63m).
 
 For an interactive role, `f' means what it has always meant - no further
 work - and for a role that runs one pass at a time (cb-5yr) that is:
@@ -1639,6 +1733,7 @@ nothing is in flight, so the flag means *stop now* rather than *finish*,
 ah-ymn) or `write' (a bead is in flight - tell it to finish, and it stops
 once that bead is done)."
   (cond
+   ((cerebro--duplicated-p agent) 'duplicate)
    ((not (eq (cerebro-agent-kind agent) 'implementer))
     (cond ((eq (cerebro-agent-state agent) 'standby) 'standby)
           ((not (cerebro--alive-p agent)) 'dead)
@@ -2077,8 +2172,8 @@ not an identity; the launcher passes `--name <Name>' to every session
 that this pid is still the one the file was written about.
 
 Reads only the named pid's args, not the whole process list - this is asked
-once per agent on every refresh, where `cerebro--system-args' is a scan the
-fleet view deliberately caches.
+once per agent on every refresh, where `cerebro--system-processes' is a scan
+the fleet view deliberately caches.
 
 ROOT is the third discriminator (cb-lzi): a recycled pid can land on a
 same-named session of ANOTHER consumer - every consumer on the built-in
@@ -2091,14 +2186,19 @@ the args of one pid."
   (let ((args (and pid (alist-get 'args (process-attributes pid)))))
     (and args (cerebro--session-args-p args name root))))
 
-(defun cerebro--system-args ()
-  "The command-line args string of every system process, as a list.
+(defun cerebro--system-processes ()
+  "Every system process as (PID . ARGS), ARGS its command line string.
 
 Every process on the machine, deliberately: which of them are this
-consumer\='s fleet is a pure question, answered by `cerebro--consumer-args\='
-at the call site rather than here."
+consumer\='s fleet is a pure question, answered by
+`cerebro--consumer-processes\=' at the call site rather than here.  The pid
+travels beside the args because a second session of one name is a count of
+processes, and the echo line that reports one names their pids
+\(`cerebro--session-pids\=', cb-63m)."
   (delq nil
-        (mapcar (lambda (pid) (alist-get 'args (process-attributes pid)))
+        (mapcar (lambda (pid)
+                  (let ((args (alist-get 'args (process-attributes pid))))
+                    (and args (cons pid args))))
                 (list-system-processes))))
 
 (defvar cerebro-system-scan-seconds 30
@@ -2106,20 +2206,33 @@ at the call site rather than here."
 outside Emacs. A rare event, polled at the rate of a state file; the scan
 itself is 75 ms of blocking work and was on the five-second tick.")
 
-(defvar-local cerebro--system-args-cache nil
-  "(ARGS . SCANNED-AT) from the last scan, per fleet buffer.")
+(defvar-local cerebro--system-processes-cache nil
+  "(PROCESSES . SCANNED-AT) from the last scan, per fleet buffer.")
 
-(defun cerebro--cached-system-args (&optional now)
-  "`cerebro--system-args', rescanned only when `cerebro-system-scan-seconds'
+(defun cerebro--cached-system-processes (&optional now)
+  "`cerebro--system-processes', rescanned only when `cerebro-system-scan-seconds'
 have passed. NOW is for tests."
   (let ((now (or now (float-time))))
-    (if (and cerebro--system-args-cache
-             (not (cerebro--due-p (cdr cerebro--system-args-cache)
+    (if (and cerebro--system-processes-cache
+             (not (cerebro--due-p (cdr cerebro--system-processes-cache)
                                   cerebro-system-scan-seconds now)))
-        (car cerebro--system-args-cache)
-      (let ((args (cerebro--system-args)))
-        (setq cerebro--system-args-cache (cons args now))
-        args))))
+        (car cerebro--system-processes-cache)
+      (let ((procs (cerebro--system-processes)))
+        (setq cerebro--system-processes-cache (cons procs now))
+        procs))))
+
+(defun cerebro--duplicate-message-for (agent repo-root)
+  "The `cerebro--duplicate-message\=' for AGENT, gathering what it needs.
+
+Impure glue and nothing else: the pids from this consumer\='s scan and the
+one the state file names, handed to the pure formatter."
+  (let* ((name (cerebro-agent-name agent))
+         (pids (cerebro--session-pids
+                name (cerebro--consumer-processes (cerebro--cached-system-processes)
+                                                  repo-root)))
+         (file-pid (alist-get 'pid (cerebro--read-state-file
+                                    (cerebro--state-file-path repo-root name)))))
+    (cerebro--duplicate-message name pids file-pid)))
 
 (defvar cerebro--sessions nil
   "The sessions this Emacs started: an alist of (NAME . BUFFER), one per agent.
@@ -3579,7 +3692,8 @@ is where that is said."
          ;; Machine-wide scan, narrowed to this consumer's own sessions: another
          ;; checkout's fleet has the same names, and a name alone is not an
          ;; identity across repositories (see `cerebro--consumer-args').
-         (args (cerebro--consumer-args (cerebro--cached-system-args) repo-root))
+         (procs (cerebro--consumer-processes (cerebro--cached-system-processes) repo-root))
+         (args (mapcar #'cdr procs))
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states
@@ -3590,6 +3704,10 @@ is where that is said."
     ;; file the derive reads was deleted when the view ended the session, so
     ;; `cerebro--armed' is the only thing that can say a role is coming back.
     (setq agents (cerebro--apply-standby agents cerebro--armed))
+    ;; And the session count, for the same reason: `cerebro--derive' is given
+    ;; the args as strings, and a duplicate is a fact about the pids beside
+    ;; them (cb-63m).
+    (setq agents (cerebro--apply-session-counts agents procs))
     (setq cerebro--agents agents)
     ;; The table is sized to what is in front of it, every revert: a roster
     ;; gains an agent, a bead id gets deeper, and the columns follow (ah-qled.9).
@@ -3817,6 +3935,7 @@ seconds earlier would be a worse surprise than announcing it."
            (when clears-flag
              (message "%s: cleared a stale stop flag" name)))
           ('already-up (message "%s is already up" name))
+          ('duplicate (message "%s" (cerebro--duplicate-message-for agent repo-root)))
           ('external (message "%s is running outside Emacs" name)))))))
 
 (defun cerebro--kill-session-buffer (agent repo-root)
@@ -3870,6 +3989,8 @@ kept buffer and start nothing more under that name until `s' says so
            (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
            (cerebro--forget-parked (cerebro-agent-name agent))
            (revert-buffer)))
+        ('duplicate
+         (message "%s" (cerebro--duplicate-message-for agent repo-root)))
         ('external
          (message "%s is running outside Emacs - stop it from its own terminal"
                   (cerebro-agent-name agent)))
@@ -3969,6 +4090,8 @@ refuse rather than write one that would sit unread (ah-ymn)."
            (cerebro--write-stop-flag repo-root name)
            (revert-buffer)
            (message "told %s to finish its pass - it stays down until you press s" name))
+          ('duplicate
+           (message "%s" (cerebro--duplicate-message-for agent repo-root)))
           ('standby
            (message "%s is on standby - press k to disarm it, or s to start it now" name))
           ('dead (message "%s is not running - nothing to finish" name))

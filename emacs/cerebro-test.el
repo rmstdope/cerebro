@@ -127,6 +127,54 @@ test body cannot compute this itself.")
   (let ((args (list cerebro-test--this-consumer-args)))
     (should (equal (cerebro--consumer-args args "/Users/x/repos/cerebro/") args))))
 
+(defconst cerebro-test--beast-args
+  "claude --agent planner --name Beast --settings /Users/x/repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json"
+  "Another name's session of the fleet rooted at /Users/x/repos/cerebro.")
+
+(defconst cerebro-test--duplicate-procs
+  (list (cons 70687 cerebro-test--this-consumer-args)
+        (cons 32075 cerebro-test--this-consumer-args)
+        (cons 47482 cerebro-test--other-consumer-args)
+        (cons 70688 cerebro-test--beast-args))
+  "A machine's processes as (PID . ARGS): two Xaviers here, one Xavier in
+another consumer, one Beast here.")
+
+(ert-deftest cerebro-test/session-pids-counts-this-consumers-sessions-of-one-name ()
+  "Two sessions of one name is a count, not a yes/no - and another consumer's
+same-named session is not one of them (cb-lzi)."
+  (let ((mine (cerebro--consumer-processes cerebro-test--duplicate-procs
+                                           "/Users/x/repos/cerebro")))
+    (should (equal (cerebro--session-pids "Xavier" mine) '(32075 70687)))
+    (should (equal (cerebro--session-pids "Beast" mine) '(70688)))
+    (should (equal (cerebro--session-pids "Cerebro" mine) nil))
+    ;; The other consumer's fleet counts its own Xavier and none of ours.
+    (should (equal (cerebro--session-pids
+                    "Xavier"
+                    (cerebro--consumer-processes cerebro-test--duplicate-procs
+                                                 "/Users/x/repos/atlantis-hud"))
+                   '(47482)))))
+
+(ert-deftest cerebro-test/apply-session-counts-marks-a-name-with-two-sessions ()
+  (let* ((procs (cerebro--consumer-processes cerebro-test--duplicate-procs
+                                             "/Users/x/repos/cerebro"))
+         (agents (cerebro--derive nil cerebro-test--interactive nil
+                                  #'cerebro-test--never-alive
+                                  (mapcar #'cdr procs) nil))
+         (counted (cerebro--apply-session-counts agents procs))
+         (by-name (lambda (name)
+                    (cl-find name counted :key #'cerebro-agent-name :test #'equal))))
+    (should (= (cerebro-agent-sessions (funcall by-name "Xavier")) 2))
+    (should (= (cerebro-agent-sessions (funcall by-name "Cerebro")) 0))
+    (should (cerebro--duplicated-p (funcall by-name "Xavier")))
+    (should-not (cerebro--duplicated-p (funcall by-name "Cerebro")))
+    (should-not (cerebro--duplicated-p (funcall by-name "Moira")))))
+
+(ert-deftest cerebro-test/duplicated-p-reads-an-uncounted-agent-as-one-session ()
+  "`sessions\=' is nil until `cerebro--apply-session-counts\=' has run, and a row
+that was never counted is not a duplicate."
+  (should-not (cerebro--duplicated-p
+               (cerebro-test--agent "Xavier" "planner" 'interactive 'up))))
+
 (ert-deftest cerebro-test/one-rule-takes-a-root-spelled-with-a-tilde ()
   "A root `locate-dominating-file\=' abbreviated still matches an absolute command line.
 
@@ -471,7 +519,7 @@ reading once the row has caught the eye (see ah-axj)."
              (lambda (_repo-root) cerebro-test--fleet-fixture))
             ((symbol-function 'cerebro--gather-states)
              (lambda (_repo-root _roster) nil))
-            ((symbol-function 'cerebro--system-args) (lambda () nil))
+            ((symbol-function 'cerebro--system-processes) (lambda () nil))
             ((symbol-function 'cerebro--owned) (lambda () nil)))
     (unwind-protect
         (progn
@@ -503,7 +551,7 @@ render path loads."
                ((symbol-function 'cerebro--fleet)
                 (lambda (_repo-root) cerebro-test--fleet-fixture))
                ((symbol-function 'cerebro--gather-states) (lambda (_r _roster) nil))
-               ((symbol-function 'cerebro--system-args) (lambda () nil))
+               ((symbol-function 'cerebro--system-processes) (lambda () nil))
                ((symbol-function 'cerebro--owned) (lambda () nil))
                ((symbol-function 'cerebro--ensure-prune-watcher) (lambda (&rest _) nil))
                ((symbol-function 'cerebro--autostart-names)
@@ -700,6 +748,73 @@ clears a stop flag for every kind - the navigator's decision (cb-0r6)."
   (should (equal (cerebro--autostart-message
                    '(("Xavier" . already-up) ("Psylocke" . external)))
                   "cerebro: nothing to autostart; Xavier and Psylocke are already up")))
+
+(defun cerebro-test--duplicated-agent (name role kind state &optional external bead phase)
+  "An agent as `cerebro-test--agent\=' builds one, with two sessions counted."
+  (let ((agent (cerebro-test--agent name role kind state external bead phase)))
+    (setf (cerebro-agent-sessions agent) 2)
+    agent))
+
+(ert-deftest cerebro-test/start-action-refuses-a-duplicated-name ()
+  "With two sessions of one name, `s\=' would start a third over an ambiguity."
+  (should (eq (cerebro--start-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'dead) nil)
+              'duplicate))
+  ;; Ahead of `already-up' and `external' too - the answer is the same whichever
+  ;; of the two sessions this Emacs happens to hold.
+  (should (eq (cerebro--start-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'up)
+               '("Xavier"))
+              'duplicate))
+  (should (eq (cerebro--start-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'standby) nil)
+              'duplicate)))
+
+(ert-deftest cerebro-test/kill-action-refuses-a-duplicated-name ()
+  "`k\=' would kill whichever session Emacs holds, which is not necessarily the
+one the navigator can see - and it beats `disarm\=', which acts on the name."
+  (should (eq (cerebro--kill-action
+               (cerebro-test--duplicated-agent "Cyclops" "implementer" 'implementer 'idle)
+               '("Cyclops"))
+              'duplicate))
+  (should (eq (cerebro--kill-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'standby) nil)
+              'duplicate)))
+
+(ert-deftest cerebro-test/finish-action-refuses-a-duplicated-name ()
+  "A stop flag is per name, and two sessions would both read the one flag."
+  (should (eq (cerebro--finish-action
+               (cerebro-test--duplicated-agent "Cyclops" "implementer" 'implementer
+                                               'working nil "cb-63m")
+               nil)
+              'duplicate))
+  ;; Ahead of `offer-clear', which is otherwise checked before every state.
+  (should (eq (cerebro--finish-action
+               (cerebro-test--duplicated-agent "Cyclops" "implementer" 'implementer
+                                               'working nil "cb-63m")
+               t)
+              'duplicate))
+  (should (eq (cerebro--finish-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'up) nil)
+              'duplicate)))
+
+(ert-deftest cerebro-test/autostart-never-launches-a-duplicated-name ()
+  (should (eq (cerebro--autostart-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'dead) nil t)
+              'duplicate)))
+
+(ert-deftest cerebro-test/duplicate-message-names-every-pid-and-tags-the-state-files ()
+  (should (equal (cerebro--duplicate-message "Xavier" '(32075 70687) 70687)
+                 (concat "Xavier has 2 sessions in this fleet: pid 70687 (state file), "
+                         "pid 32075 — end the extra one from its own terminal"))))
+
+(ert-deftest cerebro-test/duplicate-message-without-a-file-pid-tags-nothing ()
+  "No state file, or one naming a pid that is not among them: every pid is
+untagged and the order is ascending."
+  (let ((expected (concat "Xavier has 2 sessions in this fleet: pid 32075, pid 70687"
+                          " — end the extra one from its own terminal")))
+    (should (equal (cerebro--duplicate-message "Xavier" '(32075 70687) nil) expected))
+    (should (equal (cerebro--duplicate-message "Xavier" '(32075 70687) 99) expected))))
 
 (ert-deftest cerebro-test/start-action-launches-dead ()
   (should (eq (cerebro--start-action
@@ -3408,6 +3523,60 @@ the new `'unknown\=' bucket alongside a typo."
          (agent (car agents)))
     (should (eq (cerebro-agent-state agent) 'idle))))
 
+(ert-deftest cerebro-test/entry-state-column-shows-a-session-count-past-one ()
+  "A name with two sessions in this fleet carries a yellow \=` ×N\=' after the
+state, flag first and count second (cb-63m).  One session, or a row nobody
+counted, shows nothing."
+  (let ((now (current-time))
+        (counted (lambda (agent n)
+                   (setf (cerebro-agent-sessions agent) n)
+                   agent)))
+    (should (equal (aref (cadr (cerebro--entry
+                                (funcall counted
+                                         (cerebro-test--agent "Xavier" "planner" 'interactive
+                                                              'working nil "cb-63m" "build")
+                                         2)
+                                now))
+                         2)
+                   "build ×2"))
+    (should (equal (aref (cadr (cerebro--entry
+                                (funcall counted
+                                         (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                              'working nil "cb-63m" "ci")
+                                         2)
+                                now t))
+                         2)
+                   "ci ■ ×2"))
+    (should (equal (aref (cadr (cerebro--entry
+                                (funcall counted
+                                         (cerebro-test--agent "Beast" "planner" 'interactive 'up)
+                                         3)
+                                now))
+                         2)
+                   "up ×3"))
+    (should (equal (aref (cadr (cerebro--entry
+                                (funcall counted
+                                         (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                              'working nil "cb-63m" "build")
+                                         1)
+                                now))
+                         2)
+                   "build"))
+    (should (equal (aref (cadr (cerebro--entry
+                                (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                     'working nil "cb-63m" "build")
+                                now))
+                         2)
+                   "build"))
+    ;; The marker is the warning face, so it reads as something to act on.
+    (let ((cell (aref (cadr (cerebro--entry
+                             (funcall counted
+                                      (cerebro-test--agent "Xavier" "planner" 'interactive 'up)
+                                      2)
+                             now))
+                      2)))
+      (should (eq (get-text-property (1- (length cell)) 'face cell) 'warning)))))
+
 (ert-deftest cerebro-test/entry-state-column-shows-the-phase ()
   (let ((now (current-time)))
     (should (equal (aref (cadr (cerebro--entry
@@ -3682,19 +3851,22 @@ navigator who redraws by hand every twenty seconds would never see one."
 ;; ---------------------------------------------------------------------------
 ;; ah-9dv: the process scan runs on its own, slower cadence
 
-(ert-deftest cerebro-test/system-args-are-rescanned-every-thirty-seconds-not-five ()
+(ert-deftest cerebro-test/system-processes-are-rescanned-every-thirty-seconds-not-five ()
   "The scan used to be on the five-second tick; it now keeps its own
-thirty-second cadence, the same as the bead panel's."
-  (let ((calls 0) (buffer (generate-new-buffer " *cerebro-test-system-args*")))
+thirty-second cadence, the same as the bead panel's.  It returns (PID . ARGS)
+pairs since cb-63m - there is no strings-only reader left, `cerebro--revert'
+taking `(mapcar #\='cdr procs)' where it needs them - and the cadence had to
+survive that change."
+  (let ((calls 0) (buffer (generate-new-buffer " *cerebro-test-system-processes*")))
     (unwind-protect
-        (cl-letf (((symbol-function 'cerebro--system-args)
-                   (lambda () (cl-incf calls) '("fake args"))))
+        (cl-letf (((symbol-function 'cerebro--system-processes)
+                   (lambda () (cl-incf calls) '((1 . "fake args")))))
           (with-current-buffer buffer
-            (cerebro--cached-system-args 1000.0)
+            (cerebro--cached-system-processes 1000.0)
             (should (= calls 1))
-            (cerebro--cached-system-args 1005.0)
+            (cerebro--cached-system-processes 1005.0)
             (should (= calls 1))
-            (cerebro--cached-system-args 1031.0)
+            (cerebro--cached-system-processes 1031.0)
             (should (= calls 2))))
       (kill-buffer buffer))))
 
@@ -4261,13 +4433,17 @@ where one is given, most-specific-first, the way `models.conf' resolves."
 (ert-deftest cerebro-test/column-widths-match-todays-table-for-todays-fleet ()
   "Computed, not configured - and for this fleet the computation has to
 produce exactly the table that is there today, or the promotion pass has
-changed behaviour."
+changed behaviour.
+
+The State floor is 12 rather than 10 since cb-63m: `working ■ ×2\=' is twelve
+characters, and `tabulated-list-mode\=' truncates a cell at its column
+silently - at 10 the marker would be cut off while this test still passed."
   (should (equal (cerebro--column-widths
                   '("Xavier" "Cerebro" "Psylocke" "Wolverine")
                   '("planner" "orchestrator" "verifier" "implementer")
                   '("ah-qled.9" "ah-t65"))
-                 '(14 13 10 10 10)))
-  (should (= (cerebro--width-for '(14 13 10 10 10)) 59)))
+                 '(14 13 12 10 10)))
+  (should (= (cerebro--width-for '(14 13 12 10 10)) 61)))
 
 (ert-deftest cerebro-test/column-widths-grow-for-a-long-name-or-a-long-id ()
   "A consumer's names and ids are not this project's. The Bead column is 10
@@ -5181,7 +5357,7 @@ derive, and the label the For column shows, computed once for the buffer."
             ((symbol-function 'cerebro--fleet)
              (lambda (_) '(("Psylocke" "verifier" interactive) ("Rogue" "implementer" implementer))))
             ((symbol-function 'cerebro--gather-states) (lambda (&rest _) nil))
-            ((symbol-function 'cerebro--cached-system-args) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--cached-system-processes) (lambda (&rest _) nil))
             ((symbol-function 'cerebro--owned) (lambda () nil))
             ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
             ((symbol-function 'cerebro--beads-panel-buffer) (lambda () nil))

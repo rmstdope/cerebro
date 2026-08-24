@@ -22,6 +22,17 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
+# The fake sessions the duplicate-refusal cases start, killed by the EXIT trap the library
+# installs - it calls `suite_cleanup' first, before removing anything, so a failed assertion
+# leaves none of them running (`fail' exits, so per-case cleanup would not run). Never a second
+# `trap ... EXIT': bash keeps one per signal, and a later one would silently replace the library's.
+strays=()
+
+suite_cleanup() {
+  local p
+  for p in ${strays+"${strays[@]}"}; do kill "$p" 2>/dev/null || true; done
+}
+
 # A stub `claude` on PATH ahead of the real one, so a launcher's `exec claude ...` runs this instead
 # of starting a real session. It prints the environment and args it was handed, which is exactly what
 # these assertions need and nothing a real session would do.
@@ -759,5 +770,61 @@ set -e
 echo "$err" | grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" \
   || fail "self-consumer roster at the old path: expected the mv line, got: $err"
 pass "self-consumer roster: the retired .claude/ path refuses too"
+
+# --- launch refuses a name whose session is already up in this fleet (cb-63m) ---
+#
+# Two sessions of one name is the one thing the fleet view cannot see: the newer one overwrites the
+# state file with its own pid and the older disappears from every reading. Only the view's `s'
+# refused a second session, and only for a name it could already see - the terminal was the way
+# round it. The refusal belongs where the name is known, which is here.
+#
+# The fake session is the recipe tests/agent-alive.sh uses: a script file (never `bash -c', whose
+# implicit exec would drop `--name' from the args) carrying the `--settings' path that proves which
+# consumer's fleet it belongs to.
+# `sed -n 1p' rather than `head -n 1': head closes the pipe on its first line, and under
+# `set -o pipefail' roster's EPIPE would kill this suite rather than name an implementer.
+dup_name="$("$fixture_scripts/roster" --implementers | sed -n 1p)"
+[[ -n "$dup_name" ]] || fail "duplicate-launch: the fixture roster names no implementer"
+
+printf '#!/usr/bin/env bash\nsleep 30\n' > "$fixture_dir/fake-session"
+chmod +x "$fixture_dir/fake-session"
+# agent-alive resolves the --settings directory physically, so hooks/ must exist.
+mkdir -p "$fixture_dir/.claude/cerebro/hooks"
+bash "$fixture_dir/fake-session" --name "$dup_name" \
+  --settings "$fixture_dir/.claude/cerebro/scripts/../hooks/question-state.settings.json" &
+dup_pid=$!
+# The `sleep' is a child of that bash rather than the bash itself; both are registered, or the
+# child outlives a kill of the wrapper for the rest of its thirty seconds.
+strays+=("$dup_pid")
+for child in $(pgrep -P "$dup_pid" 2>/dev/null || true); do strays+=("$child"); done
+
+mkdir -p "$fixture_dir/.cerebro/state"
+printf '{"state":"working","pid":%s}\n' "$dup_pid" \
+  > "$fixture_dir/.cerebro/state/$dup_name.state.json"
+
+set +e
+dup_out="$(run_launcher launch "$dup_name" 2>&1)"
+dup_status=$?
+set -e
+[[ $dup_status -eq 2 ]] || fail "duplicate-launch: expected exit 2, got $dup_status: $dup_out"
+echo "$dup_out" | grep -q "is already running in this fleet (pid $dup_pid); end it first" \
+  || fail "duplicate-launch: expected the refusal naming the pid, got: $dup_out"
+echo "$dup_out" | grep -q '^ARG:' \
+  && fail "duplicate-launch: the stub claude ran anyway: $dup_out"
+pass "launch refuses a name whose session is already up in this fleet"
+
+# --- and the refusal is agent-alive's rule, not a bare pid check ---
+#
+# $$ is this suite: a live pid whose args carry no `--name'. A launcher that only asked whether the
+# pid existed would refuse here too, and every state file left behind by a killed session would
+# make its name unlaunchable.
+printf '{"state":"working","pid":%s}\n' "$$" \
+  > "$fixture_dir/.cerebro/state/$dup_name.state.json"
+live_out="$(run_launcher launch "$dup_name")"
+echo "$live_out" | grep -q '^ARG:--name$' \
+  || fail "recycled-pid launch: expected a normal launch, got: $live_out"
+pass "launch is not fooled by a live pid that is not that name's session"
+
+rm -f "$fixture_dir/.cerebro/state/$dup_name.state.json"
 
 echo "all launcher tests passed"

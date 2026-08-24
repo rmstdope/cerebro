@@ -302,20 +302,8 @@ pass "prune-worktrees.sh sweeps a consumer whose worktrees hold nothing to recla
 # submodule, which answers for a submodule and nothing else. An arbitrarily-PLACED copy - vendored
 # by hand, outside the standard mount - is still unsupported, and scripts/consumer-root says so.
 # (The stub this replaced sketched a plain `mkdir -p vendor/cerebro'; that is the unsupported case.)
-cerebro_src="$work_dir/cerebro-src"
-mkdir -p "$cerebro_src"
-for d in scripts agents skills hooks; do
-  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$cerebro_src/"
-done
-git init -q "$cerebro_src"
-git_q -C "$cerebro_src" add -A
-git_q -C "$cerebro_src" commit -q -m "cerebro"
-
-alt="$work_dir/alt"
-git init -q -b "$branch" "$alt"
-git_q -C "$alt" commit -q --allow-empty -m init
-git_q -C "$alt" -c protocol.file.allow=always submodule add -q "$cerebro_src" vendor/cerebro
-alt_root="$(cd "$alt" && pwd -P)"
+alt="$(consumer_with_submodule alt vendor/cerebro --branch "$branch")"
+alt_root="$alt"
 alt_scripts="$alt/vendor/cerebro/scripts"
 
 run_alt() { PATH="$stub_dir:$PATH" bash "$alt_scripts/$@"; }
@@ -326,8 +314,6 @@ run_alt() { PATH="$stub_dir:$PATH" bash "$alt_scripts/$@"; }
   || fail "an alternative mount point --shared: got $(run_alt consumer-root --shared)"
 pass "consumer-root resolves a consumer that vendors cerebro at vendor/cerebro"
 
-mkdir -p "$alt/.claude"
-mkdir -p "$alt/.cerebro"
 printf 'project_name Vendored\ngate_fast true\n' > "$alt/.cerebro/project.conf"
 [[ "$(run_alt project-conf project_name 2>/dev/null)" == "Vendored" ]] \
   || fail "project-conf from an alternative mount: got $(run_alt project-conf project_name 2>/dev/null)"

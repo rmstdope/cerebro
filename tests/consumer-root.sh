@@ -82,21 +82,8 @@ pass "refuses when there is no consumer above .claude/cerebro/scripts"
 #
 # A REAL submodule, not a copied directory: the probe answers for a submodule and nothing else, so
 # an arbitrarily-placed non-submodule copy stays unsupported (see the header of scripts/consumer-root).
-cerebro_src="$work_dir/cerebro-src"
-mkdir -p "$cerebro_src/scripts"
-cp "$repo_root/scripts/consumer-root" "$cerebro_src/scripts/consumer-root"
-cp "$repo_root/scripts/roster" "$cerebro_src/scripts/roster"
-git init -q "$cerebro_src"
-git -C "$cerebro_src" -c user.name=test -c user.email=test@example.com add -A
-git -C "$cerebro_src" -c user.name=test -c user.email=test@example.com commit -q -m "cerebro"
-
-alt="$work_dir/alt"
-git init -q "$alt"
-git -C "$alt" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-git -C "$alt" -c user.name=test -c user.email=test@example.com \
-  -c protocol.file.allow=always submodule add -q "$cerebro_src" vendor/cerebro
-
-alt_root="$(cd "$alt" && pwd -P)"
+alt="$(consumer_with_submodule alt vendor/cerebro)"
+alt_root="$alt"
 alt_out="$("$alt/vendor/cerebro/scripts/consumer-root")"
 [[ "$alt_out" == "$alt_root" ]] || fail "alternative mount: expected $alt_root, got $alt_out"
 pass "a submodule mounted at vendor/cerebro resolves its consumer"

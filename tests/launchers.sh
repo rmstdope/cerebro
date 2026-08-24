@@ -413,21 +413,7 @@ pass "roster: the new path wins when both exist"
 # roster too, from a SECOND candidate: `<superproject>/.cerebro/roster.conf', tried only when git
 # is on PATH and skipped silently when it is not - which is what keeps the narrowed-PATH guarantee
 # above true. Candidate order matters: the arithmetic first, so the standard mount never needs git.
-alt_cerebro="$(mktemp -d)/cerebro-src"
-mkdir -p "$alt_cerebro/scripts"
-cp "$repo_root/scripts/roster" "$alt_cerebro/scripts/roster"
-# roster asks consumer-root for the root (cb-akc), so the sibling has to be here too - every
-# fixture links or copies scripts one by one, and a missing one reads as "no consumer file".
-cp "$repo_root/scripts/consumer-root" "$alt_cerebro/scripts/consumer-root"
-git init -q "$alt_cerebro"
-git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com add -A
-git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com commit -q -m cerebro
-
-alt_consumer="$(mktemp -d)/alt"
-git init -q "$alt_consumer"
-git -C "$alt_consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-git -C "$alt_consumer" -c user.name=test -c user.email=test@example.com \
-  -c protocol.file.allow=always submodule add -q "$alt_cerebro" vendor/cerebro
+alt_consumer="$(consumer_with_submodule alt vendor/cerebro)"
 alt_roster_at="$alt_consumer/vendor/cerebro/scripts/roster"
 
 [[ "$("$alt_roster_at")" == "$roster_out" ]] \

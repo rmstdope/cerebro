@@ -68,21 +68,10 @@ advisory() {
   status=1
 }
 
-# Every file an agent session is given, and only those. `docs/cerebro-jobs.md' and
-# `docs/decisions.md' are cerebro-side records of which bead decided what: they exist precisely so
-# the provenance has somewhere to live that no session carries. `skills/release-notes' is exempt in
-# full - its job is teaching someone to write good notes, and a concrete worked example teaches
-# better than an abstract one.
-prose_files() {
-  { find agents skills -name '*.md' ! -path 'skills/release-notes/*'
-    echo docs/agent-workflow.md
-  } | sort
-}
-
 # A bead id from either board this repository's history is written in: the project cerebro was
-# extracted from used `ah-', cerebro's own board uses `cb-'. Written once and used by check 1, by
-# the guard on the provenance file, and by `--plan', so the three cannot disagree about what an id
-# looks like. The boundaries are spelled as character classes rather than `\b': the same string is
+# extracted from used `ah-', cerebro's own board uses `cb-'. Written once and used by the rule
+# `bead-id' and by check 1's guard on the provenance file, so the two cannot disagree about what an
+# id looks like. The boundaries are spelled as character classes rather than `\b': the same string is
 # handed to awk, where GNU awk reads `\b' as a backspace and BSD awk does not know it at all.
 bead_id_re='(^|[^A-Za-z0-9_-])(ah|cb)-[a-z0-9]{3,}([.][0-9]+)*([^A-Za-z0-9_-]|$)'
 

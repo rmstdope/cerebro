@@ -2137,35 +2137,47 @@ the args of one pid."
   (let ((args (and pid (alist-get 'args (process-attributes pid)))))
     (and args (cerebro--session-args-p args name root))))
 
+(defun cerebro--system-processes ()
+  "Every system process as (PID . ARGS), ARGS its command line string.
+
+Every process on the machine, deliberately: which of them are this
+consumer\='s fleet is a pure question, answered by
+`cerebro--consumer-processes\=' at the call site rather than here.  The pid
+travels beside the args because a second session of one name is a count of
+processes, and the echo line that reports one names their pids
+\(`cerebro--session-pids\=', cb-63m)."
+  (delq nil
+        (mapcar (lambda (pid)
+                  (let ((args (alist-get 'args (process-attributes pid))))
+                    (and args (cons pid args))))
+                (list-system-processes))))
+
 (defun cerebro--system-args ()
   "The command-line args string of every system process, as a list.
 
-Every process on the machine, deliberately: which of them are this
-consumer\='s fleet is a pure question, answered by `cerebro--consumer-args\='
-at the call site rather than here."
-  (delq nil
-        (mapcar (lambda (pid) (alist-get 'args (process-attributes pid)))
-                (list-system-processes))))
+`cerebro--system-processes\=' without the pids, for the callers that only ask
+which sessions exist rather than how many."
+  (mapcar #'cdr (cerebro--system-processes)))
 
 (defvar cerebro-system-scan-seconds 30
   "How often the process list is scanned for interactive agents started
 outside Emacs. A rare event, polled at the rate of a state file; the scan
 itself is 75 ms of blocking work and was on the five-second tick.")
 
-(defvar-local cerebro--system-args-cache nil
-  "(ARGS . SCANNED-AT) from the last scan, per fleet buffer.")
+(defvar-local cerebro--system-processes-cache nil
+  "(PROCESSES . SCANNED-AT) from the last scan, per fleet buffer.")
 
-(defun cerebro--cached-system-args (&optional now)
-  "`cerebro--system-args', rescanned only when `cerebro-system-scan-seconds'
+(defun cerebro--cached-system-processes (&optional now)
+  "`cerebro--system-processes', rescanned only when `cerebro-system-scan-seconds'
 have passed. NOW is for tests."
   (let ((now (or now (float-time))))
-    (if (and cerebro--system-args-cache
-             (not (cerebro--due-p (cdr cerebro--system-args-cache)
+    (if (and cerebro--system-processes-cache
+             (not (cerebro--due-p (cdr cerebro--system-processes-cache)
                                   cerebro-system-scan-seconds now)))
-        (car cerebro--system-args-cache)
-      (let ((args (cerebro--system-args)))
-        (setq cerebro--system-args-cache (cons args now))
-        args))))
+        (car cerebro--system-processes-cache)
+      (let ((procs (cerebro--system-processes)))
+        (setq cerebro--system-processes-cache (cons procs now))
+        procs))))
 
 (defvar cerebro--sessions nil
   "The sessions this Emacs started: an alist of (NAME . BUFFER), one per agent.
@@ -3625,7 +3637,8 @@ is where that is said."
          ;; Machine-wide scan, narrowed to this consumer's own sessions: another
          ;; checkout's fleet has the same names, and a name alone is not an
          ;; identity across repositories (see `cerebro--consumer-args').
-         (args (cerebro--consumer-args (cerebro--cached-system-args) repo-root))
+         (procs (cerebro--consumer-processes (cerebro--cached-system-processes) repo-root))
+         (args (mapcar #'cdr procs))
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states
@@ -3636,6 +3649,10 @@ is where that is said."
     ;; file the derive reads was deleted when the view ended the session, so
     ;; `cerebro--armed' is the only thing that can say a role is coming back.
     (setq agents (cerebro--apply-standby agents cerebro--armed))
+    ;; And the session count, for the same reason: `cerebro--derive' is given
+    ;; the args as strings, and a duplicate is a fact about the pids beside
+    ;; them (cb-63m).
+    (setq agents (cerebro--apply-session-counts agents procs))
     (setq cerebro--agents agents)
     ;; The table is sized to what is in front of it, every revert: a roster
     ;; gains an agent, a bead id gets deeper, and the columns follow (ah-qled.9).

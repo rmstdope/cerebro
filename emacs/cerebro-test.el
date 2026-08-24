@@ -519,7 +519,7 @@ reading once the row has caught the eye (see ah-axj)."
              (lambda (_repo-root) cerebro-test--fleet-fixture))
             ((symbol-function 'cerebro--gather-states)
              (lambda (_repo-root _roster) nil))
-            ((symbol-function 'cerebro--system-args) (lambda () nil))
+            ((symbol-function 'cerebro--system-processes) (lambda () nil))
             ((symbol-function 'cerebro--owned) (lambda () nil)))
     (unwind-protect
         (progn
@@ -551,7 +551,7 @@ render path loads."
                ((symbol-function 'cerebro--fleet)
                 (lambda (_repo-root) cerebro-test--fleet-fixture))
                ((symbol-function 'cerebro--gather-states) (lambda (_r _roster) nil))
-               ((symbol-function 'cerebro--system-args) (lambda () nil))
+               ((symbol-function 'cerebro--system-processes) (lambda () nil))
                ((symbol-function 'cerebro--owned) (lambda () nil))
                ((symbol-function 'cerebro--ensure-prune-watcher) (lambda (&rest _) nil))
                ((symbol-function 'cerebro--autostart-names)
@@ -3730,20 +3730,23 @@ navigator who redraws by hand every twenty seconds would never see one."
 ;; ---------------------------------------------------------------------------
 ;; ah-9dv: the process scan runs on its own, slower cadence
 
-(ert-deftest cerebro-test/system-args-are-rescanned-every-thirty-seconds-not-five ()
+(ert-deftest cerebro-test/system-processes-are-rescanned-every-thirty-seconds-not-five ()
   "The scan used to be on the five-second tick; it now keeps its own
-thirty-second cadence, the same as the bead panel's."
-  (let ((calls 0) (buffer (generate-new-buffer " *cerebro-test-system-args*")))
+thirty-second cadence, the same as the bead panel's.  It returns (PID . ARGS)
+pairs since cb-63m, and the cadence had to survive that change."
+  (let ((calls 0) (buffer (generate-new-buffer " *cerebro-test-system-processes*")))
     (unwind-protect
-        (cl-letf (((symbol-function 'cerebro--system-args)
-                   (lambda () (cl-incf calls) '("fake args"))))
+        (cl-letf (((symbol-function 'cerebro--system-processes)
+                   (lambda () (cl-incf calls) '((1 . "fake args")))))
           (with-current-buffer buffer
-            (cerebro--cached-system-args 1000.0)
+            (cerebro--cached-system-processes 1000.0)
             (should (= calls 1))
-            (cerebro--cached-system-args 1005.0)
+            (cerebro--cached-system-processes 1005.0)
             (should (= calls 1))
-            (cerebro--cached-system-args 1031.0)
-            (should (= calls 2))))
+            (cerebro--cached-system-processes 1031.0)
+            (should (= calls 2))
+            ;; The strings-only wrapper every other caller keeps using.
+            (should (equal (cerebro--system-args) '("fake args")))))
       (kill-buffer buffer))))
 
 ;; ---------------------------------------------------------------------------
@@ -5229,7 +5232,7 @@ derive, and the label the For column shows, computed once for the buffer."
             ((symbol-function 'cerebro--fleet)
              (lambda (_) '(("Psylocke" "verifier" interactive) ("Rogue" "implementer" implementer))))
             ((symbol-function 'cerebro--gather-states) (lambda (&rest _) nil))
-            ((symbol-function 'cerebro--cached-system-args) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--cached-system-processes) (lambda (&rest _) nil))
             ((symbol-function 'cerebro--owned) (lambda () nil))
             ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
             ((symbol-function 'cerebro--beads-panel-buffer) (lambda () nil))

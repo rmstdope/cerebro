@@ -413,10 +413,15 @@ else
     grep -qF "$cmd" "$ci" 2>/dev/null || { advisory "CI no longer runs: $cmd"; fired=1; }
     grep -qF "$cmd" "$runner" || { advisory "$runner does not run what CI runs: $cmd"; fired=1; }
   done
-  grep -qF 'tests/*.sh' "$ci" 2>/dev/null || { advisory "CI no longer runs every tests/*.sh"; fired=1; }
-  grep -qF 'tests/*.sh' "$runner" || { advisory "$runner does not run every tests/*.sh"; fired=1; }
+  # The suite loop is one script both callers name (cb-8cn). Grepping for the glob would have gone
+  # on passing on CI's *step name* long after the loop itself was gone, which is the drift this
+  # check exists to catch.
+  suites="bash scripts/suite-runner tests"
+  [[ -f scripts/suite-runner ]] || { advisory "scripts/suite-runner does not exist"; fired=1; }
+  grep -qF "$suites" "$ci" 2>/dev/null || { advisory "CI no longer runs: $suites"; fired=1; }
+  grep -qF "$suites" "$runner" || { advisory "$runner does not run what CI runs: $suites"; fired=1; }
 fi
-((fired)) || ok "the gate runs exactly what CI runs: byte-compile, ERT, every tests/*.sh"
+((fired)) || ok "the gate runs exactly what CI runs: byte-compile, ERT, every tests/*.sh through scripts/suite-runner"
 
 # --- 11. the retired worktree path is named nowhere ---
 #

@@ -100,23 +100,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The same script tests/gate runs, so the two loops cannot drift (cb-8cn). It emits the
+      # ::group::/::error annotations this step used to write inline, because GitHub sets
+      # GITHUB_ACTIONS on every job.
       - name: Run every tests/*.sh
-        shell: bash
-        run: |
-          set -uo pipefail
-          failed=()
-          for t in tests/*.sh; do
-            echo "::group::$t"
-            if bash "$t"; then
-              echo "::endgroup::"
-            else
-              echo "::endgroup::"
-              echo "::error file=$t::$t failed"
-              failed+=("$t")
-            fi
-          done
-          if [ "${#failed[@]}" -gt 0 ]; then
-            printf 'FAILED: %s\n' "${failed[@]}" >&2
-            exit 1
-          fi
-          echo "all bash suites passed"
+        run: bash scripts/suite-runner tests

@@ -128,31 +128,45 @@ carry `verification:pending`:
   | .id'
 ```
 
-### And, before it, the stale-verdict list
+### And, before it, the second-look list
 
 **A separate query, because the one above cannot answer it.** The work list asks `work-beads` for
-**closed** beads and every arm in it describes a closed bead; a `verdict:stale` bead is **open**.
-Adding an arm for it to the query above would be dead code, matching an input that can never
-contain it — the failure this project paid for twice in a row (see `docs/retrospectives/`), which is
-why `work-beads` now refuses a call that does not name its status: read the `--status` on the line
-before you add an arm to it.
+**closed** beads and every arm in it describes a closed bead; every bead here is **open**. Adding an
+arm for one to the query above would be dead code, matching an input that can never contain it — the
+failure this project paid for twice in a row (see `docs/retrospectives/`), which is why `work-beads`
+now refuses a call that does not name its status: read the `--status` on the line before you add an
+arm to it.
 
 ```bash
-.claude/cerebro/scripts/work-beads --status open | jq -r '.[]
-  | select([.labels[]?] | index("verdict:stale"))
-  | .id'
+.claude/cerebro/scripts/second-look-beads
 ```
+
+It is a script rather than a `jq` block here because the bug that added its second arm **was** an
+untested query living only in prose — `tests/second-look-beads.sh` now fails if either state stops
+arriving. Two states reach you through it:
+
+- **`verdict:stale`** — a failed verdict formed against a commit main has since moved past.
+- **handed back** — `verification:failed`, with neither `planned` nor `plan:revise`: an implementer
+  read the failure, found nothing left to build, and handed the bead back. Nothing listed these at
+  all until recently, and one sat eleven hours reachable by no role in the fleet.
 
 **Run it first in the pass, and take what it returns before anything on the list above.** It is the
 cheapest kind of verification there is — re-read your own finding against current main and either
-confirm it or clear it — and every hour it waits is an hour a P0 sits doing nothing: the label takes
-the bead out of both the implementer and the planner queues, so while it carries one **nobody else
-can move it at all**.
+confirm it or clear it — and every hour it waits is an hour a P0 sits doing nothing: both states
+take the bead out of the implementer and planner queues, so while it is here **nobody else can move
+it at all**.
 
 `verdict:stale` is set by the fleet view's verdict sweep (`sweep-verdicts.sh`) when main has moved
 past the commit a failed verdict was formed against. It never fires on its own — the navigator
 confirms it — and it decides nothing about whether the finding still holds, which is precisely what
-it is handing back to you.
+it is handing back to you. A handed-back bead arrives with more than that: an implementer has
+already reported that there is nothing left to build, and its notes say why.
+
+**A handed-back bead needs no new outcome — it takes the three below.** Its state is the *absence*
+of `planned` and `plan:revise`, so acting on it in any of those ways removes it from this list with
+no cleanup step to remember: passing it clears the state, closing it clears the state, and a fresh
+`failed` verdict sends it back to a planner or an implementer, either of which adds a label. The one
+thing that leaves it here is doing nothing.
 
 What the second look decides, and how you record it:
 

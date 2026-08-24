@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#
+# The open beads that need the verifier's second look, and the one place that question is answered.
+# Prints ids, one per line.
+#
+#     .claude/cerebro/scripts/second-look-beads
+#
+# Two states reach her here, and neither can arrive on her ordinary work list: that one asks
+# `work-beads --status closed`, and both of these are OPEN. ah-e0kf learnt this for the first of
+# them; ah-zuhs for the second, after a bead sat eleven hours reachable by no role at all.
+#
+#   verdict:stale   a failed verdict formed against a commit main has since moved past. Set by the
+#                   fleet view's verdict sweep, and it decides nothing about whether the finding
+#                   still holds - that is what it hands back.
+#   handed back     `verification:failed`, and NEITHER `planned` NOR `plan:revise`. An implementer
+#                   read the failure, found nothing left to build, and handed it back
+#                   (implement-bead's hand-back block). The state is an ABSENCE of the other two
+#                   labels, deliberately: `plan:revise` means a planner has it and `planned` means
+#                   an implementer has it, so "neither" is exactly "nobody" - and acting on the
+#                   bead in any way clears it, with no cleanup step anybody has to remember.
+#
+# Three details decide whether this works, and each fails silently if it is wrong:
+#
+#   1. `index(...) | not` is the right negation. `index` returns the POSITION, null when absent;
+#      in jq only null and false are falsy, so a label at position 0 yields 0, which is TRUTHY.
+#      A `has`/`contains` spelling, or testing the index for truth directly, lists a `planned`
+#      bead and sends the verifier to work an implementer is about to build.
+#   2. `--status open` excludes `in_progress`, so a bead an implementer is currently building can
+#      never appear here. That is why no assignee test is needed; do not "fix" it by adding
+#      `in_progress`.
+#   3. The two arms may overlap. One `select` with an `or` lists such a bead once; two queries
+#      concatenated would list it twice.
+#
+# This exists as a script rather than as another `jq` block in `agents/verifier.md` because the bug
+# it fixes WAS an untested query living only in prose - stated, believed, and never run.
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+"$script_dir/work-beads" --status open | jq -r '
+  .[]
+  | select(
+      ([.labels[]?] | index("verdict:stale"))
+      or (
+        ([.labels[]?] | index("verification:failed"))
+        and ([.labels[]?] | index("planned") | not)
+        and ([.labels[]?] | index("plan:revise") | not)
+      )
+    )
+  | .id'

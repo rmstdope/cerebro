@@ -2172,8 +2172,8 @@ not an identity; the launcher passes `--name <Name>' to every session
 that this pid is still the one the file was written about.
 
 Reads only the named pid's args, not the whole process list - this is asked
-once per agent on every refresh, where `cerebro--system-args' is a scan the
-fleet view deliberately caches.
+once per agent on every refresh, where `cerebro--system-processes' is a scan
+the fleet view deliberately caches.
 
 ROOT is the third discriminator (cb-lzi): a recycled pid can land on a
 same-named session of ANOTHER consumer - every consumer on the built-in
@@ -2200,13 +2200,6 @@ processes, and the echo line that reports one names their pids
                   (let ((args (alist-get 'args (process-attributes pid))))
                     (and args (cons pid args))))
                 (list-system-processes))))
-
-(defun cerebro--system-args ()
-  "The command-line args string of every system process, as a list.
-
-`cerebro--system-processes\=' without the pids, for the callers that only ask
-which sessions exist rather than how many."
-  (mapcar #'cdr (cerebro--system-processes)))
 
 (defvar cerebro-system-scan-seconds 30
   "How often the process list is scanned for interactive agents started

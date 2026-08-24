@@ -3854,7 +3854,9 @@ navigator who redraws by hand every twenty seconds would never see one."
 (ert-deftest cerebro-test/system-processes-are-rescanned-every-thirty-seconds-not-five ()
   "The scan used to be on the five-second tick; it now keeps its own
 thirty-second cadence, the same as the bead panel's.  It returns (PID . ARGS)
-pairs since cb-63m, and the cadence had to survive that change."
+pairs since cb-63m - there is no strings-only reader left, `cerebro--revert'
+taking `(mapcar #\='cdr procs)' where it needs them - and the cadence had to
+survive that change."
   (let ((calls 0) (buffer (generate-new-buffer " *cerebro-test-system-processes*")))
     (unwind-protect
         (cl-letf (((symbol-function 'cerebro--system-processes)
@@ -3865,9 +3867,7 @@ pairs since cb-63m, and the cadence had to survive that change."
             (cerebro--cached-system-processes 1005.0)
             (should (= calls 1))
             (cerebro--cached-system-processes 1031.0)
-            (should (= calls 2))
-            ;; The strings-only wrapper every other caller keeps using.
-            (should (equal (cerebro--system-args) '("fake args")))))
+            (should (= calls 2))))
       (kill-buffer buffer))))
 
 ;; ---------------------------------------------------------------------------

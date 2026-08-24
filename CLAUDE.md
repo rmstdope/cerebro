@@ -284,7 +284,7 @@ The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebr
 `cerebro--*-action`, `cerebro--launch-command`, `cerebro--claim-finding`, `cerebro--epic-finding`,
 `cerebro--finding-command`, `cerebro--findings-from-snapshot`) and a small set of **impure readers**
 at the bottom (`cerebro--fleet`, `cerebro--roster`, `cerebro--read-state-file`,
-`cerebro--system-args`, `cerebro--owned`, `cerebro--gather-sweeps`, `cerebro--fleet-snapshot`). The tests only exercise the pure half, passing state in as plain data. Keep
+`cerebro--system-processes`, `cerebro--owned`, `cerebro--gather-sweeps`, `cerebro--fleet-snapshot`). The tests only exercise the pure half, passing state in as plain data. Keep
 new logic on the pure side or it becomes untestable.
 
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
@@ -323,7 +323,7 @@ row, with `s`, `k` and `f` naming the pids rather than acting on an ambiguity (c
 which every session has because `scripts/launch` passes it, **and a `--settings` path under this
 consumer's root** — the third discriminator (cb-lzi), because a name is unique inside one consumer
 and not on the machine. The rule is stated once, in `cerebro--session-args-p`; the state-file path
-(`cerebro--session-alive-p`) and the process-scan path (`cerebro--consumer-args` then
+(`cerebro--session-alive-p`) and the process-scan path (`cerebro--consumer-processes` then
 `cerebro--name-in-args-p`) are both built from it. A bare `process-attributes` check was
 what let a `done` file that outlived its session by ten hours light up green again once the OS
 recycled its pid onto an unrelated daemon: pids are reused, so a number alone is not an identity.

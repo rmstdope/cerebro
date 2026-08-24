@@ -81,7 +81,7 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
    bd dolt pull
    git fetch origin main                       # from the consumer root; never checkout or branch here
    bd recall forge-watermark                  # "<full sha> <ISO-8601 UTC>", or exit 1 = never swept
-   bd recall bishop-weekly                     # "<ISO-8601 UTC>" of the last weekly, or exit 1
+   bd recall forge-weekly                     # "<ISO-8601 UTC>" of the last weekly, or exit 1
    ```
 
    `bd recall <missing-key>` exits 1 — that is the "never swept" branch, not an error.
@@ -94,7 +94,7 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
    wasted one, and a busy afternoon is read while it is still fresh instead of in one lump the next
    day.
 
-2. **Decide the sweep, and say which and why, in your first message.** Weekly if `bishop-weekly` is
+2. **Decide the sweep, and say which and why, in your first message.** Weekly if `forge-weekly` is
    absent or seven or more days old, or if `forge-watermark` is absent (a first run reads
    everything); otherwise daily — which names the *incremental* sweep, the one bounded by the
    watermark, whatever the hour. Say the range: "daily, since `<sha>` (`<n>` commits over `<d>`
@@ -181,7 +181,7 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
 
    ```bash
    bd remember "$(git rev-parse origin/main) $(date -u +%Y-%m-%dT%H:%M:%SZ)" --key forge-watermark
-   bd remember "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --key bishop-weekly     # weekly sweeps only
+   bd remember "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --key forge-weekly     # weekly sweeps only
    bd dolt push
    ```
 

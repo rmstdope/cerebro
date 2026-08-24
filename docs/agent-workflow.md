@@ -442,7 +442,7 @@ rather than in the checkout, so it survives a lost or replaced machine:
 
 ```bash
 bd recall forge-watermark
-bd recall bishop-weekly         # this key kept the old name when Bishop was renamed to Forge
+bd recall forge-weekly
 ```
 
 ## Your queue

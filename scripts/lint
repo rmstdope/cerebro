@@ -458,6 +458,22 @@ if grep -q 'bash scripts/ci-needed' "$ci" 2>/dev/null; then
 fi
 ((fired)) || ok "CI's skip list names nothing a suite opens, and its exit 1 is an answer not a failure"
 
+# --- 13. every work-beads call names the status it means ---
+#
+# `work-beads --status' has no default (cb-45f): two beads in a row added an arm to a closed-beads
+# query that could only match an open bead, because the status was on no line anyone read. A
+# command line in an agent file that runs the script bare will get exit 2 at run time; this says so
+# before then. `--print-excluded-types' asks about the script, not the board, and needs no status.
+fired=0
+hits="$(prose_files | xargs grep -n 'scripts/work-beads' 2>/dev/null \
+        | grep -v -- '--status' | grep -v -- '--print-excluded-types' \
+        | grep -E ':[[:space:]]*(\.claude/cerebro/)?scripts/work-beads' || true)"
+if [[ -n "$hits" ]]; then
+  advisory "a work-beads call names no --status" "$hits"
+  fired=1
+fi
+((fired)) || ok "every work-beads call in an agent file names its status"
+
 # --- 14. the planning path runs the plan check ---
 #
 # `--plan' above is only a prevention if the planner runs it. The step is one line in the skill's

@@ -121,7 +121,7 @@ Closed beads that either carry no `verification:*` label at all, or carry `verif
 carry `verification:pending`:
 
 ```bash
-.claude/cerebro/scripts/work-beads | jq -r '.[]
+.claude/cerebro/scripts/work-beads --status closed | jq -r '.[]
   | select(([.labels[]? | select(startswith("verification:"))] | length == 0)
            or ([.labels[]?] | index("verification:failed"))
            or ([.labels[]?] | index("verification:pending")))
@@ -130,11 +130,12 @@ carry `verification:pending`:
 
 ### And, before it, the stale-verdict list
 
-**A separate query, because this one cannot answer it.** `work-beads` takes `--status closed` by
-default and every arm above describes a closed bead, but a `verdict:stale` bead is **`open`** — so
-adding an arm to the query above would be dead code, matching an input that can never contain it.
-That is the exact failure this project has already paid for once: a bead that reached no role at all
-because the list it was meant to arrive on was built from closed beads.
+**A separate query, because the one above cannot answer it.** The work list asks `work-beads` for
+**closed** beads and every arm in it describes a closed bead; a `verdict:stale` bead is **open**.
+Adding an arm for it to the query above would be dead code, matching an input that can never
+contain it — the failure this project paid for twice in a row (see `docs/retrospectives/`), which is
+why `work-beads` now refuses a call that does not name its status: read the `--status` on the line
+before you add an arm to it.
 
 ```bash
 .claude/cerebro/scripts/work-beads --status open | jq -r '.[]
@@ -186,8 +187,8 @@ bead database and outlives the session that wrote it, so a bead a previous sessi
 heard back about is an ordinary candidate again and must be picked up. Two beads sat
 unverifiable for a day because the query excluded pending outright.
 
-`work-beads` is the one place the harness asks "which closed beads are real work" — it always passes
-the status it means, and excludes epics and bd's own `event` beads twice over (see its header for
+`work-beads` is the one place the harness asks "which beads are real work" — it passes the status
+you name and refuses a call without one, and excludes epics and bd's own `event` beads twice over (see its header for
 why both). The `jq` here is your question alone: which of that work still wants a verdict.
 
 **Why the event exclusion exists at all**: `bd set-state
@@ -214,10 +215,10 @@ Detect it before running the query above: no bead anywhere carries a `verificati
 with no `--status` flag defaults to open beads only. A query without `--status closed` always reads
 zero here and reports "first pass" even after hundreds of beads have already been labelled — seen
 live on 2026-08-16, with 118 closed beads already carrying labels and this check still reading zero.
-`work-beads` always passes it, which is why this goes through the script too:
+`work-beads` will not run without it, which is why this goes through the script too:
 
 ```bash
-.claude/cerebro/scripts/work-beads | jq -r '[.[] | .labels[]? | select(startswith("verification:"))] | length'
+.claude/cerebro/scripts/work-beads --status closed | jq -r '[.[] | .labels[]? | select(startswith("verification:"))] | length'
 ```
 
 Zero means this is the first pass. There are closed beads from before this role existed, and

@@ -111,6 +111,25 @@ grep -F 'agents/planner.md' <<<"$out" | grep -qF 'cb-zzz8' \
 $out"
 pass "a planted cb- id fires the same advisory as an ah- id"
 
+# --- a work-beads call that names no status ------------------------------------------------------
+#
+# A work-beads call with no --status in an agent file would exit 2 at run time (cb-45f); the lint
+# says so on the gate instead.
+printf '\n```bash\n.claude/cerebro/scripts/work-beads | jq -r ".[].id"\n```\n' >> "$fixture/agents/verifier.md"
+set +e
+out="$(bash "$lint" "$fixture" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "lint with a planted bare work-beads call: expected exit 1, got $status
+$out"
+grep -q 'names no --status' <<<"$out" \
+  || fail "lint with a planted bare work-beads call: the advisory did not fire
+$out"
+grep -q 'agents/verifier.md' <<<"$out" \
+  || fail "lint with a planted bare work-beads call: the advisory does not name agents/verifier.md
+$out"
+pass "a work-beads call that names no --status fires an advisory naming the file"
+
 # --- the plan check ------------------------------------------------------------------------------
 #
 # A plan may cite beads in its Context; what it may not do is quote one into a block or a

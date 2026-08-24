@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# The one place the harness asks: "which closed beads are real work?" Prints a JSON array on stdout,
+# The one place the harness asks: "which beads are real work, at a status the caller names?" Prints
+# a JSON array on stdout,
 # so a caller pipes it into `jq` exactly as it pipes `bd list --json` today.
 #
-#     .claude/cerebro/scripts/work-beads [--status <list>] [--closed-after <when>]
+#     .claude/cerebro/scripts/work-beads --status <list> [--closed-after <when>]
 #     .claude/cerebro/scripts/work-beads --print-excluded-types
 #
 # It exists because that question was hand-written independently by every reader of closed beads -
@@ -13,8 +14,10 @@
 #
 #   1. `bd list` defaults to OPEN beads. A closed-bead query without `--status closed` silently
 #      reads zero and looks like a quiet day, or like a first pass - seen live with 118 closed
-#      labelled beads in the database. So `--status` defaults to `closed` here: every caller of
-#      this script wants closed beads, and the default that bites is bd's own.
+#      labelled beads in the database. So `--status` is REQUIRED here and has no default: "every
+#      caller wants closed beads" was the assumption, and two beads (ah-tjaz, ah-e0kf) each added
+#      an arm for an open bead to a query answered from closed ones - dead code nobody saw, because
+#      the status was on no line they read. A caller says what it means.
 #   2. An `epic` closing is bookkeeping, not delivery. It closes when its last child does, so
 #      counting both reports the same work twice.
 #   3. `bd set-state <id> <k>=<v>` writes an **event bead** as its audit record: `issue_type:
@@ -45,11 +48,11 @@ set -euo pipefail
 excluded_types=("epic" "event")
 
 usage() {
-  echo "usage: work-beads [--status <list>] [--closed-after <when>] | work-beads --print-excluded-types" >&2
+  echo "usage: work-beads --status <list> [--closed-after <when>] | work-beads --print-excluded-types" >&2
   exit 2
 }
 
-status="closed"
+status=""
 closed_after=""
 
 while [[ $# -gt 0 ]]; do
@@ -65,6 +68,15 @@ while [[ $# -gt 0 ]]; do
       usage ;;
   esac
 done
+
+# No default. Every call site used to be a bare `work-beads | jq ...` and the status that decides
+# whether a query can match anything was on none of them: two beads in a row added an arm for an
+# OPEN bead to a query this script answered from CLOSED ones, and nobody saw it until review
+# (ah-tjaz, ah-e0kf). Naming the status is what makes the call site readable, so it is required.
+if [[ -z "$status" ]]; then
+  echo "work-beads: --status is required - say which beads you mean, e.g. --status closed" >&2
+  usage
+fi
 
 excluded_csv="$(IFS=,; echo "${excluded_types[*]}")"
 

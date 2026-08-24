@@ -139,6 +139,43 @@ test body cannot compute this itself.")
   (should-not (cerebro--consumer-args '("claude --agent planner --name Xavier")
                                       "/Users/x/repos/cerebro")))
 
+(ert-deftest cerebro-test/session-args-p-requires-the-name-and-the-root-together ()
+  "The one rule (cb-lzi): a whole-word --name NAME and a path under ROOT, on one command line."
+  (let ((root "/Users/x/repos/cerebro"))
+    (should (cerebro--session-args-p cerebro-test--this-consumer-args "Xavier" root))
+    ;; the same name in another consumer is not ours
+    (should-not (cerebro--session-args-p cerebro-test--other-consumer-args "Xavier" root))
+    ;; the root without the name is not ours either
+    (should-not (cerebro--session-args-p cerebro-test--this-consumer-args "Beast" root))
+    ;; a hand-typed session naming no root: the documented trade
+    (should-not (cerebro--session-args-p "claude --agent planner --name Xavier" "Xavier" root))
+    ;; the name only as a --remote-control value does not count (ah-qym)
+    (should-not (cerebro--session-args-p
+                 "claude --remote-control Xavier --settings /Users/x/repos/cerebro/.claude/x" "Xavier" root))
+    ;; a trailing slash on ROOT, and a sibling checkout with the same prefix
+    (should (cerebro--session-args-p cerebro-test--this-consumer-args "Xavier" "/Users/x/repos/cerebro/"))
+    (should-not (cerebro--session-args-p
+                 "claude --name Xavier --settings /Users/x/repos/cerebro-hud/.claude/x" "Xavier" root))
+    ;; not a string is not a session
+    (should-not (cerebro--session-args-p nil "Xavier" root))))
+
+(ert-deftest cerebro-test/scan-path-and-pid-path-apply-one-rule ()
+  "The process scan and the pid path are the same two tests.
+`cerebro--consumer-args' then `cerebro--name-in-args-p' is the scan
+composition; `cerebro--session-args-p' is the pid path.  A command line that
+passes one passes the other, for every row of this table."
+  (let ((root "/Users/x/repos/cerebro"))
+    (dolist (args (list cerebro-test--this-consumer-args
+                        cerebro-test--other-consumer-args
+                        "claude --agent planner --name Xavier"
+                        "claude --name Xavier --settings /Users/x/repos/cerebro-hud/.claude/x"
+                        "claude --remote-control Xavier --settings /Users/x/repos/cerebro/.claude/x"
+                        "claude --name Xavier --settings /Users/x/repos/cerebro/.claude/cerebro/hooks/q.json"))
+      (should (eq (and (cerebro--session-args-p args "Xavier" root) t)
+                  (and (cerebro--name-in-args-p
+                        "Xavier" (cerebro--consumer-args (list args) root))
+                       t))))))
+
 (ert-deftest cerebro-test/derive-interactive-dead-for-another-consumers-session ()
   ;; The whole chain: another repository's Xavier is scanned, filtered out, and this fleet's
   ;; Xavier - which has no state file - reads `dead' rather than `up'.
@@ -2779,7 +2816,7 @@ from one building something else."
                      ((string-match-p "Storm" path)
                       '((pid . 222) (state . "idle")))
                      (t nil))))
-            ((symbol-function 'cerebro--session-alive-p) (lambda (_pid _name) t)))
+            ((symbol-function 'cerebro--session-alive-p) (lambda (_pid _name _root) t)))
     (should (equal (cerebro--live-session-beads "/repo")
                    '(("Cyclops" . "ah-gjq4") ("Storm" . nil))))
     ;; The sibling derivation must be untouched by the refactor that added the
@@ -3466,15 +3503,37 @@ than dressing a dead session in the file's `working'."
 
 (ert-deftest cerebro-test/session-alive-p-rejects-a-pid-that-is-not-that-session ()
   "The impure half, against this very Emacs: alive, certainly, and not Rogue."
-  (should-not (cerebro--session-alive-p (emacs-pid) "Rogue"))
-  (should-not (cerebro--session-alive-p nil "Rogue")))
+  (should-not (cerebro--session-alive-p (emacs-pid) "Rogue" "/Users/x/repos/cerebro"))
+  (should-not (cerebro--session-alive-p nil "Rogue" "/Users/x/repos/cerebro")))
 
 (ert-deftest cerebro-test/session-alive-p-accepts-the-agents-own-process ()
-  "A real process whose command line carries `--name Rogue'."
+  "A real process whose command line carries `--name Rogue' AND a path under the root."
+  (let ((process (start-process "cerebro-test-session" nil
+                                "bash" "-c" "sleep 30" "--name" "Rogue"
+                                "--settings" "/Users/x/repos/cerebro/.claude/cerebro/hooks/q.json")))
+    (unwind-protect
+        (should (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro"))
+      (delete-process process))))
+
+(ert-deftest cerebro-test/session-alive-p-rejects-the-same-name-in-another-consumer ()
+  "The cross product 7bd5962 and 9420ff2 each left open (cb-lzi).
+A live pid whose command line names this agent, but under ANOTHER consumer's root."
+  (let ((process (start-process "cerebro-test-session" nil
+                                "bash" "-c" "sleep 30" "--name" "Rogue"
+                                "--settings" "/Users/x/repos/atlantis-hud/.claude/cerebro/hooks/q.json")))
+    (unwind-protect
+        (progn
+          (should-not (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro"))
+          (should (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/atlantis-hud")))
+      (delete-process process))))
+
+(ert-deftest cerebro-test/session-alive-p-rejects-a-session-that-names-no-root ()
+  "A hand-typed `claude --name Rogue' with no --settings reads dead on this path too.
+The same trade `cerebro--consumer-args' already made."
   (let ((process (start-process "cerebro-test-session" nil
                                 "bash" "-c" "sleep 30" "--name" "Rogue")))
     (unwind-protect
-        (should (cerebro--session-alive-p (process-id process) "Rogue"))
+        (should-not (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro"))
       (delete-process process))))
 
 ;; ---------------------------------------------------------------------------

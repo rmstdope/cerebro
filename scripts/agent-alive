@@ -5,9 +5,10 @@
 #     .claude/cerebro/scripts/agent-alive <Name>
 #
 #   exit 0   <Name>'s state file names a pid that is running AND whose command line carries
-#            `--name <Name>' - so it is still that session, not a recycled pid
+#            `--name <Name>' AND a `--settings' path under this consumer - so it is still that
+#            session, of this fleet, not a recycled pid or another checkout's agent of the same name
 #   exit 1   not alive: no state file, no pid in it, the pid is gone, or the pid is alive but is
-#            somebody else's process
+#            somebody else's process or belongs to another consumer's fleet
 #   exit 2   usage error, or <Name> is not on scripts/roster
 #
 # WHY THIS EXISTS. A bare `kill -0 "$pid"' asks whether *some* process holds that number. Pids are
@@ -15,7 +16,9 @@
 # elisp that lit a finished session's row green ten hours after it ended, and in the skills it makes
 # a dead planner look alive - stranding the very `planning' label the reclaim loop exists to free,
 # and inflating the count the planning buffer is sized from. Every session `scripts/launch' starts
-# carries `--name <Name>' in its args, so the name is the identity and the pid alone is not.
+# carries `--name <Name>' in its args, so the name is the identity and the pid alone is not. And a
+# name is unique inside one consumer, not on the machine (9420ff2), so the root is the third
+# discriminator - see cerebro--session-args-p, of which this script is the bash copy.
 #
 # A predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state'
 # (which requires --pid and exists to write a file). Nothing is printed in the 0/1 cases: this runs
@@ -66,5 +69,25 @@ args="$(ps -o args= -p "$pid" 2>/dev/null)" || exit 1
 # boundary elisp spells `\_>': without it, one roster name that is a prefix of another silently
 # reads as alive.
 grep -Eq -- "--name[[:space:]]+${name}([[:space:]]|\$)" <<<"$args" || exit 1
+
+# The third discriminator, the same one cerebro--session-args-p asks for in elisp (cb-lzi): the
+# session must belong to THIS consumer's fleet. A recycled pid can land on a same-named session of
+# another checkout - every consumer on the built-in roster has a Cyclops - and pid plus name alone
+# would call that one ours, which here would let a planner free a label somebody holds. Every
+# session `scripts/launch' starts carries `--settings <root>/.../question-state.settings.json'
+# (scripts/launch, scripts/agent-hooks-env); a session that carries none is not one this script can
+# prove is ours, and reads dead - the same trade cerebro--consumer-args made (9420ff2).
+#
+# Resolved physically before comparing, because `consumer-root --shared' is a `pwd -P' path and
+# the launcher's `--settings' path is not: on macOS every mktemp fixture is /var/... to the
+# launcher and /private/var/... to consumer-root, and a consumer cloned under a symlink is the same
+# case outside a test. `cd' into the directory rather than `realpath', which is not on macOS.
+settings="$(sed -nE 's/.*--settings[[:space:]]+([^[:space:]]+).*/\1/p' <<<"$args")"
+[[ -n "$settings" ]] || exit 1
+settings_dir="$(cd "$(dirname "$settings")" 2>/dev/null && pwd -P)" || exit 1
+case "$settings_dir" in
+  "$repo_root"/*) ;;
+  *) exit 1 ;;
+esac
 
 exit 0

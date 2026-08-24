@@ -481,25 +481,25 @@ would add."
       (cerebro-agent-phase agent))
      (t (symbol-name state)))))
 
-(defun cerebro--wake-column (agent now)
-  "\"→5m\" - how long until AGENT's wake, at NOW - or the empty string.
+(defun cerebro--countdown (left)
+  "LEFT seconds rendered as \"→43m\", \"→21h04\" or \"→due\", or \"\" for nil.
 
-Only ever non-empty for a `waiting' agent with a parseable `wake_at': the
-State column says `waiting' and this says when it comes back, which together
-are what separate a waiting role from one that has hung (which shows no wake
-at all) in the fleet list.
+Nil rather than zero for an unknown deadline, exactly as `cerebro--elapsed\='
+treats an unparseable timestamp: a countdown the view cannot compute must
+show nothing rather than a figure it made up.
 
-A wake already past reads \"→due\" rather than \"→0m\": between the wake
-falling due and the poll poking it there is a real, visible moment, and
-counting downwards through zero would show a negative or a lie."
-  (if (not (eq (cerebro-agent-state agent) 'waiting))
-      ""
-    (let ((left (cerebro--seconds-until (cerebro-agent-wake-at agent) now)))
-      (cond
-       ((null left) "")
-       ((<= left 0) "→due")
-       ((>= left 3600) (format "→%dh%02d" (/ left 3600) (/ (mod left 3600) 60)))
-       (t (format "→%dm" (/ left 60)))))))
+A deadline already past reads \"→due\" rather than \"→0m\": between falling due
+and the next tick acting on it there is a real, visible moment, and counting
+downwards through zero would show a negative or a lie.
+
+Was `cerebro--wake-column\=', which rendered a `waiting\=' role\='s own `wake_at\='.
+Nothing waits for a wake any more (cb-5yr) - the countdown that is left is a
+standby role\='s cadence trigger, in `cerebro--standby-label\='."
+  (cond
+   ((null left) "")
+   ((<= left 0) "→due")
+   ((>= left 3600) (format "→%dh%02d" (/ left 3600) (/ (mod left 3600) 60)))
+   (t (format "→%dm" (/ left 60)))))
 
 (defun cerebro--for-column (since phase-since now)
   "The Bead/Phase column: time on the bead and time in the phase, at NOW.
@@ -557,7 +557,7 @@ last column to Emacs\='s `$\=' truncation marker (ah-lyc)."
           (list "Bead" (nth 3 widths) nil)
           (list "Bead/Phase" (nth 4 widths) nil)))
 
-(defun cerebro--entry (agent now &optional flagged unanswered bead-width)
+(defun cerebro--entry (agent now &optional flagged bead-width standby-label)
   "AGENT as a `tabulated-list-entries' element, evaluated at NOW.
 
 FLAGGED, when non-nil, means a stop flag is set for AGENT: the state column
@@ -576,10 +576,11 @@ implementer under a flag is retired by the fleet poll within about one tick
 all for a dead or externally-idle one \(`cerebro--finish-action'\) - so there
 is effectively no idle-and-flagged state left to describe.
 
-UNANSWERED, when non-nil, means AGENT is a `waiting' role that did not
-answer either of its pokes: the state column gains a \" !\" suffix, which is
-where the poke stops rather than being retried on every tick for ever
-\(`cerebro--poke-decision', ah-hiib.3).
+STANDBY-LABEL, when non-nil, is what the Bead/Phase column shows for a
+`standby' row instead of an elapsed time: what the role is waiting for
+\(`cerebro--standby-label', cb-5yr).  Passed in rather than computed here
+because it is derived from the bead panel and the fleet, which this
+function - pure, and one call per row - must not reach into.
 
 BEAD-WIDTH is what the Bead column was sized to (`cerebro--column-widths\=',
 default 10).  An external agent shows \"—\" rather than the wordier
@@ -598,8 +599,7 @@ rather than pushing the rest of the row right - see ah-lyc."
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
          (state-col (cerebro--emphasize
                      (concat (cerebro--state-label agent)
-                             (if (and flagged in-flight) " ■" "")
-                             (if unanswered " !" ""))
+                             (if (and flagged in-flight) " ■" ""))
                      attention))
          (bead-col (cerebro--emphasize
                     (cond (external "—")
@@ -609,13 +609,13 @@ rather than pushing the rest of the row right - see ah-lyc."
                           (t ""))
                     attention))
          (for-col (cerebro--emphasize
-                   (if external ""
-                     (let ((for (cerebro--for-column (cerebro-agent-since agent)
-                                                     (cerebro-agent-phase-since agent) now))
-                           (wake (cerebro--wake-column agent now)))
-                       (cond ((string-empty-p wake) for)
-                             ((string-empty-p for) wake)
-                             (t (concat for " " wake)))))
+                   (cond (external "")
+                         ;; A standby row has no session and so no elapsed
+                         ;; time worth showing; what it is waiting for is the
+                         ;; only thing the navigator can act on.
+                         ((eq state 'standby) (or standby-label ""))
+                         (t (cerebro--for-column (cerebro-agent-since agent)
+                                                 (cerebro-agent-phase-since agent) now)))
                    attention)))
     (list (cerebro-agent-name agent)
           (vector agent-col role-col state-col bead-col for-col))))
@@ -1149,13 +1149,17 @@ need not have."
   :type '(alist :key-type string :value-type integer)
   :group 'cerebro)
 
-(defcustom cerebro-poke-grace 60
-  "Seconds to wait for a poked role to answer before poking it a second time.
+(defcustom cerebro-end-grace 30
+  "Seconds a role that has finished a pass is left before its session is ended.
 
-Acknowledgement is free and needs no protocol: a role that woke writes its
-next transition, so one still `waiting\=' on the same `wake_at\=' after this
-long has not answered.  Sixty seconds is ample for a session that is, by
-construction, sitting at its prompt."
+A role writes `waiting\=' (Forge, `idle\='), prints one line saying what the pass
+found, and stops.  The write comes first, so the line lands after it: this is
+how long the view waits for that line before it kills the process and keeps
+the buffer as the record of the pass.
+
+Half a minute rather than five seconds because the line is the only thing
+that survives the session, and rather than five minutes because a role whose
+trigger is already true is doing nothing while it stands here."
   :type 'integer
   :group 'cerebro)
 
@@ -1169,44 +1173,19 @@ from the rest of its role says so by name."
       (and role (cdr (assoc role cerebro-wake-intervals)))
       cerebro-wake-interval-default))
 
-(defun cerebro--wake-due-p (agent now)
-  "Pure.  Whether AGENT, a `waiting\=' role, should be woken at NOW.
+(defun cerebro--end-decision (agent stop-flag-p now)
+  "Pure.  `retire\=', `end\=' or nil for an interactive AGENT whose pass is over.
 
-Due when either the role\='s own `wake_at\=' has passed or `since\=' plus this
-name\='s `cerebro-wake-interval\=' has - whichever comes first.  The role asks;
-the monitor decides, and may decide sooner, which is what makes the
-`defcustom\=' authoritative without an agent document being edited.
-
-Nil when neither timestamp parses.  A torn state file must not read as a
-deadline that has expired, for the same reason an unparseable `since\=' does
-not nudge an `asking\=' implementer: a poke lands as keystrokes in a live
-session."
-  (let* ((asked (cerebro--seconds-until (cerebro-agent-wake-at agent) now))
-         (waited (cerebro--seconds-since (cerebro-agent-since agent) now))
-         (interval (cerebro-wake-interval (cerebro-agent-name agent)
-                                          (cerebro-agent-role agent))))
-    (and (or (and asked (<= asked 0))
-             (and waited (>= waited interval)))
-         t)))
-
-(defun cerebro--poke-decision (record wake-key now)
-  "Pure.  `send\=', nil (wait) or `surface\=' for a role whose wake is due.
-
-RECORD is what the poll remembers about the last poke for this agent -
-\(WAKE-KEY SENT-AT COUNT), or nil for none - and WAKE-KEY identifies the wake
-being answered, so a role that woke, worked and waited again is a fresh wake
-rather than a continuation of one it already answered.
-
-The poke cannot fail loudly - it is keystrokes typed into a terminal - so it
-is bounded instead: send once, re-send once after `cerebro-poke-grace\=', then
-stop and let the fleet view say so.  A poke repeated on every five-second
-tick is an infinite loop nobody sees, and it buries the output of the very
-session it is trying to wake."
+The flag wins and lands at once: nothing is in flight, so there is nothing
+for the grace period to protect.  Otherwise the session is ended once it has
+stood in the finished state for `cerebro-end-grace\=', and never on a state
+file whose timestamp says nothing at all - a torn file must not read as a
+grace that has expired."
   (cond
-   ((or (null record) (not (equal (nth 0 record) wake-key))) 'send)
-   ((>= (nth 2 record) 2) 'surface)
-   (t (let ((since-sent (cerebro--seconds-since (nth 1 record) now)))
-        (and since-sent (>= since-sent cerebro-poke-grace) 'send)))))
+   (stop-flag-p 'retire)
+   ((let ((stood (cerebro--seconds-since (cerebro-agent-since agent) now)))
+      (and stood (>= stood cerebro-end-grace)))
+    'end)))
 
 (defun cerebro--supervise-action (agent stop-flag-p now)
   "What the fleet poll should do about AGENT at NOW, or nil for nothing.
@@ -1232,12 +1211,16 @@ answers are:
             under that name does not inherit an instruction meant for this
             one.
 `nudge'   - AGENT has waited past `cerebro-answer-timeout' for an answer.
-`poke'    - AGENT is an interactive role in `waiting' whose wake is due
-            (ah-hiib.3).  The roles no longer sleep inside their own
-            sessions: one finishes a pass, writes `waiting' and ends its
-            turn, and this poll is what brings it back.  Interactive-only,
-            and the exact mirror of the three above - an implementer is
-            replaced between beads and has no cadence of its own.
+`end'     - AGENT is an interactive role that has finished a pass -
+            `waiting', or `idle' for a role that writes that instead - and
+            `cerebro-end-grace' has passed since it said so (cb-5yr).  Its
+            session is ended and its buffer kept; a fresh one starts when the
+            role's own trigger fires (`cerebro--trigger'), which is what
+            makes a session one pass deep the way an implementer's is one
+            bead deep.  Interactive-only, and the exact mirror of the three
+            above - an implementer is replaced between beads and has no pass
+            of its own.  This replaced `poke', which typed into the session
+            it had rather than starting a new one.
 
 Only a session Emacs itself started is supervised.  One running in
 somebody's own terminal is theirs to end, and a dead one stays dead -
@@ -1260,15 +1243,24 @@ everything: every answer here ends in Emacs acting on a session it owns."
     (pcase (cerebro-agent-state agent)
       ('done (and (eq (cerebro-agent-kind agent) 'implementer)
                   (if stop-flag-p 'retire 'restart)))
-      ('idle (and (eq (cerebro-agent-kind agent) 'implementer) stop-flag-p 'retire))
+      ;; An implementer's `idle' is unchanged. An interactive one is a role
+      ;; that ends its pass by writing `idle' rather than `waiting' - today
+      ;; only Forge, at the end of a sweep (`agents/architect.md') - and is
+      ;; ended exactly as a `waiting' one is. A consumer role that writes
+      ;; `idle' in the middle of a pass will be ended by this: the state
+      ;; means "nothing in hand", and there is nothing here to tell that
+      ;; apart from a pass that is over.
+      ('idle
+       (pcase (cerebro-agent-kind agent)
+         ('implementer (and stop-flag-p 'retire))
+         ('interactive (cerebro--end-decision agent stop-flag-p now))))
       ;; Nothing is in flight for a waiting role - no bead, no claim, no
       ;; worktree - so a stop flag lands cleanly and *now*, which is the
       ;; behaviour that was impossible while a role slept inside its own
       ;; session and the flag had no gap to land in.
       ('waiting
        (and (eq (cerebro-agent-kind agent) 'interactive)
-            (cond (stop-flag-p 'retire)
-                  ((cerebro--wake-due-p agent now) 'poke))))
+            (cerebro--end-decision agent stop-flag-p now)))
       ('asking
        (let ((waited (cerebro--seconds-since (cerebro-agent-since agent) now)))
          ;; A stop flag makes no difference: the bead is still in flight, so
@@ -2211,23 +2203,6 @@ into the session on every tick, burying the agent's own output and
 resetting what it was told.  A name leaves this set as soon as it is no
 longer asking, so its next question is nudgeable again.")
 
-(defvar-local cerebro--pokes nil
-  "What the poll remembers about the pokes it has sent, as (NAME WAKE-KEY
-SENT-AT COUNT).
-
-A poke is keystrokes typed into a terminal and cannot report success, so
-this is what bounds it: `cerebro--poke-decision\=' reads the record to send
-once, re-send once after `cerebro-poke-grace\=', and then stop.  A name leaves
-this the moment it is no longer `waiting\=' - which is the acknowledgement,
-since a role that woke writes its next transition.")
-
-(defvar-local cerebro--unanswered-pokes nil
-  "Names of `waiting\=' roles that answered neither poke.
-
-Shown as a \" !\" in the State column (`cerebro--entry\='), which is where a
-poke stops: a line the navigator can see beats retrying every five seconds
-for ever.  Cleared with the record above when the role transitions.")
-
 (defun cerebro--autostart (buffer repo-root)
   "Start every declared autostart agent in BUFFER that is dead, once.
 
@@ -2275,9 +2250,8 @@ does: one launcher that cannot start must not stop the others."
           "and finish the run.")
   "What an interactive agent is told when its question goes unanswered.
 
-It names neither a tracker label nor a skill, for the same reason
-`cerebro--poke-message\=' names no pass: the words go into a live session, and
-how a work item is handed back is the agent\='s own instructions to state, not
+It names neither a tracker label nor a skill: the words go into a live
+session, and how a work item is handed back is the agent\='s own instructions to state, not
 the fleet view\='s.  Saying it in cerebro\='s words would be a second, quieter
 copy of a policy that must have exactly one owner.")
 
@@ -2317,23 +2291,6 @@ are needed - a timer fires with no buffer current."
 (defun cerebro--nudge (agent)
   "Type `cerebro--nudge-message' into AGENT's session."
   (cerebro--type-into-session agent cerebro--nudge-message))
-
-(defconst cerebro--poke-message
-  (concat "[cerebro] Your wait is over - start your next pass now, "
-          "exactly as your own instructions describe it.")
-  "What a `waiting' role is told when its wake falls due.
-
-It names nothing about *what* the pass is: cadence is the fleet view's and
-policy stays in the role's own skill, which is the whole point of the split.
-
-Typing into a vterm is a fragile channel in general - keystrokes arriving
-mid-tool-call are a real failure mode - and `waiting' is precisely what makes
-it safe here: a role in that state has ended its turn and is sitting at its
-prompt by construction.  Only a `waiting' role is ever poked.")
-
-(defun cerebro--poke (agent)
-  "Type `cerebro--poke-message' into AGENT's session."
-  (cerebro--type-into-session agent cerebro--poke-message))
 
 (defun cerebro--forget-session (agent)
   "Kill AGENT's session buffer, without asking and without refreshing.
@@ -2387,11 +2344,6 @@ other agents down with it."
     (let ((name (cerebro-agent-name agent)))
       (unless (eq (cerebro-agent-state agent) 'asking)
         (setq cerebro--nudged (delete name cerebro--nudged)))
-      ;; The role's own next transition is the acknowledgement, so leaving
-      ;; `waiting' is what clears both the poke record and the mark.
-      (unless (eq (cerebro-agent-state agent) 'waiting)
-        (setq cerebro--pokes (assoc-delete-all name cerebro--pokes))
-        (setq cerebro--unanswered-pokes (delete name cerebro--unanswered-pokes)))
       (with-demoted-errors "cerebro: %S"
         (pcase (cerebro--supervise-action agent (cerebro--stop-flag-p repo-root name) now)
           ;; Kill before launching: `cerebro--launch' would refuse a second
@@ -2406,25 +2358,19 @@ other agents down with it."
                       (cerebro--end-session agent repo-root)
                       (cerebro--launch agent)
                       (when watching (cerebro--show-detail agent))))
-          ('retire (cerebro--end-session agent repo-root 'clear-stop-flag))
+          ('retire
+           ;; An interactive role keeps its buffer, exactly as an ordinary
+           ;; end does - the flag says stay down, not forget the pass - and
+           ;; is disarmed, so no trigger starts it again.
+           (if (eq (cerebro-agent-kind agent) 'interactive)
+               (progn (cerebro--park-session agent repo-root now)
+                      (cerebro--clear-stop-flag repo-root name)
+                      (setq cerebro--armed (delete name cerebro--armed)))
+             (cerebro--end-session agent repo-root 'clear-stop-flag)))
+          ('end (cerebro--park-session agent repo-root now))
           ('nudge (unless (member name cerebro--nudged)
                     (push name cerebro--nudged)
-                    (cerebro--nudge agent)))
-          ('poke
-           (let* ((wake-key (or (cerebro-agent-wake-at agent)
-                                (cerebro-agent-since agent)))
-                  (record (cdr (assoc name cerebro--pokes))))
-             (pcase (cerebro--poke-decision record wake-key now)
-               ('send
-                (let ((count (if (equal (nth 0 record) wake-key) (1+ (nth 2 record)) 1)))
-                  (setf (alist-get name cerebro--pokes nil nil #'equal)
-                        (list wake-key (format-time-string "%Y-%m-%dT%H:%M:%SZ" now t) count))
-                  (cerebro--poke agent)))
-               ('surface
-                (unless (member name cerebro--unanswered-pokes)
-                  (push name cerebro--unanswered-pokes)
-                  (message "%s did not answer its wake - poke it by hand, or `k' and `s' it"
-                           name)))))))))))
+                    (cerebro--nudge agent))))))))
 
 ;;; Reading the beads
 
@@ -3138,7 +3084,6 @@ Does nothing when BUFFER is dead."
             (mapcar (lambda (a)
                       (cerebro--entry a now
                                       (cerebro--stop-flag-p repo-root (cerebro-agent-name a))
-                                      (member (cerebro-agent-name a) cerebro--unanswered-pokes)
                                       (nth 3 widths)))
                     agents)))))
 

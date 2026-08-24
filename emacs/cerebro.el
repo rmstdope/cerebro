@@ -111,6 +111,14 @@ is the fleet view's order."
   (mapcar (lambda (row) (cons (nth 0 row) (nth 1 row)))
           (seq-filter (lambda (row) (eq (nth 2 row) 'interactive)) fleet)))
 
+(defun cerebro--fleet-role-names (fleet role)
+  "The names in FLEET filling ROLE, in roster order.
+
+Roster order is load-bearing for a role two agents hold: the P4 triage pass
+belongs to the first planner alone (`skills/plan-bead\='), because two
+sessions triaging one backlog interview the navigator twice over it."
+  (mapcar #'car (seq-filter (lambda (row) (equal (nth 1 row) role)) fleet)))
+
 (defun cerebro--list-height (agent-count)
   "Lines the agent list needs for AGENT-COUNT agents: the rows, the header
 line and the mode line, so the list never scrolls and the bead panel gets
@@ -1402,6 +1410,93 @@ floor that has half a minute left to run is not worth a different word."
   "The echo line for a start the view decided on: who, and why."
   (format "cerebro: started %s — %s" name reason))
 
+(defun cerebro--stale-verdict-p (bead)
+  "Whether BEAD carries the label that parks it in front of the verifier."
+  (and (member "verdict:stale" (append (cerebro--bead-labels bead) nil)) t))
+
+(defun cerebro--count-priority (beads priority)
+  "How many of BEADS are at PRIORITY."
+  (seq-count (lambda (bead) (equal (alist-get 'priority bead) priority)) beads))
+
+(defun cerebro--trigger-context (repo-root now)
+  "What every standby role\='s trigger is judged against, at NOW.
+
+Impure, and deliberately cheap: it counts what this tick has already read -
+the bead panel\='s own partition (`cerebro--beads\='), the fleet list beside it
+\(`cerebro--agents\='), and the cached roster - and makes no `bd\=' call of its
+own.  A trigger evaluated once per standby row per five-second tick cannot
+afford a subprocess.
+
+A panel that has not answered yet reports no work rather than none wanted:
+`planned\=' comes back high enough that no buffer rule can fire, because \"the
+figures have not arrived\" and \"the buffer is empty\" are the same number
+otherwise, and the second of them starts both planners at once.
+
+The `gh\=' key is cb-5yr.2\='s and is nil here, which is what leaves Moira and
+Cypher on their cadence floor alone."
+  (ignore repo-root)
+  (let* ((panel (cerebro--beads-panel-buffer))
+         (beads (and panel (buffer-local-value 'cerebro--beads panel)))
+         (planned (nth 1 beads))
+         (unplanned (nth 3 beads))
+         (merged (nth 4 beads))
+         (open-beads (append (nth 0 beads) planned (nth 2 beads) unplanned)))
+    (list (cons 'now (float-time now))
+          (cons 'planned (if beads (length planned) most-positive-fixnum))
+          (cons 'p0-unplanned
+                (mapcar (lambda (bead) (alist-get 'id bead))
+                        (seq-filter (lambda (bead) (equal (alist-get 'priority bead) 0))
+                                    unplanned)))
+          (cons 'p4-unranked (cerebro--count-priority unplanned 4))
+          (cons 'merged-unverified (length merged))
+          (cons 'stale-verdicts (seq-count #'cerebro--stale-verdict-p open-beads))
+          (cons 'live-implementers
+                (seq-count (lambda (agent)
+                             (and (eq (cerebro-agent-kind agent) 'implementer)
+                                  (not (eq (cerebro-agent-state agent) 'dead))))
+                           cerebro--agents))
+          (cons 'first-planner
+                (car (cerebro--fleet-role-names (cerebro--fleet repo-root) "planner")))
+          (cons 'gh nil))))
+
+(defun cerebro--agent-context (agent context)
+  "CONTEXT with the four facts that are AGENT\='s rather than the fleet\='s.
+
+Kept out of `cerebro--trigger-context\=' so that one is gathered once a tick
+and this one is a few conses per standby row."
+  (let ((name (cerebro-agent-name agent)))
+    (append (list (cons 'ended-at (nth 0 (cdr (assoc name cerebro--parked))))
+                  (cons 'started-at (cdr (assoc name cerebro--started-at)))
+                  (cons 'floor (cerebro-wake-interval name (cerebro-agent-role agent)))
+                  (cons 'first-planner-p
+                        (equal name (alist-get 'first-planner context))))
+            context)))
+
+(defun cerebro--start-due (repo-root now)
+  "Start every standby role in `cerebro--agents\=' whose trigger is true at NOW.
+
+The other half of `cerebro--supervise\=', and it runs straight after it: that
+one ends a session when a pass is over, this one starts a fresh one when
+there is another pass to make.  Nothing here is a clock the role set -
+`cerebro--trigger\=' is the whole decision, and the echo line says which of its
+rules fired, so a start is never something the navigator has to reconstruct.
+
+Errors are demoted per agent, as everywhere else that launches in a loop:
+one role whose launcher refuses must not stop the rest being started.  With
+no vterm there is nothing to start a session in at all, and saying so once
+per tick per role would be worse than saying nothing - `cerebro--autostart\='
+is where that is said."
+  (when (cerebro--vterm-available-p)
+    (let ((context (cerebro--trigger-context repo-root now)))
+      (dolist (agent cerebro--agents)
+        (when (eq (cerebro-agent-state agent) 'standby)
+          (let ((reason (cerebro--trigger agent (cerebro--agent-context agent context))))
+            (when reason
+              (with-demoted-errors "cerebro: %S"
+                (cerebro--launch agent)
+                (message "%s" (cerebro--start-message
+                               (cerebro-agent-name agent) reason))))))))))
+
 ;;; ah-vcf.3: the pure start/kill/launch decisions
 
 (defcustom cerebro-submodule-path ".claude/cerebro"
@@ -1910,6 +2005,14 @@ sweep pipeline; the command itself carries no path, since it is run with
     (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure
+
+(defun cerebro--beads-panel-buffer ()
+  "The bead panel buffer if it is live, or nil.
+
+Its own function so the trigger context can be tested without one - a fleet
+view whose panel has not been drawn yet is an ordinary state, not an error."
+  (let ((buffer (get-buffer cerebro-beads-buffer-name)))
+    (and (buffer-live-p buffer) buffer)))
 
 (defun cerebro--repo-root ()
   "The repository root above `default-directory', or an error.
@@ -3404,7 +3507,9 @@ avoid by coupling them the way an earlier version did (a sweep costs no
   "Refresh BUFFER if it is still alive; called every 5s while it lives.
 
 The list first, then `cerebro--supervise' on what that just derived - never
-on a state file read five seconds ago.  Then the bead panel, when its
+on a state file read five seconds ago - and then `cerebro--start-due', which
+starts a fresh session for every standby role whose trigger has come true
+(cb-5yr).  Then the bead panel, when its
 thirty seconds are up, and the sweeps, when their ten minutes are: one
 timer with the fleet buffer's lifetime, instead of a timer per panel each
 cancelling itself by a different route (ah-6uo).  Both are demoted: a `bd'
@@ -3417,7 +3522,12 @@ left and runs every `cerebro-system-scan-seconds'."
     (let ((now (or now (current-time))))
       (with-current-buffer buffer
         (cerebro--list-render buffer)
-        (cerebro--supervise cerebro--agents (cerebro--repo-root) now))
+        (let ((repo-root (cerebro--repo-root)))
+          (cerebro--supervise cerebro--agents repo-root now)
+          ;; After, not before: a role ended on this very tick is not on
+          ;; standby until the next render restates it, which is what stops a
+          ;; pass being ended and restarted inside one tick.
+          (cerebro--start-due repo-root now)))
       (let ((panel (get-buffer cerebro-beads-buffer-name)))
         (when (buffer-live-p panel)
           (with-demoted-errors "cerebro: %S"

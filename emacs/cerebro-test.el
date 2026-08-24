@@ -4739,3 +4739,132 @@ has been there - there is no session for an elapsed time to describe."
     ;; No label computed: nothing, rather than half an hour of a session that
     ;; is not running.
     (should (equal (aref (nth 1 (cerebro--entry agent cerebro-test--now)) 4) ""))))
+
+;; --- acting on a trigger --------------------------------------------------
+
+(ert-deftest cerebro-test/start-due-launches-and-says-why ()
+  "The whole loop, in one place: a standby row whose trigger is true is
+started once, the navigator is told which role and why, and the floor stops
+the next tick starting it again."
+  (let ((launched nil)
+        (said nil))
+    (cl-letf (((symbol-function 'cerebro--launch)
+               (lambda (a) (push (cerebro-agent-name a) launched)))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) said)))
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _)
+                 '((now . 1000000.0) (live-implementers . 2) (planned . 4)
+                   (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                   (merged-unverified . 2) (stale-verdicts . 0) (gh)))))
+      (with-temp-buffer
+        (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)
+                                    (cerebro-test--interactive "Moira" "user-feedback" 'waiting)
+                                    (cerebro-test--interactive "Cerebro" "orchestrator" 'standby))
+              cerebro--parked '(("Psylocke" . (990000.0 980000.0 nil))
+                                ("Cerebro" . (990000.0 980000.0 nil)))
+              cerebro--started-at '(("Psylocke" . 980000.0) ("Cerebro" . 980000.0)))
+        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
+        (should (equal launched '("Psylocke")))
+        (should (equal said '("cerebro: started Psylocke — 2 merged, unverified")))
+        ;; A second tick with the start fresh: the floor holds it.
+        (setq cerebro--started-at '(("Psylocke" . 999900.0)))
+        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
+        (should (equal launched '("Psylocke")))))))
+
+(ert-deftest cerebro-test/start-due-does-nothing-without-vterm ()
+  "There is nothing to run a session in, and a trigger firing once every five
+seconds into a `user-error' is not a way to say so."
+  (let ((launched nil))
+    (cl-letf (((symbol-function 'cerebro--launch)
+               (lambda (a) (push (cerebro-agent-name a) launched)))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () nil))
+              ((symbol-function 'cerebro--trigger) (lambda (&rest _) "because"))
+              ((symbol-function 'cerebro--trigger-context) (lambda (&rest _) nil))
+              ((symbol-function 'message) #'ignore))
+      (with-temp-buffer
+        (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)))
+        (cerebro--start-due "/tmp/nowhere" (current-time))
+        (should (null launched))))))
+
+(ert-deftest cerebro-test/start-due-survives-a-launcher-that-cannot-start ()
+  "One role that will not start must not stop the others - the rule every
+other loop in this file already follows."
+  (let ((launched nil))
+    (cl-letf (((symbol-function 'cerebro--launch)
+               (lambda (a) (if (equal (cerebro-agent-name a) "Psylocke")
+                               (error "nope")
+                             (push (cerebro-agent-name a) launched))))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'cerebro--trigger) (lambda (&rest _) "because"))
+              ((symbol-function 'cerebro--trigger-context) (lambda (&rest _) nil))
+              ((symbol-function 'message) #'ignore))
+      (with-temp-buffer
+        (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)
+                                    (cerebro-test--interactive "Xavier" "planner" 'standby)))
+        (cerebro--start-due "/tmp/nowhere" (current-time))
+        (should (equal launched '("Xavier")))))))
+
+(ert-deftest cerebro-test/trigger-context-counts-what-the-buffer-already-holds ()
+  "No `bd' call of its own: the panel's own partition, the fleet list beside
+it, and the roster - all of which this tick has already read."
+  (let ((panel (get-buffer-create "*cerebro-beads-test*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--fleet)
+                   (lambda (_) '(("Xavier" "planner" interactive)
+                                 ("Beast" "planner" interactive)
+                                 ("Rogue" "implementer" implementer))))
+                  ((symbol-function 'cerebro--beads-panel-buffer) (lambda () panel)))
+          (with-current-buffer panel
+            (setq cerebro--beads
+                  (list nil                                        ; claimed
+                        '(((id . "a")) ((id . "b")))               ; planned
+                        nil                                        ; being planned
+                        '(((id . "c") (priority . 0))
+                          ((id . "d") (priority . 4))
+                          ((id . "e") (priority . 4))
+                          ((id . "f") (priority . 2)
+                           (labels . ["verdict:stale"])))          ; unplanned
+                        '(((id . "g")) ((id . "h")) ((id . "i")))))) ; merged
+          (with-temp-buffer
+            (setq cerebro--agents
+                  (list (cerebro-test--agent "Rogue" "implementer" 'implementer 'working)
+                        (cerebro-test--agent "Gambit" "implementer" 'implementer 'dead)
+                        (cerebro-test--interactive "Xavier" "planner" 'standby)))
+            (let ((context (cerebro--trigger-context "/tmp/nowhere" (seconds-to-time 5.0))))
+              (should (equal (alist-get 'now context) 5.0))
+              (should (equal (alist-get 'planned context) 2))
+              (should (equal (alist-get 'p0-unplanned context) '("c")))
+              (should (equal (alist-get 'p4-unranked context) 2))
+              (should (equal (alist-get 'merged-unverified context) 3))
+              (should (equal (alist-get 'stale-verdicts context) 1))
+              (should (equal (alist-get 'live-implementers context) 1))
+              (should (equal (alist-get 'first-planner context) "Xavier"))
+              ;; cb-5yr.2's key: nil until its reader lands.
+              (should (null (alist-get 'gh context))))))
+      (kill-buffer panel))))
+
+(ert-deftest cerebro-test/trigger-context-without-a-panel-says-nothing-is-wanted ()
+  "A fleet view whose panel has not answered yet must not read as an empty
+buffer and a backlog of nothing - that would start both planners at once."
+  (cl-letf (((symbol-function 'cerebro--fleet) (lambda (_) nil))
+            ((symbol-function 'cerebro--beads-panel-buffer) (lambda () nil)))
+    (with-temp-buffer
+      (setq cerebro--agents nil)
+      (let ((context (cerebro--trigger-context "/tmp/nowhere" (current-time))))
+        (should (null (alist-get 'p0-unplanned context)))
+        (should (equal (alist-get 'p4-unranked context) 0))
+        (should (equal (alist-get 'merged-unverified context) 0))
+        (should (equal (alist-get 'stale-verdicts context) 0))
+        ;; A buffer nothing has counted is not a buffer that is short.
+        (should (>= (alist-get 'planned context) 2))))))
+
+(ert-deftest cerebro-test/fleet-role-names-are-the-names-filling-a-role-in-order ()
+  "Two agents hold `planner', and which of them is first is load-bearing: the
+P4 triage pass belongs to that one alone."
+  (should (equal (cerebro--fleet-role-names
+                  '(("Xavier" "planner" interactive) ("Psylocke" "verifier" interactive)
+                    ("Beast" "planner" interactive))
+                  "planner")
+                 '("Xavier" "Beast"))))

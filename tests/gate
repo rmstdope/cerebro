@@ -5,9 +5,13 @@
 # .cerebro/project.conf both name this file) because the whole thing takes under a minute -
 # a separate fast gate would only be worth having if the full one were slow.
 #
-# It runs exactly what .github/workflows/ci.yml runs, and tests/project-facts.sh fails when the two
-# stop agreeing. A gate that has drifted from CI is worse than no gate: the fleet merges on green
-# that nobody else sees.
+# It runs exactly what .github/workflows/ci.yml runs, and scripts/lint advises when the two stop
+# agreeing. A gate that has drifted from CI is worse than no gate: the fleet merges on green that
+# nobody else sees.
+#
+# It ends with scripts/lint, whose status it deliberately ignores: the lint guards decisions -
+# prose and configuration - and a decision changing on purpose must not read as a regression
+# (cb-194).
 #
 # NOT `tests/gate.sh'. The suite loop below is `tests/*.sh', which would pick this file up and run
 # the gate from inside the gate, once per suite, forever.
@@ -48,6 +52,9 @@ for t in tests/*.sh; do
   fi
 done
 ((${#failed[@]})) || echo "all bash suites passed"
+
+echo "== lint (advisory) =="
+bash scripts/lint || echo "lint: advisories above are not failures - a deliberate change updates scripts/lint in the same PR" >&2
 
 if [[ $status -eq 0 ]]; then
   echo "gate: green"

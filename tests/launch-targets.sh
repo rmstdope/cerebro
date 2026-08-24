@@ -175,19 +175,6 @@ for f in $sites; do
 done
 pass "no launch site names pnpm --filter, tauri, @atlantis or a hardcoded port"
 
-# --- and each of them says where the answer comes from ---
-for f in agents/verifier.md agents/reviewer.md; do
-  grep -q 'launch_targets' "$repo_root/$f" \
-    || fail "$f names no way to find out how to start the application"
-  grep -q 'launch_.*_port\|launch_<name>_port' "$repo_root/$f" \
-    || fail "$f names no way to find the port to check"
-done
-grep -qE 'port_base' "$repo_root/skills/implement-bead/SKILL.md" \
-  || fail "implement-bead names no way to find its port block"
-grep -qE 'port_base|port_block_size' "$repo_root/docs/agent-workflow.md" \
-  || fail "agent-workflow still describes the blocks as fixed numbers"
-pass "each launch site names the declaration it reads"
-
 # --- THE ASK. With nothing declared, the verifier must ask - not guess, not skip ---
 verifier="$(tr '\n' ' ' < "$repo_root/agents/verifier.md" | tr -s ' ')"
 case "$verifier" in

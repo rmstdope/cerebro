@@ -8,7 +8,7 @@ rather than a support for the rule.
 So the rules keep their claims and their costs, and this file keeps the provenance. **Nothing loads
 it.** It is read by a person asking "where did this rule come from", never carried into a session —
 if a prompt ever starts referencing it, the coupling it was written to remove has come back with
-worse structure. `tests/prose-decoupling.sh` enforces both halves.
+worse structure. `scripts/lint` advises on both halves.
 
 Ids here are from the `atlantis-hud` bead database, the consumer cerebro grew up in.
 

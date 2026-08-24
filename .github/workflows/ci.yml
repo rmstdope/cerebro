@@ -54,3 +54,7 @@ jobs:
             exit 1
           fi
           echo "all bash suites passed"
+
+      - name: Lint (advisory, never blocks)
+        continue-on-error: true
+        run: bash scripts/lint

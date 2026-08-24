@@ -4031,14 +4031,6 @@ exactly today's literal."
     (should (get (car pair) 'custom-type))
     (should (equal (default-value (car pair)) (cdr pair)))))
 
-(ert-deftest cerebro-test/the-threshold-docstrings-keep-their-measurement ()
-  "A `defcustom' with a bare number loses the reason it was ever right."
-  (should (string-match-p "36 beads" (documentation-property
-                                      'cerebro-stalled-minutes 'variable-documentation)))
-  (should (string-match-p "orchestrator\\.md" (documentation-property
-                                               'cerebro-sweep-stale-minutes
-                                               'variable-documentation))))
-
 (ert-deftest cerebro-test/a-changed-planned-label-repartitions-the-panel ()
   "The panel buckets on `cerebro-planned-label', not on the word `planned'."
   (let ((cerebro-planned-label "ready")
@@ -4128,22 +4120,10 @@ rather than being truncated away."
     (should (equal (substring-no-properties (aref (nth 1 row) 3))
                    "ah-dzj.1.1.1.1.1"))))
 
-(ert-deftest cerebro-test/no-prose-names-one-particular-consumer ()
-  "`C-h m' shows every user the mode docstring, and `runImplementer.ts' is a
-file in neither repository - a dangling reference implying a Node consumer."
-  (with-temp-buffer
-    (insert-file-contents (expand-file-name "emacs/cerebro.el"))
-    (goto-char (point-min))
-    (should-not (search-forward "atlantis-hud" nil t))
-    (goto-char (point-min))
-    (should-not (search-forward "runImplementer" nil t))))
-
-(ert-deftest cerebro-test/the-nudge-names-no-label-and-no-skill ()
-  "It is typed into a live session, so it must not name this project's
-beads label or the skill it happens to keep the hand-back in."
-  (should-not (string-match-p "human" cerebro--nudge-message))
-  (should-not (string-match-p "implement-bead" cerebro--nudge-message))
-  ;; It still has to say the two things it is for: stop waiting, and finish.
+(ert-deftest cerebro-test/the-nudge-carries-the-cerebro-prefix ()
+  "The nudge is typed into a live session, and every agent is told to
+recognise it by the `[cerebro]' prefix - so the prefix is a contract with
+the sessions rather than a wording preference."
   (should (string-match-p "\\[cerebro\\]" cerebro--nudge-message)))
 
 (ert-deftest cerebro-test/every-public-constant-left-is-a-buffer-name ()

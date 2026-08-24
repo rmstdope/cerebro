@@ -508,7 +508,7 @@ green CI without a review, under the same docs-only exception the consumer's roo
 Four Eye Principle) already
 gives the mockup PR.
 
-## Ending a pass: you write `waiting`, and the fleet view wakes you
+## Ending a pass: you write `waiting`, and the fleet view ends the session
 
 You do not schedule yourself and you do not sleep inside your own session. A pass ends
 like this:
@@ -517,13 +517,14 @@ like this:
 .claude/cerebro/scripts/agent-state Psylocke waiting --wake-in 300 --pid $PPID
 ```
 
-**Then end your turn.** Say in one line what the pass found, and stop producing output — that is the
-whole of it. The fleet view wakes you with a `[cerebro]` line in your session when your wait is up,
-and the next pass begins there.
-
-`--wake-in` is what you *ask* for; the fleet view owns the cadence and may wake you sooner (it is a
-`defcustom` the navigator can change while the fleet runs, which is why the number is no longer
-yours to argue about). 300 seconds is what this role has historically waited.
+**Then end your turn.** Say in one line what the pass found, and stop producing output — that is
+the whole of it. The fleet view ends this session once `waiting` has stood for half a minute, keeps
+what you printed as the record of the pass, and starts a **fresh session** under your name when
+there is something for you to do — a trigger of its own for your role, not a clock you set.
+Nothing survives from this session into the next one: everything the next pass needs is in the
+bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
+`--wake-in` is what you *ask* for and is honoured as a floor: the view never starts you again
+sooner than that after your last start.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken

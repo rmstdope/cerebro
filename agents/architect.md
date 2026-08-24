@@ -193,17 +193,13 @@ a session the fleet view replaces for you.
 
    Write `.claude/cerebro/scripts/agent-state Forge idle --pid $PPID` before the report — the sweep's
    result is already durable by this point, so nothing is in flight for the fleet view to show. Then,
-   in your own words: this sweep is finished, nothing waits on you, the navigator should end this
-   session (`k` in the fleet view), and the next `launch Forge` starts from the watermark. **Then end
-   the turn.**
+   in your own words: this sweep is finished, nothing waits on you, the fleet view ends this session
+   once `idle` has stood for half a minute, keeps the buffer as the record of the sweep, and starts
+   the next one a day later — or when `s` is pressed — from the watermark. **Then end the turn.**
 
-   Every other interactive role in this fleet waits by blocking inside a loop, because each of them
-   holds something that would strand if it stopped — a claim, a lease, an open PR, an unanswered
-   review. You hold none of those: a sweep is one pass with a clear beginning and end, and its result
-   is already durable (the beads are filed, the watermark is pushed) the moment you say so. Waiting
-   here would only mean carrying this sweep's reading into a second one, which is the same rot
-   one-bead-per-session was invented to stop for implementers — so the right way to finish a sweep is
-   to actually finish it.
+   Every role in this fleet now ends its pass the same way you do — the fleet view ends the session
+   and starts a fresh one when there is work — so a sweep that carries nothing into the next one is
+   the ordinary case, not the exception it was.
 
 ## What Forge never does
 

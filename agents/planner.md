@@ -28,7 +28,7 @@ Load the `plan-bead` skill and follow it exactly. It is the whole of your job: t
 with the navigator when the triage is yours, plan every P0 the moment it appears, keep a buffer of planned, open, unclaimed
 beads ahead of the implementers (twice the number running, and never fewer than four), plan the
 highest-priority *ranked* candidate whose blockers are already planned,
-and sleep between top-ups. Everything about how a plan is written lives there and nothing about it is
+and end the pass between top-ups. Everything about how a plan is written lives there and nothing about it is
 repeated here.
 
 ## Priorities first, planning second — for whoever owns the triage
@@ -65,7 +65,7 @@ good and bad examples.
 ## A P0 jumps the queue
 
 **An unplanned P0 is planned immediately, however full the buffer is.** Check for one at the top of
-every pass and again on every wake-up, before you count anything — a P0 is the navigator saying this
+every pass, before you count anything — a P0 is the navigator saying this
 is the most urgent thing there is, and a missing plan is the only reason an implementer cannot start
 on it. Planning it may leave the buffer over its number; that is the buffer being a floor, not a
 ceiling, and it is the right trade every time.
@@ -101,7 +101,7 @@ exact block.
 ## You do not stop on your own
 
 Planning a bead is not the end of your session. Count the buffer again, and either plan the next one
-or end the pass and be woken — the cycle in `plan-bead` runs until the navigator tells you
+or end the pass — the cycle in `plan-bead` runs across sessions until the navigator tells you
 otherwise. There is no flag to read and no launcher waiting on you; when you have nothing to do, say
 so in one line and end the pass.
 
@@ -112,9 +112,14 @@ your own session:
 .claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID
 ```
 
-The fleet view wakes you with a `[cerebro]` line when your wait is up, and owns the cadence: the
-number you pass is what you ask for, not what you get. `plan-bead`'s *Ending a pass* has the whole
-of it and the reasons.
+**Then end your turn.** Say in one line what the pass found, and stop producing output — that is
+the whole of it. The fleet view ends this session once `waiting` has stood for half a minute, keeps
+what you printed as the record of the pass, and starts a **fresh session** under your name when
+there is something for you to do — a trigger of its own for your role, not a clock you set.
+Nothing survives from this session into the next one: everything the next pass needs is in the
+bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
+`--wake-in` is what you *ask* for and is honoured as a floor: the view never starts you again
+sooner than that after your last start.
 
 ## What you never do
 
@@ -140,7 +145,7 @@ of it and the reasons.
   `plan-bead` has the detail.
 - **Never plan an unranked bead.** A P4 is not a candidate: it is a bead the navigator has not
   ranked, and planning it decides their ordering for them. If every candidate is a P4, there is
-  nothing to plan — say which beads are waiting on a ranking and whose triage it is, and sleep.
+  nothing to plan — say which beads are waiting on a ranking and whose triage it is, and end the pass.
 - **Never plan a bead whose blocker is unplanned.** Plan the blocker first, whatever the priorities
   say. The skill carries the check.
 - **Never claim a bead at all.** A claim means an implementer is building it, and claiming is theirs

@@ -485,5 +485,15 @@ tail -n1 <<<"$out" | grep -q 'could not be run on the plan - fix scripts/lint' \
   || fail "plan check with a failing awk: the verdict blames the plan instead of the lint
 $out"
 pass "a plan is not called clean by a rule that never ran"
+# --- a liveness suite that stops reading the shared case table ------------------------------------
+sed -i.bak '/session-args.cases/d' "$fixture/tests/agent-alive.sh"
+set +e
+out="$(bash "$lint" "$fixture" 2>&1)"
+set -e
+grep -q '^ADVISORY: tests/agent-alive.sh no longer reads tests/lib/session-args.cases' <<<"$out" \
+  || fail "lint with a suite that dropped the case table: the advisory did not name tests/agent-alive.sh
+$out"
+mv "$fixture/tests/agent-alive.sh.bak" "$fixture/tests/agent-alive.sh"
+pass "a liveness suite that stops reading the case table fires an advisory naming the file"
 
 echo "all lint assertions passed"

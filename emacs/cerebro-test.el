@@ -127,6 +127,62 @@ test body cannot compute this itself.")
   (let ((args (list cerebro-test--this-consumer-args)))
     (should (equal (cerebro--consumer-args args "/Users/x/repos/cerebro/") args))))
 
+;; --- the shared case table -------------------------------------------------
+;; The rule's cases live in one tracked file that BOTH implementations run:
+;; `tests/agent-alive.sh' drives `scripts/agent-alive' with the same rows.  A
+;; row one side answers differently is the drift the table exists to catch -
+;; before it, each side kept its own list and the two diverged, twice.
+
+(defconst cerebro-test--session-args-cases-file
+  (expand-file-name "tests/lib/session-args.cases" cerebro-test--repo-root)
+  "The case table both implementations of the liveness rule run.
+`tests/agent-alive.sh' runs the same rows against `scripts/agent-alive'.")
+
+(defun cerebro-test--session-args-cases (root other)
+  "The rows of `cerebro-test--session-args-cases-file' as (EXPECT NAME ROOT ARGS).
+EXPECT is t for `alive' and nil for `dead'; {root} and {other} in the file
+are replaced by ROOT and OTHER, and ARGS gets the program name prepended,
+since the table holds the command line after it.  A malformed row is an
+error, not a skipped case."
+  (let ((sub (lambda (s)
+               (replace-regexp-in-string
+                "{other}" other (replace-regexp-in-string "{root}" root s t t) t t)))
+        rows)
+    (with-temp-buffer
+      (insert-file-contents cerebro-test--session-args-cases-file)
+      (dolist (line (split-string (buffer-string) "\n" t))
+        (unless (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" line)
+          (unless (string-match
+                   "\\`[ \t]*\\([^ \t]+\\)[ \t]+\\([^ \t]+\\)[ \t]+\\([^ \t]+\\)[ \t]+\\(.*\\)\\'"
+                   line)
+            (error "session-args.cases: malformed row: %s" line))
+          (push (list (pcase (match-string 1 line)
+                        ("alive" t)
+                        ("dead" nil)
+                        (other-word (error "session-args.cases: expects %S, not alive or dead"
+                                           other-word)))
+                      (match-string 2 line)
+                      (funcall sub (match-string 3 line))
+                      (concat "claude " (funcall sub (match-string 4 line))))
+                rows))))
+    (nreverse rows)))
+
+(ert-deftest cerebro-test/session-args-table-is-read-and-not-empty ()
+  "A table that went missing or empty must not pass as \"every row held\"."
+  (let ((rows (cerebro-test--session-args-cases "/Users/x/repos/cerebro" "/Users/x/repos/elsewhere")))
+    (should (cl-some #'car rows))
+    (should (cl-some (lambda (r) (not (car r))) rows))))
+
+(ert-deftest cerebro-test/session-args-p-answers-every-row-of-the-shared-table ()
+  "The one rule, over the cases both implementations run.
+The same rows drive `scripts/agent-alive' in its own suite; a row this
+function answers differently from the script is the drift the table exists
+to catch."
+  (dolist (row (cerebro-test--session-args-cases "/Users/x/repos/cerebro" "/Users/x/repos/elsewhere"))
+    (pcase-let ((`(,expect ,name ,root ,args) row))
+      (ert-info ((format "row: %s %s %s" (if expect "alive" "dead") name args))
+        (should (eq expect (and (cerebro--session-args-p args name root) t)))))))
+
 (defconst cerebro-test--beast-args
   "claude --agent planner --name Beast --settings /Users/x/repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json"
   "Another name's session of the fleet rooted at /Users/x/repos/cerebro.")
@@ -196,54 +252,24 @@ entry points to the rule are pinned here, since both are string matches."
     ;; and the sibling rule still holds through the expansion
     (should-not (cerebro--consumer-args args "~/repos/cerebro-hud/"))))
 
-(ert-deftest cerebro-test/consumer-args-does-not-match-a-sibling-with-the-same-prefix ()
-  ;; The root must be a whole path component: /repos/cerebro is not /repos/cerebro-hud.
-  (let ((args (list "claude --name Xavier --settings /Users/x/repos/cerebro-hud/.claude/cerebro/x")))
-    (should-not (cerebro--consumer-args args "/Users/x/repos/cerebro"))))
-
-(ert-deftest cerebro-test/consumer-args-drops-a-session-that-names-no-root-at-all ()
-  ;; A bare `claude --name Xavier' typed by hand belongs to no fleet this view can prove is
-  ;; its own, and reading it as this one's is the defect. Every session `scripts/launch'
-  ;; starts carries `--settings <root>/.../hooks/question-state.settings.json'.
-  (should-not (cerebro--consumer-args '("claude --agent planner --name Xavier")
-                                      "/Users/x/repos/cerebro")))
-
-(ert-deftest cerebro-test/session-args-p-requires-the-name-and-the-root-together ()
-  "The one rule (cb-lzi): a whole-word --name NAME and a path under ROOT, on one command line."
-  (let ((root "/Users/x/repos/cerebro"))
-    (should (cerebro--session-args-p cerebro-test--this-consumer-args "Xavier" root))
-    ;; the same name in another consumer is not ours
-    (should-not (cerebro--session-args-p cerebro-test--other-consumer-args "Xavier" root))
-    ;; the root without the name is not ours either
-    (should-not (cerebro--session-args-p cerebro-test--this-consumer-args "Beast" root))
-    ;; a hand-typed session naming no root: the documented trade
-    (should-not (cerebro--session-args-p "claude --agent planner --name Xavier" "Xavier" root))
-    ;; the name only as a --remote-control value does not count (ah-qym)
-    (should-not (cerebro--session-args-p
-                 "claude --remote-control Xavier --settings /Users/x/repos/cerebro/.claude/x" "Xavier" root))
-    ;; a trailing slash on ROOT, and a sibling checkout with the same prefix
-    (should (cerebro--session-args-p cerebro-test--this-consumer-args "Xavier" "/Users/x/repos/cerebro/"))
-    (should-not (cerebro--session-args-p
-                 "claude --name Xavier --settings /Users/x/repos/cerebro-hud/.claude/x" "Xavier" root))
-    ;; not a string is not a session
-    (should-not (cerebro--session-args-p nil "Xavier" root))))
+(ert-deftest cerebro-test/session-args-p-rejects-a-non-string ()
+  "Not a string is not a command line, and so not a session.
+The one case the shared table cannot express: every row of it is a command
+line."
+  (should-not (cerebro--session-args-p nil "Xavier" "/Users/x/repos/cerebro")))
 
 (ert-deftest cerebro-test/scan-path-and-pid-path-apply-one-rule ()
   "The process scan and the pid path are the same two tests.
 `cerebro--consumer-args' then `cerebro--name-in-args-p' is the scan
 composition; `cerebro--session-args-p' is the pid path.  A command line that
 passes one passes the other, for every row of this table."
-  (let ((root "/Users/x/repos/cerebro"))
-    (dolist (args (list cerebro-test--this-consumer-args
-                        cerebro-test--other-consumer-args
-                        "claude --agent planner --name Xavier"
-                        "claude --name Xavier --settings /Users/x/repos/cerebro-hud/.claude/x"
-                        "claude --remote-control Xavier --settings /Users/x/repos/cerebro/.claude/x"
-                        "claude --name Xavier --settings /Users/x/repos/cerebro/.claude/cerebro/hooks/q.json"))
-      (should (eq (and (cerebro--session-args-p args "Xavier" root) t)
-                  (and (cerebro--name-in-args-p
-                        "Xavier" (cerebro--consumer-args (list args) root))
-                       t))))))
+  (dolist (row (cerebro-test--session-args-cases "/Users/x/repos/cerebro" "/Users/x/repos/elsewhere"))
+    (pcase-let ((`(,_expect ,name ,root ,args) row))
+      (ert-info ((format "row: %s %s" name args))
+        (should (eq (and (cerebro--session-args-p args name root) t)
+                    (and (cerebro--name-in-args-p
+                          name (cerebro--consumer-args (list args) root))
+                         t)))))))
 
 (ert-deftest cerebro-test/derive-interactive-dead-for-another-consumers-session ()
   ;; The whole chain: another repository's Xavier is scanned, filtered out, and this fleet's

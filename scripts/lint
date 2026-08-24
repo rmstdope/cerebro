@@ -586,6 +586,21 @@ grep -q -- 'lint --plan' skills/plan-bead/SKILL.md 2>/dev/null \
 # for a vendored plain copy at the standard mount. Its own header says so.
 # Now the rule "mount-round-trip" in the table above.
 
+# --- 16. both liveness suites read the shared case table ---
+#
+# The liveness rule has two implementations by design (elisp cannot afford a subprocess per agent
+# per refresh; bash cannot call elisp), and their cases live in ONE table so that a case added on
+# either side runs on both. That only holds while both suites read it: a suite that stops is a
+# suite that has quietly gone back to its own list, which is how the two drifted twice before.
+fired=0
+table=tests/lib/session-args.cases
+[[ -f "$table" ]] || { advisory "$table does not exist - the liveness rule's cases have no shared home"; fired=1; }
+for f in tests/agent-alive.sh emacs/cerebro-test.el; do
+  grep -qF 'session-args.cases' "$f" 2>/dev/null \
+    || { advisory "$f no longer reads $table - the two liveness implementations can drift again"; fired=1; }
+done
+((fired)) || ok "both liveness suites read $table"
+
 if [[ $status -eq 0 ]]; then
   echo "lint: clean"
 elif (( unchecked > 0 )); then

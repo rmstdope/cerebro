@@ -18,7 +18,9 @@
 # and inflating the count the planning buffer is sized from. Every session `scripts/launch' starts
 # carries `--name <Name>' in its args, so the name is the identity and the pid alone is not. And a
 # name is unique inside one consumer, not on the machine (9420ff2), so the root is the third
-# discriminator - see cerebro--session-args-p, of which this script is the bash copy.
+# discriminator - see cerebro--session-args-p, of which this script is the bash copy. Its cases are
+# tests/lib/session-args.cases, which tests/agent-alive.sh and emacs/cerebro-test.el both run - add
+# a case there, not in one suite.
 #
 # A predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state'
 # (which requires --pid and exists to write a file). Nothing is printed in the 0/1 cases: this runs

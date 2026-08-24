@@ -86,10 +86,19 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
 
    `bd recall <missing-key>` exits 1 — that is the "never swept" branch, not an error.
 
+   **The watermark is the whole gate.** The fleet view starts you every hour, and every session
+   reads everything that has landed since `bishop-watermark` — every commit in the range and every
+   retrospective added in it — however recently the last session ran. There is no separate clock to
+   consult: a range that is empty costs a `git log` and a line, and a range that is not is exactly
+   the work you exist to do. So an hourly wake over an empty range is the ordinary case, not a
+   wasted one, and a busy afternoon is read while it is still fresh instead of in one lump the next
+   day.
+
 2. **Decide the sweep, and say which and why, in your first message.** Weekly if `bishop-weekly` is
    absent or seven or more days old, or if `bishop-watermark` is absent (a first run reads
-   everything); otherwise daily. Say the range: "daily, since `<sha>` (`<n>` commits over `<d>`
-   days)" — and if `<d>` is more than two, say out loud that nobody read main for that long.
+   everything); otherwise daily — which names the *incremental* sweep, the one bounded by the
+   watermark, whatever the hour. Say the range: "daily, since `<sha>` (`<n>` commits over `<d>`
+   hours)" — and if that is more than two days, say out loud that nobody read main for that long.
 
    Write `.claude/cerebro/scripts/agent-state Forge working --phase daily --pid $PPID` (or
    `--phase weekly`) the moment you decide which, before reading anything.

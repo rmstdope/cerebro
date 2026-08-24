@@ -201,9 +201,11 @@ planner`), which is the one place a name and a role stop being interchangeable:
   navigator's. It reviews a PR again when the head sha changes, and never touches the fleet's own
   PRs, which have Copilot and the implementer's own gate.
 - **Forge** (`architect`, Opus/xhigh) — loads no separate skill either; its whole job lives
-  in `agents/architect.md`. One sweep per session: reads what merged since its last sweep (daily) or
+  in `agents/architect.md`. One sweep per session: reads what merged since its watermark (daily) or
   the whole codebase (weekly), and files a `Refactoring:` bead at P4 for each smell that names a cost
-  already being paid, never a fix. Watermark kept in bd memory. Ends its own turn when the sweep is
+  already being paid, never a fix. Watermark kept in bd memory, and it is the only gate: woken hourly
+  by the fleet view, every session reads every commit and retrospective added since it, and an empty
+  range costs a `git log` and a line. Ends its own turn when the sweep is
   reported — the one role here that does not loop, because it holds no claim, lease or PR to strand.
 
 `skills/beads-workflow/SKILL.md` is the shared substrate all of them read: work is tracked in **beads**

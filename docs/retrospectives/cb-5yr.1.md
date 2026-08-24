@@ -44,3 +44,51 @@ fleet view ever runs with debugging on. Worth a line in `emacs/README.md`'s test
 running the one-liner above over a new demoted-error test before pushing: the gate's single local
 Emacs cannot see this class on its own.
 **Seen before.** None found.
+
+---
+
+*Second run — the bead was reopened by a failed verification and rebuilt. Below is that run's
+retrospective; nothing above it was changed.*
+
+- **Implementer:** Storm
+- **Date:** 2026-08-24
+- **PR:** #131
+
+## Every ERT case for the root rule fed it a root the real producer never returns
+
+**What happened.** cb-5yr shipped with `cerebro--session-alive-p` returning nil for *every*
+interactive agent, so the fleet view showed `up` for roles whose state file said `waiting`, ended
+none of them, and restarted none — the whole mechanism inert, and cb-5yr.2 and cb-5yr.3 unverifiable
+behind it. The cause was one string comparison in `cerebro--root-in-args-p` against a root spelled
+`~/repos/cerebro/`, which matches no command line. Four green ERT cases covered that function and
+every one of them passed it an absolute root (`/Users/x/repos/cerebro/`) — a shape its only real
+caller, `cerebro--repo-root`, does not produce for a checkout under the home directory.
+**Why.** The pure/impure split in `cerebro.el` is what makes the view testable, and the tests only
+exercise the pure half by design. The consequence is that no test anywhere pins the *shape* of what
+an impure reader returns, so a pure function tested exhaustively against invented inputs can still
+be wrong about every real one. `locate-dominating-file` abbreviating its result is invisible to
+every other caller, because they all expand it on the way to a file name.
+**Cost.** A failed verification, a bead reopened at P0, two dependent children blocked from
+verification, and a second full implementation cycle — the navigator's verification time plus about
+forty minutes here.
+**Prevent by.** Where a pure function's argument comes from one named impure reader, one ERT case
+should feed it that reader's real output shape and say so — for this one, a root as
+`locate-dominating-file` returns it. `emacs/README.md`'s test section is where that belongs, next to
+the pure/impure rule it qualifies. The general form: a value that is a *display* spelling
+(abbreviated paths, relative paths, formatted times) must be normalised at the point it is compared
+as a string, not assumed absolute.
+**Seen before.** None found.
+
+## `docs/retrospectives/` has no shape for a bead built twice
+
+**What happened.** `docs/retrospectives/cb-5yr.1.md` already existed, written by the first run.
+`skills/implement-bead` says one file per bead, one retrospective per file, and never rewrite one —
+which has no arm for a reopened bead whose second run also has a finding.
+**Why.** The convention was written when a bead was built once. A failed verification makes that
+untrue, and the two rules ("the bead's own id as the file name, and nothing else" and "never
+rewrite one") cannot both hold for a second run.
+**Cost.** A few minutes' hesitation; no rework.
+**Prevent by.** `skills/implement-bead`, *The retrospective* → *Where it goes*, saying what a second
+run does. Appending a delimited section under a rule saying the earlier text is never touched is
+what this file now does, and is the smallest change; the navigator may prefer `<bead id>.2.md`.
+**Seen before.** None found.

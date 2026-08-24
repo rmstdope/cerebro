@@ -116,4 +116,24 @@ for key in install prewarm disk_floor_gb retro_dir release_cmd launch_targets; d
 done
 pass "every key this repository deliberately leaves out says so in the file"
 
+# --- the harness's own machine state is ignored, wholesale (cb-i3l.5) ---
+#
+# `.cerebro/' is where the fleet keeps what belongs to this machine and this moment: an agent's
+# state file, its stop flag, its worktrees, and the personal models.conf. None of it is ever part
+# of the project. The first session started in this repository writes one, and an unignored
+# `.cerebro/' turns every `git status' into noise - or gets a state file committed, which then
+# describes somebody else's machine to everybody who clones.
+#
+# Ignored WHOLESALE, never partially: nothing tracked lives there, so a negation would only invite
+# one to.
+for p in .cerebro/state/Xavier.state.json .cerebro/state/Cyclops.stop \
+         .cerebro/worktrees/cb-1/file.txt .cerebro/models.conf; do
+  git check-ignore -q "$p" || fail "$p is not ignored - the fleet's machine state would be committable"
+done
+pass "every path the fleet writes under .cerebro/ is ignored"
+
+[[ -z "$(git ls-files .cerebro)" ]] \
+  || fail "something under .cerebro/ is tracked: $(git ls-files .cerebro)"
+pass "nothing under .cerebro/ is tracked, which is why the ignore can be wholesale"
+
 echo "all project-facts tests passed"

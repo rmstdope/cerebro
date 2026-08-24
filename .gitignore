@@ -23,6 +23,11 @@ dist/
 .beads/proxieddb/
 *.gate.lock*
 
+# Cerebro's own bookkeeping — agent state files, stop flags, the agents' worktrees and the personal
+# models.conf. Live machine state, never part of the project (ah-v82), and ignored wholesale rather
+# than partially: nothing tracked ever lives there, so a negation would only invite one to.
+.cerebro/
+
 # Claude Code's own directory. This repository is a consumer of itself (cb-i3l.1), so the same rule
 # every consumer follows applies here: everything under .claude is local machine state EXCEPT what
 # the fleet needs every clone to have — the mount, the discovery links the sync writes, the shared

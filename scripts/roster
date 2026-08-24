@@ -208,8 +208,8 @@ print_all() {
 # prevent. Captured here, `|| exit $?' propagates it to the caller.
 ROWS="$(print_all)" || exit $?
 
-# $1 = the mode's `while IFS=$'\t' read ...' loop body is the caller's; this just feeds it. A guard
-# on emptiness, because `<<<""' is one empty line, not none.
+# Feeds the rows to a mode's `while IFS=$'\t' read ...' loop. Takes no argument - it prints the
+# ROWS captured above - and guards on emptiness, because `<<<""' is one empty line, not none.
 each_row() {
   [[ -n "$ROWS" ]] && printf '%s\n' "$ROWS"
 }

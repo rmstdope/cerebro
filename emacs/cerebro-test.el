@@ -2985,13 +2985,7 @@ label has been enriched with what its assignee is actually on."
   (cl-letf (((symbol-function 'cerebro--live-sessions)
              (lambda (_root) '(("Cyclops" working "ah-gjq4"))))
             ((symbol-function 'cerebro--roster) (lambda (_root) '("Cyclops" "Storm"))))
-    (let ((findings (cerebro--findings-from
-                     "/repo"
-                     (list (cerebro-test--claim-candidate "ah-c1" "Storm" nil nil nil nil 30))
-                     (list (cerebro-test--epic-candidate "ah-e1" 30))
-                     (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300))
-                     (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32))
-                     (list (cerebro-test--verdict-candidate "ah-v1" "0b444332cd" 2)))))
+    (let ((findings (cerebro--findings-from "/repo" (cerebro-test--sweep-outputs))))
       (should (equal (mapcar #'cdr findings)
                      '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")
                        (unassign "ah-a1" 0) (recheck "ah-v1" 0))))
@@ -3010,23 +3004,106 @@ no longer sees."
                (lambda (_root) (setq reads (1+ reads)) '(("Cyclops" working "ah-gjq4"))))
               ((symbol-function 'cerebro--roster) (lambda (_root) '("Cyclops"))))
       (cerebro--findings-from
-       "/repo" nil nil
-       (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300))
-       (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32))
-       nil)
+       "/repo"
+       (list (cons 'sweep-stalled
+                   (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300)))
+             (cons 'sweep-assignees
+                   (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32)))))
       (should (equal reads 1)))))
 
 (ert-deftest cerebro-test/the-assignee-sweep-is-registered ()
-  (should (equal (alist-get 'sweep-assignees cerebro--sweep-scripts)
+  (should (equal (alist-get 'sweep-assignees (cerebro--sweep-scripts))
                  "sweep-assignees.sh")))
 
 (ert-deftest cerebro-test/the-verdict-sweep-is-registered-last ()
   "Appended last, so its parsed output reaches `cerebro--findings-from' in
 the argument position the docstring promises."
-  (should (equal (alist-get 'sweep-verdicts cerebro--sweep-scripts)
+  (should (equal (alist-get 'sweep-verdicts (cerebro--sweep-scripts))
                  "sweep-verdicts.sh"))
-  (should (equal (car (last cerebro--sweep-scripts))
+  (should (equal (car (last (cerebro--sweep-scripts)))
                  '(sweep-verdicts . "sweep-verdicts.sh"))))
+
+;; cb-4s8: a sweep is one row of `cerebro--sweeps', not six edits in lockstep.
+
+(defun cerebro-test--snapshot ()
+  "The fleet slices `cerebro--sweeps' rows draw on, hand-built - Cyclops
+working on ah-gjq4, Storm on the roster and not running."
+  (list :live-names '("Cyclops")
+        :live-states '(("Cyclops" . working))
+        :live-beads '(("Cyclops" . "ah-gjq4"))
+        :roster '("Cyclops" "Storm")
+        :now (current-time)))
+
+(defun cerebro-test--sweep-outputs ()
+  "One candidate per sweep, keyed as `cerebro--sweeps' is."
+  (list (cons 'sweep-claims
+              (list (cerebro-test--claim-candidate "ah-c1" "Storm" nil nil nil nil 30)))
+        (cons 'sweep-epics (list (cerebro-test--epic-candidate "ah-e1" 30)))
+        (cons 'sweep-stalled (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300)))
+        (cons 'sweep-assignees (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32)))
+        (cons 'sweep-verdicts
+              (list (cerebro-test--verdict-candidate "ah-v1" "0b444332cd" 2)))))
+
+(ert-deftest cerebro-test/findings-from-snapshot-is-pure-and-table-driven ()
+  "The judging half of the sweep pipeline takes its outputs as one alist and
+its fleet as one plist, and walks `cerebro--sweeps' - so it reads no files
+and a sixth sweep changes no signature."
+  (let ((findings (cerebro--findings-from-snapshot (cerebro-test--sweep-outputs)
+                                                   (cerebro-test--snapshot))))
+    (should (equal (mapcar #'cdr findings)
+                   '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")
+                     (unassign "ah-a1" 0) (recheck "ah-v1" 0))))
+    ;; The enrichment went through the row, not through the walker.
+    (should (equal (nth 3 (mapcar #'car findings))
+                   "unassign ah-a1 — Cyclops is on ah-gjq4")))
+  ;; A key absent from OUTPUTS contributes nothing, rather than erroring.
+  (should (equal (mapcar #'cdr
+                         (cerebro--findings-from-snapshot
+                          (assq-delete-all 'sweep-epics (cerebro-test--sweep-outputs))
+                          (cerebro-test--snapshot)))
+                 '((reclaim "ah-c1") (unclaim "ah-s1")
+                   (unassign "ah-a1" 0) (recheck "ah-v1" 0)))))
+
+(ert-deftest cerebro-test/a-sweep-row-declares-everything-the-runner-needs ()
+  "Every row carries its key, its script, its finder, the fleet slices it
+wants and - optionally - its label enrichment. Nothing about a sweep is
+declared anywhere the runner also has to be told about."
+  (dolist (row cerebro--sweeps)
+    (pcase-let ((`(,key ,script ,finder ,needs . ,rest) row))
+      (should (symbolp key))
+      (should (string-suffix-p ".sh" script))
+      (should (file-exists-p (expand-file-name (concat "scripts/" script)
+                                               cerebro-test--repo-root)))
+      (should (functionp finder))
+      (should (listp needs))
+      (dolist (need needs)
+        (should (memq need '(:live-names :live-states :live-beads :roster :now))))
+      (should (<= (length rest) 1))
+      (when rest (should (functionp (car rest)))))))
+
+(ert-deftest cerebro-test/a-sixth-sweep-is-one-row ()
+  "The point of the table. A sweep that exists nowhere but in
+`cerebro--sweeps' is run, judged and labelled - no signature, no second
+list, and no other function edited to let it through."
+  (let ((cerebro--sweeps
+         (append cerebro--sweeps
+                 `((sweep-demo "sweep-demo.sh"
+                               ,(lambda (c) (and (alist-get 'flag c)
+                                                 (list 'epic-close (alist-get 'id c))))
+                               ())))))
+    (should (equal (alist-get 'sweep-demo (cerebro--sweep-scripts)) "sweep-demo.sh"))
+    (let ((findings (cerebro--findings-from-snapshot
+                     (append (cerebro-test--sweep-outputs)
+                             `((sweep-demo . (((id . "ah-d1") (flag . t)
+                                               (minutes_since_last_child_closed . 30))
+                                              ((id . "ah-d2") (flag . nil))))))
+                     (cerebro-test--snapshot))))
+      ;; One finding from the new row, appended in table order, labelled by the
+      ;; `epic-close' arm that was already there.
+      (should (equal (car (last (mapcar #'cdr findings))) '(epic-close "ah-d1")))
+      (should (equal (car (last (mapcar #'car findings)))
+                     "close ah-d1 — all children closed 30m ago"))
+      (should (equal (length findings) 6)))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 4: showing sweep findings and acting on them, confirmed

@@ -103,6 +103,61 @@ test body cannot compute this itself.")
   (should (cerebro--name-in-args-p
            "Storm" '("claude --remote-control-session-name-prefix Xavier --name Storm"))))
 
+;; The process scan is machine-wide, and a name is only unique inside one consumer: every
+;; consumer that takes the built-in roster has a Xavier. Scanning for `--name Xavier' alone
+;; showed another repository's planners as `up' in this repository's fleet view, for any role
+;; that had never run here and so had no state file to be read first.
+(defconst cerebro-test--other-consumer-args
+  "claude --agent planner --name Xavier --remote-control Xavier --settings /Users/x/repos/atlantis-hud/.claude/cerebro/scripts/../hooks/question-state.settings.json"
+  "One process's args: a session of the fleet rooted at /Users/x/repos/atlantis-hud.")
+
+(defconst cerebro-test--this-consumer-args
+  "claude --agent planner --name Xavier --remote-control Xavier --settings /Users/x/repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json"
+  "The same session, of the fleet rooted at /Users/x/repos/cerebro.")
+
+(ert-deftest cerebro-test/consumer-args-keeps-only-this-consumers-sessions ()
+  (let ((args (list cerebro-test--other-consumer-args cerebro-test--this-consumer-args)))
+    (should (equal (cerebro--consumer-args args "/Users/x/repos/cerebro")
+                   (list cerebro-test--this-consumer-args)))
+    (should (equal (cerebro--consumer-args args "/Users/x/repos/atlantis-hud")
+                   (list cerebro-test--other-consumer-args)))))
+
+(ert-deftest cerebro-test/consumer-args-takes-a-root-with-or-without-a-trailing-slash ()
+  ;; `cerebro--repo-root' is a `locate-dominating-file' result, which carries one.
+  (let ((args (list cerebro-test--this-consumer-args)))
+    (should (equal (cerebro--consumer-args args "/Users/x/repos/cerebro/") args))))
+
+(ert-deftest cerebro-test/consumer-args-does-not-match-a-sibling-with-the-same-prefix ()
+  ;; The root must be a whole path component: /repos/cerebro is not /repos/cerebro-hud.
+  (let ((args (list "claude --name Xavier --settings /Users/x/repos/cerebro-hud/.claude/cerebro/x")))
+    (should-not (cerebro--consumer-args args "/Users/x/repos/cerebro"))))
+
+(ert-deftest cerebro-test/consumer-args-drops-a-session-that-names-no-root-at-all ()
+  ;; A bare `claude --name Xavier' typed by hand belongs to no fleet this view can prove is
+  ;; its own, and reading it as this one's is the defect. Every session `scripts/launch'
+  ;; starts carries `--settings <root>/.../hooks/question-state.settings.json'.
+  (should-not (cerebro--consumer-args '("claude --agent planner --name Xavier")
+                                      "/Users/x/repos/cerebro")))
+
+(ert-deftest cerebro-test/derive-interactive-dead-for-another-consumers-session ()
+  ;; The whole chain: another repository's Xavier is scanned, filtered out, and this fleet's
+  ;; Xavier - which has no state file - reads `dead' rather than `up'.
+  (let* ((args (cerebro--consumer-args (list cerebro-test--other-consumer-args)
+                                       "/Users/x/repos/cerebro"))
+         (agents (cerebro--derive nil cerebro-test--interactive nil
+                                  #'cerebro-test--never-alive args nil))
+         (xavier (car agents)))
+    (should (eq (cerebro-agent-state xavier) 'dead))))
+
+(ert-deftest cerebro-test/derive-interactive-up-for-this-consumers-session ()
+  (let* ((args (cerebro--consumer-args (list cerebro-test--this-consumer-args)
+                                       "/Users/x/repos/cerebro"))
+         (agents (cerebro--derive nil cerebro-test--interactive nil
+                                  #'cerebro-test--never-alive args nil))
+         (xavier (car agents)))
+    (should (eq (cerebro-agent-state xavier) 'up))
+    (should (cerebro-agent-external xavier))))
+
 (ert-deftest cerebro-test/derive-interactive-up-when-owned ()
   (let* ((agents (cerebro--derive nil cerebro-test--interactive nil
                                           #'cerebro-test--never-alive nil '("Xavier")))

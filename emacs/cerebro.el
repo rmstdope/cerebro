@@ -27,6 +27,10 @@
 ;;     falls back to scanning system processes for the `--name <Name>'
 ;;     argument `scripts/launch' passes when it does not - a session started
 ;;     by hand, outside this fleet, has no file and still has to show `up'.
+;;     That scan is machine-wide and a name is unique only inside one
+;;     consumer, so it is narrowed to this repository's own sessions first
+;;     (`cerebro--consumer-args') - otherwise a second checkout's Xavier
+;;     shows as this one's.
 
 ;;; Code:
 
@@ -128,6 +132,31 @@ whatever the frame has left (was a constant of 20 for eighteen agents)."
   (let ((needle (concat "--name[ \t]+" (regexp-quote name) "\\_>")))
     (cl-some (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
 
+(defun cerebro--consumer-args (args root)
+  "Those of ARGS - one string per system process - that belong to ROOT\='s fleet.
+
+The process scan behind `cerebro--name-in-args-p\=' is machine-wide, and an
+agent\='s name is only unique inside one consumer: every consumer that takes
+the built-in roster has a Xavier and a Beast.  Matching on the name alone
+showed another repository\='s planners as `up\=' here, for exactly those roles
+that had never run in this one - the state file is read first, so the lie
+only surfaced where there was no file to read.
+
+The discriminator is a path under ROOT in the process\='s own command line:
+`scripts/launch\=' passes every session `--settings <scripts>/../hooks/
+question-state.settings.json\=', which is inside the consumer whose fleet the
+session belongs to, wherever the submodule is mounted.  ROOT may carry a
+trailing slash (`cerebro--repo-root\=' returns a `locate-dominating-file\='
+result, which does) and must match a whole path component, so that a
+sibling checkout named for the same prefix is not this consumer.
+
+A session that names no root at all - a bare `claude --name Xavier\=' typed
+by hand, bypassing the launcher - is dropped rather than credited to this
+fleet.  That is the deliberate half of the trade: the scan can no longer
+prove such a session is ours, and claiming it is, is the defect being fixed."
+  (let ((needle (concat (regexp-quote (directory-file-name root)) "/")))
+    (seq-filter (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
+
 (defun cerebro--derive-from-state (name role kind parsed owned-p)
   "Build one `cerebro-agent' for NAME from a live, parsed state file PARSED.
 
@@ -181,7 +210,8 @@ the rest of the view reads."
 STATES is an alist of (NAME . parsed-state-json-or-nil), the same one an
 implementer's row is derived from; SESSION-ALIVE-P a predicate on (PID NAME) -
 is that pid still *this* agent's session, not merely a live one; ARGS is
-the system process args list; OWNED the names Emacs itself started.
+the system process args list, already narrowed to this consumer by
+`cerebro--consumer-args'; OWNED the names Emacs itself started.
 
 Liveness is the state file first, the process scan second: when STATES has
 an entry for NAME whose pid is still alive, the row comes from the file -
@@ -190,7 +220,9 @@ Otherwise (no entry, or a pid that is no longer this agent's session - the
 file, if any, is a previous session's, and the pid may since have been
 recycled onto something else) this falls back to the three process-scan branches
 below, so a session started by hand outside this fleet
-\(`claude --name Xavier ...'\) with no file at all still shows `up'."
+\(`.claude/cerebro/scripts/launch Xavier' in a terminal\) with no file at all
+still shows `up' - as long as it is a session of *this* consumer's fleet,
+which is what ARGS having been filtered establishes."
   (let* ((name (car entry))
          (role (cdr entry))
          (parsed (cdr (assoc name states)))
@@ -1662,7 +1694,11 @@ fleet view deliberately caches."
     (and args (cerebro--name-in-args-p name (list args)) t)))
 
 (defun cerebro--system-args ()
-  "The command-line args string of every system process, as a list."
+  "The command-line args string of every system process, as a list.
+
+Every process on the machine, deliberately: which of them are this
+consumer\='s fleet is a pure question, answered by `cerebro--consumer-args\='
+at the call site rather than here."
   (delq nil
         (mapcar (lambda (pid) (alist-get 'args (process-attributes pid)))
                 (list-system-processes))))
@@ -2807,7 +2843,10 @@ Does nothing when BUFFER is dead."
          ;; whichever of them have none.
          (states (cerebro--gather-states
                   repo-root (append (mapcar #'car interactive) roster)))
-         (args (cerebro--cached-system-args))
+         ;; Machine-wide scan, narrowed to this consumer's own sessions: another
+         ;; checkout's fleet has the same names, and a name alone is not an
+         ;; identity across repositories (see `cerebro--consumer-args').
+         (args (cerebro--consumer-args (cerebro--cached-system-args) repo-root))
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states

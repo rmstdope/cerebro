@@ -1268,7 +1268,7 @@ need not have."
 (defcustom cerebro-end-grace 30
   "Seconds a role that has finished a pass is left before its session is ended.
 
-A role writes `waiting\=' (Forge, `idle\='), prints one line saying what the pass
+A role writes `waiting\=', prints one line saying what the pass
 found, and stops.  The write comes first, so the line lands after it: this is
 how long the view waits for that line before it kills the process and keeps
 the buffer as the record of the pass.

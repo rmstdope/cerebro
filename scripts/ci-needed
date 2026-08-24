@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+# The one place "can these changed paths affect the gate" is answered (cb-ypx).
+#
+# A predicate in the shape of `scripts/agent-alive': it prints why, but the exit status is the
+# whole answer, and a usage error is exit 2 so a mistake can never read as "skip".
+#
+#     git diff --name-only --no-renames HEAD^1 HEAD | scripts/ci-needed
+#
+#   exit 0   at least one path reaches the gate, so CI must run. Names the first such path.
+#   exit 1   every path is on the skip list, so there is nothing to run.
+#   exit 0   no paths at all - an empty diff is a BROKEN diff, not a docs change. Fail-safe.
+#   exit 2   any argument at all: a usage error.
+#
+# The skip list is a decision, and the reason lives beside each entry below. It is deliberately
+# small: a wider list buys nothing, and each entry is one more thing a future suite can silently
+# start reading. `scripts/lint' check 11 advises when one does.
+#
+# NOT under `tests/': the gate's suite loop is `tests/*.sh', and a predicate that exits 1 as an
+# answer would be a red gate. Its suite is `tests/ci-needed.sh'.
+
+set -uo pipefail
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: ci-needed < paths" >&2
+  exit 2
+fi
+
+count=0
+while IFS= read -r path; do
+  [[ -n "$path" ]] || continue
+  count=$((count + 1))
+  case "$path" in
+    # A specific file before the directory it lives in: the first matching arm wins.
+    docs/agent-workflow.md)
+      # tests/launch-targets.sh greps this one file, so it reaches the gate.
+      echo "ci-needed: $path"
+      exit 0
+      ;;
+    docs/*)
+      # Nothing in tests/, tests/gate or emacs/*.el opens anything else under docs/.
+      ;;
+    README.md)
+      # Read only by scripts/lint, which is advisory and never blocks a merge.
+      ;;
+    LICENSE)
+      # Read by nothing.
+      ;;
+    models.conf.example)
+      # Read by nothing; the live copy is .cerebro/models.conf, which IS read.
+      ;;
+    *)
+      # Everything else: agents/, skills/, templates/, CLAUDE.md, emacs/, scripts/, hooks/,
+      # githooks/, tests/, .github/, .cerebro/, .claude/.
+      echo "ci-needed: $path"
+      exit 0
+      ;;
+  esac
+done
+
+if [[ $count -eq 0 ]]; then
+  echo "ci-needed: no paths given, running everything"
+  exit 0
+fi
+
+echo "ci-needed: none of $count paths reaches the gate"
+exit 1

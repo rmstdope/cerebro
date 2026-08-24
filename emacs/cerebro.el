@@ -403,7 +403,7 @@ sessions Emacs itself started."
    (mapcar (lambda (name) (cerebro--derive-implementer name states session-alive-p owned))
            roster)))
 
-(defun cerebro--apply-standby (agents armed)
+(defun cerebro--apply-standby (agents armed &optional failed)
   "Pure.  AGENTS with every armed, dead, interactive one restated as `standby\='.
 
 ARMED is `cerebro--armed\=': the names this Emacs has started and has not been
@@ -415,12 +415,23 @@ separates \"nobody is coming\" from \"a trigger will bring one back\".
 
 External agents are excluded with everything else this view does not own,
 and implementers are excluded because they have their own supervision:
-`done\=' and `restart\=' between beads, not a trigger."
+`done\=' and `restart\=' between beads, not a trigger.
+
+FAILED is the names with a recorded abnormal exit - the keys of
+`cerebro--last-exit\=' (cb-eat).  Standby is *armed and not failed since*: a
+launch that was refused died the moment it started, and a row that promised a
+trigger was coming would say something untrue, once every wake floor, for as
+long as the refusal stood.  The record carries this rather than the armed set
+because `cerebro--note-exit\=' runs from vterm\='s sentinel with an arbitrary
+buffer current while `cerebro--armed\=' is buffer-local; the record is global,
+and `cerebro--launch\=' clears a name\='s entry before spawning, which is what
+makes `s\=' the way back."
   (mapcar (lambda (agent)
             (if (and (eq (cerebro-agent-state agent) 'dead)
                      (eq (cerebro-agent-kind agent) 'interactive)
                      (not (cerebro-agent-external agent))
-                     (member (cerebro-agent-name agent) armed))
+                     (member (cerebro-agent-name agent) armed)
+                     (not (member (cerebro-agent-name agent) failed)))
                 (let ((copy (copy-cerebro-agent agent)))
                   (setf (cerebro-agent-state copy) 'standby)
                   copy)
@@ -604,22 +615,28 @@ State is 12 rather than 10 because the longest thing it can say is
 `tabulated-list-mode\=' truncates a cell at its column without saying so, so
 a floor short of the vocabulary makes the view lie rather than wrap.")
 
-(defun cerebro--column-widths (names roles bead-ids)
+(defun cerebro--column-widths (names roles bead-ids &optional for-texts)
   "Pure.  The five column widths for a fleet of NAMES filling ROLES, showing
-BEAD-IDS.
+BEAD-IDS, whose Bead/Phase column is about to show FOR-TEXTS.
 
 Computed rather than configured: the widths are a fact about the data, and
 four more settings would be four more things a consumer has to discover
 before its own longer names stopped being truncated.  Agent allows two
 columns for the state glyph and its space; Role and Bead one for the gap to
-the next column.  State is a fixed vocabulary and Bead/Phase a pair of
-elapsed times, so neither is derived from anything a consumer varies."
+the next column.  State is a fixed vocabulary, so it is not derived from
+anything a consumer varies.
+
+Bead/Phase is - FOR-TEXTS is every standby label and exit line the render is
+about to show (cb-eat).  An elapsed-time pair is never longer than the floor
+and need not be passed.  It matters because `tabulated-list\=' truncates every
+column but the last, and the window is sized to the table, so a long text in
+this one is cut at the window edge instead."
   (let ((longest (lambda (strings) (apply #'max 0 (mapcar #'length strings)))))
     (list (max (nth 0 cerebro--column-minimums) (+ 2 (funcall longest names)))
           (max (nth 1 cerebro--column-minimums) (+ 1 (funcall longest roles)))
           (nth 2 cerebro--column-minimums)
           (max (nth 3 cerebro--column-minimums) (+ 1 (funcall longest bead-ids)))
-          (nth 4 cerebro--column-minimums))))
+          (max (nth 4 cerebro--column-minimums) (funcall longest for-texts)))))
 
 (defun cerebro--width-for (widths)
   "Columns the layout\='s left window needs for a table of WIDTHS.
@@ -637,7 +654,7 @@ last column to Emacs\='s `$\=' truncation marker (ah-lyc)."
           (list "Bead" (nth 3 widths) nil)
           (list "Bead/Phase" (nth 4 widths) nil)))
 
-(defun cerebro--entry (agent now &optional flagged bead-width standby-label)
+(defun cerebro--entry (agent now &optional flagged bead-width standby-label exit-line)
   "AGENT as a `tabulated-list-entries' element, evaluated at NOW.
 
 FLAGGED, when non-nil, means a stop flag is set for AGENT: the state column
@@ -661,6 +678,12 @@ STANDBY-LABEL, when non-nil, is what the Bead/Phase column shows for a
 \(`cerebro--standby-label', cb-5yr).  Passed in rather than computed here
 because it is derived from the bead panel and the fleet, which this
 function - pure, and one call per row - must not reach into.
+
+EXIT-LINE, when non-nil, is what the Bead/Phase column shows for a `dead\='
+row: the last line its session printed before it died abnormally, already
+formatted by `cerebro--exit-line\=' (cb-eat).  Passed in for the same reason
+STANDBY-LABEL is - this function is pure and never reaches into
+`cerebro--last-exit\='.
 
 BEAD-WIDTH is what the Bead column was sized to (`cerebro--column-widths\=',
 default 10).  An external agent shows \"—\" rather than the wordier
@@ -701,6 +724,11 @@ rather than pushing the rest of the row right - see ah-lyc."
                          ;; time worth showing; what it is waiting for is the
                          ;; only thing the navigator can act on.
                          ((eq state 'standby) (or standby-label ""))
+                         ;; A session this view started that died on its own:
+                         ;; the reason it printed, where the navigator reads
+                         ;; the row rather than behind `RET'.
+                         ((and (eq state 'dead) exit-line)
+                          (propertize exit-line 'face 'error))
                          (t (cerebro--for-column (cerebro-agent-since agent)
                                                  (cerebro-agent-phase-since agent) now)))
                    attention)))
@@ -2494,6 +2522,27 @@ failure to explain. Returns (CODE . LAST-LINE)."
        (string-match "\\`exited abnormally with code \\([0-9]+\\)" event)
        (cons (match-string 1 event) last-line)))
 
+(defcustom cerebro-exit-line-width 60
+  "Columns of a dead session\='s last line shown on its row before an ellipsis.
+
+The detail window (`RET\=') shows the whole line; the row shows as much of it
+as a row can carry."
+  :type 'integer
+  :group 'cerebro)
+
+(defun cerebro--exit-line (last)
+  "Pure.  The Bead/Phase text for a dead row whose session printed LAST before
+it died, or nil for nil LAST.
+
+\"✗ \" then LAST with a leading \"cerebro: \" dropped - the launcher\='s own
+prefix, nine columns spent on nothing - truncated to `cerebro-exit-line-width\='
+with an ellipsis.  A plain string, like `cerebro--for-column\=': the red comes
+from `cerebro--entry\=' propertizing it."
+  (and last
+       (truncate-string-to-width
+        (concat "✗ " (string-remove-prefix "cerebro: " last))
+        cerebro-exit-line-width nil nil "…")))
+
 (defconst cerebro--exit-tail-chars 4000
   "How far back from the end of a dying session's buffer to look for its
 last line. A session that ran a while can hold megabytes of scrollback;
@@ -3703,38 +3752,59 @@ is where that is said."
     ;; Standby is derived here rather than in `cerebro--derive': the state
     ;; file the derive reads was deleted when the view ended the session, so
     ;; `cerebro--armed' is the only thing that can say a role is coming back.
-    (setq agents (cerebro--apply-standby agents cerebro--armed))
-    ;; And the session count, for the same reason: `cerebro--derive' is given
-    ;; the args as strings, and a duplicate is a fact about the pids beside
-    ;; them (cb-63m).
+    ;; A name whose session died abnormally is not coming back on a trigger,
+    ;; however it is armed (cb-eat) - `cerebro--last-exit' is the record,
+    ;; cleared by `cerebro--launch', so `s' is the way back.
+    (setq agents (cerebro--apply-standby agents cerebro--armed
+                                         (mapcar #'car cerebro--last-exit)))
+    ;; And the session count, for the same reason as standby: `cerebro--derive'
+    ;; is given the args as strings, and a duplicate is a fact about the pids
+    ;; beside them (cb-63m).
     (setq agents (cerebro--apply-session-counts agents procs))
     (setq cerebro--agents agents)
-    ;; The table is sized to what is in front of it, every revert: a roster
-    ;; gains an agent, a bead id gets deeper, and the columns follow (ah-qled.9).
-    (let ((widths (cerebro--column-widths
-                   (mapcar #'cerebro-agent-name agents)
-                   (mapcar #'cerebro-agent-role agents)
-                   (delq nil (mapcar #'cerebro-agent-bead agents)))))
+    ;; The Bead/Phase text is computed before the widths, because it is what
+    ;; the last column has to be wide enough for.  Once for the buffer, not
+    ;; once a row: the same counts answer every standby label, and gathering
+    ;; them per row would read the bead panel eighteen times a render.
+    (let* ((context (and (seq-some (lambda (a) (eq (cerebro-agent-state a) 'standby)) agents)
+                         (cerebro--trigger-context repo-root now)))
+           (for-texts
+            (mapcar (lambda (a)
+                      (cons (cerebro-agent-name a)
+                            (cond
+                             ((eq (cerebro-agent-state a) 'standby)
+                              (and context
+                                   (cerebro--standby-label
+                                    a (cerebro--agent-context a context))))
+                             ((eq (cerebro-agent-state a) 'dead)
+                              (cerebro--exit-line
+                               (alist-get (cerebro-agent-name a) cerebro--last-exit
+                                          nil nil #'equal))))))
+                    agents))
+           ;; The table is sized to what is in front of it, every revert: a
+           ;; roster gains an agent, a bead id gets deeper, and the columns
+           ;; follow (ah-qled.9).
+           (widths (cerebro--column-widths
+                    (mapcar #'cerebro-agent-name agents)
+                    (mapcar #'cerebro-agent-role agents)
+                    (delq nil (mapcar #'cerebro-agent-bead agents))
+                    (delq nil (mapcar #'cdr for-texts)))))
       (setq cerebro-list-width (cerebro--width-for widths))
       (let ((format (cerebro--table-format widths)))
         (unless (equal tabulated-list-format format)
           (setq tabulated-list-format format)
           (tabulated-list-init-header)))
-      ;; Once for the buffer, not once a row: the same counts answer every
-      ;; standby label, and gathering them per row would read the bead panel
-      ;; eighteen times a render.
-      (let ((context (and (seq-some (lambda (a) (eq (cerebro-agent-state a) 'standby)) agents)
-                          (cerebro--trigger-context repo-root now))))
-        (setq tabulated-list-entries
-              (mapcar (lambda (a)
+      (setq tabulated-list-entries
+            (mapcar (lambda (a)
+                      (let ((text (alist-get (cerebro-agent-name a) for-texts
+                                             nil nil #'equal))
+                            (standby (eq (cerebro-agent-state a) 'standby)))
                         (cerebro--entry a now
                                         (cerebro--stop-flag-p repo-root (cerebro-agent-name a))
                                         (nth 3 widths)
-                                        (and context
-                                             (eq (cerebro-agent-state a) 'standby)
-                                             (cerebro--standby-label
-                                              a (cerebro--agent-context a context)))))
-                      agents))))))
+                                        (and standby text)
+                                        (and (not standby) text))))
+                    agents)))))
 
 ;;; The prune watcher (ah-4ao): `prune-worktrees.sh --watch' moves here from Cerebro
 

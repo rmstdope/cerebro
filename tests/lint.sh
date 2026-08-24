@@ -450,4 +450,18 @@ tail -n1 <<<"$out" | grep -q '^lint: 1 rule(s) could not be run - fix scripts/li
 $out"
 pass "a grep that fails is an advisory naming the rule and the step, and the verdict says so"
 
+# A path grep that fails is reported at its own step, not folded into the hit grep's. The marker
+# `^scripts/' is the whole path pattern of the `mount-round-trip' row and a substring of
+# `retired-worktrees'' - so two rules fail at their path grep, and the assertion is on the first.
+set +e
+out="$(LINT_BREAK_GREP='^scripts/' PATH="$shim_dir:$PATH" bash "$lint" "$fixture" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "lint with a failing path grep: expected exit 1, got $status
+$out"
+grep -q 'ADVISORY: rule mount-round-trip could not be checked - its path grep exited 2' <<<"$out" \
+  || fail "lint with a failing path grep: the path step is not read
+$out"
+pass "a failing path grep is reported at its own step"
+
 echo "all lint assertions passed"

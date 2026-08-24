@@ -1356,9 +1356,9 @@ is merely waiting for it."
              ;; looks again, so it comes before work merely awaiting a look.
              ((> stale 0) (format "%d stale verdict%s" stale (if (= stale 1) "" "s")))
              ((> merged 0) (format "%d merged, unverified" merged)))))
-         ;; The `gh' reader is cb-5yr.2. Until it lands the key is nil, these
-         ;; two rows are never true, and the cadence floor below is the whole
-         ;; trigger for Moira and Cypher.
+         ;; The lists `cerebro--gh-moved' filtered for this role, or nil
+         ;; before `gh' has answered and `failed' when it stopped - in both
+         ;; of those the cadence floor below is the whole trigger.
          ("user-feedback"
           (and (consp gh) (car gh) (format "issue #%s moved" (car (car gh)))))
          ("reviewer"
@@ -1367,6 +1367,47 @@ is merely waiting for it."
        (and cadence ended (>= (- now ended) cadence)
             (format "%s since its last %s"
                     (cerebro--cadence-figure cadence) (cerebro--cadence-noun role)))))))
+
+(defun cerebro--gh-instant (s)
+  "Pure.  S, an ISO-8601 instant as `gh' prints one, as `float-time', or nil
+when it is missing or unparseable.
+
+`updatedAt' comes back as \"2026-08-24T13:00:00Z\" and every moment it is
+compared against - a role's `ended-at' - is a `float-time', so the
+conversion happens once, here."
+  (and (stringp s)
+       (condition-case nil
+           (float-time (encode-time (iso8601-parse s)))
+         (error nil))))
+
+(defun cerebro--gh-moved (issues prs me ended-at)
+  "Pure.  (ISSUE-NUMBERS PR-NUMBERS): the open issues, and the open non-draft
+pull requests by an author other than ME, whose `updatedAt' is after
+ENDED-AT (`float-time').
+
+Nil ENDED-AT means the role has never ended in this Emacs, so there is no
+moment to compare against and everything open counts; a draft and the
+navigator's own pull request are still excluded, since those are excluded by
+what they are rather than by when they moved.  Nil ME - `gh api user' has
+not answered yet - excludes every pull request: authorship is the whole of
+what makes one Cypher's, and a pull request that cannot be shown to be
+somebody else's must not start him on the navigator's own.
+
+Numbers in the order `gh' listed them, so the reason `cerebro--trigger'
+names is the first one `gh' would show the navigator."
+  (let ((moved-p (lambda (item)
+                   (let ((at (cerebro--gh-instant (alist-get 'updatedAt item))))
+                     (and at (or (null ended-at) (> at ended-at)))))))
+    (list (mapcar (lambda (issue) (alist-get 'number issue))
+                  (seq-filter moved-p issues))
+          (mapcar (lambda (pr) (alist-get 'number pr))
+                  (seq-filter
+                   (lambda (pr)
+                     (and me
+                          (not (alist-get 'isDraft pr))
+                          (not (equal me (alist-get 'login (alist-get 'author pr))))
+                          (funcall moved-p pr)))
+                   prs)))))
 
 (defun cerebro--standby-label (agent context)
   "Pure.  The Bead/Phase column of AGENT\='s standby row: what it is waiting for.
@@ -3284,6 +3325,131 @@ view whose panel has not been drawn yet is an ordinary state, not an error."
   (let ((buffer (get-buffer cerebro-beads-buffer-name)))
     (and (buffer-live-p buffer) buffer)))
 
+;;; cb-5yr.2: what moved on GitHub, for Moira's and Cypher's triggers
+
+(defvar cerebro-gh-refresh-seconds 600
+  "How often `gh' is asked for the open issues and pull requests that decide
+whether Moira or Cypher come back (cb-5yr.2).
+
+Never on the five-second tick: each answer is a network call, and the two
+roles it feeds are on an hourly floor anyway, so a ten-minute reader is
+already finer-grained than anything it can cause.")
+
+(defconst cerebro--gh-issues-argv
+  '("gh" "issue" "list" "--state" "open" "--json" "number,updatedAt" "--limit" "100")
+  "What Moira's trigger is read from: the open issues and when each last moved.")
+
+(defconst cerebro--gh-prs-argv
+  '("gh" "pr" "list" "--state" "open" "--json" "number,author,isDraft,updatedAt"
+    "--limit" "100")
+  "What Cypher's trigger is read from. `author' and `isDraft' are what make a
+pull request his - somebody else's, and not a draft.")
+
+(defconst cerebro--gh-me-argv '("gh" "api" "user" "-q" ".login")
+  "The navigator's own `gh' login, which is what \"somebody else's\" is measured
+against. Asked for until it answers and then never again.")
+
+(defvar-local cerebro--gh-issues nil
+  "The open issues `gh' last answered with, parsed, or nil before the first.")
+
+(defvar-local cerebro--gh-prs nil
+  "The open pull requests `gh' last answered with, parsed, or nil before the
+first.")
+
+(defvar-local cerebro--gh-me nil
+  "The navigator's `gh' login, or nil until `gh api user' has answered.")
+
+(defvar-local cerebro--gh-at nil
+  "`float-time' of the last request, or nil when none has been made.")
+
+(defvar-local cerebro--gh-as-of nil
+  "`float-time' at which the issues and the pull requests were both last
+answered, or nil before that has ever happened.")
+
+(defvar-local cerebro--gh-failed-at nil
+  "`float-time' of the last request either list did not answer, or nil once a
+whole pair has answered since.
+
+Compared against `cerebro--gh-as-of' rather than read on its own: the last
+answer stands until a newer one replaces it, and it is the *order* of the two
+that says whether what the trigger has is current.")
+
+(defvar-local cerebro--gh-answers nil
+  "The keys of the request now out that have answered, for this request only.")
+
+(defun cerebro--gh-list-answered (buffer key parsed at)
+  "Record in BUFFER that KEY answered with PARSED at AT.
+
+`cerebro--parse-failed' - or no output at all, which the caller passes as
+that - is not an answer: it stamps the failure and leaves the last lists
+where they are, so a `gh' that goes away downgrades the two roles to their
+cadence floor rather than telling them nothing ever moves."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (if (eq parsed cerebro--parse-failed)
+          (setq cerebro--gh-failed-at at)
+        (pcase key
+          ('gh-issues (setq cerebro--gh-issues parsed))
+          ('gh-prs (setq cerebro--gh-prs parsed)))
+        (cl-pushnew key cerebro--gh-answers)
+        (when (and (memq 'gh-issues cerebro--gh-answers)
+                   (memq 'gh-prs cerebro--gh-answers))
+          (setq cerebro--gh-as-of at
+                cerebro--gh-failed-at nil))))))
+
+(defun cerebro--request-gh-list (buffer key argv at)
+  "Ask `gh' for KEY's list into BUFFER, stamping the answer at AT."
+  (cerebro--run-async
+   key (with-current-buffer buffer (cerebro--repo-root)) argv
+   (lambda (out)
+     (cerebro--gh-list-answered
+      buffer key (if out (cerebro--try-parse-json out) cerebro--parse-failed) at))))
+
+(defun cerebro--refresh-gh-when-due (buffer seconds)
+  "Ask `gh' what is open, from BUFFER, if `cerebro-gh-refresh-seconds' have
+passed at SECONDS.
+
+Three calls rather than one: `gh' has no way of answering both lists at once,
+and the login is asked for only while it is unknown. A key still in flight
+answers `busy' and is simply not started again - the previous request is
+waited for rather than stacked."
+  (with-current-buffer buffer
+    (when (cerebro--due-p cerebro--gh-at cerebro-gh-refresh-seconds seconds)
+      (setq cerebro--gh-at seconds
+            cerebro--gh-answers nil)
+      (unless cerebro--gh-me
+        (cerebro--run-async
+         'gh-me (cerebro--repo-root) cerebro--gh-me-argv
+         (lambda (out)
+           (when (and out (buffer-live-p buffer))
+             (with-current-buffer buffer
+               (let ((login (string-trim out)))
+                 (unless (string-empty-p login)
+                   (setq cerebro--gh-me login))))))))
+      (cerebro--request-gh-list buffer 'gh-issues cerebro--gh-issues-argv seconds)
+      (cerebro--request-gh-list buffer 'gh-prs cerebro--gh-prs-argv seconds))))
+
+(defun cerebro--gh-resolver ()
+  "What the trigger context's `gh' key carries, read from this buffer.
+
+Nil until a pair has ever arrived; `failed' when the newest thing to happen
+was a request either list did not answer - the *order* of the two stamps,
+not the presence of the failure, since the last good answer stands until a
+newer one replaces it; otherwise a function of a role's ENDED-AT returning
+what `cerebro--gh-moved' returns for it.
+
+A function rather than an answer because ENDED-AT is per role and this is
+gathered once a tick: see `cerebro--trigger-context'."
+  (let ((issues cerebro--gh-issues)
+        (prs cerebro--gh-prs)
+        (me cerebro--gh-me)
+        (as-of cerebro--gh-as-of)
+        (failed-at cerebro--gh-failed-at))
+    (cond
+     ((and failed-at (or (null as-of) (> failed-at as-of))) 'failed)
+     ((null as-of) nil)
+     (t (lambda (ended-at) (cerebro--gh-moved issues prs me ended-at))))))
+
 (defun cerebro--trigger-context (repo-root now)
   "What every standby role\='s trigger is judged against, at NOW.
 
@@ -3298,8 +3464,13 @@ A panel that has not answered yet reports no work rather than none wanted:
 figures have not arrived\" and \"the buffer is empty\" are the same number
 otherwise, and the second of them starts both planners at once.
 
-The `gh\=' key is cb-5yr.2\='s and is nil here, which is what leaves Moira and
-Cypher on their cadence floor alone."
+The `gh\=' key is what Moira\='s and Cypher\='s rows are judged on, and it
+cannot be a plain answer here: \"what moved\" is measured against the
+role\='s own last pass, which is `cerebro--agent-context\='s to add.  So it
+is a *resolver* - a function of ENDED-AT returning what
+`cerebro--gh-moved\=' returns - which that one calls once per standby row.
+Nil before the first answer, and `failed\=' when the last thing to happen
+was a failure, are both plain values: neither depends on whose pass it is."
   (ignore repo-root)
   (let* ((panel (cerebro--beads-panel-buffer))
          (beads (and panel (buffer-local-value 'cerebro--beads panel)))
@@ -3323,15 +3494,22 @@ Cypher on their cadence floor alone."
                            cerebro--agents))
           (cons 'first-planner
                 (car (cerebro--fleet-role-names (cerebro--fleet repo-root) "planner")))
-          (cons 'gh nil))))
+          (cons 'gh (cerebro--gh-resolver)))))
 
 (defun cerebro--agent-context (agent context)
-  "CONTEXT with the four facts that are AGENT\='s rather than the fleet\='s.
+  "CONTEXT with the facts that are AGENT\='s rather than the fleet\='s.
+
+`gh\=' among them: the fleet\='s answer arrives as a resolver, and what it
+resolves to is this role\='s `ended-at\=', so the same reader answers Moira
+about her last pass and Cypher about his.
 
 Kept out of `cerebro--trigger-context\=' so that one is gathered once a tick
 and this one is a few conses per standby row."
-  (let ((name (cerebro-agent-name agent)))
-    (append (list (cons 'ended-at (nth 0 (cdr (assoc name cerebro--parked))))
+  (let* ((name (cerebro-agent-name agent))
+         (ended-at (nth 0 (cdr (assoc name cerebro--parked))))
+         (gh (alist-get 'gh context)))
+    (append (list (cons 'gh (if (functionp gh) (funcall gh ended-at) gh))
+                  (cons 'ended-at ended-at)
                   (cons 'started-at (cdr (assoc name cerebro--started-at)))
                   (cons 'floor (cerebro-wake-interval name (cerebro-agent-role agent)))
                   (cons 'first-planner-p
@@ -3533,7 +3711,8 @@ The list first, then `cerebro--supervise' on what that just derived - never
 on a state file read five seconds ago - and then `cerebro--start-due', which
 starts a fresh session for every standby role whose trigger has come true
 (cb-5yr).  Then the bead panel, when its
-thirty seconds are up, and the sweeps, when their ten minutes are: one
+thirty seconds are up, the `gh' reader, when its ten minutes are (cb-5yr.2),
+and the sweeps, when their ten minutes are: one
 timer with the fleet buffer's lifetime, instead of a timer per panel each
 cancelling itself by a different route (ah-6uo).  Both are demoted: a `bd'
 that will not answer must not stop the list refreshing.  NOW is for tests.
@@ -3550,7 +3729,12 @@ left and runs every `cerebro-system-scan-seconds'."
           ;; After, not before: a role ended on this very tick is not on
           ;; standby until the next render restates it, which is what stops a
           ;; pass being ended and restarted inside one tick.
-          (cerebro--start-due repo-root now)))
+          (cerebro--start-due repo-root now))
+        ;; From the fleet buffer, because that is where the answers are read
+        ;; back from (`cerebro--trigger-context'), and on its own ten-minute
+        ;; cadence rather than this five-second one (cb-5yr.2).
+        (with-demoted-errors "cerebro: %S"
+          (cerebro--refresh-gh-when-due buffer (float-time now))))
       (let ((panel (get-buffer cerebro-beads-buffer-name)))
         (when (buffer-live-p panel)
           (with-demoted-errors "cerebro: %S"

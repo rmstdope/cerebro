@@ -216,6 +216,8 @@ carries one pass is one whose context is that pass and nothing before it.
   a planner, `→ merged, unverified` for the verifier, a countdown (`→43m`, `→21h04`, `→due`) for a
   role on a cadence. When the trigger comes true the view starts a fresh session and says which and
   why: `cerebro: started Psylocke — 2 merged, unverified`.
+  ` gh?` on a standby row means `gh` did not answer the fleet view — Moira and Cypher then come
+  back hourly only, until it does.
 - **`waiting` or `idle` with `.cerebro/state/<name>.stop` present** — ended at once, whatever the
   grace says: nothing is in flight for it to protect. The flag is removed with it and the name is
   disarmed, so nothing starts in its place.

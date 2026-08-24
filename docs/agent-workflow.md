@@ -98,6 +98,9 @@ Moira and Cerebro (`release` too); `daily`/`weekly` for Forge. The Bead/Phase co
 timers — time on the bead, time in this phase — so three implementers sitting in `review` says
 Copilot is slow, and one in `ci` for an hour says something is stuck.
 
+` gh?` on a standby row means `gh` did not answer the fleet view — Moira and Cypher then
+come back hourly only, until it does.
+
 A row is only as alive as its process: the state file's pid must still be running **and** its command
 line must still name that agent. Pids get recycled, and a state file left behind by a finished
 session used to come back green hours later once the operating system handed its number to something

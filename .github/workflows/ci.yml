@@ -22,15 +22,7 @@ jobs:
 
       - name: Decide whether the gate can be affected
         id: decide
-        shell: bash
         run: |
-          # `set +e' FIRST, and it is load-bearing: GitHub's default shell is
-          # `bash --noprofile --norc -e -o pipefail {0}', so the -e is on the INTERPRETER's command
-          # line and `set -uo pipefail' does not undo it. Without this, ci-needed's exit 1 - which
-          # is an answer, not a failure - kills the step before `case $?' is ever reached, and the
-          # docs-only pull request gets a red check instead of a skipped one (cb-ypx).
-          set +e
-          set -uo pipefail
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "not a pull request: everything runs"
@@ -40,11 +32,12 @@ jobs:
           # path, so the gate still runs. On any diff failure, changed is empty and ci-needed
           # answers "run everything".
           changed="$(git diff --name-only --no-renames HEAD^1 HEAD 2>/dev/null)" || changed=""
-          printf '%s\n' "$changed" | bash scripts/ci-needed
-          case $? in
-            1) echo "run=false" >> "$GITHUB_OUTPUT" ;;
-            *) echo "run=true"  >> "$GITHUB_OUTPUT" ;;
-          esac
+          # ci-needed's stdout IS the output line; its reasons are on stderr, in the log. Under the
+          # -e GitHub puts on the interpreter's own command line, a predicate that crashes fails
+          # this step, and a failed `changes' job skips nothing (see the `if:' on the gated jobs).
+          # No `set' line of any kind here: that -e is the safety net now, and defusing it is what
+          # turned the first docs-only pull request red (cb-ypx, cb-e33).
+          printf '%s\n' "$changed" | bash scripts/ci-needed >> "$GITHUB_OUTPUT"
 
       - name: Lint (advisory, never blocks)
         continue-on-error: true

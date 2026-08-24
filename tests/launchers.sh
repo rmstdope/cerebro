@@ -110,7 +110,14 @@ effort_of() {
 
 # --- roster ---
 
-roster_out="$("$repo_root/scripts/roster")"
+# The BUILT-IN table, read from a copy that sits inside no consumer. `$repo_root/scripts/roster`
+# stopped being that copy when this checkout mounted itself (cb-i3l.1) and declared a fleet of its
+# own (cb-i3l.3): it now answers with cerebro's OWN fleet, which is a fact about this repository
+# rather than about the harness it ships. The cases below compare a consumer against the shipped
+# table, so they have to hold the shipped table.
+builtin_dir="$(mktemp -d)"
+cp "$repo_root/scripts/roster" "$builtin_dir/roster"
+roster_out="$("$builtin_dir/roster")"
 row_count="$(printf '%s\n' "$roster_out" | grep -c .)"
 [[ $row_count -ge 2 ]] || fail "roster: expected at least 2 rows, got $row_count"
 pass "roster prints at least 2 rows"
@@ -137,7 +144,7 @@ last_kind="$(printf '%s\n' "$roster_out" | tail -1 | awk -F'\t' '{print $3}')"
 [[ "$last_kind" == "implementer" ]] || fail "roster: last row is not implementer"
 pass "roster: interactive agents first, implementers last"
 
-implementers_out="$("$repo_root/scripts/roster" --implementers)"
+implementers_out="$("$builtin_dir/roster" --implementers)"
 expected_implementers="$(printf '%s\n' "$roster_out" | awk -F'\t' '$3 == "implementer" {print $1}')"
 [[ "$implementers_out" == "$expected_implementers" ]] \
   || fail "roster --implementers: does not match the implementer-kind rows"
@@ -152,32 +159,32 @@ pass "roster --implementers matches the implementer rows and excludes interactiv
 # --role exists for the one question a role with more than one agent raises: which of them is it?
 # `plan-bead` asks it to decide which planner runs the triage pass, so that two planning sessions do
 # not walk the navigator through the same P4 backlog twice.
-role_out="$("$repo_root/scripts/roster" --role planner)"
+role_out="$("$builtin_dir/roster" --role planner)"
 expected_planners="$(printf '%s\n' "$roster_out" | awk -F'\t' '$2 == "planner" {print $1}')"
 [[ "$role_out" == "$expected_planners" ]] \
   || fail "roster --role planner: got '$role_out', expected '$expected_planners'"
 [[ -n "$role_out" ]] || fail "roster --role planner: no planner on the roster"
 pass "roster --role planner lists the planners in file order"
 
-[[ -z "$("$repo_root/scripts/roster" --role nobody)" ]] \
+[[ -z "$("$builtin_dir/roster" --role nobody)" ]] \
   || fail "roster --role nobody: expected no output"
 pass "roster --role of an unheld role prints nothing"
 
 set +e
-"$repo_root/scripts/roster" --role >/dev/null 2>&1
+"$builtin_dir/roster" --role >/dev/null 2>&1
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "roster --role with no role: expected exit 2, got $status"
 pass "roster --role with no role exits 2"
 
 first_name="$(printf '%s\n' "$roster_out" | head -1 | awk -F'\t' '{print $1}')"
-entry_out="$("$repo_root/scripts/roster" --entry "$first_name")"
+entry_out="$("$builtin_dir/roster" --entry "$first_name")"
 [[ "$entry_out" == "$(printf '%s\n' "$roster_out" | head -1)" ]] \
   || fail "roster --entry $first_name: does not match its row"
 pass "roster --entry returns the matching row"
 
 set +e
-out="$("$repo_root/scripts/roster" --entry Nobody 2>&1)"
+out="$("$builtin_dir/roster" --entry Nobody 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "roster --entry Nobody: expected exit 2, got $status"
@@ -185,7 +192,7 @@ echo "$out" | grep -q "not on the roster" || fail "roster --entry Nobody: wrong 
 pass "roster --entry Nobody exits 2 naming it not on the roster"
 
 set +e
-"$repo_root/scripts/roster" --bogus >/dev/null 2>&1
+"$builtin_dir/roster" --bogus >/dev/null 2>&1
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "roster --bogus: expected exit 2, got $status"
@@ -460,7 +467,7 @@ pass "no run-* launcher shim survives; launch <Name> is the only entry point"
 # BEADS_ACTOR through `launch` for an implementer. The generic roster loop above covers every row,
 # but this was previously the only place the implementer case was named, and it is the guarantee
 # that a second claim on a held bead fails instead of aliasing into the first (ah-rnz).
-first_implementer="$("$repo_root/scripts/roster" --implementers | sed -n 1p)"
+first_implementer="$("$builtin_dir/roster" --implementers | sed -n 1p)"
 [[ -n "$first_implementer" ]] || fail "roster --implementers: the roster names no implementer"
 out="$(run_launcher launch "$first_implementer")"
 echo "$out" | grep -q "^BEADS_ACTOR=${first_implementer}\$" \
@@ -612,9 +619,9 @@ echo "$out" | grep -q '^ARG:--agent$' \
 pass "launch Forge refuses when the submodule never brought its agent file in"
 
 # --- the reviewer role: on the roster, with phases agent-state accepts ---
-reviewer_name="$("$repo_root/scripts/roster" --role reviewer | sed -n 1p)"
+reviewer_name="$("$builtin_dir/roster" --role reviewer | sed -n 1p)"
 [[ -n "$reviewer_name" ]] || fail "roster --role reviewer: the roster names no reviewer"
-entry_out="$("$repo_root/scripts/roster" --entry "$reviewer_name")"
+entry_out="$("$builtin_dir/roster" --entry "$reviewer_name")"
 IFS=$'\t' read -r entry_name entry_role entry_kind <<<"$entry_out"
 [[ "$entry_name" == "$reviewer_name" ]] \
   || fail "roster --entry $reviewer_name: first field is $entry_name"
@@ -653,5 +660,43 @@ pass "cerebro--phases still exists and is non-empty ($phase_count words)"
 [[ -n "$(model_of architect)" ]] || fail "agents/architect.md: declares no model:"
 [[ -n "$(effort_of architect)" ]] || fail "agents/architect.md: declares no effort:"
 pass "agents/architect.md exists and declares both a model and an effort"
+
+# --- a consumer roster in cerebro's own checkout, mounted in itself (cb-i3l.3) ---------------------
+#
+# The path arithmetic (`../../cerebro-roster') answers for a consumer with a submodule under
+# `.claude'. It cannot answer for cerebro serving ITSELF: `.claude/cerebro' is a symlink back to the
+# checkout, so the kernel resolves `.claude/cerebro/scripts/../..' to the directory ABOVE the
+# repository, and roster looked for a file beside somebody's clone of it. The consumer file was
+# then ignored in silence and the built-in table used instead - which looks exactly like a working
+# fleet until a name that is not on it fails to launch.
+#
+# A third candidate, tried after the arithmetic and before git, checks the same round trip through
+# the mount that `consumer-root' does. No external command, so the narrowed-PATH guarantee holds.
+self_cerebro="$(mktemp -d)/cerebro"
+mkdir -p "$self_cerebro/.claude"
+copy_cerebro_into "$self_cerebro"
+ln -s ".." "$self_cerebro/.claude/cerebro"
+self_roster_at="$self_cerebro/.claude/cerebro/scripts/roster"
+
+[[ "$("$self_roster_at")" == "$roster_out" ]] \
+  || fail "self-consumer with no roster file: expected the built-in table"
+pass "self-consumer roster: a missing file falls back to the built-in table"
+
+cat > "$self_cerebro/.claude/cerebro-roster" <<'ROSTER'
+# the fleet this checkout runs
+Ada           planner
+Hopper        orchestrator
+
+Turing        implementer
+ROSTER
+
+self_rows="$("$self_roster_at")"
+[[ "$self_rows" == "$(printf 'Ada\tplanner\tinteractive\nHopper\torchestrator\tinteractive\nTuring\timplementer\timplementer')" ]] \
+  || fail "self-consumer roster: expected the declared fleet, got: $self_rows"
+pass "self-consumer roster: the checkout's own file replaces the built-in table"
+
+[[ "$("$self_roster_at" --implementers)" == "Turing" ]] \
+  || fail "self-consumer roster: --implementers should read the consumer file too"
+pass "self-consumer roster: every mode reads the same declaration"
 
 echo "all launcher tests passed"

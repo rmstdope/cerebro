@@ -321,11 +321,10 @@ reset to main between passes rather than merged, so it always looks abandoned an
 `.claude/cerebro/docs/cerebro-jobs.md`). `prune-worktrees.sh` keeps it by name there for the same
 reason.
 
-**`.cerebro/worktrees/` is the one place worktrees live**. `.claude/worktrees/` is the
-pre-move location: `prune-worktrees.sh` still *sweeps* it, so a tree left behind by that move can be
-reclaimed rather than held on disk for ever — but it is **not a second home**, nothing writes there,
-and the verifier exception does **not** reach it. A `psylocke` under `.claude/worktrees/` is a
-leftover, not the verification tree, and is judged like any other tree.
+**`.cerebro/worktrees/` is the one place worktrees live**, and `prune-worktrees.sh` looks nowhere
+else. A tree registered under any other path — a scratchpad tree, a role's tree from an old
+session — is not an agent worktree: the sweep never reports it and never touches it, and it is
+yours to judge by the three tests above.
 
 **It walks two worktree lists, not one.** Besides the consumer's, it walks
 `.claude/cerebro`'s — because a worktree of the submodule is registered there and nowhere else, so

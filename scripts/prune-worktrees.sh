@@ -25,13 +25,9 @@
 #
 # Safe means **nothing can be lost**, which is a stronger and simpler test than "nobody is using it":
 #
-#   1. It is under `.cerebro/worktrees/` or `.claude/worktrees/`. The main checkout is never
-#      touched. **`.cerebro/worktrees/` is where worktrees live** — it is the one canonical home,
-#      and everything that makes a tree here makes it there (ah-aln5). `.claude/worktrees/` is the
-#      pre-`.cerebro/`-move location, recognised here for one reason only: so a tree left behind by
-#      that move can still be SWEPT. Nothing else sweeps it, and a 2.1 GB tree sat there, registered
-#      and invisible, until ah-gdp added it here. **It is not a second home to write to**, and once
-#      no pre-move tree survives, this arm can go.
+#   1. It is under `.cerebro/worktrees/`, the one place worktrees live (ah-v82, ah-aln5). The
+#      main checkout is never touched, and neither is a tree registered anywhere else: a tree
+#      outside the home is not an agent worktree, whatever its name.
 #   2. The working tree is clean — no modified files, no untracked ones.
 #   3. Its branch holds no commit that the default branch on origin does not already have.
 #   4. Nothing has changed in it for a while (see STALE_MINUTES), so a tree that was created moments
@@ -40,9 +36,8 @@
 # Fail any one and it stays, with the reason printed. Together they mean the directory can go without
 # destroying a line of anybody's work: the commits are on main and there is nothing uncommitted.
 #
-# One named exception, **at the canonical path only** (ah-aln5): **the fleet's verifier** is kept by
-# name, unconditionally, ahead of all four checks — when its tree is where worktrees live. The same
-# name under the legacy path is a pre-move leftover, and is judged by rules 2-4 like any other tree.
+# One named exception: **the fleet's verifier** is kept by name, unconditionally, ahead of all
+# four checks.
 #
 # The exception exists because it is the verification tree (ah-p31) — reset hard to the default
 # branch before every use rather than merged, so it never satisfies "holds no commit main lacks" the
@@ -177,15 +172,11 @@ verifier_name="$("$script_dir/roster" --role verifier 2>/dev/null | head -1 || t
 verifier_lc="$(printf '%s' "$verifier_name" | tr '[:upper:]' '[:lower:]')"
 
 is_verifier_tree() {
-  # $1 = the worktree's basename, $2 = its full path. Case-insensitive on the name, as the
-  # lowercased literal it replaces was — and CANONICAL PATH ONLY (ah-aln5). The verifier's tree
-  # lives in `.cerebro/worktrees/`; a tree of the same name under `.claude/worktrees/` is a
-  # pre-move leftover nothing has used since, and granting it the exception meant this script
-  # protected 350 MB of stale worktree from itself, for ever. It is now judged by rules 2-4 like
-  # any other tree — which is a narrowing of the EXCEPTION, never of rule 1's recognition.
+  # $1 = the worktree's basename. Case-insensitive on the name, as the lowercased literal it
+  # replaces was (ah-qled.4). No path test: rule 1 in `sweep` admits `.cerebro/worktrees/` and
+  # nothing else, so every name that reaches here is at the one path worktrees live at.
   [ -n "$verifier_lc" ] || return 1
-  [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$verifier_lc" ] || return 1
-  case "$2" in "$repo_root"/.cerebro/worktrees/*) return 0 ;; *) return 1 ;; esac
+  [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$verifier_lc" ]
 }
 
 # Whether `.claude/cerebro` resolves to the consumer's own repository rather than to a submodule of
@@ -429,14 +420,13 @@ sweep() {
   while IFS='|' read -r owner tree; do
     case "$tree" in
       "$repo_root"/.cerebro/worktrees/*) ;;
-      "$repo_root"/.claude/worktrees/*) ;;
       *) continue ;;
     esac
 
     local name reason=""
     name="$(basename "$tree")"
 
-    if is_verifier_tree "$name" "$tree"; then
+    if is_verifier_tree "$name"; then
       reason="it is $verifier_name's verification tree, reset to origin/$default_branch before every use (ah-p31)"
       reclaim_cold_target "$tree" "$name"
     elif [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
@@ -450,7 +440,7 @@ sweep() {
     if [ -n "$reason" ]; then
       echo "prune-worktrees: keeping $name — $reason"
       kept=$((kept + 1))
-      is_verifier_tree "$name" "$tree" || pressure_candidates+=("$name:$tree")
+      is_verifier_tree "$name" || pressure_candidates+=("$name:$tree")
       continue
     fi
 

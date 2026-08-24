@@ -161,6 +161,23 @@ grep -q 'cargo/registry/src' <<<"$out" \
   || fail "reclaimable: name the offline reclaims outright, got: $out"
 pass "a refusal names each build tree, the total, and the offline reclaims"
 
+# --- a build tree at the retired worktree path is not a build tree ----------------------------
+#
+# `.claude/worktrees/` is where trees lived before ah-v82 and nothing writes there (cb-k6r). The
+# preflight looks at the one home only: a directory left at the old path is not counted, not
+# named, and not offered as something to reclaim.
+mkdir -p "$consumer/.claude/worktrees/ah-old/target"
+free_gb 2
+if out="$(run)"; then
+  fail "retired path: expected a refusal"
+fi
+grep -q '3.8 GB sits in 2 build trees' <<<"$out" \
+  || fail "retired path: a tree at .claude/worktrees/ was counted, got: $out"
+grep -q '.claude/worktrees' <<<"$out" \
+  && fail "retired path: a tree at .claude/worktrees/ was named, got: $out"
+rm -rf "$consumer/.claude/worktrees"
+pass "a build tree at the retired .claude/worktrees/ path is neither counted nor named"
+
 # --- the reclaimable line is appended to a pass too --------------------------------------------
 free_gb 20
 out="$(run)" || fail "20 GB with trees: expected exit 0"

@@ -27,23 +27,14 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # -P throughout: consumer-root, sync-symlinks.sh and the sweeps all resolve paths physically, and on
 # macOS mktemp hands back /var/... which is a symlink to /private/var/... - so a fixture that keeps
 # the logical form compares two spellings of the same directory and fails for no reason.
-work_dir="$(cd "$(mktemp -d)" && pwd -P)"
 stub_dir="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$work_dir" "$stub_dir"' EXIT
-
-git_q() { git -c user.name=test -c user.email=test@example.com "$@"; }
+cleanup_add "$stub_dir"
 
 # --- the stubs on PATH ---------------------------------------------------------------------------
 #
@@ -346,7 +337,6 @@ printf 'Ada  planner\nTuring  implementer\n' > "$alt/.cerebro/roster.conf"
 [[ "$(run_alt roster)" == "$(printf 'Ada\tplanner\tinteractive\nTuring\timplementer\timplementer')" ]] \
   || fail "roster from an alternative mount: got $(run_alt roster)"
 pass "the consumer's own fleet is found from an alternative mount"
-
 
 # --- not yet: each of these is a bead, and a red assertion here would block the repository ---------
 #

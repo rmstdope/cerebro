@@ -15,16 +15,11 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
+
 cd "$repo_root"
-
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
 
 script="$repo_root/scripts/ci-needed"
 [[ -f "$script" ]] || fail "scripts/ci-needed does not exist"

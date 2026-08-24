@@ -17,8 +17,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() { echo "FAIL: $1" >&2; exit 1; }
-pass() { echo "ok - $1"; }
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
 # whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
@@ -32,17 +32,14 @@ copy_cerebro_into() {
   done
 }
 
-work_dir="$(mktemp -d)"
 stub_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir" "$stub_dir"' EXIT
+cleanup_add "$stub_dir"
 
 cat > "$stub_dir/pnpm" <<'STUB'
 #!/usr/bin/env bash
 exit 0
 STUB
 chmod +x "$stub_dir/pnpm"
-
-git_q() { git -c user.name=test -c user.email=test@example.com "$@"; }
 
 # make_consumer <name> <branch>  ->  echoes the consumer path. A real clone of a real origin, so
 # refs/remotes/origin/HEAD is set the way `git clone` sets it.
@@ -110,7 +107,6 @@ run_prepare "$c" --path .cerebro/worktrees/ah-3 --branch ah-3-work --from other 
 [[ "$(git -C "$c/.cerebro/worktrees/ah-3" rev-parse HEAD)" != "$(git -C "$c" rev-parse origin/trunk)" ]] \
   || fail "explicit: the worktree is at origin/trunk, so --from proved nothing"
 pass "an explicit --from still wins over the resolved branch"
-
 
 # --- a dry run creates nothing ---------------------------------------------------------------------
 #

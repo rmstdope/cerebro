@@ -19,14 +19,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
 # whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
@@ -44,7 +38,7 @@ copy_cerebro_into() {
 # of starting a real session. It prints the environment and args it was handed, which is exactly what
 # these assertions need and nothing a real session would do.
 stub_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir"' EXIT
+cleanup_add "$stub_dir"
 
 cat > "$stub_dir/claude" <<'STUB'
 #!/usr/bin/env bash
@@ -68,7 +62,7 @@ chmod +x "$stub_dir/claude"
 # and skips its checks entirely when they differ, so a fixture that is not a working tree would make
 # these cases silently assert nothing.
 fixture_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir"' EXIT
+cleanup_add "$fixture_dir"
 git init -q "$fixture_dir"
 mkdir -p "$fixture_dir/.claude" "$fixture_dir/.cerebro"
 copy_cerebro_into "$fixture_dir/.claude/cerebro"
@@ -593,14 +587,13 @@ echo "$out" | grep -q "^BEADS_ACTOR=${first_implementer}\$" \
   || fail "launch $first_implementer: expected BEADS_ACTOR=$first_implementer, got: $out"
 pass "launch $first_implementer sets BEADS_ACTOR=$first_implementer"
 
-
 # --- a launcher syncs the consumer repo's links before starting a session (ah-cuc) ---
 #
 # A consumer of its own, deliberately: this case asserts a link that did *not* exist beforehand, and
 # the cases below it write `.cerebro/models.conf`, which the fixture above must never have. Two temp
 # directories is the test being honest, not duplication - what had to go is the *enclosing* checkout.
 consumer_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir"' EXIT
+cleanup_add "$consumer_dir"
 git init -q "$consumer_dir"
 mkdir -p "$consumer_dir/.claude" "$consumer_dir/.cerebro"
 copy_cerebro_into "$consumer_dir/.claude/cerebro"
@@ -700,7 +693,7 @@ pass "a blocked sync aborts the launch before the stub is reached"
 # reaches launch-preflight's own `claude` check - so this cannot pass on a machine that
 # happens to have `claude` installed under /usr/bin or /bin.
 no_claude_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir" "$no_claude_dir"' EXIT
+cleanup_add "$no_claude_dir"
 ln -s "$(command -v dirname)" "$no_claude_dir/dirname"
 # launch-preflight is exec'd directly (its own `#!/usr/bin/env bash' shebang), so `env'
 # needs to find `bash' under this PATH too, not only the shell invoking launch below.
@@ -719,7 +712,7 @@ pass "launch Forge refuses with one line when claude is not on PATH"
 # Its own consumer again: this one has an agent file removed from its copy of the submodule, so it
 # cannot share a consumer with anything that expects a complete one.
 consumer_dir2="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir" "$no_claude_dir" "$consumer_dir" "$consumer_dir2"' EXIT
+cleanup_add "$consumer_dir2"
 git init -q "$consumer_dir2"
 mkdir -p "$consumer_dir2/.claude"
 copy_cerebro_into "$consumer_dir2/.claude/cerebro"

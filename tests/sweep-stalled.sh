@@ -13,17 +13,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
-
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # A stub `bd` on PATH ahead of the real one: the real one would read this machine's own backlog and
 # make the test pass or fail by accident.
@@ -36,8 +27,6 @@ cat "$beads_file"
 STUB
 chmod +x "$stub_dir/bd"
 export PATH="$stub_dir:$PATH"
-
-git_c() { git -c user.name=test -c user.email=test@example.com "$@"; }
 
 minutes_ago() {
   # $1 = minutes; prints an ISO-8601 UTC timestamp that many minutes in the past.
@@ -72,24 +61,24 @@ mkdir -p "$consumer/.cerebro"
 printf 'default_branch %s\n' "$branch" > "$consumer/.cerebro/project.conf"
 old_date="$(minutes_ago 300)"
 GIT_AUTHOR_DATE="$old_date" GIT_COMMITTER_DATE="$old_date" \
-  git_c -C "$consumer" commit -q --allow-empty -m "init"
-git_c -C "$consumer" remote add origin "$origin"
-git_c -C "$consumer" push -q -u origin "$branch"
+  git_q -C "$consumer" commit -q --allow-empty -m "init"
+git_q -C "$consumer" remote add origin "$origin"
+git_q -C "$consumer" push -q -u origin "$branch"
 
 # ah-aaa: a branch that committed two minutes ago.
-git_c -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-aaa" -b ah-aaa-recent
+git_q -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-aaa" -b ah-aaa-recent
 recent="$(minutes_ago 2)"
 GIT_AUTHOR_DATE="$recent" GIT_COMMITTER_DATE="$recent" \
-  git_c -C "$consumer/.cerebro/worktrees/ah-aaa" commit -q --allow-empty -m "feat(ah-aaa): work"
+  git_q -C "$consumer/.cerebro/worktrees/ah-aaa" commit -q --allow-empty -m "feat(ah-aaa): work"
 
 # ah-bbb: a branch whose only commit is three hours old.
-git_c -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-bbb" -b ah-bbb-stale
+git_q -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-bbb" -b ah-bbb-stale
 stale="$(minutes_ago 180)"
 GIT_AUTHOR_DATE="$stale" GIT_COMMITTER_DATE="$stale" \
-  git_c -C "$consumer/.cerebro/worktrees/ah-bbb" commit -q --allow-empty -m "feat(ah-bbb): work"
+  git_q -C "$consumer/.cerebro/worktrees/ah-bbb" commit -q --allow-empty -m "feat(ah-bbb): work"
 
 # ah-ccc: a fresh branch with no commit of its own - it points at main's five-hour-old commit.
-git_c -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-ccc" -b ah-ccc-fresh
+git_q -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-ccc" -b ah-ccc-fresh
 
 # ah-ddd: claimed, no worktree at all.
 
@@ -152,7 +141,7 @@ pass "a bead with no worktree reports a null branch"
 
 # --- the branch match needs its trailing hyphen -----------------------------------------------
 # ah-aaa must not pick up a branch belonging to a child of itself.
-git_c -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-aaa.1" -b ah-aaa.1-child
+git_q -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-aaa.1" -b ah-aaa.1-child
 after="$("$sweep" --json)"
 [[ "$(jq -r '.[] | select(.id == "ah-aaa") | .branch' <<<"$after")" == "ah-aaa-recent" ]] \
   || fail "ah-aaa matched a child's branch"

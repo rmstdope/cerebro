@@ -17,11 +17,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() { echo "FAIL: $1" >&2; exit 1; }
-pass() { echo "ok - $1"; }
-
-work_dir="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$work_dir"' EXIT
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # --- a throwaway consumer with an origin, since prepare-worktree fetches origin/main ---
 origin="$work_dir/origin.git"

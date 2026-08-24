@@ -14,14 +14,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # A stub `bd` on PATH ahead of the real one. It records its argv to $argv_file and prints whatever
 # $stub_stdout holds, exiting with $stub_exit. Never the real `bd`: that would read this machine's
@@ -33,7 +27,7 @@ stub_dir="$(mktemp -d)"
 # this suite used to - exercises a layout it never runs in. So: a throwaway consumer with this
 # submodule copied in, and every case runs the script from there.
 consumer="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$consumer"' EXIT
+cleanup_add "$stub_dir" "$consumer"
 
 git init -q "$consumer"
 mkdir -p "$consumer/.claude/cerebro"

@@ -18,14 +18,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
 # whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
@@ -39,9 +33,8 @@ copy_cerebro_into() {
   done
 }
 
-work_dir="$(mktemp -d)"
 stub_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir" "$stub_dir"' EXIT
+cleanup_add "$stub_dir"
 
 # launch-preflight refuses before anything else when `claude` is not on PATH, and these cases are
 # about the checkout rather than the install. The stub is never executed - the preflight only looks
@@ -51,8 +44,6 @@ cat > "$stub_dir/claude" <<'STUB'
 exit 0
 STUB
 chmod +x "$stub_dir/claude"
-
-git_q() { git -c user.name=test -c user.email=test@example.com "$@"; }
 
 # --- a throwaway consumer with an origin it can be behind -----------------------------------------
 #

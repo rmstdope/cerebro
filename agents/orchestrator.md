@@ -327,6 +327,16 @@ reclaimed rather than held on disk for ever — but it is **not a second home**,
 and the verifier exception does **not** reach it. A `psylocke` under `.claude/worktrees/` is a
 leftover, not the verification tree, and is judged like any other tree.
 
+**It walks two worktree lists, not one** (ah-apw4). Besides the consumer's, it walks
+`.claude/cerebro`'s — because a worktree of the submodule is registered there and nowhere else, so
+for a long time nothing enumerated one and two sat on this machine with their merged branches still
+checked out. Every rule above applies to such a tree unchanged; only the repository each is asked of
+changes, so `keeping … — it holds work that is not on main yet` means *cerebro's* main for a cerebro
+tree. This is cleanup for a category `implement-bead` no longer creates — a bead whose diff is inside
+the submodule now works in place, in its own consumer worktree's copy — so expect the submodule's
+list to hold nothing but its own git dir, which is not an agent worktree and is never reported. A
+cerebro remote that cannot be reached costs the submodule half of the sweep only, and says so.
+
 Then `git worktree remove <path>` and `git worktree prune`. A tree that fails the third test is
 somebody's unpushed work: leave it, and say whose tree it is and what it holds, because that is a
 decision about someone else's edits and not one to take alone. **`--force` is for the cache-only

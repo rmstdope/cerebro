@@ -12,11 +12,11 @@
 # suite at all - "I have no per-suite timings, only the aggregate"). cb-8cn made the loop one
 # script, with a test under it.
 #
-# cb-x05 made it parallel. The 27 suites are independent - every one builds its fixtures under its
+# cb-x05 made it parallel. The suites are independent - every one builds its fixtures under its
 # own $work_dir (tests/lib/consumer.sh) and the two that spawn processes scope them by pid and by a
-# --settings path under their own fixture - and the bash half of the gate was ~209s of mostly
-# fork-bound work on a ten-core machine. A suite that reaches outside its own $work_dir breaks
-# this, so do not write one.
+# --settings path under their own fixture - and the bash half of the gate was 185s of mostly
+# fork-bound work run one at a time on a ten-core machine (83s after this change). A suite that
+# reaches outside its own $work_dir breaks this, so do not write one.
 #
 # The contract, on stdout:
 #

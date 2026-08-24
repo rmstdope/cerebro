@@ -179,11 +179,22 @@ is_verifier_tree() {
   [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$verifier_lc" ]
 }
 
-# Whether `.claude/cerebro` resolves to the consumer's own repository rather than to a submodule of
-# it. It does when cerebro serves its own fleet: the path is then a symlink back to the checkout
-# root, and walking "both" lists would walk one list twice — every tree enumerated once per owner,
-# the tallies inflated, and a tree already removed on the first pass reported as kept on the second.
-# Compared by git dir rather than by path, since the symlink makes the paths differ.
+# Whether the mount and the consumer are ONE GIT REPOSITORY, so that `git worktree list` asked of
+# each returns the same list. When they are, walking "both" walks one list twice — every tree
+# enumerated once per owner, the tallies inflated, and a tree already removed on the first pass
+# reported as kept on the second.
+#
+# This is the one place cb-akc did NOT fold into `consumer-root --self-mounted', and the reason is
+# that the two questions are not the same one. `--self-mounted' asks whether `.claude/cerebro'
+# resolves back to the checkout root — true for cerebro serving its own fleet (cb-i3l.1) and false
+# otherwise. That answers this question for a real submodule (two repositories) and for the
+# self-mount (one repository), and gets it WRONG for the third supported layout: a vendored plain
+# COPY at the standard mount (tests/consumer-root.sh, "a plain copy at the standard mount resolves
+# the consumer"), where `.claude/cerebro' is an ordinary directory of the consumer's own repository
+# — one worktree list — while the round trip says "not self-mounted". tests/project-sweeps.sh is
+# the fixture with exactly that shape, and it reported every tree twice when this asked
+# `--self-mounted'. So: compared by git dir, which is what "one repository" actually means, and
+# which the symlinked self-mount also satisfies where a path comparison would not.
 submodule_is_the_consumer() {
   local a b
   a="$(git -C "$submodule_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1

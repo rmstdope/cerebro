@@ -600,10 +600,12 @@ once instead of erroring once per declared name."
 rendered as an empty fleet (cb-0r6).  Before this, a mistyped third column
 gave `M-x cerebro\=' a list of nobody and said nothing about why.
 
-The consumer is built with a real copy of the script rather than a symlink
-to this checkout: `roster\=' finds its consumer by path arithmetic, and a
-symlinked mount resolves that arithmetic to whatever is above the checkout
-instead of to the temporary consumer."
+The consumer is built with real copies of the scripts rather than symlinks
+to this checkout: the consumer is found by path arithmetic, and a symlinked
+mount resolves that arithmetic to whatever is above the checkout instead of
+to the temporary consumer.  `consumer-root\=' is copied beside `roster\=',
+which asks it for that root since cb-akc; without the sibling the fixture
+would find no consumer file and render the built-in fleet, refusing nothing."
   (let ((tmp (make-temp-file "cerebro-roster-refusal" t)))
     (unwind-protect
         (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
@@ -611,6 +613,8 @@ instead of to the temporary consumer."
           (make-directory (expand-file-name ".cerebro" tmp) t)
           (copy-file (expand-file-name "scripts/roster" cerebro-test--repo-root)
                      (expand-file-name "roster" scripts))
+          (copy-file (expand-file-name "scripts/consumer-root" cerebro-test--repo-root)
+                     (expand-file-name "consumer-root" scripts))
           (with-temp-file (expand-file-name ".cerebro/roster.conf" tmp)
             (insert "Ada  planner  autostrat\n"))
           (with-temp-buffer

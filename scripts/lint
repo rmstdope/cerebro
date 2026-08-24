@@ -484,6 +484,23 @@ grep -q -- 'lint --plan' skills/plan-bead/SKILL.md 2>/dev/null \
   || { advisory "skills/plan-bead/SKILL.md never runs scripts/lint --plan before shipping a plan"; fired=1; }
 ((fired)) || ok "plan-bead runs the plan check before a plan is shipped"
 
+# --- 15. the mount round trip lives in consumer-root and nowhere else ---
+#
+# "Does <root>/.claude/cerebro resolve to this checkout" was answered by five sites in four
+# scripts, three ways, each added by a bead that shipped the wrong answer first (cb-akc).
+# consumer-root's mount_resolves_to is the one answer, and --self-mounted / --mount expose it.
+# prune-worktrees.sh is not a copy and is not matched here: it compares GIT DIRS, which asks
+# "one repository or two" rather than "does the mount resolve back", and the two part company
+# for a vendored plain copy at the standard mount. Its own header says so.
+fired=0
+hits="$(find scripts -type f ! -name '*~' ! -name consumer-root ! -name lint \
+        | xargs grep -n 'claude/cerebro" 2>/dev/null && pwd -P' 2>/dev/null)"
+if [[ -n "$hits" ]]; then
+  advisory "the mount round trip is spelled outside consumer-root" "$hits"
+  fired=1
+fi
+((fired)) || ok "the mount round trip is answered by consumer-root alone"
+
 if [[ $status -eq 0 ]]; then
   echo "lint: clean"
 else

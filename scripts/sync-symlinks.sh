@@ -9,8 +9,7 @@ shopt -s nullglob
 # Run from anywhere inside the consumer repo.
 
 # -P (physical) throughout: consumer-root resolves symlinks the same way (macOS mktemp lives
-# under /var -> /private/var), and REL_SOURCE below strips CLAUDE_ROOT as a literal prefix of
-# SOURCE_ROOT, so the two must agree on which form of the path they use.
+# under /var -> /private/var), and SOURCE_ROOT is compared against paths it hands back.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
@@ -25,32 +24,20 @@ consumer_root="$("$SCRIPT_DIR/consumer-root" 2>/dev/null)" || {
 CLAUDE_ROOT="$consumer_root/.claude"
 
 # Every link this script writes is RELATIVE, so the same link is correct in the main checkout, in
-# every worktree and on every machine — an absolute link would point at one worktree's path and be
-# wrong (or dirty the tree) everywhere else (ah-cuc). REL_SOURCE is not relative to $CLAUDE_ROOT
-# itself: it is relative to where a link actually lives, one level below $CLAUDE_ROOT
-# ($CLAUDE_ROOT/skills/<name>, $CLAUDE_ROOT/agents/<name>) — hence the leading "../" and no more.
-REL_SOURCE="../${SOURCE_ROOT#"$CLAUDE_ROOT/"}"
+# every worktree and on every machine - an absolute link would point at one worktree's path and be
+# wrong (or dirty the tree) everywhere else (ah-cuc). Where this checkout sits under the consumer
+# is consumer-root's to say (cb-akc): `.claude/cerebro' for the standard mount and for cerebro
+# serving itself through the symlink `.claude/cerebro -> ..' (cb-i3l.1), the physical relative
+# path for a submodule vendored elsewhere.
+REL_FROM_ROOT="$("$SCRIPT_DIR/consumer-root" --mount)"
 
-# Unless the source root is not below $CLAUDE_ROOT at all, in which case the strip stripped nothing
-# and the line above just glued "../" to the front of an absolute path. That is cerebro serving
-# itself (cb-i3l.1): the mount is a symlink `.claude/cerebro -> ..`, so the source root IS the
-# consumer root. Link through the mount, which resolves there and reads exactly like every other
-# consumer's link - the whole point of mounting by symlink rather than teaching every path here
-# about a second layout.
-if [[ "$REL_SOURCE" == "../$SOURCE_ROOT" \
-      && "$(cd "$CLAUDE_ROOT/cerebro" 2>/dev/null && pwd -P)" == "$SOURCE_ROOT" ]]; then
-  REL_SOURCE="../cerebro"
-fi
-
-# `.dir-locals.el' lives at the consumer ROOT, one level above where the skill and agent links
-# sit, so it needs the source path relative to the root rather than to $CLAUDE_ROOT/<sub>/. Same
-# two cases as REL_SOURCE above, for the same reasons: the ordinary submodule (any mount, not just
-# .claude/cerebro), and cerebro serving itself, where the strip strips nothing and the mount is
-# the answer.
-REL_FROM_ROOT="${SOURCE_ROOT#"$consumer_root/"}"
-if [[ "$REL_FROM_ROOT" == "$SOURCE_ROOT" ]]; then
-  REL_FROM_ROOT=".claude/cerebro"
-fi
+# The skill and agent links live one level below $CLAUDE_ROOT ($CLAUDE_ROOT/skills/<name>,
+# $CLAUDE_ROOT/agents/<name>), so from there the mount is `../cerebro' - one `../' to reach
+# .claude/, then the rest of the mount path. A mount outside .claude/ is two levels up.
+case "$REL_FROM_ROOT" in
+  .claude/*) REL_SOURCE="../${REL_FROM_ROOT#.claude/}" ;;
+  *)         REL_SOURCE="../../$REL_FROM_ROOT" ;;
+esac
 
 # Ensure target subdirectories exist.
 mkdir -p "$CLAUDE_ROOT/skills" "$CLAUDE_ROOT/agents"

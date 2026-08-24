@@ -343,9 +343,13 @@ mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd
   tree* rather than a pinned sha. A submodule of the repository inside itself would have satisfied
   `consumer-root` with no code at all, and was rejected for a different reason: `git submodule
   update --init --recursive`, which `launch-preflight` runs, has no fixed point on a repository that
-  contains itself. Two scripts know about the mount and nothing else does — `consumer-root`, whose
-  third resolution step is the round trip through it, and `sync-symlinks.sh`, which links through
-  the mount when the source root is the consumer root. A worktree carries the same committed
+  contains itself. **One script knows about the mount**: `consumer-root`, whose
+  `mount_resolves_to` is the round trip through it, exposed as `--self-mounted` and `--mount`;
+  `roster` and `sync-symlinks.sh` ask it (cb-akc), and `scripts/lint` advises if the round trip is
+  ever spelled anywhere else. `prune-worktrees.sh` is the documented exception and keeps its git-dir
+  comparison: it asks whether the mount and the consumer are **one repository**, so that one
+  `git worktree list` covers both, and that parts company with the round trip for a vendored plain
+  copy at the standard mount — where the mount is an ordinary directory of the consumer's own repo. A worktree carries the same committed
   symlink, which resolves to the worktree, so an implementer reads its own branch's skills.
 - `scripts/agent-alive <Name>` is the one place bash answers "is this agent up" (see above). A
   predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state`: it
@@ -368,10 +372,11 @@ mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd
   (`--show-superproject-working-tree`, which answers at any mount — ah-ohc2). That order matters: the
   probe answers about whatever repository the checkout belongs to, so for a plain *copy* at the
   standard mount inside a consumer that is itself a submodule it would name the grandparent.
-  `scripts/roster` orders its two candidates the same way for the same reasons. So
+  `scripts/roster` asks this script for its root rather than resolving one of its own (cb-akc). So
   `.claude/cerebro/scripts` is load-bearing only for a consumer that vendors cerebro as a plain copy;
   a submodule may be mounted anywhere. To test a change, build a throwaway consumer repo rather than running
-  the script here (it will refuse: there is no `.claude/` above this tree).
+  the script here (it will refuse: there is no `.claude/` above this tree). Since cb-akc it is also
+  the one place "how is this checkout mounted in it" is answered — `--self-mounted` and `--mount`.
 - `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
   asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a
   submodule-bump PR commit them (ah-cuc). It writes one link outside `.claude/`: the consumer's root
@@ -432,11 +437,11 @@ mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd
   takes implementer names in file order). It is **tracked**, beside `.cerebro/project.conf`, by a
   `.gitignore` negation inside the otherwise-ignored `.cerebro/` (cb-epr): which agents exist is a
   fact every clone needs, and an ignored declaration vanishes on a fresh clone. `roster`
-  finds it by path arithmetic and **must never call `consumer-root`**, which shells out to `git` —
-  the launchers' narrowed-PATH guarantee (`dirname` and `bash` alone) depends on it. It has a second
-  candidate for a submodule mounted elsewhere (`<superproject>/.cerebro/roster.conf`, ah-ohc2),
-  tried only when `git` is on PATH and skipped in silence when it is not, which is what leaves that
-  guarantee intact. At every candidate root a file still at the retired `.claude/cerebro-roster`
+  asks `consumer-root` for the root (cb-akc) — the one resolver, whose git step is optional and
+  whose failure is swallowed, so the launchers' narrowed-PATH guarantee (`dirname` and `bash`
+  alone, `tests/launchers.sh`) still holds and is what guards it; a submodule mounted elsewhere
+  (`vendor/cerebro`, ah-ohc2) is found through git when git is there. At that root a file still at
+  the retired `.claude/cerebro-roster`
   with none at the new path **exits 2 naming the `mv`** rather than falling back: absence is the
   documented "run the built-in fleet" signal, and a stale path borrowing it would silently give a
   consumer nineteen names it never declared. `project-conf` and `launch-preflight` refuse the same

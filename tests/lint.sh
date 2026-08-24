@@ -254,4 +254,18 @@ set -e
 $out"
 pass "the plan check is a usage error without a readable plan"
 
+# A round trip through the mount spelled anywhere but consumer-root is the five-copies drift
+# cb-akc removed coming back.
+printf '\nx="$(cd "$here/.claude/cerebro" 2>/dev/null && pwd -P)"\n' >> "$fixture/scripts/roster"
+set +e
+out="$(bash "$lint" "$fixture" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "lint with a planted mount round trip: expected exit 1, got $status
+$out"
+grep -q 'scripts/roster' <<<"$out" \
+  || fail "lint with a planted mount round trip: the advisory does not name scripts/roster
+$out"
+pass "a mount round trip outside consumer-root fires an advisory naming the file"
+
 echo "all lint assertions passed"

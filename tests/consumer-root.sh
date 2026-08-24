@@ -42,6 +42,16 @@ shared_out="$("$consumer/.claude/cerebro/scripts/consumer-root" --shared)"
   || fail "--shared: expected $consumer, got $shared_out"
 pass "--shared, from the main checkout, prints the same consumer"
 
+# --- how this checkout is mounted, from the one script that knows (cb-akc) ---
+set +e
+"$consumer/.claude/cerebro/scripts/consumer-root" --self-mounted; status=$?
+set -e
+[[ $status -eq 1 ]] || fail "--self-mounted on a real consumer: expected 1, got $status"
+pass "--self-mounted is 1 for a consumer whose mount is not its own checkout"
+mount_out="$("$consumer/.claude/cerebro/scripts/consumer-root" --mount)"
+[[ "$mount_out" == ".claude/cerebro" ]] || fail "--mount at the standard mount: got $mount_out"
+pass "--mount names .claude/cerebro at the standard mount"
+
 # --- a linked worktree of it: plain answers the worktree, --shared answers the main checkout ---
 worktree="$consumer/.cerebro/worktrees/wt"
 git -C "$consumer" worktree add -q "$worktree" -b wt-branch
@@ -103,6 +113,10 @@ pass "a submodule mounted at vendor/cerebro resolves its consumer"
 alt_shared="$("$alt/vendor/cerebro/scripts/consumer-root" --shared)"
 [[ "$alt_shared" == "$alt_root" ]] || fail "alternative mount --shared: expected $alt_root, got $alt_shared"
 pass "--shared answers from an alternative mount too"
+
+alt_mount="$("$alt/vendor/cerebro/scripts/consumer-root" --mount)"
+[[ "$alt_mount" == "vendor/cerebro" ]] || fail "--mount at vendor/cerebro: got $alt_mount"
+pass "--mount names the physical relative path for a submodule vendored elsewhere"
 
 # A plain COPY at the standard mount, inside a consumer that is itself a submodule of something
 # else. The superproject probe would answer with the GRANDPARENT here - it reports the superproject
@@ -184,6 +198,17 @@ self_shared="$("$self_consumer/.claude/cerebro/scripts/consumer-root" --shared)"
 [[ "$self_shared" == "$self_root" ]] \
   || fail "self-consumer --shared: expected $self_root, got $self_shared"
 pass "--shared from a self-consumer's main checkout prints that checkout"
+
+"$self_consumer/.claude/cerebro/scripts/consumer-root" --self-mounted \
+  || fail "--self-mounted on cerebro mounted in itself: expected 0"
+pass "--self-mounted is 0 for cerebro mounted in itself"
+self_mount="$("$self_consumer/.claude/cerebro/scripts/consumer-root" --mount)"
+[[ "$self_mount" == ".claude/cerebro" ]] || fail "--mount on the self-mount: got $self_mount"
+pass "--mount on the self-mount names .claude/cerebro, like every other consumer"
+# With no git on PATH: the answer is builtins only, which is what lets roster ask it.
+PATH="$bare_path_dir" "$(command -v bash)" "$self_consumer/.claude/cerebro/scripts/consumer-root" --self-mounted \
+  || fail "--self-mounted under a narrowed PATH: expected 0"
+pass "--self-mounted answers with PATH narrowed to dirname and bash"
 
 # A worktree of it carries the same committed symlink, which resolves to the WORKTREE - so an
 # implementer building there reads its own branch's skills, not the main checkout's.

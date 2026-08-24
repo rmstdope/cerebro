@@ -9,6 +9,17 @@
 #                            sweeps look. Right for anything the fleet reads or that reasons about
 #                            the whole repository. From the main checkout both answers are equal.
 #
+# And two about the mount itself - how this checkout sits in that root, which is the same question
+# asked from the other side, so it is answered here and nowhere else (cb-akc):
+#
+#   consumer-root --self-mounted   exit 0 when `.claude/cerebro' resolves back to this very
+#                                  checkout - cerebro serving its own fleet (cb-i3l.1) - and 1 for
+#                                  every real consumer. Prints nothing.
+#   consumer-root --mount          the path of this checkout relative to the consumer root, the way
+#                                  a link from the consumer should spell it: `.claude/cerebro' at
+#                                  the standard mount and for the self-mount, the physical relative
+#                                  path (`vendor/cerebro') for a submodule vendored elsewhere.
+#
 # The mount may be <consumer>/.claude/cerebro or, for a consumer that vendors cerebro as a SUBMODULE
 # somewhere else entirely (vendor/cerebro, tools/cerebro, ...), wherever it put it - see the three
 # resolution steps below. It may also be cerebro's own checkout, which mounts itself by symlink to
@@ -20,6 +31,20 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# THE one answer to "does <root>/.claude/cerebro resolve to <checkout>" (cb-akc). Both round trips
+# below use it, `--self-mounted' and `--mount' expose it, and roster, sync-symlinks.sh and
+# prune-worktrees.sh ask those rather than spelling the round trip again - five copies by three
+# mechanisms is how the janitor walked one list twice and roster fell back to the built-in fleet
+# in silence. Builtins only (`cd', `pwd'), so the narrowed-PATH guarantee tests/launchers.sh
+# asserts survives it. Physical on both sides: macOS mktemp lives under /var -> /private/var.
+mount_resolves_to() {
+  # $1 = a candidate consumer root, $2 = a checkout of cerebro
+  local mount checkout
+  mount="$(cd "$1/.claude/cerebro" 2>/dev/null && pwd -P)" || return 1
+  checkout="$(cd "$2" 2>/dev/null && pwd -P)" || return 1
+  [[ "$mount" == "$checkout" ]]
+}
 
 # Three ways of answering, tried in order (ah-ohc2, cb-i3l.1).
 #
@@ -34,7 +59,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 #    whatever repository this checkout belongs to - for a plain (non-submodule) COPY at the standard
 #    mount that is the consumer's own repo, so a consumer that is itself a submodule of something
 #    else would resolve to its grandparent. The validated arithmetic cannot make that mistake.
-#    `scripts/roster' orders its two candidates the same way, and for the same reasons.
+#    `scripts/roster' asks this script for its root rather than resolving one of its own (cb-akc).
 #
 # 2. Ask git which working tree contains this checkout as a submodule.
 #    `--show-superproject-working-tree' is purpose-built for exactly that question and answers
@@ -57,7 +82,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 #    A standalone clone still has no consumer, and is still refused: what is checked is the round
 #    trip through the mount, which only a checkout that has deliberately mounted itself can make.
 candidate="$(cd "$script_dir/../../.." 2>/dev/null && pwd -P)" || candidate=""
-if [[ -n "$candidate" && "$(cd "$candidate/.claude/cerebro" 2>/dev/null && pwd -P)" == "$(cd "$script_dir/.." && pwd -P)" ]]; then
+if [[ -n "$candidate" ]] && mount_resolves_to "$candidate" "$script_dir/.."; then
   enclosing="$candidate"
 else
   enclosing="$(git -C "$script_dir" rev-parse --show-superproject-working-tree 2>/dev/null)" || enclosing=""
@@ -69,7 +94,7 @@ if [[ -z "$enclosing" ]]; then
   # 3. This checkout mounted as its own consumer - `.claude/cerebro' resolving back to the very
   #    tree this script lives in. No git, so the narrowed PATH in tests/launchers.sh still works.
   own_root="$(cd "$script_dir/.." && pwd -P)"
-  if [[ "$(cd "$own_root/.claude/cerebro" 2>/dev/null && pwd -P)" == "$own_root" ]]; then
+  if mount_resolves_to "$own_root" "$own_root"; then
     enclosing="$own_root"
   fi
 fi
@@ -86,5 +111,26 @@ case "${1:-}" in
     common="$(git -C "$enclosing" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
       || { echo "consumer-root: $enclosing is not inside a git working tree" >&2; exit 1; }
     printf '%s\n' "$(cd "$(dirname "$common")" && pwd -P)" ;;
-  *) echo "usage: consumer-root [--shared]" >&2; exit 2 ;;
+  --self-mounted)
+    # Exit 0 when this checkout IS its consumer - `.claude/cerebro' is a symlink back to the tree
+    # it lives in (cb-i3l.1) - and 1 for every real consumer. Nothing printed: asked by
+    # prune-worktrees.sh to walk one worktree list rather than the same list twice, and by
+    # roster through the plain form above.
+    mount_resolves_to "$enclosing" "$enclosing" ;;
+  --mount)
+    # The path of this checkout relative to the consumer root, the way a link from the consumer
+    # should spell it: `.claude/cerebro' whenever the standard mount resolves to this checkout
+    # (a submodule there, the self-mount symlink, or a symlink at the standard mount to a
+    # submodule elsewhere), and the physical relative path otherwise (`vendor/cerebro').
+    # sync-symlinks.sh builds every relative link from this.
+    checkout="$(cd "$script_dir/.." && pwd -P)"
+    if mount_resolves_to "$enclosing" "$checkout"; then
+      printf '.claude/cerebro\n'
+    else
+      rel="${checkout#"$enclosing/"}"
+      [[ "$rel" != "$checkout" ]] \
+        || { echo "consumer-root: $checkout is not under $enclosing" >&2; exit 1; }
+      printf '%s\n' "$rel"
+    fi ;;
+  *) echo "usage: consumer-root [--shared|--self-mounted|--mount]" >&2; exit 2 ;;
 esac

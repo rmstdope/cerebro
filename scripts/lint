@@ -377,7 +377,14 @@ if [[ -n "$hits" ]]; then
 fi
 grep -q 'docs/agent-workflow.md' scripts/ci-needed 2>/dev/null \
   || { advisory "scripts/ci-needed no longer keeps docs/agent-workflow.md on the gated side"; fired=1; }
-((fired)) || ok "CI's skip list names nothing a suite opens"
+# The step that runs ci-needed must neutralise the -e GitHub puts on the interpreter's own command
+# line: exit 1 from the predicate is an answer, and under -e it kills the step instead. cb-ypx
+# shipped without this and turned the first docs-only pull request red.
+if grep -q 'bash scripts/ci-needed' "$ci" 2>/dev/null; then
+  grep -qE '^ +set \+e$' "$ci" \
+    || { advisory "$ci runs scripts/ci-needed without 'set +e', so its exit 1 fails the step"; fired=1; }
+fi
+((fired)) || ok "CI's skip list names nothing a suite opens, and its exit 1 is an answer not a failure"
 
 if [[ $status -eq 0 ]]; then
   echo "lint: clean"

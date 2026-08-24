@@ -44,7 +44,8 @@ git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --
 for s in consumer-root project-conf; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
-conf="$consumer/.claude/cerebro-project.conf"
+conf="$consumer/.cerebro/project.conf"
+mkdir -p "$consumer/.cerebro"
 project_conf="$consumer/.claude/cerebro/scripts/project-conf"
 
 cat > "$conf" <<'CONF'
@@ -98,7 +99,8 @@ git -C "$bare" -c user.name=test -c user.email=test@example.com commit -q --allo
 for s in consumer-root project-conf; do
   ln -s "$repo_root/scripts/$s" "$bare/.claude/cerebro/scripts/$s"
 done
-: > "$bare/.claude/cerebro-project.conf"
+mkdir -p "$bare/.cerebro"
+: > "$bare/.cerebro/project.conf"
 
 out="$("$bare/.claude/cerebro/scripts/project-conf" launch_targets 2>"$work_dir/err")" || true
 [[ -z "$out" ]] || fail "no launch_targets: expected no value on stdout, got '$out'"
@@ -114,8 +116,9 @@ git -C "$half" -c user.name=test -c user.email=test@example.com commit -q --allo
 for s in consumer-root project-conf; do
   ln -s "$repo_root/scripts/$s" "$half/.claude/cerebro/scripts/$s"
 done
+mkdir -p "$half/.cerebro"
 printf 'launch_targets web desktop\nlaunch_web  run me\nlaunch_web_port 5173\n' \
-  > "$half/.claude/cerebro-project.conf"
+  > "$half/.cerebro/project.conf"
 
 out="$("$half/.claude/cerebro/scripts/project-conf" launch_desktop 2>"$work_dir/err2")" || true
 [[ -z "$out" ]] || fail "half-written conf: expected no value for launch_desktop, got '$out'"

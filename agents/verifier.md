@@ -334,7 +334,7 @@ you can ahead of the question:
   exactly as declared, from the verification worktree** — a flag you drop because it looks redundant
   may be the one that builds the real binary rather than a stub that exits at once, and the symptom
   of that is a broken-looking application rather than a lost flag. The notes beside each key in the
-  consumer's `.claude/cerebro-project.conf` are comment lines: read them, they are there for you.
+  consumer's `.cerebro/project.conf` are comment lines: read them, they are there for you.
 
   **With no `launch_targets` declared, ask the navigator how to run the application** — sandwiched,
   `asking --bead <id> --phase verify` before you say it. **Never improvise a command**, and never

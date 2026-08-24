@@ -48,12 +48,23 @@ a bead is planned in one session and implemented in another.
 ## Where the project declares its facts
 
 > *Not prose — files. The fleet reads these rather than guessing, and each is tracked so that every
-> clone has it.*
+> clone has it — by a `.gitignore` negation inside the otherwise-ignored `.cerebro/`:*
+>
+> ```gitignore
+> .cerebro/*
+> !.cerebro/project.conf
+> !.cerebro/roster.conf
+> !.cerebro/traps.md
+> ```
+>
+> *`.cerebro/*` and not `.cerebro/`: a negation only works when the parent directory itself is not
+> ignored. These lived under `.claude/` with a `cerebro-` prefix until cb-epr; a file left at the old
+> path makes `project-conf`, `roster` and `launch-preflight` refuse, naming the `mv`.*
 
-- `.claude/cerebro-project.conf` — how the project installs itself, what its fast and full gates are
+- `.cerebro/project.conf` — how the project installs itself, what its fast and full gates are
   called, which paths are the application, where retrospectives live.
-- `.claude/cerebro-roster` — which agents this project runs, and in what order. Absent means the
+- `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
   built-in fleet.
-- `.claude/cerebro-traps.md` — the traps this project has already paid for, read by planners and
+- `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
   implementers before they start. Absent means the project has paid for nothing yet, which is where
   every project starts.

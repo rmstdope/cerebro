@@ -88,7 +88,8 @@ for s in consumer-root project-conf default-branch roster \
 done
 
 
-conf="$consumer/.claude/cerebro-project.conf"
+conf="$consumer/.cerebro/project.conf"
+mkdir -p "$consumer/.cerebro"
 # Every case declares the same build floor, which is where the floor lives since ah-qled.7.2 - it
 # used to be read out of a consumer's TypeScript. The pressure path is off entirely without it, so
 # it belongs with `default_branch' in the preamble rather than in each case; the one case that is
@@ -178,7 +179,7 @@ pass "every declared directory is reclaimed, not just the first, and an undeclar
 # =================================================================================================
 # 3. The verifier is found on the roster, not named in the source
 # =================================================================================================
-cat > "$consumer/.claude/cerebro-roster" <<'ROSTER'
+cat > "$consumer/.cerebro/roster.conf" <<'ROSTER'
 Oracle    verifier
 Cyclops   implementer
 ROSTER
@@ -227,7 +228,7 @@ pass "the roster name is matched case-insensitively, as the lowercased literal w
 
 # A roster with no verifier at all keeps nobody by that exception, and still deletes nothing it
 # should not — every tree here is live, so every one is kept for an ordinary reason.
-cat > "$consumer/.claude/cerebro-roster" <<'ROSTER'
+cat > "$consumer/.cerebro/roster.conf" <<'ROSTER'
 Cyclops   implementer
 ROSTER
 out="$(run_prune PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999)"
@@ -251,7 +252,7 @@ pass ".claude/worktrees/ is still swept, so a pre-move tree is not left unmanage
 # -merging consumer would keep every delivered worktree for ever. So `none` pairs the rev-list test
 # with the staleness bound: a clean tree nobody has written to in far longer than a whole tree is
 # ever left alone for is finished with, whoever merged it and however.
-rm -f "$consumer/.claude/cerebro-roster"
+rm -f "$consumer/.cerebro/roster.conf"
 squashed="$consumer/.cerebro/worktrees/ah-squash"
 git_c -C "$consumer" worktree add -q "$squashed" -b ah-squash-branch
 git_c -C "$squashed" commit -q --allow-empty -m "feat(ah-squash): delivered, then squashed"

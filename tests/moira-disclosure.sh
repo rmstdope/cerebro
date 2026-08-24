@@ -45,7 +45,8 @@ git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --
 for s in consumer-root project-conf; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
-conf="$consumer/.claude/cerebro-project.conf"
+conf="$consumer/.cerebro/project.conf"
+mkdir -p "$consumer/.cerebro"
 project_conf="$consumer/.claude/cerebro/scripts/project-conf"
 
 printf 'project_name   Some Other Project\n' > "$conf"

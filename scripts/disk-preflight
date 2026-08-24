@@ -9,7 +9,7 @@
 # 2.0 GiB free while three worktrees each kept a build tree of their own, and eleven retrospectives
 # name that floor since.
 #
-# THE FLOOR IS THE CONSUMER'S, not cerebro's. `disk_floor_gb' in .claude/cerebro-project.conf is
+# THE FLOOR IS THE CONSUMER'S, not cerebro's. `disk_floor_gb' in .cerebro/project.conf is
 # what "not enough room to build" means for this project, and `prune-worktrees.sh' reads the very
 # same key - a number of cerebro's own would drift from it and the two would disagree at the worst
 # possible moment. A CONSUMER THAT DECLARES NONE GETS NO PREFLIGHT: exit 0, silently, rather than

@@ -38,7 +38,8 @@ git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --
 for s in consumer-root project-conf app-paths; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
-conf="$consumer/.claude/cerebro-project.conf"
+conf="$consumer/.cerebro/project.conf"
+mkdir -p "$consumer/.cerebro"
 app_paths="$consumer/.claude/cerebro/scripts/app-paths"
 
 printf 'project_name Atlantis HUD\napp_paths      ^(packages|crates|apps)/\n' > "$conf"

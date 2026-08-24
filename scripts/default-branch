@@ -7,7 +7,7 @@
 # Three answers, and the order is the whole design - CONFIGURED BEATS DETECTED, DETECTED BEATS
 # ASSUMED:
 #
-#   1. `default_branch` in <consumer>/.claude/cerebro-project.conf. An explicit declaration wins
+#   1. `default_branch` in <consumer>/.cerebro/project.conf. An explicit declaration wins
 #      because a consumer that HAS a `main` and does its work on `develop` is exactly the case
 #      detection answers wrongly.
 #   2. `git symbolic-ref --short refs/remotes/origin/HEAD`, minus its `origin/` prefix.
@@ -32,7 +32,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # 1. configured
 configured="$("$here/project-conf" default_branch 2>/dev/null)" || configured=""
 if [[ -n "$configured" ]]; then
-  echo "default-branch: cerebro-project.conf -> $configured" >&2
+  echo "default-branch: project.conf -> $configured" >&2
   printf '%s\n' "$configured"
   exit 0
 fi

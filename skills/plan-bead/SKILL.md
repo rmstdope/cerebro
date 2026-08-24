@@ -1109,7 +1109,7 @@ that belongs here is one a plan cannot be written correctly without: a suite tha
 wrong artefact, a driver that lies about what it can see, a default that must be migrated rather
 than clamped.
 
-Read `<consumer>/.claude/cerebro-traps.md` if it exists — the traps this project has already paid
+Read `<consumer>/.cerebro/traps.md` if it exists — the traps this project has already paid
 for. It is a list of facts, not rules: if the bead touches one, say so and say what to do about it.
 Absent is an ordinary state, not an error — a project with no traps file has paid for nothing yet,
 which is where every project starts.

@@ -70,7 +70,8 @@ done
 # `reclaim_dirs` defaults to EMPTY, so an unconfigured consumer never has a directory deleted. Every
 # assertion below is about what happens once a consumer HAS opted in, which is what this line does;
 # tests/project-sweeps.sh owns the opted-out case.
-cat > "$consumer/.claude/cerebro-project.conf" <<'CONF'
+mkdir -p "$consumer/.cerebro"
+cat > "$consumer/.cerebro/project.conf" <<'CONF'
 reclaim_dirs target
 disk_floor_gb 8
 CONF
@@ -217,7 +218,8 @@ git init -q --bare "$origin2"
 consumer2="$work_dir/repo2"
 mkdir -p "$consumer2/.claude"
 git init -q -b main "$consumer2"
-cat > "$consumer2/.claude/cerebro-project.conf" <<'CONF'
+mkdir -p "$consumer2/.cerebro"
+cat > "$consumer2/.cerebro/project.conf" <<'CONF'
 disk_floor_gb 8
 CONF
 git_c -C "$consumer2" add -A
@@ -317,7 +319,8 @@ pass "a failed submodule fetch skips the submodule half and leaves the consumer'
 selfmount="$work_dir/selfmount"
 mkdir -p "$selfmount/.claude"
 git init -q -b main "$selfmount"
-cat > "$selfmount/.claude/cerebro-project.conf" <<'CONF'
+mkdir -p "$selfmount/.cerebro"
+cat > "$selfmount/.cerebro/project.conf" <<'CONF'
 disk_floor_gb 8
 CONF
 mkdir -p "$selfmount/scripts"

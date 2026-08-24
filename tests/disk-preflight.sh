@@ -70,7 +70,8 @@ git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --
 for s in consumer-root project-conf disk-preflight; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
-conf="$consumer/.claude/cerebro-project.conf"
+conf="$consumer/.cerebro/project.conf"
+mkdir -p "$consumer/.cerebro"
 preflight="$consumer/.claude/cerebro/scripts/disk-preflight"
 
 # stdout on either exit path, and the exit status alongside it.
@@ -169,7 +170,9 @@ grep -q '3.8 GB sits in 2 build trees' <<<"$out" \
 pass "the reclaimable line is appended to a pass too - the sweep is worth running either way"
 
 # --- one tree is not spoken of in the plural ---------------------------------------------------
-rm -rf "$consumer/.cerebro"
+# Only the worktrees go: since cb-epr the project's own declaration lives under `.cerebro/` too, and
+# removing the directory wholesale would take the floor this case is asserting against with it.
+rm -rf "$consumer/.cerebro/worktrees"
 out="$(run)" || fail "one tree: expected exit 0"
 grep -q '1 build tree:' <<<"$out" || fail "one tree: expected the singular, got: $out"
 grep -q '1 build trees' <<<"$out" && fail "one tree: spoke of one tree in the plural: $out"

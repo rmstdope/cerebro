@@ -15,8 +15,8 @@ in a *consumer* repo, and the launchers in `scripts/` only make sense from a con
 this repo is mounted at `.claude/cerebro`. So a change here is generally not testable by running it
 in this tree.
 
-Every project-specific fact is read from `<consumer>/.claude/cerebro-project.conf`
-(`scripts/project-conf`), and the fleet's names from `<consumer>/.claude/cerebro-roster`
+Every project-specific fact is read from `<consumer>/.cerebro/project.conf`
+(`scripts/project-conf`), and the fleet's names from `<consumer>/.cerebro/roster.conf`
 (`scripts/roster`). Nothing in this repository names a consumer.
 
 ## This repository is also a consumer
@@ -71,12 +71,12 @@ tracked, the root `.gitignore` keeps a stray `bd export` out of every commit, an
 
 Not prose — files, each tracked so that every clone has it.
 
-- `.claude/cerebro-project.conf` — this project's name, default branch, audience, which paths are
+- `.cerebro/project.conf` — this project's name, default branch, audience, which paths are
   the application, and the gate. Both gates name `tests/gate`, which runs exactly what
   `.github/workflows/ci.yml` runs (cb-i3l.2).
-- `.claude/cerebro-roster` — which agents this project runs, and in what order. Absent means the
+- `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
   built-in fleet.
-- `.claude/cerebro-traps.md` — the traps this project has already paid for, read by planners and
+- `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
   implementers before they start. Absent means it has paid for none yet, which is where every
   project starts.
 
@@ -295,9 +295,14 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
 ## Gotchas
 
 - `.cerebro/` is the harness's own directory in the consumer — agent state files, stop flags and
-  agent worktrees (ah-v82). It is ignored wholesale by the consumer's `.gitignore`, never partially,
-  because nothing tracked ever lives there. `.claude/` holds only what Claude Code itself discovers
-  (`agents/`, `skills/`, `settings.json`) plus this repository's own submodule mount.
+  agent worktrees (ah-v82), **and since cb-epr the project's own declarations** (`project.conf`,
+  `roster.conf`, `traps.md`). So the consumer's `.gitignore` ignores it the way it ignores
+  `.claude/`: `.cerebro/*` plus a negation per tracked declaration, never `.cerebro/` — a negation
+  only works when the parent directory itself is not ignored. Everything-except is the fail-safe
+  direction: the fleet invents runtime artifacts far more often than it invents declarations, so a
+  new one arrives ignored rather than committable by accident. `.claude/` holds only what Claude
+  Code itself discovers (`agents/`, `skills/`, `settings.json`) plus this repository's own
+  submodule mount.
 - **This repository is a consumer of itself** (cb-i3l.1). `.claude/cerebro` is a committed symlink
   back to the checkout, so every path the harness assumes — `.claude/cerebro/scripts/launch`, the
   `../cerebro/...` links the sync writes — is literally true here, and the fleet runs the *working
@@ -382,17 +387,23 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
 - The state directory was `.claude/implementers/` until ah-2n3.1, and its writer was
   `scripts/implementer-state`. Both names are gone: `scripts/agent-state` is the writer, and the
   rename shim was removed once a release of the consumer had carried it (ah-qled.5.3).
-- **A consumer declares its own fleet in `<consumer>/.claude/cerebro-roster`** (ah-qled.5.1) — same
+- **A consumer declares its own fleet in `<consumer>/.cerebro/roster.conf`** (ah-qled.5.1) — same
   `NAME  ROLE` shape as the `TABLE=` heredoc in `scripts/roster`, `#` comments and blank lines
   ignored, `KIND` still derived. When it exists and is non-empty it **replaces** the built-in table
   rather than merging with it, because file order is load-bearing (first planner triages; Cerebro
-  takes implementer names in file order). It is **tracked**, beside `.claude/cerebro-project.conf`,
-  not under the git-ignored `.cerebro/`: which agents exist is a fact every clone needs. `roster`
+  takes implementer names in file order). It is **tracked**, beside `.cerebro/project.conf`, by a
+  `.gitignore` negation inside the otherwise-ignored `.cerebro/` (cb-epr): which agents exist is a
+  fact every clone needs, and an ignored declaration vanishes on a fresh clone. `roster`
   finds it by path arithmetic and **must never call `consumer-root`**, which shells out to `git` —
   the launchers' narrowed-PATH guarantee (`dirname` and `bash` alone) depends on it. It has a second
-  candidate for a submodule mounted elsewhere (`<superproject>/.claude/cerebro-roster`, ah-ohc2),
+  candidate for a submodule mounted elsewhere (`<superproject>/.cerebro/roster.conf`, ah-ohc2),
   tried only when `git` is on PATH and skipped in silence when it is not, which is what leaves that
-  guarantee intact. A role only the
+  guarantee intact. At every candidate root a file still at the retired `.claude/cerebro-roster`
+  with none at the new path **exits 2 naming the `mv`** rather than falling back: absence is the
+  documented "run the built-in fleet" signal, and a stale path borrowing it would silently give a
+  consumer nineteen names it never declared. `project-conf` and `launch-preflight` refuse the same
+  way, and the reader-level refusal is the load-bearing one — `M-x cerebro` reaches `roster`
+  without ever passing through a preflight. A role only the
   consumer declares needs `<consumer>/.claude/agents/<role>.md`; `scripts/launch` prefers that
   directory over the submodule's, and `launch-preflight` says which of the two causes is missing
   rather than always blaming the submodule.

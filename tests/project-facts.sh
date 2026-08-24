@@ -2,7 +2,7 @@
 #
 # Proves this repository declares its OWN facts, the way every consumer must (cb-i3l.2). Cerebro is
 # a harness for other repositories and is now also a consumer of itself (cb-i3l.1), so the file
-# every other consumer writes — .claude/cerebro-project.conf — has to exist here too, and say what
+# every other consumer writes — .cerebro/project.conf — has to exist here too, and say what
 # is true here rather than what was true in the repository these agents were extracted from.
 #
 # Two things are asserted, and they are different in kind:
@@ -33,7 +33,7 @@ pass() {
   echo "ok - $1"
 }
 
-conf=".claude/cerebro-project.conf"
+conf=".cerebro/project.conf"
 project_conf() { ".claude/cerebro/scripts/project-conf" "$@" 2>/dev/null; }
 
 # --- the file exists, and is TRACKED ---
@@ -124,23 +124,32 @@ pass "every key this repository deliberately leaves out says so in the file"
 # `.cerebro/' turns every `git status' into noise - or gets a state file committed, which then
 # describes somebody else's machine to everybody who clones.
 #
-# Ignored WHOLESALE, never partially: nothing tracked lives there, so a negation would only invite
-# one to.
+# Ignored by the `.cerebro/*' + negation shape (cb-epr), the same one the `.claude/*' block uses:
+# everything under it ignored EXCEPT the project's own declarations, which every clone needs. The
+# negation direction is the fail-safe one - the fleet invents runtime artifacts far more often than
+# it invents declarations, so a new one arrives ignored rather than committable-by-accident.
 for p in .cerebro/state/Xavier.state.json .cerebro/state/Cyclops.stop \
          .cerebro/worktrees/cb-1/file.txt .cerebro/models.conf; do
   git check-ignore -q "$p" || fail "$p is not ignored - the fleet's machine state would be committable"
 done
 pass "every path the fleet writes under .cerebro/ is ignored"
 
-[[ -z "$(git ls-files .cerebro)" ]] \
-  || fail "something under .cerebro/ is tracked: $(git ls-files .cerebro)"
-pass "nothing under .cerebro/ is tracked, which is why the ignore can be wholesale"
+# And the declarations themselves are NOT ignored - a negation only works if the parent directory
+# is not ignored, so the block must be `.cerebro/*' (children) rather than `.cerebro/'.
+for p in .cerebro/project.conf .cerebro/roster.conf; do
+  git check-ignore -q "$p" && fail "$p is ignored - it would vanish on a fresh clone"
+done
+pass "the declarations under .cerebro/ are not ignored"
+
+[[ "$(git ls-files .cerebro)" == "$(printf '.cerebro/project.conf\n.cerebro/roster.conf')" ]] \
+  || fail "tracked under .cerebro/ should be exactly the two declarations, got: $(git ls-files .cerebro)"
+pass "exactly the declarations are tracked under .cerebro/, and nothing else"
 # --- the fleet this repository runs (cb-i3l.3) ---
 #
-# `.claude/cerebro-roster' REPLACES the built-in table rather than merging with it, so what it
+# `.cerebro/roster.conf' REPLACES the built-in table rather than merging with it, so what it
 # leaves out is as much a decision as what it declares - and a role left out by accident reads
 # exactly like one left out on purpose.
-roster_file=".claude/cerebro-roster"
+roster_file=".cerebro/roster.conf"
 [[ -f "$roster_file" ]] || fail "$roster_file does not exist - this repository runs the X-Men by default"
 git ls-files --error-unmatch "$roster_file" >/dev/null 2>&1 \
   || fail "$roster_file is not tracked - an ignored roster vanishes on a fresh clone"

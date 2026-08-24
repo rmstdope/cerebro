@@ -418,6 +418,46 @@ Worktrees must stay under `.cerebro/worktrees/`; the script refuses anything els
 and most build tools find their configuration by walking up, so a worktree outside the repository
 silently gets its own empty bead database and its own multi-gigabyte build directory.
 
+### A bead whose diff is inside `.claude/cerebro`
+
+**It needs no special tree, and no worktree of the submodule at all.** Run `prepare-worktree`
+exactly as above — it already initialises the submodule inside the new tree — and do the work in
+`<tree>/.claude/cerebro`.
+
+**That checkout is yours alone.** Every consumer worktree gets its own private submodule git dir, so
+branching there moves nobody else's HEAD. Check it rather than believe it:
+
+```bash
+cat <tree>/.claude/cerebro/.git    # gitdir: …/.git/worktrees/<id>/modules/.claude/cerebro
+cat <repo>/.claude/cerebro/.git    # gitdir: …/.git/modules/.claude/cerebro
+```
+
+**It arrives detached at the pinned sha**, because `prepare-worktree` ends with
+`submodule update --init --recursive`, which checks out the commit the consumer pins rather than a
+branch. So the first two commands are its own fetch and branch — branching from the pinned sha
+instead is how a cerebro PR arrives based on a commit behind cerebro's main:
+
+```bash
+git -C <tree>/.claude/cerebro fetch origin
+git -C <tree>/.claude/cerebro checkout -b <id>-short-description origin/main
+```
+
+**Never `git -C .claude/cerebro worktree add`.** It makes a tree registered in the submodule and not
+in the consumer — and for a long time nothing enumerated the submodule's list, so trees made that way
+sat on disk with their merged branches checked out and the janitor never saw one. It walks both
+lists now, but that is cleanup for a category this route no longer creates. Given a relative path it also lands the tree
+*inside* the submodule, which four retrospectives paid for one at a time.
+
+**Do not clone cerebro to a sibling directory either.** The harness classifier refuses it outright —
+a dead end with no diagnosis.
+
+`bd` still works from here, because the tree is inside the consumer: that is why the location matters
+more than the mechanism, and why a clone in `~/repos/` is the wrong shape even where it is allowed.
+
+**It is two PRs.** Commit and push in `<tree>/.claude/cerebro` and open the PR against the cerebro
+repository; once it merges, bump the pointer with a `chore: bump cerebro` commit from the same
+consumer tree.
+
 **Check `pwd` before any git command.** A shell keeps its directory between commands, so one `cd`
 into another agent's worktree to look at something leaves every later command there — and a
 `git checkout -b` then moves that agent off its own branch.

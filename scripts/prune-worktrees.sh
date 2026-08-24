@@ -2,6 +2,14 @@
 #
 # Removes agent worktrees that have nothing left in them.
 #
+# It walks TWO worktree lists: the consumer's, and `.claude/cerebro`'s (ah-apw4). A worktree of the
+# submodule is registered in the submodule and nowhere else, so nothing enumerated one and two sat
+# on the machine that prompted this with their merged branches still checked out, immortal. A bead
+# whose diff is inside the submodule should not need such a tree at all — `implement-bead`'s
+# *Workspace* declares the in-place route instead — but the ones already made are real, and this is
+# what clears them. Every rule below applies to a cerebro tree unchanged; only the repository each
+# rule is asked of changes.
+#
 # Every implementer builds its bead in `.cerebro/worktrees/<bead>` and is told to remove it on the way
 # out — on every exit, including the ones that go wrong. It does not always get there: a session that
 # crashes, is killed, or has its bead merged by somebody else leaves the tree, its branch and its
@@ -139,6 +147,16 @@ repo_root="$("$script_dir/consumer-root" --shared)" || exit 1
 default_branch="$("$script_dir/default-branch" 2>/dev/null)" || default_branch=""
 [ -n "$default_branch" ] || default_branch="main"
 
+# The submodule the fleet's own harness lives in, and the second worktree list this sweep walks.
+# A bead whose diff is inside it needs no worktree of its own — `implement-bead`'s *Workspace*
+# declares the in-place route — but the trees older instructions left are real, are registered in
+# the submodule and not in the consumer, and were therefore invisible to every sweep for ever
+# (ah-apw4). Absent, or not a repository, is an ordinary state: the sweep then walks one list.
+submodule_root="$repo_root/.claude/cerebro"
+submodule_default_branch="$(git -C "$submodule_root" symbolic-ref --short --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
+submodule_default_branch="${submodule_default_branch#origin/}"
+[ -n "$submodule_default_branch" ] || submodule_default_branch="$default_branch"
+
 # The build directories this consumer is willing to have deleted, and NOTHING BY DEFAULT — see the
 # header. Whitespace-separated, so `reclaim_dirs target node_modules` names two.
 reclaim_dirs=()
@@ -170,6 +188,27 @@ is_verifier_tree() {
   case "$2" in "$repo_root"/.cerebro/worktrees/*) return 0 ;; *) return 1 ;; esac
 }
 
+# Whether `.claude/cerebro` resolves to the consumer's own repository rather than to a submodule of
+# it. It does when cerebro serves its own fleet: the path is then a symlink back to the checkout
+# root, and walking "both" lists would walk one list twice — every tree enumerated once per owner,
+# the tallies inflated, and a tree already removed on the first pass reported as kept on the second.
+# Compared by git dir rather than by path, since the symlink makes the paths differ.
+submodule_is_the_consumer() {
+  local a b
+  a="$(git -C "$submodule_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  b="$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
+
+# The default branch of whichever repository owns a worktree — the consumer's for a consumer tree,
+# the submodule's for one of its own.
+owner_default_branch() {
+  case "$1" in
+    "$submodule_root") printf '%s\n' "$submodule_default_branch" ;;
+    *)                 printf '%s\n' "$default_branch" ;;
+  esac
+}
+
 # Whether everything in this worktree is already on main.
 #
 # Two tests, because one is not enough. `origin/<default branch>..HEAD` empty catches a branch that was never
@@ -196,16 +235,24 @@ is_verifier_tree() {
 #   <command>  run it, with `{branch}` substituted if it appears and the branch appended if it does
 #              not; exit 0 means the work landed.
 landed_on_main() {
-  local tree="$1" branch command_line
+  # $1 = the worktree, $2 = the default branch of the repository that owns it. The second argument
+  # exists because a worktree of the submodule is judged against the submodule's own origin, not
+  # the consumer's (ah-apw4); it defaults to the consumer's, which is every other caller.
+  local tree="$1" base="${2:-$default_branch}" branch command_line
 
-  [ "$(git -C "$tree" rev-list --count "origin/$default_branch..HEAD" 2>/dev/null || echo 1)" = "0" ] && return 0
+  [ "$(git -C "$tree" rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 1)" = "0" ] && return 0
 
   branch="$(git -C "$tree" symbolic-ref --quiet --short HEAD 2>/dev/null)" || return 1
   [ -n "$branch" ] || return 1
 
   case "$merged_check" in
     gh)
-      [ "$(gh pr list --head "$branch" --state merged --json number --jq 'length' 2>/dev/null || echo 0)" != "0" ]
+      # From the tree, in a subshell. `gh` infers its repository from the process's working
+      # directory and not from anything passed to it, so asking from the sweep's own cwd asks the
+      # consumer about a branch it has never heard of — reads "not merged", and keeps a delivered
+      # worktree of another repository for ever (ah-apw4). The subshell leaves the sweep's own
+      # directory alone, and for a consumer tree this is where the answer already came from.
+      [ "$( (cd "$tree" && gh pr list --head "$branch" --state merged --json number --jq 'length') 2>/dev/null || echo 0)" != "0" ]
       ;;
     none)
       # Deep, not `-maxdepth 0`: a tree's own mtime stops moving while every write lands in a
@@ -358,12 +405,28 @@ sweep() {
     return 0
   }
 
+  # The same two steps for the submodule, and a failure here costs the submodule half ONLY. The
+  # consumer's fetch above returns from the whole sweep because without it nothing can be judged;
+  # a cerebro remote that cannot be reached is no reason to leave the consumer's trees unswept.
+  local sweep_submodule=false
+  if git -C "$submodule_root" rev-parse --git-dir >/dev/null 2>&1 && ! submodule_is_the_consumer; then
+    git -C "$submodule_root" worktree prune 2>/dev/null || true
+    if git -C "$submodule_root" fetch --quiet origin "$submodule_default_branch" 2>/dev/null; then
+      sweep_submodule=true
+    else
+      echo "prune-worktrees: could not reach the submodule's origin; sweeping the consumer's worktrees only"
+    fi
+  fi
+
   local removed=0 kept=0
   # Trees that are staying and could give up their build directory if the disk is tight. The
   # verifier's is not among them: see the pressure note in the header.
   local pressure_candidates=()
 
-  while IFS= read -r tree; do
+  # Each line is `<owning repository>|<worktree>`. Every other git call in this loop already
+  # passes `$tree` and needs no owner; the four that address the repository do (ah-apw4).
+  local owner
+  while IFS='|' read -r owner tree; do
     case "$tree" in
       "$repo_root"/.cerebro/worktrees/*) ;;
       "$repo_root"/.claude/worktrees/*) ;;
@@ -378,7 +441,7 @@ sweep() {
       reclaim_cold_target "$tree" "$name"
     elif [ -n "$(git -C "$tree" status --porcelain 2>/dev/null)" ]; then
       reason="it has uncommitted or untracked changes"
-    elif ! landed_on_main "$tree"; then
+    elif ! landed_on_main "$tree" "$(owner_default_branch "$owner")"; then
       reason="it holds work that is not on main yet"
     elif [ -n "$(find "$tree" -maxdepth 0 -mmin "-$STALE_MINUTES" 2>/dev/null)" ]; then
       reason="it was touched in the last $STALE_MINUTES minutes"
@@ -402,7 +465,7 @@ sweep() {
     # worth reporting rather than steamrolling.
     local branch
     branch="$(git -C "$tree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-    if git -C "$repo_root" worktree remove "$tree" 2>/dev/null; then
+    if git -C "$owner" worktree remove "$tree" 2>/dev/null; then
       echo "prune-worktrees: removed $name"
       removed=$((removed + 1))
       # `-d` first, then `-D`. The fallback looks reckless and is not: `landed_on_main` has already
@@ -410,14 +473,24 @@ sweep() {
       # or GitHub says the PR merged, and git only calls the branch unmerged because a squash merge
       # rewrote it. Without the fallback every squash-merged branch stays for ever.
       if [ -n "$branch" ]; then
-        git -C "$repo_root" branch -d "$branch" >/dev/null 2>&1 ||
-          git -C "$repo_root" branch -D "$branch" >/dev/null 2>&1
+        git -C "$owner" branch -d "$branch" >/dev/null 2>&1 ||
+          git -C "$owner" branch -D "$branch" >/dev/null 2>&1
       fi
     else
       echo "prune-worktrees: keeping $name — git would not remove it"
       kept=$((kept + 1))
     fi
-  done < <(git -C "$repo_root" worktree list --porcelain | sed -n 's/^worktree //p')
+  done < <(
+    git -C "$repo_root" worktree list --porcelain \
+      | sed -n "s|^worktree |$repo_root\||p"
+    if $sweep_submodule; then
+      # The submodule's list names its own git dir first. That is not an agent worktree, and it
+      # needs no guard of its own: it is not under `.cerebro/worktrees/`, so rule 1's filter above
+      # already declines it.
+      git -C "$submodule_root" worktree list --porcelain \
+        | sed -n "s|^worktree |$submodule_root\||p"
+    fi
+  )
 
   if [ "${#pressure_candidates[@]}" -gt 0 ]; then
     reclaim_under_pressure "${pressure_candidates[@]}"

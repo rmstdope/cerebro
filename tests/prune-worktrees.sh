@@ -177,4 +177,170 @@ fi
 targets_present ah-warm || fail "the outer bound took a live agent's warm tree: $out"
 pass "the existing COLD_TARGET_MINUTES behaviour is unchanged"
 
+# ================================================================================================
+# The janitor and a worktree whose repository is not the consumer (ah-apw4).
+#
+# A bead whose diff is inside `.claude/cerebro` no longer needs a worktree of the submodule — the
+# skill declares the in-place route instead — but the trees older instructions left are real, and
+# nothing enumerated them. Two things had to change for them to be seen and taken: `gh` must be
+# asked from the tree rather than from the sweep's own working directory, and the sweep must walk
+# the submodule's worktree list as well as the consumer's.
+#
+# Its own fixture, deliberately: the cases above are about the pressure path and must keep passing
+# unedited.
+# ================================================================================================
+
+sub_stub_dir="$work_dir/bin2"
+mkdir -p "$sub_stub_dir"
+gh_cwd_log="$work_dir/gh-cwd.log"
+gh_merged_branch="$work_dir/gh-merged-branch"
+: > "$gh_cwd_log"
+: > "$gh_merged_branch"
+
+# Records where it was called from, and calls a branch merged only when the caller asked from the
+# right place — which is the whole point of the first assertion below.
+cat > "$sub_stub_dir/gh" <<STUB
+#!/usr/bin/env bash
+pwd >> "$gh_cwd_log"
+for arg in "\$@"; do
+  if [ "\$arg" = "\$(cat "$gh_merged_branch")" ] && [ -s "$gh_merged_branch" ]; then
+    echo 1
+    exit 0
+  fi
+done
+echo 0
+STUB
+chmod +x "$sub_stub_dir/gh"
+
+origin2="$work_dir/origin2.git"
+git init -q --bare "$origin2"
+consumer2="$work_dir/repo2"
+mkdir -p "$consumer2/.claude"
+git init -q -b main "$consumer2"
+cat > "$consumer2/.claude/cerebro-project.conf" <<'CONF'
+disk_floor_gb 8
+CONF
+git_c -C "$consumer2" add -A
+git_c -C "$consumer2" commit -q -m "init"
+git_c -C "$consumer2" remote add origin "$origin2"
+git_c -C "$consumer2" push -q -u origin main
+
+# `.claude/cerebro` is a repository of its own, exactly as the submodule is in a real consumer, and
+# the scripts under test are reached through it.
+sub_origin="$work_dir/cerebro-origin.git"
+git init -q --bare "$sub_origin"
+sub="$consumer2/.claude/cerebro"
+mkdir -p "$sub/scripts"
+git init -q -b main "$sub"
+for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
+  ln -s "$repo_root/scripts/$s" "$sub/scripts/$s"
+done
+git_c -C "$sub" add -A
+git_c -C "$sub" commit -q -m "init"
+git_c -C "$sub" remote add origin "$sub_origin"
+git_c -C "$sub" push -q -u origin main
+
+prune2="$sub/scripts/prune-worktrees.sh"
+
+age() {
+  local stamp
+  stamp="$(date -d "@$(( $(date +%s) - 600 * 60 ))" +%Y%m%d%H%M.%S 2>/dev/null \
+    || date -r $(( $(date +%s) - 600 * 60 )) +%Y%m%d%H%M.%S)"
+  touch -t "$stamp" "$1"
+}
+
+# A consumer tree carrying one commit origin/main lacks: the rev-list test cannot clear it, so
+# `landed_on_main` has to ask `gh` — which is what pins where `gh` is asked from.
+consumer_tree="$consumer2/.cerebro/worktrees/ah-squashed"
+git_c -C "$consumer2" worktree add -q "$consumer_tree" -b ah-squashed-branch
+echo delivered > "$consumer_tree/delivered.txt"
+git_c -C "$consumer_tree" add -A
+git_c -C "$consumer_tree" commit -q -m "delivered by squash"
+age "$consumer_tree"
+
+# --- 8. `gh` is asked from the tree, not from the sweep's working directory ---------------------
+: > "$gh_cwd_log"
+out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" --dry-run 2>&1)"
+# `pwd` in the stub reports the physical path, so compare against the physical path too — on macOS
+# $TMPDIR is a symlink into /private/var and a literal comparison never matches.
+consumer_tree_real="$(cd "$consumer_tree" && pwd -P)"
+grep -qx "$consumer_tree_real" "$gh_cwd_log" \
+  || fail "gh was never asked from the worktree itself (asked from: $(cat "$gh_cwd_log")) — $out"
+pass "a_merged_branch_in_another_repository_is_seen: gh is asked from the tree, not the sweep's cwd"
+
+# A worktree of the submodule, under the consumer's own worktree home, clean, old, and carrying a
+# commit cerebro's main lacks — i.e. squash-merged, which is how both trees stranded on the machine
+# that prompted this bead look.
+sub_tree="$consumer2/.cerebro/worktrees/ah-stranded-cerebro"
+git_c -C "$sub" worktree add -q "$sub_tree" -b ah-stranded-branch
+echo shipped > "$sub_tree/shipped.txt"
+git_c -C "$sub_tree" add -A
+git_c -C "$sub_tree" commit -q -m "shipped by squash"
+age "$sub_tree"
+echo "ah-stranded-branch" > "$gh_merged_branch"
+
+# --- 9. the submodule's worktrees are walked at all ---------------------------------------------
+out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" --dry-run 2>&1)"
+echo "$out" | grep -q "would remove ah-stranded-cerebro" \
+  || fail "a stranded worktree of the submodule was never enumerated: $out"
+pass "a_stranded_submodule_worktree_is_removed: the submodule's worktree list is walked"
+
+# --- 10. the submodule's own git dir is not an agent worktree -----------------------------------
+if echo "$out" | grep -qE "(remove|keeping) cerebro( |$|—)"; then
+  fail "the submodule's own checkout was treated as an agent worktree: $out"
+fi
+[ -d "$sub/scripts" ] || fail "the submodule's own checkout was harmed"
+pass "the_submodules_own_gitdir_is_not_a_worktree: the first entry is never reported or touched"
+
+# --- 11. the removal uses the owning repository -------------------------------------------------
+out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" 2>&1)"
+echo "$out" | grep -q "removed ah-stranded-cerebro" || fail "it did not remove the stranded tree: $out"
+[ ! -d "$sub_tree" ] || fail "the stranded tree is still on disk: $out"
+git -C "$sub" worktree list --porcelain | grep -q "ah-stranded-cerebro" \
+  && fail "the worktree registration survived, so it was removed from the wrong repository: $out"
+git -C "$sub" branch --list ah-stranded-branch | grep -q . \
+  && fail "the branch survived in the submodule: $out"
+pass "a_stranded_submodule_worktree_is_removed_for_real: removal and branch deletion use the owner"
+
+# --- 12. an unreachable submodule remote costs the submodule half only --------------------------
+git_c -C "$sub" remote set-url origin "$work_dir/no-such-remote.git"
+out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" --dry-run 2>&1)"
+echo "$out" | grep -q "ah-squashed" \
+  || fail "an unreachable submodule remote aborted the consumer's half of the sweep: $out"
+pass "a failed submodule fetch skips the submodule half and leaves the consumer's alone"
+
+# --- 13. a self-mounted cerebro is not swept twice ----------------------------------------------
+# When cerebro serves its own fleet, `.claude/cerebro` is a symlink back to the checkout root, so
+# the two roots are the SAME repository and its worktree list would otherwise be walked twice —
+# every tree enumerated once per owner, tallies inflated, and an already-removed tree reported as
+# kept on its second pass.
+selfmount="$work_dir/selfmount"
+mkdir -p "$selfmount/.claude"
+git init -q -b main "$selfmount"
+cat > "$selfmount/.claude/cerebro-project.conf" <<'CONF'
+disk_floor_gb 8
+CONF
+mkdir -p "$selfmount/scripts"
+for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
+  ln -s "$repo_root/scripts/$s" "$selfmount/scripts/$s"
+done
+ln -s ".." "$selfmount/.claude/cerebro"
+git_c -C "$selfmount" add -A
+git_c -C "$selfmount" commit -q -m "init"
+git_c -C "$selfmount" remote add origin "$work_dir/selfmount-origin.git"
+git init -q --bare "$work_dir/selfmount-origin.git"
+git_c -C "$selfmount" push -q -u origin main
+
+self_tree="$selfmount/.cerebro/worktrees/ah-self"
+git_c -C "$selfmount" worktree add -q "$self_tree" -b ah-self-branch
+echo work > "$self_tree/work.txt"
+git_c -C "$self_tree" add -A
+git_c -C "$self_tree" commit -q -m "not merged"
+age "$self_tree"
+
+out="$(cd "$selfmount" && PATH="$sub_stub_dir:$PATH" bash "$selfmount/scripts/prune-worktrees.sh" --dry-run 2>&1)"
+[ "$(echo "$out" | grep -c "ah-self")" = "1" ] \
+  || fail "a self-mounted cerebro enumerated its worktrees twice: $out"
+pass "a self-mounted cerebro is walked once, not twice"
+
 echo "all prune-worktrees assertions passed"

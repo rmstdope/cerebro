@@ -346,6 +346,20 @@ else
 fi
 ((fired)) || ok "the gate runs exactly what CI runs: byte-compile, ERT, every tests/*.sh"
 
+# --- 11. the retired worktree path is named nowhere ---
+#
+# `.claude/worktrees/` is where agent worktrees lived before ah-v82. cb-k6r retired it from the
+# janitor and the disk preflight after three beads each had to decide which of two paths a rule
+# meant; a script or a role document that names it again is the migration un-finishing itself.
+fired=0
+hits="$({ prose_files; find scripts -type f ! -name '*~' ! -name lint; } \
+        | xargs grep -n '\.claude/worktrees' 2>/dev/null)"
+if [[ -n "$hits" ]]; then
+  advisory "the retired worktree path .claude/worktrees/ is named again" "$hits"
+  fired=1
+fi
+((fired)) || ok "no script and no prose a session reads names the retired .claude/worktrees/ path"
+
 if [[ $status -eq 0 ]]; then
   echo "lint: clean"
 else

@@ -54,7 +54,7 @@ tree_count=0
 total_kb=0
 if [ -n "$reclaim_dirs" ]; then
   candidates="$root"
-  for parent in "$root/.cerebro/worktrees" "$root/.claude/worktrees"; do
+  for parent in "$root/.cerebro/worktrees"; do
     [ -d "$parent" ] || continue
     for tree in "$parent"/*; do
       [ -d "$tree" ] && candidates="$candidates

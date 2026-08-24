@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Runs every bash suite under one directory, naming each one on stdout BEFORE it starts.
+# Runs every bash suite under one directory, naming each one on stdout BEFORE it starts, several at
+# a time.
 #
 # This is the project's one bash-suite loop: `tests/gate' calls it and so does the `bash-tests' job
 # in .github/workflows/ci.yml, which used to carry a second copy of the same `for t in tests/*.sh'
@@ -11,27 +12,41 @@
 # suite at all - "I have no per-suite timings, only the aggregate"). cb-8cn made the loop one
 # script, with a test under it.
 #
-# The contract, per suite, on stdout, in this order:
+# cb-x05 made it parallel. The suites are independent - every one builds its fixtures under its
+# own $work_dir (tests/lib/consumer.sh) and the two that spawn processes scope them by pid and by a
+# --settings path under their own fixture - and the bash half of the gate was 185s of mostly
+# fork-bound work run one at a time on a ten-core machine (83s after this change). A suite that
+# reaches outside its own $work_dir breaks this, so do not write one.
 #
-#     -- <path>                       printed before the suite starts
-#     ok   <path> (Ns)                a passing suite: its own output is hidden
+# The contract, on stdout:
 #
-#     -- <path>
-#     <the suite's stdout and stderr, verbatim>
-#     FAIL <path> (Ns)                a failing suite: its output is replayed, so the failure is
-#                                     diagnosable without a re-run
+#     -- <path>                       as each suite starts; at most <jobs> names are ahead of their
+#                                     results, so a stalled run still names what is in flight
+#     ok   <path> (Ns)                as each suite ends - in COMPLETION order, not glob order
+#     FAIL <path> (Ns)
 #
-# <path> is the glob result as-is, so `suite-runner tests' prints `tests/agent-alive.sh'. Every suite
+#     == output of <path> ==          after the LAST suite has ended, once per failing suite, in
+#     <its stdout and stderr, verbatim>   glob order
+#
+# A passing suite's own output is hidden; a failing suite's is replayed in full, so the failure is
+# diagnosable without a re-run. The replay is deferred to the end because several suites are
+# reporting at once and a multi-line replay printed mid-run would interleave with them. Every suite
 # runs even after one fails: a loop that stopped at the first failure would hide the others and the
 # implementer would fix them one round trip at a time. Then one summary line - `all suites passed'
 # on stdout, or `FAILED: <path> ...' on stderr and exit 1.
 #
-# Under GitHub Actions ($GITHUB_ACTIONS set, which GitHub sets on every job) it additionally emits
-# the ::group::/::endgroup::/::error annotations the CI job emitted inline before cb-8cn, so the log
-# keeps one collapsible group per suite. Nothing else differs.
+# A suite that is KILLED rather than exiting - the harness's output ceiling, a `kill' - leaves no
+# result behind, and a missing result is reported as a failure with an empty replay. Never a pass.
 #
-# Exit 0 every suite passed, 1 any suite failed, 2 a usage error (no argument, more than one, or a
-# path that is not a directory) - one line on stderr and nothing run.
+# <path> is the glob result as-is, so `suite-runner tests' prints `tests/agent-alive.sh'.
+#
+# Under GitHub Actions ($GITHUB_ACTIONS set, which GitHub sets on every job) each failing suite's
+# replay is wrapped in ::group::/::endgroup:: and followed by ::error. The live --/ok/FAIL lines
+# carry no annotation: they interleave, and a group cannot span interleaved output. So a green run
+# under CI has no groups at all - the per-suite timing lines are what the log keeps.
+#
+# Exit 0 every suite passed, 1 any suite failed, 2 a usage error (a bad --jobs, no directory, more
+# than one, or a path that is not a directory) - one line on stderr and nothing run.
 #
 # The caller's working directory is left alone: `tests/gate' cd's to the repository root first, and
 # the glob strings printed here are relative to wherever the caller stood.
@@ -42,40 +57,87 @@
 # tests/launchers.sh and tests/consumer-fixture.sh both guard (ah-qled.5.3), and a script that is
 # not a launcher has no business in it.
 #
-#     scripts/suite-runner <dir>
+#     scripts/suite-runner [--jobs N] <dir>
 
 # NOT `set -e': a failing suite is an answer, and every suite must still run after one fails.
 set -uo pipefail
 
-[[ $# -eq 1 ]] || { echo "usage: suite-runner <dir>" >&2; exit 2; }
+usage="usage: suite-runner [--jobs N] <dir>"
+
+jobs=""
+if [[ "${1:-}" == "--jobs" ]]; then
+  jobs="${2:-}"
+  [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "$usage" >&2; exit 2; }
+  shift 2
+fi
+
+[[ $# -eq 1 ]] || { echo "$usage" >&2; exit 2; }
 dir="$1"
 [[ -d "$dir" ]] || { echo "suite-runner: not a directory: $dir" >&2; exit 2; }
+
+# One per online processor by default. `getconf _NPROCESSORS_ONLN' answers on both macOS and
+# Linux; `nproc' is Linux-only and `sysctl -n hw.ncpu' macOS-only, and the gate runs on both.
+[[ -n "$jobs" ]] || jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+[[ "$jobs" =~ ^[1-9][0-9]*$ ]] || jobs=1
 
 annotate=0
 [[ -n "${GITHUB_ACTIONS:-}" ]] && annotate=1
 
-log="$(mktemp)"
-trap 'rm -f "$log"' EXIT
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# A token pipe as the semaphore. bash 3.2 - what macOS ships and what the gate runs on locally -
+# has no `wait -n', and running batches of N with a `wait' between them would idle every core but
+# one while the slowest suite of a batch finished. Each job takes a token before it starts and puts
+# it back when it ends; `read' on the fifo blocks until one is there. `exec 3<>' opens it
+# read-write in one step, so neither end blocks on open.
+mkfifo "$tmp/tokens"
+exec 3<>"$tmp/tokens"
+i=0
+while [[ $i -lt $jobs ]]; do echo >&3; i=$((i+1)); done
+
+# Runs one suite and reports it, writing its output and result to files the parent reads afterwards.
+# The slot is the suite's glob position, so the parent walks the same order without parsing names.
+# It runs in a background subshell, so SECONDS and the locals are its own; every line it prints is
+# one short write, which is what keeps two jobs ending at the same moment from splitting a line.
+run_one() {
+  local t="$1" slot="$2" rc
+  echo "-- $t"
+  SECONDS=0
+  bash "$t" >"$tmp/$slot.log" 2>&1
+  rc=$?
+  echo "$rc" >"$tmp/$slot.rc"
+  if [[ $rc -eq 0 ]]; then echo "ok   $t (${SECONDS}s)"; else echo "FAIL $t (${SECONDS}s)"; fi
+  echo >&3                           # the token back
+}
 
 # A string, not an array: "${arr[@]}" on an empty array is an unbound-variable error under `set -u'
 # in bash 3.2, which is what macOS ships and what the gate runs on locally.
-failed=""
-
+paths=""
+n=0
 for t in "$dir"/*.sh; do
   [[ -e "$t" ]] || continue          # no suites at all: the glob stays literal
-  ((annotate)) && echo "::group::$t"
-  echo "-- $t"
-  SECONDS=0
-  if bash "$t" >"$log" 2>&1; then
-    echo "ok   $t (${SECONDS}s)"
-    ((annotate)) && echo "::endgroup::"
-  else
-    cat "$log"
-    echo "FAIL $t (${SECONDS}s)"
-    ((annotate)) && { echo "::endgroup::"; echo "::error file=$t::$t failed"; }
-    failed="$failed $t"
-  fi
+  paths="$paths"$'\n'"$t"
+  read -r -u 3 _                     # blocks until a slot is free
+  run_one "$t" "$n" &
+  n=$((n+1))
 done
+wait
+
+failed=""
+i=0
+while IFS= read -r t; do
+  [[ -n "$t" ]] || continue
+  # A killed suite left no .rc file; `cat' of a missing file prints nothing, which is not 0.
+  if [[ "$(cat "$tmp/$i.rc" 2>/dev/null)" != 0 ]]; then
+    failed="$failed $t"
+    ((annotate)) && echo "::group::$t"
+    echo "== output of $t =="
+    cat "$tmp/$i.log" 2>/dev/null
+    ((annotate)) && { echo "::endgroup::"; echo "::error file=$t::$t failed"; }
+  fi
+  i=$((i+1))
+done <<<"$paths"
 
 if [[ -n "$failed" ]]; then
   echo "FAILED:$failed" >&2

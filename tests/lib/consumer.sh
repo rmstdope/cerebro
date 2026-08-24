@@ -41,7 +41,9 @@
 #
 # Rules bound into it: no function ever `cd`s the caller (subshells and `git -C` only); everything a
 # function creates lives under `$work_dir`, so one trap covers it; nothing runs at source time
-# except the temp directory and the trap.
+# except the temp directory and the trap. And nothing a suite touches lives outside `$work_dir` at
+# all, because `scripts/suite-runner` runs the suites at the same time (cb-x05) - a suite that
+# reaches for a shared path is a suite that fails whenever another one happens to be there.
 
 # --- the error protocol ---------------------------------------------------------------------------
 

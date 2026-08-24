@@ -118,7 +118,12 @@ bash tests/launchers.sh                     # one suite
 
 `scripts/suite-runner` names each suite before it runs it and replays a failing suite's output, so a
 stalled suite is identifiable by name; both `tests/gate` and CI call it, which is what keeps the one
-loop from being written twice (cb-8cn).
+loop from being written twice (cb-8cn). Suites run **in parallel, one per processor** by default
+(`--jobs N` to change it, `--jobs 1` for one at a time — the same output either way); on the
+navigator's ten-core machine that took the bash half of the gate from 185s to 83s (cb-x05). Results
+therefore arrive in completion order, and each failing suite's output is replayed after every suite
+has ended rather than inline. What makes it safe is that every suite builds its fixtures under its
+own `$work_dir` — a new suite that reaches outside it breaks the whole gate, not just itself.
 
 Every suite sources `tests/lib/consumer.sh` for `fail`/`pass`, `git_q`, its work directory and the
 two throwaway-consumer shapes (`consumer_new`, `consumer_with_submodule`); `tests/lib/` is a

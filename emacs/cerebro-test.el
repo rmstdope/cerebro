@@ -691,6 +691,134 @@ would find no consumer file and render the built-in fleet, refusing nothing."
               (should (string-match-p "autostrat" (format "%S" err))))))
       (delete-directory tmp t))))
 
+;; ---------------------------------------------------------------------------
+;; Reader contracts: each impure reader run for real, its output fed to the
+;; pure function that consumes it.  A pure function tested against invented
+;; inputs can be wrong about every real one; these are the real ones.
+
+(ert-deftest cerebro-test/canonical-root-expands-a-tilde-and-ends-in-a-slash ()
+  (should (equal (cerebro--canonical-root "~/repos/cerebro/")
+                 (concat (expand-file-name "~/") "repos/cerebro/")))
+  (should (equal (cerebro--canonical-root "/x/y") "/x/y/"))
+  (should (equal (cerebro--canonical-root "/x/y/") "/x/y/")))
+
+(ert-deftest cerebro-test/repo-root-returns-the-abbreviated-locate-result-canonical ()
+  "`locate-dominating-file\=' abbreviates - \"~/repos/cerebro/\" for a checkout
+under the home directory - and `cerebro--repo-root\=' is the one reader whose
+raw result is a display spelling.  cb-5yr shipped with the whole liveness chain
+inert because of it; the stub here returns the shape the real producer returns,
+on purpose."
+  (cl-letf (((symbol-function 'locate-dominating-file)
+             (lambda (&rest _) "~/repos/cerebro/")))
+    (let ((root (cerebro--repo-root)))
+      (should (equal root (concat (expand-file-name "~/") "repos/cerebro/")))
+      (should-not (string-prefix-p "~" root))
+      (should (cerebro--session-args-p
+               (concat "claude --agent planner --name Xavier --remote-control Xavier --settings "
+                       (expand-file-name "~/")
+                       "repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json")
+               "Xavier" root))))
+  ;; Unstubbed, on a real temporary consumer: absolute and slash-terminated.
+  (let ((tmp (make-temp-file "cerebro-repo-root-contract" t)))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name cerebro-submodule-path tmp) t)
+          (let ((default-directory (file-name-as-directory tmp)))
+            (should (equal (cerebro--repo-root)
+                           (file-name-as-directory (expand-file-name tmp))))))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/state-file-written-by-agent-state-derives-a-row ()
+  "The real `scripts/agent-state\=' writes the file `cerebro--read-state-file\='
+parses and `cerebro--derive\=' turns into a row.  Green the day it is written -
+that is what a contract case is for: it goes red the day either side changes
+shape."
+  (skip-unless (executable-find "jq"))
+  (skip-unless (executable-find "git"))
+  (let ((tmp (make-temp-file "cerebro-state-contract" t)))
+    (unwind-protect
+        (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
+          (make-directory scripts t)
+          (make-directory (expand-file-name ".cerebro" tmp) t)
+          (dolist (s '("agent-state" "roster" "consumer-root"))
+            (make-symbolic-link (expand-file-name (concat "scripts/" s)
+                                                  cerebro-test--repo-root)
+                                (expand-file-name s scripts)))
+          ;; `agent-state\=' resolves its consumer with `consumer-root --shared\=',
+          ;; which asks git for the main working tree - so the fixture is a repo,
+          ;; the way `tests/lib/consumer.sh\=' builds one for the bash suites.
+          (let ((default-directory (file-name-as-directory tmp)))
+            (should (eq 0 (call-process "git" nil nil nil "init" "-q"))))
+          (let ((agent-state (expand-file-name "agent-state" scripts)))
+            ;; the implementer shape
+            (should (eq 0 (call-process agent-state nil nil nil
+                                        "Cyclops" "working" "--bead" "cb-1"
+                                        "--phase" "build" "--pid" "4242")))
+            (let* ((parsed (cerebro--read-state-file
+                            (cerebro--state-file-path tmp "Cyclops")))
+                   (agent (car (cerebro--derive '("Cyclops") nil
+                                                (list (cons "Cyclops" parsed))
+                                                #'cerebro-test--always-alive nil nil))))
+              (should (integerp (alist-get 'pid parsed)))   ; `pid: ($pid | tonumber)'
+              (should (eq (alist-get 'wake_at parsed) nil)) ; JSON null -> nil, not :null
+              (should (eq (cerebro-agent-state agent) 'working))
+              (should (equal (cerebro-agent-bead agent) "cb-1"))
+              (should (equal (cerebro-agent-phase agent) "build"))
+              (should (stringp (cerebro-agent-since agent))))
+            ;; the interactive shape, with the one field only that role writes
+            (should (eq 0 (call-process agent-state nil nil nil
+                                        "Xavier" "waiting" "--wake-in" "600"
+                                        "--pid" "4243")))
+            (let* ((parsed (cerebro--read-state-file
+                            (cerebro--state-file-path tmp "Xavier")))
+                   (agent (car (cerebro--derive nil '(("Xavier" . "planner"))
+                                                (list (cons "Xavier" parsed))
+                                                #'cerebro-test--always-alive nil nil))))
+              (should (eq (cerebro-agent-state agent) 'waiting))
+              (should (stringp (cerebro-agent-wake-at agent)))
+              (should (eq (cerebro-agent-bead agent) nil)))))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/system-processes-are-pid-and-args-string-pairs ()
+  "The real process scan, on this very Emacs.  The `(emacs-pid)\=' line is the
+one that would catch a platform where `process-attributes\=' returns no
+`args\=': there the reader returns nothing, every interactive row falls to
+`dead\=', and nothing says so.  Do not weaken it to `(should procs)\='."
+  (let ((procs (cerebro--system-processes)))
+    (should (cl-every (lambda (p) (and (integerp (car p)) (stringp (cdr p)))) procs))
+    (should (assq (emacs-pid) procs))
+    ;; and the pure consumers take that shape without complaint
+    (let ((mine (cerebro--consumer-processes procs "/no/such/root/")))
+      (should (listp mine))
+      (should (equal (cerebro--session-pids "Nobody" mine) nil)))))
+
+(ert-deftest cerebro-test/fleet-snapshot-feeds-the-sweep-finders ()
+  "The snapshot plist carries every key some row of `cerebro--sweeps\=' names in
+its NEEDS.  A key the snapshot stopped producing would reach a finder as nil
+today - a claims sweep judging every session as not live - and nothing would
+say so.  `with-temp-buffer\=' because `cerebro--fleet-cache\=' is buffer-local:
+without it the fixture\='s roster is cached wherever ERT happens to be."
+  (let ((tmp (make-temp-file "cerebro-snapshot-contract" t)))
+    (unwind-protect
+        (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
+          (make-directory scripts t)
+          (make-directory (expand-file-name ".cerebro" tmp) t)
+          (dolist (s '("roster" "consumer-root"))
+            (make-symbolic-link (expand-file-name (concat "scripts/" s)
+                                                  cerebro-test--repo-root)
+                                (expand-file-name s scripts)))
+          (with-temp-buffer
+            (let ((snap (cerebro--fleet-snapshot tmp)))
+              (should (equal (plist-get snap :live-names) nil))
+              (should (cl-every #'stringp (plist-get snap :roster)))
+              (should (member "Cyclops" (plist-get snap :roster)))
+              (should (plist-get snap :now))
+              (dolist (row cerebro--sweeps)
+                (dolist (key (nth 3 row))
+                  (should (plist-member snap key))))
+              (should (equal (cerebro--findings-from-snapshot nil snap) nil)))))
+      (delete-directory tmp t))))
+
 (ert-deftest cerebro-test/session-buffer-name-shape ()
   (should (equal (cerebro--session-buffer-name
                    (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))

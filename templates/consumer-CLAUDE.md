@@ -64,7 +64,8 @@ a bead is planned in one session and implemented in another.
 - `.cerebro/project.conf` — how the project installs itself, what its fast and full gates are
   called, which paths are the application, where retrospectives live.
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
-  built-in fleet.
+  built-in fleet. An optional third word, `autostart`, makes the fleet view start that agent as it
+  comes up (cb-0r6).
 - `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
   implementers before they start. Absent means the project has paid for nothing yet, which is where
   every project starts.

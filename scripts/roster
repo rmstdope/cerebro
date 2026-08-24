@@ -25,6 +25,16 @@
 #     roster --entry <Name>     that one row (NAME<TAB>ROLE<TAB>KIND); exit 2 if absent
 #     roster --role <role>      the names holding that ROLE, one per line, in file order; nothing
 #                               (exit 0) if nobody holds it
+#     roster --autostart        the names whose row carries `autostart', one per line, in file
+#                               order; nothing (exit 0) when no row does
+#
+# A row is NAME ROLE and, optionally, a third word: `autostart', which says the fleet view starts
+# that agent as it comes up (cb-0r6). Omitting it means no, so every roster written before that
+# bead - and the TABLE below - behaves exactly as it did. Any OTHER third word, or a fourth word,
+# is refused with exit 2 naming the file, the line and the word: a typo of `autostart' that read as
+# "no" would be a fleet that quietly does not start, which is the failure this refusal exists to
+# prevent. The word is exposed through `--autostart' ALONE - the default output stays three columns,
+# because `launch', `agent-state' and `cerebro--parse-fleet' all take the last field as the KIND.
 #
 # Exact-match only, case-sensitive — the "it is spelt Storm" courtesy belongs to `launch`, where a
 # human types the name.
@@ -139,15 +149,33 @@ if [[ -z "$CONSUMER_ROSTER" && -n "$OLD_ROSTER" ]]; then
   exit 2
 fi
 
+# $1 = what to call the source in a refusal: the consumer file's path, or `built-in table'.
+#
+# Emits FOUR tab-separated fields - NAME, ROLE, KIND, FLAG (`autostart' or empty). Only
+# `--autostart' looks at the fourth; every other mode drops it, so the public output is the three
+# columns every other reader assumes.
 parse_rows() {
+  local source="$1" lineno=0 name role third rest
   while IFS= read -r line; do
+    lineno=$((lineno + 1))
     [[ -z "$line" ]] && continue
     case "$line" in
       \#*) continue ;;
     esac
-    read -r name role _ <<<"$line"
+    read -r name role third rest <<<"$line"
     [[ -z "$name" ]] && continue
-    printf '%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")"
+    case "$third" in
+      "" | autostart) ;;
+      *)
+        echo "roster: $source line $lineno: '$third' is not a word roster knows - the third column is autostart or nothing" >&2
+        exit 2
+        ;;
+    esac
+    if [[ -n "$rest" ]]; then
+      echo "roster: $source line $lineno: '$rest' is one word too many - a row is NAME ROLE and optionally autostart" >&2
+      exit 2
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")" "$third"
   done
 }
 
@@ -159,25 +187,50 @@ print_all() {
   # comments has as much to say about the fleet as an absent one, and taking it at its word would
   # leave `roster' silent, every `launch <Name>' answering "not on the roster", and the fleet view
   # empty - with the file that caused it looking, to its author, like a fleet.
+  # `exit 2' inside a `$( )' ends the SUBSHELL alone, so a refusal has to be propagated by hand or
+  # a typo prints an empty fleet and exits 0 - the silent failure the refusal exists to prevent.
+  # `set -e' would abort here too; the `|| exit $?' is written out so the intent is visible and the
+  # status is 2 rather than whatever `set -e' would report.
   local rows=""
   if [[ -f "$CONSUMER_ROSTER" ]]; then
-    rows="$(parse_rows < "$CONSUMER_ROSTER")"
+    rows="$(parse_rows "$CONSUMER_ROSTER" < "$CONSUMER_ROSTER")" || exit $?
   fi
   if [[ -n "$rows" ]]; then
     printf '%s\n' "$rows"
   else
-    parse_rows <<<"$TABLE"
+    parse_rows "built-in table" <<<"$TABLE" || exit $?
   fi
+}
+
+# Every mode reads the rows through this ONE capture rather than `< <(print_all)': a process
+# substitution runs in a subshell, so `parse_rows' refusing there would exit that subshell and leave
+# the mode looping over nothing with status 0 - exactly the silent fleet the refusal exists to
+# prevent. Captured here, `|| exit $?' propagates it to the caller.
+ROWS="$(print_all)" || exit $?
+
+# Feeds the rows to a mode's `while IFS=$'\t' read ...' loop. Takes no argument - it prints the
+# ROWS captured above - and guards on emptiness, because `<<<""' is one empty line, not none.
+each_row() {
+  [[ -n "$ROWS" ]] && printf '%s\n' "$ROWS"
 }
 
 case "${1:-}" in
   "")
-    print_all
+    while IFS=$'\t' read -r name role kind _; do
+      printf '%s\t%s\t%s\n' "$name" "$role" "$kind"
+    done < <(each_row)
     ;;
   --implementers)
-    while IFS=$'\t' read -r name role kind; do
+    while IFS=$'\t' read -r name role kind _; do
       [[ "$kind" == "implementer" ]] && printf '%s\n' "$name"
-    done < <(print_all)
+    done < <(each_row)
+    ;;
+  --autostart)
+    while IFS=$'\t' read -r name role kind flag; do
+      if [[ "$flag" == "autostart" ]]; then
+        printf '%s\n' "$name"
+      fi
+    done < <(each_row)
     ;;
   --role)
     # A role can be held by more than one agent (two planners, ah-2p), so "who is the first of
@@ -185,39 +238,39 @@ case "${1:-}" in
     # `plan-bead' uses it to give the triage pass to exactly one planner.
     role="${2:-}"
     if [[ -z "$role" ]]; then
-      echo "usage: roster [--implementers | --role <role> | --entry <Name>]" >&2
+      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart]" >&2
       exit 2
     fi
     # `if' rather than `[[ ... ]] &&': the latter leaves the loop - and so this script - exiting
     # non-zero whenever the *last* roster row is not a match, which for any interactive role is
     # every time. `--implementers' gets away with it only because the roster ends in implementers.
-    while IFS=$'\t' read -r name row_role _; do
+    while IFS=$'\t' read -r name row_role _ _; do
       if [[ "$row_role" == "$role" ]]; then
         printf '%s\n' "$name"
       fi
-    done < <(print_all)
+    done < <(each_row)
     ;;
   --entry)
     name="${2:-}"
     if [[ -z "$name" ]]; then
-      echo "usage: roster [--implementers | --role <role> | --entry <Name>]" >&2
+      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart]" >&2
       exit 2
     fi
     found=""
-    while IFS=$'\t' read -r row_name row_role row_kind; do
+    while IFS=$'\t' read -r row_name row_role row_kind _; do
       if [[ "$row_name" == "$name" ]]; then
         printf '%s\t%s\t%s\n' "$row_name" "$row_role" "$row_kind"
         found=1
         break
       fi
-    done < <(print_all)
+    done < <(each_row)
     if [[ -z "$found" ]]; then
       echo "roster: $name is not on the roster" >&2
       exit 2
     fi
     ;;
   *)
-    echo "usage: roster [--implementers | --role <role> | --entry <Name>]" >&2
+    echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart]" >&2
     exit 2
     ;;
 esac

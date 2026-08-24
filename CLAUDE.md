@@ -167,7 +167,8 @@ planner`), which is the one place a name and a role stop being interchangeable:
 - **Xavier** and **Beast** (`planner`, Opus/high) — load `plan-bead`. Turn unplanned beads into
   plans a Sonnet agent could build unattended. Decide architecture themselves; take every
   user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
-  builders, sized from how many are running (twice the count, never fewer than four). They divide
+  builders, sized from how many are running (one each, never fewer than two) and refilled one bead
+  per pass, with no wake interval to wait out. They divide
   the work through the `planning:<name>` label alone, and a whole split family through a
   `planner:<name>` label on its parent — taken before research and pushed at once (after the
   state file names the bead, which is what makes an abandoned label safe to tell apart from a held

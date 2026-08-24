@@ -182,8 +182,10 @@ the queue is bounded by your answers, and a second planner adds a second row wai
 than more plans. If he is mostly `working`, the second one buys you throughput directly.
 
 A pass runs in this order: free abandoned labels, plan every unplanned P0 whatever the queue looks
-like, then fill the buffer to twice the number of running implementers (never fewer than four), then
-sleep ten minutes and look again.
+like, then — if the planned, unclaimed count is below the number of running implementers, and never
+fewer than two — plan **one** bead, and end the pass. There is no interval to wait out: if the buffer
+is still short the fleet view starts the next session within seconds, against a board that has moved
+rather than a planner's memory of it.
 
 **It will interrupt you**, and this is the part worth your attention. Anything the audience sees —
 layout, wording, what a control is called, what happens on a click — is yours to decide, not the

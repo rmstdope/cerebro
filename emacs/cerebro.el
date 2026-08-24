@@ -1586,9 +1586,12 @@ is merely waiting for it."
           (let ((p0 (alist-get 'p0-unplanned context))
                 (p4 (alist-get 'p4-unranked context))
                 (planned (alist-get 'planned context))
-                ;; The buffer `skills/plan-bead' asks for: twice the running
-                ;; implementers, never fewer than four - halved here because
-                ;; two planners share it and each one\='s pass adds to it.
+                ;; The buffer `skills/plan-bead' asks for: one planned,
+                ;; unclaimed bead per running implementer, never fewer than
+                ;; two - a fleet with nothing running is started by the
+                ;; navigator, and starting one to find an empty queue is the
+                ;; one case a buffer cannot recover from in time. A pass
+                ;; plans one bead, so a buffer two short is two passes.
                 (want (max 2 (alist-get 'live-implementers context))))
             (cond
              ;; A P0 is planned the moment it appears, whichever planner sees

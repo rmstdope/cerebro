@@ -5022,12 +5022,19 @@ not an abnormal exit to be echoed at the navigator."
     (should (equal (cerebro-test--trigger "planner" '(p4-unranked . 1)) "1 unranked"))
     (should (null (cerebro-test--trigger "planner" '(p4-unranked . 7)
                                          '(first-planner-p))))
-    ;; The buffer: twice the running implementers, never fewer than two.
+    ;; The buffer: one planned, unclaimed bead per running implementer, and
+    ;; never fewer than two whatever the fleet looks like.
     (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 3))
                    "buffer 1 of 3"))
+    (should (equal (cerebro-test--trigger "planner" '(planned . 0) '(live-implementers . 1))
+                   "buffer 0 of 2"))
     (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 0))
                    "buffer 1 of 2"))
+    ;; Enough is enough: one each above the floor, and nobody plans ahead of
+    ;; that.
+    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(live-implementers . 2))))
     (should (null (cerebro-test--trigger "planner" '(planned . 3) '(live-implementers . 2))))
+    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(live-implementers . 0))))
     ;; The verifier: a stale verdict before a merged bead.
     (should (equal (cerebro-test--trigger "verifier" '(stale-verdicts . 2)) "2 stale verdicts"))
     (should (equal (cerebro-test--trigger "verifier" '(stale-verdicts . 1)) "1 stale verdict"))
@@ -5151,7 +5158,7 @@ has been there - there is no session for an elapsed time to describe."
                    "→ buffer < 3"))
     (should (equal (cerebro--standby-label
                     (cerebro-test--interactive "X" "planner" 'standby)
-                    (cerebro-test--context '(live-implementers . 0)))
+                    (cerebro-test--context '(live-implementers . 1)))
                    "→ buffer < 2"))
     (should (equal (cerebro--standby-label
                     (cerebro-test--interactive "X" "verifier" 'standby)

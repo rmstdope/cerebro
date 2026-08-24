@@ -496,8 +496,9 @@ the bead, and say in the same line whose family you took it out of, so the owner
 navigator both see it happened rather than discovering it in a design that disagrees with its
 siblings.
 
-Anything it returns, plan. All of it, one at a time, before you look at the buffer at all — and if
-that leaves the buffer over its `2m`, that is simply what it costs. The buffer is a floor under the
+Anything it returns, plan. All of it, one at a time, before you look at the buffer at all — a P0 is
+the exception to the one-bead pass, since every one of them is what the fleet is blocked behind — and
+if that leaves the buffer over its `m`, that is simply what it costs. The buffer is a floor under the
 fleet, not a ceiling on urgent work.
 
 Then go on to the buffer as usual. A P0 you just planned counts toward it like anything else, so the
@@ -554,9 +555,10 @@ Then go on to the buffer.
 
 ## You keep a buffer sized to the fleet
 
-You are not here to plan one bead and leave. You keep the implementers fed, and the measure of that
-is a **buffer of planned, open, unclaimed beads** — ready for anyone to pick up — whose size follows
-how many implementers are running.
+You keep the implementers fed, and the measure of that is a **buffer of planned, open, unclaimed
+beads** — ready for anyone to pick up — whose size follows how many implementers are running: **one
+each, and never fewer than two**. A pass plans **one bead** and ends; the fleet view starts the next pass the moment the buffer
+is short again, which on a moving fleet is seconds later.
 
 ```bash
 # The buffer, and the only count that matters:
@@ -571,14 +573,15 @@ has children rather than a plan.
 planner's. The buffer measures what an idle implementer could claim *right now*, and a bead being
 planned cannot be claimed by anyone: it has no design yet. Counting `planning` too was tried and
 starved the queue within a day (ah-2p.1). Two planners, each holding one candidate, added two to the
-count; with a small fleet that reached `2m` on its own, so both sessions reported a full buffer and
-went to sleep over a queue with two pickable beads in it.
+count; with a small fleet that reached the number on its own, so both sessions reported a full buffer
+and went to sleep over a queue with two pickable beads in it.
 
 **Both planners filling at once is not a fault to design against.** It is the whole point of a second
-planner, and the cost is bounded: each of you can only be holding one candidate, so the buffer can
-overshoot `2m` by one bead per planner. That is a bead built slightly earlier than it needed to be —
-against a rule this file already states twice, that the buffer is a floor and never a ceiling. An
-under-full buffer costs an idle implementer, which is the expensive error of the two.
+planner, and the cost is bounded: each of you plans one bead and each can only be holding one
+candidate, so the buffer can overshoot by one bead per planner. That is a bead built slightly earlier
+than it needed to be — against a rule this file already states twice, that the buffer is a floor and
+never a ceiling. An under-full buffer costs an idle implementer, which is the expensive error of the
+two.
 
 **How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
 state file under `.cerebro/state/` whose `pid` is alive, minus any implementer whose stop flag
@@ -606,44 +609,58 @@ for name in $(.claude/cerebro/scripts/roster --implementers); do
   [ -e "$state/$name.stop" ] && continue
   .claude/cerebro/scripts/agent-alive "$name" && n=$((n+1))
 done
-m=$(( n > 2 ? n : 2 )); echo "n=$n implementers, refill below $m, fill to $((2*m))"
+m=$(( n > 2 ? n : 2 )); echo "n=$n implementers, so the buffer is short below $m"
 ```
 
-**The two numbers are `m = max(2, n)` and `2m`**: refill when the buffer drops **below `m`**, and
-fill **to `2m`**. Two or fewer implementers — including none — is a floor of two and a target of
-four; three is 3/6; four is 4/8. Measure `n` on every pass, since the fleet changes under you.
+**There is one number, `m = max(2, n)`**: the buffer is short whenever the planned, unclaimed count
+is **below `m`**, and a pass that finds it short plans **one bead**. Three implementers want three
+planned beads; four want four. **Two is the floor whatever the fleet looks like**, including a fleet
+with nothing running — the navigator starts an implementer expecting it to have something to claim,
+and a queue that begins filling only once it is up is a queue that is late. Measure `n` on every
+pass, since the fleet changes under you.
+
+The old rule filled to `2m` and waited for the buffer to drain to `m`. It was a rule about latency:
+refilling one bead at a time cost a ten-minute wake interval per bead, so a planner planned in
+batches to get ahead of the clock. The planners have no wake interval now — the fleet view starts
+them on the next five-second tick after the count drops (`cerebro-wake-intervals`) — so the batch
+bought nothing and cost the two things a batch always costs: a plan written further ahead of the code
+it describes, and a session holding several candidates at once where one would do.
 
 The cycle:
 
 1. **Free every abandoned `planning` label.** See *Reclaiming a hold nobody is holding* — a bead
    stranded there is invisible to steps 1 and 2 alike, so it comes first.
 2. **Plan every unplanned P0**, whatever the buffer says. See *P0 pre-empts the buffer*.
-3. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m` — from ranked candidates
-   only, since a P4 is not a candidate. If that leaves nothing to plan, report the beads waiting on
-   a ranking and go to step 4.
+3. **Plan one bead**, if the buffer is below `m` — from ranked candidates only, since a P4 is not a
+   candidate. One, not as many as it takes to reach `m`: the next pass starts seconds after this one
+   ends, so a buffer two short is two passes rather than one long one. If there is nothing you may
+   plan, report the beads waiting on a ranking and go to step 4.
 4. **End the pass.** Write `waiting` and end your turn; the next pass is a fresh session, woken by
    the buffer, a P0 or a P4. See *Ending a pass*.
 5. **A fresh session begins at the top of this skill**, re-measuring `n`, triaging what arrived
    since the last pass if the triage is yours (*Then: triage the P4 backlog*), and freeing any
    abandoned label again — a session died between passes is exactly when one appears. A new P0 —
    plan it, always, and then continue. Otherwise: `m` or more in the buffer, end the pass again;
-   **fewer than `m`, fill back to `2m`**.
+   **fewer than `m`, plan one more**.
 
-The gap between `2m` and `m` is deliberate: topping up on every single claim would have you planning
-constantly against a queue that barely moved. Let it drain by half, then refill it in one go.
+**One bead per pass is the rule, and it is not a limit on how much you may do.** It is what keeps a
+session's context one bead deep, the way an implementer's is: everything the next pass needs is on
+the board, so a pass that plans one bead well beats one that plans three against a fleet that moved
+underneath it. A triage pass, and freeing an abandoned label, are not beads and do not count against
+it.
 
-**The P0 check has no such gap, and that is the point.** It runs on every pass and acts on every
-hit — a P0 filed between passes is planned on the next one even if the buffer is untouched at `2m`
-and step 5 would otherwise have ended the pass at once. The abandoned-label check has
+**The P0 check is the exception, and that is the point.** It runs on every pass and acts on every
+hit — every unplanned P0, not one of them — and it fires with the buffer full at `m`, where step 5
+would otherwise have ended the pass at once. The abandoned-label check has
 no gap either, and for the same reason: what it frees may be the P0.
 
 **A buffer over its number is left alone.** When the fleet shrinks — six planned and one
 implementer — nothing is unplanned; the extra beads simply get built later. The buffer is a floor
 under the fleet, never a ceiling on planned work.
 
-**If you cannot reach `2m`, that is fine.** Plan every candidate there is, say how far you got and
-why, and end the pass as usual — new beads arrive, and the next pass will find them. Never invent
-work to hit the number.
+**If there is nothing you may plan, that is fine.** Say why — every candidate unranked, or every one
+blocked behind a bead the navigator holds — and end the pass as usual; new beads arrive, and the next
+pass will find them. Never invent work to hit the number.
 
 **A backlog of nothing but unranked beads is an empty backlog.** Say so — name the beads waiting on
 a ranking, say whose triage it is, and end the pass. Do not plan one to keep busy, and do not rank one
@@ -1212,8 +1229,12 @@ it looks like from here — and so is **a child of a bead the other planner is h
 mid-split work whatever the state files say, since a splitting planner names only one child at a
 time.
 
-Then count the buffer again and act on it: **below `2m`, plan the next one — immediately, in this
-same pass**; at `2m`, say so and end the pass. Count `planned` alone (see *You keep a buffer sized
-to the fleet*): if you have just planned a bead and the pickable count is still short, there is
-nothing to wait for, and ending the pass there is an implementer idle until the next one starts. The
-pass does not end when a bead is planned — it ends when the buffer is full.
+Then end the pass. **One bead is a pass** — say what you planned, write `waiting`, and stop; if the
+buffer is still short the fleet view starts your next session within seconds of this one ending, and
+that session re-reads a board that has moved rather than working from what you remember of it. This
+is the one thing that changed when the planners lost their wake interval: a pass used to have to keep
+planning, because the alternative was ten minutes of an idle implementer, and it no longer is.
+
+The exception is an unplanned P0, which is planned in the same pass however many there are (see *P0
+pre-empts the buffer*) — the fleet is blocked behind each of them, and a fresh session per P0 is
+latency for no gain.

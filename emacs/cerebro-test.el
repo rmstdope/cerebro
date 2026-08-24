@@ -4685,6 +4685,38 @@ the same end of the same kind of pass."
                  t cerebro-test--now)
                 'retire))))
 
+(ert-deftest cerebro-test/an-idle-orchestrator-is-never-ended ()
+  "Cerebro writes `idle' between the navigator's questions - it is not a pass
+that is over, it is a session waiting to be spoken to.  Only a role listed in
+`cerebro-idle-ends-pass-roles' means \"my pass is finished\" by writing `idle';
+every other interactive role stays up until the navigator kills it."
+  (let ((cerebro-end-grace 30))
+    (should (null (cerebro--supervise-action
+                   (cerebro-test--interactive "Cerebro" "orchestrator" 'idle nil
+                                              "2026-08-14T08:00:00Z")
+                   nil cerebro-test--now)))
+    ;; The stop flag still lands: nothing is in flight, so `f' means stop now.
+    (should (eq (cerebro--supervise-action
+                 (cerebro-test--interactive "Cerebro" "orchestrator" 'idle nil
+                                            "2026-08-14T08:00:00Z")
+                 t cerebro-test--now)
+                'retire))))
+
+(ert-deftest cerebro-test/idle-ends-a-pass-only-for-the-roles-that-say-so ()
+  "The list is the whole rule, so a consumer role that ends its pass with
+`idle' is one entry rather than a code change."
+  (let ((cerebro-end-grace 30)
+        (cerebro-idle-ends-pass-roles '("verifier")))
+    (should (eq (cerebro--supervise-action
+                 (cerebro-test--interactive "Psylocke" "verifier" 'idle nil
+                                            "2026-08-14T09:29:00Z")
+                 nil cerebro-test--now)
+                'end))
+    (should (null (cerebro--supervise-action
+                   (cerebro-test--interactive "Forge" "architect" 'idle nil
+                                              "2026-08-14T09:29:00Z")
+                   nil cerebro-test--now)))))
+
 (ert-deftest cerebro-test/an-external-waiting-or-idle-role-is-never-ended ()
   "Ending a session means killing a process this Emacs started; one in
 somebody's own terminal is theirs."

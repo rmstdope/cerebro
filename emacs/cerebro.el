@@ -1289,6 +1289,22 @@ from the rest of its role says so by name."
       (and role (cdr (assoc role cerebro-wake-intervals)))
       cerebro-wake-interval-default))
 
+(defcustom cerebro-idle-ends-pass-roles '("architect")
+  "Interactive roles whose `idle\=' means \"my pass is over, end me\".
+
+Most interactive roles end a pass by writing `waiting\=' (ah-hiib.3).  Forge
+writes `idle\=' instead, at the end of its sweep (`agents/architect.md'), and
+that is the same end of the same kind of pass.
+
+Every other role\='s `idle\=' means something quite different: a session with
+nothing in hand, waiting to be spoken to.  Cerebro sits in exactly that
+state between the navigator\='s questions, and ending it there killed the
+session the navigator was about to talk to and restated it as `standby\='.
+So the list is a whitelist, not a guess: a role absent from it stays up on
+`idle\=' until the navigator kills it, or until a stop flag retires it."
+  :type '(repeat string)
+  :group 'cerebro)
+
 (defun cerebro--end-decision (agent stop-flag-p now)
   "Pure.  `retire\=', `end\=' or nil for an interactive AGENT whose pass is over.
 
@@ -1328,7 +1344,8 @@ answers are:
             one.
 `nudge'   - AGENT has waited past `cerebro-answer-timeout' for an answer.
 `end'     - AGENT is an interactive role that has finished a pass -
-            `waiting', or `idle' for a role that writes that instead - and
+            `waiting', or `idle' for a role in
+            `cerebro-idle-ends-pass-roles' that writes that instead - and
             `cerebro-end-grace' has passed since it said so (cb-5yr).  Its
             session is ended and its buffer kept; a fresh one starts when the
             role's own trigger fires (`cerebro--trigger'), which is what
@@ -1359,17 +1376,21 @@ everything: every answer here ends in Emacs acting on a session it owns."
     (pcase (cerebro-agent-state agent)
       ('done (and (eq (cerebro-agent-kind agent) 'implementer)
                   (if stop-flag-p 'retire 'restart)))
-      ;; An implementer's `idle' is unchanged. An interactive one is a role
-      ;; that ends its pass by writing `idle' rather than `waiting' - today
-      ;; only Forge, at the end of a sweep (`agents/architect.md') - and is
-      ;; ended exactly as a `waiting' one is. A consumer role that writes
-      ;; `idle' in the middle of a pass will be ended by this: the state
-      ;; means "nothing in hand", and there is nothing here to tell that
-      ;; apart from a pass that is over.
+      ;; An implementer's `idle' is unchanged. An interactive one is ended
+      ;; only when its role says `idle' is how it finishes a pass
+      ;; (`cerebro-idle-ends-pass-roles' - Forge, at the end of a sweep).
+      ;; For every other role `idle' means a live session with nothing in
+      ;; hand, waiting to be spoken to: Cerebro sits there between the
+      ;; navigator's questions, and ending it there took down the very
+      ;; session the navigator was about to use. A stop flag still lands on
+      ;; any of them - nothing is in flight, so `f' means stop now.
       ('idle
        (pcase (cerebro-agent-kind agent)
          ('implementer (and stop-flag-p 'retire))
-         ('interactive (cerebro--end-decision agent stop-flag-p now))))
+         ('interactive
+          (if (member (cerebro-agent-role agent) cerebro-idle-ends-pass-roles)
+              (cerebro--end-decision agent stop-flag-p now)
+            (and stop-flag-p 'retire)))))
       ;; Nothing is in flight for a waiting role - no bead, no claim, no
       ;; worktree - so a stop flag lands cleanly and *now*, which is the
       ;; behaviour that was impossible while a role slept inside its own

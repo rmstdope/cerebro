@@ -314,9 +314,9 @@ has apparently died.
 ```
 
 The other planner skips this whole section and starts at *P0 pre-empts the buffer*. Triage is the
-one part of this role that is not divisible: what a session remembers having asked lives in its own
-context and nowhere on the bead, so two planners triaging means the navigator is walked through the
-same P4 backlog twice, in two windows, and answers it twice. The buffer is what a second planner is
+one part of this role that is not divisible: two planners triaging means the navigator is walked
+through the same P4 backlog twice, in two windows, and answers it twice — the `triage:declined`
+label below stops a *later* pass re-asking, not a concurrent one. The buffer is what a second planner is
 for; ranking is not.
 
 If you are the one who skips it, say so in a line — "triage is <the first planner>'s; starting at
@@ -332,7 +332,7 @@ the navigator.
 ```bash
 bd dolt pull
 # The beads to ask about: P4, unplanned, and not somebody's child.
-bd list --status open --exclude-label planned --json \
+bd list --status open --exclude-label planned --exclude-label triage:declined --json \
   | jq -r '[.[] | . as $b | ($b.dependencies // [])[]
             | select(.type=="parent-child") | $b.id] as $children
            | .[] | select(.priority==4)
@@ -426,21 +426,33 @@ Then `bd dolt push` once the pass is done, so the ranking reaches the other agen
 planning against it.
 
 **If the navigator is away, do not stall.** Say which beads you could not get a ranking for, leave
-them at P4, and go on to the buffer — an unanswered triage costs you ordering, not the queue. Do not
+them at P4, **label each one `triage:declined` and `bd dolt push`**, and go on to the buffer — an
+unanswered triage costs you ordering, not the queue.
+
+```bash
+bd update <id> --add-label triage:declined     # asked, not answered: do not ask again
+```
+
+That label is the whole of what a triage pass remembers. Your context is gone the moment the pass
+ends, so a question you asked and got no answer to is one the next session would put to the
+navigator again — the same beads, the same options, in a fresh window. The navigator removes the
+label when they want to be asked again, and a bead they *do* rank leaves the list by its priority.
+Remove it yourself if you ever rank one that still carries it. Do not
 apply your own recommendation unasked: priority is what the navigator uses to steer the fleet, and
 taking that silently is the one thing this step exists to prevent.
 
-Triage runs **on every wake-up**, starting with the first pass of the session — not once and then
-never again. It is the only way a bead is ever ranked, and an unranked bead is not a candidate for
-planning at all (see *Choosing what to plan*), so a pass you skip is a pass in which every bead
-filed since the last one stays unplannable for as long as this session lives.
+Triage runs **on every pass**, this one included — not once and then never again. It is the only
+way a bead is ever ranked, and an unranked bead is not a candidate for planning at all (see
+*Choosing what to plan*), so a pass you skip is a pass in which every bead filed since the last one
+stays unplannable.
 
-It is short after the first pass, and that is the point: the query above still returns every open
-P4 every time — nothing records a watermark — so what shortens is what you **ask about**. Ask only
-about the beads in it you have not already put to the navigator this session. A bead they already
-ranked has left the list; one they declined to rank has not, and is not asked about twice. So a
-wake-up whose query returns nothing you have not already raised is a wake-up with no triage to do,
-and you go straight on to the buffer.
+It is short after the first pass, and that is the point: what shortens is what you **ask about**. A
+bead the navigator already ranked has left the list by its priority; one they declined to rank
+carries `triage:declined` and the query above excludes it. So a pass whose query returns nothing is
+a pass with no triage to do, and you go straight on to the buffer.
+
+Nothing here relies on your remembering the last pass, and that is deliberate: a pass is a session,
+so anything the next one needs is on the bead or it is lost.
 
 ## P0 pre-empts the buffer
 
@@ -609,19 +621,20 @@ The cycle:
 3. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m` — from ranked candidates
    only, since a P4 is not a candidate. If that leaves nothing to plan, report the beads waiting on
    a ranking and go to step 4.
-4. **Sleep ten minutes.** Say that you are doing so, then wait.
-5. **Look again**, re-measuring `n`, triaging what arrived while you slept if the triage is yours
-   (*Then: triage the P4 backlog*), and freeing any abandoned label again — a session died while you
-   slept is exactly when one appears. A new P0 — plan it, always, and then continue. Otherwise:
-   `m` or more in the buffer, sleep another ten minutes and look again; **fewer than `m`, fill
-   back to `2m`** and start over.
+4. **End the pass.** Write `waiting` and end your turn; the next pass is a fresh session, woken by
+   the buffer, a P0 or a P4. See *Ending a pass*.
+5. **A fresh session begins at the top of this skill**, re-measuring `n`, triaging what arrived
+   since the last pass if the triage is yours (*Then: triage the P4 backlog*), and freeing any
+   abandoned label again — a session died between passes is exactly when one appears. A new P0 —
+   plan it, always, and then continue. Otherwise: `m` or more in the buffer, end the pass again;
+   **fewer than `m`, fill back to `2m`**.
 
 The gap between `2m` and `m` is deliberate: topping up on every single claim would have you planning
 constantly against a queue that barely moved. Let it drain by half, then refill it in one go.
 
-**The P0 check has no such gap, and that is the point.** It runs on every wake-up and acts on every
-hit — a P0 filed while you slept is planned on the next wake-up even if the buffer is untouched at
-`2m` and step 5 would otherwise have sent you straight back to sleep. The abandoned-label check has
+**The P0 check has no such gap, and that is the point.** It runs on every pass and acts on every
+hit — a P0 filed between passes is planned on the next one even if the buffer is untouched at `2m`
+and step 5 would otherwise have ended the pass at once. The abandoned-label check has
 no gap either, and for the same reason: what it frees may be the P0.
 
 **A buffer over its number is left alone.** When the fleet shrinks — six planned and one
@@ -629,17 +642,17 @@ implementer — nothing is unplanned; the extra beads simply get built later. Th
 under the fleet, never a ceiling on planned work.
 
 **If you cannot reach `2m`, that is fine.** Plan every candidate there is, say how far you got and
-why, and sleep as usual — new beads arrive, and the next wake-up will find them. Never invent work
-to hit the number.
+why, and end the pass as usual — new beads arrive, and the next pass will find them. Never invent
+work to hit the number.
 
 **A backlog of nothing but unranked beads is an empty backlog.** Say so — name the beads waiting on
-a ranking, say whose triage it is, and sleep. Do not plan one to keep busy, and do not rank one
+a ranking, say whose triage it is, and end the pass. Do not plan one to keep busy, and do not rank one
 yourself. An idle implementer costs an hour; a bead planned in an order the navigator never chose
 costs their hold on the queue, and they may never learn it happened. That holds when the navigator
 is away too, which is the case it was decided for: leave the beads unranked, report them, and go
 idle rather than picking one and announcing it afterwards.
 
-### Ending a pass: you write `waiting`, and the fleet view wakes you
+### Ending a pass: you write `waiting`, and the fleet view ends the session
 
 You do not schedule yourself and you do not sleep inside your own session. A pass ends
 like this:
@@ -648,13 +661,16 @@ like this:
 .claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID
 ```
 
-**Then end your turn.** Say in one line what the pass found, and stop producing output — that is the
-whole of it. The fleet view wakes you with a `[cerebro]` line in your session when your wait is up,
-and the next pass begins there.
-
-`--wake-in` is what you *ask* for; the fleet view owns the cadence and may wake you sooner (it is a
-`defcustom` the navigator can change while the fleet runs, which is why the number is no longer
-yours to argue about). 600 seconds is what this role has historically waited.
+**Then end your turn.** Say in one line what the pass found, and stop producing output — that is
+the whole of it. The fleet view ends this session once `waiting` has stood for half a minute, keeps
+what you printed as the record of the pass, and starts a **fresh session** under your name when
+there is something for you to do — a trigger of its own for your role, not a clock you set.
+Nothing survives from this session into the next one: everything the next pass needs is in the
+bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
+`--wake-in` is what you *ask* for, and the view owns what you get: the floor between two starts of
+your role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
+measured from your last start and not from the number you wrote. That is why the number is not
+yours to argue about.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken
@@ -1195,8 +1211,8 @@ it looks like from here — and so is **a child of a bead the other planner is h
 mid-split work whatever the state files say, since a splitting planner names only one child at a
 time.
 
-Then count the buffer again and act on it: **below `2m`, plan the next one — immediately, without
-sleeping in between**; at `2m`, say so and sleep. Count `planned` alone (see *You keep a buffer sized
+Then count the buffer again and act on it: **below `2m`, plan the next one — immediately, in this
+same pass**; at `2m`, say so and end the pass. Count `planned` alone (see *You keep a buffer sized
 to the fleet*): if you have just planned a bead and the pickable count is still short, there is
-nothing to wait for and the sleep is ten minutes an implementer spends idle. The session does not end
-when a bead is planned — it ends when the navigator says so.
+nothing to wait for, and ending the pass there is an implementer idle until the next one starts. The
+pass does not end when a bead is planned — it ends when the buffer is full.

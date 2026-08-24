@@ -10,7 +10,8 @@ it.** It is read by a person asking "where did this rule come from", never carri
 if a prompt ever starts referencing it, the coupling it was written to remove has come back with
 worse structure. `scripts/lint` advises on both halves.
 
-Ids here are from the `atlantis-hud` bead database, the consumer cerebro grew up in.
+Ids are from one of two bead databases: `ah-` from `atlantis-hud`, the consumer cerebro grew up
+in, and `cb-` from this repository's own board, since cb-i3l.1 made it a consumer of itself.
 
 ## `agents/orchestrator.md`
 
@@ -28,6 +29,7 @@ Ids here are from the `atlantis-hud` bead database, the consumer cerebro grew up
 | "Gone" is about the session, not the name: a live agent on a different bead | ah-v2l, ah-u4e.2, ah-u4e.3 |
 | Epics left open at 2/2 children closed | ah-1is, ah-vp3 |
 | The stalled-claims sweep | ah-4xm4 |
+| The interactive roles are ended after each pass and restarted on a per-role trigger | cb-5yr |
 
 ## `agents/verifier.md`
 
@@ -45,6 +47,7 @@ Ids here are from the `atlantis-hud` bead database, the consumer cerebro grew up
 | Every interactive agent writes the same state file an implementer does | ah-2n3.2 |
 | Status comments name the issue as well as the bead | ah-2vy (gh-31) |
 | `-F` and the parentheses are load-bearing when grepping a bead id | ah-1is, ah-1is.2 |
+| The interactive roles are ended after each pass and restarted on a per-role trigger | cb-5yr |
 
 ## `skills/plan-bead/SKILL.md`
 
@@ -59,6 +62,7 @@ Ids here are from the `atlantis-hud` bead database, the consumer cerebro grew up
 | Re-check the hold immediately before writing the design — a backstop that saves the plan, not the interview | ah-ywj7 |
 | The public surface written out as signatures is the shape a plan copies | ah-jg6.2 |
 | Never ask for an effect-level test in a package with no jsdom | ah-nass |
+| A P4 the navigator declined to rank carries `triage:declined`, so a fresh pass does not ask twice | cb-5yr.3 |
 
 ## `skills/implement-bead/SKILL.md`
 

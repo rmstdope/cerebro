@@ -523,8 +523,10 @@ what you printed as the record of the pass, and starts a **fresh session** under
 there is something for you to do — a trigger of its own for your role, not a clock you set.
 Nothing survives from this session into the next one: everything the next pass needs is in the
 bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
-`--wake-in` is what you *ask* for and is honoured as a floor: the view never starts you again
-sooner than that after your last start.
+`--wake-in` is what you *ask* for, and the view owns what you get: the floor between two starts of
+your role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
+measured from your last start and not from the number you wrote. That is why the number is not
+yours to argue about.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken

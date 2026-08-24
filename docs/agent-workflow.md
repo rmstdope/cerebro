@@ -85,7 +85,12 @@ unverified or a verdict is stale; Moira and Cypher when an issue or an outside P
 and hourly regardless; Forge hourly too. A role you have not started this Emacs is never started: `s` (or
 `autostart` in `roster.conf`) arms it, `k` and `f` disarm it, and none of that is written to any
 file. `cerebro-wake-intervals` is the floor between two starts of one role, changeable while the
-fleet runs.
+fleet runs — **the planners have none**: a short buffer is the fleet already idle, so they start on
+the next five-second tick. What keeps that from looping over a trigger no pass can clear is two
+comparisons rather than a clock: the counts leave out what is parked in your queue (`human`,
+`triage:declined`), and a role is not started again while its trigger names exactly the work its own
+last pass was started for. Anything that moves — a bead arrives, one is planned, an implementer
+comes up — starts the next pass at once.
 
 **Reading a row.** Green `●` is working, yellow `●` is idle, yellow `◐` is an interactive role
 `waiting` between passes — it is ended within half a minute — blue `◌` is **standby**: the view ended

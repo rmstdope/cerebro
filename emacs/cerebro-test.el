@@ -4419,7 +4419,8 @@ for the repository root."
   "The five-minute override belonged to a role, not to the agent called
 `Psylocke' - a consumer's verifier may be called anything. Name still wins
 where one is given, most-specific-first, the way `models.conf' resolves."
-  (should (equal (default-value 'cerebro-wake-intervals) '(("verifier" . 300))))
+  (should (equal (default-value 'cerebro-wake-intervals)
+                 '(("verifier" . 300) ("planner" . 0))))
   (let ((cerebro-wake-interval-default 600)
         (cerebro-wake-intervals '(("verifier" . 300))))
     (should (equal (cerebro-wake-interval "Betsy" "verifier") 300))
@@ -4871,7 +4872,7 @@ not an abnormal exit to be echoed at the navigator."
   (append overrides
           '((now . 1000000.0) (ended-at . 999000.0) (started-at . 990000.0)
             (floor . 600) (first-planner-p . t) (live-implementers . 2)
-            (planned . 4) (p0-unplanned) (p4-unranked . 0)
+            (planned . 4) (p0-unplanned) (p4-unranked . 0) (actionable-ids)
             (merged-unverified . 0) (stale-verdicts . 0) (gh))))
 
 (defun cerebro-test--trigger (role &rest overrides)
@@ -4936,6 +4937,80 @@ not an abnormal exit to be echoed at the navigator."
     (should (equal (cerebro-test--trigger "verifier" '(merged-unverified . 3)
                                           '(started-at))
                    "3 merged, unverified"))))
+
+;; ---------------------------------------------------------------------------
+;; The planners wake on a condition alone: no floor, and a guard instead
+
+(ert-deftest cerebro-test/a-parked-bead-is-not-work-a-planner-can-take ()
+  "`plan-bead' parks a bead it cannot decide alone with `human', and marks a
+P4 it asked about and got no answer for with `triage:declined'.  Both are
+durable *because* the pass ends; the trigger has to read them the same way
+the skill's own queries do, or it starts a session to find nothing it may
+touch."
+  (let ((beads (list '((id . "cb-1") (priority . 0) (labels . []))
+                     '((id . "cb-2") (priority . 0) (labels . ["human"]))
+                     '((id . "cb-3") (priority . 4) (labels . ["triage:declined"]))
+                     '((id . "cb-4") (priority . 4) (labels . [])))))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                           (cerebro--actionable-beads beads))
+                   '("cb-1" "cb-4")))))
+
+(ert-deftest cerebro-test/a-blocked-bead-is-still-a-planner-s-work ()
+  "`skills/plan-bead' plans beads whose blockers are unbuilt on purpose - `bd
+ready' hides the ones most worth having planned.  So blockedness is not a
+reason to leave a planner asleep, and only what the navigator holds is."
+  (let ((beads (list '((id . "cb-5") (priority . 2) (labels . [])
+                       (dependency_count . 2)))))
+    (should (equal (length (cerebro--actionable-beads beads)) 1))))
+
+(ert-deftest cerebro-test/a-pass-that-changed-nothing-does-not-start-another ()
+  "The guard that replaces the planners' floor: a trigger naming exactly the
+work its own last pass was started for is a pass that could not clear it -
+a P0 parked in the navigator's queue, a crash - and starting it again would
+be a loop at the speed of the end grace."
+  (let* ((context (cerebro-test--context '(p0-unplanned "cb-9zz")))
+         (fingerprint (cerebro--trigger-fingerprint "planner" context))
+         (again (cons (cons 'last-fingerprint fingerprint) context)))
+    ;; Nothing recorded yet - a role this Emacs has not started - is not a
+    ;; match, and starts.
+    (should (equal (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                     context)
+                   "P0 cb-9zz unplanned"))
+    (should (null (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                    again)))))
+
+(ert-deftest cerebro-test/work-that-moved-starts-the-next-pass-at-once ()
+  "The guard is a comparison, not a clock: the moment anything the trigger
+measures changes - a bead arrives, one is planned, an implementer comes up -
+the next pass starts on the next tick with no interval to wait out."
+  (let* ((before (cerebro-test--context '(planned . 1) '(live-implementers . 3)))
+         (fingerprint (cerebro--trigger-fingerprint "planner" before))
+         (moved (cons (cons 'last-fingerprint fingerprint)
+                      (cerebro-test--context '(planned . 1) '(live-implementers . 3)
+                                             '(actionable-ids "cb-new")))))
+    (should (null (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                    (cons (cons 'last-fingerprint fingerprint) before))))
+    (should (equal (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                     moved)
+                   "buffer 1 of 3"))))
+
+(ert-deftest cerebro-test/the-cadence-roles-are-not-held-by-the-guard ()
+  "Moira and Cypher come back on the hour whatever the fleet looks like -
+what they watch moves outside it, so \"nothing changed here\" is not evidence
+of anything.  The guard holds a condition, never a cadence."
+  (let* ((cerebro-cadence-triggers '(("user-feedback" . 3600)))
+         (context (cerebro-test--context '(gh . failed) '(ended-at . 996000.0)))
+         (fingerprint (cerebro--trigger-fingerprint "user-feedback" context)))
+    (should (equal (cerebro--trigger
+                    (cerebro-test--interactive "X" "user-feedback" 'standby)
+                    (cons (cons 'last-fingerprint fingerprint) context))
+                   "60m since its last pass"))))
+
+(ert-deftest cerebro-test/the-planners-have-no-floor ()
+  "The floor was the only thing damping a trigger a pass could not clear, and
+the guard does that job by asking whether anything changed.  A clock in its
+place would only add latency to every real change."
+  (should (equal (cerebro-wake-interval "Xavier" "planner") 0)))
 
 (ert-deftest cerebro-test/standby-label-forms ()
   "The For column of a standby row: what it is waiting for, not how long it

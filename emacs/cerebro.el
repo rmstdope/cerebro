@@ -1248,7 +1248,7 @@ the drift a self-timing agent produces and this poll removes."
   :type 'integer
   :group 'cerebro)
 
-(defcustom cerebro-wake-intervals '(("verifier" . 300))
+(defcustom cerebro-wake-intervals '(("verifier" . 300) ("planner" . 0))
   "Overrides of `cerebro-wake-interval-default\=', as (KEY . SECONDS).
 
 KEY is a role or an agent name, and a name-keyed entry wins over a
@@ -1256,7 +1256,14 @@ role-keyed one - most-specific-first, the way `models.conf\=' resolves a
 model.  Roles come from `scripts/roster\=', so a role key holds for whatever
 a consumer calls the agent that fills it.
 
-The verifier alone, at five minutes: Psylocke\='s own prose asks for five, and
+The planners have no floor at all.  Theirs is the one cadence a clock was
+always the wrong tool for - a buffer that has just run short is work the
+fleet is already idle behind, and ten minutes of it is ten minutes of
+implementers with nothing to take.  What used to need the floor - a trigger
+no pass can clear - is `cerebro--unless-unchanged\=', which asks whether
+anything changed instead of how long it has been.
+
+The verifier, at five minutes: Psylocke\='s own prose asks for five, and
 the log agrees - 90 idle intervals, median 4.7 min - because a bead can
 merge, wait and still be waiting when the navigator asks what happened to
 it.  Every other role measured at ten and takes the default.  It was keyed
@@ -1442,6 +1449,85 @@ in minutes by anyone reading the fleet."
   "What ROLE calls the thing it does once per cadence."
   (if (equal role "architect") "sweep" "pass"))
 
+(defcustom cerebro-parked-labels '("human" "triage:declined")
+  "Labels that say a bead is the navigator\='s rather than a planner\='s.
+
+`skills/plan-bead\=' does not stall when the navigator is away: a bead it
+cannot decide alone is parked with `human\=', a P4 it asked about and got no
+answer for is marked `triage:declined\=', and the pass ends.  Both marks are
+durable precisely *because* the pass ends, and both of the skill\='s own
+queries exclude them.
+
+So the trigger excludes them too.  Without that the fleet view counts work
+the next pass may not touch, starts a session to find nothing to do, and
+starts it again when that one ends - which is the loop the wake-interval
+floor used to damp with a clock.
+
+Blockedness is deliberately *not* on this list.  `plan-bead\=' plans beads
+whose blockers are unbuilt on purpose - `bd ready\=' hides the ones most worth
+having planned - so a blocked bead is a planner\='s work like any other."
+  :type '(repeat string)
+  :group 'cerebro)
+
+(defun cerebro--actionable-beads (beads)
+  "Pure.  BEADS minus the ones parked in the navigator\='s queue.
+
+See `cerebro-parked-labels\=' for which those are and why the trigger has to
+know."
+  (seq-remove (lambda (bead)
+                (seq-intersection (cerebro--bead-labels bead) cerebro-parked-labels
+                                  #'equal))
+              beads))
+
+(defun cerebro--trigger-fingerprint (role context)
+  "Pure.  Everything ROLE\='s condition rules read out of CONTEXT, or nil.
+
+The fleet view records this when it starts a session and compares it when it
+is deciding whether to start the next one: a trigger naming exactly the work
+its own last pass was started for is a pass that could not clear it, and the
+answer to that is to wait for something to change rather than to wait out a
+clock (`cerebro--trigger\=').
+
+It has to carry ids and not only counts.  A planner that plans one bead while
+another arrives leaves every count where it was, and \"nothing changed\" would
+then be wrong in the one direction that costs the fleet work.
+
+Nil for a role with no condition rules - `orchestrator\=', anything a consumer
+added - and for the cadence roles, whose reason is a clock this must not
+hold: what Moira and Cypher watch moves outside this fleet, so the fleet
+looking unchanged is evidence of nothing."
+  (pcase role
+    ("planner" (list (alist-get 'p0-unplanned context)
+                     (alist-get 'p4-unranked context)
+                     (alist-get 'planned context)
+                     (alist-get 'live-implementers context)
+                     (alist-get 'actionable-ids context)))
+    ("verifier" (list (alist-get 'stale-verdicts context)
+                      (alist-get 'merged-unverified context)))
+    (_ nil)))
+
+(defun cerebro--unless-unchanged (role context reason)
+  "Pure.  REASON, unless it names exactly what ROLE\='s last pass was started for.
+
+The planners have no wake-interval floor (`cerebro-wake-intervals\='), and this
+is what stands in its place.  A floor damps every trigger a pass cannot
+clear - a P0 sitting in the navigator\='s queue, a session that died before it
+planned anything - by refusing to start anything for ten minutes, which costs
+ten minutes on every trigger a pass *can* clear as well.
+
+Comparing fingerprints costs nothing on a real change: a bead arriving, one
+being planned, an implementer coming up all change what
+`cerebro--trigger-fingerprint\=' returns, and the next pass starts on the next
+five-second tick.  What it holds is the case where a pass ended having
+changed nothing the trigger measures, which is the only case a loop can come
+out of.
+
+`last-fingerprint\=' absent - a role this Emacs has not started - is not a
+match, so a first start is never held."
+  (let ((last (alist-get 'last-fingerprint context))
+        (now (cerebro--trigger-fingerprint role context)))
+    (and reason (not (and last now (equal last now))) reason)))
+
 (defun cerebro--trigger (agent context)
   "Pure.  Why AGENT, on standby, should start now - a string - or nil.
 
@@ -1450,16 +1536,26 @@ so it has to say what the navigator would otherwise have to go and look up.
 
 CONTEXT is what `cerebro--trigger-context\=' gathers - `now\=',
 `live-implementers\=', `planned\=', `p0-unplanned\=' (ids), `p4-unranked\=',
-`merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for no answer yet,
-`failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) - plus the four per-agent facts
-`cerebro--agent-context\=' adds to it: `ended-at\=', `started-at\=', `floor\=' and
-`first-planner-p\='.
+`actionable-ids\=', `merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for
+no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) - plus the five
+per-agent facts `cerebro--agent-context\=' adds to it: `ended-at\=',
+`started-at\=', `floor\=', `last-fingerprint\=' and `first-planner-p\='.
 
 Every rule is gated on the floor first: `cerebro-wake-interval\=' is the
-minimum gap between two *starts* of one role, and without it a role whose
-trigger its pass cannot clear - a P0 nobody can plan, a verification the
-navigator has not run - would be started again on the next tick, for ever.
-A role this Emacs has never started has no floor to clear.
+minimum gap between two *starts* of one role.  A role this Emacs has never
+started has no floor to clear, and the planners have no floor at all - a
+buffer that has just run short is the fleet already idle, and a clock there
+costs the same ten minutes on every trigger a pass *can* clear.
+
+What the floor was really protecting against is a trigger a pass cannot
+clear - a P0 parked in the navigator's queue, a session that died before it
+planned anything - being started again on the next tick, for ever.  Two
+things do that job without a clock now: the counts exclude what the
+navigator holds (`cerebro-parked-labels'), so a trigger that is true names
+work a pass may actually take; and `cerebro--unless-unchanged\=' refuses a
+condition that names exactly what this role's own last pass was started
+for.  Both are comparisons, so a real change starts the next pass on the
+next five-second tick.
 
 The order inside a role is the order the plan\='s table gives, first true
 wins, and it is the order of urgency: what is blocking the fleet, then what
@@ -1472,7 +1568,9 @@ is merely waiting for it."
          (cadence (cdr (assoc role cerebro-cadence-triggers))))
     (when (or (null started) (>= (- now started) (alist-get 'floor context)))
       (or
-       (pcase role
+       (cerebro--unless-unchanged
+        role context
+        (pcase role
          ("planner"
           (let ((p0 (alist-get 'p0-unplanned context))
                 (p4 (alist-get 'p4-unranked context))
@@ -1506,7 +1604,7 @@ is merely waiting for it."
           (and (consp gh) (car gh) (format "issue #%s moved" (car (car gh)))))
          ("reviewer"
           (and (consp gh) (cadr gh) (format "PR #%s moved" (car (cadr gh)))))
-         (_ nil))
+         (_ nil)))
        (and cadence ended (>= (- now ended) cadence)
             (format "%s since its last %s"
                     (cerebro--cadence-figure cadence) (cerebro--cadence-noun role)))))))
@@ -2317,6 +2415,16 @@ when it had started - and BUFFER is the kept session buffer holding its last
 pass, or nil once something has killed it.  One entry per name: a fresh
 start replaces it, and `k\=' removes it.")
 
+(defvar-local cerebro--start-fingerprints nil
+  "Alist of (NAME . FINGERPRINT) - what each role was last started *for*.
+
+`cerebro--trigger-fingerprint\=' of the context that was true when the view
+started the session, and `cerebro--unless-unchanged\=' is what reads it: a
+trigger that names the same thing again is a pass that could not clear it,
+and the answer is to wait for a change rather than for a clock.  Recorded on
+every start, `s\=' included, so a pass the navigator started by hand arms the
+guard exactly as an automatic one does.")
+
 (defvar-local cerebro--started-at nil
   "Alist of (NAME . FLOAT-TIME) - when this Emacs last started each session.
 
@@ -2507,7 +2615,14 @@ from afterwards (cb-5yr)."
       ;; The floor a trigger is gated on is measured from here: the state
       ;; file that would otherwise carry it is deleted when the session ends.
       (setf (alist-get (cerebro-agent-name agent) cerebro--started-at nil nil #'equal)
-            (float-time)))
+            (float-time))
+      ;; And what it is being started *for*, which is what says whether the
+      ;; pass after this one has anything new to do (`cerebro--trigger').
+      (setf (alist-get (cerebro-agent-name agent) cerebro--start-fingerprints
+                       nil nil #'equal)
+            (cerebro--trigger-fingerprint
+             (cerebro-agent-role agent)
+             (cerebro--trigger-context (cerebro--repo-root) (current-time)))))
     ;; The navigator's quit guard: confirm before Emacs or a buffer kill
     ;; takes a live agent down.  vterm's own kill behaviour is tuned for
     ;; disposable shells and does not set this on its own.
@@ -3670,10 +3785,14 @@ was a failure, are both plain values: neither depends on whose pass it is."
   (ignore repo-root)
   (let* ((panel (cerebro--beads-panel-buffer))
          (beads (and panel (buffer-local-value 'cerebro--beads panel)))
-         (planned (nth 1 beads))
-         (unplanned (nth 3 beads))
+         ;; What a planner may actually take, both sides of the buffer rule:
+         ;; a bead parked in the navigator's queue is not work anybody in the
+         ;; fleet can move (`cerebro-parked-labels'), and counting it starts a
+         ;; session to find nothing to do.
+         (planned (cerebro--actionable-beads (nth 1 beads)))
+         (unplanned (cerebro--actionable-beads (nth 3 beads)))
          (merged (nth 4 beads))
-         (open-beads (append (nth 0 beads) planned (nth 2 beads) unplanned)))
+         (open-beads (append (nth 0 beads) (nth 1 beads) (nth 2 beads) (nth 3 beads))))
     (list (cons 'now (float-time now))
           (cons 'planned (if beads (length planned) most-positive-fixnum))
           (cons 'p0-unplanned
@@ -3681,6 +3800,11 @@ was a failure, are both plain values: neither depends on whose pass it is."
                         (seq-filter (lambda (bead) (equal (alist-get 'priority bead) 0))
                                     unplanned)))
           (cons 'p4-unranked (cerebro--count-priority unplanned 4))
+          ;; The ids rather than their number, because the fingerprint the
+          ;; no-progress guard compares has to see one bead replaced by
+          ;; another (`cerebro--trigger-fingerprint').
+          (cons 'actionable-ids
+                (mapcar (lambda (bead) (alist-get 'id bead)) unplanned))
           (cons 'merged-unverified (length merged))
           (cons 'stale-verdicts (seq-count #'cerebro--stale-verdict-p open-beads))
           (cons 'live-implementers
@@ -3707,6 +3831,10 @@ and this one is a few conses per standby row."
     (append (list (cons 'gh (if (functionp gh) (funcall gh ended-at) gh))
                   (cons 'ended-at ended-at)
                   (cons 'started-at (cdr (assoc name cerebro--started-at)))
+                  ;; What this role's own last start was triggered by, for
+                  ;; `cerebro--unless-unchanged'.
+                  (cons 'last-fingerprint
+                        (cdr (assoc name cerebro--start-fingerprints)))
                   (cons 'floor (cerebro-wake-interval name (cerebro-agent-role agent)))
                   (cons 'first-planner-p
                         (equal name (alist-get 'first-planner context))))

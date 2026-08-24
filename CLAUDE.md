@@ -220,7 +220,9 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   carries `idle`/`working`/`asking`/`waiting`/`done`; every agent in the fleet writes it, and
   `cerebro.el` acts on it. Since ah-u3i it also carries `phase` (an implementer's `build`/`gate`/`review`/`ci`/`rebase`/
   `merge`, or a role word for the interactive agents since ah-2n3.2, or null) and `phase_since`; `standby` is
-  the one state no file ever carries, being derived from what this Emacs armed (cb-5yr) —
+  the one state no file ever carries, being derived from what this Emacs armed and has not seen die
+  abnormally since (cb-5yr, cb-eat) — a refused launch is `dead` with its last line on the row,
+  never `standby` —
   supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
   phase vocabulary can only mislabel a column, never break the restart loop. An unrecognised `state`
   string shows its raw word in yellow rather than reading as `idle`, which used to mean "fine" when

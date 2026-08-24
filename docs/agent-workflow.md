@@ -91,7 +91,13 @@ fleet runs.
 `waiting` between passes — it is ended within half a minute — blue `◌` is **standby**: the view ended
 this role after its pass and starts a fresh one when the trigger in the For column fires, and `RET`
 shows its last pass. A bold yellow `?` is an agent waiting on
-*you*, green `◍` is done and about to be replaced, grey `○` is dead. The State column names the
+*you*, green `◍` is done and about to be replaced, grey `○` is dead.
+
+A dead row with a red `✗ …` in the Bead/Phase column is a session that died on its own — most often
+a launcher that refused, and the line is the reason it printed. The view does not start that name
+again, however it is armed, until you press `s`; `RET` shows the whole line.
+
+The State column names the
 **phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `triage`/`plan` for
 a planner; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
 Moira and Cerebro (`release` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both

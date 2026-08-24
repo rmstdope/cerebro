@@ -5371,3 +5371,110 @@ derive, and the label the For column shows, computed once for the buffer."
         (should (equal (aref row 4) "→ merged, unverified")))
       ;; The implementer beside it is untouched.
       (should (eq (cerebro-agent-state (nth 1 cerebro--agents)) 'dead)))))
+
+;; ---------------------------------------------------------------------------
+;; cb-eat: a launch that dies at once shows `dead' with its last line, not
+;; `standby'.  Standby is armed *and* not seen to die abnormally since.
+
+(ert-deftest cerebro-test/apply-standby-keeps-a-failed-launch-dead ()
+  "Armed is no longer the whole story: a name whose session died abnormally
+stays `dead' until `s' clears its record, because the trigger loop starts
+standby rows only."
+  (let* ((agents (list (cerebro-test--interactive "Psylocke" "verifier" 'dead)
+                       (cerebro-test--interactive "Moira" "user-feedback" 'dead)))
+         (out (cerebro--apply-standby agents '("Psylocke" "Moira") '("Psylocke"))))
+    (should (eq (cerebro-agent-state (nth 0 out)) 'dead))
+    (should (eq (cerebro-agent-state (nth 1 out)) 'standby))
+    ;; Two arguments still mean what they meant: no failures known.
+    (should (eq (cerebro-agent-state
+                 (nth 0 (cerebro--apply-standby agents '("Psylocke"))))
+                'standby))
+    ;; Pure: the input list is not mutated.
+    (should (eq (cerebro-agent-state (nth 0 agents)) 'dead))))
+
+(ert-deftest cerebro-test/exit-line-strips-the-prefix-and-truncates ()
+  "The row shows why the session died, in the columns a row has: the
+launcher's own `cerebro: ' prefix is nine columns spent saying nothing, and
+the rest is cut with an ellipsis rather than at the window edge."
+  (should (equal (cerebro--exit-line "cerebro: the checkout is 1 commits behind")
+                 "✗ the checkout is 1 commits behind"))
+  (should (equal (cerebro--exit-line "boom") "✗ boom"))
+  (should-not (cerebro--exit-line nil))
+  (let ((cerebro-exit-line-width 20))
+    (let ((out (cerebro--exit-line (make-string 100 ?x))))
+      (should (= (string-width out) 20))
+      (should (string-suffix-p "…" out)))))
+
+(ert-deftest cerebro-test/entry-shows-the-exit-line-on-a-dead-row ()
+  "The line the navigator has to act on goes on the row, not behind `RET':
+a dead row with an exit line shows it in red, and a standby row still shows
+its label."
+  (let ((agent (cerebro-test--interactive "Psylocke" "verifier" 'dead)))
+    (let ((col (aref (nth 1 (cerebro--entry agent cerebro-test--now nil nil nil "✗ nope")) 4)))
+      (should (equal (substring-no-properties col) "✗ nope"))
+      (should (eq (get-text-property 0 'face col) 'error)))
+    ;; No line recorded: the column is as empty as it was.
+    (should (equal (aref (nth 1 (cerebro--entry agent cerebro-test--now)) 4) "")))
+  ;; A standby row given both shows the label: standby is what it is waiting
+  ;; for, and it cannot be a failed row at all (`cerebro--apply-standby').
+  (should (equal (substring-no-properties
+                  (aref (nth 1 (cerebro--entry
+                                (cerebro-test--interactive "Moira" "user-feedback" 'standby)
+                                cerebro-test--now nil nil "→ 3 issues" "✗ nope"))
+                        4))
+                 "→ 3 issues")))
+
+(ert-deftest cerebro-test/column-widths-grow-for-the-for-column ()
+  "The last column is not truncated by `tabulated-list' and the window is
+sized to the table, so a Bead/Phase text longer than the floor was cut at the
+window edge - the standby label already was, and the exit line would be
+unreadable."
+  (should (= (nth 4 (cerebro--column-widths
+                     '("Xavier") '("planner") nil
+                     '("→ buffer < 4" "✗ the checkout is 1 commits behind")))
+             34))
+  (should (= (nth 4 (cerebro--column-widths '("Xavier") '("planner") nil)) 10))
+  ;; Never below the floor, however short the texts.
+  (should (= (nth 4 (cerebro--column-widths '("Xavier") '("planner") nil '("✗ x"))) 10)))
+
+(ert-deftest cerebro-test/revert-keeps-a-failed-launch-dead-and-shows-why ()
+  "The whole of cb-eat, end to end: a name whose launch was refused is drawn
+`dead' with the launcher's line on the row, its trigger starts nothing while
+that stands, and `s' - which clears the record - is the way back."
+  (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () "/tmp/nowhere"))
+            ((symbol-function 'cerebro--roster) (lambda (_) '("Rogue")))
+            ((symbol-function 'cerebro--interactive-agents)
+             (lambda (_) '(("Psylocke" . "verifier"))))
+            ((symbol-function 'cerebro--fleet)
+             (lambda (_) '(("Psylocke" "verifier" interactive) ("Rogue" "implementer" implementer))))
+            ((symbol-function 'cerebro--gather-states) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--cached-system-args) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--owned) (lambda () nil))
+            ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--beads-panel-buffer) (lambda () nil))
+            ((symbol-function 'tabulated-list-init-header) #'ignore))
+    (let ((cerebro--last-exit '(("Psylocke" . "cerebro: nope"))))
+      (with-temp-buffer
+        (setq cerebro--armed '("Psylocke"))
+        (cerebro--revert)
+        (should (eq (cerebro-agent-state (nth 0 cerebro--agents)) 'dead))
+        (let ((row (nth 1 (assoc "Psylocke" tabulated-list-entries))))
+          (should (equal (aref row 2) "dead"))
+          (should (equal (substring-no-properties (aref row 4)) "✗ nope")))
+        (should (>= (nth 1 (aref tabulated-list-format 4)) 6))
+        ;; The trigger loop starts standby rows only, so nothing is launched.
+        (let ((launched nil)
+              (debug-on-error nil))
+          (cl-letf (((symbol-function 'cerebro--launch)
+                     (lambda (a) (push (cerebro-agent-name a) launched)))
+                    ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+                    ((symbol-function 'cerebro--trigger) (lambda (&rest _) "because"))
+                    ((symbol-function 'cerebro--trigger-context) (lambda (&rest _) nil)))
+            (cerebro--start-due "/tmp/nowhere" (current-time))
+            (should-not launched)))
+        ;; `s' clears the record (`cerebro--launch'), and the row is standby again.
+        (setq cerebro--last-exit nil)
+        (cerebro--revert)
+        (should (eq (cerebro-agent-state (nth 0 cerebro--agents)) 'standby))
+        (should (equal (aref (nth 1 (assoc "Psylocke" tabulated-list-entries)) 4)
+                       "→ merged, unverified"))))))

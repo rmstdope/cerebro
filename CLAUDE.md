@@ -203,8 +203,11 @@ planner`), which is the one place a name and a role stop being interchangeable:
 - **Forge** (`architect`, Opus/xhigh) — loads no separate skill either; its whole job lives
   in `agents/architect.md`. One sweep per session: reads what merged since its last sweep (daily) or
   the whole codebase (weekly), and files a `Refactoring:` bead at P4 for each smell that names a cost
-  already being paid, never a fix. Watermark kept in bd memory. Ends its own turn when the sweep is
-  reported — the one role here that does not loop, because it holds no claim, lease or PR to strand.
+  already being paid, never a fix. Two watermarks in bd memory: `bishop-watermark` is how far it has
+  read, `bishop-last-sweep` when it last ran. Woken hourly by the fleet view, it sweeps only when
+  that last run is 24 hours old and otherwise finishes in a line. Ends its own turn when the sweep is
+  reported — writing `waiting`, like every interactive role — because it holds no claim, lease or PR
+  to strand.
 
 `skills/beads-workflow/SKILL.md` is the shared substrate all of them read: work is tracked in **beads**
 (`bd`), not GitHub issues; GitHub issues are the external inbox only. The planner/builder handover is

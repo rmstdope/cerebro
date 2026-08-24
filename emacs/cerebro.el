@@ -716,8 +716,9 @@ it from."
                .progress_age_min))
       ;; `assignee_bead\=' is not a field of `sweep-assignees.sh\='s output - the
       ;; script reads `bd\=', not the state files, and cannot know it.
-      ;; `cerebro--findings-from\=' enriches the candidate with it before
-      ;; labelling, so this stays a pure formatter like the three arms above.
+      ;; `cerebro--assignee-enrich\=', named by that sweep's row in
+      ;; `cerebro--sweeps\=', puts it on the candidate before labelling, so
+      ;; this stays a pure formatter like the three arms above.
       (`(unassign ,id ,_priority)
        (format "unassign %s — %s is %s" id .assignee
                (if .assignee_bead (format "on %s" .assignee_bead) "not running")))
@@ -855,7 +856,7 @@ a nil state.
 
 `cerebro--live-implementer-names\=' is the same read without the states and
 `cerebro--live-session-beads\=' the same read with the beads instead;
-`cerebro--findings-from\=' derives all three from one call to
+`cerebro--fleet-snapshot\=' derives all three from one call to
 `cerebro--live-sessions\='."
   (mapcar (lambda (session)
             (cons (nth 0 session) (nth 1 session)))
@@ -958,70 +959,18 @@ garbage is not `bd' or a sweep script having answered."
                          :null-object nil :false-object nil)
     (error cerebro--parse-failed)))
 
-(defun cerebro--findings-from (repo-root claims epics stalled assignees verdicts)
-  "The sweep findings (LABEL . FINDING) from CLAIMS, EPICS, STALLED,
-ASSIGNEES and VERDICTS, the parsed JSON of the five sweep scripts. Computed at answer
-time (called from `cerebro--request-sweeps\='s callback) so the live fleet is
-the one described when the findings are shown, not the one that existed when
-the scripts were kicked off.
+(defun cerebro--findings-from (repo-root outputs)
+  "The sweep findings (LABEL . FINDING) from OUTPUTS, an alist (KEY . parsed
+JSON) keyed as `cerebro--sweeps\=' is. Computed at answer time (called from
+`cerebro--request-sweeps\='s callback) so the live fleet is the one described
+when the findings are shown, not the one that existed when the scripts were
+kicked off.
 
-The claims sweep wants names, the stalled sweep wants states and the
-assignee sweep wants beads; all three are derived here from one call to
-`cerebro--live-sessions\=', rather than through the three helpers - which
-would walk the roster three times and, worse, take three separate snapshots
-of a fleet that moves, so one sweep could judge a session the next one no
-longer sees."
-  (let* ((sessions (cerebro--live-sessions repo-root))
-         (live-names (mapcar (lambda (x) (nth 0 x)) sessions))
-         (live-states (mapcar (lambda (x) (cons (nth 0 x) (nth 1 x))) sessions))
-         (live-beads (mapcar (lambda (x) (cons (nth 0 x) (nth 2 x))) sessions))
-         (roster (cerebro--roster repo-root))
-         (now (current-time)))
-    (append
-     (delq nil (mapcar (lambda (c)
-                         (let ((finding (cerebro--claim-finding c live-names now)))
-                           (and finding (cons (cerebro--sweep-label finding c) finding))))
-                       claims))
-     (delq nil (mapcar (lambda (e)
-                         (let ((finding (cerebro--epic-finding e)))
-                           (and finding (cons (cerebro--sweep-label finding e) finding))))
-                       epics))
-     (delq nil (mapcar (lambda (c)
-                         (let ((finding (cerebro--stalled-finding c live-states now)))
-                           (and finding (cons (cerebro--sweep-label finding c) finding))))
-                       stalled))
-     (delq nil (mapcar (lambda (c)
-                         (let ((finding (cerebro--assignee-finding c live-beads roster now)))
-                           (and finding
-                                ;; The label wants to say what the assignee is
-                                ;; actually on, which the script cannot know - it
-                                ;; reads `bd\=', not the state files. Enriching the
-                                ;; candidate here keeps `cerebro--sweep-label\=' a
-                                ;; pure two-argument formatter.
-                                (let ((enriched
-                                       (cons (cons 'assignee_bead
-                                                   (cdr (assoc (alist-get 'assignee c)
-                                                               live-beads)))
-                                             c)))
-                                  (cons (cerebro--sweep-label finding enriched) finding)))))
-                       assignees))
-     ;; One argument, and no enrichment: everything this finding and its label
-     ;; need is already in the candidate, because a stale verdict is a fact
-     ;; about git rather than about the fleet.
-     (delq nil (mapcar (lambda (c)
-                         (let ((finding (cerebro--verdict-finding c)))
-                           (and finding (cons (cerebro--sweep-label finding c) finding))))
-                       verdicts)))))
-
-(defconst cerebro--sweep-scripts
-  '((sweep-claims . "sweep-claims.sh")
-    (sweep-epics . "sweep-epics.sh")
-    (sweep-stalled . "sweep-stalled.sh")
-    (sweep-assignees . "sweep-assignees.sh")
-    (sweep-verdicts . "sweep-verdicts.sh"))
-  "The sweep scripts, in the order they are run, keyed by their
-`cerebro--run-async\=' key. Their parsed output reaches
-`cerebro--findings-from\=' as arguments in this same order.")
+The impure half only: it reads the live fleet once, through
+`cerebro--fleet-snapshot\=', and hands that to
+`cerebro--findings-from-snapshot\=', which is where the judging lives and is
+pure. One read rather than three helper calls - see that function."
+  (cerebro--findings-from-snapshot outputs (cerebro--fleet-snapshot repo-root)))
 
 (defun cerebro--request-sweeps (repo-root callback)
   "Run the sweep scripts without blocking, one after the other; CALLBACK gets
@@ -1032,13 +981,14 @@ sweep is already out.
 
 List-driven rather than hand-nested: the scripts are identical in shape, and
 a callback nest one level deep per script stops being readable at three."
-  (cerebro--request-sweeps-1 repo-root cerebro--sweep-scripts nil callback))
+  (cerebro--request-sweeps-1 repo-root (cerebro--sweep-scripts) nil callback))
 
 (defun cerebro--request-sweeps-1 (repo-root remaining acc callback)
   "Run REMAINING sweep scripts in order, collecting parsed output onto ACC
-\(reversed), then call CALLBACK. See `cerebro--request-sweeps\='."
+\(reversed) as (KEY . PARSED) pairs, then call CALLBACK. See
+`cerebro--request-sweeps\='."
   (if (null remaining)
-      (funcall callback (list (apply #'cerebro--findings-from repo-root (nreverse acc))))
+      (funcall callback (list (cerebro--findings-from repo-root (nreverse acc))))
     (let ((key (caar remaining))
           (script (cdar remaining)))
       (cerebro--run-async
@@ -1051,7 +1001,7 @@ a callback nest one level deep per script stops being readable at three."
              (if (eq parsed cerebro--parse-failed)
                  (funcall callback nil)
                (cerebro--request-sweeps-1 repo-root (cdr remaining)
-                                          (cons parsed acc) callback)))))))))
+                                          (cons (cons key parsed) acc) callback)))))))))
 
 (defun cerebro--request-history (repo-root callback)
   "Run `scripts/fleet-history --summary' without blocking; CALLBACK gets the
@@ -1360,6 +1310,71 @@ Only an implementer has one; a flag on a name being started is stale by
 definition (ah-kgc): the navigator is saying it should run."
   (and flag-set (eq (cerebro-agent-kind agent) 'implementer)))
 
+(defun cerebro--autostart-action (agent owned flagged)
+  "What autostart should do for AGENT, given OWNED session names and FLAGGED.
+
+One of `launch\=', `launch-clearing-flag\=', `already-up\=' or `external\=' -
+`cerebro--start-action\=''s three answers, with the flag folded into the
+first.
+
+FLAGGED is whether a stop flag exists for AGENT.  Unlike `s\='
+(`cerebro--start-clears-flag-p\=', implementers only), autostart clears a
+flag for EVERY kind: the navigator decided that opening the fleet view is a
+statement that everything the roster declares should be running, and a flag
+left on such a name is stale by the same argument ah-kgc made for `s\='
+(cb-0r6).
+
+A flag on a name that is already up changes nothing - there is nothing to
+start, so there is nothing to clear."
+  (let ((action (cerebro--start-action agent owned)))
+    (if (and flagged (eq action 'launch)) 'launch-clearing-flag action)))
+
+(defun cerebro--autostart-names-and-skipped (results)
+  "RESULTS split into (STARTED . SKIPPED) label lists, in RESULTS order.
+
+RESULTS is an alist of (NAME . ACTION) as `cerebro--autostart-action\='
+answered for each declared agent.  A started name carries its parenthesis
+when a stop flag was cleared for it; a skipped one is just the name, since
+`already-up\=' and `external\=' read the same to the navigator - the agent is
+running, autostart did nothing."
+  (let (started skipped)
+    (dolist (entry results)
+      (pcase (cdr entry)
+        ('launch (push (car entry) started))
+        ('launch-clearing-flag
+         (push (concat (car entry) " (cleared a stale stop flag)") started))
+        (_ (push (car entry) skipped))))
+    (cons (nreverse started) (nreverse skipped))))
+
+(defun cerebro--autostart-message (results)
+  "The one echo line for RESULTS, or nil when RESULTS is empty.
+
+A roster that declares no autostart says nothing at all: every consumer
+that has not adopted the column sees no new line on `M-x cerebro\='.
+
+The started half is a plain comma list because each item may carry a
+parenthesis; the already-up half reads as English (\"Beast and Psylocke\"),
+being a list of bare names.  Both keep roster order."
+  (when results
+    (let* ((split (cerebro--autostart-names-and-skipped results))
+           (started (car split))
+           (skipped (cdr split))
+           (head (if started
+                     (concat "autostarted " (mapconcat #'identity started ", "))
+                   "nothing to autostart"))
+           (tail (when skipped
+                   (format "; %s %s already up"
+                           (cerebro--english-list skipped)
+                           (if (cdr skipped) "are" "is")))))
+      (concat "cerebro: " head (or tail "")))))
+
+(defun cerebro--english-list (names)
+  "NAMES joined with commas and a final \" and \"."
+  (cond
+   ((null (cdr names)) (car names))
+   (t (concat (mapconcat #'identity (butlast names) ", ")
+              " and " (car (last names))))))
+
 (defun cerebro--kill-action (agent owned)
   "What `k' should do for AGENT, given OWNED session names.
 
@@ -1613,6 +1628,82 @@ for a P0."
      ((< .merges_since cerebro-stale-verdict-merges) nil)
      (t (list 'recheck .id .priority)))))
 
+;;; cb-4s8: one row per sweep, and the pure walker that reads it
+
+(defconst cerebro--sweeps
+  `((sweep-claims    "sweep-claims.sh"    ,#'cerebro--claim-finding    (:live-names :now))
+    (sweep-epics     "sweep-epics.sh"     ,#'cerebro--epic-finding     ())
+    (sweep-stalled   "sweep-stalled.sh"   ,#'cerebro--stalled-finding  (:live-states :now))
+    (sweep-assignees "sweep-assignees.sh" ,#'cerebro--assignee-finding (:live-beads :roster :now)
+                     ,#'cerebro--assignee-enrich)
+    (sweep-verdicts  "sweep-verdicts.sh"  ,#'cerebro--verdict-finding  ()))
+  "One row per sweep: (KEY SCRIPT FINDER NEEDS [ENRICH]).
+KEY is the `cerebro--run-async\=' key and the key of the outputs alist
+`cerebro--findings-from\=' takes; SCRIPT the file under scripts/; FINDER a
+pure function (CANDIDATE . NEEDS-VALUES) -> finding or nil; NEEDS the
+`cerebro--fleet-snapshot\=' keys passed after the candidate, in this order;
+ENRICH, when present, (CANDIDATE SNAPSHOT) -> the candidate
+`cerebro--sweep-label\=' formats, for the one sweep whose label needs a fact
+its script cannot know. Run order is row order.
+
+This table is the whole of what the runner is told about a sweep. Adding a
+sixth is a row here, a `cerebro--<x>-finding\=', a `cerebro--sweep-label\='
+arm and a `cerebro--finding-command\=' arm - no signature and no existing
+test changes with it, which is what cb-4s8 bought. Label and command stay
+outside the table deliberately: both dispatch on the finding's shape rather
+than on the sweep - the claims sweep alone yields two - and
+`cerebro--finding-command\=' is meant to read as one list of every
+destructive command the fleet view can run.")
+
+(defun cerebro--sweep-scripts ()
+  "(KEY . SCRIPT) per sweep, in run order - derived from `cerebro--sweeps\='
+rather than kept beside it as a second list in the same order."
+  (mapcar (lambda (row) (cons (nth 0 row) (nth 1 row))) cerebro--sweeps))
+
+(defun cerebro--assignee-enrich (candidate snapshot)
+  "CANDIDATE with `assignee_bead\=' added from SNAPSHOT's :live-beads - what
+the assignee is actually on, which sweep-assignees.sh cannot know (it reads
+`bd\=', not the state files). Keeps `cerebro--sweep-label\=' a pure
+two-argument formatter."
+  (cons (cons 'assignee_bead
+              (cdr (assoc (alist-get 'assignee candidate)
+                          (plist-get snapshot :live-beads))))
+        candidate))
+
+(defun cerebro--fleet-snapshot (repo-root)
+  "One read of the live fleet under REPO-ROOT, as the plist the NEEDS keys of
+`cerebro--sweeps\=' name. One read, not three helper calls: those would walk
+the roster three times and take three separate readings of a fleet that
+moves, so one sweep could judge a session the next no longer sees."
+  (let ((sessions (cerebro--live-sessions repo-root)))
+    (list :live-names  (mapcar (lambda (x) (nth 0 x)) sessions)
+          :live-states (mapcar (lambda (x) (cons (nth 0 x) (nth 1 x))) sessions)
+          :live-beads  (mapcar (lambda (x) (cons (nth 0 x) (nth 2 x))) sessions)
+          :roster      (cerebro--roster repo-root)
+          :now         (current-time))))
+
+(defun cerebro--findings-from-snapshot (outputs snapshot)
+  "Pure. The (LABEL . FINDING) list for OUTPUTS - an alist (KEY . CANDIDATES),
+one entry per row of `cerebro--sweeps\=' - judged against SNAPSHOT, the plist
+`cerebro--fleet-snapshot\=' builds. Rows are walked in table order; a key
+absent from OUTPUTS contributes nothing."
+  (apply #'append
+         (mapcar
+          (lambda (row)
+            (pcase-let ((`(,key ,_script ,finder ,needs . ,rest) row))
+              (let ((args (mapcar (lambda (k) (plist-get snapshot k)) needs))
+                    (enrich (car rest)))
+                (delq nil
+                      (mapcar (lambda (c)
+                                (let ((finding (apply finder c args)))
+                                  (and finding
+                                       (cons (cerebro--sweep-label
+                                              finding
+                                              (if enrich (funcall enrich c snapshot) c))
+                                             finding))))
+                              (alist-get key outputs))))))
+          cerebro--sweeps)))
+
 (defun cerebro--finding-command (finding repo-root)
   "The exact argv for FINDING, or nil for nil.
 
@@ -1663,13 +1754,42 @@ may not exist yet on a fresh machine - `agent-state' and
   "The parsed roster, once read; buffer-local so a revert does not re-shell out.")
 
 (defun cerebro--fleet (repo-root)
-  "The fleet as (NAME ROLE KIND) rows, via `scripts/roster' in REPO-ROOT."
+  "The fleet as (NAME ROLE KIND) rows, via `scripts/roster\=' in REPO-ROOT.
+
+A roster that REFUSES - a roster.conf left at the retired path, a third
+column that is not `autostart\=' - signals rather than returning nothing
+(cb-0r6).  An empty fleet drawn in silence is the one outcome that looks
+like a working view: the navigator sees a list of nobody and no reason for
+it.  `call-process\=''s destination is `t\=', which mixes stderr into the
+buffer, so the script\='s own line is what reaches the echo area.
+
+The signal happens inside the `or\=' producer, before the cache is set, so a
+refusal is never cached as a fleet."
   (or cerebro--fleet-cache
       (setq cerebro--fleet-cache
             (cerebro--parse-fleet
              (with-temp-buffer
-               (call-process (expand-file-name (cerebro--script "roster") repo-root) nil t nil)
+               (let ((status (call-process
+                              (expand-file-name (cerebro--script "roster") repo-root)
+                              nil t nil)))
+                 (unless (eq status 0)
+                   (error "cerebro: %s" (string-trim (buffer-string)))))
                (buffer-string))))))
+
+(defun cerebro--autostart-names (repo-root)
+  "The names `scripts/roster --autostart\=' lists in REPO-ROOT, in file order.
+
+nil when the script refuses, or cannot be run at all: `cerebro--fleet\=' has
+already read the same script for the same render by the time this runs, so
+anything wrong with it has already been reported - a second error here
+would only replace the roster\='s own line with a worse one."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((status (call-process (expand-file-name (cerebro--script "roster") repo-root)
+                                    nil t nil "--autostart")))
+          (when (eq status 0)
+            (split-string (buffer-string) "\n" t "[ \t\r]+"))))
+    (error nil)))
 
 (defun cerebro--roster (repo-root)                 ; keeps its name and both callers
   "The implementer names, in roster order."
@@ -1895,6 +2015,14 @@ is changed.  Returns the buffer."
       (vterm-mode))
     buffer))
 
+(defun cerebro--vterm-available-p ()
+  "Whether vterm can be loaded, so a session has something to run in.
+
+A function of its own rather than an inline `require\=' so the autostart
+tests can stub exactly this one question; stubbing `require\=' itself would
+reach every other library the render path loads (cb-0r6)."
+  (and (require 'vterm nil t) t))
+
 (defun cerebro--launch (agent)
   "Create AGENT's vterm session and return its buffer.
 
@@ -1920,7 +2048,7 @@ a name with a live session is refused here, whatever the derived state
 believes about it (ah-5pp)."
   (when (cerebro--session (cerebro-agent-name agent))
     (error "cerebro: %s already has a live session" (cerebro-agent-name agent)))
-  (unless (require 'vterm nil t)
+  (unless (cerebro--vterm-available-p)
     (user-error "cerebro needs vterm for live sessions - install emacs-libvterm"))
   (add-hook 'vterm-exit-functions #'cerebro--note-exit)
   (setq cerebro--last-exit
@@ -2028,6 +2156,38 @@ since a role that woke writes its next transition.")
 Shown as a \" !\" in the State column (`cerebro--entry\='), which is where a
 poke stops: a line the navigator can see beats retrying every five seconds
 for ever.  Cleared with the record above when the role transitions.")
+
+(defun cerebro--autostart (buffer repo-root)
+  "Start every declared autostart agent in BUFFER that is dead, once.
+
+Runs after the first `cerebro--list-render\=', so `cerebro--agents\=' is
+derived, and re-renders afterwards so the rows show what was started.  The
+walk is over `cerebro--agents\=' rather than over the declared names, which
+is what keeps the echo line in roster order.
+
+Each launch is wrapped in `with-demoted-errors\=', as `cerebro--supervise\='
+does: one launcher that cannot start must not stop the others."
+  (with-current-buffer buffer
+    (let ((names (cerebro--autostart-names repo-root)))
+      (when names
+        (if (not (cerebro--vterm-available-p))
+            (message "cerebro: vterm is not installed, so nothing was autostarted")
+          (let ((owned (cerebro--owned))
+                results)
+            (dolist (agent cerebro--agents)
+              (let ((name (cerebro-agent-name agent)))
+                (when (member name names)
+                  (let ((action (cerebro--autostart-action
+                                 agent owned (cerebro--stop-flag-p repo-root name))))
+                    (with-demoted-errors "cerebro: %S"
+                      (when (eq action 'launch-clearing-flag)
+                        (cerebro--clear-stop-flag repo-root name))
+                      (when (memq action '(launch launch-clearing-flag))
+                        (cerebro--launch agent)))
+                    (push (cons name action) results)))))
+            (cerebro--list-render buffer)
+            (let ((line (cerebro--autostart-message (nreverse results))))
+              (when line (message "%s" line)))))))))
 
 (defun cerebro--stop-flag-path (repo-root name)
   "Where NAME's stop flag lives, as `orchestrator.md' documents it."
@@ -3321,15 +3481,24 @@ would have taken TAB from every vterm the navigator has, fleet or not.
 (defun cerebro ()
   "Open (or refresh) the *cerebro* buffer, listing every agent."
   (interactive)
-  (let ((buffer (get-buffer-create cerebro-buffer-name)))
+  (let ((buffer (get-buffer-create cerebro-buffer-name))
+        fresh)
     (with-current-buffer buffer
+      ;; Computed BEFORE `cerebro-mode' runs and consulted after the first
+      ;; render: "the fleet buffer is created" is the moment autostart fires
+      ;; (cb-0r6), so a later `M-x cerebro' on a live buffer starts nothing -
+      ;; it would otherwise restart whatever `k' had just killed. After `q'
+      ;; the next call is fresh again, which is what the navigator asked for.
+      (setq fresh (not (derived-mode-p 'cerebro-mode)))
       (unless (derived-mode-p 'cerebro-mode)
         (cerebro-mode))
       (cerebro--list-render buffer)
       (cerebro--cancel-timer)
       (setq cerebro--timer
             (run-with-timer 5 5 #'cerebro--tick buffer))
-      (cerebro--ensure-prune-watcher (cerebro--repo-root)))
+      (cerebro--ensure-prune-watcher (cerebro--repo-root))
+      (when fresh
+        (cerebro--autostart buffer (cerebro--repo-root))))
     ;; `pop-to-buffer' must run before `--setup-layout': layout claims
     ;; `selected-window' as the list window, which is only correct once that
     ;; window is actually showing this buffer.

@@ -269,6 +269,81 @@ set -e
 [[ $status -eq 2 ]] || fail "consumer roster --entry Xavier: expected exit 2, got $status"
 pass "consumer roster: all four modes read it, and KIND is still derived"
 
+# --- the optional third column: `autostart` (cb-0r6) --------------------------------------------
+#
+# A roster row may carry a third word, `autostart`, saying the fleet view starts that agent as it
+# comes up. Omitted means no, so every roster written before this and the built-in table below are
+# unaffected. Any OTHER third word - a typo of this one, most likely - refuses with exit 2 naming
+# the file, the line and the word: a typo that read as "no" would be a fleet that quietly does not
+# start, which is the failure the navigator chose against.
+#
+# The word is exposed through `--autostart` alone. The default output stays NAME<TAB>ROLE<TAB>KIND
+# because `launch`, `agent-state` and `cerebro--parse-fleet` all assume exactly three fields.
+cat > "$consumer_roster_file" <<'ROSTER'
+Ada           planner        autostart
+Grace         planner
+Turing        implementer    autostart
+ROSTER
+expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nTuring\timplementer\timplementer')"
+[[ "$("$roster_at")" == "$expected_rows" ]] \
+  || fail "roster autostart: default output should still be three columns, got: $("$roster_at")"
+pass "roster: the autostart column leaves the default three-column output alone"
+
+[[ "$("$roster_at" --autostart)" == "$(printf 'Ada\nTuring')" ]] \
+  || fail "roster --autostart: expected Ada and Turing in file order, got: $("$roster_at" --autostart)"
+pass "roster --autostart lists the declared names, in file order"
+
+[[ "$("$roster_at" --implementers)" == "Turing" ]] \
+  || fail "roster --implementers with the column: got $("$roster_at" --implementers)"
+[[ "$("$roster_at" --entry Ada)" == "$(printf 'Ada\tplanner\tinteractive')" ]] \
+  || fail "roster --entry with the column: got $("$roster_at" --entry Ada)"
+[[ "$("$roster_at" --role planner)" == "$(printf 'Ada\nGrace')" ]] \
+  || fail "roster --role with the column: got $("$roster_at" --role planner)"
+pass "roster: the other modes read a row that carries the word"
+
+# The built-in table declares no autostart: a consumer that has not adopted the column sees nothing.
+out="$("$builtin_dir/roster" --autostart)"
+status=$?
+[[ $status -eq 0 ]] || fail "built-in roster --autostart: expected exit 0, got $status"
+[[ -z "$out" ]] || fail "built-in roster --autostart: expected nothing, got: $out"
+pass "roster --autostart is silent, and exits 0, when no row declares it"
+
+# A third word that is not `autostart` refuses - and the refusal is the parser's, so every mode
+# refuses, not only the one that reads the column. `exit` inside a `$( )` ends the subshell alone,
+# which is what this asserts is propagated.
+printf 'Ada  planner  autostrat\n' > "$consumer_roster_file"
+for mode in "" "--autostart" "--entry Ada" "--implementers"; do
+  set +e
+  # shellcheck disable=SC2086
+  out="$("$roster_at" $mode 2>/dev/null)"
+  status=$?
+  # shellcheck disable=SC2086
+  err="$("$roster_at" $mode 2>&1 >/dev/null)"
+  set -e
+  [[ $status -eq 2 ]] || fail "roster ${mode:-(bare)} with a bad third word: expected exit 2, got $status"
+  [[ -z "$out" ]] || fail "roster ${mode:-(bare)} with a bad third word: expected nothing on stdout, got: $out"
+  echo "$err" | grep -q "autostrat" \
+    || fail "roster ${mode:-(bare)}: the refusal should name the word, got: $err"
+  echo "$err" | grep -q "line 1" \
+    || fail "roster ${mode:-(bare)}: the refusal should name the line, got: $err"
+  echo "$err" | grep -q "roster.conf" \
+    || fail "roster ${mode:-(bare)}: the refusal should name the file, got: $err"
+done
+pass "roster: a third word that is not autostart refuses, naming the file, line and word"
+
+printf 'Ada  planner  autostart  extra\n' > "$consumer_roster_file"
+set +e
+out="$("$roster_at" 2>/dev/null)"
+status=$?
+err="$("$roster_at" 2>&1 >/dev/null)"
+set -e
+[[ $status -eq 2 ]] || fail "roster with a fourth word: expected exit 2, got $status"
+[[ -z "$out" ]] || fail "roster with a fourth word: expected nothing on stdout, got: $out"
+echo "$err" | grep -q "one word too many" \
+  || fail "roster with a fourth word: expected the 'one word too many' line, got: $err"
+pass "roster: a fourth word refuses"
+rm -f "$consumer_roster_file"
+
 # An empty file says nothing, so the built-in table answers - and so does a file of nothing but
 # comments, which has as much to say about the fleet as an absent one. Taking that at its word would
 # leave the fleet empty everywhere, with the file looking like a fleet to whoever wrote it.
@@ -295,6 +370,13 @@ out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at")"
   || fail "roster under a narrowed PATH with a consumer file: got: $out"
 rm -f "$consumer_roster_file"
 pass "roster reads the consumer file with PATH narrowed to dirname and bash - no git crept in"
+
+# `--autostart` is the same parser and the same builtins, so it survives the narrowed PATH too.
+printf 'Ada  planner  autostart\n' > "$consumer_roster_file"
+out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at" --autostart)"
+[[ "$out" == "Ada" ]] || fail "roster --autostart under a narrowed PATH: got: $out"
+rm -f "$consumer_roster_file"
+pass "roster --autostart needs nothing but bash"
 
 # --- a roster left at the retired .claude/ path refuses, loudly (cb-epr) ------------------------
 #
@@ -340,6 +422,9 @@ pass "roster: the new path wins when both exist"
 alt_cerebro="$(mktemp -d)/cerebro-src"
 mkdir -p "$alt_cerebro/scripts"
 cp "$repo_root/scripts/roster" "$alt_cerebro/scripts/roster"
+# roster asks consumer-root for the root (cb-akc), so the sibling has to be here too - every
+# fixture links or copies scripts one by one, and a missing one reads as "no consumer file".
+cp "$repo_root/scripts/consumer-root" "$alt_cerebro/scripts/consumer-root"
 git init -q "$alt_cerebro"
 git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com add -A
 git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com commit -q -m cerebro
@@ -368,7 +453,7 @@ model: sonnet
 The consumer's own role, shipped by nobody but this repository.
 AGENT
 cat > "$consumer_roster_file" <<'ROSTER'
-Ada           archivist
+Ada           archivist      autostart
 Turing        implementer
 ROSTER
 out="$(run_launcher_at "$roster_consumer/.claude/cerebro/scripts" launch Ada)"

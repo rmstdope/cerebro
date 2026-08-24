@@ -464,6 +464,80 @@ reading once the row has caught the eye (see ah-axj)."
       (when (get-buffer cerebro-buffer-name)
         (kill-buffer cerebro-buffer-name)))))
 
+(defvar cerebro-test--autostart-launched nil)
+(defvar cerebro-test--autostart-cleared nil)
+(defvar cerebro-test--autostart-messages nil)
+
+(defmacro cerebro-test--with-autostart (&rest body)
+  "Run BODY with the fleet view's impure edges stubbed for autostart.
+
+`cerebro--vterm-available-p\=' is a function of its own precisely so this can
+stub it: stubbing `require\=' instead would reach every other library the
+render path loads."
+  (declare (indent 0))
+  `(let ((cerebro-test--autostart-launched nil)
+         (cerebro-test--autostart-cleared nil)
+         (cerebro-test--autostart-messages nil))
+     (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () "/fake/repo"))
+               ((symbol-function 'cerebro--fleet)
+                (lambda (_repo-root) cerebro-test--fleet-fixture))
+               ((symbol-function 'cerebro--gather-states) (lambda (_r _roster) nil))
+               ((symbol-function 'cerebro--system-args) (lambda () nil))
+               ((symbol-function 'cerebro--owned) (lambda () nil))
+               ((symbol-function 'cerebro--ensure-prune-watcher) (lambda (&rest _) nil))
+               ((symbol-function 'cerebro--autostart-names)
+                (lambda (_repo-root) '("Alpha" "One")))
+               ((symbol-function 'cerebro--stop-flag-p)
+                (lambda (_repo-root name) (equal name "One")))
+               ((symbol-function 'cerebro--clear-stop-flag)
+                (lambda (_repo-root name)
+                  (push name cerebro-test--autostart-cleared)))
+               ((symbol-function 'cerebro--launch)
+                (lambda (agent)
+                  (push (cerebro-agent-name agent) cerebro-test--autostart-launched)
+                  (generate-new-buffer " *cerebro-test-stub*")))
+               ((symbol-function 'message)
+                (lambda (fmt &rest args)
+                  (push (apply #'format fmt args) cerebro-test--autostart-messages)
+                  nil)))
+       (unwind-protect (progn ,@body)
+         (when (get-buffer cerebro-buffer-name)
+           (kill-buffer cerebro-buffer-name))))))
+
+(ert-deftest cerebro-test/autostart-runs-once-on-buffer-creation ()
+  "Every declared name that is dead starts as the buffer is created, a stop
+flag on such a name is cleared first, and a later `M-x cerebro\=' on the
+live buffer starts nothing - or it would restart whatever `k\=' just killed
+(cb-0r6)."
+  (cerebro-test--with-autostart
+    (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () t)))
+      (cerebro)
+      (should (equal (nreverse cerebro-test--autostart-launched) '("Alpha" "One")))
+      (should (equal cerebro-test--autostart-cleared '("One")))
+      (setq cerebro-test--autostart-launched nil)
+      (cerebro)
+      (should (null cerebro-test--autostart-launched))
+      (kill-buffer cerebro-buffer-name)
+      (cerebro)
+      (should (equal (nreverse cerebro-test--autostart-launched) '("Alpha" "One"))))))
+
+(ert-deftest cerebro-test/autostart-echoes-who-started-and-who-was-up ()
+  (cerebro-test--with-autostart
+    (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () t)))
+      (cerebro)
+      (should (member "cerebro: autostarted Alpha, One (cleared a stale stop flag)"
+                      cerebro-test--autostart-messages)))))
+
+(ert-deftest cerebro-test/autostart-says-nothing-without-vterm ()
+  "Without vterm there is nothing to start a session in, so autostart says so
+once instead of erroring once per declared name."
+  (cerebro-test--with-autostart
+    (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () nil)))
+      (cerebro)
+      (should (null cerebro-test--autostart-launched))
+      (should (member "cerebro: vterm is not installed, so nothing was autostarted"
+                      cerebro-test--autostart-messages)))))
+
 (defun cerebro-test--agent (name role kind state &optional external bead phase)
   (make-cerebro-agent :name name :role role :kind kind :state state
                               :bead bead :since nil :external external :phase phase))
@@ -521,10 +595,90 @@ reading once the row has caught the eye (see ah-axj)."
                                        (format "agents/%s.md" (nth 1 row)) repo-root))))))
       (delete-directory tmp t))))
 
+(ert-deftest cerebro-test/fleet-signals-when-roster-refuses ()
+  "A roster `scripts/roster\=' refuses must reach the navigator, not be
+rendered as an empty fleet (cb-0r6).  Before this, a mistyped third column
+gave `M-x cerebro\=' a list of nobody and said nothing about why.
+
+The consumer is built with real copies of the scripts rather than symlinks
+to this checkout: the consumer is found by path arithmetic, and a symlinked
+mount resolves that arithmetic to whatever is above the checkout instead of
+to the temporary consumer.  `consumer-root\=' is copied beside `roster\=',
+which asks it for that root since cb-akc; without the sibling the fixture
+would find no consumer file and render the built-in fleet, refusing nothing."
+  (let ((tmp (make-temp-file "cerebro-roster-refusal" t)))
+    (unwind-protect
+        (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
+          (make-directory scripts t)
+          (make-directory (expand-file-name ".cerebro" tmp) t)
+          (copy-file (expand-file-name "scripts/roster" cerebro-test--repo-root)
+                     (expand-file-name "roster" scripts))
+          (copy-file (expand-file-name "scripts/consumer-root" cerebro-test--repo-root)
+                     (expand-file-name "consumer-root" scripts))
+          (with-temp-file (expand-file-name ".cerebro/roster.conf" tmp)
+            (insert "Ada  planner  autostrat\n"))
+          (with-temp-buffer
+            (let ((err (should-error (cerebro--fleet tmp))))
+              (should (string-match-p "autostrat" (format "%S" err))))))
+      (delete-directory tmp t))))
+
 (ert-deftest cerebro-test/session-buffer-name-shape ()
   (should (equal (cerebro--session-buffer-name
                    (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
                   "*fleet: Cyclops*")))
+
+
+;; ---------------------------------------------------------------------------
+;; cb-0r6: an agent whose roster line says `autostart' comes up with the fleet
+;; view. The decision is pure; the starting is at the bottom of cerebro.el.
+
+(ert-deftest cerebro-test/autostart-action-launches-dead ()
+  (should (eq (cerebro--autostart-action
+                (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) nil nil)
+              'launch)))
+
+(ert-deftest cerebro-test/autostart-action-clears-a-flag-for-every-kind ()
+  "Unlike `s' (`cerebro--start-clears-flag-p', implementers only), autostart
+clears a stop flag for every kind - the navigator's decision (cb-0r6)."
+  (should (eq (cerebro--autostart-action
+                (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) nil t)
+              'launch-clearing-flag))
+  (should (eq (cerebro--autostart-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) nil t)
+              'launch-clearing-flag)))
+
+(ert-deftest cerebro-test/autostart-action-skips-owned-and-external ()
+  (dolist (flagged '(nil t))
+    (should (eq (cerebro--autostart-action
+                  (cerebro-test--agent "Xavier" "planner" 'interactive 'up nil)
+                  '("Xavier") flagged)
+                'already-up))
+    (should (eq (cerebro--autostart-action
+                  (cerebro-test--agent "Xavier" "planner" 'interactive 'up t)
+                  nil flagged)
+                'external))))
+
+(ert-deftest cerebro-test/autostart-message-forms ()
+  (should (null (cerebro--autostart-message nil)))
+  (should (equal (cerebro--autostart-message
+                   '(("Xavier" . launch) ("Psylocke" . launch) ("Cyclops" . launch)))
+                  "cerebro: autostarted Xavier, Psylocke, Cyclops"))
+  (should (equal (cerebro--autostart-message
+                   '(("Xavier" . launch-clearing-flag) ("Cyclops" . launch)))
+                  "cerebro: autostarted Xavier (cleared a stale stop flag), Cyclops"))
+  (should (equal (cerebro--autostart-message
+                   '(("Xavier" . launch) ("Psylocke" . already-up) ("Cyclops" . launch)))
+                  "cerebro: autostarted Xavier, Cyclops; Psylocke is already up"))
+  (should (equal (cerebro--autostart-message
+                   '(("Beast" . external) ("Psylocke" . already-up) ("Cyclops" . launch)))
+                  "cerebro: autostarted Cyclops; Beast and Psylocke are already up"))
+  (should (equal (cerebro--autostart-message
+                   '(("Beast" . already-up) ("Psylocke" . already-up)
+                     ("Storm" . external) ("Cyclops" . launch)))
+                  "cerebro: autostarted Cyclops; Beast, Psylocke and Storm are already up"))
+  (should (equal (cerebro--autostart-message
+                   '(("Xavier" . already-up) ("Psylocke" . external)))
+                  "cerebro: nothing to autostart; Xavier and Psylocke are already up")))
 
 (ert-deftest cerebro-test/start-action-launches-dead ()
   (should (eq (cerebro--start-action
@@ -2835,13 +2989,7 @@ label has been enriched with what its assignee is actually on."
   (cl-letf (((symbol-function 'cerebro--live-sessions)
              (lambda (_root) '(("Cyclops" working "ah-gjq4"))))
             ((symbol-function 'cerebro--roster) (lambda (_root) '("Cyclops" "Storm"))))
-    (let ((findings (cerebro--findings-from
-                     "/repo"
-                     (list (cerebro-test--claim-candidate "ah-c1" "Storm" nil nil nil nil 30))
-                     (list (cerebro-test--epic-candidate "ah-e1" 30))
-                     (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300))
-                     (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32))
-                     (list (cerebro-test--verdict-candidate "ah-v1" "0b444332cd" 2)))))
+    (let ((findings (cerebro--findings-from "/repo" (cerebro-test--sweep-outputs))))
       (should (equal (mapcar #'cdr findings)
                      '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")
                        (unassign "ah-a1" 0) (recheck "ah-v1" 0))))
@@ -2860,23 +3008,106 @@ no longer sees."
                (lambda (_root) (setq reads (1+ reads)) '(("Cyclops" working "ah-gjq4"))))
               ((symbol-function 'cerebro--roster) (lambda (_root) '("Cyclops"))))
       (cerebro--findings-from
-       "/repo" nil nil
-       (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300))
-       (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32))
-       nil)
+       "/repo"
+       (list (cons 'sweep-stalled
+                   (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300)))
+             (cons 'sweep-assignees
+                   (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32)))))
       (should (equal reads 1)))))
 
 (ert-deftest cerebro-test/the-assignee-sweep-is-registered ()
-  (should (equal (alist-get 'sweep-assignees cerebro--sweep-scripts)
+  (should (equal (alist-get 'sweep-assignees (cerebro--sweep-scripts))
                  "sweep-assignees.sh")))
 
 (ert-deftest cerebro-test/the-verdict-sweep-is-registered-last ()
   "Appended last, so its parsed output reaches `cerebro--findings-from' in
 the argument position the docstring promises."
-  (should (equal (alist-get 'sweep-verdicts cerebro--sweep-scripts)
+  (should (equal (alist-get 'sweep-verdicts (cerebro--sweep-scripts))
                  "sweep-verdicts.sh"))
-  (should (equal (car (last cerebro--sweep-scripts))
+  (should (equal (car (last (cerebro--sweep-scripts)))
                  '(sweep-verdicts . "sweep-verdicts.sh"))))
+
+;; cb-4s8: a sweep is one row of `cerebro--sweeps', not six edits in lockstep.
+
+(defun cerebro-test--snapshot ()
+  "The fleet slices `cerebro--sweeps' rows draw on, hand-built - Cyclops
+working on ah-gjq4, Storm on the roster and not running."
+  (list :live-names '("Cyclops")
+        :live-states '(("Cyclops" . working))
+        :live-beads '(("Cyclops" . "ah-gjq4"))
+        :roster '("Cyclops" "Storm")
+        :now (current-time)))
+
+(defun cerebro-test--sweep-outputs ()
+  "One candidate per sweep, keyed as `cerebro--sweeps' is."
+  (list (cons 'sweep-claims
+              (list (cerebro-test--claim-candidate "ah-c1" "Storm" nil nil nil nil 30)))
+        (cons 'sweep-epics (list (cerebro-test--epic-candidate "ah-e1" 30)))
+        (cons 'sweep-stalled (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300)))
+        (cons 'sweep-assignees (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32)))
+        (cons 'sweep-verdicts
+              (list (cerebro-test--verdict-candidate "ah-v1" "0b444332cd" 2)))))
+
+(ert-deftest cerebro-test/findings-from-snapshot-is-pure-and-table-driven ()
+  "The judging half of the sweep pipeline takes its outputs as one alist and
+its fleet as one plist, and walks `cerebro--sweeps' - so it reads no files
+and a sixth sweep changes no signature."
+  (let ((findings (cerebro--findings-from-snapshot (cerebro-test--sweep-outputs)
+                                                   (cerebro-test--snapshot))))
+    (should (equal (mapcar #'cdr findings)
+                   '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")
+                     (unassign "ah-a1" 0) (recheck "ah-v1" 0))))
+    ;; The enrichment went through the row, not through the walker.
+    (should (equal (nth 3 (mapcar #'car findings))
+                   "unassign ah-a1 — Cyclops is on ah-gjq4")))
+  ;; A key absent from OUTPUTS contributes nothing, rather than erroring.
+  (should (equal (mapcar #'cdr
+                         (cerebro--findings-from-snapshot
+                          (assq-delete-all 'sweep-epics (cerebro-test--sweep-outputs))
+                          (cerebro-test--snapshot)))
+                 '((reclaim "ah-c1") (unclaim "ah-s1")
+                   (unassign "ah-a1" 0) (recheck "ah-v1" 0)))))
+
+(ert-deftest cerebro-test/a-sweep-row-declares-everything-the-runner-needs ()
+  "Every row carries its key, its script, its finder, the fleet slices it
+wants and - optionally - its label enrichment. Nothing about a sweep is
+declared anywhere the runner also has to be told about."
+  (dolist (row cerebro--sweeps)
+    (pcase-let ((`(,key ,script ,finder ,needs . ,rest) row))
+      (should (symbolp key))
+      (should (string-suffix-p ".sh" script))
+      (should (file-exists-p (expand-file-name (concat "scripts/" script)
+                                               cerebro-test--repo-root)))
+      (should (functionp finder))
+      (should (listp needs))
+      (dolist (need needs)
+        (should (memq need '(:live-names :live-states :live-beads :roster :now))))
+      (should (<= (length rest) 1))
+      (when rest (should (functionp (car rest)))))))
+
+(ert-deftest cerebro-test/a-sixth-sweep-is-one-row ()
+  "The point of the table. A sweep that exists nowhere but in
+`cerebro--sweeps' is run, judged and labelled - no signature, no second
+list, and no other function edited to let it through."
+  (let ((cerebro--sweeps
+         (append cerebro--sweeps
+                 `((sweep-demo "sweep-demo.sh"
+                               ,(lambda (c) (and (alist-get 'flag c)
+                                                 (list 'epic-close (alist-get 'id c))))
+                               ())))))
+    (should (equal (alist-get 'sweep-demo (cerebro--sweep-scripts)) "sweep-demo.sh"))
+    (let ((findings (cerebro--findings-from-snapshot
+                     (append (cerebro-test--sweep-outputs)
+                             `((sweep-demo . (((id . "ah-d1") (flag . t)
+                                               (minutes_since_last_child_closed . 30))
+                                              ((id . "ah-d2") (flag . nil))))))
+                     (cerebro-test--snapshot))))
+      ;; One finding from the new row, appended in table order, labelled by the
+      ;; `epic-close' arm that was already there.
+      (should (equal (car (last (mapcar #'cdr findings))) '(epic-close "ah-d1")))
+      (should (equal (car (last (mapcar #'car findings)))
+                     "close ah-d1 — all children closed 30m ago"))
+      (should (equal (length findings) 6)))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 4: showing sweep findings and acting on them, confirmed

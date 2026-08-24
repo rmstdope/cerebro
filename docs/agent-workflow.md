@@ -113,8 +113,8 @@ can steer the session from claude.ai or the Claude app, and installs the hooks t
 file honest while an agent has a question open. Pressing `s` in the fleet view runs exactly this.
 
 **Changing what the fleet runs on** is one file, and it lives in *your project* rather than inside
-the `.claude/cerebro` submodule — so it is yours, uncommitted, and no other consumer of the harness
-inherits it. Copy `.claude/cerebro/models.conf.example` to `.cerebro/models.conf` and uncomment a
+the `.claude/cerebro` submodule — so no other consumer of the harness inherits it — commit it
+to give every clone the same fleet, or ignore it to keep it yours. Copy `.claude/cerebro/models.conf.example` to `.cerebro/models.conf` and uncomment a
 line. Keys are an agent's name, a role, or `default`, most specific first, so `default fable` moves
 everybody and `Beast sonnet` moves one planner — which is the cheap way to compare two models on the
 same queue. It takes effect at the next launch; a session already running keeps the model it started
@@ -172,7 +172,8 @@ user-facing surface, so the queue keeps filling. It will not guess on your behal
 ## Starting builders
 
 **You** start builders — one session each, `s` in the fleet view or `launch <Name>` in a
-terminal. There is no flag that puts a running implementer to work: **a running implementer is a
+terminal — unless their `.cerebro/roster.conf` line says `autostart`, in which case `M-x cerebro`
+starts them for you as it opens. There is no flag that puts a running implementer to work: **a running implementer is a
 working one**, and it claims the next planned bead as soon as one exists. If you want another
 builder, start another session.
 

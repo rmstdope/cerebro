@@ -85,7 +85,8 @@ Not prose — files, each tracked so that every clone has it.
   the application, and the gate. Both gates name `tests/gate`, which runs exactly what
   `.github/workflows/ci.yml` runs (cb-i3l.2).
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
-  built-in fleet.
+  built-in fleet. An optional third word, `autostart`, makes the fleet view start that agent as it
+  comes up (cb-0r6).
 - `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
   implementers before they start. Absent means it has paid for none yet, which is where every
   project starts.
@@ -129,7 +130,8 @@ A pull request that touches only `docs/` (except `docs/agent-workflow.md`, which
 place that list lives, with the reason beside each entry, and the three required checks report
 *skipped*, which GitHub counts as green (cb-ypx). Anything else runs the whole matrix, and a push
 to `main` always does. `scripts/lint` check 12 advises when a suite starts reading a path on that
-list.
+list. The two ERT jobs are literal, not a matrix, because a skipped matrix job never expands into
+the per-version check names branch protection requires.
 
 Sync symlinks into a consumer repo (run from that repo, not this one):
 
@@ -261,15 +263,18 @@ also shows a
 **Sweeps** section: the claims and epics sweeps `agents/orchestrator.md` describes, run every ten
 minutes by `scripts/sweep-claims.sh` and `scripts/sweep-epics.sh` (read-only; they gather facts and
 mutate nothing), turned into findings by pure decision functions, and hidden entirely when there is
-nothing to report. `x` on a finding shows the exact `bd close`/`bd reclaim` it maps to and runs it
+nothing to report. A sweep is **one row of `cerebro--sweeps`** — key, script, finding function, which
+fleet slices it needs, an optional label enrichment; adding one is a row, a `cerebro--<x>-finding`, a
+`cerebro--sweep-label` arm and a `cerebro--finding-command` arm, and
+`cerebro-test/a-sixth-sweep-is-one-row` proves the row alone is enough for the runner (cb-4s8). `x` on a finding shows the exact `bd close`/`bd reclaim` it maps to and runs it
 only on confirmation. Worktree pruning (`prune-worktrees.sh --watch`) starts automatically alongside
 the fleet buffer and needs no confirmation - see `docs/cerebro-jobs.md` for why.
 
 The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebro--entry`,
 `cerebro--*-action`, `cerebro--launch-command`, `cerebro--claim-finding`, `cerebro--epic-finding`,
-`cerebro--finding-command`) and a small set of **impure readers** at the bottom (`cerebro--fleet`,
-`cerebro--roster`, `cerebro--read-state-file`, `cerebro--system-args`, `cerebro--owned`,
-`cerebro--gather-sweeps`). The tests only exercise the pure half, passing state in as plain data. Keep
+`cerebro--finding-command`, `cerebro--findings-from-snapshot`) and a small set of **impure readers**
+at the bottom (`cerebro--fleet`, `cerebro--roster`, `cerebro--read-state-file`,
+`cerebro--system-args`, `cerebro--owned`, `cerebro--gather-sweeps`, `cerebro--fleet-snapshot`). The tests only exercise the pure half, passing state in as plain data. Keep
 new logic on the pure side or it becomes untestable.
 
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
@@ -325,11 +330,12 @@ mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd
 
 - `.cerebro/` is the harness's own directory in the consumer — agent state files, stop flags and
   agent worktrees (ah-v82), **and since cb-epr the project's own declarations** (`project.conf`,
-  `roster.conf`, `traps.md`). So the consumer's `.gitignore` ignores it the way it ignores
-  `.claude/`: `.cerebro/*` plus a negation per tracked declaration, never `.cerebro/` — a negation
-  only works when the parent directory itself is not ignored. Everything-except is the fail-safe
-  direction: the fleet invents runtime artifacts far more often than it invents declarations, so a
-  new one arrives ignored rather than committable by accident. `.claude/` holds only what Claude
+  `roster.conf`, `traps.md`). So the consumer's `.gitignore` names the
+  two things the fleet writes while it runs — `.cerebro/worktrees` and `.cerebro/state` — and
+  tracks the rest: the declarations, and `models.conf`, which this project commits so every clone
+  runs the same models (`eb6ffdb`; a project that wants it personal ignores it). A deny-list rather
+  than everything-except: the price is that a new runtime artifact has to be added to it, and that
+  price was taken so models.conf could be tracked without a negation per tracked file. `.claude/` holds only what Claude
   Code itself discovers (`agents/`, `skills/`, `settings.json`) plus this repository's own
   submodule mount.
 - **This repository is a consumer of itself** (cb-i3l.1). `.claude/cerebro` is a committed symlink
@@ -338,9 +344,13 @@ mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd
   tree* rather than a pinned sha. A submodule of the repository inside itself would have satisfied
   `consumer-root` with no code at all, and was rejected for a different reason: `git submodule
   update --init --recursive`, which `launch-preflight` runs, has no fixed point on a repository that
-  contains itself. Two scripts know about the mount and nothing else does — `consumer-root`, whose
-  third resolution step is the round trip through it, and `sync-symlinks.sh`, which links through
-  the mount when the source root is the consumer root. A worktree carries the same committed
+  contains itself. **One script knows about the mount**: `consumer-root`, whose
+  `mount_resolves_to` is the round trip through it, exposed as `--self-mounted` and `--mount`;
+  `roster` and `sync-symlinks.sh` ask it (cb-akc), and `scripts/lint` advises if the round trip is
+  ever spelled anywhere else. `prune-worktrees.sh` is the documented exception and keeps its git-dir
+  comparison: it asks whether the mount and the consumer are **one repository**, so that one
+  `git worktree list` covers both, and that parts company with the round trip for a vendored plain
+  copy at the standard mount — where the mount is an ordinary directory of the consumer's own repo. A worktree carries the same committed
   symlink, which resolves to the worktree, so an implementer reads its own branch's skills.
 - `scripts/agent-alive <Name>` is the one place bash answers "is this agent up" (see above). A
   predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state`: it
@@ -363,10 +373,11 @@ mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd
   (`--show-superproject-working-tree`, which answers at any mount — ah-ohc2). That order matters: the
   probe answers about whatever repository the checkout belongs to, so for a plain *copy* at the
   standard mount inside a consumer that is itself a submodule it would name the grandparent.
-  `scripts/roster` orders its two candidates the same way for the same reasons. So
+  `scripts/roster` asks this script for its root rather than resolving one of its own (cb-akc). So
   `.claude/cerebro/scripts` is load-bearing only for a consumer that vendors cerebro as a plain copy;
   a submodule may be mounted anywhere. To test a change, build a throwaway consumer repo rather than running
-  the script here (it will refuse: there is no `.claude/` above this tree).
+  the script here (it will refuse: there is no `.claude/` above this tree). Since cb-akc it is also
+  the one place "how is this checkout mounted in it" is answered — `--self-mounted` and `--mount`.
 - `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
   asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a
   submodule-bump PR commit them (ah-cuc). It writes one link outside `.claude/`: the consumer's root
@@ -418,16 +429,20 @@ mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd
   rename shim was removed once a release of the consumer had carried it (ah-qled.5.3).
 - **A consumer declares its own fleet in `<consumer>/.cerebro/roster.conf`** (ah-qled.5.1) — same
   `NAME  ROLE` shape as the `TABLE=` heredoc in `scripts/roster`, `#` comments and blank lines
-  ignored, `KIND` still derived. When it exists and is non-empty it **replaces** the built-in table
+  ignored, `KIND` still derived, and an optional third word `autostart` read by `roster --autostart`
+  alone — the three default columns never change, since `launch`, `agent-state` and
+  `cerebro--parse-fleet` all take the last field as the KIND; any other third word, or a fourth,
+  refuses with exit 2 naming the file, line and word, and `M-x cerebro` shows that refusal rather
+  than an empty fleet (cb-0r6). When it exists and is non-empty it **replaces** the built-in table
   rather than merging with it, because file order is load-bearing (first planner triages; Cerebro
   takes implementer names in file order). It is **tracked**, beside `.cerebro/project.conf`, by a
   `.gitignore` negation inside the otherwise-ignored `.cerebro/` (cb-epr): which agents exist is a
   fact every clone needs, and an ignored declaration vanishes on a fresh clone. `roster`
-  finds it by path arithmetic and **must never call `consumer-root`**, which shells out to `git` —
-  the launchers' narrowed-PATH guarantee (`dirname` and `bash` alone) depends on it. It has a second
-  candidate for a submodule mounted elsewhere (`<superproject>/.cerebro/roster.conf`, ah-ohc2),
-  tried only when `git` is on PATH and skipped in silence when it is not, which is what leaves that
-  guarantee intact. At every candidate root a file still at the retired `.claude/cerebro-roster`
+  asks `consumer-root` for the root (cb-akc) — the one resolver, whose git step is optional and
+  whose failure is swallowed, so the launchers' narrowed-PATH guarantee (`dirname` and `bash`
+  alone, `tests/launchers.sh`) still holds and is what guards it; a submodule mounted elsewhere
+  (`vendor/cerebro`, ah-ohc2) is found through git when git is there. At that root a file still at
+  the retired `.claude/cerebro-roster`
   with none at the new path **exits 2 naming the `mv`** rather than falling back: absence is the
   documented "run the built-in fleet" signal, and a stale path borrowing it would silently give a
   consumer nineteen names it never declared. `project-conf` and `launch-preflight` refuse the same

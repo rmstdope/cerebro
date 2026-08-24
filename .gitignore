@@ -29,17 +29,5 @@ dist/
 # declarations (cb-epr), which every clone needs. Same shape as the .claude block below: everything
 # ignored, except what is deliberately tracked. `.cerebro/*` and not `.cerebro/` — a negation only
 # works when the parent directory itself is not ignored.
-.cerebro/*
-!.cerebro/project.conf
-!.cerebro/roster.conf
-!.cerebro/traps.md
-
-# Claude Code's own directory. This repository is a consumer of itself (cb-i3l.1), so the same rule
-# every consumer follows applies here: everything under .claude is local machine state EXCEPT what
-# the fleet needs every clone to have — the mount, the discovery links the sync writes, the shared
-# settings, and this project's own declaration of its facts.
-.claude/*
-!.claude/cerebro
-!.claude/skills/
-!.claude/agents/
-!.claude/settings.json
+.cerebro/worktrees
+.cerebro/state

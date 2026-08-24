@@ -33,11 +33,14 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # THE one answer to "does <root>/.claude/cerebro resolve to <checkout>" (cb-akc). Both round trips
-# below use it, `--self-mounted' and `--mount' expose it, and roster, sync-symlinks.sh and
-# prune-worktrees.sh ask those rather than spelling the round trip again - five copies by three
-# mechanisms is how the janitor walked one list twice and roster fell back to the built-in fleet
-# in silence. Builtins only (`cd', `pwd'), so the narrowed-PATH guarantee tests/launchers.sh
-# asserts survives it. Physical on both sides: macOS mktemp lives under /var -> /private/var.
+# below use it and `--self-mounted' and `--mount' expose it, so that roster (through the plain
+# form) and sync-symlinks.sh (through `--mount') ask rather than spelling the round trip again -
+# five copies by three mechanisms is how the janitor walked one list twice and roster fell back to
+# the built-in fleet in silence. prune-worktrees.sh is NOT one of the callers and is not a sixth
+# copy: it compares git dirs, which asks "one repository or two" rather than "does the mount
+# resolve back", and the two part company for a vendored plain copy at the standard mount - its own
+# header carries the reason. Builtins only (`cd', `pwd'), so the narrowed-PATH guarantee
+# tests/launchers.sh asserts survives it. Physical on both sides: macOS mktemp lives under /var -> /private/var.
 mount_resolves_to() {
   # $1 = a candidate consumer root, $2 = a checkout of cerebro
   local mount checkout
@@ -113,9 +116,9 @@ case "${1:-}" in
     printf '%s\n' "$(cd "$(dirname "$common")" && pwd -P)" ;;
   --self-mounted)
     # Exit 0 when this checkout IS its consumer - `.claude/cerebro' is a symlink back to the tree
-    # it lives in (cb-i3l.1) - and 1 for every real consumer. Nothing printed: asked by
-    # prune-worktrees.sh to walk one worktree list rather than the same list twice, and by
-    # roster through the plain form above.
+    # it lives in (cb-i3l.1) - and 1 for every real consumer. Nothing printed: the exit status is
+    # the whole answer. No caller in this repository needs it today - it is here because it is the
+    # question `--mount' and both resolution steps above are already asking, stated once.
     mount_resolves_to "$enclosing" "$enclosing" ;;
   --mount)
     # The path of this checkout relative to the consumer root, the way a link from the consumer

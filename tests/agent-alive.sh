@@ -61,101 +61,59 @@ if run_alive "$tmp" Cyclops; then
 fi
 pass "dead-for-a-live-pid-that-is-not-that-session"
 
-# --- alive-for-a-live-pid-that-names-the-agent ---
+# --- every row of the shared case table ---
+# The rule's cases live in tests/lib/session-args.cases and cerebro-test.el runs the same rows
+# against cerebro--session-args-p: a row one side answers differently is the drift this table
+# exists to catch. Each row becomes a live process with exactly that command line, a state file
+# naming its pid, and one agent-alive call from the row's root.
+#
+# The rows name Cyclops, Beast and Storm outright rather than asking the roster for a planner the
+# way the hand-written cases they replace did: the table is read by the ERT suite too, which has no
+# roster to ask, and the fixture here declares none of its own and so runs the built-in fleet.
+cases="$repo_root/tests/lib/session-args.cases"
+[[ -r "$cases" ]] || fail "session-args table: cannot read $cases"
 tmp="$(new_fixture)"
+other="$(new_fixture)"
+# The three directories the table's --settings paths may name. agent-alive resolves the settings
+# directory physically before comparing, so a directory that does not exist reads dead whatever the
+# row expects - and {root}-hud is the sibling-prefix case, a checkout beside this one whose path
+# merely starts with this one's.
+mkdir -p "$tmp/.claude/cerebro/hooks" "$other/.claude/cerebro/hooks" "$tmp-hud/.claude/cerebro/hooks"
 printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-session"
 chmod +x "$tmp/fake-session"
-# Every session `scripts/launch' starts carries `--settings <root>/.../hooks/...' (cb-lzi), and
-# that path is the proof of which consumer's fleet it belongs to. `scripts/' already exists;
-# `hooks/' must, because agent-alive resolves the directory physically before comparing.
-mkdir -p "$tmp/.claude/cerebro/hooks"
-bash "$tmp/fake-session" --name Cyclops \
-  --settings "$tmp/.claude/cerebro/scripts/../hooks/question-state.settings.json" &
-fake_pid=$!
-# The `sleep' inside the script is a child of that bash, not the bash itself (the implicit-exec
-# optimisation applies to `-c', not to a script file - which is what keeps `--name' in the args),
-# so killing the wrapper alone orphans it for the rest of its 30 seconds.
-strays+=("$fake_pid")
-for child in $(pgrep -P "$fake_pid" 2>/dev/null || true); do strays+=("$child"); done
-write_state "$tmp" Cyclops "{\"state\":\"working\",\"pid\":$fake_pid}"
-run_alive "$tmp" Cyclops \
-  || fail "alive-for-a-live-pid-that-names-the-agent: reported dead for its own session"
-pass "alive-for-a-live-pid-that-names-the-agent"
-
-# --- dead-for-a-live-pid-whose-name-is-only-a-prefix ---
-# One agent's live session, named in another agent's state file: alive as Cyclops, dead as the
-# planner below. This is the everyday form of the identity check - a pid is alive for exactly one
-# name. Both the present name and the absent one are taken from the roster rather than spelled out,
-# so a consumer with its own fleet still runs these cases (ah-qled.5.1).
-# `sed -n 1p' rather than `head -n 1': head closes the pipe on its first line, and under
-# `set -o pipefail' roster's EPIPE would then kill this suite rather than name a planner.
-prefix_name="$("$repo_root/scripts/roster" --role planner | sed -n 1p)"
-[[ -n "$prefix_name" ]] || fail "prefix-name: the roster names no planner"
-suffixed_name="${prefix_name}ly"
-write_state "$tmp" "$prefix_name" "{\"state\":\"working\",\"pid\":$fake_pid}"
-if run_alive "$tmp" "$prefix_name"; then
-  fail "dead-for-a-live-pid-whose-name-is-only-a-prefix: matched --name Cyclops as $prefix_name"
-fi
-pass "dead-for-a-live-pid-whose-name-is-only-a-prefix"
-
-# The case the word boundary itself is about, and the one that fails without it: a live pid whose
-# args carry the name with something appended. The name is taken from the roster rather than spelled
-# out, so a consumer with its own fleet still runs this case (ah-qled.5.1): `$prefix_name' is on the
-# roster, `$prefix_name'ly is not a session of its, and `--name $prefix_name' must not match inside
-# it.
-printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-suffixed"
-chmod +x "$tmp/fake-suffixed"
-bash "$tmp/fake-suffixed" --name "$suffixed_name" \
-  --settings "$tmp/.claude/cerebro/scripts/../hooks/question-state.settings.json" &
-suffixed_pid=$!
-strays+=("$suffixed_pid")
-for child in $(pgrep -P "$suffixed_pid" 2>/dev/null || true); do strays+=("$child"); done
-write_state "$tmp" "$prefix_name" "{\"state\":\"working\",\"pid\":$suffixed_pid}"
-if run_alive "$tmp" "$prefix_name"; then
-  fail "dead-for-a-live-pid-with-the-name-as-a-prefix-of-its-own: matched --name $suffixed_name as $prefix_name"
-fi
-pass "dead-for-a-live-pid-with-the-name-as-a-prefix-of-its-own"
-
-# --- dead-for-the-same-name-in-another-consumer ---
-# The cross product the two earlier fixes each left open (cb-lzi): a live pid whose command line
-# names this agent - but as another checkout's fleet. Every consumer on the built-in roster has a
-# Cyclops; pid plus name alone would call this one ours and let a planner free a label it holds.
-other="$(new_fixture)"
-mkdir -p "$other/.claude/cerebro/hooks"
-printf '#!/usr/bin/env bash\nsleep 30\n' > "$other/fake-session"
-chmod +x "$other/fake-session"
-bash "$other/fake-session" --name Cyclops \
-  --settings "$other/.claude/cerebro/scripts/../hooks/question-state.settings.json" &
-other_pid=$!
-strays+=("$other_pid")
-for child in $(pgrep -P "$other_pid" 2>/dev/null || true); do strays+=("$child"); done
-write_state "$tmp" Cyclops "{\"state\":\"working\",\"pid\":$other_pid}"
-if run_alive "$tmp" Cyclops; then
-  fail "dead-for-the-same-name-in-another-consumer: another checkout's Cyclops read as ours"
-fi
-pass "dead-for-the-same-name-in-another-consumer"
-
-# And alive when asked from the consumer it does belong to - the root is a discriminator, not a
-# second way of saying dead.
-write_state "$other" Cyclops "{\"state\":\"working\",\"pid\":$other_pid}"
-run_alive "$other" Cyclops \
-  || fail "alive-in-its-own-consumer: its own fleet's check reported it dead"
-pass "alive-in-its-own-consumer"
-
-# --- dead-for-a-session-that-names-no-root ---
-# A hand-typed `claude --name Cyclops' with no --settings: nothing can prove whose fleet it is,
-# and reading it as ours is the defect. The same trade cerebro--consumer-args made (9420ff2).
-printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-rootless"
-chmod +x "$tmp/fake-rootless"
-bash "$tmp/fake-rootless" --name Cyclops &
-rootless_pid=$!
-strays+=("$rootless_pid")
-for child in $(pgrep -P "$rootless_pid" 2>/dev/null || true); do strays+=("$child"); done
-write_state "$tmp" Cyclops "{\"state\":\"working\",\"pid\":$rootless_pid}"
-if run_alive "$tmp" Cyclops; then
-  fail "dead-for-a-session-that-names-no-root: a session naming no root read as ours"
-fi
-pass "dead-for-a-session-that-names-no-root"
+rows=0
+while read -r expect name root args; do
+  case "$expect" in ''|'#'*) continue ;; esac
+  case "$root" in
+    '{root}')  root="$tmp" ;;
+    '{other}') root="$other" ;;
+    *) fail "session-args table: row $((rows+1)) names a root that is not {root} or {other}: $root" ;;
+  esac
+  args="${args//\{root\}/$tmp}"
+  args="${args//\{other\}/$other}"
+  # Unquoted on purpose: a row is a command line, and the process must carry it as separate
+  # arguments the way `scripts/launch' passes them. No row carries a quoted or globbing argument.
+  # shellcheck disable=SC2086
+  bash "$tmp/fake-session" $args &
+  pid=$!
+  strays+=("$pid")
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do strays+=("$child"); done
+  write_state "$root" "$name" "{\"state\":\"working\",\"pid\":$pid}"
+  case "$expect" in
+    alive)
+      run_alive "$root" "$name" \
+        || fail "session-args row $((rows+1)): expected alive, reported dead ($name at $root: $args)" ;;
+    dead)
+      if run_alive "$root" "$name"; then
+        fail "session-args row $((rows+1)): expected dead, reported alive ($name at $root: $args)"
+      fi ;;
+    *) fail "session-args table: row $((rows+1)) expects '$expect', not alive or dead" ;;
+  esac
+  rows=$((rows+1))
+done < "$cases"
+# A table nobody can read, or one that went empty, must not pass as "every row held".
+[[ "$rows" -ge 2 ]] || fail "session-args table: only $rows rows read from $cases"
+pass "every row of tests/lib/session-args.cases holds for agent-alive ($rows rows)"
 
 # --- dead-for-a-pid-that-no-longer-exists ---
 tmp="$(new_fixture)"

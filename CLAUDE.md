@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Cerebro is an **AI harness**, not an application: agent definitions, skills, docs, a sync script, and
 an Emacs fleet viewer. It is consumed by other repositories as a git submodule at `.claude/cerebro`,
-whose `scripts/sync-symlinks.sh` symlinks the skills and agents into the consumer's discovery paths.
+whose `scripts/sync-symlinks.sh` symlinks the skills and agents into the consumer's discovery paths,
+and `templates/consumer-dir-locals.el` in as the consumer's root `.dir-locals.el` so that `M-x
+cerebro` exists for everyone working in that repository.
 
 Almost nothing here executes in this repository. The agents and skills describe a workflow that runs
 in a *consumer* repo, and the launchers in `scripts/` only make sense from a consumer root, where
@@ -331,9 +333,13 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
   the script here (it will refuse: there is no `.claude/` above this tree).
 - `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
   asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a
-  submodule-bump PR commit them (ah-cuc). The two git hooks ask git directly (`--show-toplevel`)
-  rather than `consumer-root`: a hook's cwd is already inside the tree it fires in, so the enclosing
-  tree is `--show-toplevel` by definition.
+  submodule-bump PR commit them (ah-cuc). It writes one link outside `.claude/`: the consumer's root
+  `.dir-locals.el`, pointing at `templates/consumer-dir-locals.el`, which is what makes `M-x cerebro`
+  available to every contributor without one of them editing their init. It is the one file the sync
+  **may not merge** — Emacs reads exactly one per directory — so a consumer that already has one, or
+  that has pointed that path at something of its own, keeps it and gets a line on stderr instead.
+  The two git hooks ask git directly (`--show-toplevel`) rather than `consumer-root`: a hook's cwd
+  is already inside the tree it fires in, so the enclosing tree is `--show-toplevel` by definition.
 - `githooks/install.sh` sets `core.hooksPath`, which is repository-wide and replaces `.git/hooks`
   entirely. It refuses rather than clobbering a `core.hooksPath` already pointing elsewhere.
 - **`hooks/` and `githooks/` are different mechanisms.** `githooks/` is git; `hooks/` holds Claude

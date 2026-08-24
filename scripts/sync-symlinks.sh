@@ -42,6 +42,16 @@ if [[ "$REL_SOURCE" == "../$SOURCE_ROOT" \
   REL_SOURCE="../cerebro"
 fi
 
+# `.dir-locals.el' lives at the consumer ROOT, one level above where the skill and agent links
+# sit, so it needs the source path relative to the root rather than to $CLAUDE_ROOT/<sub>/. Same
+# two cases as REL_SOURCE above, for the same reasons: the ordinary submodule (any mount, not just
+# .claude/cerebro), and cerebro serving itself, where the strip strips nothing and the mount is
+# the answer.
+REL_FROM_ROOT="${SOURCE_ROOT#"$consumer_root/"}"
+if [[ "$REL_FROM_ROOT" == "$SOURCE_ROOT" ]]; then
+  REL_FROM_ROOT=".claude/cerebro"
+fi
+
 # Ensure target subdirectories exist.
 mkdir -p "$CLAUDE_ROOT/skills" "$CLAUDE_ROOT/agents"
 
@@ -100,5 +110,47 @@ sync_links() {
   echo "Synced $updated $label link(s) from $source_dir to $dest_dir"
 }
 
+# The one file this script writes outside .claude/, and the one it may not merge: Emacs reads
+# exactly one `.dir-locals.el' per directory, so a consumer that has its own already has spent
+# the slot. It gets a line on stderr and keeps its file - guessing which of the two sets of
+# settings matters is not this script's call, and silently replacing them is the failure that
+# would be found weeks later.
+#
+# Why a link rather than a copy: a change to the form is then carried by a submodule bump, like
+# every skill and agent here. Why at all: `M-x cerebro' otherwise costs each contributor an edit
+# to their own init, and the fleet view is how this harness is driven.
+sync_dir_locals() {
+  local template="$SOURCE_ROOT/templates/consumer-dir-locals.el"
+  local target="$consumer_root/.dir-locals.el"
+  local link="$REL_FROM_ROOT/templates/consumer-dir-locals.el"
+
+  # A submodule from before this template existed. Nothing to link, and nothing wrong.
+  [[ -f "$template" ]] || return 0
+
+  if [[ -L "$target" ]]; then
+    # Ours, or the consumer's own link to somewhere else? `-L' alone would repoint the latter.
+    # Only a link that already names this template is refreshed - which is what moves it when
+    # the mount moves.
+    if [[ "$(readlink "$target")" == */templates/consumer-dir-locals.el ]]; then
+      ln -sfn "$link" "$target"
+      echo "Synced .dir-locals.el -> $link"
+    else
+      echo "Left $target alone: it is a symlink of this project's own." >&2
+    fi
+    return 0
+  fi
+
+  if [[ -e "$target" ]]; then
+    echo "Left $target alone: this project has its own." >&2
+    echo "  Emacs reads one per directory, so M-x cerebro is not installed by it." >&2
+    echo "  To enable it, copy the eval form from $template into that file." >&2
+    return 0
+  fi
+
+  ln -s "$link" "$target"
+  echo "Synced .dir-locals.el -> $link"
+}
+
 sync_links "$SOURCE_ROOT/skills" "$CLAUDE_ROOT/skills" "skill" "dir"
 sync_links "$SOURCE_ROOT/agents" "$CLAUDE_ROOT/agents" "agent" "file"
+sync_dir_locals

@@ -1,0 +1,1 @@
+.claude/cerebro/templates/consumer-dir-locals.el

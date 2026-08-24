@@ -1,10 +1,28 @@
 # cerebro.el
 
-An Emacs 28+ package that lists the cerebro agent fleet: `M-x cerebro` (after adding
-this directory to `load-path` and `(require 'cerebro)`) opens a self-refreshing buffer
-showing every agent on `scripts/roster` — with its
+An Emacs 28+ package that lists the cerebro agent fleet: `M-x cerebro` opens a self-refreshing
+buffer showing every agent on `scripts/roster` — with its
 state, and for one working a bead (an implementer, or one of the interactive agents
 mid-verification or mid-triage) the bead it is on and for how long.
+
+## Getting `M-x cerebro`
+
+Nothing to install by hand: `scripts/sync-symlinks.sh` links
+`templates/consumer-dir-locals.el` in as the consumer's root `.dir-locals.el`, so the command
+exists for every contributor the moment any file of the project is open. Emacs asks each user
+once whether that file's `eval` form may run — answer `!`. The form only registers an autoload,
+so cerebro.el is read on the first `M-x cerebro` and not before.
+
+Two cases where you do it yourself:
+
+- **The project already has a `.dir-locals.el`.** Emacs reads one per directory, so the sync
+  leaves it alone and says so. Copy the `eval` form out of the template into it.
+- **You want the command everywhere, not only inside the project.** In your init:
+
+  ```elisp
+  (add-to-list 'load-path "/path/to/consumer/.claude/cerebro/emacs")
+  (autoload 'cerebro "cerebro" "List the Cerebro agent fleet." t)
+  ```
 
 It supports a live detail window that follows the list selection, and starting/killing agents
 from the list:

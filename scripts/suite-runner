@@ -64,11 +64,21 @@ set -uo pipefail
 
 usage="usage: suite-runner [--jobs N] <dir>"
 
-jobs=1
+jobs=""
+if [[ "${1:-}" == "--jobs" ]]; then
+  jobs="${2:-}"
+  [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "$usage" >&2; exit 2; }
+  shift 2
+fi
 
 [[ $# -eq 1 ]] || { echo "$usage" >&2; exit 2; }
 dir="$1"
 [[ -d "$dir" ]] || { echo "suite-runner: not a directory: $dir" >&2; exit 2; }
+
+# One per online processor by default. `getconf _NPROCESSORS_ONLN' answers on both macOS and
+# Linux; `nproc' is Linux-only and `sysctl -n hw.ncpu' macOS-only, and the gate runs on both.
+[[ -n "$jobs" ]] || jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+[[ "$jobs" =~ ^[1-9][0-9]*$ ]] || jobs=1
 
 annotate=0
 [[ -n "${GITHUB_ACTIONS:-}" ]] && annotate=1

@@ -179,3 +179,45 @@ grep -q '^::' <<<"$out" && fail "an annotation was printed outside GitHub Action
 $out"
 
 pass "GitHub annotations appear under GITHUB_ACTIONS and nowhere else"
+
+# --- 5. --jobs N, and what it refuses ---
+#
+# The option exists so the gate can be told how many suites to run at once; the default is one per
+# processor, which is not assertable here (the number is the machine's). What is assertable is that
+# a bad N is refused rather than rounded to something, and that `--jobs 1' - one suite at a time -
+# still produces exactly the contract every other N produces.
+
+for bad in 0 x -1 1.5; do
+  run --jobs "$bad" "$work_dir/suites"
+  [[ $status -eq 2 ]] || fail "--jobs $bad: expected exit 2, got $status
+$out"
+  grep -q '^usage: ' <<<"$out" || fail "--jobs $bad: no usage line
+$out"
+done
+
+run --jobs "$work_dir/suites"
+[[ $status -eq 2 ]] || fail "--jobs with no number: expected exit 2, got $status
+$out"
+grep -q '^usage: ' <<<"$out" || fail "--jobs with no number: no usage line
+$out"
+
+run --jobs 2
+[[ $status -eq 2 ]] || fail "--jobs 2 with no directory: expected exit 2, got $status
+$out"
+
+set +e
+out="$(env -u GITHUB_ACTIONS bash "$script" --jobs 1 "$work_dir/suites" 2>/dev/null)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "--jobs 1: expected exit 1, got $status
+$out"
+for f in a-pass c-pass; do
+  grep -qF -- "ok   $work_dir/suites/$f.sh (" <<<"$out" || fail "--jobs 1: no 'ok' line for $f.sh
+$out"
+done
+grep -qF -- "FAIL $work_dir/suites/b-fail.sh (" <<<"$out" || fail "--jobs 1: no 'FAIL' line for b-fail.sh
+$out"
+grep -qF -- "== output of $work_dir/suites/b-fail.sh ==" <<<"$out" || fail "--jobs 1: no replay for b-fail.sh
+$out"
+
+pass "--jobs refuses a bad count and --jobs 1 keeps the contract"

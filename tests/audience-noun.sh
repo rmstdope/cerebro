@@ -5,7 +5,8 @@
 #
 # Two treatments, on the navigator's decision of 2026-08-22:
 #
-#   * every agent, doc, script and skill EXCEPT skills/release-notes/SKILL.md uses neutral
+#   * every agent, doc, script and skill - and README.md, the front door - EXCEPT
+#     skills/release-notes/SKILL.md uses neutral
 #     prose - "the audience" - and reads no key and substitutes nothing;
 #   * skills/release-notes/SKILL.md alone reads `project-conf audience_noun` once, at the top,
 #     and then uses the literal word throughout, because it produces the navigator's public
@@ -39,14 +40,14 @@ self="tests/$(basename "${BASH_SOURCE[0]}")"
 
 # --- the noun survives only where the navigator decided it should ---
 hits="$(grep -rniI --exclude="$(basename "$self")" --exclude-dir=release-notes \
-          -e "$noun" agents/ docs/ scripts/ tests/ skills/ || true)"
+          -e "$noun" agents/ docs/ scripts/ tests/ skills/ README.md || true)"
 [[ -z "$hits" ]] || fail "neutral prose still names a $noun:
 $hits"
 pass "no file outside release-notes names the audience as a $noun"
 
 # --- the verb belongs to nobody by default, so this bead removed it entirely ---
 hits="$(grep -rniI --exclude="$(basename "$self")" \
-          -e "$verb" agents/ docs/ scripts/ tests/ skills/ || true)"
+          -e "$verb" agents/ docs/ scripts/ tests/ skills/ README.md || true)"
 [[ -z "$hits" ]] || fail "the verb '$verb' survives:
 $hits"
 pass "the verb '$verb' occurs nowhere"

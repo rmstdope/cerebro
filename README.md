@@ -63,7 +63,7 @@ you like (`--dry-run` first).
 ## Skills
 
 `plan-bead` and `implement-bead` are the two roles' procedures; `beads-workflow` is the substrate
-both read. `release-notes` turns the work between two release tags into a page a player can read —
+both read. `release-notes` turns the work between two release tags into a page the audience can read —
 it drops everything that never reached the application, and describes outcomes rather than changes.
 
 ## Sync Script (Skills and Agents)

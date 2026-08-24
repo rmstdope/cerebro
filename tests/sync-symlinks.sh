@@ -93,4 +93,37 @@ echo "$out" | grep -q "must run from a consumer repo" \
   || fail "the guard must exit before creating any target directory"
 pass "refuses to run outside a consumer repo's .claude/cerebro, before touching anything"
 
+# --- cerebro as its own consumer: the links still read ../cerebro/... (cb-i3l.1) ---
+#
+# Here the source root is the consumer root, not a directory below .claude, so stripping
+# $CLAUDE_ROOT off the front of it strips nothing and the old arithmetic produced an ABSOLUTE path
+# with a "../" glued to the front of it. The mount is the answer: `.claude/cerebro` is a symlink
+# back to the checkout, so a link through it is correct and reads exactly like every consumer's.
+self_consumer="$work_dir/self"
+mkdir -p "$self_consumer/scripts" "$self_consumer/skills/demo" "$self_consumer/agents" "$self_consumer/.claude"
+cp "$repo_root/scripts/sync-symlinks.sh" "$self_consumer/scripts/sync-symlinks.sh"
+cp "$repo_root/scripts/consumer-root" "$self_consumer/scripts/consumer-root"
+chmod +x "$self_consumer/scripts/sync-symlinks.sh" "$self_consumer/scripts/consumer-root"
+ln -s ".." "$self_consumer/.claude/cerebro"
+cat > "$self_consumer/skills/demo/SKILL.md" <<'EOF'
+# Demo skill
+EOF
+cat > "$self_consumer/agents/demo.md" <<'EOF'
+# Demo agent
+EOF
+
+"$self_consumer/.claude/cerebro/scripts/sync-symlinks.sh" >/dev/null
+
+self_skill_link="$self_consumer/.claude/skills/demo"
+self_agent_link="$self_consumer/.claude/agents/demo.md"
+[[ "$(readlink "$self_skill_link")" == "../cerebro/skills/demo" ]] \
+  || fail "self-consumer skill link: expected '../cerebro/skills/demo', got '$(readlink "$self_skill_link")'"
+[[ "$(readlink "$self_agent_link")" == "../cerebro/agents/demo.md" ]] \
+  || fail "self-consumer agent link: expected '../cerebro/agents/demo.md', got '$(readlink "$self_agent_link")'"
+pass "a self-consumer's links read ../cerebro/... like every other consumer's"
+
+[[ -e "$self_skill_link/SKILL.md" ]] || fail "self-consumer skill link does not resolve to SKILL.md"
+[[ -e "$self_agent_link" ]] || fail "self-consumer agent link does not resolve"
+pass "a self-consumer's links resolve through the mount"
+
 echo "all sync-symlinks tests passed"

@@ -322,4 +322,32 @@ hits="$(grep -nE "pnpm|cargo" "$repo_root/skills/implement-bead/SKILL.md" || tru
 [[ -z "$hits" ]] || fail "implement-bead still names a tool: $hits"
 pass "implement-bead names no build tool at all"
 
+# --- cerebro's own checkout, mounted in itself, launches (cb-i3l.1) -------------------------------
+#
+# The self-consumer is not a variant of make_consumer: there is no submodule under .claude, because
+# the harness IS the checkout. What .claude/cerebro holds is a committed symlink back up to the
+# repository root, and the whole point of this case is that a launcher run through that symlink
+# reaches the end of the preflight - consumer-root answers, the role's agent file is found through
+# the mount, and the sync writes links that resolve.
+self_origin="$work_dir/self-origin.git"
+self_consumer="$work_dir/self"
+git init -q --bare -b main "$self_origin"
+git init -q -b main "$work_dir/self-seed"
+copy_cerebro_into "$work_dir/self-seed"
+mkdir -p "$work_dir/self-seed/.claude"
+ln -s ".." "$work_dir/self-seed/.claude/cerebro"
+git_q -C "$work_dir/self-seed" add -A
+git_q -C "$work_dir/self-seed" commit -q -m "cerebro, mounted in itself"
+git_q -C "$work_dir/self-seed" push -q "$self_origin" main
+git clone -q "$self_origin" "$self_consumer"
+
+run_preflight "$self_consumer" planner Xavier || fail "self-consumer: expected exit 0"
+[[ -L "$self_consumer/.claude/agents/planner.md" ]] \
+  || fail "self-consumer: expected .claude/agents/planner.md to be a link"
+[[ -f "$self_consumer/.claude/agents/planner.md" ]] \
+  || fail "self-consumer: the agent link does not resolve"
+[[ -f "$self_consumer/.claude/skills/plan-bead/SKILL.md" ]] \
+  || fail "self-consumer: the skill link does not resolve to a SKILL.md"
+pass "cerebro mounted in its own checkout passes the preflight and gets working links"
+
 echo "all launch-preflight tests passed"

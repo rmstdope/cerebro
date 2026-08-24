@@ -13,41 +13,24 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Fixtures and background processes are cleaned up from one trap, so a failed assertion leaves
-# neither a mktemp directory nor a `sleep' behind - `fail' exits, so per-case cleanup would not run.
-fixtures=()
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
+
+# The background `sleep's this suite starts to stand in for live sessions. The library's EXIT trap
+# calls suite_cleanup first, before it removes anything, so a failed assertion leaves none of them
+# running - `fail' exits, so per-case cleanup would not run. The fixtures themselves need no entry
+# here: consumer_new builds them under $work_dir, which that same trap removes.
 strays=()
 
-cleanup() {
+suite_cleanup() {
   local p
   for p in ${strays+"${strays[@]}"}; do kill "$p" 2>/dev/null || true; done
-  local d
-  for d in ${fixtures+"${fixtures[@]}"}; do rm -rf "$d"; done
-}
-trap cleanup EXIT
-
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
 }
 
 # The same fixture shape tests/agent-state.sh uses: a git repo with its own scripts/ directory
 # symlinked to the real scripts, so consumer-root --shared resolves inside the fixture.
 new_fixture() {
-  local tmp
-  tmp="$(mktemp -d)"
-  git init -q "$tmp"
-  git -C "$tmp" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-  mkdir -p "$tmp/.claude/cerebro/scripts"
-  ln -s "$repo_root/scripts/roster" "$tmp/.claude/cerebro/scripts/roster"
-  ln -s "$repo_root/scripts/agent-alive" "$tmp/.claude/cerebro/scripts/agent-alive"
-  ln -s "$repo_root/scripts/consumer-root" "$tmp/.claude/cerebro/scripts/consumer-root"
-  fixtures+=("$tmp")
-  printf '%s' "$tmp"
+  consumer_new "$(fixture_name)" --link roster agent-alive consumer-root
 }
 
 write_state() {

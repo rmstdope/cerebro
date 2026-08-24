@@ -116,6 +116,14 @@ for t in tests/*.sh; do bash "$t"; done    # all of them
 bash tests/launchers.sh                     # one suite
 ```
 
+Every suite sources `tests/lib/consumer.sh` for `fail`/`pass`, `git_q`, its work directory and the
+two throwaway-consumer shapes (`consumer_new`, `consumer_with_submodule`); `tests/lib/` is a
+directory precisely so the gate's `tests/*.sh` glob never runs it as a suite (cb-dul). A suite keeps
+its own assertions and any fixture that is not a consumer — a worktree fabricator, a corpus
+directory, the linted inputs. The library installs the one EXIT trap, so a suite adds to it with
+`cleanup_add` rather than writing a `trap` that would silently replace it, and does its own killing
+in a `suite_cleanup` the trap calls first. `tests/consumer-lib.sh` is the library's own suite.
+
 The advisory lint — the prose and configuration decisions, reported but never blocking:
 
 ```bash

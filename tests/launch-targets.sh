@@ -30,20 +30,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() { echo "FAIL: $1" >&2; exit 1; }
-pass() { echo "ok - $1"; }
-
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # --- a throwaway consumer, the way tests/project-conf.sh builds one ---
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q "$consumer"
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-for s in consumer-root project-conf; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf)"
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
 project_conf="$consumer/.claude/cerebro/scripts/project-conf"
@@ -92,13 +83,7 @@ grep -q '^# Without --features desktop-runtime' "$conf" \
 pass "a note is a comment line, and does not leak into the value"
 
 # --- 2. NOTHING DECLARED IS REPORTED AS SUCH, distinctly from a name that did not match ---
-bare="$work_dir/bare"
-mkdir -p "$bare/.claude/cerebro/scripts"
-git init -q "$bare"
-git -C "$bare" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-for s in consumer-root project-conf; do
-  ln -s "$repo_root/scripts/$s" "$bare/.claude/cerebro/scripts/$s"
-done
+bare="$(consumer_new bare --link consumer-root project-conf)"
 mkdir -p "$bare/.cerebro"
 : > "$bare/.cerebro/project.conf"
 
@@ -109,13 +94,7 @@ grep -q 'launch_targets unset' "$work_dir/err" \
 pass "no launch_targets is reported as unset, which is what turns into asking the navigator"
 
 # --- 3. a name in the index with no launch_<name> is reported, not silently dropped ---
-half="$work_dir/half"
-mkdir -p "$half/.claude/cerebro/scripts"
-git init -q "$half"
-git -C "$half" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-for s in consumer-root project-conf; do
-  ln -s "$repo_root/scripts/$s" "$half/.claude/cerebro/scripts/$s"
-done
+half="$(consumer_new half --link consumer-root project-conf)"
 mkdir -p "$half/.cerebro"
 printf 'launch_targets web desktop\nlaunch_web  run me\nlaunch_web_port 5173\n' \
   > "$half/.cerebro/project.conf"

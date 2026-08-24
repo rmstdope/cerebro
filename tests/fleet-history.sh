@@ -27,14 +27,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # A fixture tree with its own scripts/ directory symlinked to the real scripts, exactly as
 # tests/agent-state.sh builds one, so fleet-history's own root-derivation (via
@@ -42,12 +36,8 @@ pass() {
 # real log - which would make these assertions pass or fail by accident.
 new_fixture() {
   local tmp
-  tmp="$(mktemp -d)"
-  git init -q "$tmp"
-  git -C "$tmp" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-  mkdir -p "$tmp/.claude/cerebro/scripts" "$tmp/.cerebro/state"
-  ln -s "$repo_root/scripts/consumer-root" "$tmp/.claude/cerebro/scripts/consumer-root"
-  ln -s "$repo_root/scripts/fleet-history" "$tmp/.claude/cerebro/scripts/fleet-history"
+  tmp="$(consumer_new "$(fixture_name)" --link consumer-root fleet-history)"
+  mkdir -p "$tmp/.cerebro/state"
   printf '%s' "$tmp"
 }
 

@@ -19,32 +19,14 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
-
-# The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
-# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
-# elisp, editor droppings - so the fixture was neither hermetic nor cheap (ah-qled.11). `emacs/` is
-# deliberately absent: no bash suite reads it, and it is the largest thing in the tree.
-copy_cerebro_into() {
-  local dest="$1" d
-  mkdir -p "$dest"
-  for d in scripts agents skills hooks; do
-    [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$dest/"
-  done
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # A stub `claude` on PATH ahead of the real one, so a launcher's `exec claude ...` runs this instead
 # of starting a real session. It prints the environment and args it was handed, which is exactly what
 # these assertions need and nothing a real session would do.
 stub_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir"' EXIT
+cleanup_add "$stub_dir"
 
 cat > "$stub_dir/claude" <<'STUB'
 #!/usr/bin/env bash
@@ -67,11 +49,7 @@ chmod +x "$stub_dir/claude"
 # `git init` matters: launch-preflight compares `git rev-parse --show-toplevel` against the consumer
 # and skips its checks entirely when they differ, so a fixture that is not a working tree would make
 # these cases silently assert nothing.
-fixture_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir"' EXIT
-git init -q "$fixture_dir"
-mkdir -p "$fixture_dir/.claude" "$fixture_dir/.cerebro"
-copy_cerebro_into "$fixture_dir/.claude/cerebro"
+fixture_dir="$(consumer_new fixture --copy)"
 fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
 # A consumer that runs implementers must declare a fast gate, or launch-preflight refuses them
 # (ah-qled.7.1). The fixture declares one for the same reason a real consumer does: nothing here
@@ -208,12 +186,7 @@ pass "roster --bogus exits 2"
 # Tracked, by a `.gitignore` negation inside the otherwise-ignored `.cerebro/` (cb-epr), beside
 # `.cerebro/project.conf`: which agents exist is a fact every clone needs, and an ignored file would
 # vanish on a fresh clone with the fleet silently reverting to the X-Men.
-# Cleaned up at the end of this block rather than by the EXIT trap: the cases below rewrite that
-# trap with their own directories, and a name added here would be dropped from it again.
-roster_consumer="$(mktemp -d)"
-git init -q "$roster_consumer"
-mkdir -p "$roster_consumer/.claude" "$roster_consumer/.cerebro"
-copy_cerebro_into "$roster_consumer/.claude/cerebro"
+roster_consumer="$(consumer_new roster-consumer --copy)"
 roster_at="$roster_consumer/.claude/cerebro/scripts/roster"
 consumer_roster_file="$roster_consumer/.cerebro/roster.conf"
 
@@ -419,21 +392,7 @@ pass "roster: the new path wins when both exist"
 # roster too, from a SECOND candidate: `<superproject>/.cerebro/roster.conf', tried only when git
 # is on PATH and skipped silently when it is not - which is what keeps the narrowed-PATH guarantee
 # above true. Candidate order matters: the arithmetic first, so the standard mount never needs git.
-alt_cerebro="$(mktemp -d)/cerebro-src"
-mkdir -p "$alt_cerebro/scripts"
-cp "$repo_root/scripts/roster" "$alt_cerebro/scripts/roster"
-# roster asks consumer-root for the root (cb-akc), so the sibling has to be here too - every
-# fixture links or copies scripts one by one, and a missing one reads as "no consumer file".
-cp "$repo_root/scripts/consumer-root" "$alt_cerebro/scripts/consumer-root"
-git init -q "$alt_cerebro"
-git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com add -A
-git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com commit -q -m cerebro
-
-alt_consumer="$(mktemp -d)/alt"
-git init -q "$alt_consumer"
-git -C "$alt_consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-git -C "$alt_consumer" -c user.name=test -c user.email=test@example.com \
-  -c protocol.file.allow=always submodule add -q "$alt_cerebro" vendor/cerebro
+alt_consumer="$(consumer_with_submodule alt vendor/cerebro)"
 alt_roster_at="$alt_consumer/vendor/cerebro/scripts/roster"
 
 [[ "$("$alt_roster_at")" == "$roster_out" ]] \
@@ -479,7 +438,7 @@ echo "$out" | grep -q "roster.conf" \
 echo "$out" | grep -q "the submodule is behind" \
   && fail "launch Grace: a consumer-declared role is not a stale submodule, got: $out"
 pass "a consumer-declared role with no agent file anywhere is refused by its right cause"
-rm -rf "$roster_consumer" "$bare_path_dir"
+rm -rf "$bare_path_dir"
 
 # --- launch, generically over every roster row ---
 
@@ -593,17 +552,12 @@ echo "$out" | grep -q "^BEADS_ACTOR=${first_implementer}\$" \
   || fail "launch $first_implementer: expected BEADS_ACTOR=$first_implementer, got: $out"
 pass "launch $first_implementer sets BEADS_ACTOR=$first_implementer"
 
-
 # --- a launcher syncs the consumer repo's links before starting a session (ah-cuc) ---
 #
 # A consumer of its own, deliberately: this case asserts a link that did *not* exist beforehand, and
 # the cases below it write `.cerebro/models.conf`, which the fixture above must never have. Two temp
 # directories is the test being honest, not duplication - what had to go is the *enclosing* checkout.
-consumer_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir"' EXIT
-git init -q "$consumer_dir"
-mkdir -p "$consumer_dir/.claude" "$consumer_dir/.cerebro"
-copy_cerebro_into "$consumer_dir/.claude/cerebro"
+consumer_dir="$(consumer_new own-consumer --copy)"
 # A gate, for the same reason the fixture above declares one: the implementer cases below would
 # otherwise be refused at launch (ah-qled.7.1).
 printf 'gate_fast make check\n' > "$consumer_dir/.cerebro/project.conf"
@@ -700,7 +654,7 @@ pass "a blocked sync aborts the launch before the stub is reached"
 # reaches launch-preflight's own `claude` check - so this cannot pass on a machine that
 # happens to have `claude` installed under /usr/bin or /bin.
 no_claude_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir" "$no_claude_dir"' EXIT
+cleanup_add "$no_claude_dir"
 ln -s "$(command -v dirname)" "$no_claude_dir/dirname"
 # launch-preflight is exec'd directly (its own `#!/usr/bin/env bash' shebang), so `env'
 # needs to find `bash' under this PATH too, not only the shell invoking launch below.
@@ -718,11 +672,7 @@ pass "launch Forge refuses with one line when claude is not on PATH"
 #
 # Its own consumer again: this one has an agent file removed from its copy of the submodule, so it
 # cannot share a consumer with anything that expects a complete one.
-consumer_dir2="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir" "$no_claude_dir" "$consumer_dir" "$consumer_dir2"' EXIT
-git init -q "$consumer_dir2"
-mkdir -p "$consumer_dir2/.claude"
-copy_cerebro_into "$consumer_dir2/.claude/cerebro"
+consumer_dir2="$(consumer_new behind-consumer --copy)"
 rm -f "$consumer_dir2/.claude/cerebro/agents/architect.md"
 set +e
 out="$(run_launcher_at "$consumer_dir2/.claude/cerebro/scripts" launch Forge 2>&1)"

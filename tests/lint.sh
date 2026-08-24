@@ -19,16 +19,11 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
+
 cd "$repo_root"
-
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
 
 lint="$repo_root/scripts/lint"
 [[ -f "$lint" ]] || fail "scripts/lint does not exist"
@@ -66,14 +61,12 @@ pass "a root that is not a directory exits 2"
 # The fixture is a copy of the linted inputs rather than this tree, so the violation can be
 # planted without touching the repository. It needs a git work tree with one commit and its own
 # .gitignore: one check queries `git ls-files' and `git check-ignore'.
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
 fixture="$work_dir/repo"
 mkdir -p "$fixture"
 cp -R agents skills docs emacs templates tests scripts CLAUDE.md README.md .github .gitignore "$fixture/"
 git init -q "$fixture"
 git -C "$fixture" add -A >/dev/null 2>&1
-git -C "$fixture" -c user.name=test -c user.email=test@example.com commit -q -m init
+git_q -C "$fixture" commit -q -m init
 
 # The unmodified copy is the baseline the planted violation is measured against, not a claim
 # that it is clean.

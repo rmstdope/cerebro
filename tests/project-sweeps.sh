@@ -27,13 +27,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() { echo "FAIL: $1" >&2; exit 1; }
-pass() { echo "ok - $1"; }
-
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
-
-git_c() { git -c user.name=test -c user.email=test@example.com "$@"; }
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # --- stubs ---------------------------------------------------------------------------------------
 # `df` so the test decides what the disk looks like, and `gh` so `landed_on_main` never asks the
@@ -79,14 +74,10 @@ branch="trunk"
 origin="$work_dir/origin.git"
 git init -q --bare "$origin"
 
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/scripts"
-git init -q -b "$branch" "$consumer"
-for s in consumer-root project-conf default-branch roster \
-         prune-worktrees.sh sweep-claims.sh sweep-stalled.sh; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
-
+consumer="$(consumer_new repo --branch "$branch" --link \
+  consumer-root project-conf default-branch roster \
+  prune-worktrees.sh sweep-claims.sh sweep-stalled.sh)"
+mkdir -p "$consumer/scripts"
 
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
@@ -99,10 +90,10 @@ write_conf() {
 }
 write_conf </dev/null
 
-git_c -C "$consumer" add -A
-git_c -C "$consumer" commit -q -m "init"
-git_c -C "$consumer" remote add origin "$origin"
-git_c -C "$consumer" push -q -u origin "$branch"
+git_q -C "$consumer" add -A
+git_q -C "$consumer" commit -q -m "init"
+git_q -C "$consumer" remote add origin "$origin"
+git_q -C "$consumer" push -q -u origin "$branch"
 
 prune="$consumer/.claude/cerebro/scripts/prune-worktrees.sh"
 
@@ -112,7 +103,7 @@ make_tree() {
   local name="$1" minutes="$2" base="${3:-.cerebro}"; shift 3 2>/dev/null || shift 2
   local tree="$consumer/$base/worktrees/$name" d
   mkdir -p "$(dirname "$tree")"
-  git_c -C "$consumer" worktree add -q "$tree" -b "$name-branch"
+  git_q -C "$consumer" worktree add -q "$tree" -b "$name-branch"
   echo scratch > "$tree/untracked.txt"
   for d in "$@"; do
     mkdir -p "$tree/$d/deps"
@@ -192,7 +183,7 @@ make_tree oracle 5000 .cerebro target
 # the sweep neither reports it nor touches it, and the exception never has to reach it.
 # It needs a branch of its own; two worktrees cannot hold one branch.
 mkdir -p "$consumer/.claude/worktrees"
-git_c -C "$consumer" worktree add -q "$consumer/.claude/worktrees/oracle" -b oracle-legacy-branch
+git_q -C "$consumer" worktree add -q "$consumer/.claude/worktrees/oracle" -b oracle-legacy-branch
 find "$consumer/.claude/worktrees/oracle" -exec touch -h -t "$(stamp_for 5000)" {} +
 
 gb_free 40
@@ -239,8 +230,8 @@ pass "a roster with no verifier grants the exception to nobody and deletes nothi
 # ever left alone for is finished with, whoever merged it and however.
 rm -f "$consumer/.cerebro/roster.conf"
 squashed="$consumer/.cerebro/worktrees/ah-squash"
-git_c -C "$consumer" worktree add -q "$squashed" -b ah-squash-branch
-git_c -C "$squashed" commit -q --allow-empty -m "feat(ah-squash): delivered, then squashed"
+git_q -C "$consumer" worktree add -q "$squashed" -b ah-squash-branch
+git_q -C "$squashed" commit -q --allow-empty -m "feat(ah-squash): delivered, then squashed"
 # `-h`: this worktree has the consumer's tracked symlinks into the real cerebro checkout in
 # it, and `touch` without `-h` follows them — aging the wrong files and leaving these warm.
 find "$squashed" -exec touch -h -t "$(stamp_for 5000)" {} +
@@ -254,8 +245,8 @@ pass "merged_check none reclaims a squash-merged tree via the staleness bound"
 
 # And it is a BOUND, not a free pass: a tree touched moments ago is still kept.
 warm="$consumer/.cerebro/worktrees/ah-warm"
-git_c -C "$consumer" worktree add -q "$warm" -b ah-warm-branch
-git_c -C "$warm" commit -q --allow-empty -m "feat(ah-warm): still being worked on"
+git_q -C "$consumer" worktree add -q "$warm" -b ah-warm-branch
+git_q -C "$warm" commit -q --allow-empty -m "feat(ah-warm): still being worked on"
 out="$(run_prune STALE_MINUTES=1 COLD_TARGET_MINUTES=1440)"
 present "$warm" || fail "merged_check none removed a tree that is still being written to: $out"
 pass "merged_check none keeps a tree that is still warm"
@@ -277,9 +268,9 @@ pass "merged_check <command> lets a consumer answer whether work landed"
 # =================================================================================================
 # 5. Delivery and branches are patterns, and the defaults reproduce today exactly
 # =================================================================================================
-git_c -C "$consumer" commit -q --allow-empty -m "feat(ah-conv): the conventional-commits subject"
-git_c -C "$consumer" commit -q --allow-empty -m "PROJ-9 done: an id that is not a scope at all"
-git_c -C "$consumer" push -q origin "$branch"
+git_q -C "$consumer" commit -q --allow-empty -m "feat(ah-conv): the conventional-commits subject"
+git_q -C "$consumer" commit -q --allow-empty -m "PROJ-9 done: an id that is not a scope at all"
+git_q -C "$consumer" push -q origin "$branch"
 
 cat > "$beads_file" <<'JSON'
 [{"id": "ah-conv", "assignee": "Cyclops", "title": "conventional"},
@@ -304,8 +295,8 @@ out="$(cd "$consumer" && "$claims" --json)"
 pass "commit_ref_pattern substitutes {id} anywhere in the subject, not as a prefix"
 
 # The mockup exclusion is this project's convention, so it is declared rather than built in.
-git_c -C "$consumer" commit -q --allow-empty -m "docs(ah-mock): mockup"
-git_c -C "$consumer" push -q origin "$branch"
+git_q -C "$consumer" commit -q --allow-empty -m "docs(ah-mock): mockup"
+git_q -C "$consumer" push -q origin "$branch"
 cat > "$beads_file" <<'JSON'
 [{"id": "ah-mock", "assignee": "Beast", "title": "mockup only"}]
 JSON
@@ -323,10 +314,10 @@ pass "non_delivery_commit_pattern is declared, defaults to excluding nothing, an
 
 # --- branch_pattern -----------------------------------------------------------------------------
 stalled="$consumer/.claude/cerebro/scripts/sweep-stalled.sh"
-git_c -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/PROJ-7" -b feature/PROJ-7-work
+git_q -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/PROJ-7" -b feature/PROJ-7-work
 # A commit of its own, so "resolved the branch" and "measured from the branch" are distinguishable.
-git_c -C "$consumer/.cerebro/worktrees/PROJ-7" commit -q --allow-empty -m "PROJ-7 work in progress"
-git_c -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-plain" -b ah-plain-work
+git_q -C "$consumer/.cerebro/worktrees/PROJ-7" commit -q --allow-empty -m "PROJ-7 work in progress"
+git_q -C "$consumer" worktree add -q "$consumer/.cerebro/worktrees/ah-plain" -b ah-plain-work
 cat > "$beads_file" <<'JSON'
 [{"id": "PROJ-7", "assignee": "Storm", "title": "namespaced branch"},
  {"id": "ah-plain", "assignee": "Rogue", "title": "today's branch"}]

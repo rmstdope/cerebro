@@ -13,24 +13,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
-
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # --- a throwaway consumer repo: T/repo/.claude/cerebro is where the script actually lives ---
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q "$consumer"
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-ln -s "$repo_root/scripts/consumer-root" "$consumer/.claude/cerebro/scripts/consumer-root"
+consumer="$(consumer_new repo --link consumer-root)"
 
 plain_out="$("$consumer/.claude/cerebro/scripts/consumer-root")"
 [[ "$plain_out" == "$(cd "$consumer" && pwd -P)" ]] \
@@ -91,21 +78,8 @@ pass "refuses when there is no consumer above .claude/cerebro/scripts"
 #
 # A REAL submodule, not a copied directory: the probe answers for a submodule and nothing else, so
 # an arbitrarily-placed non-submodule copy stays unsupported (see the header of scripts/consumer-root).
-cerebro_src="$work_dir/cerebro-src"
-mkdir -p "$cerebro_src/scripts"
-cp "$repo_root/scripts/consumer-root" "$cerebro_src/scripts/consumer-root"
-cp "$repo_root/scripts/roster" "$cerebro_src/scripts/roster"
-git init -q "$cerebro_src"
-git -C "$cerebro_src" -c user.name=test -c user.email=test@example.com add -A
-git -C "$cerebro_src" -c user.name=test -c user.email=test@example.com commit -q -m "cerebro"
-
-alt="$work_dir/alt"
-git init -q "$alt"
-git -C "$alt" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-git -C "$alt" -c user.name=test -c user.email=test@example.com \
-  -c protocol.file.allow=always submodule add -q "$cerebro_src" vendor/cerebro
-
-alt_root="$(cd "$alt" && pwd -P)"
+alt="$(consumer_with_submodule alt vendor/cerebro)"
+alt_root="$alt"
 alt_out="$("$alt/vendor/cerebro/scripts/consumer-root")"
 [[ "$alt_out" == "$alt_root" ]] || fail "alternative mount: expected $alt_root, got $alt_out"
 pass "a submodule mounted at vendor/cerebro resolves its consumer"
@@ -122,15 +96,17 @@ pass "--mount names the physical relative path for a submodule vendored elsewher
 # else. The superproject probe would answer with the GRANDPARENT here - it reports the superproject
 # of whatever repository this checkout belongs to, and a copied mount belongs to the consumer's own
 # repo - so the validated arithmetic has to come first (Copilot, PR #84).
+#
+# Hand-built rather than `consumer_with_submodule`: there the CEREBRO checkout is the submodule, and
+# here the CONSUMER is - the opposite shape, and the only one this case is about (cb-dul).
 grandparent="$work_dir/grandparent"
 git init -q "$grandparent"
-git -C "$grandparent" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
+git_q -C "$grandparent" commit -q --allow-empty -m init
 nested_src="$work_dir/nested-src"
 mkdir -p "$nested_src"
 git init -q "$nested_src"
-git -C "$nested_src" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-git -C "$grandparent" -c user.name=test -c user.email=test@example.com \
-  -c protocol.file.allow=always submodule add -q "$nested_src" child
+git_q -C "$nested_src" commit -q --allow-empty -m init
+git_q -C "$grandparent" -c protocol.file.allow=always submodule add -q "$nested_src" child
 nested="$grandparent/child"
 mkdir -p "$nested/.claude/cerebro/scripts"
 cp "$repo_root/scripts/consumer-root" "$nested/.claude/cerebro/scripts/consumer-root"
@@ -186,8 +162,8 @@ git init -q "$self_consumer"
 cp "$repo_root/scripts/consumer-root" "$self_consumer/scripts/consumer-root"
 chmod +x "$self_consumer/scripts/consumer-root"
 ln -s ".." "$self_consumer/.claude/cerebro"
-git -C "$self_consumer" -c user.name=test -c user.email=test@example.com add -A
-git -C "$self_consumer" -c user.name=test -c user.email=test@example.com commit -q -m "self-consumer"
+git_q -C "$self_consumer" add -A
+git_q -C "$self_consumer" commit -q -m "self-consumer"
 
 self_root="$(cd "$self_consumer" && pwd -P)"
 self_out="$("$self_consumer/.claude/cerebro/scripts/consumer-root")"

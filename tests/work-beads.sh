@@ -14,14 +14,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # A stub `bd` on PATH ahead of the real one. It records its argv to $argv_file and prints whatever
 # $stub_stdout holds, exiting with $stub_exit. Never the real `bd`: that would read this machine's
@@ -32,17 +26,11 @@ stub_dir="$(mktemp -d)"
 # copy of cerebro is mounted at <consumer>/.claude/cerebro. Running it from cerebro's own tree - as
 # this suite used to - exercises a layout it never runs in. So: a throwaway consumer with this
 # submodule copied in, and every case runs the script from there.
-consumer="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$consumer"' EXIT
-
-git init -q "$consumer"
-mkdir -p "$consumer/.claude/cerebro"
-for d in scripts agents skills hooks; do
-  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$consumer/.claude/cerebro/"
-done
-# `consumer-root --shared` resolves with `pwd -P`; on macOS $TMPDIR is under /var, a symlink to
-# /private/var, so the resolved form is what an assertion must compare against.
-consumer_resolved="$(cd "$consumer" && pwd -P)"
+cleanup_add "$stub_dir"
+consumer="$(consumer_new repo --copy)"
+# The library hands back a physical path already - `consumer-root --shared` resolves with `pwd -P`
+# and on macOS $TMPDIR is under /var, a symlink to /private/var.
+consumer_resolved="$consumer"
 
 argv_file="$stub_dir/argv"
 stub_stdout="$stub_dir/stdout"
@@ -155,13 +143,11 @@ pass "prints the excluded types for the panel to check itself against"
 # caller's working directory happened to be in - well-formed JSON about the wrong database, which
 # reads as a quiet day. The stub records its argv, so calling from somewhere else entirely is what
 # makes the assertion mean anything.
-other="$(mktemp -d)"
-git init -q "$other"
+other="$(consumer_new other)"
 set_stub "$empty_json"
 ( cd "$other" && PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/work-beads" --status closed >/dev/null )
 argv_has "-C" || fail "no -C was passed: bd answered about the caller's repository"
 argv_has_pair "-C" "$consumer_resolved" || fail "-C did not name the consumer root"
-rm -rf "$other"
 pass "asks bd about the consumer root, not the caller's repository"
 
 # --- --print-excluded-types needs no repository at all ------------------------------------------

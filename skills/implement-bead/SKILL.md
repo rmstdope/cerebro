@@ -349,9 +349,13 @@ bd unclaim <id>
 bd dolt push
 ```
 
-`verification:failed` is what builds Psylocke's list, and a failed verification with nothing left to
-build wants her second look, not the navigator's queue; adding `human` parks it in front of a person
-who has nothing to decide. It has happened, and the bead had to be moved back by hand.
+`verification:failed` on an **open** bead, with neither `planned` nor `plan:revise`, is what puts it
+on Psylocke's second-look list (`scripts/second-look-beads`) — her ordinary work list is built from
+closed beads and would never show it. So a failed verification with nothing left to build wants that
+second look, not the navigator's queue; adding `human` parks it in front of a person who has nothing
+to decide. It has happened, and the bead had to be moved back by hand. (That list once matched
+`verdict:stale` only, and a bead handed back this way reached no role at all for eleven hours —
+which is why the query now lives in a script with a test under it rather than in prose.)
 
 **Never add `plan:revise` in either case.** Whether the plan was wrong is the navigator's answer to
 Psylocke's question, asked at the verdict, and it is not an implementer's to assert — the label is

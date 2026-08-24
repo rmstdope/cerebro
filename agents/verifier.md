@@ -124,22 +124,34 @@ carry `verification:pending`:
 .claude/cerebro/scripts/work-beads | jq -r '.[]
   | select(([.labels[]? | select(startswith("verification:"))] | length == 0)
            or ([.labels[]?] | index("verification:failed"))
-           or ([.labels[]?] | index("verification:pending"))
-           or ([.labels[]?] | index("verdict:stale")))
+           or ([.labels[]?] | index("verification:pending")))
   | .id'
 ```
 
-**A `verdict:stale` bead is taken first in the pass, before anything else on this list.** It is the
+### And, before it, the stale-verdict list
+
+**A separate query, because this one cannot answer it.** `work-beads` takes `--status closed` by
+default and every arm above describes a closed bead, but a `verdict:stale` bead is **`open`** — so
+adding an arm to the query above would be dead code, matching an input that can never contain it.
+That is the exact failure this project has already paid for once: a bead that reached no role at all
+because the list it was meant to arrive on was built from closed beads.
+
+```bash
+.claude/cerebro/scripts/work-beads --status open | jq -r '.[]
+  | select([.labels[]?] | index("verdict:stale"))
+  | .id'
+```
+
+**Run it first in the pass, and take what it returns before anything on the list above.** It is the
 cheapest kind of verification there is — re-read your own finding against current main and either
 confirm it or clear it — and every hour it waits is an hour a P0 sits doing nothing: the label takes
 the bead out of both the implementer and the planner queues, so while it carries one **nobody else
 can move it at all**.
 
-Note the shape it arrives in. `verdict:stale` is set by the fleet view's verdict sweep
-(`sweep-verdicts.sh`) when main has moved past the commit a failed verdict was formed
-against, and a bead it flags is **`open`**, not closed — so without this arm it would be invisible
-to you, which is strictly worse than not flagging it at all. It is the one arm of this query that
-selects an open bead.
+`verdict:stale` is set by the fleet view's verdict sweep (`sweep-verdicts.sh`) when main has moved
+past the commit a failed verdict was formed against. It never fires on its own — the navigator
+confirms it — and it decides nothing about whether the finding still holds, which is precisely what
+it is handing back to you.
 
 What the second look decides, and how you record it:
 

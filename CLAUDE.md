@@ -204,19 +204,21 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **The state file is the contract, for every agent.** `.cerebro/state/<name>.state.json`
   carries `idle`/`working`/`asking`/`waiting`/`done`; every agent in the fleet writes it, and
   `cerebro.el` acts on it. Since ah-u3i it also carries `phase` (an implementer's `build`/`gate`/`review`/`ci`/`rebase`/
-  `merge`, or a role word for the interactive agents since ah-2n3.2, or null) and `phase_since` —
+  `merge`, or a role word for the interactive agents since ah-2n3.2, or null) and `phase_since`; `standby` is
+  the one state no file ever carries, being derived from what this Emacs armed (cb-5yr) —
   supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
   phase vocabulary can only mislabel a column, never break the restart loop. An unrecognised `state`
   string shows its raw word in yellow rather than reading as `idle`, which used to mean "fine" when
   it meant "an error". **`done` is an implementer's state alone** — `scripts/agent-state` refuses it
   from an interactive name, and a live file that carries it anyway maps to `'unknown` rather than
   being handed to the restart/retire logic as a finished bead. **`waiting` is the mirror image**
-  (ah-hiib.3): an interactive role's state alone, refused from an implementer, carrying a `wake_at`
-  and meaning *this pass is over and my turn has ended*. It is what removed the sleep loops from
-  every role document — the fleet view owns the cadence (`cerebro-wake-intervals`) and wakes a
-  waiting role by typing into its session, safe precisely because a waiting role is at its prompt by
-  construction. It is also the one state a stop flag lands cleanly on for an interactive role:
-  nothing is in flight, so it retires at once. **`asking` has a hook behind it**:
+  (ah-hiib.3, cb-5yr): an interactive role's state alone, refused from an implementer, meaning
+  *this pass is over and my turn has ended*. The fleet view ends that session half a minute later
+  (`cerebro-end-grace`), keeps its buffer as the record of the pass, and starts a fresh one on the
+  role's own trigger (`cerebro--trigger`) — the poke that used to type into a waiting session is
+  gone, so a session's context is one pass deep the way an implementer's is one bead deep.
+  `cerebro-wake-intervals` survives it as the minimum gap between two *starts* of one role. A stop
+  flag on a waiting role ends it and disarms it. **`asking` has a hook behind it**:
   `hooks/question-state.settings.json` + `scripts/agent-asking`, wired into the whole fleet by the
   two lines `scripts/launch` gives every session (`agent-hooks-env`, `--settings`), flip the file
   for the lifetime of a question tool call, because telling an agent three ways did not make it so.

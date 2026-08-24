@@ -27,6 +27,25 @@
 
 set -uo pipefail
 
+# `lint [root]' runs every check below. `lint --plan <file>' runs one check on a plan a planner is
+# about to ship: does it quote a bead id into prose an agent reads? It needs no root - the plan is
+# the input - so it is parsed first and the root is forced to this repository.
+if [[ "${1:-}" == "--plan" ]]; then
+  plan="${2:-}"
+  if [[ -z "$plan" || $# -ne 2 ]]; then
+    echo "usage: scripts/lint --plan <file>" >&2
+    exit 2
+  fi
+  if [[ ! -r "$plan" ]]; then
+    echo "lint: cannot read $plan" >&2
+    exit 2
+  fi
+  # Resolve it here, in the caller's directory, because the checks below `cd' into the root: the
+  # documented invocation passes a relative path from wherever the planner is sitting, and a
+  # relative path re-opened from the root would read no plan at all and report it clean.
+  plan="$(cd "$(dirname "$plan")" && pwd)/$(basename "$plan")"
+  set -- ""
+fi
 root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 if [[ ! -d "$root" ]]; then
   echo "lint: not a directory: $root" >&2
@@ -60,9 +79,62 @@ prose_files() {
   } | sort
 }
 
+# A bead id from either board this repository's history is written in: the project cerebro was
+# extracted from used `ah-', cerebro's own board uses `cb-'. Written once and used by check 1, by
+# the guard on the provenance file, and by `--plan', so the three cannot disagree about what an id
+# looks like. The boundaries are spelled as character classes rather than `\b': the same string is
+# handed to awk, where GNU awk reads `\b' as a backspace and BSD awk does not know it at all.
+bead_id_re='(^|[^A-Za-z0-9_-])(ah|cb)-[a-z0-9]{3,}([.][0-9]+)*([^A-Za-z0-9_-]|$)'
+
+# --- the plan check: a bead id quoted into prose an agent reads ---
+#
+# Three plans in a row told an implementer to write an id into agents/** or skills/**, and each
+# cost a cycle to find out. The rule lives in check 1 below, which runs on the tree AFTER the prose
+# is written; this runs the same rule on the plan BEFORE it is shipped, where the mistake is made.
+# A line is "destined for" the last repository path the plan named outside a block - a heading like
+# `### agents/verifier.md', or a sentence naming the file - and only fenced blocks and blockquotes
+# are read: a plan's own Context may, and should, cite the beads it stands on.
+if [[ -n "${plan:-}" ]]; then
+  hits="$(awk -v re="$bead_id_re" '
+    function is_prose(p) {
+      return p ~ /^(\.claude\/cerebro\/)?(agents\/[A-Za-z0-9_-]+\.md|skills\/[A-Za-z0-9_-]+\/SKILL\.md|docs\/agent-workflow\.md)$/ \
+             && p !~ /skills\/release-notes\//
+    }
+    function check(l) { if (l ~ re) printf "%s:%d: %s\n", FILENAME, NR, l }
+    BEGIN { dest = ""; fence = 0 }
+    {
+      line = $0
+      # A fence opens and closes on a line beginning with three backticks. Inside one, nothing
+      # moves the destination.
+      if (line ~ /^[[:space:]]*```/) {
+        if (fence) { fence = 0 } else { fence = 1; if (is_prose(dest)) check(line) }
+        next
+      }
+      if (fence) { if (is_prose(dest)) check(line); next }
+      # A blockquote line is quoted prose too.
+      if (line ~ /^[[:space:]]*>/) { if (is_prose(dest)) check(line); next }
+      # Outside blocks: the last path-shaped token on the line becomes the destination.
+      n = split(line, w, /[[:space:]`(),;]+/)
+      for (i = 1; i <= n; i++) {
+        t = w[i]
+        sub(/:[0-9-]+$/, "", t)
+        if (t ~ /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)+$/) dest = t
+      }
+    }
+  ' "$plan")"
+  if [[ -n "$hits" ]]; then
+    advisory "the plan quotes a bead id into prose an agent reads - move the provenance to docs/decisions.md" "$hits"
+    echo "lint: a plan that ships this puts an id where a consumer cannot resolve it; fix the plan, not the lint"
+  else
+    ok "the plan quotes no bead id into prose an agent reads"
+    echo "lint: plan clean"
+  fi
+  exit $status
+fi
+
 # --- 1. no bead id survives in prose an agent is given, and the provenance lives elsewhere ---
 fired=0
-hits="$(prose_files | xargs grep -noE '\bah-[a-z0-9]{3,}(\.[0-9]+)*\b' 2>/dev/null)"
+hits="$(prose_files | xargs grep -nE "$bead_id_re" 2>/dev/null)"
 if [[ -n "$hits" ]]; then
   advisory "bead ids remain in agent prose - a consumer cannot resolve these" "$hits"
   fired=1
@@ -70,7 +142,7 @@ fi
 if [[ ! -f docs/decisions.md ]]; then
   advisory "docs/decisions.md is missing - the ids moved but the evidence went with them"
   fired=1
-elif ! grep -qE '\bah-[a-z0-9]{3,}' docs/decisions.md; then
+elif ! grep -qE "$bead_id_re" docs/decisions.md; then
   advisory "docs/decisions.md records no bead id, so nothing was preserved"
   fired=1
 fi
@@ -385,6 +457,16 @@ if grep -q 'bash scripts/ci-needed' "$ci" 2>/dev/null; then
     || { advisory "$ci runs scripts/ci-needed without 'set +e', so its exit 1 fails the step"; fired=1; }
 fi
 ((fired)) || ok "CI's skip list names nothing a suite opens, and its exit 1 is an answer not a failure"
+
+# --- 14. the planning path runs the plan check ---
+#
+# `--plan' above is only a prevention if the planner runs it. The step is one line in the skill's
+# ship-the-plan checklist; if that line goes, the check goes silent and the next plan ships an id
+# into agent prose the way three plans in a row already have.
+fired=0
+grep -q -- 'lint --plan' skills/plan-bead/SKILL.md 2>/dev/null \
+  || { advisory "skills/plan-bead/SKILL.md never runs scripts/lint --plan before shipping a plan"; fired=1; }
+((fired)) || ok "plan-bead runs the plan check before a plan is shipped"
 
 if [[ $status -eq 0 ]]; then
   echo "lint: clean"

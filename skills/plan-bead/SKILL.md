@@ -688,6 +688,7 @@ bd list --exclude-label planned --exclude-label human \
 bd update <id> --add-label planning:<your-name>
 bd dolt push                                       # publish it at once
 # ... research, decide, discuss, write ...
+.claude/cerebro/scripts/lint --plan plan.md            # no bead id quoted into agent prose (see below)
 bd update <id> --design-file plan.md --add-label planned --remove-label planning:<your-name>
 bd dolt push                                       # or the release is invisible elsewhere
 ```
@@ -1150,6 +1151,21 @@ is theirs. What must not survive this pass:
 - a named file, function or type you have not verified;
 - an acceptance criterion that cannot be checked by running something or by looking at something
   specific.
+
+**Then run the one check that is mechanical, and do not ship on a red one:**
+
+```bash
+.claude/cerebro/scripts/lint --plan plan.md
+```
+
+It fires when a fenced block or a blockquote destined for a file an agent reads — `agents/**`,
+`skills/**`, `docs/agent-workflow.md`, named by the last path before it — quotes a bead id. A
+consumer cannot resolve an id, so those files carry the rule and its cost and never the bead; the
+provenance belongs in cerebro's own record instead, and the check names the file when it fires.
+Three plans in a row told an implementer to write one in,
+and three implementers paid a cycle each to find out. Your *Context* may cite beads freely — the
+check reads blocks and quotes only — so a hit means: rewrite that block without the id, and say the
+cost instead of naming the bead.
 
 **A plan that reads well and specifies nothing is the failure mode**, and it is a comfortable one to
 produce because it is much shorter. If this pass finds nothing at all, you have almost certainly

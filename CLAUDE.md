@@ -293,7 +293,11 @@ when it does not — a session started by hand, outside this fleet, has no file 
 
 **"A live pid" means the agent's own session, not merely an existing pid.**
 `cerebro--session-alive-p` reads the named pid's command line and requires `--name <Name>` in it,
-which every session has because `scripts/launch` passes it. A bare `process-attributes` check was
+which every session has because `scripts/launch` passes it, **and a `--settings` path under this
+consumer's root** — the third discriminator (cb-lzi), because a name is unique inside one consumer
+and not on the machine. The rule is stated once, in `cerebro--session-args-p`; the state-file path
+(`cerebro--session-alive-p`) and the process-scan path (`cerebro--consumer-args` then
+`cerebro--name-in-args-p`) are both built from it. A bare `process-attributes` check was
 what let a `done` file that outlived its session by ten hours light up green again once the OS
 recycled its pid onto an unrelated daemon: pids are reused, so a number alone is not an identity.
 The same check guards the claims sweep (`cerebro--live-implementer-names`), where a recycled pid
@@ -305,6 +309,8 @@ what `skills/plan-bead/SKILL.md` calls in both places it needs liveness: sizing 
 running implementers, and deciding whether a `planning:` label is still held. Anything in bash that
 needs to know whether an agent is up calls this; a bare `kill -0` there is the pre-ah-bqi shape, and
 it makes a dead planner look alive, which strands the very label the reclaim loop exists to free.
+It is the bash copy of `cerebro--session-args-p` — pid, name and root — and `tests/agent-alive.sh`
+mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd5962`, `9420ff2`).
 
 ## Gotchas
 

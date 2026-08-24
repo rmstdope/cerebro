@@ -30,7 +30,8 @@
 ;;     That scan is machine-wide and a name is unique only inside one
 ;;     consumer, so it is narrowed to this repository's own sessions first
 ;;     (`cerebro--consumer-args') - otherwise a second checkout's Xavier
-;;     shows as this one's.
+;;     shows as this one's.  The rule - name AND root, on one command line -
+;;     is `cerebro--session-args-p', and both paths are built from it (cb-lzi).
 
 ;;; Code:
 
@@ -132,6 +133,35 @@ whatever the frame has left (was a constant of 20 for eighteen agents)."
   (let ((needle (concat "--name[ \t]+" (regexp-quote name) "\\_>")))
     (cl-some (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
 
+(defun cerebro--root-in-args-p (root args)
+  "Non-nil if some string in ARGS carries a path under ROOT, as a whole component.
+
+ROOT may carry a trailing slash (`cerebro--repo-root\=' is a
+`locate-dominating-file\=' result, which does), and /repos/cerebro is not
+/repos/cerebro-hud: the needle is ROOT with its slash normalised and one
+appended, so a sibling checkout named for the same prefix is not this
+consumer."
+  (let ((needle (concat (regexp-quote (directory-file-name root)) "/")))
+    (cl-some (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
+
+(defun cerebro--session-args-p (args name root)
+  "Non-nil if the one command line ARGS is NAME's session of the fleet at ROOT.
+
+THE rule, stated once (cb-lzi): a whole-word `--name NAME\='
+\(`cerebro--name-in-args-p\=') AND a path under ROOT
+\(`cerebro--root-in-args-p\='), which every session `scripts/launch\=' starts
+carries in `--settings <root>/.../question-state.settings.json\='.  The
+state-file path asks it of one pid's own args (`cerebro--session-alive-p\=');
+the process-scan path asks it of every process, as `cerebro--consumer-args\='
+followed by `cerebro--name-in-args-p\=' - the same two tests in the other
+order, which `cerebro-test/scan-path-and-pid-path-apply-one-rule\=' pins.
+`scripts/agent-alive\=' is the bash copy of this function and is held to it by
+`tests/agent-alive.sh\='."
+  (and (stringp args)
+       (cerebro--name-in-args-p name (list args))
+       (cerebro--root-in-args-p root (list args))
+       t))
+
 (defun cerebro--consumer-args (args root)
   "Those of ARGS - one string per system process - that belong to ROOT\='s fleet.
 
@@ -154,8 +184,7 @@ A session that names no root at all - a bare `claude --name Xavier\=' typed
 by hand, bypassing the launcher - is dropped rather than credited to this
 fleet.  That is the deliberate half of the trade: the scan can no longer
 prove such a session is ours, and claiming it is, is the defect being fixed."
-  (let ((needle (concat (regexp-quote (directory-file-name root)) "/")))
-    (seq-filter (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
+  (seq-filter (lambda (a) (cerebro--root-in-args-p root (list a))) args))
 
 (defun cerebro--derive-from-state (name role kind parsed owned-p)
   "Build one `cerebro-agent' for NAME from a live, parsed state file PARSED.
@@ -805,7 +834,7 @@ session, which here would suppress a real finding."
                            (pid (and parsed (alist-get 'pid parsed)))
                            (state (and parsed (alist-get 'state parsed)))
                            (bead (and parsed (alist-get 'bead parsed))))
-                      (and pid (cerebro--session-alive-p pid name)
+                      (and pid (cerebro--session-alive-p pid name repo-root)
                            (list name (and state (intern state)) bead))))
                   roster))))
 
@@ -1675,8 +1704,8 @@ writing the same file."
                         (cerebro--state-file-path repo-root name))))
           roster))
 
-(defun cerebro--session-alive-p (pid name)
-  "Non-nil if PID is a live process and is NAME's own session.
+(defun cerebro--session-alive-p (pid name root)
+  "Non-nil if PID is a live process and is NAME's own session of the fleet at ROOT.
 
 Both halves matter. \"Does this pid exist\" was the whole test until a
 `done' state file outlived its session by ten hours and the operating
@@ -1689,9 +1718,18 @@ that this pid is still the one the file was written about.
 
 Reads only the named pid's args, not the whole process list - this is asked
 once per agent on every refresh, where `cerebro--system-args' is a scan the
-fleet view deliberately caches."
+fleet view deliberately caches.
+
+ROOT is the third discriminator (cb-lzi): a recycled pid can land on a
+same-named session of ANOTHER consumer - every consumer on the built-in
+roster has a Xavier - and name plus pid alone would call that one ours.
+Required, not optional: a default would silently be the two-discriminator
+rule this bead removes.
+
+The rule itself is `cerebro--session-args-p\='; this function only fetches
+the args of one pid."
   (let ((args (and pid (alist-get 'args (process-attributes pid)))))
-    (and args (cerebro--name-in-args-p name (list args)) t)))
+    (and args (cerebro--session-args-p args name root))))
 
 (defun cerebro--system-args ()
   "The command-line args string of every system process, as a list.
@@ -2850,7 +2888,9 @@ Does nothing when BUFFER is dead."
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states
-                                          #'cerebro--session-alive-p args owned)))
+                                          (lambda (pid name)
+                                            (cerebro--session-alive-p pid name repo-root))
+                                          args owned)))
     (setq cerebro--agents agents)
     ;; The table is sized to what is in front of it, every revert: a roster
     ;; gains an agent, a bead id gets deeper, and the columns follow (ah-qled.9).

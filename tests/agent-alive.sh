@@ -82,7 +82,12 @@ pass "dead-for-a-live-pid-that-is-not-that-session"
 tmp="$(new_fixture)"
 printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-session"
 chmod +x "$tmp/fake-session"
-bash "$tmp/fake-session" --name Cyclops &
+# Every session `scripts/launch' starts carries `--settings <root>/.../hooks/...' (cb-lzi), and
+# that path is the proof of which consumer's fleet it belongs to. `scripts/' already exists;
+# `hooks/' must, because agent-alive resolves the directory physically before comparing.
+mkdir -p "$tmp/.claude/cerebro/hooks"
+bash "$tmp/fake-session" --name Cyclops \
+  --settings "$tmp/.claude/cerebro/scripts/../hooks/question-state.settings.json" &
 fake_pid=$!
 # The `sleep' inside the script is a child of that bash, not the bash itself (the implicit-exec
 # optimisation applies to `-c', not to a script file - which is what keeps `--name' in the args),
@@ -117,7 +122,8 @@ pass "dead-for-a-live-pid-whose-name-is-only-a-prefix"
 # it.
 printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-suffixed"
 chmod +x "$tmp/fake-suffixed"
-bash "$tmp/fake-suffixed" --name "$suffixed_name" &
+bash "$tmp/fake-suffixed" --name "$suffixed_name" \
+  --settings "$tmp/.claude/cerebro/scripts/../hooks/question-state.settings.json" &
 suffixed_pid=$!
 strays+=("$suffixed_pid")
 for child in $(pgrep -P "$suffixed_pid" 2>/dev/null || true); do strays+=("$child"); done
@@ -126,6 +132,47 @@ if run_alive "$tmp" "$prefix_name"; then
   fail "dead-for-a-live-pid-with-the-name-as-a-prefix-of-its-own: matched --name $suffixed_name as $prefix_name"
 fi
 pass "dead-for-a-live-pid-with-the-name-as-a-prefix-of-its-own"
+
+# --- dead-for-the-same-name-in-another-consumer ---
+# The cross product the two earlier fixes each left open (cb-lzi): a live pid whose command line
+# names this agent - but as another checkout's fleet. Every consumer on the built-in roster has a
+# Cyclops; pid plus name alone would call this one ours and let a planner free a label it holds.
+other="$(new_fixture)"
+mkdir -p "$other/.claude/cerebro/hooks"
+printf '#!/usr/bin/env bash\nsleep 30\n' > "$other/fake-session"
+chmod +x "$other/fake-session"
+bash "$other/fake-session" --name Cyclops \
+  --settings "$other/.claude/cerebro/scripts/../hooks/question-state.settings.json" &
+other_pid=$!
+strays+=("$other_pid")
+for child in $(pgrep -P "$other_pid" 2>/dev/null || true); do strays+=("$child"); done
+write_state "$tmp" Cyclops "{\"state\":\"working\",\"pid\":$other_pid}"
+if run_alive "$tmp" Cyclops; then
+  fail "dead-for-the-same-name-in-another-consumer: another checkout's Cyclops read as ours"
+fi
+pass "dead-for-the-same-name-in-another-consumer"
+
+# And alive when asked from the consumer it does belong to - the root is a discriminator, not a
+# second way of saying dead.
+write_state "$other" Cyclops "{\"state\":\"working\",\"pid\":$other_pid}"
+run_alive "$other" Cyclops \
+  || fail "alive-in-its-own-consumer: its own fleet's check reported it dead"
+pass "alive-in-its-own-consumer"
+
+# --- dead-for-a-session-that-names-no-root ---
+# A hand-typed `claude --name Cyclops' with no --settings: nothing can prove whose fleet it is,
+# and reading it as ours is the defect. The same trade cerebro--consumer-args made (9420ff2).
+printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-rootless"
+chmod +x "$tmp/fake-rootless"
+bash "$tmp/fake-rootless" --name Cyclops &
+rootless_pid=$!
+strays+=("$rootless_pid")
+for child in $(pgrep -P "$rootless_pid" 2>/dev/null || true); do strays+=("$child"); done
+write_state "$tmp" Cyclops "{\"state\":\"working\",\"pid\":$rootless_pid}"
+if run_alive "$tmp" Cyclops; then
+  fail "dead-for-a-session-that-names-no-root: a session naming no root read as ours"
+fi
+pass "dead-for-a-session-that-names-no-root"
 
 # --- dead-for-a-pid-that-no-longer-exists ---
 tmp="$(new_fixture)"

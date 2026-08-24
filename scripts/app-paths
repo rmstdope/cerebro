@@ -5,7 +5,7 @@
 #     app-paths                        ->  ^(packages|crates|apps)/
 #     app-paths --classify <path>...   ->  application | invisible
 #
-# The pattern is the `app_paths' key in <consumer>/.claude/cerebro-project.conf: an extended regular
+# The pattern is the `app_paths' key in <consumer>/.cerebro/project.conf: an extended regular
 # expression, anchored by the consumer as it sees fit, matched against each changed path as `git
 # show --stat' prints it (repository-relative, no leading `./').
 #
@@ -51,14 +51,14 @@ fi
 
 pattern="$("$here/project-conf" app_paths 2>/dev/null)" || pattern=""
 if [[ -z "$pattern" ]]; then
-  echo "app-paths: no app_paths in .claude/cerebro-project.conf - cannot classify anything as" \
+  echo "app-paths: no app_paths in .cerebro/project.conf - cannot classify anything as" \
        "application-touching or invisible. Declare app_paths (an extended regex over" \
        "repository-relative paths) and try again." >&2
   exit 3
 fi
 
 if [[ "$mode" == "pattern" ]]; then
-  echo "app-paths: cerebro-project.conf -> $pattern" >&2
+  echo "app-paths: project.conf -> $pattern" >&2
   printf '%s\n' "$pattern"
   exit 0
 fi

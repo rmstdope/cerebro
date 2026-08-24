@@ -498,7 +498,7 @@ what it names:
 .claude/cerebro/scripts/project-conf gate_full     # everything the project has
 ```
 
-A project declares those in its tracked `.claude/cerebro-project.conf`; where it has not, the reader
+A project declares those in its tracked `.cerebro/project.conf`; where it has not, the reader
 may detect one and will say on stderr that it did — read that line, because a gate the harness chose
 is not one the project vouched for. If neither answers, you should never have been started: the
 launch preflight refuses an implementer with no fast gate.
@@ -772,7 +772,7 @@ into it.
   holds existing selectors exact; that catches a loose selector, never a new name colliding with an
   exact one, so it passes while the suite goes red.
 
-Read `<consumer>/.claude/cerebro-traps.md` if it exists — the traps this project has already paid
+Read `<consumer>/.cerebro/traps.md` if it exists — the traps this project has already paid
 for. It is a list of facts, not rules: if the bead touches one, say so and say what to do about it.
 Absent is an ordinary state, not an error — a project with no traps file has paid for nothing yet,
 which is where every project starts.

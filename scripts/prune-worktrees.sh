@@ -65,7 +65,7 @@
 # ## Reclaiming a kept tree's build directory
 #
 # **Which directories those are is the consumer's to declare, and the default is NONE** (ah-qled.4).
-# `reclaim_dirs` in `.claude/cerebro-project.conf` names them — `reclaim_dirs target node_modules`.
+# `reclaim_dirs` in `.cerebro/project.conf` names them — `reclaim_dirs target node_modules`.
 # Undeclared means nothing here ever deletes anything, at any age and under any pressure. That
 # default is deliberate and is the safety property of this script: `target` as a built-in meant a
 # Node consumer's `node_modules/` was never reclaimed, a Python consumer's `.venv/` never, and a
@@ -86,7 +86,7 @@
 # disk is roomy nothing is reclaimed and nobody pays that rebuild for nothing.
 #
 # The floor is **not a second number**. It is `disk_floor_gb` from the consumer's own
-# `.claude/cerebro-project.conf`, which already defines "not enough room to build" and is what
+# `.cerebro/project.conf`, which already defines "not enough room to build" and is what
 # `disk-preflight` refuses to start a bead below; a threshold of this script's own would drift from
 # it and the two would disagree at the worst possible moment. A consumer that declares no floor
 # gets no pressure path at all — only the outer bound — rather than a number this script made up.

@@ -6,7 +6,7 @@
 # Three answers, in this order, because CONFIGURED MUST BEAT DETECTED: a consumer that has both a
 # `main` and does its work on `develop` is exactly the case `origin/HEAD` gets wrong.
 #
-#   1. the `default_branch` key in <consumer>/.claude/cerebro-project.conf
+#   1. the `default_branch` key in <consumer>/.cerebro/project.conf
 #   2. `git symbolic-ref --short refs/remotes/origin/HEAD`, minus its `origin/` prefix
 #   3. `main`
 #
@@ -68,7 +68,8 @@ resolve() { "$1/.claude/cerebro/scripts/default-branch" 2>/dev/null; }
 # THE precedence assertion: this consumer's origin/HEAD really does say `main`, and the answer must
 # still be `develop`.
 c="$(make_consumer configured main)"
-echo "default_branch develop" > "$c/.claude/cerebro-project.conf"
+mkdir -p "$c/.cerebro"
+echo "default_branch develop" > "$c/.cerebro/project.conf"
 out="$(resolve "$c")"
 [[ "$out" == "develop" ]] || fail "configured: expected 'develop', got '$out'"
 pass "the default_branch key beats a resolvable origin/HEAD"

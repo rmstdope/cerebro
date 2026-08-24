@@ -14,7 +14,7 @@
 #
 #   3. No consumer's scar tissue is carried in cerebro's prompts. A trap naming a browser engine,
 #      a job or a path a consumer need not have belongs in that consumer's own
-#      .claude/cerebro-traps.md, which both traps sections point at.
+#      .cerebro/traps.md, which both traps sections point at.
 #
 # No framework: plain bash, set -euo pipefail, exit non-zero on the first failed assertion. Run
 # from the submodule root:
@@ -68,14 +68,14 @@ pass "every Four Eye Principle reference names the consumer's root CLAUDE.md"
 
 if grep -rniE "webkit|vite preview|service worker|packages/shared" skills/ agents/ >/dev/null 2>&1; then
   grep -rniE "webkit|vite preview|service worker|packages/shared" skills/ agents/ >&2
-  fail "one project's traps are being carried in cerebro's prompts; they belong in that project's .claude/cerebro-traps.md"
+  fail "one project's traps are being carried in cerebro's prompts; they belong in that project's .cerebro/traps.md"
 fi
 
 pass "no consumer-specific trap remains in skills/ or agents/"
 
 for f in skills/implement-bead/SKILL.md skills/plan-bead/SKILL.md; do
-  grep -q "cerebro-traps.md" "$f" \
-    || fail "$f never tells the reader to read the consumer's .claude/cerebro-traps.md"
+  grep -q "traps.md" "$f" \
+    || fail "$f never tells the reader to read the consumer's .cerebro/traps.md"
 done
 
 pass "both traps sections read the consumer's own traps file"
@@ -91,7 +91,7 @@ pass "implement-bead keeps every universal trap"
 
 # --- 5. Forge proposes a traps entry and never writes one ---
 
-grep -q "cerebro-traps.md" agents/architect.md \
+grep -q "traps.md" agents/architect.md \
   || fail "agents/architect.md never mentions the consumer's traps file"
 
 grep -q "138" agents/architect.md \
@@ -125,7 +125,7 @@ pass "the Four Eye Principle section says when an agent may merge, not just that
 
 # The declarations are files, not prose, and the section has to name the ones this project writes.
 facts="$(awk '/^## Where the project declares its facts$/{f=1;next} /^## /{f=0} f' CLAUDE.md)"
-for f in "cerebro-project.conf" "cerebro-roster" "cerebro-traps.md"; do
+for f in "project.conf" "roster.conf" "traps.md"; do
   echo "$facts" | grep -q "$f" || fail "the facts section never names .claude/$f"
 done
 pass "the facts section names each file the fleet reads rather than guessing at"

@@ -54,7 +54,7 @@ minutes_ago() {
 # case below now runs against a `trunk` consumer, so all of them pin the resolution as well as
 # whatever they were pinning before.
 #
-# It is declared in cerebro-project.conf rather than left to detection because this fixture builds
+# It is declared in project.conf rather than left to detection because this fixture builds
 # its remote with `git remote add`, which leaves refs/remotes/origin/HEAD unset - ordinary, and
 # exactly the case the resolver falls through on.
 branch="trunk"
@@ -68,7 +68,8 @@ git init -q -b "$branch" "$consumer"
 for s in consumer-root project-conf default-branch sweep-stalled.sh; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
-printf 'default_branch %s\n' "$branch" > "$consumer/.claude/cerebro-project.conf"
+mkdir -p "$consumer/.cerebro"
+printf 'default_branch %s\n' "$branch" > "$consumer/.cerebro/project.conf"
 old_date="$(minutes_ago 300)"
 GIT_AUTHOR_DATE="$old_date" GIT_COMMITTER_DATE="$old_date" \
   git_c -C "$consumer" commit -q --allow-empty -m "init"

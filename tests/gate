@@ -2,7 +2,7 @@
 #
 # This project's gate: what an implementer runs before it opens a pull request, and what the pull
 # request is then judged by. The two are the same command here (`gate_fast' and `gate_full' in
-# .claude/cerebro-project.conf both name this file) because the whole thing takes under a minute -
+# .cerebro/project.conf both name this file) because the whole thing takes under a minute -
 # a separate fast gate would only be worth having if the full one were slow.
 #
 # It runs exactly what .github/workflows/ci.yml runs, and tests/project-facts.sh fails when the two

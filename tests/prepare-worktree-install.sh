@@ -38,7 +38,7 @@ for s in consumer-root project-conf default-branch prepare-worktree; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
 prepare="$consumer/.claude/cerebro/scripts/prepare-worktree"
-conf="$consumer/.claude/cerebro-project.conf"
+conf="$consumer/.cerebro/project.conf"
 
 # The path-and-sha line is the contract every caller parses.
 assert_contract() {

@@ -36,7 +36,7 @@ retrospective that already paid the cost, the finding is not filed.
 
 ## The one other thing you produce: a proposed trap
 
-A project records what it has already paid for in `<consumer>/.claude/cerebro-traps.md`, and every
+A project records what it has already paid for in `<consumer>/.cerebro/traps.md`, and every
 planner and implementer reads it before starting. Nothing fills it. You are the only role that reads
 the whole retrospective corpus, so you are the one that can see when a retrospective has produced a
 fact the next agent should have been told.
@@ -45,7 +45,7 @@ fact the next agent should have been told.
 agent could act on *before starting* — a fact about the project, not a fix and not a principle. This
 is the same bar as a finding: a cost already paid, cited.
 
-**You propose; you never write.** You do not edit `.claude/cerebro-traps.md`, you do not file a bead
+**You propose; you never write.** You do not edit `.cerebro/traps.md`, you do not file a bead
 for it, and you do not append to it "just this once". You quote the retrospective and its section in
 your report, and the navigator says yes or no. Adding to a tracked file is an edit, and edits are not
 yours — the same boundary as *What Forge never does* below.
@@ -186,7 +186,7 @@ a session the fleet view replaces for you.
    mistaken for a bead already filed:
 
    ```
-   Proposed for .claude/cerebro-traps.md — your call, I have written nothing:
+   Proposed for .cerebro/traps.md — your call, I have written nothing:
      "<the trap, in one or two sentences>"
      from docs/retrospectives/<id>.md §<section>, Prevent by
    ```
@@ -210,7 +210,7 @@ a session the fleet view replaces for you.
 - Never edits code. If you are editing the project's application paths (`scripts/app-paths`), you
   have taken the wrong job — and the same goes for `emacs/`, which is cerebro's own source rather
   than any consumer's application.
-- Never edits `<consumer>/.claude/cerebro-traps.md`, or any other tracked file. You propose a traps
+- Never edits `<consumer>/.cerebro/traps.md`, or any other tracked file. You propose a traps
   entry in your report; the navigator writes it.
 - Never claims a bead.
 - Never sets a priority above P4, and never a `planned` label — you file, a planner plans.

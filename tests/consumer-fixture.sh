@@ -70,7 +70,7 @@ chmod +x "$stub_dir/bd"
 #
 # no package.json / no lockfile  -> prepare-worktree must take its no-install branch and say so
 # branch `trunk`                 -> every hardcoded `origin/main`
-# its own cerebro-project.conf   -> anything reading this project's values
+# its own project.conf   -> anything reading this project's values
 # its own roster, one role       -> the roster table, and agent-state's phase words
 #   cerebro does not ship
 branch="trunk"
@@ -93,7 +93,8 @@ for d in scripts agents skills hooks; do
 done
 scripts_at="$consumer/.claude/cerebro/scripts"
 
-cat > "$consumer/.claude/cerebro-project.conf" <<'CONF'
+mkdir -p "$consumer/.cerebro"
+cat > "$consumer/.cerebro/project.conf" <<'CONF'
 project_name   Ledger
 default_branch trunk
 app_paths      ^src/
@@ -110,7 +111,7 @@ CONF
 # Names that are not cerebro's, and `archivist` - a role cerebro does not ship. launch-preflight
 # accepts such a role only when the CONSUMER supplies the agent file (see its three-case check), so
 # the fixture supplies one; that is the supported shape, not a workaround.
-cat > "$consumer/.claude/cerebro-roster" <<'ROSTER'
+cat > "$consumer/.cerebro/roster.conf" <<'ROSTER'
 # the Ledger fleet
 
 Ada        planner
@@ -139,7 +140,7 @@ run_at() { PATH="$stub_dir:$PATH" bash "$scripts_at/$@"; }
 # The names this consumer declared, which is what "no name from cerebro's own table" is asserted
 # against - listing cerebro's names here would make this fixture name the very fleet it exists to
 # stop assuming.
-declared_names="$(sed -n 's/^\([A-Za-z][A-Za-z]*\)[[:space:]].*/\1/p' "$consumer/.claude/cerebro-roster")"
+declared_names="$(sed -n 's/^\([A-Za-z][A-Za-z]*\)[[:space:]].*/\1/p' "$consumer/.cerebro/roster.conf")"
 
 # --- the consumer is found, and its branch is its own ---------------------------------------------
 
@@ -335,12 +336,13 @@ run_alt() { PATH="$stub_dir:$PATH" bash "$alt_scripts/$@"; }
 pass "consumer-root resolves a consumer that vendors cerebro at vendor/cerebro"
 
 mkdir -p "$alt/.claude"
-printf 'project_name Vendored\ngate_fast true\n' > "$alt/.claude/cerebro-project.conf"
+mkdir -p "$alt/.cerebro"
+printf 'project_name Vendored\ngate_fast true\n' > "$alt/.cerebro/project.conf"
 [[ "$(run_alt project-conf project_name 2>/dev/null)" == "Vendored" ]] \
   || fail "project-conf from an alternative mount: got $(run_alt project-conf project_name 2>/dev/null)"
 pass "project facts are the consumer's from an alternative mount, with no change to project-conf"
 
-printf 'Ada  planner\nTuring  implementer\n' > "$alt/.claude/cerebro-roster"
+printf 'Ada  planner\nTuring  implementer\n' > "$alt/.cerebro/roster.conf"
 [[ "$(run_alt roster)" == "$(printf 'Ada\tplanner\tinteractive\nTuring\timplementer\timplementer')" ]] \
   || fail "roster from an alternative mount: got $(run_alt roster)"
 pass "the consumer's own fleet is found from an alternative mount"

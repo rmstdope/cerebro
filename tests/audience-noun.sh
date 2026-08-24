@@ -79,7 +79,8 @@ for s in consumer-root project-conf; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
 project_conf="$consumer/.claude/cerebro/scripts/project-conf"
-conf="$consumer/.claude/cerebro-project.conf"
+conf="$consumer/.cerebro/project.conf"
+mkdir -p "$consumer/.cerebro"
 
 printf 'audience_noun  operator\n' > "$conf"
 out="$("$project_conf" audience_noun user 2>/dev/null)"

@@ -1269,6 +1269,139 @@ everything: every answer here ends in Emacs acting on a session it owns."
               waited (>= waited cerebro-answer-timeout) 'nudge)))
       (_ nil))))
 
+
+;;; cb-5yr: why a role on standby should start now
+
+(defcustom cerebro-cadence-triggers
+  '(("user-feedback" . 3600) ("reviewer" . 3600) ("architect" . 86400))
+  "Roles started again after this long on standby whatever else is true.
+
+\(ROLE . SECONDS).  Moira and Cypher hourly, because what they watch moves
+outside this fleet - an issue, somebody else\='s pull request - and a floor is
+what covers whatever the `gh\=' reader could not see.  Forge daily, which is
+the cadence its own sweep is written around.
+
+A role absent here starts on its condition alone: a planner and the verifier
+have conditions that are true whenever there is work, so a floor would only
+start them with nothing to do.  `orchestrator\=' has neither, and is `s\=' only -
+Cerebro starts nothing on its own, including itself."
+  :type '(alist :key-type string :value-type integer)
+  :group 'cerebro)
+
+(defun cerebro--cadence-figure (seconds)
+  "SECONDS as the figure a cadence reason names: \"60m\", \"24h\".
+
+Minutes under a day and hours at or over one, which is what makes an hourly
+cadence read as \"60m since its last pass\" rather than \"1h\": the point of the
+line is how long the role has been down, and an hour of it is still counted
+in minutes by anyone reading the fleet."
+  (if (< seconds 86400)
+      (format "%dm" (/ seconds 60))
+    (format "%dh" (/ seconds 3600))))
+
+(defun cerebro--cadence-noun (role)
+  "What ROLE calls the thing it does once per cadence."
+  (if (equal role "architect") "sweep" "pass"))
+
+(defun cerebro--trigger (agent context)
+  "Pure.  Why AGENT, on standby, should start now - a string - or nil.
+
+The string is the reason the echo line carries (`cerebro--start-message\='),
+so it has to say what the navigator would otherwise have to go and look up.
+
+CONTEXT is what `cerebro--trigger-context\=' gathers, plus the three per-agent
+facts its caller adds: `now\=', `ended-at\=', `started-at\=', `floor\=',
+`first-planner-p\=', `live-implementers\=', `planned\=', `p0-unplanned\=' (ids),
+`p4-unranked\=', `merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for no
+answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)).
+
+Every rule is gated on the floor first: `cerebro-wake-interval\=' is the
+minimum gap between two *starts* of one role, and without it a role whose
+trigger its pass cannot clear - a P0 nobody can plan, a verification the
+navigator has not run - would be started again on the next tick, for ever.
+A role this Emacs has never started has no floor to clear.
+
+The order inside a role is the order the plan\='s table gives, first true
+wins, and it is the order of urgency: what is blocking the fleet, then what
+is merely waiting for it."
+  (let* ((role (cerebro-agent-role agent))
+         (now (alist-get 'now context))
+         (started (alist-get 'started-at context))
+         (ended (alist-get 'ended-at context))
+         (gh (alist-get 'gh context))
+         (cadence (cdr (assoc role cerebro-cadence-triggers))))
+    (when (or (null started) (>= (- now started) (alist-get 'floor context)))
+      (or
+       (pcase role
+         ("planner"
+          (let ((p0 (alist-get 'p0-unplanned context))
+                (p4 (alist-get 'p4-unranked context))
+                (planned (alist-get 'planned context))
+                ;; The buffer `skills/plan-bead' asks for: twice the running
+                ;; implementers, never fewer than four - halved here because
+                ;; two planners share it and each one\='s pass adds to it.
+                (want (max 2 (alist-get 'live-implementers context))))
+            (cond
+             ;; A P0 is planned the moment it appears, whichever planner sees
+             ;; it: it is what the whole fleet is blocked behind.
+             (p0 (format "P0 %s unplanned" (car p0)))
+             ;; The triage pass belongs to the first planner on the roster
+             ;; alone - two sessions interview the navigator twice over one
+             ;; backlog.
+             ((and (alist-get 'first-planner-p context) (> p4 0))
+              (format "%d unranked" p4))
+             ((< planned want) (format "buffer %d of %d" planned want)))))
+         ("verifier"
+          (let ((stale (alist-get 'stale-verdicts context))
+                (merged (alist-get 'merged-unverified context)))
+            (cond
+             ;; A stale verdict is a bead the fleet cannot act on until she
+             ;; looks again, so it comes before work merely awaiting a look.
+             ((> stale 0) (format "%d stale verdict%s" stale (if (= stale 1) "" "s")))
+             ((> merged 0) (format "%d merged, unverified" merged)))))
+         ;; The `gh' reader is cb-5yr.2. Until it lands the key is nil, these
+         ;; two rows are never true, and the cadence floor below is the whole
+         ;; trigger for Moira and Cypher.
+         ("user-feedback"
+          (and (consp gh) (car gh) (format "issue #%s moved" (car (car gh)))))
+         ("reviewer"
+          (and (consp gh) (cadr gh) (format "PR #%s moved" (car (cadr gh)))))
+         (_ nil))
+       (and cadence ended (>= (- now ended) cadence)
+            (format "%s since its last %s"
+                    (cerebro--cadence-figure cadence) (cerebro--cadence-noun role)))))))
+
+(defun cerebro--standby-label (agent context)
+  "Pure.  The Bead/Phase column of AGENT\='s standby row: what it is waiting for.
+
+CONTEXT is `cerebro--trigger\='s.  A role whose trigger is a condition names
+the condition, since there is no time at which it becomes true; a role on a
+cadence counts down to its next start, which there is.  `orchestrator\=' and
+any role this view has no rule for show nothing rather than a guess.
+
+Deliberately not gated on the floor: it says what the role is for, and a
+floor that has half a minute left to run is not worth a different word."
+  (let* ((role (cerebro-agent-role agent))
+         (cadence (cdr (assoc role cerebro-cadence-triggers))))
+    (cond
+     ((equal role "planner")
+      (format "→ buffer < %d" (max 2 (alist-get 'live-implementers context))))
+     ((equal role "verifier") "→ merged, unverified")
+     (cadence
+      (concat (cerebro--countdown
+               (let ((ended (alist-get 'ended-at context)))
+                 (and ended (floor (- (+ ended cadence) (alist-get 'now context))))))
+              ;; The countdown is all that is left when the reader is down,
+              ;; and the navigator should know that is why.
+              (if (and (eq (alist-get 'gh context) 'failed)
+                       (member role '("user-feedback" "reviewer")))
+                  " gh?" "")))
+     (t ""))))
+
+(defun cerebro--start-message (name reason)
+  "The echo line for a start the view decided on: who, and why."
+  (format "cerebro: started %s — %s" name reason))
+
 ;;; ah-vcf.3: the pure start/kill/launch decisions
 
 (defcustom cerebro-submodule-path ".claude/cerebro"

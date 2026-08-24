@@ -4605,3 +4605,137 @@ not an abnormal exit to be echoed at the navigator."
             (should-not (assoc "Psylocke" cerebro--parked))))
       (dolist (b buffers) (when (buffer-live-p b) (kill-buffer b)))
       (when (buffer-live-p parked) (kill-buffer parked)))))
+
+;; --- triggers: why a standby role should start now ------------------------
+
+(defun cerebro-test--context (&rest overrides)
+  "The trigger context, with nothing to do, plus OVERRIDES."
+  (append overrides
+          '((now . 1000000.0) (ended-at . 999000.0) (started-at . 990000.0)
+            (floor . 600) (first-planner-p . t) (live-implementers . 2)
+            (planned . 4) (p0-unplanned) (p4-unranked . 0)
+            (merged-unverified . 0) (stale-verdicts . 0) (gh))))
+
+(defun cerebro-test--trigger (role &rest overrides)
+  (cerebro--trigger (cerebro-test--interactive "X" role 'standby)
+                    (apply #'cerebro-test--context overrides)))
+
+(ert-deftest cerebro-test/trigger-table ()
+  "One `should' per row of the plan's table, and the negative beside it."
+  (let ((cerebro-cadence-triggers '(("user-feedback" . 3600) ("reviewer" . 3600)
+                                    ("architect" . 86400))))
+    ;; A planner: an unplanned P0 first, whichever planner it is.
+    (should (equal (cerebro-test--trigger "planner" '(p0-unplanned "cb-9zz"))
+                   "P0 cb-9zz unplanned"))
+    (should (equal (cerebro-test--trigger "planner" '(p0-unplanned "cb-9zz")
+                                          '(first-planner-p))
+                   "P0 cb-9zz unplanned"))
+    ;; The P4 triage pass belongs to the first planner on the roster alone.
+    (should (equal (cerebro-test--trigger "planner" '(p4-unranked . 7)) "7 unranked"))
+    (should (equal (cerebro-test--trigger "planner" '(p4-unranked . 1)) "1 unranked"))
+    (should (null (cerebro-test--trigger "planner" '(p4-unranked . 7)
+                                         '(first-planner-p))))
+    ;; The buffer: twice the running implementers, never fewer than two.
+    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 3))
+                   "buffer 1 of 3"))
+    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 0))
+                   "buffer 1 of 2"))
+    (should (null (cerebro-test--trigger "planner" '(planned . 3) '(live-implementers . 2))))
+    ;; The verifier: a stale verdict before a merged bead.
+    (should (equal (cerebro-test--trigger "verifier" '(stale-verdicts . 2)) "2 stale verdicts"))
+    (should (equal (cerebro-test--trigger "verifier" '(stale-verdicts . 1)) "1 stale verdict"))
+    (should (equal (cerebro-test--trigger "verifier" '(merged-unverified . 2))
+                   "2 merged, unverified"))
+    (should (equal (cerebro-test--trigger "verifier" '(merged-unverified . 1))
+                   "1 merged, unverified"))
+    (should (null (cerebro-test--trigger "verifier")))
+    ;; GitHub: cb-5yr.2's reader. Until it lands the key is nil and only the
+    ;; cadence floor can start these two.
+    (should (equal (cerebro-test--trigger "user-feedback" '(gh (41 17) nil))
+                   "issue #41 moved"))
+    (should (equal (cerebro-test--trigger "reviewer" '(gh nil (40)))
+                   "PR #40 moved"))
+    (should (null (cerebro-test--trigger "user-feedback" '(gh nil nil))))
+    (should (null (cerebro-test--trigger "reviewer" '(gh . failed))))
+    ;; The cadence floor, on its own.
+    (should (null (cerebro-test--trigger "user-feedback" '(gh . failed)
+                                         '(ended-at . 998800.0))))
+    (should (equal (cerebro-test--trigger "user-feedback" '(gh . failed)
+                                          '(ended-at . 996000.0))
+                   "60m since its last pass"))
+    (should (null (cerebro-test--trigger "architect" '(ended-at . 917000.0))))
+    (should (equal (cerebro-test--trigger "architect" '(ended-at . 910000.0))
+                   "24h since its last sweep"))
+    ;; Cerebro starts nothing on its own, and neither does anything the view
+    ;; has no rule for.
+    (should (null (cerebro-test--trigger "orchestrator" '(p0-unplanned "cb-9zz")
+                                         '(merged-unverified . 9))))
+    (should (null (cerebro-test--trigger "sommelier" '(p0-unplanned "cb-9zz"))))
+    ;; The floor is above every rule: started 100s ago, floor 600.
+    (should (null (cerebro-test--trigger "verifier" '(merged-unverified . 3)
+                                         '(started-at . 999900.0))))
+    ;; A role this Emacs has never started has no floor to clear.
+    (should (equal (cerebro-test--trigger "verifier" '(merged-unverified . 3)
+                                          '(started-at))
+                   "3 merged, unverified"))))
+
+(ert-deftest cerebro-test/standby-label-forms ()
+  "The For column of a standby row: what it is waiting for, not how long it
+has been there - there is no session for an elapsed time to describe."
+  (let ((cerebro-cadence-triggers '(("user-feedback" . 3600) ("reviewer" . 3600)
+                                    ("architect" . 86400))))
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "planner" 'standby)
+                    (cerebro-test--context '(live-implementers . 3)))
+                   "→ buffer < 3"))
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "planner" 'standby)
+                    (cerebro-test--context '(live-implementers . 0)))
+                   "→ buffer < 2"))
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "verifier" 'standby)
+                    (cerebro-test--context))
+                   "→ merged, unverified"))
+    ;; A cadence role counts down to its next start.
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "user-feedback" 'standby)
+                    (cerebro-test--context '(ended-at . 997420.0)))
+                   "→17m"))
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "architect" 'standby)
+                    (cerebro-test--context '(ended-at . 989440.0)))
+                   "→21h04"))
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "architect" 'standby)
+                    (cerebro-test--context '(ended-at . 900000.0)))
+                   "→due"))
+    ;; A `gh' reader that did not answer is said so where the countdown is,
+    ;; because it is the countdown that is now the only thing left running.
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "reviewer" 'standby)
+                    (cerebro-test--context '(ended-at . 997420.0) '(gh . failed)))
+                   "→17m gh?"))
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "orchestrator" 'standby)
+                    (cerebro-test--context))
+                   ""))
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "sommelier" 'standby)
+                    (cerebro-test--context))
+                   ""))))
+
+(ert-deftest cerebro-test/start-message-names-the-role-and-the-reason ()
+  (should (equal (cerebro--start-message "Psylocke" "2 merged, unverified")
+                 "cerebro: started Psylocke — 2 merged, unverified")))
+
+(ert-deftest cerebro-test/entry-shows-the-standby-label-in-for ()
+  "The label the caller computed, in place of the elapsed time a session has."
+  (let* ((agent (cerebro-test--interactive "Psylocke" "verifier" 'standby nil
+                                           "2026-08-14T09:00:00Z"))
+         (row (nth 1 (cerebro--entry agent cerebro-test--now nil nil
+                                     "→ merged, unverified"))))
+    (should (equal (aref row 2) "standby"))
+    (should (equal (aref row 4) "→ merged, unverified"))
+    ;; No label computed: nothing, rather than half an hour of a session that
+    ;; is not running.
+    (should (equal (aref (nth 1 (cerebro--entry agent cerebro-test--now)) 4) ""))))

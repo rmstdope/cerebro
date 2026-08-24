@@ -172,7 +172,8 @@ user-facing surface, so the queue keeps filling. It will not guess on your behal
 ## Starting builders
 
 **You** start builders — one session each, `s` in the fleet view or `launch <Name>` in a
-terminal. There is no flag that puts a running implementer to work: **a running implementer is a
+terminal — unless their `.cerebro/roster.conf` line says `autostart`, in which case `M-x cerebro`
+starts them for you as it opens. There is no flag that puts a running implementer to work: **a running implementer is a
 working one**, and it claims the next planned bead as soon as one exists. If you want another
 builder, start another session.
 

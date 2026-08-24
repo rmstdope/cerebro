@@ -1360,6 +1360,71 @@ Only an implementer has one; a flag on a name being started is stale by
 definition (ah-kgc): the navigator is saying it should run."
   (and flag-set (eq (cerebro-agent-kind agent) 'implementer)))
 
+(defun cerebro--autostart-action (agent owned flagged)
+  "What autostart should do for AGENT, given OWNED session names and FLAGGED.
+
+One of `launch\=', `launch-clearing-flag\=', `already-up\=' or `external\=' -
+`cerebro--start-action\=''s three answers, with the flag folded into the
+first.
+
+FLAGGED is whether a stop flag exists for AGENT.  Unlike `s\='
+(`cerebro--start-clears-flag-p\=', implementers only), autostart clears a
+flag for EVERY kind: the navigator decided that opening the fleet view is a
+statement that everything the roster declares should be running, and a flag
+left on such a name is stale by the same argument ah-kgc made for `s\='
+(cb-0r6).
+
+A flag on a name that is already up changes nothing - there is nothing to
+start, so there is nothing to clear."
+  (let ((action (cerebro--start-action agent owned)))
+    (if (and flagged (eq action 'launch)) 'launch-clearing-flag action)))
+
+(defun cerebro--autostart-names-and-skipped (results)
+  "RESULTS split into (STARTED . SKIPPED) label lists, in RESULTS order.
+
+RESULTS is an alist of (NAME . ACTION) as `cerebro--autostart-action\='
+answered for each declared agent.  A started name carries its parenthesis
+when a stop flag was cleared for it; a skipped one is just the name, since
+`already-up\=' and `external\=' read the same to the navigator - the agent is
+running, autostart did nothing."
+  (let (started skipped)
+    (dolist (entry results)
+      (pcase (cdr entry)
+        ('launch (push (car entry) started))
+        ('launch-clearing-flag
+         (push (concat (car entry) " (cleared a stale stop flag)") started))
+        (_ (push (car entry) skipped))))
+    (cons (nreverse started) (nreverse skipped))))
+
+(defun cerebro--autostart-message (results)
+  "The one echo line for RESULTS, or nil when RESULTS is empty.
+
+A roster that declares no autostart says nothing at all: every consumer
+that has not adopted the column sees no new line on `M-x cerebro\='.
+
+The started half is a plain comma list because each item may carry a
+parenthesis; the already-up half reads as English (\"Beast and Psylocke\"),
+being a list of bare names.  Both keep roster order."
+  (when results
+    (let* ((split (cerebro--autostart-names-and-skipped results))
+           (started (car split))
+           (skipped (cdr split))
+           (head (if started
+                     (concat "autostarted " (mapconcat #'identity started ", "))
+                   "nothing to autostart"))
+           (tail (when skipped
+                   (format "; %s %s already up"
+                           (cerebro--english-list skipped)
+                           (if (cdr skipped) "are" "is")))))
+      (concat "cerebro: " head (or tail "")))))
+
+(defun cerebro--english-list (names)
+  "NAMES joined with commas and a final \" and \"."
+  (cond
+   ((null (cdr names)) (car names))
+   (t (concat (mapconcat #'identity (butlast names) ", ")
+              " and " (car (last names))))))
+
 (defun cerebro--kill-action (agent owned)
   "What `k' should do for AGENT, given OWNED session names.
 
@@ -1663,13 +1728,42 @@ may not exist yet on a fresh machine - `agent-state' and
   "The parsed roster, once read; buffer-local so a revert does not re-shell out.")
 
 (defun cerebro--fleet (repo-root)
-  "The fleet as (NAME ROLE KIND) rows, via `scripts/roster' in REPO-ROOT."
+  "The fleet as (NAME ROLE KIND) rows, via `scripts/roster\=' in REPO-ROOT.
+
+A roster that REFUSES - a roster.conf left at the retired path, a third
+column that is not `autostart\=' - signals rather than returning nothing
+(cb-0r6).  An empty fleet drawn in silence is the one outcome that looks
+like a working view: the navigator sees a list of nobody and no reason for
+it.  `call-process\=''s destination is `t\=', which mixes stderr into the
+buffer, so the script\='s own line is what reaches the echo area.
+
+The signal happens inside the `or\=' producer, before the cache is set, so a
+refusal is never cached as a fleet."
   (or cerebro--fleet-cache
       (setq cerebro--fleet-cache
             (cerebro--parse-fleet
              (with-temp-buffer
-               (call-process (expand-file-name (cerebro--script "roster") repo-root) nil t nil)
+               (let ((status (call-process
+                              (expand-file-name (cerebro--script "roster") repo-root)
+                              nil t nil)))
+                 (unless (eq status 0)
+                   (error "cerebro: %s" (string-trim (buffer-string)))))
                (buffer-string))))))
+
+(defun cerebro--autostart-names (repo-root)
+  "The names `scripts/roster --autostart\=' lists in REPO-ROOT, in file order.
+
+nil when the script refuses, or cannot be run at all: `cerebro--fleet\=' has
+already read the same script for the same render by the time this runs, so
+anything wrong with it has already been reported - a second error here
+would only replace the roster\='s own line with a worse one."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((status (call-process (expand-file-name (cerebro--script "roster") repo-root)
+                                    nil t nil "--autostart")))
+          (when (eq status 0)
+            (split-string (buffer-string) "\n" t "[ \t\r]+"))))
+    (error nil)))
 
 (defun cerebro--roster (repo-root)                 ; keeps its name and both callers
   "The implementer names, in roster order."
@@ -1895,6 +1989,14 @@ is changed.  Returns the buffer."
       (vterm-mode))
     buffer))
 
+(defun cerebro--vterm-available-p ()
+  "Whether vterm can be loaded, so a session has something to run in.
+
+A function of its own rather than an inline `require\=' so the autostart
+tests can stub exactly this one question; stubbing `require\=' itself would
+reach every other library the render path loads (cb-0r6)."
+  (and (require 'vterm nil t) t))
+
 (defun cerebro--launch (agent)
   "Create AGENT's vterm session and return its buffer.
 
@@ -1920,7 +2022,7 @@ a name with a live session is refused here, whatever the derived state
 believes about it (ah-5pp)."
   (when (cerebro--session (cerebro-agent-name agent))
     (error "cerebro: %s already has a live session" (cerebro-agent-name agent)))
-  (unless (require 'vterm nil t)
+  (unless (cerebro--vterm-available-p)
     (user-error "cerebro needs vterm for live sessions - install emacs-libvterm"))
   (add-hook 'vterm-exit-functions #'cerebro--note-exit)
   (setq cerebro--last-exit
@@ -2028,6 +2130,38 @@ since a role that woke writes its next transition.")
 Shown as a \" !\" in the State column (`cerebro--entry\='), which is where a
 poke stops: a line the navigator can see beats retrying every five seconds
 for ever.  Cleared with the record above when the role transitions.")
+
+(defun cerebro--autostart (buffer repo-root)
+  "Start every declared autostart agent in BUFFER that is dead, once.
+
+Runs after the first `cerebro--list-render\=', so `cerebro--agents\=' is
+derived, and re-renders afterwards so the rows show what was started.  The
+walk is over `cerebro--agents\=' rather than over the declared names, which
+is what keeps the echo line in roster order.
+
+Each launch is wrapped in `with-demoted-errors\=', as `cerebro--supervise\='
+does: one launcher that cannot start must not stop the others."
+  (with-current-buffer buffer
+    (let ((names (cerebro--autostart-names repo-root)))
+      (when names
+        (if (not (cerebro--vterm-available-p))
+            (message "cerebro: vterm is not installed, so nothing was autostarted")
+          (let ((owned (cerebro--owned))
+                results)
+            (dolist (agent cerebro--agents)
+              (let ((name (cerebro-agent-name agent)))
+                (when (member name names)
+                  (let ((action (cerebro--autostart-action
+                                 agent owned (cerebro--stop-flag-p repo-root name))))
+                    (with-demoted-errors "cerebro: %S"
+                      (when (eq action 'launch-clearing-flag)
+                        (cerebro--clear-stop-flag repo-root name))
+                      (when (memq action '(launch launch-clearing-flag))
+                        (cerebro--launch agent)))
+                    (push (cons name action) results)))))
+            (cerebro--list-render buffer)
+            (let ((line (cerebro--autostart-message (nreverse results))))
+              (when line (message "%s" line)))))))))
 
 (defun cerebro--stop-flag-path (repo-root name)
   "Where NAME's stop flag lives, as `orchestrator.md' documents it."
@@ -3321,15 +3455,24 @@ would have taken TAB from every vterm the navigator has, fleet or not.
 (defun cerebro ()
   "Open (or refresh) the *cerebro* buffer, listing every agent."
   (interactive)
-  (let ((buffer (get-buffer-create cerebro-buffer-name)))
+  (let ((buffer (get-buffer-create cerebro-buffer-name))
+        fresh)
     (with-current-buffer buffer
+      ;; Computed BEFORE `cerebro-mode' runs and consulted after the first
+      ;; render: "the fleet buffer is created" is the moment autostart fires
+      ;; (cb-0r6), so a later `M-x cerebro' on a live buffer starts nothing -
+      ;; it would otherwise restart whatever `k' had just killed. After `q'
+      ;; the next call is fresh again, which is what the navigator asked for.
+      (setq fresh (not (derived-mode-p 'cerebro-mode)))
       (unless (derived-mode-p 'cerebro-mode)
         (cerebro-mode))
       (cerebro--list-render buffer)
       (cerebro--cancel-timer)
       (setq cerebro--timer
             (run-with-timer 5 5 #'cerebro--tick buffer))
-      (cerebro--ensure-prune-watcher (cerebro--repo-root)))
+      (cerebro--ensure-prune-watcher (cerebro--repo-root))
+      (when fresh
+        (cerebro--autostart buffer (cerebro--repo-root))))
     ;; `pop-to-buffer' must run before `--setup-layout': layout claims
     ;; `selected-window' as the list window, which is only correct once that
     ;; window is actually showing this buffer.

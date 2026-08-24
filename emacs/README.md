@@ -40,6 +40,12 @@ from the list:
 (`cerebro-session-mode`) so it applies only to the buffers the fleet view created, never to the
 navigator's own vterms. `C-c TAB` sends a real tab on to the agent when one is wanted.
 
+Rows whose `.cerebro/roster.conf` line carries a third word `autostart` are started as the fleet
+buffer is created — once, not on every `M-x cerebro`, or the next one would restart whatever `k`
+had just killed — with one echo line saying who started and who was already up. A stop flag left on
+such a name is cleared, as `s` would, and for every kind rather than implementers only. Nothing
+restarts an autostarted agent that later dies; that is still `s`.
+
 An agent running outside Emacs is shown and marked but not viewable — a placeholder says so. This
 needs **vterm** (`emacs-libvterm`); without it the list still works, and `s`/`RET` signal a clear
 error instead of failing obscurely.

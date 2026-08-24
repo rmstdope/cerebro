@@ -464,6 +464,80 @@ reading once the row has caught the eye (see ah-axj)."
       (when (get-buffer cerebro-buffer-name)
         (kill-buffer cerebro-buffer-name)))))
 
+(defvar cerebro-test--autostart-launched nil)
+(defvar cerebro-test--autostart-cleared nil)
+(defvar cerebro-test--autostart-messages nil)
+
+(defmacro cerebro-test--with-autostart (&rest body)
+  "Run BODY with the fleet view's impure edges stubbed for autostart.
+
+`cerebro--vterm-available-p\=' is a function of its own precisely so this can
+stub it: stubbing `require\=' instead would reach every other library the
+render path loads."
+  (declare (indent 0))
+  `(let ((cerebro-test--autostart-launched nil)
+         (cerebro-test--autostart-cleared nil)
+         (cerebro-test--autostart-messages nil))
+     (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () "/fake/repo"))
+               ((symbol-function 'cerebro--fleet)
+                (lambda (_repo-root) cerebro-test--fleet-fixture))
+               ((symbol-function 'cerebro--gather-states) (lambda (_r _roster) nil))
+               ((symbol-function 'cerebro--system-args) (lambda () nil))
+               ((symbol-function 'cerebro--owned) (lambda () nil))
+               ((symbol-function 'cerebro--ensure-prune-watcher) (lambda (&rest _) nil))
+               ((symbol-function 'cerebro--autostart-names)
+                (lambda (_repo-root) '("Alpha" "One")))
+               ((symbol-function 'cerebro--stop-flag-p)
+                (lambda (_repo-root name) (equal name "One")))
+               ((symbol-function 'cerebro--clear-stop-flag)
+                (lambda (_repo-root name)
+                  (push name cerebro-test--autostart-cleared)))
+               ((symbol-function 'cerebro--launch)
+                (lambda (agent)
+                  (push (cerebro-agent-name agent) cerebro-test--autostart-launched)
+                  (generate-new-buffer " *cerebro-test-stub*")))
+               ((symbol-function 'message)
+                (lambda (fmt &rest args)
+                  (push (apply #'format fmt args) cerebro-test--autostart-messages)
+                  nil)))
+       (unwind-protect (progn ,@body)
+         (when (get-buffer cerebro-buffer-name)
+           (kill-buffer cerebro-buffer-name))))))
+
+(ert-deftest cerebro-test/autostart-runs-once-on-buffer-creation ()
+  "Every declared name that is dead starts as the buffer is created, a stop
+flag on such a name is cleared first, and a later `M-x cerebro\=' on the
+live buffer starts nothing - or it would restart whatever `k\=' just killed
+(cb-0r6)."
+  (cerebro-test--with-autostart
+    (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () t)))
+      (cerebro)
+      (should (equal (nreverse cerebro-test--autostart-launched) '("Alpha" "One")))
+      (should (equal cerebro-test--autostart-cleared '("One")))
+      (setq cerebro-test--autostart-launched nil)
+      (cerebro)
+      (should (null cerebro-test--autostart-launched))
+      (kill-buffer cerebro-buffer-name)
+      (cerebro)
+      (should (equal (nreverse cerebro-test--autostart-launched) '("Alpha" "One"))))))
+
+(ert-deftest cerebro-test/autostart-echoes-who-started-and-who-was-up ()
+  (cerebro-test--with-autostart
+    (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () t)))
+      (cerebro)
+      (should (member "cerebro: autostarted Alpha, One (cleared a stale stop flag)"
+                      cerebro-test--autostart-messages)))))
+
+(ert-deftest cerebro-test/autostart-says-nothing-without-vterm ()
+  "Without vterm there is nothing to start a session in, so autostart says so
+once instead of erroring once per declared name."
+  (cerebro-test--with-autostart
+    (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () nil)))
+      (cerebro)
+      (should (null cerebro-test--autostart-launched))
+      (should (member "cerebro: vterm is not installed, so nothing was autostarted"
+                      cerebro-test--autostart-messages)))))
+
 (defun cerebro-test--agent (name role kind state &optional external bead phase)
   (make-cerebro-agent :name name :role role :kind kind :state state
                               :bead bead :since nil :external external :phase phase))
@@ -521,10 +595,86 @@ reading once the row has caught the eye (see ah-axj)."
                                        (format "agents/%s.md" (nth 1 row)) repo-root))))))
       (delete-directory tmp t))))
 
+(ert-deftest cerebro-test/fleet-signals-when-roster-refuses ()
+  "A roster `scripts/roster\=' refuses must reach the navigator, not be
+rendered as an empty fleet (cb-0r6).  Before this, a mistyped third column
+gave `M-x cerebro\=' a list of nobody and said nothing about why.
+
+The consumer is built with a real copy of the script rather than a symlink
+to this checkout: `roster\=' finds its consumer by path arithmetic, and a
+symlinked mount resolves that arithmetic to whatever is above the checkout
+instead of to the temporary consumer."
+  (let ((tmp (make-temp-file "cerebro-roster-refusal" t)))
+    (unwind-protect
+        (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
+          (make-directory scripts t)
+          (make-directory (expand-file-name ".cerebro" tmp) t)
+          (copy-file (expand-file-name "scripts/roster" cerebro-test--repo-root)
+                     (expand-file-name "roster" scripts))
+          (with-temp-file (expand-file-name ".cerebro/roster.conf" tmp)
+            (insert "Ada  planner  autostrat\n"))
+          (with-temp-buffer
+            (let ((err (should-error (cerebro--fleet tmp))))
+              (should (string-match-p "autostrat" (format "%S" err))))))
+      (delete-directory tmp t))))
+
 (ert-deftest cerebro-test/session-buffer-name-shape ()
   (should (equal (cerebro--session-buffer-name
                    (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
                   "*fleet: Cyclops*")))
+
+
+;; ---------------------------------------------------------------------------
+;; cb-0r6: an agent whose roster line says `autostart' comes up with the fleet
+;; view. The decision is pure; the starting is at the bottom of cerebro.el.
+
+(ert-deftest cerebro-test/autostart-action-launches-dead ()
+  (should (eq (cerebro--autostart-action
+                (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) nil nil)
+              'launch)))
+
+(ert-deftest cerebro-test/autostart-action-clears-a-flag-for-every-kind ()
+  "Unlike `s' (`cerebro--start-clears-flag-p', implementers only), autostart
+clears a stop flag for every kind - the navigator's decision (cb-0r6)."
+  (should (eq (cerebro--autostart-action
+                (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) nil t)
+              'launch-clearing-flag))
+  (should (eq (cerebro--autostart-action
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) nil t)
+              'launch-clearing-flag)))
+
+(ert-deftest cerebro-test/autostart-action-skips-owned-and-external ()
+  (dolist (flagged '(nil t))
+    (should (eq (cerebro--autostart-action
+                  (cerebro-test--agent "Xavier" "planner" 'interactive 'up nil)
+                  '("Xavier") flagged)
+                'already-up))
+    (should (eq (cerebro--autostart-action
+                  (cerebro-test--agent "Xavier" "planner" 'interactive 'up t)
+                  nil flagged)
+                'external))))
+
+(ert-deftest cerebro-test/autostart-message-forms ()
+  (should (null (cerebro--autostart-message nil)))
+  (should (equal (cerebro--autostart-message
+                   '(("Xavier" . launch) ("Psylocke" . launch) ("Cyclops" . launch)))
+                  "cerebro: autostarted Xavier, Psylocke, Cyclops"))
+  (should (equal (cerebro--autostart-message
+                   '(("Xavier" . launch-clearing-flag) ("Cyclops" . launch)))
+                  "cerebro: autostarted Xavier (cleared a stale stop flag), Cyclops"))
+  (should (equal (cerebro--autostart-message
+                   '(("Xavier" . launch) ("Psylocke" . already-up) ("Cyclops" . launch)))
+                  "cerebro: autostarted Xavier, Cyclops; Psylocke is already up"))
+  (should (equal (cerebro--autostart-message
+                   '(("Beast" . external) ("Psylocke" . already-up) ("Cyclops" . launch)))
+                  "cerebro: autostarted Cyclops; Beast and Psylocke are already up"))
+  (should (equal (cerebro--autostart-message
+                   '(("Beast" . already-up) ("Psylocke" . already-up)
+                     ("Storm" . external) ("Cyclops" . launch)))
+                  "cerebro: autostarted Cyclops; Beast, Psylocke and Storm are already up"))
+  (should (equal (cerebro--autostart-message
+                   '(("Xavier" . already-up) ("Psylocke" . external)))
+                  "cerebro: nothing to autostart; Xavier and Psylocke are already up")))
 
 (ert-deftest cerebro-test/start-action-launches-dead ()
   (should (eq (cerebro--start-action

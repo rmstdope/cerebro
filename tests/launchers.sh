@@ -811,3 +811,5 @@ echo "$err" | grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" \
 pass "self-consumer roster: the retired .claude/ path refuses too"
 
 echo "all launcher tests passed"
+
+# cb-ypx proof: a gated path on the docs-only branch, so the three checks must run (do not merge).

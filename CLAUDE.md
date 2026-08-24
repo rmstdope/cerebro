@@ -17,9 +17,75 @@ Every project-specific fact is read from `<consumer>/.claude/cerebro-project.con
 (`scripts/project-conf`), and the fleet's names from `<consumer>/.claude/cerebro-roster`
 (`scripts/roster`). Nothing in this repository names a consumer.
 
+## This repository is also a consumer
+
+Since cb-i3l.1 cerebro is mounted in itself, so the fleet works on its own source and this file has
+two readers. Everything above is the harness a contributor reads; everything under the four headings
+below is what an agent working here reads, and it is the same declaration
+`templates/consumer-CLAUDE.md` asks of every other project. The template's own "The project"
+section is the one thing not repeated: **What this repository is**, above, already is it.
+
+## Four Eye Principle
+
+*Read by `skills/implement-bead` and `skills/plan-bead` by this exact heading. In a project that
+uses cerebro this lives in the consumer's root CLAUDE.md; here that file is this one. An
+implementer's standing approval to merge without asking comes from this section and from nowhere
+else — delete it and every implementer in this repository builds, opens its pull request, and then
+stops.*
+
+Nothing merges unreviewed and nothing merges red.
+
+For a change built by an agent, GitHub Copilot's automatic review counts as the second pair of eyes
+when all of these hold: it has reviewed the head commit that is being merged; every comment it left
+is answered, by a change or by a posted reply saying why not; and every check is green. That is the
+whole standing approval, and it covers a planned bead only.
+
+Everything else needs the navigator — a change nobody planned, a red or missing check, a review
+comment answered by neither a change nor a reply, and any pull request that came from outside the
+fleet, which is Cypher's to review and the navigator's to merge.
+
+## Work tracking
+
+Planned work is tracked in **beads** (`bd`), with the prefix `cb`; `skills/beads-workflow` carries
+the commands. GitHub issues are the external inbox only. Every bead is created unranked at P4 and
+ranked later with the navigator; a bead is planned in one session and implemented in another.
+
+The board syncs through the Dolt remote rather than through git — a clone gets the code, `bd sync`
+gets the work.
+
+## Development practices
+
+- Work is delivered in small increments that stand on their own.
+- Code is written test-first. That is not a style preference here: the two suites are the only thing
+  that can tell a change to this harness from a change that quietly breaks every consumer, since
+  almost nothing in this repository executes in this repository.
+- A change to a role's agent file or skill changes how the fleet behaves in every consumer. Say so
+  in the bead, and keep the invariants above consistent with each other.
+- Prefer the simple design; say so when you decline a more general one.
+
+## Where the project declares its facts
+
+Not prose — files, each tracked so that every clone has it.
+
+- `.claude/cerebro-project.conf` — this project's name, default branch, audience, which paths are
+  the application, and the gate. Both gates name `tests/gate`, which runs exactly what
+  `.github/workflows/ci.yml` runs (cb-i3l.2).
+- `.claude/cerebro-roster` — which agents this project runs, and in what order. Absent means the
+  built-in fleet.
+- `.claude/cerebro-traps.md` — the traps this project has already paid for, read by planners and
+  implementers before they start. Absent means it has paid for none yet, which is where every
+  project starts.
+
 ## Commands
 
-Two test suites. The Emacs package (ERT):
+The whole gate, which is what an implementer runs before it opens a pull request and what CI runs
+on it (cb-i3l.2) — byte-compile, ERT, every `tests/*.sh`:
+
+```bash
+bash tests/gate
+```
+
+Its three parts, for when only one of them is the question. The Emacs package (ERT):
 
 ```bash
 emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit    # all tests

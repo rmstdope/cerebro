@@ -848,11 +848,14 @@ read the raw table rather than go through the liveness check."
                 t)
               'offer-clear)))
 
-(ert-deftest cerebro-test/finish-action-refuses-interactive-roles ()
+(ert-deftest cerebro-test/finish-action-tells-a-running-role-to-finish-its-pass ()
+  "It used to refuse: an interactive role had no bead to finish and no flag
+to write.  Since cb-5yr it has a pass, and the flag ends it and leaves the
+name down - `cerebro-test/finish-action-for-interactive-rows' has the rest."
   (should (eq (cerebro--finish-action
                 (cerebro-test--agent "Xavier" "planner" 'interactive 'up)
                 nil)
-              'not-implementer)))
+              'write-disarm)))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-ymn: `f' on an idle implementer stops it now, not after one more bead
@@ -4868,3 +4871,127 @@ P4 triage pass belongs to that one alone."
                     ("Beast" "planner" interactive))
                   "planner")
                  '("Xavier" "Beast"))))
+
+;; --- `f' and `k' on an interactive role -----------------------------------
+
+(ert-deftest cerebro-test/finish-action-for-interactive-rows ()
+  "`f' means the same thing it always meant - no further work - and for a role
+that is one pass at a time, that is: finish this pass and stay down."
+  (should (eq (cerebro--finish-action
+               (cerebro-test--interactive "Xavier" "planner" 'working) nil)
+              'write-disarm))
+  (should (eq (cerebro--finish-action
+               (cerebro-test--interactive "Xavier" "planner" 'standby) nil)
+              'standby))
+  ;; Checked before `dead': a standby row is not alive either, and "nothing
+  ;; to finish" is the one thing it does not mean.
+  (should (eq (cerebro--finish-action
+               (cerebro-test--interactive "Xavier" "planner" 'dead) nil)
+              'dead))
+  (should (eq (cerebro--finish-action
+               (cerebro-test--interactive "Xavier" "planner" 'working t) nil)
+              'external))
+  (should (eq (cerebro--finish-action
+               (cerebro-test--interactive "Xavier" "planner" 'working) t)
+              'offer-clear))
+  ;; An implementer's answers are untouched.
+  (should (eq (cerebro--finish-action (cerebro-test--supervised 'working) nil) 'write))
+  (should (eq (cerebro--finish-action (cerebro-test--supervised 'idle) nil) 'stop-now)))
+
+(ert-deftest cerebro-test/kill-disarms-a-standby-role-on-confirmation ()
+  "There is no process, so the whole of `k' here is: forget the pass and do
+not start another."
+  (let ((parked (generate-new-buffer "*fleet: Xavier (ended 08:00)*"))
+        (reverted 0))
+    (unwind-protect
+        (cl-letf (((symbol-function 'y-or-n-p)
+                   (lambda (prompt)
+                     (should (equal prompt "Disarm Xavier? "))
+                     t))
+                  ((symbol-function 'revert-buffer)
+                   (lambda (&rest _) (setq reverted (1+ reverted))))
+                  ((symbol-function 'cerebro--repo-root) (lambda () "/tmp/nowhere"))
+                  ((symbol-function 'cerebro--show-detail) #'ignore)
+                  ((symbol-function 'cerebro--agent-at-point)
+                   (lambda () (cerebro-test--interactive "Xavier" "planner" 'standby))))
+          (with-temp-buffer
+            (setq cerebro--armed '("Xavier")
+                  cerebro--parked (list (cons "Xavier" (list 1.0 0.0 parked))))
+            (cerebro-kill)
+            (should (null cerebro--armed))
+            (should (null cerebro--parked))
+            (should-not (buffer-live-p parked))
+            (should (= reverted 1))))
+      (when (buffer-live-p parked) (kill-buffer parked)))))
+
+(ert-deftest cerebro-test/killing-a-live-interactive-session-disarms-it-too ()
+  "`k' on a running role means stay down, exactly as it does on a standby one -
+otherwise a trigger would start it again five seconds later."
+  (cl-letf (((symbol-function 'cerebro--end-session) #'ignore)
+            ((symbol-function 'revert-buffer) #'ignore)
+            ((symbol-function 'cerebro--show-detail) #'ignore))
+    (with-temp-buffer
+      (setq cerebro--armed '("Xavier" "Psylocke"))
+      (cerebro--kill-session-buffer
+       (cerebro-test--interactive "Xavier" "planner" 'working) "/tmp/nowhere")
+      (should (equal cerebro--armed '("Psylocke"))))))
+
+(ert-deftest cerebro-test/finish-on-a-running-role-writes-the-flag-and-says-what-it-means ()
+  (let ((said nil)
+        (root (make-temp-file "cerebro-finish" t)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () root))
+                  ((symbol-function 'revert-buffer) #'ignore)
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) said)))
+                  ((symbol-function 'cerebro--agent-at-point)
+                   (lambda () (cerebro-test--interactive "Xavier" "planner" 'working))))
+          (with-temp-buffer
+            (cerebro-finish)
+            (should (cerebro--stop-flag-p root "Xavier"))
+            (should (equal said '("told Xavier to finish its pass - it stays down until you press s")))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/finish-on-a-standby-role-says-which-key-to-press ()
+  "There is no pass to finish, and writing a flag nothing would read is what
+`f' has refused to do since ah-ymn."
+  (let ((said nil)
+        (root (make-temp-file "cerebro-finish" t)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () root))
+                  ((symbol-function 'revert-buffer) #'ignore)
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) said)))
+                  ((symbol-function 'cerebro--agent-at-point)
+                   (lambda () (cerebro-test--interactive "Xavier" "planner" 'standby))))
+          (with-temp-buffer
+            (cerebro-finish)
+            (should-not (cerebro--stop-flag-p root "Xavier"))
+            (should (equal said
+                           '("Xavier is on standby - press k to disarm it, or s to start it now")))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/revert-restates-armed-roles-and-labels-them ()
+  "The two ends of the render meeting: `cerebro--apply-standby' after the
+derive, and the label the For column shows, computed once for the buffer."
+  (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () "/tmp/nowhere"))
+            ((symbol-function 'cerebro--roster) (lambda (_) '("Rogue")))
+            ((symbol-function 'cerebro--interactive-agents)
+             (lambda (_) '(("Psylocke" . "verifier"))))
+            ((symbol-function 'cerebro--fleet)
+             (lambda (_) '(("Psylocke" "verifier" interactive) ("Rogue" "implementer" implementer))))
+            ((symbol-function 'cerebro--gather-states) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--cached-system-args) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--owned) (lambda () nil))
+            ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--beads-panel-buffer) (lambda () nil))
+            ((symbol-function 'tabulated-list-init-header) #'ignore))
+    (with-temp-buffer
+      (setq cerebro--armed '("Psylocke"))
+      (cerebro--revert)
+      (should (eq (cerebro-agent-state (nth 0 cerebro--agents)) 'standby))
+      (let ((row (nth 1 (assoc "Psylocke" tabulated-list-entries))))
+        (should (equal (aref row 2) "standby"))
+        (should (equal (aref row 4) "→ merged, unverified")))
+      ;; The implementer beside it is untouched.
+      (should (eq (cerebro-agent-state (nth 1 cerebro--agents)) 'dead)))))

@@ -1658,8 +1658,16 @@ either, and \"nothing to kill\" is the one thing it does not mean."
 (defun cerebro--finish-action (agent flag-set)
   "What `f' should do for AGENT given FLAG-SET.
 
-One of `not-implementer' (an interactive agent has no bead to finish
-and no flag to write), `offer-clear' (flag already set - ask before removing
+For an interactive role, `f' means what it has always meant - no further
+work - and for a role that runs one pass at a time (cb-5yr) that is:
+`write-disarm' (a pass is running; write the flag, which
+`cerebro--supervise-action' reads when the pass ends, and the role is
+disarmed as it is retired), `standby' (there is no pass to finish, so say
+which key does what instead of writing a flag nothing would read) or, as
+before, `dead' and `external'.  `standby' is answered ahead of `dead'
+because a standby row is not alive either.
+
+For an implementer, one of `offer-clear' (flag already set - ask before removing
 it, which is the cheap way back to \"actually, keep going\"; checked ahead of
 every state below, since a stale flag is worth offering to clear whatever
 AGENT is doing now), `dead' (nothing is running - there is nothing to finish
@@ -1670,7 +1678,12 @@ nothing is in flight, so the flag means *stop now* rather than *finish*,
 ah-ymn) or `write' (a bead is in flight - tell it to finish, and it stops
 once that bead is done)."
   (cond
-   ((not (eq (cerebro-agent-kind agent) 'implementer)) 'not-implementer)
+   ((not (eq (cerebro-agent-kind agent) 'implementer))
+    (cond ((eq (cerebro-agent-state agent) 'standby) 'standby)
+          ((not (cerebro--alive-p agent)) 'dead)
+          ((cerebro-agent-external agent) 'external)
+          (flag-set 'offer-clear)
+          (t 'write-disarm)))
    (flag-set 'offer-clear)
    ((not (cerebro--alive-p agent)) 'dead)
    ((and (eq (cerebro-agent-state agent) 'idle)
@@ -3388,6 +3401,10 @@ Does nothing when BUFFER is dead."
                                           (lambda (pid name)
                                             (cerebro--session-alive-p pid name repo-root))
                                           args owned)))
+    ;; Standby is derived here rather than in `cerebro--derive': the state
+    ;; file the derive reads was deleted when the view ended the session, so
+    ;; `cerebro--armed' is the only thing that can say a role is coming back.
+    (setq agents (cerebro--apply-standby agents cerebro--armed))
     (setq cerebro--agents agents)
     ;; The table is sized to what is in front of it, every revert: a roster
     ;; gains an agent, a bead id gets deeper, and the columns follow (ah-qled.9).
@@ -3400,12 +3417,21 @@ Does nothing when BUFFER is dead."
         (unless (equal tabulated-list-format format)
           (setq tabulated-list-format format)
           (tabulated-list-init-header)))
-      (setq tabulated-list-entries
-            (mapcar (lambda (a)
-                      (cerebro--entry a now
-                                      (cerebro--stop-flag-p repo-root (cerebro-agent-name a))
-                                      (nth 3 widths)))
-                    agents)))))
+      ;; Once for the buffer, not once a row: the same counts answer every
+      ;; standby label, and gathering them per row would read the bead panel
+      ;; eighteen times a render.
+      (let ((context (and (seq-some (lambda (a) (eq (cerebro-agent-state a) 'standby)) agents)
+                          (cerebro--trigger-context repo-root now))))
+        (setq tabulated-list-entries
+              (mapcar (lambda (a)
+                        (cerebro--entry a now
+                                        (cerebro--stop-flag-p repo-root (cerebro-agent-name a))
+                                        (nth 3 widths)
+                                        (and context
+                                             (eq (cerebro-agent-state a) 'standby)
+                                             (cerebro--standby-label
+                                              a (cerebro--agent-context a context)))))
+                      agents))))))
 
 ;;; The prune watcher (ah-4ao): `prune-worktrees.sh --watch' moves here from Cerebro
 
@@ -3612,17 +3638,25 @@ second time.  The state file goes with the session, which is
 what stops the row reading `working' on a bead nobody is building.
 
 The stop flag is left alone: `k' is not a retire, and a flag set with `f'
-means this name stays down until `s' clears it and says so.
+means this name stays down until `s' clears it and says so.  An interactive
+name is *disarmed* here for the same reason (cb-5yr): `k' means stay down,
+and a name still armed would be started again by its own trigger within five
+seconds.
 
 REPO-ROOT is passed in rather than looked up here, so `cerebro--repo-root'
 and its buffer-local `default-directory' work stay out of the unit under
 test - `cerebro-kill' computes it once for all its branches."
   (cerebro--end-session agent repo-root)
+  (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
   (revert-buffer)
   (cerebro--show-detail agent))
 
 (defun cerebro-kill ()
-  "Kill the agent at point (`k'), confirming first."
+  "Kill the agent at point (`k'), confirming first.
+
+A role on standby has no process to kill: `k' there is `disarm' - forget the
+kept buffer and start nothing more under that name until `s' says so
+(cb-5yr)."
   (interactive)
   (let ((agent (cerebro--agent-at-point)))
     (when agent
@@ -3640,6 +3674,11 @@ test - `cerebro-kill' computes it once for all its branches."
                                  "a worktree and an open PR. Kill anyway? ")
                         (cerebro-agent-name agent) (cerebro-agent-bead agent)))
            (cerebro--kill-session-buffer agent repo-root)))
+        ('disarm
+         (when (y-or-n-p (format "Disarm %s? " (cerebro-agent-name agent)))
+           (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
+           (cerebro--forget-parked (cerebro-agent-name agent))
+           (revert-buffer)))
         ('external
          (message "%s is running outside Emacs - stop it from its own terminal"
                   (cerebro-agent-name agent)))
@@ -3696,6 +3735,12 @@ swallowed silently rather than simply doing nothing."
 (defun cerebro-finish ()
   "Tell the implementer at point to finish (`f'): write its stop flag.
 
+An interactive role has a pass rather than a bead, and the flag means the
+same thing about it: the pass finishes, and nothing starts in its place
+(cb-5yr).  `cerebro--supervise-action' reads it at `waiting' or `idle', ends
+the session and disarms the name, so `f' then `s' is the round trip.  A role
+on standby has no pass to finish and gets a line saying which key does what.
+
 The flag is read between beads, never during one (see `orchestrator.md'):
 a working or asking session completes the bead it is on, closes it, and only
 then stops - so this cannot end an implementer mid-bead, and does not try
@@ -3729,11 +3774,15 @@ refuse rather than write one that would sit unread (ah-ymn)."
              (cerebro--clear-stop-flag repo-root name)
              (revert-buffer)
              (message "%s will keep going" name)))
+          ('write-disarm
+           (cerebro--write-stop-flag repo-root name)
+           (revert-buffer)
+           (message "told %s to finish its pass - it stays down until you press s" name))
+          ('standby
+           (message "%s is on standby - press k to disarm it, or s to start it now" name))
           ('dead (message "%s is not running - nothing to finish" name))
           ('external
-           (message "%s is running outside Emacs - stop it from its own terminal" name))
-          ('not-implementer
-           (message "%s is not an implementer - nothing to finish" name)))))))
+           (message "%s is running outside Emacs - stop it from its own terminal" name)))))))
 
 (defun cerebro-other-window ()
   "Move to the next window (`TAB'), exactly as `C-x o' does.

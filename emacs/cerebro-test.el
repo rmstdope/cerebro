@@ -2668,12 +2668,12 @@ from one building something else."
                    '(("Cyclops" . working) ("Storm" . idle))))
     (should (equal (cerebro--live-implementer-names "/repo") '("Cyclops" "Storm")))))
 
-(ert-deftest cerebro-test/findings-from-returns-all-four-sweeps ()
-  "The assignee sweep is wired in beside the other three, and the label it
-produces has been enriched with what its assignee is actually on."
+(ert-deftest cerebro-test/findings-from-returns-all-five-sweeps ()
+  "The verdict sweep is wired in beside the other four, and the assignee
+label has been enriched with what its assignee is actually on."
   ;; `cerebro--live-sessions' is stubbed, not the three helpers that derive
   ;; from it: `cerebro--findings-from' must reach the state files exactly
-  ;; once, so all four sweeps judge one snapshot of a fleet that moves.
+  ;; once, so all five sweeps judge one snapshot of a fleet that moves.
   (cl-letf (((symbol-function 'cerebro--live-sessions)
              (lambda (_root) '(("Cyclops" working "ah-gjq4"))))
             ((symbol-function 'cerebro--roster) (lambda (_root) '("Cyclops" "Storm"))))
@@ -2682,15 +2682,18 @@ produces has been enriched with what its assignee is actually on."
                      (list (cerebro-test--claim-candidate "ah-c1" "Storm" nil nil nil nil 30))
                      (list (cerebro-test--epic-candidate "ah-e1" 30))
                      (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300))
-                     (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32)))))
+                     (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32))
+                     (list (cerebro-test--verdict-candidate "ah-v1" "0b444332cd" 2)))))
       (should (equal (mapcar #'cdr findings)
                      '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")
-                       (unassign "ah-a1" 0))))
+                       (unassign "ah-a1" 0) (recheck "ah-v1" 0))))
+      (should (equal (nth 3 (mapcar #'car findings))
+                     "unassign ah-a1 — Cyclops is on ah-gjq4"))
       (should (equal (car (last (mapcar #'car findings)))
-                     "unassign ah-a1 — Cyclops is on ah-gjq4")))))
+                     "recheck ah-v1 — verdict at 0b444332, 2 merges since")))))
 
 (ert-deftest cerebro-test/findings-from-reads-the-state-files-once ()
-  "Four sweeps, one snapshot. Deriving through the three helpers instead
+  "Five sweeps, one snapshot. Deriving through the three helpers instead
 would walk the roster three times and take three separate readings of a
 fleet that moves between them - so one sweep could judge a session the next
 no longer sees."
@@ -2701,14 +2704,21 @@ no longer sees."
       (cerebro--findings-from
        "/repo" nil nil
        (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300))
-       (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32)))
+       (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32))
+       nil)
       (should (equal reads 1)))))
 
-(ert-deftest cerebro-test/the-assignee-sweep-is-registered-last ()
+(ert-deftest cerebro-test/the-assignee-sweep-is-registered ()
   (should (equal (alist-get 'sweep-assignees cerebro--sweep-scripts)
-                 "sweep-assignees.sh"))
+                 "sweep-assignees.sh")))
+
+(ert-deftest cerebro-test/the-verdict-sweep-is-registered-last ()
+  "Appended last, so its parsed output reaches `cerebro--findings-from' in
+the argument position the docstring promises."
+  (should (equal (alist-get 'sweep-verdicts cerebro--sweep-scripts)
+                 "sweep-verdicts.sh"))
   (should (equal (car (last cerebro--sweep-scripts))
-                 '(sweep-assignees . "sweep-assignees.sh"))))
+                 '(sweep-verdicts . "sweep-verdicts.sh"))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 4: showing sweep findings and acting on them, confirmed
@@ -4032,3 +4042,86 @@ in this list is a fact that wants a `defcustom'."
       (should (equal (sort public #'string<)
                      '("cerebro-bead-buffer-name" "cerebro-beads-buffer-name"
                        "cerebro-buffer-name"))))))
+
+;; ---------------------------------------------------------------------------
+;; ah-e0kf: a failed verdict main has moved past
+
+(defun cerebro-test--verdict-candidate (id verified-at merges &optional priority)
+  `((id . ,id) (title . "a bead whose verdict may be stale")
+    (priority . ,(or priority 0))
+    (verified_at . ,verified-at)
+    (merges_since . ,merges)))
+
+(ert-deftest cerebro-test/a-verdict-with-no-commit-is-left-alone ()
+  "Unknown is not stale. Every verdict recorded before ah-e0kf shipped has no
+`verified_at', and a sweep that read absence as staleness would flag the
+entire history on its first run."
+  (should (null (cerebro--verdict-finding
+                 (cerebro-test--verdict-candidate "ah-t2pn.3" nil nil)))))
+
+(ert-deftest cerebro-test/a-commit-not-on-the-branch-is-left-alone ()
+  "A distance that is not a number is not a small number. The script says
+nil when the commit is missing from the clone, or is not an ancestor of the
+default branch - a drifted worktree, a force-push."
+  (should (null (cerebro--verdict-finding
+                 (cerebro-test--verdict-candidate "ah-t2pn.3" "ce9d2817ab" nil)))))
+
+(ert-deftest cerebro-test/a-verdict-at-the-head-is-left-alone ()
+  "Nothing merged since the verdict, so there is nothing to say."
+  (should (null (cerebro--verdict-finding
+                 (cerebro-test--verdict-candidate "ah-t2pn.3" "ce9d2817ab" 0)))))
+
+(ert-deftest cerebro-test/a-verdict-one-merge-behind-is-offered ()
+  "The chosen threshold is one: anything landing on main since the verdict
+is enough to be worth a second look."
+  (should (equal (cerebro--verdict-finding
+                  (cerebro-test--verdict-candidate "ah-vocw" "0b444332cd" 1))
+                 '(recheck "ah-vocw" 0))))
+
+(ert-deftest cerebro-test/a-verdict-many-merges-behind-is-offered ()
+  "ah-fjty on 2026-08-23: six merges after the verdict, and the two causes a
+planner's audit named were both correct behaviour introduced after it."
+  (should (equal (cerebro--verdict-finding
+                  (cerebro-test--verdict-candidate "ah-fjty" "dd3f67bdef" 6))
+                 '(recheck "ah-fjty" 0))))
+
+(ert-deftest cerebro-test/verdict-finding-carries-the-priority-it-was-given ()
+  "As `cerebro--assignee-finding' does, and for the same reason:
+`cerebro--sweep-line' is given nothing but the finding and needs it."
+  (should (equal (cerebro--verdict-finding
+                  (cerebro-test--verdict-candidate "ah-zzz" "0b444332cd" 2 2))
+                 '(recheck "ah-zzz" 2))))
+
+(ert-deftest cerebro-test/verdict-label-names-the-commit-and-the-distance ()
+  "Both lines ship verbatim; the navigator chose this wording. The singular
+is not optional - the threshold is one, so `1 merge since' is the most
+common line this sweep will ever print."
+  (should (equal (cerebro--sweep-label
+                  '(recheck "ah-t2pn.3" 0)
+                  (cerebro-test--verdict-candidate
+                   "ah-t2pn.3" "ce9d2817ab7f3e0d1c2b" 4))
+                 "recheck ah-t2pn.3 — verdict at ce9d2817, 4 merges since"))
+  (should (equal (cerebro--sweep-label
+                  '(recheck "ah-fjty" 0)
+                  (cerebro-test--verdict-candidate
+                   "ah-fjty" "dd3f67bd1a2b3c4d5e6f" 1))
+                 "recheck ah-fjty — verdict at dd3f67bd, 1 merge since")))
+
+(ert-deftest cerebro-test/a-stale-p0-verdict-line-shouts-and-others-do-not ()
+  "The same `warning' face ah-kjfm shipped for a stranded assignee, and
+nothing more."
+  (should (eq 'warning
+              (get-text-property 0 'face
+                                 (cerebro--sweep-line "recheck ah-fjty — x"
+                                                      '(recheck "ah-fjty" 0)))))
+  (should-not (get-text-property 0 'face
+                                 (cerebro--sweep-line "recheck ah-zzz — x"
+                                                      '(recheck "ah-zzz" 2)))))
+
+(ert-deftest cerebro-test/verdict-finding-command-flags-the-verdict-stale ()
+  "The one write this bead adds, and the only place it may live. A dimension
+of its own: `verification:' is a bd state dimension and `bd set-state'
+replaces it, so a `verification=stale' would erase the verdict itself."
+  (should (equal (cerebro--finding-command '(recheck "ah-vocw" 0) "/repo")
+                 '("bd" "set-state" "ah-vocw" "verdict=stale"
+                   "--reason" "verdict formed against a commit main has moved past"))))

@@ -627,6 +627,70 @@ reopen path in `agents/verifier.md`, or an implementer's own exit is a separate 
 better fix. This sweep is a net, not a cure. Report every assignee you cleared and who it named, so
 the navigator can see the pattern rather than only its symptom.
 
+## Failed verdicts main has moved past
+
+**The fleet view detects these too**, on the same ten-minute timer as the other four:
+`sweep-verdicts.sh` reports every `open` bead carrying `verification:failed` and not already
+carrying `verdict:stale`, the Sweeps section shows a line for each whose verdict main has moved past,
+and `x` runs the `bd set-state <id> verdict=stale` shown, on confirmation.
+`cerebro--verdict-finding` enforces the guards below; this prose is what it was built from.
+
+The sixth thing a sweep looks for, and the one that costs whole sessions rather than minutes. A
+verdict is formed against **one specific commit**. On a fast day the fleet merges several beads while
+the verification is happening, so by the time the verdict reaches anybody a sibling may already have
+delivered the very thing it found missing. The verdict is then true of the tree that was looked at
+and **false of main** — and nothing distinguishes the two, because until now the commit existed only
+in prose. It gets worse as the fleet gets faster, which is the wrong direction.
+
+Three beads in one project on 2026-08-23, all within a day:
+
+| Verdict was | What landed after | Cost |
+|---|---|---|
+| 4 merges behind | A sibling bead carrying exactly the wording the verification had called the sharper half | An implementer claimed it as a P0, found nothing to build, handed it back — two sessions and a planner pass |
+| 2 merges behind | A sibling that shipped the asked-for behaviour outright | Closed unbuilt |
+| 6 merges behind | Two later beads | A planner audit that found the shipped code matched the plan exactly, and named two causes that were both *correct behaviour* introduced after the verdict |
+
+The commit now lives in the bead's `verified_at` metadata field, written by Psylocke at every verdict
+as the **full 40-character sha** — the prose keeps the short one, because `git merge-base` reads the
+field and a person reads the prose. A stale verdict on a **P0** renders its Sweeps line in the
+`warning` face, the same escalation a stranded assignee gets and for the same reason.
+
+The line says the commit and the distance, and nothing about which files moved:
+
+```
+recheck <id> — verdict at ce9d2817, 4 merges since
+recheck <id> — verdict at dd3f67bd, 1 merge since
+```
+
+Three guards, each of which is a case the sweep must stay out of:
+
+- **The bead carries no `verified_at`.** Every verdict recorded before this shipped is in that state,
+  and so is any recorded by a session running an older `verifier.md`. **Unknown is not stale** — a
+  sweep that read absence as staleness would flag the entire history on its first run.
+- **The commit is not in this clone**, or is not an ancestor of the default branch — a worktree that
+  had drifted, a force-push. The distance is then not a number, and a distance that is not known is
+  not a small distance. The script says `null`, never `0`, and the finding leaves it alone.
+- **Fewer than `cerebro-stale-verdict-merges` commits have landed since** — one, by default. Anything
+  landing on main since the verdict is enough to be worth a second look; three would be quieter but
+  would have missed the two-merge case above, one of the three this was filed for.
+
+Note what is *not* a guard: whether any of those merges touched the files this bead's plan names.
+The cheap question is deliberate — it errs toward a second look rather than toward an implementer
+building a no-op — and a mockup commit counts like any other, because the question is *has main
+moved*, not *was this bead delivered*.
+
+**What this buys, and what it does not.** Flagging takes the bead out of the two queues that would
+act on a stale verdict — `implement-bead`'s pickup and `plan-bead`'s candidate queries both exclude
+`verdict:stale` — and puts it at the top of Psylocke's next pass, which takes a stale bead first
+because re-reading a finding against current main is the cheapest verification there is. It does
+**not** decide whether the verdict still holds: only Psylocke and the navigator do that. Nothing is
+destroyed either — the verdict, the notes and the plan all stay exactly as written, which is why the
+label is `verdict:stale` and not a `verification:` value: `verification` is a bd state dimension and
+`bd set-state` replaces the whole of it, so writing staleness there would erase the finding itself.
+
+Psylocke removes the label whenever she records a new verdict, unconditionally. Without that the
+sweep would re-offer the same bead every cycle after the next merge lands.
+
 ## Staying alive between questions
 
 **Retired.** The fleet view (`emacs/cerebro.el`) now runs the worktree, claims and epics

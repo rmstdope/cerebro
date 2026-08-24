@@ -659,7 +659,14 @@ it from."
       ;; labelling, so this stays a pure formatter like the three arms above.
       (`(unassign ,id ,_priority)
        (format "unassign %s — %s is %s" id .assignee
-               (if .assignee_bead (format "on %s" .assignee_bead) "not running"))))))
+               (if .assignee_bead (format "on %s" .assignee_bead) "not running")))
+      ;; The short sha, seven-plus characters as every other line in the fleet
+      ;; view uses - the full one lives in the bead's `verified_at\=' field,
+      ;; where `git merge-base\=' reads it, and a person reads this.
+      (`(recheck ,id ,_priority)
+       (format "recheck %s — verdict at %s, %d merge%s since"
+               id (substring .verified_at 0 8) .merges_since
+               (if (= .merges_since 1) "" "s"))))))
 
 (defun cerebro--sweep-line (label finding)
   "One propertized Sweeps line: LABEL, carrying FINDING the way a bead row
@@ -675,6 +682,7 @@ one nobody presses."
   (let ((line (propertize label 'cerebro-finding finding)))
     (pcase finding
       (`(unassign ,_id 0) (propertize line 'face 'warning))
+      (`(recheck ,_id 0) (propertize line 'face 'warning))
       (_ line))))
 
 (defun cerebro--sweep-section (findings)
@@ -889,9 +897,9 @@ garbage is not `bd' or a sweep script having answered."
                          :null-object nil :false-object nil)
     (error cerebro--parse-failed)))
 
-(defun cerebro--findings-from (repo-root claims epics stalled assignees)
-  "The sweep findings (LABEL . FINDING) from CLAIMS, EPICS, STALLED and
-ASSIGNEES, the parsed JSON of the four sweep scripts. Computed at answer
+(defun cerebro--findings-from (repo-root claims epics stalled assignees verdicts)
+  "The sweep findings (LABEL . FINDING) from CLAIMS, EPICS, STALLED,
+ASSIGNEES and VERDICTS, the parsed JSON of the five sweep scripts. Computed at answer
 time (called from `cerebro--request-sweeps\='s callback) so the live fleet is
 the one described when the findings are shown, not the one that existed when
 the scripts were kicked off.
@@ -935,13 +943,21 @@ longer sees."
                                                                live-beads)))
                                              c)))
                                   (cons (cerebro--sweep-label finding enriched) finding)))))
-                       assignees)))))
+                       assignees))
+     ;; One argument, and no enrichment: everything this finding and its label
+     ;; need is already in the candidate, because a stale verdict is a fact
+     ;; about git rather than about the fleet.
+     (delq nil (mapcar (lambda (c)
+                         (let ((finding (cerebro--verdict-finding c)))
+                           (and finding (cons (cerebro--sweep-label finding c) finding))))
+                       verdicts)))))
 
 (defconst cerebro--sweep-scripts
   '((sweep-claims . "sweep-claims.sh")
     (sweep-epics . "sweep-epics.sh")
     (sweep-stalled . "sweep-stalled.sh")
-    (sweep-assignees . "sweep-assignees.sh"))
+    (sweep-assignees . "sweep-assignees.sh")
+    (sweep-verdicts . "sweep-verdicts.sh"))
   "The sweep scripts, in the order they are run, keyed by their
 `cerebro--run-async\=' key. Their parsed output reaches
 `cerebro--findings-from\=' as arguments in this same order.")
@@ -1501,6 +1517,41 @@ nothing but the finding and needs it to shout for a P0."
      ((< .age_min cerebro-stale-assignee-minutes) nil)
      (t (list 'unassign .id .priority)))))
 
+(defcustom cerebro-stale-verdict-merges 1
+  "How many commits must land on the default branch after a failed verdict\='s
+own commit before the sweep offers the bead back for a second look.
+
+One, because anything landing on main since the verdict is enough to make it
+worth re-checking: the three cases of 2026-08-23 were 4, 2 and 6 merges
+behind, and erring toward a re-verification is much cheaper than erring
+toward an implementer building a no-op. Three would be quieter but would
+have missed `ah-vocw\=' at two merges, one of the three cases this was
+filed for."
+  :type 'integer
+  :group 'cerebro)
+
+(defun cerebro--verdict-finding (candidate)
+  "Pure. What the verdict sweep should offer for CANDIDATE, or nil.
+
+CANDIDATE is one parsed object from `sweep-verdicts.sh --json\='. Returns nil
+or (recheck ID PRIORITY). Nil covers the two cases the script could not
+answer: the bead carries no `verified_at\=', so no verdict commit is known;
+or `merges_since\=' is nil, meaning the commit is not on the default branch
+and the distance is not a number. A known distance below
+`cerebro-stale-verdict-merges\=' is also nil.
+
+It takes ONE argument, unlike `cerebro--assignee-finding\=': everything it
+needs is in the candidate, since there is no liveness to consult and no
+roster to check. PRIORITY rides in the finding for the same reason it does
+there - `cerebro--sweep-line\=' is given nothing else and needs it to shout
+for a P0."
+  (let-alist candidate
+    (cond
+     ((null .verified_at) nil)
+     ((null .merges_since) nil)
+     ((< .merges_since cerebro-stale-verdict-merges) nil)
+     (t (list 'recheck .id .priority)))))
+
 (defun cerebro--finding-command (finding repo-root)
   "The exact argv for FINDING, or nil for nil.
 
@@ -1524,6 +1575,15 @@ sweep pipeline; the command itself carries no path, since it is run with
     ;; and holds no lease, so there is nothing to unclaim or reclaim. This is
     ;; the whole write, and this arm is the only place it may live.
     (`(unassign ,id ,_priority) (list cerebro-bd-program "update" id "--assignee" ""))
+    ;; `verdict\=' is a dimension of its own, deliberately: `verification\=' is a bd
+    ;; state dimension and `bd set-state\=' replaces the whole of it, so
+    ;; `verification=stale\=' would erase the verdict this line exists to preserve.
+    ;; Nothing is destroyed here - the verdict, the notes and the plan all stay
+    ;; exactly as written; the label only moves the bead out of the implementer
+    ;; and planner queues and into Psylocke\='s.
+    (`(recheck ,id ,_priority)
+     (list cerebro-bd-program "set-state" id "verdict=stale"
+           "--reason" "verdict formed against a commit main has moved past"))
     (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure

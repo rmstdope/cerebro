@@ -109,3 +109,43 @@ stranded **P0**'s line renders in the `warning` face, because the failure being 
 was looking and a line nobody presses strands the P0 just as silently. `cerebro-stale-assignee-minutes`
 is 10 — one sweep cycle, so a bead is seen twice before it is offered; 30 would only just have caught
 `ah-fjty` at 32 minutes.
+
+## ah-e0kf — a verification verdict acted on after main has moved past it
+
+`agents/orchestrator.md`'s *Failed verdicts main has moved past* comes from three beads verified on
+2026-08-23, each of which had been overtaken by main before its verdict reached anybody:
+
+| Bead | Verdict at | Merges since | What landed after | Cost |
+|---|---|---|---|---|
+| `ah-t2pn.3` | `ce9d2817` | 4 | `ah-t2pn.4`, carrying exactly the wording the verification had called the sharper half | An implementer claimed it as a P0, found nothing to build, handed it back — two sessions and a planner pass |
+| `ah-vocw` | `0b444332` | 2 | `ah-gjq4`, which shipped it outright (`silver.rs:385`, `:632`) | Closed unbuilt |
+| `ah-fjty` | `dd3f67bd` | 6 | `ah-e66j` and `ah-eacd` | A planner audit that found the shipped code matched the plan exactly, and named two candidate causes that were both correct behaviour introduced after the bead was planned |
+
+Nothing recorded *which commit* a verdict was formed against in a place a later reader checks: the
+sha existed only in the prose of a `--reason` string and an appended note, and nothing compared it to
+the default branch's head before the bead reached an implementer or a planner. A stale verdict was
+therefore indistinguishable from a live one, and it gets worse as a fleet gets faster.
+
+The navigator chose, against `docs/ui/ah-e0kf-stale-verdict.html`:
+
+- **The line says the commit and the count of merges since**, not a time behind main (a quiet three
+  hours and a busy three hours read identically) and not the name of what merged (the longest line in
+  the section, and it must truncate and pick one exactly when several merged, which is when the line
+  matters most).
+- **The key sends the bead back to the verifier** rather than being a pure alert — the failure being
+  fixed is that nobody was looking, and a line with no key behind it strands the bead just as quietly
+  — and it still confirms like the other five, so every destructive path stays in
+  `cerebro--finding-command`.
+- **`verdict:stale`, a dimension of its own**, put to the navigator as a correction:
+  `verification:` is a bd state dimension and `bd set-state` replaces the whole of it, so a
+  `verification=stale` would erase the verdict itself and `--add-label verification:stale` would
+  leave two labels in one dimension.
+- **`cerebro-stale-verdict-merges` is 1.** Three would be quieter but would have missed `ah-vocw` at
+  two merges; erring toward a re-verification is much cheaper than erring toward an implementer
+  building a no-op.
+
+Two decisions the planner took and stated so the implementer would not reopen them: the field carries
+the **full 40-character sha** (it is read by `git merge-base` and `git log`, and a short sha is
+ambiguous in a large repository) while every prose mention keeps the short one; and a **missing
+`verified_at` yields no finding at all**, because unknown is not stale and every verdict recorded
+before this shipped is in that state.

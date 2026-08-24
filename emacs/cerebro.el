@@ -148,8 +148,18 @@ ROOT may carry a trailing slash (`cerebro--repo-root\=' is a
 `locate-dominating-file\=' result, which does), and /repos/cerebro is not
 /repos/cerebro-hud: the needle is ROOT with its slash normalised and one
 appended, so a sibling checkout named for the same prefix is not this
-consumer."
-  (let ((needle (concat (regexp-quote (directory-file-name root)) "/")))
+consumer.
+
+ROOT is expanded first, because that same `locate-dominating-file\=' result
+comes back *abbreviated* - \"~/repos/cerebro/\" for a checkout under the home
+directory, which is where one normally is.  Every other caller expands it on
+the way to a file name, so the abbreviation was invisible until it reached
+this function, which is the one place the root is compared as a string: a
+process names `/Users/<you>/repos/...\=' and never `~\=', so nothing matched,
+every agent read as having no live session, and `cerebro--derive-interactive\='
+showed `up\=' for a role whose state file said `waiting\=' - with no supervision
+behind it, which is the whole cb-5yr mechanism gone quiet (cb-5yr.1)."
+  (let ((needle (concat (regexp-quote (directory-file-name (expand-file-name root))) "/")))
     (cl-some (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
 
 (defun cerebro--session-args-p (args name root)

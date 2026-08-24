@@ -127,6 +127,27 @@ test body cannot compute this itself.")
   (let ((args (list cerebro-test--this-consumer-args)))
     (should (equal (cerebro--consumer-args args "/Users/x/repos/cerebro/") args))))
 
+(ert-deftest cerebro-test/one-rule-takes-a-root-spelled-with-a-tilde ()
+  "A root `locate-dominating-file\=' abbreviated still matches an absolute command line.
+
+`cerebro--repo-root\=' is that result, and it comes back as \"~/repos/cerebro/\"
+whenever the tree is under the home directory - which is where a checkout
+normally is.  Every other caller expands it before use, so the abbreviation
+was invisible until it reached the one place that compares it as a *string*:
+a command line names `/Users/<you>/repos/cerebro/...\=', never `~\=', so the
+match failed for every process, `cerebro--session-alive-p\=' answered nil for
+every agent, and the view fell through to its no-file branches - reading `up\='
+for a role whose state file said `waiting\=', and supervising nobody.  Both
+entry points to the rule are pinned here, since both are string matches."
+  (let* ((home (expand-file-name "~/"))
+         (args (list (concat "claude --agent planner --name Xavier --remote-control Xavier"
+                             " --settings " home
+                             "repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json"))))
+    (should (equal (cerebro--consumer-args args "~/repos/cerebro/") args))
+    (should (cerebro--session-args-p (car args) "Xavier" "~/repos/cerebro/"))
+    ;; and the sibling rule still holds through the expansion
+    (should-not (cerebro--consumer-args args "~/repos/cerebro-hud/"))))
+
 (ert-deftest cerebro-test/consumer-args-does-not-match-a-sibling-with-the-same-prefix ()
   ;; The root must be a whole path component: /repos/cerebro is not /repos/cerebro-hud.
   (let ((args (list "claude --name Xavier --settings /Users/x/repos/cerebro-hud/.claude/cerebro/x")))

@@ -38,3 +38,4 @@ dist/
 !.claude/agents/
 !.claude/settings.json
 !.claude/cerebro-project.conf
+!.claude/cerebro-roster

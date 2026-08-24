@@ -90,6 +90,24 @@ kind_of() {
 # dependency or a call to `consumer-root', or that guarantee goes with it.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONSUMER_ROSTER="$here/../../cerebro-roster"
+
+# Third candidate, between the two: cerebro serving ITSELF (cb-i3l.3). The mount is a symlink
+# `.claude/cerebro -> ..', so the arithmetic above walks THROUGH it - the kernel resolves
+# `.claude/cerebro/scripts/../..' to the directory above the repository - and roster went looking
+# for a file beside somebody's clone. The consumer file was then ignored in silence and the table
+# below used instead, which looks exactly like a working fleet until a name that is not on it fails
+# to launch.
+#
+# The check is the same round trip `consumer-root' makes, and like everything else above it uses no
+# external command, so the narrowed-PATH guarantee survives. It runs BEFORE git for the same reason
+# the arithmetic does.
+if [[ ! -f "$CONSUMER_ROSTER" ]]; then
+  own_root="$(cd "$here/.." 2>/dev/null && pwd -P)" || own_root=""
+  if [[ -n "$own_root" && "$(cd "$own_root/.claude/cerebro" 2>/dev/null && pwd -P)" == "$own_root" ]]; then
+    CONSUMER_ROSTER="$own_root/.claude/cerebro-roster"
+  fi
+fi
+
 if [[ ! -f "$CONSUMER_ROSTER" ]] && command -v git >/dev/null 2>&1; then
   superproject="$(git -C "$here" rev-parse --show-superproject-working-tree 2>/dev/null)" || superproject=""
   if [[ -n "$superproject" && -f "$superproject/.claude/cerebro-roster" ]]; then

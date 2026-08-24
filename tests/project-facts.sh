@@ -135,5 +135,46 @@ pass "every path the fleet writes under .cerebro/ is ignored"
 [[ -z "$(git ls-files .cerebro)" ]] \
   || fail "something under .cerebro/ is tracked: $(git ls-files .cerebro)"
 pass "nothing under .cerebro/ is tracked, which is why the ignore can be wholesale"
+# --- the fleet this repository runs (cb-i3l.3) ---
+#
+# `.claude/cerebro-roster' REPLACES the built-in table rather than merging with it, so what it
+# leaves out is as much a decision as what it declares - and a role left out by accident reads
+# exactly like one left out on purpose.
+roster_file=".claude/cerebro-roster"
+[[ -f "$roster_file" ]] || fail "$roster_file does not exist - this repository runs the X-Men by default"
+git ls-files --error-unmatch "$roster_file" >/dev/null 2>&1 \
+  || fail "$roster_file is not tracked - an ignored roster vanishes on a fresh clone"
+pass "this repository declares its own fleet, in a tracked file"
+
+rows="$(".claude/cerebro/scripts/roster")"
+[[ -n "$rows" ]] || fail "roster prints nothing"
+roles="$(echo "$rows" | cut -f2 | sort -u)"
+for role in planner orchestrator reviewer architect implementer; do
+  echo "$roles" | grep -qx "$role" || fail "the roster declares no $role"
+done
+for role in verifier user-feedback; do
+  echo "$roles" | grep -qx "$role" && fail "$role is on the roster; it was decided against"
+done
+pass "the fleet is planner, orchestrator, reviewer, architect and implementers"
+
+# The first planner listed is not cosmetic: plan-bead gives the P4 triage pass to that one alone,
+# so two triaging sessions never interview the navigator twice over the same backlog.
+[[ "$(echo "$rows" | grep -m1 -P '\tplanner\t' | cut -f1)" == "Xavier" ]] 2>/dev/null \
+  || [[ "$(echo "$rows" | awk -F'\t' '$2=="planner"{print $1; exit}')" == "Xavier" ]] \
+  || fail "Xavier is not the first planner listed, and the triage pass belongs to that one"
+pass "the first planner listed is the one that triages"
+
+# Every declared role must have an agent file, or launch-preflight refuses the moment it is started.
+while IFS=$'\t' read -r name role _; do
+  [[ -f "agents/$role.md" ]] || fail "$name holds $role, and there is no agents/$role.md"
+done <<<"$rows"
+pass "every role on the roster has an agent definition to run"
+
+# An omission has to say so. Whoever reads this file next must be able to tell a decision from an
+# oversight, and only the file can tell them.
+for role in verifier user-feedback; do
+  grep -q "$role" "$roster_file" || fail "$roster_file leaves out $role without a word saying why"
+done
+pass "each role left out of the fleet says in the file why it is out"
 
 echo "all project-facts tests passed"

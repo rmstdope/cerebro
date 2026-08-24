@@ -406,7 +406,12 @@ pass "transition-log-never-fatal"
 tmp="$(new_fixture)"
 # The names come from the roster rather than being spelled out, so a consumer with its own fleet
 # runs this case too (ah-qled.5.1). Ten of them: 20 concurrent appends is what this pins.
-concurrent_names="$("$repo_root/scripts/roster" --implementers | sed -n 1,10p)"
+# From the FIXTURE's roster, not this checkout's. The intent is unchanged - the names come from a
+# roster rather than being spelled out, so a consumer with its own fleet runs this case too - but
+# this checkout is now a consumer itself with four implementers on it (cb-i3l.3), and ten distinct
+# names is what twenty concurrent appends need. The fixture declares no fleet, so it answers with
+# the shipped table.
+concurrent_names="$("$tmp/.claude/cerebro/scripts/roster" --implementers | sed -n 1,10p)"
 [[ "$(printf '%s\n' "$concurrent_names" | grep -c .)" == "10" ]] \
   || fail "transition-log-concurrent: the roster names fewer than ten implementers"
 for n in $concurrent_names; do

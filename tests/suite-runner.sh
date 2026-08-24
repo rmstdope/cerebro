@@ -129,10 +129,18 @@ $err"
 grep -qF -- "ok   $work_dir/suites/c-pass.sh (" <<<"$out" || fail "c-pass.sh did not run after b-fail.sh failed
 $out"
 
-named="$(grep -nF -- "-- $work_dir/suites/b-fail.sh" <<<"$out" | head -n 1 | cut -d: -f1)"
+# The replay comes after every result line, not inline. Suites run at the same time now, so a
+# multi-line replay printed while another suite is still reporting would interleave with it; the
+# parent replays each failing suite once every job has ended, in glob order.
+grep -qF -- "== output of $work_dir/suites/b-fail.sh ==" <<<"$out" \
+  || fail "no '== output of <path> ==' header for b-fail.sh
+$out"
+header="$(grep -nF -- "== output of $work_dir/suites/b-fail.sh ==" <<<"$out" | head -n 1 | cut -d: -f1)"
+last_result="$(grep -nE '^(ok   |FAIL )' <<<"$out" | tail -n 1 | cut -d: -f1)"
+[[ $header -gt $last_result ]] || fail "b-fail.sh's replay is at line $header, before the last result line at $last_result
+$out"
 replay="$(grep -n '^b stdout$' <<<"$out" | head -n 1 | cut -d: -f1)"
-result="$(grep -nF -- "FAIL $work_dir/suites/b-fail.sh (" <<<"$out" | head -n 1 | cut -d: -f1)"
-[[ $named -lt $replay && $replay -lt $result ]] || fail "b-fail.sh: name/replay/result out of order ($named, $replay, $result)
+[[ $replay -gt $header ]] || fail "b-fail.sh: 'b stdout' at line $replay does not follow its header at $header
 $out"
 
 pass "a failing suite's output is replayed and the remaining suites still run"
@@ -153,9 +161,15 @@ grep -qF -- "::error file=$work_dir/suites/b-fail.sh::$work_dir/suites/b-fail.sh
   || fail "no ::error annotation for b-fail.sh
 $out"
 
+# The group wraps the replay, which is all a group can wrap now: the live -- / ok / FAIL lines of
+# several suites interleave, and a group cannot span them.
 group="$(grep -nF -- "::group::$work_dir/suites/b-fail.sh" <<<"$out" | head -n 1 | cut -d: -f1)"
-named="$(grep -nF -- "-- $work_dir/suites/b-fail.sh" <<<"$out" | head -n 1 | cut -d: -f1)"
-[[ $group -lt $named ]] || fail "::group:: for b-fail.sh is at line $group, after its name at $named
+header="$(grep -nF -- "== output of $work_dir/suites/b-fail.sh ==" <<<"$out" | head -n 1 | cut -d: -f1)"
+endgroup="$(grep -n '^::endgroup::$' <<<"$out" | head -n 1 | cut -d: -f1)"
+error="$(grep -nF -- "::error file=$work_dir/suites/b-fail.sh::" <<<"$out" | head -n 1 | cut -d: -f1)"
+[[ $group -lt $header ]] || fail "::group:: for b-fail.sh is at line $group, after its replay header at $header
+$out"
+[[ $error -gt $endgroup ]] || fail "::error for b-fail.sh is at line $error, before ::endgroup:: at $endgroup
 $out"
 
 set +e

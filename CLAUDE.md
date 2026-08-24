@@ -262,15 +262,18 @@ also shows a
 **Sweeps** section: the claims and epics sweeps `agents/orchestrator.md` describes, run every ten
 minutes by `scripts/sweep-claims.sh` and `scripts/sweep-epics.sh` (read-only; they gather facts and
 mutate nothing), turned into findings by pure decision functions, and hidden entirely when there is
-nothing to report. `x` on a finding shows the exact `bd close`/`bd reclaim` it maps to and runs it
+nothing to report. A sweep is **one row of `cerebro--sweeps`** — key, script, finding function, which
+fleet slices it needs, an optional label enrichment; adding one is a row, a `cerebro--<x>-finding`, a
+`cerebro--sweep-label` arm and a `cerebro--finding-command` arm, and
+`cerebro-test/a-sixth-sweep-is-one-row` proves the row alone is enough for the runner (cb-4s8). `x` on a finding shows the exact `bd close`/`bd reclaim` it maps to and runs it
 only on confirmation. Worktree pruning (`prune-worktrees.sh --watch`) starts automatically alongside
 the fleet buffer and needs no confirmation - see `docs/cerebro-jobs.md` for why.
 
 The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebro--entry`,
 `cerebro--*-action`, `cerebro--launch-command`, `cerebro--claim-finding`, `cerebro--epic-finding`,
-`cerebro--finding-command`) and a small set of **impure readers** at the bottom (`cerebro--fleet`,
-`cerebro--roster`, `cerebro--read-state-file`, `cerebro--system-args`, `cerebro--owned`,
-`cerebro--gather-sweeps`). The tests only exercise the pure half, passing state in as plain data. Keep
+`cerebro--finding-command`, `cerebro--findings-from-snapshot`) and a small set of **impure readers**
+at the bottom (`cerebro--fleet`, `cerebro--roster`, `cerebro--read-state-file`,
+`cerebro--system-args`, `cerebro--owned`, `cerebro--gather-sweeps`, `cerebro--fleet-snapshot`). The tests only exercise the pure half, passing state in as plain data. Keep
 new logic on the pure side or it becomes untestable.
 
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:

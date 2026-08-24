@@ -716,8 +716,9 @@ it from."
                .progress_age_min))
       ;; `assignee_bead\=' is not a field of `sweep-assignees.sh\='s output - the
       ;; script reads `bd\=', not the state files, and cannot know it.
-      ;; `cerebro--findings-from\=' enriches the candidate with it before
-      ;; labelling, so this stays a pure formatter like the three arms above.
+      ;; `cerebro--assignee-enrich\=', named by that sweep's row in
+      ;; `cerebro--sweeps\=', puts it on the candidate before labelling, so
+      ;; this stays a pure formatter like the three arms above.
       (`(unassign ,id ,_priority)
        (format "unassign %s — %s is %s" id .assignee
                (if .assignee_bead (format "on %s" .assignee_bead) "not running")))
@@ -855,7 +856,7 @@ a nil state.
 
 `cerebro--live-implementer-names\=' is the same read without the states and
 `cerebro--live-session-beads\=' the same read with the beads instead;
-`cerebro--findings-from\=' derives all three from one call to
+`cerebro--fleet-snapshot\=' derives all three from one call to
 `cerebro--live-sessions\='."
   (mapcar (lambda (session)
             (cons (nth 0 session) (nth 1 session)))
@@ -958,70 +959,18 @@ garbage is not `bd' or a sweep script having answered."
                          :null-object nil :false-object nil)
     (error cerebro--parse-failed)))
 
-(defun cerebro--findings-from (repo-root claims epics stalled assignees verdicts)
-  "The sweep findings (LABEL . FINDING) from CLAIMS, EPICS, STALLED,
-ASSIGNEES and VERDICTS, the parsed JSON of the five sweep scripts. Computed at answer
-time (called from `cerebro--request-sweeps\='s callback) so the live fleet is
-the one described when the findings are shown, not the one that existed when
-the scripts were kicked off.
+(defun cerebro--findings-from (repo-root outputs)
+  "The sweep findings (LABEL . FINDING) from OUTPUTS, an alist (KEY . parsed
+JSON) keyed as `cerebro--sweeps\=' is. Computed at answer time (called from
+`cerebro--request-sweeps\='s callback) so the live fleet is the one described
+when the findings are shown, not the one that existed when the scripts were
+kicked off.
 
-The claims sweep wants names, the stalled sweep wants states and the
-assignee sweep wants beads; all three are derived here from one call to
-`cerebro--live-sessions\=', rather than through the three helpers - which
-would walk the roster three times and, worse, take three separate snapshots
-of a fleet that moves, so one sweep could judge a session the next one no
-longer sees."
-  (let* ((sessions (cerebro--live-sessions repo-root))
-         (live-names (mapcar (lambda (x) (nth 0 x)) sessions))
-         (live-states (mapcar (lambda (x) (cons (nth 0 x) (nth 1 x))) sessions))
-         (live-beads (mapcar (lambda (x) (cons (nth 0 x) (nth 2 x))) sessions))
-         (roster (cerebro--roster repo-root))
-         (now (current-time)))
-    (append
-     (delq nil (mapcar (lambda (c)
-                         (let ((finding (cerebro--claim-finding c live-names now)))
-                           (and finding (cons (cerebro--sweep-label finding c) finding))))
-                       claims))
-     (delq nil (mapcar (lambda (e)
-                         (let ((finding (cerebro--epic-finding e)))
-                           (and finding (cons (cerebro--sweep-label finding e) finding))))
-                       epics))
-     (delq nil (mapcar (lambda (c)
-                         (let ((finding (cerebro--stalled-finding c live-states now)))
-                           (and finding (cons (cerebro--sweep-label finding c) finding))))
-                       stalled))
-     (delq nil (mapcar (lambda (c)
-                         (let ((finding (cerebro--assignee-finding c live-beads roster now)))
-                           (and finding
-                                ;; The label wants to say what the assignee is
-                                ;; actually on, which the script cannot know - it
-                                ;; reads `bd\=', not the state files. Enriching the
-                                ;; candidate here keeps `cerebro--sweep-label\=' a
-                                ;; pure two-argument formatter.
-                                (let ((enriched
-                                       (cons (cons 'assignee_bead
-                                                   (cdr (assoc (alist-get 'assignee c)
-                                                               live-beads)))
-                                             c)))
-                                  (cons (cerebro--sweep-label finding enriched) finding)))))
-                       assignees))
-     ;; One argument, and no enrichment: everything this finding and its label
-     ;; need is already in the candidate, because a stale verdict is a fact
-     ;; about git rather than about the fleet.
-     (delq nil (mapcar (lambda (c)
-                         (let ((finding (cerebro--verdict-finding c)))
-                           (and finding (cons (cerebro--sweep-label finding c) finding))))
-                       verdicts)))))
-
-(defconst cerebro--sweep-scripts
-  '((sweep-claims . "sweep-claims.sh")
-    (sweep-epics . "sweep-epics.sh")
-    (sweep-stalled . "sweep-stalled.sh")
-    (sweep-assignees . "sweep-assignees.sh")
-    (sweep-verdicts . "sweep-verdicts.sh"))
-  "The sweep scripts, in the order they are run, keyed by their
-`cerebro--run-async\=' key. Their parsed output reaches
-`cerebro--findings-from\=' as arguments in this same order.")
+The impure half only: it reads the live fleet once, through
+`cerebro--fleet-snapshot\=', and hands that to
+`cerebro--findings-from-snapshot\=', which is where the judging lives and is
+pure. One read rather than three helper calls - see that function."
+  (cerebro--findings-from-snapshot outputs (cerebro--fleet-snapshot repo-root)))
 
 (defun cerebro--request-sweeps (repo-root callback)
   "Run the sweep scripts without blocking, one after the other; CALLBACK gets
@@ -1032,13 +981,14 @@ sweep is already out.
 
 List-driven rather than hand-nested: the scripts are identical in shape, and
 a callback nest one level deep per script stops being readable at three."
-  (cerebro--request-sweeps-1 repo-root cerebro--sweep-scripts nil callback))
+  (cerebro--request-sweeps-1 repo-root (cerebro--sweep-scripts) nil callback))
 
 (defun cerebro--request-sweeps-1 (repo-root remaining acc callback)
   "Run REMAINING sweep scripts in order, collecting parsed output onto ACC
-\(reversed), then call CALLBACK. See `cerebro--request-sweeps\='."
+\(reversed) as (KEY . PARSED) pairs, then call CALLBACK. See
+`cerebro--request-sweeps\='."
   (if (null remaining)
-      (funcall callback (list (apply #'cerebro--findings-from repo-root (nreverse acc))))
+      (funcall callback (list (cerebro--findings-from repo-root (nreverse acc))))
     (let ((key (caar remaining))
           (script (cdar remaining)))
       (cerebro--run-async
@@ -1051,7 +1001,7 @@ a callback nest one level deep per script stops being readable at three."
              (if (eq parsed cerebro--parse-failed)
                  (funcall callback nil)
                (cerebro--request-sweeps-1 repo-root (cdr remaining)
-                                          (cons parsed acc) callback)))))))))
+                                          (cons (cons key parsed) acc) callback)))))))))
 
 (defun cerebro--request-history (repo-root callback)
   "Run `scripts/fleet-history --summary' without blocking; CALLBACK gets the
@@ -1677,6 +1627,82 @@ for a P0."
      ((null .merges_since) nil)
      ((< .merges_since cerebro-stale-verdict-merges) nil)
      (t (list 'recheck .id .priority)))))
+
+;;; cb-4s8: one row per sweep, and the pure walker that reads it
+
+(defconst cerebro--sweeps
+  `((sweep-claims    "sweep-claims.sh"    ,#'cerebro--claim-finding    (:live-names :now))
+    (sweep-epics     "sweep-epics.sh"     ,#'cerebro--epic-finding     ())
+    (sweep-stalled   "sweep-stalled.sh"   ,#'cerebro--stalled-finding  (:live-states :now))
+    (sweep-assignees "sweep-assignees.sh" ,#'cerebro--assignee-finding (:live-beads :roster :now)
+                     ,#'cerebro--assignee-enrich)
+    (sweep-verdicts  "sweep-verdicts.sh"  ,#'cerebro--verdict-finding  ()))
+  "One row per sweep: (KEY SCRIPT FINDER NEEDS [ENRICH]).
+KEY is the `cerebro--run-async\=' key and the key of the outputs alist
+`cerebro--findings-from\=' takes; SCRIPT the file under scripts/; FINDER a
+pure function (CANDIDATE . NEEDS-VALUES) -> finding or nil; NEEDS the
+`cerebro--fleet-snapshot\=' keys passed after the candidate, in this order;
+ENRICH, when present, (CANDIDATE SNAPSHOT) -> the candidate
+`cerebro--sweep-label\=' formats, for the one sweep whose label needs a fact
+its script cannot know. Run order is row order.
+
+This table is the whole of what the runner is told about a sweep. Adding a
+sixth is a row here, a `cerebro--<x>-finding\=', a `cerebro--sweep-label\='
+arm and a `cerebro--finding-command\=' arm - no signature and no existing
+test changes with it, which is what cb-4s8 bought. Label and command stay
+outside the table deliberately: both dispatch on the finding's shape rather
+than on the sweep - the claims sweep alone yields two - and
+`cerebro--finding-command\=' is meant to read as one list of every
+destructive command the fleet view can run.")
+
+(defun cerebro--sweep-scripts ()
+  "(KEY . SCRIPT) per sweep, in run order - derived from `cerebro--sweeps\='
+rather than kept beside it as a second list in the same order."
+  (mapcar (lambda (row) (cons (nth 0 row) (nth 1 row))) cerebro--sweeps))
+
+(defun cerebro--assignee-enrich (candidate snapshot)
+  "CANDIDATE with `assignee_bead\=' added from SNAPSHOT's :live-beads - what
+the assignee is actually on, which sweep-assignees.sh cannot know (it reads
+`bd\=', not the state files). Keeps `cerebro--sweep-label\=' a pure
+two-argument formatter."
+  (cons (cons 'assignee_bead
+              (cdr (assoc (alist-get 'assignee candidate)
+                          (plist-get snapshot :live-beads))))
+        candidate))
+
+(defun cerebro--fleet-snapshot (repo-root)
+  "One read of the live fleet under REPO-ROOT, as the plist the NEEDS keys of
+`cerebro--sweeps\=' name. One read, not three helper calls: those would walk
+the roster three times and take three separate readings of a fleet that
+moves, so one sweep could judge a session the next no longer sees."
+  (let ((sessions (cerebro--live-sessions repo-root)))
+    (list :live-names  (mapcar (lambda (x) (nth 0 x)) sessions)
+          :live-states (mapcar (lambda (x) (cons (nth 0 x) (nth 1 x))) sessions)
+          :live-beads  (mapcar (lambda (x) (cons (nth 0 x) (nth 2 x))) sessions)
+          :roster      (cerebro--roster repo-root)
+          :now         (current-time))))
+
+(defun cerebro--findings-from-snapshot (outputs snapshot)
+  "Pure. The (LABEL . FINDING) list for OUTPUTS - an alist (KEY . CANDIDATES),
+one entry per row of `cerebro--sweeps\=' - judged against SNAPSHOT, the plist
+`cerebro--fleet-snapshot\=' builds. Rows are walked in table order; a key
+absent from OUTPUTS contributes nothing."
+  (apply #'append
+         (mapcar
+          (lambda (row)
+            (pcase-let ((`(,key ,_script ,finder ,needs . ,rest) row))
+              (let ((args (mapcar (lambda (k) (plist-get snapshot k)) needs))
+                    (enrich (car rest)))
+                (delq nil
+                      (mapcar (lambda (c)
+                                (let ((finding (apply finder c args)))
+                                  (and finding
+                                       (cons (cerebro--sweep-label
+                                              finding
+                                              (if enrich (funcall enrich c snapshot) c))
+                                             finding))))
+                              (alist-get key outputs))))))
+          cerebro--sweeps)))
 
 (defun cerebro--finding-command (finding repo-root)
   "The exact argv for FINDING, or nil for nil.

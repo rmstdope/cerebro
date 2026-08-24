@@ -4472,3 +4472,136 @@ somebody's own terminal is theirs."
                                                 "2026-08-14T09:00:00Z")
                      nil cerebro-test--now))))))
 
+
+;; --- parking: the session ends, the buffer stays --------------------------
+
+(defun cerebro-test--parkable (name body)
+  "Run BODY with NAME holding a real, recorded session buffer and a state file.
+
+BODY gets (ROOT AGENT BUFFER).  The process is a `sleep' rather than a vterm:
+what parking does to it - clear the query flag, kill it, keep and rename the
+buffer - is the same either way, and vterm cannot be started in batch."
+  (let ((root (make-temp-file "cerebro-park" t))
+        (buffer (generate-new-buffer (format "*fleet: %s*" name)))
+        (cerebro--sessions nil))
+    (unwind-protect
+        (with-temp-buffer
+          (let ((process (start-process "cerebro-test-session" buffer
+                                        "bash" "-c" "sleep 30")))
+            (set-process-query-on-exit-flag process t)
+            (setf (alist-get name cerebro--sessions nil nil #'equal) buffer)
+            (make-directory (expand-file-name ".cerebro/state" root) t)
+            (write-region "{}" nil (expand-file-name
+                                    (format ".cerebro/state/%s.state.json" name) root))
+            (funcall body root
+                     (cerebro-test--interactive name "verifier" 'waiting)
+                     buffer)))
+      (when (buffer-live-p buffer)
+        (let ((p (get-buffer-process buffer)))
+          (when p (set-process-query-on-exit-flag p nil) (delete-process p)))
+        (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/park-session-keeps-the-buffer-and-forgets-the-session ()
+  "Everything `cerebro--end-session' removes, except the one thing worth
+keeping: the buffer, which is the only record the pass leaves behind."
+  (cerebro-test--parkable
+   "Psylocke"
+   (lambda (root agent buffer)
+     (setq cerebro--started-at '(("Psylocke" . 1000.0)))
+     (cerebro--park-session agent root (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))
+     (should-not (process-live-p (get-buffer-process buffer)))
+     (should (buffer-live-p buffer))
+     (should (string-match-p "\\`\\*fleet: Psylocke (ended [0-9][0-9]:[0-9][0-9])\\*\\'"
+                             (buffer-name buffer)))
+     (should (with-current-buffer buffer buffer-read-only))
+     ;; Forgotten, so `s' and a trigger both reach `cerebro--launch'.
+     (should-not (cerebro--session "Psylocke"))
+     (should-not (cerebro--recorded-buffer "Psylocke"))
+     ;; The file names a pid that is gone, and pids are recycled.
+     (should-not (file-exists-p (expand-file-name ".cerebro/state/Psylocke.state.json" root)))
+     (let ((entry (cdr (assoc "Psylocke" cerebro--parked))))
+       (should (eq (nth 2 entry) buffer))
+       (should (equal (nth 1 entry) 1000.0))
+       (should (numberp (nth 0 entry)))))))
+
+(ert-deftest cerebro-test/park-replaces-an-earlier-parked-buffer ()
+  "One kept buffer per role: the record of the last pass, not of every pass."
+  (let ((stale (generate-new-buffer "*fleet: Psylocke (ended 08:00)*")))
+    (cerebro-test--parkable
+     "Psylocke"
+     (lambda (root agent buffer)
+       (setq cerebro--parked (list (cons "Psylocke" (list 1.0 0.0 stale))))
+       (cerebro--park-session agent root (current-time))
+       (should-not (buffer-live-p stale))
+       (should (eq (nth 2 (cdr (assoc "Psylocke" cerebro--parked))) buffer))))))
+
+(ert-deftest cerebro-test/park-says-nothing-when-it-kills-the-process ()
+  "`cerebro--note-exit' finds an agent through `cerebro--sessions', so the
+session is forgotten before the process dies: an end the view decided on is
+not an abnormal exit to be echoed at the navigator."
+  (cerebro-test--parkable
+   "Psylocke"
+   (lambda (root agent buffer)
+     (let ((messages nil))
+       (cl-letf (((symbol-function 'message)
+                  (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+         (cerebro--park-session agent root (current-time))
+         (cerebro--note-exit buffer "exited abnormally with code 1\n"))
+       (should (null messages))
+       (should (null (alist-get "Psylocke" cerebro--last-exit nil nil #'equal)))))))
+
+(ert-deftest cerebro-test/show-detail-prefers-a-parked-buffer-over-the-placeholder ()
+  "`RET' on a standby row shows what the last pass printed."
+  (let ((parked (generate-new-buffer "*fleet: Psylocke (ended 08:00)*"))
+        (agent (cerebro-test--interactive "Psylocke" "verifier" 'standby))
+        (cerebro--sessions nil))
+    (unwind-protect
+        (progn
+          (setq cerebro--parked (list (cons "Psylocke" (list 1.0 0.0 parked))))
+          (should (eq (cerebro--show-detail agent) parked))
+          ;; Killed by hand, or never there: the placeholder, as before.
+          (kill-buffer parked)
+          (should (eq (cerebro--show-detail agent)
+                      (get-buffer (cerebro--placeholder-buffer-name agent)))))
+      (when (buffer-live-p parked) (kill-buffer parked)))))
+
+(ert-deftest cerebro-test/launch-arms-an-interactive-name-and-not-an-implementer ()
+  "`s' is what arms a role; an implementer is supervised by `done' instead."
+  (let ((cerebro--sessions nil)
+        (buffers nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--make-session-buffer)
+                   (lambda (name) (car (push (generate-new-buffer name) buffers))))
+                  ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+                  ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                  ((symbol-function 'cerebro-session-mode) #'ignore)
+                  ((symbol-function 'message) #'ignore))
+          (with-temp-buffer
+            (setq cerebro--armed nil cerebro--started-at nil)
+            (cerebro--launch (cerebro-test--interactive "Psylocke" "verifier" 'standby))
+            (cerebro--launch (cerebro-test--agent "Rogue" "implementer" 'implementer 'dead))
+            (should (equal cerebro--armed '("Psylocke")))
+            (should (assoc "Psylocke" cerebro--started-at))
+            (should-not (assoc "Rogue" cerebro--started-at))))
+      (dolist (b buffers) (when (buffer-live-p b) (kill-buffer b))))))
+
+(ert-deftest cerebro-test/launch-kills-the-parked-buffer-it-replaces ()
+  "The kept buffer is the record of the *last* pass, so a fresh start ends it."
+  (let ((cerebro--sessions nil)
+        (parked (generate-new-buffer "*fleet: Psylocke (ended 08:00)*"))
+        (buffers nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--make-session-buffer)
+                   (lambda (name) (car (push (generate-new-buffer name) buffers))))
+                  ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+                  ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+                  ((symbol-function 'cerebro-session-mode) #'ignore)
+                  ((symbol-function 'message) #'ignore))
+          (with-temp-buffer
+            (setq cerebro--parked (list (cons "Psylocke" (list 1.0 0.0 parked))))
+            (cerebro--launch (cerebro-test--interactive "Psylocke" "verifier" 'standby))
+            (should-not (buffer-live-p parked))
+            (should-not (assoc "Psylocke" cerebro--parked))))
+      (dolist (b buffers) (when (buffer-live-p b) (kill-buffer b)))
+      (when (buffer-live-p parked) (kill-buffer parked)))))

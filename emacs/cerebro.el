@@ -2039,8 +2039,13 @@ same as `cerebro--session'."
 
 Returns the buffer chosen.  A session with no live buffer - should not
 happen, `cerebro--session' is what `cerebro--owned' derives from too -
-falls back to the placeholder rather than erroring."
+falls back to the placeholder rather than erroring.
+
+A role on standby has no session and a kept buffer instead: `RET' on that
+row shows what its last pass printed (cb-5yr), which is the whole reason
+the buffer outlives the process."
   (let ((buffer (or (cerebro--session (cerebro-agent-name agent))
+                     (cerebro--parked-buffer (cerebro-agent-name agent))
                      (cerebro--placeholder-buffer agent))))
     (when (and cerebro--detail-window (window-live-p cerebro--detail-window))
       (set-window-buffer cerebro--detail-window buffer))
@@ -2108,7 +2113,9 @@ line from the one before it.
 
 The buffer is recorded in `cerebro--sessions', which is what makes it ours;
 a name with a live session is refused here, whatever the derived state
-believes about it (ah-5pp)."
+believes about it (ah-5pp).  An interactive name is *armed* here and its
+start time stamped, which is what a standby row and its trigger are derived
+from afterwards (cb-5yr)."
   (when (cerebro--session (cerebro-agent-name agent))
     (error "cerebro: %s already has a live session" (cerebro-agent-name agent)))
   (unless (cerebro--vterm-available-p)
@@ -2116,12 +2123,24 @@ believes about it (ah-5pp)."
   (add-hook 'vterm-exit-functions #'cerebro--note-exit)
   (setq cerebro--last-exit
         (assoc-delete-all (cerebro-agent-name agent) cerebro--last-exit))
+  ;; The kept buffer records the last pass; this is the next one.
+  (cerebro--forget-parked (cerebro-agent-name agent))
   (let* ((default-directory (cerebro--repo-root))
          (cmd (cerebro--launch-command agent))
          (vterm-shell (mapconcat #'shell-quote-argument cmd " "))
          (session-name (cerebro--session-buffer-name agent))
          (buffer (cerebro--make-session-buffer session-name)))
     (setf (alist-get (cerebro-agent-name agent) cerebro--sessions nil nil #'equal) buffer)
+    ;; Starting a role is what arms it: from here the view will start it
+    ;; again on its own trigger until `k' or `f' says otherwise (cb-5yr).
+    ;; An implementer is not armed - it is supervised by `done'/`restart',
+    ;; which needs no memory of having been started.
+    (when (eq (cerebro-agent-kind agent) 'interactive)
+      (cl-pushnew (cerebro-agent-name agent) cerebro--armed :test #'equal)
+      ;; The floor a trigger is gated on is measured from here: the state
+      ;; file that would otherwise carry it is deleted when the session ends.
+      (setf (alist-get (cerebro-agent-name agent) cerebro--started-at nil nil #'equal)
+            (float-time)))
     ;; The navigator's quit guard: confirm before Emacs or a buffer kill
     ;; takes a live agent down.  vterm's own kill behaviour is tuned for
     ;; disposable shells and does not set this on its own.
@@ -2311,6 +2330,66 @@ has run."
         (kill-buffer buffer)))
     (setq cerebro--sessions (assoc-delete-all name cerebro--sessions))))
 
+(defun cerebro--parked-buffer-name (name now)
+  "What NAME\='s kept session buffer is called once it has been ended at NOW.
+
+The clock time rather than an elapsed one: a buffer name is not redrawn, so
+\"ended 12m ago\" would be wrong a minute later, and the fleet row beside it
+is where a live figure belongs."
+  (format "*fleet: %s (ended %s)*" name (format-time-string "%H:%M" now)))
+
+(defun cerebro--parked-buffer (name)
+  "NAME\='s kept session buffer, if one is still live, or nil."
+  (let ((buffer (nth 2 (cdr (assoc name cerebro--parked)))))
+    (and (buffer-live-p buffer) buffer)))
+
+(defun cerebro--forget-parked (name)
+  "Kill NAME\='s kept session buffer, if any, and drop the record of it.
+
+One kept buffer per role: it is the record of the *last* pass, so a fresh
+start replaces it and `k\=' removes it.  Keeping every pass would fill the
+buffer list with a role\='s whole day and bury the one worth reading."
+  (let ((buffer (cerebro--parked-buffer name)))
+    (when buffer (kill-buffer buffer)))
+  (setq cerebro--parked (assoc-delete-all name cerebro--parked)))
+
+(defun cerebro--park-session (agent repo-root now)
+  "End AGENT\='s session at NOW, keeping its buffer as the record of its pass.
+
+Everything `cerebro--end-session\=' removes, except the one thing worth
+keeping.  The buffer is renamed by `cerebro--parked-buffer-name\=', made
+read-only, and recorded in `cerebro--parked\=' with when the session ended and
+when it had started (`cerebro--started-at\='); `RET' on the standby row that
+follows shows it (`cerebro--show-detail\=').
+
+The order is load-bearing.  The `cerebro--sessions\=' entry goes *first*,
+before the process is killed: `cerebro--note-exit\=' runs from vterm\='s
+sentinel and finds the agent through that alist, so a session still recorded
+would have this deliberate end echoed at the navigator as an abnormal exit -
+and recorded in `cerebro--last-exit\=', where the placeholder would repeat it.
+The query-on-exit flag goes with it, for the same reason `cerebro--forget-session\='
+clears it: the navigator is not asked about a kill the view decided on.
+
+Read-only is set after the process is dead, since a live vterm resets it on
+some input paths.  `RET\=' in the kept buffer reaches `vterm-send-return\=',
+which is a no-op rather than an error once the process is gone."
+  (let* ((name (cerebro-agent-name agent))
+         (buffer (cerebro--recorded-buffer name))
+         (started (cdr (assoc name cerebro--started-at))))
+    (setq cerebro--sessions (assoc-delete-all name cerebro--sessions))
+    (cerebro--forget-parked name)
+    (when (buffer-live-p buffer)
+      (let ((process (get-buffer-process buffer)))
+        (when process
+          (set-process-query-on-exit-flag process nil)
+          (delete-process process)))
+      (with-current-buffer buffer
+        (rename-buffer (cerebro--parked-buffer-name name now) t)
+        (setq buffer-read-only t)))
+    (cerebro--delete-state-file repo-root name)
+    (setf (alist-get name cerebro--parked nil nil #'equal)
+          (list (float-time now) started (and (buffer-live-p buffer) buffer)))))
+
 (defun cerebro--end-session (agent repo-root &optional clear-stop-flag)
   "End AGENT's session and remove every per-session artifact it leaves behind.
 
@@ -2321,9 +2400,14 @@ is a claim about a pid that no longer exists and pids are recycled (see
 only a retire has finished with the instruction.
 
 This is the one owner of ending a session: every artifact a session leaves
-is removed here or nowhere, so a fourth call site cannot be added
+is removed here or nowhere, so a further call site cannot be added
 half-right - which is how the same omission came to be fixed twice, in the
 two `cerebro--supervise' branches only, while `k' kept leaking a state file.
+
+`cerebro--park-session\=' is the one shape that is deliberately not this
+function (cb-5yr): it removes the same artifacts and *keeps the buffer*, which
+is the record of the pass the role just finished.  Anything ending a session
+calls one or the other; neither lists the artifacts a third time.
 
 CLEAR-STOP-FLAG stays explicit rather than inferred from the state: a flag
 written between a restart being decided and this running is the navigator

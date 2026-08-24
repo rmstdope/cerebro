@@ -3,7 +3,7 @@ name: beads-workflow
 description: How planned work is tracked in this repository with beads (bd) — picking up work, writing a good bead, modelling dependencies, branch/commit conventions, and the GitHub bug-report bridge. Use whenever work is selected, created, updated, or closed.
 ---
 
-# Beads workflow (atlantis-hud)
+# Beads workflow
 
 Planned work lives in **beads** (`bd`), not in GitHub issues. GitHub issues are the inbox for
 external requests and bug reports only.

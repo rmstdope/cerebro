@@ -771,9 +771,9 @@ claude agents --json | jq -r --argjson planners "$(.claude/cerebro/scripts/roste
   '.[] | select(.name as $n | $planners | index($n)) | "\(.name) \(.status)"'
 ```
 
-(`runImplementer.ts` and its `pgrep` are gone — `scripts/runImplementer.ts` was deleted in
-atlantis-hud `8049f17`, and the closed roster now lives in `scripts/roster` and each
-implementer's own `.cerebro/state/<name>.state.json`, which the fleet view already reads.)
+(`runImplementer.ts` and its `pgrep` are gone — the closed roster now lives in
+`scripts/roster` and each implementer's own `.cerebro/state/<name>.state.json`, which the
+fleet view already reads.)
 
 The first names every implementer whose session is up — the list to skip when you pick a new X-Man
 name for the navigator to start, and the list to choose from when you set a stop flag. The second

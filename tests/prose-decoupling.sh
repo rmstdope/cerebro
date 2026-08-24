@@ -13,6 +13,9 @@
 #     teaching someone to write good notes, and a concrete worked example teaches better than an
 #     abstract one.
 #
+# It also forbids the literal name of the project cerebro was extracted from, in that same
+# prose set plus README.md - the front door, which no other suite scans.
+#
 # No framework: plain bash, set -euo pipefail, exit non-zero on the first failed assertion. Run
 # from the submodule root:
 #
@@ -65,5 +68,15 @@ domain="$(prose_files | xargs grep -noEi '\bhexe?s?\b|\bwasm\b|\.rep\b|\bfaction
 [ -z "$domain" ] || fail "one game's vocabulary is still teaching the rules:
 $domain"
 pass "domain vocabulary appears only in the exempt release-notes skill"
+
+# --- the project cerebro grew up in is named nowhere a session reads, nor on the front door ---
+# README.md gets its own entry: it is not prose an agent is given, so prose_files rightly
+# excludes it, but it is the repository's front door and the audit (cerebro#58) found the
+# name there too. docs/decisions.md deliberately keeps the name: it is the provenance file
+# nothing loads, and prose_files already excludes it.
+hits="$({ prose_files; echo README.md; } | xargs grep -noi 'atlantis-hud' || true)"
+[ -z "$hits" ] || fail "the project cerebro was extracted from is still named in prose:
+$hits"
+pass "no prose an agent reads, and not README.md, names atlantis-hud"
 
 echo "all prose-decoupling assertions passed"

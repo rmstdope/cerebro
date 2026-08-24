@@ -3597,6 +3597,25 @@ panel render."
           (kill-buffer list-buffer)
           (kill-buffer panel))))))
 
+(ert-deftest cerebro-test/tick-asks-gh-in-the-fleet-buffer ()
+  "The reader's answers are what `cerebro--trigger-context' reads, and that
+runs in the fleet buffer - so the tick asks from there, on the fleet
+buffer's own cadence rather than the panel's."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'cerebro--list-render) #'ignore)
+              ((symbol-function 'cerebro--supervise) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--start-due) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--refresh-gh-when-due)
+               (lambda (buffer seconds) (push (cons buffer seconds) asked)))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+      (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-gh*")))
+        (unwind-protect
+            (progn
+              (with-current-buffer list-buffer (cerebro-mode))
+              (cerebro--tick list-buffer (seconds-to-time 1000))
+              (should (equal asked (list (cons list-buffer 1000.0)))))
+          (kill-buffer list-buffer))))))
+
 (ert-deftest cerebro-test/tick-skips-a-dead-panel-and-keeps-going ()
   "The panel buffer may not exist yet, or may have been killed by hand; the
 list must still refresh and supervise without error."
@@ -4656,8 +4675,8 @@ not an abnormal exit to be echoed at the navigator."
     (should (equal (cerebro-test--trigger "verifier" '(merged-unverified . 1))
                    "1 merged, unverified"))
     (should (null (cerebro-test--trigger "verifier")))
-    ;; GitHub: cb-5yr.2's reader. Until it lands the key is nil and only the
-    ;; cadence floor can start these two.
+    ;; GitHub: what `cerebro--gh-moved' found for this role. Nil, or a
+    ;; reader that has failed, leaves the cadence floor as the whole trigger.
     (should (equal (cerebro-test--trigger "user-feedback" '(gh (41 17) nil))
                    "issue #41 moved"))
     (should (equal (cerebro-test--trigger "reviewer" '(gh nil (40)))
@@ -4855,7 +4874,8 @@ it, and the roster - all of which this tick has already read."
               (should (equal (alist-get 'stale-verdicts context) 1))
               (should (equal (alist-get 'live-implementers context) 1))
               (should (equal (alist-get 'first-planner context) "Xavier"))
-              ;; cb-5yr.2's key: nil until its reader lands.
+              ;; No `gh' answer in this buffer, so nothing for the two rows
+              ;; the key feeds - and not `failed', which would say it went away.
               (should (null (alist-get 'gh context))))))
       (kill-buffer panel))))
 
@@ -4873,6 +4893,154 @@ buffer and a backlog of nothing - that would start both planners at once."
         (should (equal (alist-get 'stale-verdicts context) 0))
         ;; A buffer nothing has counted is not a buffer that is short.
         (should (>= (alist-get 'planned context) 2))))))
+
+;; --- the `gh' reader: what moved on GitHub since a role's pass ended ------
+
+(defun cerebro-test--gh-time (s)
+  "S, an ISO-8601 instant, as `float-time' - what ENDED-AT is measured in."
+  (float-time (encode-time (iso8601-parse s))))
+
+(ert-deftest cerebro-test/gh-moved-filters-by-time-author-and-draft ()
+  "The open issues, and the open non-draft pull requests somebody else opened,
+that moved after the role's last pass ended - in the order `gh' listed them."
+  (let ((issues '(((number . 10) (updatedAt . "2026-08-24T11:00:00Z"))
+                  ((number . 31) (updatedAt . "2026-08-24T13:00:00Z"))
+                  ((number . 17) (updatedAt . "2026-08-24T12:30:00Z"))))
+        (prs '(((number . 38) (author (login . "navigator")) (isDraft . nil)
+                (updatedAt . "2026-08-24T13:00:00Z"))
+               ((number . 39) (author (login . "outsider")) (isDraft . t)
+                (updatedAt . "2026-08-24T13:00:00Z"))
+               ((number . 40) (author (login . "outsider")) (isDraft . nil)
+                (updatedAt . "2026-08-24T13:00:00Z"))
+               ((number . 41) (author (login . "outsider")) (isDraft . nil)
+                (updatedAt . "2026-08-24T11:00:00Z"))))
+        (ended (cerebro-test--gh-time "2026-08-24T12:00:00Z")))
+    (should (equal (cerebro--gh-moved issues prs "navigator" ended)
+                   '((31 17) (40))))
+    ;; Never ended in this Emacs: there is no moment to compare against, so
+    ;; everything still open counts - the draft and the navigator's own PR
+    ;; excepted, which are excluded by what they are rather than by when.
+    (should (equal (cerebro--gh-moved issues prs "navigator" nil)
+                   '((10 31 17) (40 41))))
+    ;; No login yet: nothing has been shown to be somebody else's, so no PR
+    ;; can start Cypher - the issues are unaffected.
+    (should (equal (cerebro--gh-moved issues prs nil ended) '((31 17) nil)))
+    (should (equal (cerebro--gh-moved nil nil "navigator" ended) '(nil nil)))))
+
+(ert-deftest cerebro-test/gh-reader-marks-failure-and-keeps-the-last-answer ()
+  "A `gh' that stops answering leaves the last answer standing and says so:
+the trigger then reads `failed' rather than \"nothing moved\"."
+  (let ((answers nil))
+    (cl-letf (((symbol-function 'cerebro--run-async)
+               (lambda (key _root _argv callback)
+                 (funcall callback (cdr (assq key answers)))
+                 'started))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+      (with-temp-buffer
+        (setq answers `((gh-issues . "[{\"number\":31,\"updatedAt\":\"2026-08-24T13:00:00Z\"}]")
+                        (gh-prs . "[]")
+                        (gh-me . "navigator\n")))
+        (cerebro--refresh-gh-when-due (current-buffer) 100.0)
+        (should (equal cerebro--gh-issues
+                       '(((number . 31) (updatedAt . "2026-08-24T13:00:00Z")))))
+        (should (null cerebro--gh-prs))
+        (should (equal cerebro--gh-me "navigator"))
+        (should (equal cerebro--gh-as-of 100.0))
+        (should (null cerebro--gh-failed-at))
+        ;; Not due again five seconds later: each answer is a network call.
+        (setq answers nil)
+        (cerebro--refresh-gh-when-due (current-buffer) 105.0)
+        (should (null cerebro--gh-failed-at))
+        ;; Due, and `gh' is gone. The last answer stands; the failure is
+        ;; stamped after it, which is what the context reads as `failed'.
+        (cerebro--refresh-gh-when-due
+         (current-buffer) (+ 100.0 cerebro-gh-refresh-seconds))
+        (should (equal cerebro--gh-issues
+                       '(((number . 31) (updatedAt . "2026-08-24T13:00:00Z")))))
+        (should (> cerebro--gh-failed-at cerebro--gh-as-of))))))
+
+(ert-deftest cerebro-test/gh-me-is-asked-once ()
+  "The navigator's login does not change while Emacs is up, so it is asked for
+until it answers and never again - unlike the two lists beside it."
+  (let ((asked nil))
+    (cl-letf (((symbol-function 'cerebro--run-async)
+               (lambda (key _root _argv callback)
+                 (push key asked)
+                 (funcall callback (and (eq key 'gh-me) "navigator"))
+                 'started))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+      (with-temp-buffer
+        (cerebro--refresh-gh-when-due (current-buffer) 100.0)
+        (should (memq 'gh-me asked))
+        (setq asked nil)
+        (cerebro--refresh-gh-when-due
+         (current-buffer) (+ 100.0 cerebro-gh-refresh-seconds))
+        (should (memq 'gh-issues asked))
+        (should-not (memq 'gh-me asked))))))
+
+(ert-deftest cerebro-test/gh-garbage-is-not-an-answer ()
+  "A program exiting zero and printing something that is not JSON has not
+answered - the same rule the panel and the sweeps already apply."
+  (cl-letf (((symbol-function 'cerebro--run-async)
+             (lambda (key _root _argv callback)
+               (funcall callback (if (eq key 'gh-me) "navigator" "not json"))
+               'started))
+            ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+    (with-temp-buffer
+      (cerebro--refresh-gh-when-due (current-buffer) 100.0)
+      (should (null cerebro--gh-as-of))
+      (should (equal cerebro--gh-failed-at 100.0)))))
+
+(ert-deftest cerebro-test/trigger-context-carries-gh ()
+  "The `gh' key: nil before the first answer, `failed' when the newest thing
+that happened was a failure, and the moved lists when a whole pair has
+arrived since. Per role, because each is measured against its own last pass."
+  (cl-letf (((symbol-function 'cerebro--fleet) (lambda (_) nil))
+            ((symbol-function 'cerebro--beads-panel-buffer) (lambda () nil)))
+    (with-temp-buffer
+      (setq cerebro--agents nil)
+      ;; Nothing has answered yet: not `failed', which would say `gh' is down.
+      (should (null (alist-get 'gh (cerebro--trigger-context "/tmp/nowhere"
+                                                             (seconds-to-time 5.0)))))
+      ;; A pair has arrived.
+      (setq cerebro--gh-issues '(((number . 31) (updatedAt . "2026-08-24T13:00:00Z")))
+            cerebro--gh-prs '(((number . 40) (author (login . "outsider"))
+                               (isDraft . nil) (updatedAt . "2026-08-24T13:00:00Z")))
+            cerebro--gh-me "navigator"
+            cerebro--gh-as-of 100.0
+            cerebro--gh-failed-at nil)
+      (let* ((context (cerebro--trigger-context "/tmp/nowhere" (seconds-to-time 5.0)))
+             (gh (alist-get 'gh context)))
+        (should (functionp gh))
+        ;; Ended before both moved: both count.
+        (should (equal (funcall gh (cerebro-test--gh-time "2026-08-24T12:00:00Z"))
+                       '((31) (40))))
+        ;; Ended after them: neither does.
+        (should (equal (funcall gh (cerebro-test--gh-time "2026-08-24T14:00:00Z"))
+                       '(nil nil))))
+      ;; A failure newer than the last good pair.
+      (setq cerebro--gh-failed-at 200.0)
+      (should (eq (alist-get 'gh (cerebro--trigger-context "/tmp/nowhere"
+                                                           (seconds-to-time 5.0)))
+                  'failed))
+      ;; A good pair after it: back to answering.
+      (setq cerebro--gh-as-of 300.0)
+      (should (functionp (alist-get 'gh (cerebro--trigger-context "/tmp/nowhere"
+                                                                  (seconds-to-time 5.0))))))))
+
+(ert-deftest cerebro-test/agent-context-resolves-gh-against-its-own-pass ()
+  "One reader, two roles, two different \"since\": `cerebro--agent-context' is
+where the fleet's answer becomes this role's, because `ended-at' is its own."
+  (let ((context (list (cons 'gh (lambda (ended-at)
+                                   (list (list (or ended-at 0)) nil)))
+                       (cons 'first-planner "Xavier"))))
+    (cl-letf (((symbol-function 'cerebro-wake-interval) (lambda (&rest _) 3600)))
+      (with-temp-buffer
+        (setq cerebro--parked '(("Moira" 777.0 0.0 nil)) cerebro--started-at nil)
+        (let ((resolved (cerebro--agent-context
+                         (cerebro-test--interactive "Moira" "user-feedback" 'standby)
+                         context)))
+          (should (equal (alist-get 'gh resolved) '((777.0) nil))))))))
 
 (ert-deftest cerebro-test/fleet-role-names-are-the-names-filling-a-role-in-order ()
   "Two agents hold `planner', and which of them is first is load-bearing: the

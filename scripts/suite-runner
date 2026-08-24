@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# Runs every bash suite under one directory, naming each one on stdout BEFORE it starts.
+#
+# This is the project's one bash-suite loop: `tests/gate' calls it and so does the `bash-tests' job
+# in .github/workflows/ci.yml, which used to carry a second copy of the same `for t in tests/*.sh'
+# - and the copy an implementer actually watches was the mute one. Two retrospectives paid for that
+# silence: docs/retrospectives/cb-dul.md (a gate run stalled 19 minutes inside one suite and the
+# only way to find out which was `ps'; ~25 minutes lost) and docs/retrospectives/ah-il8j.md (the
+# loop hit the harness's ten-minute output ceiling and the implementer could not name the slow
+# suite at all - "I have no per-suite timings, only the aggregate"). cb-8cn made the loop one
+# script, with a test under it.
+#
+# The contract, per suite, on stdout, in this order:
+#
+#     -- <path>                       printed before the suite starts
+#     ok   <path> (Ns)                a passing suite: its own output is hidden
+#
+#     -- <path>
+#     <the suite's stdout and stderr, verbatim>
+#     FAIL <path> (Ns)                a failing suite: its output is replayed, so the failure is
+#                                     diagnosable without a re-run
+#
+# <path> is the glob result as-is, so `suite-runner tests' prints `tests/agent-alive.sh'. Every suite
+# runs even after one fails: a loop that stopped at the first failure would hide the others and the
+# implementer would fix them one round trip at a time. Then one summary line - `all suites passed'
+# on stdout, or `FAILED: <path> ...' on stderr and exit 1.
+#
+# Under GitHub Actions ($GITHUB_ACTIONS set, which GitHub sets on every job) it additionally emits
+# the ::group::/::endgroup::/::error annotations the CI job emitted inline before cb-8cn, so the log
+# keeps one collapsible group per suite. Nothing else differs.
+#
+# Exit 0 every suite passed, 1 any suite failed, 2 a usage error (no argument, more than one, or a
+# path that is not a directory) - one line on stderr and nothing run.
+#
+# The caller's working directory is left alone: `tests/gate' cd's to the repository root first, and
+# the glob strings printed here are relative to wherever the caller stood.
+#
+# NOT `scripts/suite-runner.sh'. Nothing under scripts/ is globbed as a suite, but the name follows
+# tests/gate, scripts/lint and scripts/ci-needed - bare names whose header says what they are. And
+# NOT `scripts/run-suites' either: `scripts/run-*' is the retired launcher-shim namespace that
+# tests/launchers.sh and tests/consumer-fixture.sh both guard (ah-qled.5.3), and a script that is
+# not a launcher has no business in it.
+#
+#     scripts/suite-runner <dir>
+
+# NOT `set -e': a failing suite is an answer, and every suite must still run after one fails.
+set -uo pipefail
+
+[[ $# -eq 1 ]] || { echo "usage: suite-runner <dir>" >&2; exit 2; }
+dir="$1"
+[[ -d "$dir" ]] || { echo "suite-runner: not a directory: $dir" >&2; exit 2; }
+
+annotate=0
+[[ -n "${GITHUB_ACTIONS:-}" ]] && annotate=1
+
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+
+# A string, not an array: "${arr[@]}" on an empty array is an unbound-variable error under `set -u'
+# in bash 3.2, which is what macOS ships and what the gate runs on locally.
+failed=""
+
+for t in "$dir"/*.sh; do
+  [[ -e "$t" ]] || continue          # no suites at all: the glob stays literal
+  ((annotate)) && echo "::group::$t"
+  echo "-- $t"
+  SECONDS=0
+  if bash "$t" >"$log" 2>&1; then
+    echo "ok   $t (${SECONDS}s)"
+    ((annotate)) && echo "::endgroup::"
+  else
+    cat "$log"
+    echo "FAIL $t (${SECONDS}s)"
+    ((annotate)) && { echo "::endgroup::"; echo "::error file=$t::$t failed"; }
+    failed="$failed $t"
+  fi
+done
+
+if [[ -n "$failed" ]]; then
+  echo "FAILED:$failed" >&2
+  exit 1
+fi
+echo "all suites passed"

@@ -360,6 +360,25 @@ if [[ -n "$hits" ]]; then
 fi
 ((fired)) || ok "no script and no prose a session reads names the retired .claude/worktrees/ path"
 
+# --- 12. CI's skip list names nothing a suite opens ---
+#
+# scripts/ci-needed lets a docs-only pull request skip the suites. That is only safe while no suite
+# opens a file under docs/ except docs/agent-workflow.md (tests/launch-targets.sh). A new suite
+# that starts reading docs/ must either be listed here as a fixture string or move that file off
+# the skip list in scripts/ci-needed - in the same pull request.
+fired=0
+hits="$(git grep -n 'docs/[A-Za-z]' -- tests emacs/cerebro-test.el emacs/cerebro.el 2>/dev/null \
+        | grep -v 'docs/agent-workflow.md' \
+        | grep -v 'tests/ci-needed.sh' \
+        | grep -vF 'docs/ui/x.html' | grep -vF 'docs/x.md' | grep -vF 'docs/retrospectives/ah-aao.md')"
+if [[ -n "$hits" ]]; then
+  advisory "a suite names a docs/ path that scripts/ci-needed lets CI skip" "$hits"
+  fired=1
+fi
+grep -q 'docs/agent-workflow.md' scripts/ci-needed 2>/dev/null \
+  || { advisory "scripts/ci-needed no longer keeps docs/agent-workflow.md on the gated side"; fired=1; }
+((fired)) || ok "CI's skip list names nothing a suite opens"
+
 if [[ $status -eq 0 ]]; then
   echo "lint: clean"
 else

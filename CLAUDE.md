@@ -70,7 +70,9 @@ tracked, the root `.gitignore` keeps a stray `bd export` out of every commit, an
   (cb-194 — one line added to the roster turned the gate red in three places). The decisions worth
   guarding live in `scripts/lint`, which runs at the end of `tests/gate` and as a
   `continue-on-error` step in CI, and **never blocks a merge**. An advisory that fires on a
-  deliberate change means: update `scripts/lint` in the same pull request.
+  deliberate change means: update `scripts/lint` in the same pull request. `tests/lint.sh` tests
+  the lint's mechanics and never that this tree is clean: a firing advisory is not a red suite, on
+  `main` or in CI (cb-ypx).
 - A change to a role's agent file or skill changes how the fleet behaves in every consumer. Say so
   in the bead, and keep the invariants above consistent with each other.
 - Prefer the simple design; say so when you decline a more general one.
@@ -121,6 +123,13 @@ bash scripts/lint            # exit 0 clean, 1 when an advisory fired, 2 on a ba
 
 CI (`.github/workflows/ci.yml`) runs both: ERT on Emacs 28.2 and 30.1, and every `tests/*.sh` on
 ubuntu-latest. A suite that only passes on macOS is a red PR.
+
+A pull request that touches only `docs/` (except `docs/agent-workflow.md`, which a suite reads),
+`README.md`, `LICENSE` or `models.conf.example` runs none of that: `scripts/ci-needed` is the one
+place that list lives, with the reason beside each entry, and the three required checks report
+*skipped*, which GitHub counts as green (cb-ypx). Anything else runs the whole matrix, and a push
+to `main` always does. `scripts/lint` check 11 advises when a suite starts reading a path on that
+list.
 
 Sync symlinks into a consumer repo (run from that repo, not this one):
 

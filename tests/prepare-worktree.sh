@@ -20,18 +20,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
-# The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
-# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
-# elisp, editor droppings - so the fixture was neither hermetic nor cheap (ah-qled.11). `emacs/` is
-# deliberately absent: no bash suite reads it, and it is the largest thing in the tree.
-copy_cerebro_into() {
-  local dest="$1" d
-  mkdir -p "$dest"
-  for d in scripts agents skills hooks; do
-    [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$dest/"
-  done
-}
-
 stub_dir="$(mktemp -d)"
 cleanup_add "$stub_dir"
 
@@ -44,20 +32,7 @@ chmod +x "$stub_dir/pnpm"
 # make_consumer <name> <branch>  ->  echoes the consumer path. A real clone of a real origin, so
 # refs/remotes/origin/HEAD is set the way `git clone` sets it.
 make_consumer() {
-  local name="$1" branch="$2"
-  local origin="$work_dir/$name-origin.git" consumer="$work_dir/$name" seed="$work_dir/$name-seed"
-
-  git init -q --bare -b "$branch" "$origin"
-  git init -q -b "$branch" "$seed"
-  echo one > "$seed/file.txt"
-  git_q -C "$seed" add file.txt
-  git_q -C "$seed" commit -q -m init
-  git_q -C "$seed" push -q "$origin" "$branch"
-
-  git clone -q "$origin" "$consumer"
-  mkdir -p "$consumer/.claude"
-  copy_cerebro_into "$consumer/.claude/cerebro"
-  printf '%s\n' "$consumer"
+  consumer_new "$1" --branch "$2" --origin --copy
 }
 
 # The relative --path form, deliberately: on macOS `mktemp -d` hands back a /var path while

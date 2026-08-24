@@ -33,21 +33,7 @@ source "$repo_root/tests/lib/consumer.sh"
 # which is the only way the detection step can be tested at all. The branch is a parameter because
 # a fixture that only ever builds `main` agrees with the bug and proves nothing.
 make_consumer() {
-  local name="$1" branch="$2"
-  local origin="$work_dir/$name-origin.git" consumer="$work_dir/$name" seed="$work_dir/$name-seed"
-
-  git init -q --bare -b "$branch" "$origin"
-  git init -q -b "$branch" "$seed"
-  git_q -C "$seed" commit -q --allow-empty -m init
-  git_q -C "$seed" push -q "$origin" "$branch"
-  git clone -q "$origin" "$consumer"
-
-  mkdir -p "$consumer/.claude/cerebro/scripts"
-  local s
-  for s in consumer-root project-conf default-branch; do
-    ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-  done
-  printf '%s\n' "$consumer"
+  consumer_new "$1" --branch "$2" --origin --link consumer-root project-conf default-branch
 }
 
 resolve() { "$1/.claude/cerebro/scripts/default-branch" 2>/dev/null; }

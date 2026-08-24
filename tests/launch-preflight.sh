@@ -21,18 +21,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
-# The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
-# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
-# elisp, editor droppings - so the fixture was neither hermetic nor cheap (ah-qled.11). `emacs/` is
-# deliberately absent: no bash suite reads it, and it is the largest thing in the tree.
-copy_cerebro_into() {
-  local dest="$1" d
-  mkdir -p "$dest"
-  for d in scripts agents skills hooks; do
-    [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$dest/"
-  done
-}
-
 stub_dir="$(mktemp -d)"
 cleanup_add "$stub_dir"
 
@@ -58,35 +46,7 @@ chmod +x "$stub_dir/claude"
 # called anything else. Cases that do not care pass nothing and get `main`, so what they assert is
 # unchanged; the `trunk` case below is what the parameter exists for.
 make_consumer() {
-  local name="$1"
-  local branch="${2:-main}"
-  local origin="$work_dir/$name-origin.git"
-  local consumer="$work_dir/$name"
-  local seed="$work_dir/$name-seed"
-
-  git init -q --bare -b "$branch" "$origin"
-  git init -q -b "$branch" "$seed"
-  echo one > "$seed/file.txt"
-  git_q -C "$seed" add file.txt
-  git_q -C "$seed" commit -q -m init
-  git_q -C "$seed" push -q "$origin" "$branch"
-
-  git clone -q "$origin" "$consumer"
-  mkdir -p "$consumer/.claude" "$consumer/.cerebro"
-  copy_cerebro_into "$consumer/.claude/cerebro"
-  git clone -q "$origin" "$work_dir/$name-up"
-  echo "$consumer"
-}
-
-# Adds <n> commits to the consumer's origin, so the consumer is behind by that many. It pushes
-# whatever branch the clone is on, so it needs no branch argument of its own.
-advance_origin() {
-  local name="$1" n="$2" up="$work_dir/$1-up" i
-  for ((i = 0; i < n; i++)); do
-    echo "upstream $i" >> "$up/file.txt"
-    git_q -C "$up" commit -q -am "upstream $i"
-  done
-  git_q -C "$up" push -q origin HEAD
+  consumer_new "$1" --branch "${2:-main}" --origin --copy
 }
 
 # Runs the preflight the way a launcher does: from the consumer's own copy, so consumer-root resolves

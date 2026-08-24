@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><style>body{background:#1e1e1e;color:#d4d4d4;font:14px/1.45 Menlo,monospace;padding:2em;max-width:70em}h1{font-size:15px;color:#9cdcfe}pre{background:#252526;padding:1em;border:1px solid #444}.g{color:#6a9955}.y{color:#dcdcaa}.d{color:#808080}.b{color:#569cd6}.hl{color:#ce9178}p{color:#bbb;max-width:60em}</style><title>cb-5yr A</title>
+<h1>Variant A — a fourth quiet state, <b>standby</b>: the view ended the session and will start a fresh one when the trigger in the For column fires</h1>
+<pre>Agent      Role           State     Bead / Phase          For
+<span class="d">○ Cerebro</span>    orchestrator   dead
+<span class="b">◌ Xavier</span>     planner        standby                         → buffer &lt; 3
+<span class="g">● Beast</span>      planner        plan      cb-5yr 31m 9m
+<span class="b">◌ Psylocke</span>   verifier       standby                         → merged, unverified
+<span class="b">◌ Moira</span>      user-feedback  standby                         → 7m
+<span class="b">◌ Forge</span>      architect      standby                         → 21h04
+<span class="d">○ Cypher</span>     reviewer       dead
+<span class="g">● Cyclops</span>    implementer    build     cb-akc 12m 12m
+<span class="g">◍ Storm</span>      implementer    done      cb-0r6 58m
+<span class="d">○ Wolverine</span>  implementer    dead
+<span class="d">○ Rogue</span>      implementer    dead
+</pre>
+<p>Blue <b>◌</b> is new. <b>dead</b> stays grey: nobody started it, or <code>k</code> stopped it, and nothing will start it. A standby row's For column names its trigger — a condition (<code>buffer &lt; 3</code>, <code>merged, unverified</code>) or a countdown for a role on a cadence. Echo line when a trigger fires: <span class="hl">cerebro: started Psylocke — 2 merged, unverified</span>.</p>
+<p>Narrow window: the For column truncates its text with … exactly as the Bead column does today; the glyph and the word <b>standby</b> always fit.</p>

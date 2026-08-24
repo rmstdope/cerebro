@@ -7,9 +7,51 @@ on:
   workflow_dispatch:
 
 jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # On pull_request the checkout is the PR's merge commit, whose first parent is the base
+          # tip: two commits are the whole diff, and a two-dot diff needs no more history than that.
+          # Leave `ref:' unset - overriding it stops actions/checkout checking out the merge commit.
+          fetch-depth: 2
+
+      - name: Decide whether the gate can be affected
+        id: decide
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "not a pull request: everything runs"
+            exit 0
+          fi
+          # --no-renames: a file renamed OUT of a gated path is listed as a deletion of the old
+          # path, so the gate still runs. On any diff failure, changed is empty and ci-needed
+          # answers "run everything".
+          changed="$(git diff --name-only --no-renames HEAD^1 HEAD 2>/dev/null)" || changed=""
+          printf '%s\n' "$changed" | bash scripts/ci-needed
+          case $? in
+            1) echo "run=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "run=true"  >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Lint (advisory, never blocks)
+        continue-on-error: true
+        run: bash scripts/lint
+
   emacs-tests:
     name: ERT (Emacs ${{ matrix.emacs_version }})
     runs-on: ubuntu-latest
+    needs: changes
+    # NOT the default success(): a failed `changes' job would SKIP this one, and a skipped required
+    # check is green. `!= 'false'` runs on an empty output too, so the filter can only ever skip
+    # on an explicit "false".
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +73,8 @@ jobs:
   bash-tests:
     name: Bash suites (ubuntu-latest)
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +98,3 @@ jobs:
             exit 1
           fi
           echo "all bash suites passed"
-
-      - name: Lint (advisory, never blocks)
-        continue-on-error: true
-        run: bash scripts/lint

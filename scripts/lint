@@ -454,14 +454,24 @@ if [[ -n "$hits" ]]; then
 fi
 grep -q 'docs/agent-workflow.md' scripts/ci-needed 2>/dev/null \
   || { advisory "scripts/ci-needed no longer keeps docs/agent-workflow.md on the gated side"; fired=1; }
-# The step that runs ci-needed must neutralise the -e GitHub puts on the interpreter's own command
-# line: exit 1 from the predicate is an answer, and under -e it kills the step instead. cb-ypx
-# shipped without this and turned the first docs-only pull request red.
+# ci-needed answers on stdout in $GITHUB_OUTPUT's own shape, and the step appends it there
+# unread: no `set +e', no `case $?'. A step that parses the exit status again is the shape that
+# turned the first docs-only pull request red (cb-ypx, cb-e33).
 if grep -q 'bash scripts/ci-needed' "$ci" 2>/dev/null; then
+  grep -qF 'bash scripts/ci-needed >> "$GITHUB_OUTPUT"' "$ci" \
+    || { advisory "$ci does not append scripts/ci-needed's stdout to \$GITHUB_OUTPUT"; fired=1; }
+  # A NEGATIVE assertion - the advisory fires when the line MATCHES. Do not "fix" the && to ||.
   grep -qE '^ +set \+e$' "$ci" \
-    || { advisory "$ci runs scripts/ci-needed without 'set +e', so its exit 1 fails the step"; fired=1; }
+    && { advisory "$ci defuses -e around scripts/ci-needed, which no longer answers by exit status"; fired=1; }
 fi
-((fired)) || ok "CI's skip list names nothing a suite opens, and its exit 1 is an answer not a failure"
+# The skip condition is copied onto every gated job because Actions has no way to state it once
+# without renaming the checks branch protection requires; this is the one place that says the
+# copies agree.
+gated="$(grep -c '^ *needs: changes$' "$ci" 2>/dev/null)"
+same="$(grep -cF "if: \${{ !cancelled() && needs.changes.outputs.run != 'false' }}" "$ci" 2>/dev/null)"
+[[ "$gated" -gt 0 && "$gated" -eq "$same" ]] \
+  || { advisory "$ci: $gated jobs need 'changes' but $same carry the agreed skip condition"; fired=1; }
+((fired)) || ok "CI's skip list names nothing a suite opens, the predicate's stdout is the output, and every gated job carries the one skip condition"
 
 # --- 13. every work-beads call names the status it means ---
 #

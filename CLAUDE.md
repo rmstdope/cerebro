@@ -140,7 +140,9 @@ ubuntu-latest. A suite that only passes on macOS is a red PR.
 A pull request that touches only `docs/` (except `docs/agent-workflow.md`, which a suite reads),
 `README.md`, `LICENSE` or `models.conf.example` runs none of that: `scripts/ci-needed` is the one
 place that list lives, with the reason beside each entry, and the three required checks report
-*skipped*, which GitHub counts as green (cb-ypx). Anything else runs the whole matrix, and a push
+*skipped*, which GitHub counts as green (cb-ypx). The predicate answers on stdout, in
+`$GITHUB_OUTPUT`'s own `run=true|false` shape, so the workflow appends it unread and a crashed
+predicate is a red step rather than a skipped one. Anything else runs the whole matrix, and a push
 to `main` always does. `scripts/lint` check 12 advises when a suite starts reading a path on that
 list. The two ERT jobs are literal, not a matrix, because a skipped matrix job never expands into
 the per-version check names branch protection requires.

@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+#
+# This project's advisory lint: the decisions worth guarding, guarded as advisories rather than as
+# tests (cb-194).
+#
+# Tests here assert the behaviour of the code this repository ships - the elisp in `emacs/' and the
+# bash in `scripts/'. Prose and configuration are not code: an agent file, a skill file, a
+# declaration file. A suite that greps them fails on the day somebody changes their mind rather
+# than on the day something breaks, and a decision that reads as a regression is worse than no
+# check at all - it was one line in a roster that turned this project's gate red in three places.
+#
+# So the greps live here instead. Every one of them is a decision somebody made and wrote down;
+# when one fires on a change that was deliberate, the answer is to UPDATE THIS FILE in the same
+# pull request. It never blocks a merge: the gate prints its output and ignores its status, and
+# CI runs it with continue-on-error.
+#
+# NOT `scripts/lint.sh' and never under `tests/': the gate's suite loop is `tests/*.sh', which
+# would run this file as a suite and make its exit 1 a red gate - undoing the whole point.
+#
+#     scripts/lint [root]
+#
+# `root' defaults to the repository this script sits in. Exit 0 when clean, 1 when any advisory
+# fired, 2 on a usage error.
+#
+# `set -e' is deliberately OFF: every check must run even after one fires, the way the gate runs
+# every suite even after one fails. A lint that stops at the first advisory hides the rest.
+
+set -uo pipefail
+
+root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+if [[ ! -d "$root" ]]; then
+  echo "lint: not a directory: $root" >&2
+  echo "usage: scripts/lint [root]" >&2
+  exit 2
+fi
+root="$(cd "$root" && pwd)"
+cd "$root" || exit 2
+
+status=0
+
+ok() { echo "ok - $1"; }
+
+# An advisory names what was decided and then shows what it found, so the reader can tell a
+# deliberate change from a regression without opening this file.
+advisory() {
+  local what="$1" hits="${2:-}"
+  echo "ADVISORY: $what"
+  [[ -n "$hits" ]] && sed 's/^/    /' <<<"$hits"
+  status=1
+}
+
+# Every file an agent session is given, and only those. `docs/cerebro-jobs.md' and
+# `docs/decisions.md' are cerebro-side records of which bead decided what: they exist precisely so
+# the provenance has somewhere to live that no session carries. `skills/release-notes' is exempt in
+# full - its job is teaching someone to write good notes, and a concrete worked example teaches
+# better than an abstract one.
+prose_files() {
+  { find agents skills -name '*.md' ! -path 'skills/release-notes/*'
+    echo docs/agent-workflow.md
+  } | sort
+}
+
+# --- 1. no bead id survives in prose an agent is given, and the provenance lives elsewhere ---
+fired=0
+hits="$(prose_files | xargs grep -noE '\bah-[a-z0-9]{3,}(\.[0-9]+)*\b' 2>/dev/null)"
+if [[ -n "$hits" ]]; then
+  advisory "bead ids remain in agent prose - a consumer cannot resolve these" "$hits"
+  fired=1
+fi
+if [[ ! -f docs/decisions.md ]]; then
+  advisory "docs/decisions.md is missing - the ids moved but the evidence went with them"
+  fired=1
+elif ! grep -qE '\bah-[a-z0-9]{3,}' docs/decisions.md; then
+  advisory "docs/decisions.md records no bead id, so nothing was preserved"
+  fired=1
+fi
+loaders="$(prose_files | xargs grep -nl 'decisions\.md' 2>/dev/null)"
+if [[ -n "$loaders" ]]; then
+  advisory "docs/decisions.md is referenced by prose an agent reads" "$loaders"
+  fired=1
+fi
+((fired)) || ok "no bead id remains in the prompts or skills, and the provenance is loaded by nothing"
+
+# --- 2. one project's vocabulary is not the rules' vocabulary ---
+hits="$(prose_files | xargs grep -noEi '\bhexe?s?\b|\bwasm\b|\.rep\b|\bfaction\b|\bhexMapModel\b' 2>/dev/null)"
+if [[ -n "$hits" ]]; then
+  advisory "one game's vocabulary is still teaching the rules" "$hits"
+else
+  ok "domain vocabulary appears only in the exempt release-notes skill"
+fi
+
+# --- 3. the project cerebro grew up in is named nowhere a session reads ---
+#
+# README.md is the front door and is not prose an agent is given, so it gets its own entry;
+# emacs/cerebro.el is what `C-h m' shows every user, and `runImplementer.ts' is a file in neither
+# repository - a dangling reference implying a Node consumer.
+fired=0
+hits="$({ prose_files; echo README.md; } | xargs grep -noi 'atlantis-hud' 2>/dev/null)"
+if [[ -n "$hits" ]]; then
+  advisory "the project cerebro was extracted from is still named in prose" "$hits"
+  fired=1
+fi
+hits="$(grep -noiE 'atlantis-hud|runImplementer' emacs/cerebro.el 2>/dev/null)"
+if [[ -n "$hits" ]]; then
+  advisory "emacs/cerebro.el names one particular consumer" "$hits"
+  fired=1
+fi
+((fired)) || ok "no prose an agent reads, not README.md and not the elisp, names one consumer"
+
+# --- 4. the audience is neutral everywhere but the release notes ---
+#
+# The word itself is spelled by concatenation so this file never matches its own grep.
+noun="play""er"
+verb="play""ing"
+fired=0
+hits="$(grep -rniI --exclude-dir=release-notes -e "$noun" agents/ docs/ scripts/ tests/ skills/ README.md 2>/dev/null)"
+if [[ -n "$hits" ]]; then
+  advisory "neutral prose still names the audience as one project's noun" "$hits"
+  fired=1
+fi
+hits="$(grep -rniI -e "$verb" agents/ docs/ scripts/ tests/ skills/ README.md 2>/dev/null)"
+if [[ -n "$hits" ]]; then
+  advisory "the verb belonging to one project's audience survives" "$hits"
+  fired=1
+fi
+rn="skills/release-notes/SKILL.md"
+if [[ ! -f "$rn" ]]; then
+  advisory "$rn does not exist"
+  fired=1
+else
+  grep -q "project-conf audience_noun" "$rn" \
+    || { advisory "$rn does not tell its reader to read the audience_noun key"; fired=1; }
+  grep -qi -- "$noun" "$rn" \
+    || { advisory "$rn no longer uses this project's literal word"; fired=1; }
+  grep -q '"user"' "$rn" \
+    || { advisory "$rn does not state the default when the key is unset"; fired=1; }
+  grep -qi "irregular" "$rn" \
+    || { advisory "$rn does not state the +s / +'s rule and its irregular-plural limitation"; fired=1; }
+fi
+((fired)) || ok "the audience is neutral everywhere but release-notes, which says where its word comes from"
+
+# --- 5. the contract between cerebro and a project that uses it ---
+fired=0
+template="templates/consumer-CLAUDE.md"
+if [[ ! -f "$template" ]]; then
+  advisory "$template does not exist; the skills require a section cerebro does not ship"
+  fired=1
+else
+  grep -q '^## Four Eye Principle$' "$template" \
+    || { advisory "$template has no '## Four Eye Principle' heading - the exact section the skills require"; fired=1; }
+  grep -qi "starting point\|meant to be edited\|expected to be edited" "$template" \
+    || { advisory "$template must say about itself that it is a starting point to be edited"; fired=1; }
+fi
+
+# Line wrapping is prose's business, so the window is the joined text either side of the phrase
+# rather than the line it happens to sit on.
+bad=""
+for f in $(grep -rl "Four Eye Principle" skills/ agents/ CLAUDE.md 2>/dev/null); do
+  while IFS= read -r m; do
+    echo "$m" | grep -qi "consumer" && continue
+    bad+="$f: $m"$'\n'
+  done < <(tr '\n' ' ' < "$f" | grep -oE '.{0,200}Four Eye Principle.{0,80}' 2>/dev/null)
+done
+if [[ -n "$bad" ]]; then
+  advisory "every Four Eye Principle reference must say the CONSUMER's root CLAUDE.md" "$bad"
+  fired=1
+fi
+
+hits="$(grep -rniE "webkit|vite preview|service worker|packages/shared" skills/ agents/ 2>/dev/null)"
+if [[ -n "$hits" ]]; then
+  advisory "one project's traps are carried in cerebro's prompts; they belong in that project's .cerebro/traps.md" "$hits"
+  fired=1
+fi
+for f in skills/implement-bead/SKILL.md skills/plan-bead/SKILL.md; do
+  grep -q "traps.md" "$f" 2>/dev/null \
+    || { advisory "$f never tells the reader to read the consumer's .cerebro/traps.md"; fired=1; }
+done
+for phrase in "preview server" "stale lease" "conflicted head"; do
+  grep -qi "$phrase" skills/implement-bead/SKILL.md 2>/dev/null \
+    || { advisory "implement-bead lost the universal trap about the $phrase"; fired=1; }
+done
+grep -q "traps.md" agents/architect.md 2>/dev/null \
+  || { advisory "agents/architect.md never mentions the consumer's traps file"; fired=1; }
+grep -q "138" agents/architect.md 2>/dev/null \
+  || { advisory "agents/architect.md must name the 138-of-138 figure so the bar for a proposal is calibrated"; fired=1; }
+
+# This repository is a consumer too, and its root CLAUDE.md is both documents.
+for heading in "## Four Eye Principle" "## Work tracking" "## Development practices" \
+               "## Where the project declares its facts" "## Commands" \
+               "## The agent fleet these files describe" "### Invariants the agent files encode" \
+               "## emacs/cerebro.el" "## Gotchas"; do
+  grep -qF "$heading" CLAUDE.md 2>/dev/null \
+    || { advisory "CLAUDE.md has no '$heading' - the fleet reads it here the way it does in any consumer"; fired=1; }
+done
+four_eyes="$(awk '/^## Four Eye Principle$/{f=1;next} /^## /{f=0} f' CLAUDE.md 2>/dev/null)"
+if [[ "$(grep -c . <<<"$four_eyes")" -lt 3 ]]; then
+  advisory "the Four Eye Principle section is empty or nearly so"
+  fired=1
+elif ! grep -qi "green" <<<"$four_eyes"; then
+  advisory "the Four Eye Principle section never says a red check stops a merge"
+  fired=1
+fi
+facts="$(awk '/^## Where the project declares its facts$/{f=1;next} /^## /{f=0} f' CLAUDE.md 2>/dev/null)"
+for f in "project.conf" "roster.conf" "traps.md"; do
+  grep -q "$f" <<<"$facts" \
+    || { advisory "the facts section never names $f"; fired=1; }
+done
+((fired)) || ok "the consumer contract holds: template, references, traps and this repository's own CLAUDE.md"
+
+# --- 6. Moira's public disclosure, which is the one place cerebro reaches people outside the fleet ---
+fired=0
+moira="agents/user-feedback.md"
+if [[ ! -f "$moira" ]]; then
+  advisory "$moira does not exist"
+  fired=1
+else
+  # The prose is wrapped for reading, so sentence assertions are made against a flattened copy: a
+  # rule that only holds while a sentence stays on one line breaks on the next reflow.
+  flat="$(tr '\n' ' ' < "$moira" | tr -s ' ')"
+  hits="$(grep -n 'Atlantis HUD' "$moira" 2>/dev/null)"
+  if [[ -n "$hits" ]]; then
+    advisory "one consumer's project name still stands in Moira's prose" "$hits"
+    fired=1
+  fi
+  disclosure_count="$(grep -cF '_Written by **Moira**, an AI agent that triages issues for' "$moira")"
+  if [[ "$disclosure_count" -lt 3 ]]; then
+    advisory "the disclosure: expected it at all three comment sites, found $disclosure_count"
+    fired=1
+  fi
+  grep -qF 'Replying here reaches a human maintainer.' "$moira" \
+    || { advisory "the disclosure: the promise that a reply reaches a person is gone"; fired=1; }
+  placeholder='_Written by **Moira**, an AI agent that triages issues for {project name}. Replying here reaches a human maintainer._'
+  placeholder_count="$(grep -cF "$placeholder" "$moira")"
+  [[ "$placeholder_count" -eq "$disclosure_count" ]] \
+    || { advisory "the name: $placeholder_count of $disclosure_count disclosure sites read the placeholder"; fired=1; }
+  grep -q 'project-conf project_name\|project_conf project_name' "$moira" \
+    || { advisory "the name: nothing tells Moira to read project-conf project_name"; fired=1; }
+  grep -qF 'triages issues for this project' <<<"$flat" \
+    || { advisory "the fallback: 'this project' must be spelled out as it will read to a reporter"; fired=1; }
+  fallback_block="$(grep -o 'If no name is declared.\{0,250\}' <<<"$flat")"
+  if grep -qi 'warn\|flag it\|tell the navigator\|log it' <<<"$fallback_block"; then
+    advisory "the fallback: a warning was added; the navigator chose the silent fallback deliberately"
+    fired=1
+  fi
+  grep -qi 'hard-wrap' "$moira" \
+    || { advisory "the wrap rule: the never-hard-wrap rule is gone"; fired=1; }
+  if grep -n '"Atlantis" on one line' "$moira" >/dev/null 2>&1; then
+    advisory "the wrap rule: the Atlantis/HUD example re-couples the rule to one project"
+    fired=1
+  fi
+  grep -qF '<!-- moira-ack -->' "$moira" || { advisory "the ack marker is gone"; fired=1; }
+  grep -qi 'once, ever' "$moira" || { advisory "the ack marker's once-ever rule is gone"; fired=1; }
+  grep -qF '<!-- beads-state:' "$moira" || { advisory "the beads-state markers are gone"; fired=1; }
+  grep -q 'Adapt the wording' "$moira" || { advisory "the instruction to adapt the wording is gone"; fired=1; }
+  grep -qF 'people actually using {project name}' <<<"$flat" \
+    || { advisory "the shared sentence must carry both the neutral verb and the project-name placeholder"; fired=1; }
+fi
+((fired)) || ok "Moira's disclosure survives, and takes the project's name from the consumer"
+
+# --- 7. the bead board stays Dolt-only ---
+fired=0
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  ok "the bead board is Dolt-only (skipped: $root is not a git work tree)"
+else
+  hits="$(git ls-files -- '.beads/*.jsonl')"
+  if [[ -n "$hits" ]]; then
+    advisory "a JSONL board snapshot is tracked - the board is Dolt-only by decision (cb-4yo)" "$hits"
+    fired=1
+  fi
+  git check-ignore -q .beads/issues.jsonl \
+    || { advisory ".beads/issues.jsonl is not git-ignored, so a stray 'bd export' could be committed"; fired=1; }
+  git check-ignore -q .beads/events.jsonl \
+    || { advisory ".beads/events.jsonl is not git-ignored, so a stray events export could be committed"; fired=1; }
+  grep -qF '.beads/*.jsonl' CLAUDE.md 2>/dev/null \
+    || { advisory "CLAUDE.md does not state the .beads/*.jsonl decision - the next person re-opens it"; fired=1; }
+  ((fired)) || ok "the bead board is Dolt-only: nothing tracked, nothing committable, and it is written down"
+fi
+
+# --- 8. every launch site names the declaration it reads ---
+fired=0
+for f in agents/verifier.md agents/reviewer.md; do
+  grep -q 'launch_targets' "$f" 2>/dev/null \
+    || { advisory "$f names no way to find out how to start the application"; fired=1; }
+  grep -q 'launch_.*_port\|launch_<name>_port' "$f" 2>/dev/null \
+    || { advisory "$f names no way to find the port to check"; fired=1; }
+done
+grep -qE 'port_base' skills/implement-bead/SKILL.md 2>/dev/null \
+  || { advisory "implement-bead names no way to find its port block"; fired=1; }
+grep -qE 'port_base|port_block_size' docs/agent-workflow.md 2>/dev/null \
+  || { advisory "agent-workflow still describes the port blocks as fixed numbers"; fired=1; }
+((fired)) || ok "each launch site names the declaration it reads"
+
+# --- 9. no phase drift between the agent files and the fleet view's reference list ---
+#
+# `agent-state' no longer refuses an unknown word, so this is a drift check rather than a legality
+# one: an agent that starts using a new phase and never says so leaves `cerebro--phases' describing
+# a fleet that has moved on, and that list is the only prose saying which words belong to which role.
+fired=0
+used="$(grep -oh -- '--phase [a-z][a-z0-9-]*' agents/*.md skills/*/SKILL.md 2>/dev/null \
+        | awk '{print $2}' | sort -u)"
+if [[ -z "$used" ]]; then
+  advisory "phase drift: found no --phase words at all - the grep has stopped matching"
+  fired=1
+else
+  missing=""
+  while IFS= read -r phase; do
+    grep -q "\"$phase\"" emacs/cerebro.el 2>/dev/null || missing+="$phase"$'\n'
+  done <<<"$used"
+  if [[ -n "$missing" ]]; then
+    advisory "emacs/cerebro.el: these phases are used by an agent file but missing from cerebro--phases" "$missing"
+    fired=1
+  fi
+fi
+phases_block="$(awk '/^\(defconst cerebro--phases/{f=1} f{print} f&&/^  "/{exit}' emacs/cerebro.el 2>/dev/null)"
+if [[ -z "$phases_block" ]]; then
+  advisory "emacs/cerebro.el: cerebro--phases is gone"
+  fired=1
+elif [[ "$(grep -o '"[a-z][a-z0-9-]*"' <<<"$phases_block" | wc -l | tr -d ' ')" -eq 0 ]]; then
+  advisory "emacs/cerebro.el: cerebro--phases is empty"
+  fired=1
+fi
+((fired)) || ok "every phase a shipped agent uses is in cerebro--phases, which exists and is non-empty"
+
+# --- 10. the gate does not drift from CI ---
+#
+# What an implementer runs before it opens a pull request and what the pull request is then judged
+# by must be the same three commands, or the fleet merges on a gate nobody else runs.
+fired=0
+runner="tests/gate"
+ci=".github/workflows/ci.yml"
+byte_compile="emacs --batch -L emacs -f batch-byte-compile emacs/cerebro.el"
+ert="emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit"
+if [[ ! -f "$runner" ]]; then
+  advisory "$runner does not exist"
+  fired=1
+elif [[ "$runner" == *.sh ]]; then
+  advisory "$runner ends in .sh, so the gate would run itself recursively"
+  fired=1
+else
+  for cmd in "$byte_compile" "$ert"; do
+    grep -qF "$cmd" "$ci" 2>/dev/null || { advisory "CI no longer runs: $cmd"; fired=1; }
+    grep -qF "$cmd" "$runner" || { advisory "$runner does not run what CI runs: $cmd"; fired=1; }
+  done
+  grep -qF 'tests/*.sh' "$ci" 2>/dev/null || { advisory "CI no longer runs every tests/*.sh"; fired=1; }
+  grep -qF 'tests/*.sh' "$runner" || { advisory "$runner does not run every tests/*.sh"; fired=1; }
+fi
+((fired)) || ok "the gate runs exactly what CI runs: byte-compile, ERT, every tests/*.sh"
+
+if [[ $status -eq 0 ]]; then
+  echo "lint: clean"
+else
+  echo "lint: advisories above are not failures - a deliberate change updates scripts/lint in the same pull request"
+fi
+exit $status

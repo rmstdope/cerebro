@@ -55,7 +55,7 @@ ranked later with the navigator; a bead is planned in one session and implemente
 The board syncs through the Dolt remote rather than through git — a clone gets the code, `bd sync`
 gets the work. That is deliberate, not an omission (cb-4yo): no `.beads/*.jsonl` snapshot is
 tracked, the root `.gitignore` keeps a stray `bd export` out of every commit, and
-`tests/bead-board-untracked.sh` pins it. Reading the board means `bd sync`, never browsing git.
+`scripts/lint` advises on it. Reading the board means `bd sync`, never browsing git.
 
 ## Development practices
 
@@ -63,6 +63,14 @@ tracked, the root `.gitignore` keeps a stray `bd export` out of every commit, an
 - Code is written test-first. That is not a style preference here: the two suites are the only thing
   that can tell a change to this harness from a change that quietly breaks every consumer, since
   almost nothing in this repository executes in this repository.
+- **Tests assert behaviour; decisions are advisories.** A test here exercises the code this
+  repository ships — the elisp in `emacs/` and the bash in `scripts/`. Prose and configuration are
+  not code: an agent file, a skill file, a declaration file gets no test, because a suite that
+  greps prose fails on the day somebody changes their mind rather than on the day something breaks
+  (cb-194 — one line added to the roster turned the gate red in three places). The decisions worth
+  guarding live in `scripts/lint`, which runs at the end of `tests/gate` and as a
+  `continue-on-error` step in CI, and **never blocks a merge**. An advisory that fires on a
+  deliberate change means: update `scripts/lint` in the same pull request.
 - A change to a role's agent file or skill changes how the fleet behaves in every consumer. Say so
   in the bead, and keep the invariants above consistent with each other.
 - Prefer the simple design; say so when you decline a more general one.
@@ -103,6 +111,12 @@ assertion), run from this repository's root:
 ```bash
 for t in tests/*.sh; do bash "$t"; done    # all of them
 bash tests/launchers.sh                     # one suite
+```
+
+The advisory lint — the prose and configuration decisions, reported but never blocking:
+
+```bash
+bash scripts/lint            # exit 0 clean, 1 when an advisory fired, 2 on a bad root
 ```
 
 CI (`.github/workflows/ci.yml`) runs both: ERT on Emacs 28.2 and 30.1, and every `tests/*.sh` on

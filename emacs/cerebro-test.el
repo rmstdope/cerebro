@@ -4512,3 +4512,66 @@ replaces it, so a `verification=stale' would erase the verdict itself."
   (should (equal (cerebro--finding-command '(recheck "ah-vocw" 0) "/repo")
                  '("bd" "set-state" "ah-vocw" "verdict=stale"
                    "--reason" "verdict formed against a commit main has moved past"))))
+
+;; ---------------------------------------------------------------------------
+;; cb-5yr.1: the interactive roles are ended after a pass and started again on
+;; a trigger of their own.  Standby is what the row shows in between.
+
+(defun cerebro-test--interactive (name role state &optional external since)
+  (make-cerebro-agent :name name :role role :kind 'interactive :state state
+                              :since since :external external))
+
+(ert-deftest cerebro-test/apply-standby-restates-an-armed-dead-role ()
+  "Standby is derived, never read from a file: the view deleted the state file
+when it ended the session, so `cerebro--armed' is the only thing that can say
+this role is coming back."
+  (let* ((armed '("Psylocke"))
+         (agents (list (cerebro-test--interactive "Psylocke" "verifier" 'dead)
+                       (cerebro-test--interactive "Moira" "user-feedback" 'dead)
+                       (cerebro-test--interactive "Cypher" "reviewer" 'dead t)
+                       (cerebro-test--interactive "Xavier" "planner" 'waiting)
+                       (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead)))
+         (out (cerebro--apply-standby agents (append armed '("Cypher" "Cyclops")))))
+    ;; Armed, dead, interactive, ours: standby.
+    (should (eq (cerebro-agent-state (nth 0 out)) 'standby))
+    ;; Dead but never started this Emacs: still dead.
+    (should (eq (cerebro-agent-state (nth 1 out)) 'dead))
+    ;; Running outside Emacs: not ours to restate or to restart.
+    (should (eq (cerebro-agent-state (nth 2 out)) 'dead))
+    ;; A live role is whatever its state file said.
+    (should (eq (cerebro-agent-state (nth 3 out)) 'waiting))
+    ;; Implementers are supervised by `done'/`restart' and are untouched here.
+    (should (eq (cerebro-agent-state (nth 4 out)) 'dead))
+    ;; Pure: the input list is not mutated.
+    (should (eq (cerebro-agent-state (nth 0 agents)) 'dead))))
+
+(ert-deftest cerebro-test/standby-glyph-and-label ()
+  "Its own glyph and its own word: `dead' means nobody is coming, and standby
+means somebody is, on a trigger the For column names."
+  (should (equal (substring-no-properties (cerebro--glyph 'standby)) "◌"))
+  (should (eq (get-text-property 0 'face (cerebro--glyph 'standby)) 'cerebro-standby))
+  (should (equal (cerebro--state-label
+                  (cerebro-test--interactive "Psylocke" "verifier" 'standby))
+                 "standby")))
+
+(ert-deftest cerebro-test/alive-p-treats-standby-as-not-alive ()
+  "`s' has to reach `launch' and `k' has to have something to say - both ask
+this one question first."
+  (should-not (cerebro--alive-p (cerebro-test--interactive "Psylocke" "verifier" 'standby)))
+  (should (cerebro--alive-p (cerebro-test--interactive "Psylocke" "verifier" 'waiting))))
+
+(ert-deftest cerebro-test/start-action-launches-a-standby-role ()
+  (should (eq (cerebro--start-action
+               (cerebro-test--interactive "Psylocke" "verifier" 'standby) nil)
+              'launch)))
+
+(ert-deftest cerebro-test/kill-action-disarms-a-standby-role ()
+  "There is no process to kill, so `k' means the other half of what it always
+meant for an interactive role: stay down."
+  (should (eq (cerebro--kill-action
+               (cerebro-test--interactive "Psylocke" "verifier" 'standby) nil)
+              'disarm))
+  ;; A role that was never armed is still simply dead.
+  (should (eq (cerebro--kill-action
+               (cerebro-test--interactive "Psylocke" "verifier" 'dead) nil)
+              'dead)))

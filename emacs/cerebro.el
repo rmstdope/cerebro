@@ -316,7 +316,40 @@ sessions Emacs itself started."
    (mapcar (lambda (name) (cerebro--derive-implementer name states session-alive-p owned))
            roster)))
 
+(defun cerebro--apply-standby (agents armed)
+  "Pure.  AGENTS with every armed, dead, interactive one restated as `standby\='.
+
+ARMED is `cerebro--armed\=': the names this Emacs has started and has not been
+told to leave down.  Runs after `cerebro--derive\=', which is untouched - a
+state file is never the source of `standby\=', because the view deleted that
+file when it ended the session, and a name with no file and no process is
+exactly what `cerebro--derive\=' calls `dead\='.  Armed is the only thing that
+separates \"nobody is coming\" from \"a trigger will bring one back\".
+
+External agents are excluded with everything else this view does not own,
+and implementers are excluded because they have their own supervision:
+`done\=' and `restart\=' between beads, not a trigger."
+  (mapcar (lambda (agent)
+            (if (and (eq (cerebro-agent-state agent) 'dead)
+                     (eq (cerebro-agent-kind agent) 'interactive)
+                     (not (cerebro-agent-external agent))
+                     (member (cerebro-agent-name agent) armed))
+                (let ((copy (copy-cerebro-agent agent)))
+                  (setf (cerebro-agent-state copy) 'standby)
+                  copy)
+              agent))
+          agents))
+
 ;;; Formatting
+
+(defface cerebro-standby
+  '((t :inherit font-lock-keyword-face))
+  "The standby glyph: a dotted circle, for a role the view will start again.
+
+Blue rather than the grey of `dead\=' or the yellow of `idle\=': nothing is
+running, so it is not yellow\='s \"there is a session here, look at it\", and
+somebody *is* coming back, so it is not grey\='s \"nobody is there\"."
+  :group 'cerebro)
 
 (defface cerebro-idle
   '((default :weight normal)
@@ -359,6 +392,10 @@ does not read against your theme."
    ;; acts next: an idle implementer is waiting for the navigator or the
    ;; queue, a waiting role is waiting for this very poll.
    ((eq state 'waiting) (propertize "◐" 'face 'cerebro-idle))          ; ◐
+   ;; Standby: no session at all, and one coming back when the trigger in the
+   ;; For column fires. Hollow, because nothing is running; blue, because
+   ;; grey would say nobody is coming (cb-5yr).
+   ((eq state 'standby) (propertize "◌" 'face 'cerebro-standby))       ; ◌
    ((memq state '(idle unknown)) (propertize "●" 'face 'cerebro-idle))  ; ●
    (t (propertize "○" 'face 'shadow))))                           ; ○
 
@@ -1284,8 +1321,11 @@ and `done' (which the fleet poll replaces within about five seconds) and
 `unknown' (a process is up; the view merely does not recognise what its
 state file says it is doing). Anything narrower than that reintroduces the
 `*fleet: <name>*<2>' bug: `s' on an `asking' or `done' implementer used to
-read as \"not alive\" and start a second session over the first."
-  (not (eq (cerebro-agent-state agent) 'dead)))
+read as \"not alive\" and start a second session over the first.
+
+`standby\=' joins `dead\=' (cb-5yr): there is no process at all, so `s\=' must
+reach `launch\=' and `k\=' must have something to say."
+  (not (memq (cerebro-agent-state agent) '(dead standby))))
 
 (defun cerebro--start-action (agent owned)
   "What `s' should do for AGENT, given OWNED session names.
@@ -1379,9 +1419,15 @@ being a list of bare names.  Both keep roster order."
   "What `k' should do for AGENT, given OWNED session names.
 
 One of `kill' (plain confirm), `kill-working' (an implementer mid-bead -
-harder confirm), `external' (refuse - not ours to stop) or `dead'
-(refuse - nothing to kill)."
+harder confirm), `external' (refuse - not ours to stop), `disarm' (a standby role - there is
+no process to kill, so `k' means the other half of what it has always meant
+for an interactive role: stay down, cb-5yr) or `dead' (refuse - nothing to
+kill).
+
+`disarm' is checked ahead of `dead' because a standby row is not alive
+either, and \"nothing to kill\" is the one thing it does not mean."
   (cond
+   ((eq (cerebro-agent-state agent) 'standby) 'disarm)
    ((not (cerebro--alive-p agent)) 'dead)
    ((not (member (cerebro-agent-name agent) owned)) 'external)
    ((and (eq (cerebro-agent-kind agent) 'implementer)
@@ -1893,6 +1939,31 @@ is live, and everything that asks whose session it is, whether it is up,
 or which buffer holds it, reads here.  Global, not buffer-local: sessions
 outlive the fleet buffer, and `M-x cerebro' after a `q' must still know
 what it started.")
+
+(defvar-local cerebro--armed nil
+  "Interactive names the view will start again on their trigger (cb-5yr).
+
+Armed by `cerebro--launch\=' - every start, `s\=' or autostart - and disarmed by
+`k\=', by `f\=' once the pass ends, and by a stop flag on a waiting role.  Emacs
+memory only: nothing is written to any file, so a new Emacs arms nothing
+until something is started in it.  That is deliberate rather than an
+omission - opening the fleet view must not resurrect a fleet the navigator
+took down last night.")
+
+(defvar-local cerebro--parked nil
+  "Alist of (NAME . (ENDED-AT STARTED-AT BUFFER)) for roles the view has ended.
+
+ENDED-AT and STARTED-AT are `float-time\=' values - when the session ended, and
+when it had started - and BUFFER is the kept session buffer holding its last
+pass, or nil once something has killed it.  One entry per name: a fresh
+start replaces it, and `k\=' removes it.")
+
+(defvar-local cerebro--started-at nil
+  "Alist of (NAME . FLOAT-TIME) - when this Emacs last started each session.
+
+The floor a trigger is gated on (`cerebro-wake-interval\=') is measured from
+here rather than from the state file, which is deleted with the session it
+described.")
 
 (defun cerebro--session (name)
   "The live session buffer this Emacs started for NAME, or nil.

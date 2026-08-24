@@ -148,8 +148,8 @@ set -e
 $out"
 grep -q 'bad-fence.md:7' <<<"$out" || fail "plan check, id in a fence under agents/: the hit does not name line 7
 $out"
-grep -q 'quotes a bead id into prose an agent reads' <<<"$out" \
-  || fail "plan check: the advisory text is missing
+grep -q 'rule bead-id' <<<"$out" \
+  || fail "plan check: the advisory does not name the rule that fired
 $out"
 pass "the plan check fires on a bead id in a fenced block destined for agents/"
 
@@ -242,6 +242,102 @@ set -e
 $out"
 pass "the plan check sees a child bead id with dotted suffixes"
 
+# A plan may not tell an implementer to write the provenance file's name into prose an agent
+# reads: check 1 forbids exactly that on the tree, and a plan that specifies it costs a rewrite
+# plus a gate cycle.
+# The path is composed rather than written: rule `docs-in-suites' reads this suite, and a literal
+# one here would fire the tree lint on the file that tests it.
+d='docs/'
+cat > "$plan_dir/decisions-in-skill.md" <<PLAN
+### \`skills/plan-bead/SKILL.md\`
+Replace the paragraph with:
+> The provenance goes in ${d}decisions.md, which the lint names when it fires.
+PLAN
+set +e
+out="$(bash "$lint" --plan "$plan_dir/decisions-in-skill.md" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "plan check, the provenance file named in a skill: expected exit 1, got $status
+$out"
+grep -q 'rule decisions-ref' <<<"$out" \
+  || fail "plan check, the provenance file named in a skill: rule decisions-ref did not fire
+$out"
+grep -q 'decisions-in-skill.md:3' <<<"$out" \
+  || fail "plan check, the provenance file named in a skill: the hit does not name line 3
+$out"
+pass "the plan check fires on the provenance file named in a skill"
+
+# A suite that opens a file under docs/ is what stops scripts/ci-needed letting CI skip the
+# suites on a docs-only pull request. A plan that specifies one costs a red CI job, not a red
+# gate. Both paths here are composed, for the reason above.
+cat > "$plan_dir/docs-in-suite.md" <<PLAN
+### \`tests/lint.sh\`
+Add the case:
+\`\`\`bash
+grep -q x "$fixture/${d}retrospectives/why.md"
+\`\`\`
+PLAN
+set +e
+out="$(bash "$lint" --plan "$plan_dir/docs-in-suite.md" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "plan check, a docs/ path in a suite: expected exit 1, got $status
+$out"
+grep -q 'rule docs-in-suites' <<<"$out" \
+  || fail "plan check, a docs/ path in a suite: rule docs-in-suites did not fire
+$out"
+
+cat > "$plan_dir/docs-in-exempt-suite.md" <<PLAN
+### \`tests/ci-needed.sh\`
+Add the case:
+\`\`\`bash
+grep -q x "$fixture/${d}retrospectives/why.md"
+\`\`\`
+PLAN
+set +e
+out="$(bash "$lint" --plan "$plan_dir/docs-in-exempt-suite.md" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "plan check, a docs/ path in the exempt suite: expected exit 0, got $status
+$out"
+pass "the plan check fires on a docs/ path quoted into a suite, and honours the exempt suite"
+
+# The audience word, spelled by concatenation for the same reason scripts/lint spells it that
+# way: this suite is one of the trees the rule reads.
+n="play""er"
+cat > "$plan_dir/audience-word.md" <<PLAN
+### \`scripts/roster\`
+Add the comment:
+\`\`\`bash
+# the ${n} sees this
+\`\`\`
+PLAN
+set +e
+out="$(bash "$lint" --plan "$plan_dir/audience-word.md" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "plan check, the audience word in a script: expected exit 1, got $status
+$out"
+grep -q 'rule audience-noun' <<<"$out" \
+  || fail "plan check, the audience word in a script: rule audience-noun did not fire
+$out"
+
+# scripts/lint is exempt from every rule in both walks: it spells every pattern it forbids.
+cat > "$plan_dir/audience-word-in-lint.md" <<PLAN
+### \`scripts/lint\`
+Add the comment:
+\`\`\`bash
+# the ${n} sees this
+\`\`\`
+PLAN
+set +e
+out="$(bash "$lint" --plan "$plan_dir/audience-word-in-lint.md" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "plan check, the audience word in scripts/lint: expected exit 0, got $status
+$out"
+pass "the plan check fires on the audience word in a script and leaves scripts/lint alone"
+
 # The documented invocation passes a relative path from wherever the planner is sitting, while the
 # checks run from the repository root: a plan re-opened there is no plan at all, and reports clean.
 set +e
@@ -279,5 +375,22 @@ grep -q 'scripts/roster' <<<"$out" \
   || fail "lint with a planted mount round trip: the advisory does not name scripts/roster
 $out"
 pass "a mount round trip outside consumer-root fires an advisory naming the file"
+
+# The retired worktree path in a script: a tree-mode rule that never had a case of its own, and
+# the one that proves a rule reaching outside agent prose still names the file it found.
+printf '\nx=.claude/worktrees/y\n' >> "$fixture/scripts/roster"
+set +e
+out="$(bash "$lint" "$fixture" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "lint with a planted retired worktree path: expected exit 1, got $status
+$out"
+grep -q 'retired worktree path' <<<"$out" \
+  || fail "lint with a planted retired worktree path: the advisory did not fire
+$out"
+grep -q 'scripts/roster' <<<"$out" \
+  || fail "lint with a planted retired worktree path: the advisory does not name scripts/roster
+$out"
+pass "a retired worktree path in a script fires the rule naming the file"
 
 echo "all lint assertions passed"

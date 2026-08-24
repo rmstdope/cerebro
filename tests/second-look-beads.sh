@@ -58,7 +58,7 @@ cat > "$stub_stdout" <<'JSON'
   {"id":"ah-handed-back", "issue_type":"bug",  "labels":["verification:failed"]},
   {"id":"ah-implementer", "issue_type":"bug",  "labels":["verification:failed","planned"]},
   {"id":"ah-planner",     "issue_type":"bug",  "labels":["verification:failed","plan:revise"]},
-  {"id":"ah-both",        "issue_type":"bug",  "labels":["verdict:stale","verification:failed","planned"]},
+  {"id":"ah-both",        "issue_type":"bug",  "labels":["verdict:stale","verification:failed"]},
   {"id":"ah-planned-0th", "issue_type":"bug",  "labels":["planned","verification:failed"]},
   {"id":"ah-ordinary",    "issue_type":"task", "labels":["planned"]},
   {"id":"ah-nolabels",    "issue_type":"task"}
@@ -94,6 +94,11 @@ if listed ah-planned-0th; then fail "a bead whose FIRST label is 'planned' was l
 pass "handles a label at position 0"
 
 # --- the two arms overlapping ------------------------------------------------------------------
+#
+# ah-both must match BOTH arms - stale, and handed back with neither owning label - or this asserts
+# nothing: a single `select` emits each element once whatever the arms say, so a fixture matching
+# only one arm passes even against a two-queries-concatenated implementation, which is exactly what
+# double-lists a bead in both states.
 count="$(printf '%s\n' "$ids" | grep -cxF ah-both || true)"
 [ "$count" = "1" ] || fail "a bead matching both arms was listed $count times, not once"
 pass "lists a bead matching both arms exactly once"

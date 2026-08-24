@@ -139,6 +139,9 @@ The advisory lint — the prose and configuration decisions, reported but never 
 bash scripts/lint            # exit 0 clean, 1 when an advisory fired, 2 on a bad root
 ```
 
+A rule whose grep or awk fails is itself an advisory naming the rule and the step, never an `ok`
+line — `|| true` could not tell a no-match from a grep that never ran (cb-u5e).
+
 CI (`.github/workflows/ci.yml`) runs both: ERT on Emacs 28.2 and 30.1, and every `tests/*.sh` on
 ubuntu-latest. A suite that only passes on macOS is a red PR.
 

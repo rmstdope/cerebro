@@ -43,6 +43,7 @@ reported="$(grep -c -e '^ok - ' -e '^ADVISORY: ' <<<"$out" || true)"
   || fail "lint on this repository: expected at least ten checks to report, got $reported
 $out"
 tail -n1 <<<"$out" | grep -q -e '^lint: clean$' -e '^lint: advisories above are not failures' \
+                             -e '^lint: [0-9]* rule(s) could not be run' \
   || fail "lint on this repository: the last line is neither verdict
 $out"
 pass "the lint runs on this repository and reports every check"

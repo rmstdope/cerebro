@@ -749,6 +749,73 @@ clears a stop flag for every kind - the navigator's decision (cb-0r6)."
                    '(("Xavier" . already-up) ("Psylocke" . external)))
                   "cerebro: nothing to autostart; Xavier and Psylocke are already up")))
 
+(defun cerebro-test--duplicated-agent (name role kind state &optional external bead phase)
+  "An agent as `cerebro-test--agent\=' builds one, with two sessions counted."
+  (let ((agent (cerebro-test--agent name role kind state external bead phase)))
+    (setf (cerebro-agent-sessions agent) 2)
+    agent))
+
+(ert-deftest cerebro-test/start-action-refuses-a-duplicated-name ()
+  "With two sessions of one name, `s\=' would start a third over an ambiguity."
+  (should (eq (cerebro--start-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'dead) nil)
+              'duplicate))
+  ;; Ahead of `already-up' and `external' too - the answer is the same whichever
+  ;; of the two sessions this Emacs happens to hold.
+  (should (eq (cerebro--start-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'up)
+               '("Xavier"))
+              'duplicate))
+  (should (eq (cerebro--start-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'standby) nil)
+              'duplicate)))
+
+(ert-deftest cerebro-test/kill-action-refuses-a-duplicated-name ()
+  "`k\=' would kill whichever session Emacs holds, which is not necessarily the
+one the navigator can see - and it beats `disarm\=', which acts on the name."
+  (should (eq (cerebro--kill-action
+               (cerebro-test--duplicated-agent "Cyclops" "implementer" 'implementer 'idle)
+               '("Cyclops"))
+              'duplicate))
+  (should (eq (cerebro--kill-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'standby) nil)
+              'duplicate)))
+
+(ert-deftest cerebro-test/finish-action-refuses-a-duplicated-name ()
+  "A stop flag is per name, and two sessions would both read the one flag."
+  (should (eq (cerebro--finish-action
+               (cerebro-test--duplicated-agent "Cyclops" "implementer" 'implementer
+                                               'working nil "cb-63m")
+               nil)
+              'duplicate))
+  ;; Ahead of `offer-clear', which is otherwise checked before every state.
+  (should (eq (cerebro--finish-action
+               (cerebro-test--duplicated-agent "Cyclops" "implementer" 'implementer
+                                               'working nil "cb-63m")
+               t)
+              'duplicate))
+  (should (eq (cerebro--finish-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'up) nil)
+              'duplicate)))
+
+(ert-deftest cerebro-test/autostart-never-launches-a-duplicated-name ()
+  (should (eq (cerebro--autostart-action
+               (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'dead) nil t)
+              'duplicate)))
+
+(ert-deftest cerebro-test/duplicate-message-names-every-pid-and-tags-the-state-files ()
+  (should (equal (cerebro--duplicate-message "Xavier" '(32075 70687) 70687)
+                 (concat "Xavier has 2 sessions in this fleet: pid 70687 (state file), "
+                         "pid 32075 — end the extra one from its own terminal"))))
+
+(ert-deftest cerebro-test/duplicate-message-without-a-file-pid-tags-nothing ()
+  "No state file, or one naming a pid that is not among them: every pid is
+untagged and the order is ascending."
+  (let ((expected (concat "Xavier has 2 sessions in this fleet: pid 32075, pid 70687"
+                          " — end the extra one from its own terminal")))
+    (should (equal (cerebro--duplicate-message "Xavier" '(32075 70687) nil) expected))
+    (should (equal (cerebro--duplicate-message "Xavier" '(32075 70687) 99) expected))))
+
 (ert-deftest cerebro-test/start-action-launches-dead ()
   (should (eq (cerebro--start-action
                 (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) nil)

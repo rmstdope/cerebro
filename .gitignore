@@ -21,6 +21,7 @@ dist/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+.beads/*.jsonl
 *.gate.lock*
 
 # Cerebro's own bookkeeping — agent state files, stop flags, the agents' worktrees and the personal

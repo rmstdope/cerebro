@@ -53,7 +53,9 @@ the commands. GitHub issues are the external inbox only. Every bead is created u
 ranked later with the navigator; a bead is planned in one session and implemented in another.
 
 The board syncs through the Dolt remote rather than through git — a clone gets the code, `bd sync`
-gets the work.
+gets the work. That is deliberate, not an omission (cb-4yo): no `.beads/*.jsonl` snapshot is
+tracked, the root `.gitignore` keeps a stray `bd export` out of every commit, and
+`tests/bead-board-untracked.sh` pins it. Reading the board means `bd sync`, never browsing git.
 
 ## Development practices
 

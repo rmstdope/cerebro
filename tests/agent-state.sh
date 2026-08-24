@@ -22,15 +22,7 @@ source "$repo_root/tests/lib/consumer.sh"
 # consults it for the fleet.
 # A git repo, since consumer-root --shared asks git for the main .git directory.
 new_fixture() {
-  local tmp
-  tmp="$(mktemp -d)"
-  git init -q "$tmp"
-  git -C "$tmp" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-  mkdir -p "$tmp/.claude/cerebro/scripts"
-  ln -s "$repo_root/scripts/roster" "$tmp/.claude/cerebro/scripts/roster"
-  ln -s "$repo_root/scripts/agent-state" "$tmp/.claude/cerebro/scripts/agent-state"
-  ln -s "$repo_root/scripts/consumer-root" "$tmp/.claude/cerebro/scripts/consumer-root"
-  printf '%s' "$tmp"
+  consumer_new "$(fixture_name)" --link roster agent-state consumer-root
 }
 
 run_state() {

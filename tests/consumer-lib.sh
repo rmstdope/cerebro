@@ -123,6 +123,26 @@ set -e
 echo "$out" | grep -q "bad/name" || fail "consumer_new bad/name: the refusal should name it, got: $out"
 pass "consumer_new refuses a name containing a slash"
 
+# A name twice re-inits the first consumer's directory and the second case then runs against the
+# first's state - silently. It cost this bead a red suite, so it is a refusal rather than a rule.
+set +e
+out="$( ( consumer_new plain ) 2>&1 )"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "consumer_new twice: expected exit 1, got $status"
+echo "$out" | grep -q "already exists" || fail "consumer_new twice: got: $out"
+pass "consumer_new refuses a name it has already built"
+
+# A fabricator wrapping consumer_new is called as `x="$(new_fixture)"`, so a counter incremented
+# inside it never survives the subshell - which is exactly how every fixture got one name.
+a="$(fixture_name)"
+b="$( (fixture_name) )"
+[[ "$a" != "$b" ]] || fail "fixture_name: two calls gave the same name, $a"
+[[ "$a" == fixture-* && "$b" == fixture-* ]] || fail "fixture_name: unexpected shape, $a and $b"
+[[ "$(fixture_name state)" == state-* ]] || fail "fixture_name <prefix>: got $(fixture_name state)"
+[[ ! -e "$work_dir/$a" ]] || fail "fixture_name should leave no directory behind, $a exists"
+pass "fixture_name is unique across subshells, takes a prefix, and creates nothing"
+
 # --- cleanup ------------------------------------------------------------------------------------------
 #
 # The trap is installed by the library in the *suite's* shell, which is why a migrated suite must

@@ -32,7 +32,9 @@
 #   link_scripts <consumer> <script>...
 #                                 symlinks <script> into <consumer>/.claude/cerebro/scripts/
 #   consumer_new <name> [--branch <b>] [--origin] [--copy | --link <script>...]
-#                                 echoes $work_dir/<name>
+#                                 echoes $work_dir/<name>; refuses a name it has already built
+#   fixture_name <prefix>         a name no earlier call has used, for a fabricator called in a
+#                                 subshell (a counter would never survive `$( )`)
 #   advance_origin <name> <n>     pushes <n> commits to <name>'s origin, so the consumer is behind
 #   consumer_with_submodule <name> <mount> [--branch <b>]
 #                                 echoes $work_dir/<name>, with cerebro as a REAL submodule at <mount>
@@ -109,6 +111,16 @@ link_scripts() {
   done
 }
 
+# A name no earlier call has used. A fabricator wrapping consumer_new is almost always called as
+# `x="$(new_fixture)"`, and a counter incremented in that subshell is lost the moment it returns -
+# so every fixture got the same name and quietly re-inited the first one's directory.
+fixture_name() {
+  local d
+  d="$(mktemp -d "$work_dir/${1:-fixture}-XXXXXX")"
+  rmdir "$d"
+  basename "$d"
+}
+
 # --- the consumers ------------------------------------------------------------------------------------
 
 # consumer_new <name> [--branch <b>] [--origin] [--copy | --link <script>...]
@@ -128,6 +140,9 @@ consumer_new() {
   case "$name" in
     */*) fail "consumer_new: <name> may not contain a slash, got: $name" ;;
   esac
+  # A name twice is a mistake, and a silent one: `git init` over an existing tree re-inits it and
+  # the second case then runs against the first case's state. It cost this migration a red suite.
+  [ -e "$work_dir/$name" ] && fail "consumer_new: $name already exists - each consumer needs its own name"
 
   local branch="main" origin="" copy="" links=()
   while [ $# -gt 0 ]; do

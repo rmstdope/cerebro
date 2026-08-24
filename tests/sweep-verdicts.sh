@@ -44,12 +44,7 @@ git_id=(-c user.name=test -c user.email=test@example.com)
 origin="$work_dir/origin.git"
 git init -q --bare -b main "$origin"
 
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q -b main "$consumer"
-for s in consumer-root project-conf default-branch sweep-verdicts.sh; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf default-branch sweep-verdicts.sh)"
 git "${git_id[@]}" -C "$consumer" commit -q --allow-empty -m "init"
 verdict_sha="$(git -C "$consumer" rev-parse HEAD)"
 # Three commits after the verdict's own, so the distance is a number this suite can pin exactly.

@@ -48,12 +48,8 @@ gb_free() { echo $(( $1 * 1024 * 1024 )) > "$free_kb_file"; }
 origin="$work_dir/origin.git"
 git init -q --bare "$origin"
 
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/scripts"
-git init -q -b main "$consumer"
-for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf default-branch roster prune-worktrees.sh)"
+mkdir -p "$consumer/scripts"
 
 # What this consumer is willing to have reclaimed. Declared rather than assumed since ah-qled.4:
 # `reclaim_dirs` defaults to EMPTY, so an unconfigured consumer never has a directory deleted. Every

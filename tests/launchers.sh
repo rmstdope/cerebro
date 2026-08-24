@@ -22,18 +22,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
-# The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
-# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
-# elisp, editor droppings - so the fixture was neither hermetic nor cheap (ah-qled.11). `emacs/` is
-# deliberately absent: no bash suite reads it, and it is the largest thing in the tree.
-copy_cerebro_into() {
-  local dest="$1" d
-  mkdir -p "$dest"
-  for d in scripts agents skills hooks; do
-    [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$dest/"
-  done
-}
-
 # A stub `claude` on PATH ahead of the real one, so a launcher's `exec claude ...` runs this instead
 # of starting a real session. It prints the environment and args it was handed, which is exactly what
 # these assertions need and nothing a real session would do.
@@ -61,11 +49,7 @@ chmod +x "$stub_dir/claude"
 # `git init` matters: launch-preflight compares `git rev-parse --show-toplevel` against the consumer
 # and skips its checks entirely when they differ, so a fixture that is not a working tree would make
 # these cases silently assert nothing.
-fixture_dir="$(mktemp -d)"
-cleanup_add "$fixture_dir"
-git init -q "$fixture_dir"
-mkdir -p "$fixture_dir/.claude" "$fixture_dir/.cerebro"
-copy_cerebro_into "$fixture_dir/.claude/cerebro"
+fixture_dir="$(consumer_new fixture --copy)"
 fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
 # A consumer that runs implementers must declare a fast gate, or launch-preflight refuses them
 # (ah-qled.7.1). The fixture declares one for the same reason a real consumer does: nothing here
@@ -204,10 +188,7 @@ pass "roster --bogus exits 2"
 # vanish on a fresh clone with the fleet silently reverting to the X-Men.
 # Cleaned up at the end of this block rather than by the EXIT trap: the cases below rewrite that
 # trap with their own directories, and a name added here would be dropped from it again.
-roster_consumer="$(mktemp -d)"
-git init -q "$roster_consumer"
-mkdir -p "$roster_consumer/.claude" "$roster_consumer/.cerebro"
-copy_cerebro_into "$roster_consumer/.claude/cerebro"
+roster_consumer="$(consumer_new roster-consumer --copy)"
 roster_at="$roster_consumer/.claude/cerebro/scripts/roster"
 consumer_roster_file="$roster_consumer/.cerebro/roster.conf"
 
@@ -459,7 +440,7 @@ echo "$out" | grep -q "roster.conf" \
 echo "$out" | grep -q "the submodule is behind" \
   && fail "launch Grace: a consumer-declared role is not a stale submodule, got: $out"
 pass "a consumer-declared role with no agent file anywhere is refused by its right cause"
-rm -rf "$roster_consumer" "$bare_path_dir"
+rm -rf "$bare_path_dir"
 
 # --- launch, generically over every roster row ---
 
@@ -578,11 +559,7 @@ pass "launch $first_implementer sets BEADS_ACTOR=$first_implementer"
 # A consumer of its own, deliberately: this case asserts a link that did *not* exist beforehand, and
 # the cases below it write `.cerebro/models.conf`, which the fixture above must never have. Two temp
 # directories is the test being honest, not duplication - what had to go is the *enclosing* checkout.
-consumer_dir="$(mktemp -d)"
-cleanup_add "$consumer_dir"
-git init -q "$consumer_dir"
-mkdir -p "$consumer_dir/.claude" "$consumer_dir/.cerebro"
-copy_cerebro_into "$consumer_dir/.claude/cerebro"
+consumer_dir="$(consumer_new own-consumer --copy)"
 # A gate, for the same reason the fixture above declares one: the implementer cases below would
 # otherwise be refused at launch (ah-qled.7.1).
 printf 'gate_fast make check\n' > "$consumer_dir/.cerebro/project.conf"
@@ -697,11 +674,7 @@ pass "launch Forge refuses with one line when claude is not on PATH"
 #
 # Its own consumer again: this one has an agent file removed from its copy of the submodule, so it
 # cannot share a consumer with anything that expects a complete one.
-consumer_dir2="$(mktemp -d)"
-cleanup_add "$consumer_dir2"
-git init -q "$consumer_dir2"
-mkdir -p "$consumer_dir2/.claude"
-copy_cerebro_into "$consumer_dir2/.claude/cerebro"
+consumer_dir2="$(consumer_new behind-consumer --copy)"
 rm -f "$consumer_dir2/.claude/cerebro/agents/architect.md"
 set +e
 out="$(run_launcher_at "$consumer_dir2/.claude/cerebro/scripts" launch Forge 2>&1)"

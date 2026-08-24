@@ -41,12 +41,7 @@ minutes_ago() {
 #
 # The sweep needs no origin and no branch: it reads `bd` and nothing else. A git repository is all
 # it wants, so `consumer-root` has a root to answer with.
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q -b main "$consumer"
-for s in consumer-root project-conf sweep-assignees.sh; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf sweep-assignees.sh)"
 git -c user.name=test -c user.email=test@example.com -C "$consumer" \
   commit -q --allow-empty -m "init"
 

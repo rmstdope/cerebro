@@ -66,25 +66,16 @@ chmod +x "$stub_dir/bd"
 #   cerebro does not ship
 branch="trunk"
 origin="$work_dir/origin.git"
-consumer="$work_dir/consumer"
+consumer="$(consumer_new consumer --branch "$branch" --copy)"
 
 git init -q --bare -b "$branch" "$origin"
-git init -q -b "$branch" "$consumer"
 git_q -C "$consumer" remote add origin "$origin"
 
 mkdir -p "$consumer/src" "$consumer/.claude/agents" "$consumer/doc/retro"
 echo 'print("a consumer with no JavaScript in it")' > "$consumer/src/main.py"
 
-# Only the directories the fixture needs, never `cp -R "$repo_root"`: that drags in whatever happens
-# to be present at the time - a local .cerebro/, the .git, byte-compiled elisp - so the fixture stops
-# being hermetic and starts being expensive (ah-qled.11, increment 4).
-mkdir -p "$consumer/.claude/cerebro"
-for d in scripts agents skills hooks; do
-  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$consumer/.claude/cerebro/"
-done
 scripts_at="$consumer/.claude/cerebro/scripts"
 
-mkdir -p "$consumer/.cerebro"
 cat > "$consumer/.cerebro/project.conf" <<'CONF'
 project_name   Ledger
 default_branch trunk

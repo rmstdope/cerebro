@@ -74,13 +74,10 @@ branch="trunk"
 origin="$work_dir/origin.git"
 git init -q --bare "$origin"
 
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/scripts"
-git init -q -b "$branch" "$consumer"
-for s in consumer-root project-conf default-branch roster \
-         prune-worktrees.sh sweep-claims.sh sweep-stalled.sh; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --branch "$branch" --link \
+  consumer-root project-conf default-branch roster \
+  prune-worktrees.sh sweep-claims.sh sweep-stalled.sh)"
+mkdir -p "$consumer/scripts"
 
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"

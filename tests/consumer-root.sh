@@ -17,11 +17,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 # --- a throwaway consumer repo: T/repo/.claude/cerebro is where the script actually lives ---
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q "$consumer"
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-ln -s "$repo_root/scripts/consumer-root" "$consumer/.claude/cerebro/scripts/consumer-root"
+consumer="$(consumer_new repo --link consumer-root)"
 
 plain_out="$("$consumer/.claude/cerebro/scripts/consumer-root")"
 [[ "$plain_out" == "$(cd "$consumer" && pwd -P)" ]] \

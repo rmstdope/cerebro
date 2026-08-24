@@ -22,13 +22,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 # --- a throwaway consumer repo, the way tests/project-conf.sh builds one ---
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q "$consumer"
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-for s in consumer-root project-conf app-paths; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf app-paths)"
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
 app_paths="$consumer/.claude/cerebro/scripts/app-paths"

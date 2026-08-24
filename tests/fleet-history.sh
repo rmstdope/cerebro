@@ -36,12 +36,8 @@ source "$repo_root/tests/lib/consumer.sh"
 # real log - which would make these assertions pass or fail by accident.
 new_fixture() {
   local tmp
-  tmp="$(mktemp -d)"
-  git init -q "$tmp"
-  git -C "$tmp" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-  mkdir -p "$tmp/.claude/cerebro/scripts" "$tmp/.cerebro/state"
-  ln -s "$repo_root/scripts/consumer-root" "$tmp/.claude/cerebro/scripts/consumer-root"
-  ln -s "$repo_root/scripts/fleet-history" "$tmp/.claude/cerebro/scripts/fleet-history"
+  tmp="$(consumer_new "$(fixture_name)" --link consumer-root fleet-history)"
+  mkdir -p "$tmp/.cerebro/state"
   printf '%s' "$tmp"
 }
 

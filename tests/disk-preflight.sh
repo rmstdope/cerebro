@@ -54,13 +54,7 @@ free_gb() { awk -v gb="$1" 'BEGIN { printf "%d\n", gb * 1024 * 1024 }' > "$free_
 tree_gb() { awk -v gb="$1" 'BEGIN { printf "%d\n", gb * 1024 * 1024 }' > "$du_kb_file"; }
 
 # --- a throwaway consumer, the way tests/project-conf.sh builds one -----------------------------
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q "$consumer"
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-for s in consumer-root project-conf disk-preflight; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf disk-preflight)"
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
 preflight="$consumer/.claude/cerebro/scripts/disk-preflight"

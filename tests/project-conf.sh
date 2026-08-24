@@ -21,13 +21,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 # --- a throwaway consumer repo, the way tests/consumer-root.sh builds one ---
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/.cerebro"
-git init -q "$consumer"
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-for s in consumer-root project-conf; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf)"
 conf="$consumer/.cerebro/project.conf"
 project_conf="$consumer/.claude/cerebro/scripts/project-conf"
 
@@ -121,12 +115,7 @@ pass "an unreadable file is not an error"
 fi
 
 # --- detection: `install` is inferred from a lockfile when unconfigured ---
-detect_consumer="$work_dir/detect"
-mkdir -p "$detect_consumer/.claude/cerebro/scripts" "$detect_consumer/.cerebro"
-git init -q "$detect_consumer"
-for s in consumer-root project-conf; do
-  ln -s "$repo_root/scripts/$s" "$detect_consumer/.claude/cerebro/scripts/$s"
-done
+detect_consumer="$(consumer_new detect --link consumer-root project-conf)"
 detect_conf="$detect_consumer/.claude/cerebro/scripts/project-conf"
 
 out="$("$detect_conf" install 2>/dev/null)"
@@ -176,12 +165,7 @@ pass "calling it with no key is a usage error"
 # --- CRLF line endings do not leak into the value: this file is TRACKED, so it will be edited on
 # --- Windows checkouts, and a trailing \r turns `npm ci' into `npm ci\r' and `main' into a branch
 # --- that does not exist - invisibly, in every message.
-crlf_consumer="$work_dir/crlf"
-mkdir -p "$crlf_consumer/.claude/cerebro/scripts" "$crlf_consumer/.cerebro"
-git init -q "$crlf_consumer"
-for s in consumer-root project-conf; do
-  ln -s "$repo_root/scripts/$s" "$crlf_consumer/.claude/cerebro/scripts/$s"
-done
+crlf_consumer="$(consumer_new crlf --link consumer-root project-conf)"
 printf 'install npm ci\r\nproject_name Atlantis HUD\r\n' > "$crlf_consumer/.cerebro/project.conf"
 out="$("$crlf_consumer/.claude/cerebro/scripts/project-conf" install 2>/dev/null)"
 [[ "$out" == "npm ci" ]] || fail "CRLF: expected 'npm ci' with no carriage return, got '$(printf %s "$out" | cat -v)'"
@@ -232,13 +216,7 @@ pass "a declared gate is read whole"
 #
 # Detection is a convenience, never a silent one: an agent about to trust a green result should know
 # the harness chose the command rather than the project declaring it.
-gate_repo="$work_dir/gaterepo"
-mkdir -p "$gate_repo/.claude/cerebro/scripts"
-git init -q "$gate_repo"
-git -C "$gate_repo" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-for s in consumer-root project-conf; do
-  ln -s "$repo_root/scripts/$s" "$gate_repo/.claude/cerebro/scripts/$s"
-done
+gate_repo="$(consumer_new gate --link consumer-root project-conf)"
 gate_conf="$gate_repo/.claude/cerebro/scripts/project-conf"
 cat > "$gate_repo/package.json" <<'JSON'
 { "name": "x", "scripts": { "check:fast": "eslint .", "check": "eslint . && vitest run" } }
@@ -305,12 +283,7 @@ pass "a gate that is neither declared nor detectable yields nothing"
 # a fact about the consumer; a file sitting at the path the declarations moved away from is a
 # MIGRATION ERROR, and falling back silently is exactly what would leave a consumer running on
 # defaults it never declared.
-old_consumer="$work_dir/oldpath"
-mkdir -p "$old_consumer/.claude/cerebro/scripts" "$old_consumer/.cerebro"
-git init -q "$old_consumer"
-for s in consumer-root project-conf; do
-  ln -s "$repo_root/scripts/$s" "$old_consumer/.claude/cerebro/scripts/$s"
-done
+old_consumer="$(consumer_new oldpath --link consumer-root project-conf)"
 echo "default_branch trunk" > "$old_consumer/.claude/cerebro-project.conf"
 set +e
 out="$("$old_consumer/.claude/cerebro/scripts/project-conf" default_branch main 2>/tmp/oldpath.err)"

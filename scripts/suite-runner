@@ -86,8 +86,20 @@ annotate=0
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# A token pipe as the semaphore. bash 3.2 - what macOS ships and what the gate runs on locally -
+# has no `wait -n', and running batches of N with a `wait' between them would idle every core but
+# one while the slowest suite of a batch finished. Each job takes a token before it starts and puts
+# it back when it ends; `read' on the fifo blocks until one is there. `exec 3<>' opens it
+# read-write in one step, so neither end blocks on open.
+mkfifo "$tmp/tokens"
+exec 3<>"$tmp/tokens"
+i=0
+while [[ $i -lt $jobs ]]; do echo >&3; i=$((i+1)); done
+
 # Runs one suite and reports it, writing its output and result to files the parent reads afterwards.
 # The slot is the suite's glob position, so the parent walks the same order without parsing names.
+# It runs in a background subshell, so SECONDS and the locals are its own; every line it prints is
+# one short write, which is what keeps two jobs ending at the same moment from splitting a line.
 run_one() {
   local t="$1" slot="$2" rc
   echo "-- $t"
@@ -96,6 +108,7 @@ run_one() {
   rc=$?
   echo "$rc" >"$tmp/$slot.rc"
   if [[ $rc -eq 0 ]]; then echo "ok   $t (${SECONDS}s)"; else echo "FAIL $t (${SECONDS}s)"; fi
+  echo >&3                           # the token back
 }
 
 # A string, not an array: "${arr[@]}" on an empty array is an unbound-variable error under `set -u'
@@ -105,9 +118,11 @@ n=0
 for t in "$dir"/*.sh; do
   [[ -e "$t" ]] || continue          # no suites at all: the glob stays literal
   paths="$paths"$'\n'"$t"
-  run_one "$t" "$n"
+  read -r -u 3 _                     # blocks until a slot is free
+  run_one "$t" "$n" &
   n=$((n+1))
 done
+wait
 
 failed=""
 i=0

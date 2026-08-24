@@ -221,3 +221,40 @@ grep -qF -- "== output of $work_dir/suites/b-fail.sh ==" <<<"$out" || fail "--jo
 $out"
 
 pass "--jobs refuses a bad count and --jobs 1 keeps the contract"
+
+# --- 6. suites actually run at the same time ---
+#
+# The point of the bead. Two suites that sleep 2s each finish in under 4s at --jobs 2 and take at
+# least 4s at --jobs 1. Their own directory, so cases 1-5 are untouched by the sleeping.
+
+mkdir -p "$work_dir/slow"
+printf '#!/usr/bin/env bash\nsleep 2\nexit 0\n' >"$work_dir/slow/d-slow.sh"
+printf '#!/usr/bin/env bash\nsleep 2\nexit 0\n' >"$work_dir/slow/e-slow.sh"
+
+SECONDS=0
+run --jobs 2 "$work_dir/slow"
+parallel_secs=$SECONDS
+[[ $status -eq 0 ]] || fail "--jobs 2 on two sleeping suites: expected exit 0, got $status
+$out"
+for f in d-slow e-slow; do
+  grep -qF -- "ok   $work_dir/slow/$f.sh (" <<<"$out" || fail "--jobs 2: no 'ok' line for $f.sh
+$out"
+done
+[[ $parallel_secs -lt 4 ]] || fail "--jobs 2 on two 2s suites took ${parallel_secs}s - they did not overlap
+$out"
+
+SECONDS=0
+run --jobs 1 "$work_dir/slow"
+serial_secs=$SECONDS
+[[ $status -eq 0 ]] || fail "--jobs 1 on two sleeping suites: expected exit 0, got $status
+$out"
+[[ $serial_secs -ge 4 ]] || fail "--jobs 1 on two 2s suites took ${serial_secs}s - it did not serialise
+$out"
+
+# At --jobs 1 at most one name is ahead of its result, which is the property a stalled run relies on.
+named="$(grep -nF -- "-- $work_dir/slow/e-slow.sh" <<<"$out" | head -n 1 | cut -d: -f1)"
+first_result="$(grep -nF -- "ok   $work_dir/slow/d-slow.sh (" <<<"$out" | head -n 1 | cut -d: -f1)"
+[[ $named -gt $first_result ]] || fail "--jobs 1: e-slow.sh is named at line $named, before d-slow.sh's result at $first_result
+$out"
+
+pass "suites run N at a time, and --jobs 1 is one at a time"

@@ -279,7 +279,8 @@ run* describes:
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> idle --pid $PPID
-until bd ready --label planned --exclude-label human --exclude-type epic --json \
+until bd ready --label planned --exclude-label human --exclude-label verdict:stale \
+        --exclude-type epic --json \
         | grep -q '"id"'; do
   echo "queue empty, waiting"
   sleep 60
@@ -290,7 +291,8 @@ Then claim, as below. Say once that you are waiting, so the navigator knows why 
 
 ```bash
 bd dolt pull
-bd ready --label planned --exclude-label human --exclude-type epic --claim --json
+bd ready --label planned --exclude-label human --exclude-label verdict:stale \
+        --exclude-type epic --claim --json
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID
 bd dolt push                               # so other machines see the claim
 ```
@@ -299,6 +301,15 @@ One bead. `--claim` takes the first ready one; take that and no other.
 
 `human` is work already waiting on the navigator; `epic` is a split parent, which has children
 rather than a plan. Claiming either means refusing it a minute later.
+
+`verdict:stale` is the third, and it is the one that looks most like ordinary work: an open,
+`planned`, P0 bead exactly like a reopened one, except that the fleet view has found main has moved
+past the commit its verdict was formed against. **Building against a stale verdict is the no-op this
+label exists to prevent**: on the day this was filed, one such bead asked for something a sibling
+had already shipped two merges later, and another for wording a bead in flight was already carrying
+when the verdict was written. The bead is waiting for Psylocke to look again, not for you; she either clears the label,
+and it comes back to this queue unchanged, or she records a fresh verdict against current main, and
+then it is worth building.
 
 `bd heartbeat <id>` at every phase gate and before anything long — a full gate run, a CI watch. The
 lease is short, about five minutes, and a cycle is an hour; the exact TTL is bd's and not

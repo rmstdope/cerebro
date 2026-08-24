@@ -124,9 +124,47 @@ carry `verification:pending`:
 .claude/cerebro/scripts/work-beads | jq -r '.[]
   | select(([.labels[]? | select(startswith("verification:"))] | length == 0)
            or ([.labels[]?] | index("verification:failed"))
-           or ([.labels[]?] | index("verification:pending")))
+           or ([.labels[]?] | index("verification:pending"))
+           or ([.labels[]?] | index("verdict:stale")))
   | .id'
 ```
+
+**A `verdict:stale` bead is taken first in the pass, before anything else on this list.** It is the
+cheapest kind of verification there is — re-read your own finding against current main and either
+confirm it or clear it — and every hour it waits is an hour a P0 sits doing nothing: the label takes
+the bead out of both the implementer and the planner queues, so while it carries one **nobody else
+can move it at all**.
+
+Note the shape it arrives in. `verdict:stale` is set by the fleet view's verdict sweep
+(`sweep-verdicts.sh`) when main has moved past the commit a failed verdict was formed
+against, and a bead it flags is **`open`**, not closed — so without this arm it would be invisible
+to you, which is strictly worse than not flagging it at all. It is the one arm of this query that
+selects an open bead.
+
+What the second look decides, and how you record it:
+
+- **The finding still holds.** Record a fresh verdict by the ordinary `failed` recipe below, which
+  removes `verdict:stale` in the same breath. The bead goes back to the fleet with a verdict formed
+  against current main.
+- **The finding no longer holds** — the tree now does what you asked for. Pass it, and clear the
+  label:
+
+  ```bash
+  bd set-state <id> verification=passed --reason "re-verified at <short sha>; the finding no longer holds"
+  bd update <id> --set-metadata verified_at=<full sha> --remove-label verdict:stale
+  bd dolt push
+  ```
+
+- **A sibling delivered the work** — one of the three cases this mechanism was built for. Close it with a reason naming that
+  sibling rather than sending anybody to build it again:
+
+  ```bash
+  bd close <id> --reason "Delivered by <sibling id>; verification finding no longer applies"
+  ```
+
+**The sweep says only that main has moved.** It does not say the finding no longer applies — that is
+yours and the navigator's, and it is why the label offers the bead back to you rather than deciding
+anything.
 
 **`verification:pending` is in the list, and this pass's own offers are what you leave out.**
 Pending means "offered to the navigator and not yet answered". Within a pass you know which of those
@@ -360,6 +398,7 @@ Three answers, and you carry out whichever comes back:
 
 ```bash
 bd set-state <id> verification=passed --reason "verified by the navigator at <short sha>"
+bd update <id> --set-metadata verified_at=<full sha>
 bd dolt push
 ```
 
@@ -369,6 +408,7 @@ bead:
 
 ```bash
 bd create --title "..." --description "Found during verification of <id>: ..." --type task --priority 4
+bd update <id> --set-metadata verified_at=<full sha>
 bd dolt push
 ```
 
@@ -381,6 +421,8 @@ as anything else that lands in the backlog. Do not rank it yourself.
 bd reopen <id> --reason "<what the navigator saw, one line>"
 bd update <id> --priority=0 --append-notes "Verification failed (<date>, at <short sha>): <what the navigator saw, in full>"
 bd set-state <id> verification=failed --reason "failed verification at <short sha>"
+bd update <id> --set-metadata verified_at=<full sha>
+bd update <id> --remove-label verdict:stale     # harmless when it is not there
 ```
 
 Then ask the navigator one more question, as part of taking the verdict: **is the plan wrong, or is
@@ -500,4 +542,10 @@ cheapest place to catch one. The next pass opens with `working --phase prepare`,
 - **Never reuses a server she did not start this pass.** Anything already listening on the port is a
   refusal, not something to build on top of.
 - **Never records a verdict without the sha.** `passed`, `passed with a follow-up` and `failed` all
-  name the commit that was actually judged.
+  name the commit that was actually judged — in prose as the short sha, and in the
+  `verified_at` metadata field as the **full 40-character** one. The field is what
+  `sweep-verdicts.sh` reads to ask whether main has moved past the verdict; the prose is what a
+  person reads. A verdict recorded without the field is not wrong, it is **invisible to that
+  sweep** — the bead can never be offered back for a second look, which is exactly the failure of
+  2026-08-23. `not-needed` records no field at all: no tree was ever looked at, so there is no
+  commit a verdict was formed against.

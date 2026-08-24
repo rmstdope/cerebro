@@ -458,11 +458,18 @@ bd list --status open --exclude-label planned --exclude-label human \
   | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
               | select((.labels // []) | (index("verification:failed") | not)
                                          or (index("plan:revise") != null))
+              | select(((.labels // []) | index("verdict:stale")) | not)
               | select(.priority==0) | "\(.id)\t\(.title)"'
 ```
 
 **A failed verification is a candidate only when it carries `plan:revise`** — that is what the second
-`select` says. A bead reopened because the *build* was wrong, or handed back by an implementer that
+`select` says. **And never when it carries `verdict:stale`**, whatever else it carries: that label
+says the fleet view found main has moved past the commit the verdict was formed against, so the
+finding may no longer hold and the plan may be perfectly sound. Revising a plan on the strength of a
+stale verdict is a failure this has already cost — a planner audit that found the shipped code matched the plan
+exactly, and named two causes that were both correct behaviour introduced after the verdict. The
+bead is waiting for Psylocke to look again; when she does, she either clears the label or records a
+fresh verdict, and either way it comes back to you or does not on its own merits. A bead reopened because the *build* was wrong, or handed back by an implementer that
 found nothing left to build, is waiting for Psylocke's second look and is not yours; without this
 filter it comes back every pass. A brand-new P0 that was never planned carries neither label and is
 unaffected, which is why the test is on `verification:failed` rather than on `planned`.
@@ -669,9 +676,12 @@ bd list --exclude-label planned --exclude-label human \
   | jq '[.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
              | select((.labels // []) | (index("verification:failed") | not)
                                         or (index("plan:revise") != null))
+             | select(((.labels // []) | index("verdict:stale")) | not)
              | select(.priority != 4)]'
 # ... a failed verification is a candidate only when it carries plan:revise; without that label
 # it is waiting for Psylocke, not for you. See *A reopened bead is a P0 with a plan already*.
+# ... and never one carrying verdict:stale: main has moved past the commit that verdict was formed
+# against, so the finding may not hold and the plan may be sound. It is Psylocke's to settle.
 # ... and skip any candidate whose family another planner owns: see *How two planners
 # stay off each other's work*, which is what the jq filter and the label order above obey.
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID

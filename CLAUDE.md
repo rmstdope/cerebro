@@ -112,9 +112,13 @@ And the scripts, in plain bash (no framework; each file exits non-zero at its fi
 assertion), run from this repository's root:
 
 ```bash
-for t in tests/*.sh; do bash "$t"; done    # all of them
+bash scripts/suite-runner tests             # all of them, each named as it starts
 bash tests/launchers.sh                     # one suite
 ```
+
+`scripts/suite-runner` names each suite before it runs it and replays a failing suite's output, so a
+stalled suite is identifiable by name; both `tests/gate` and CI call it, which is what keeps the one
+loop from being written twice (cb-8cn).
 
 Every suite sources `tests/lib/consumer.sh` for `fail`/`pass`, `git_q`, its work directory and the
 two throwaway-consumer shapes (`consumer_new`, `consumer_with_submodule`); `tests/lib/` is a

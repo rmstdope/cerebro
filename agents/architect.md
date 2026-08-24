@@ -82,22 +82,9 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
    git fetch origin main                       # from the consumer root; never checkout or branch here
    bd recall bishop-watermark                  # "<full sha> <ISO-8601 UTC>", or exit 1 = never swept
    bd recall bishop-weekly                     # "<ISO-8601 UTC>" of the last weekly, or exit 1
-   bd recall bishop-last-sweep                 # "<ISO-8601 UTC>" of the last sweep of any kind, or exit 1
    ```
 
    `bd recall <missing-key>` exits 1 — that is the "never swept" branch, not an error.
-
-   **Then decide whether there is a sweep to make at all.** The fleet view starts you every hour;
-   a sweep is due once a day. If `bishop-last-sweep` is less than 24 hours old, **do not sweep**:
-   say so in one line — "last sweep was `<n>h` ago, next one due in `<m>h`; nothing to do" — write
-   `.claude/cerebro/scripts/agent-state Forge waiting --pid $PPID`, and end the turn. Read nothing,
-   file nothing, move no watermark. An hourly wake that finds the day's sweep already done is the
-   ordinary case, not a wasted one: it costs a `bd recall` and a line.
-
-   `bishop-last-sweep` absent means you have never swept, and a sweep is due.
-
-   The navigator pressing `s` is the one override: a session the navigator started by hand sweeps
-   whatever the stamp says, and says that is why.
 
 2. **Decide the sweep, and say which and why, in your first message.** Weekly if `bishop-weekly` is
    absent or seven or more days old, or if `bishop-watermark` is absent (a first run reads
@@ -119,9 +106,7 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
    If the range touches the `.claude/cerebro` gitlink, also read
    `git -C .claude/cerebro log --first-parent --format='%h %s' <old>..<new>` (`git diff
    <watermark-sha>..origin/main -- .claude/cerebro` shows both shas) — the harness is code the fleet
-   pays for too. Nothing in the range → say so, move no watermark, stamp `bishop-last-sweep`
-   (step 5), report, finish: a sweep that found an empty range is still a sweep that ran, and the
-   stamp is what keeps the next hourly wake from repeating it.
+   pays for too. Nothing in the range → say so, move nothing, report, finish.
 
    **Weekly reads:** all of the project's application paths — `scripts/app-paths` prints the
    pattern, and the project's own workspace manifest (`pnpm-workspace.yaml`, `Cargo.toml`, whatever
@@ -188,15 +173,8 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
    ```bash
    bd remember "$(git rev-parse origin/main) $(date -u +%Y-%m-%dT%H:%M:%SZ)" --key bishop-watermark
    bd remember "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --key bishop-weekly     # weekly sweeps only
-   bd remember "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --key bishop-last-sweep # every sweep, always
    bd dolt push
    ```
-
-   `bishop-last-sweep` is the one stamp that moves on **every** sweep, including one that read an
-   empty range and filed nothing — it answers "when did Forge last run", which is a different
-   question from "how far has Forge read" (`bishop-watermark`, which only moves over a range that
-   was actually read and filed). Keeping them apart is what lets an empty sweep still hold the
-   next 23 hourly wakes off without ever skipping a commit.
 
    `--key` updates a memory in place. Always pass `--key` on `bd remember` — a bare argument that
    happens to look like an existing key is read back instead of stored, and the content here (a sha

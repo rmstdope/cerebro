@@ -24,10 +24,11 @@ dist/
 .beads/*.jsonl
 *.gate.lock*
 
-# Cerebro's own directory in a consumer — runtime state (agent state files, stop flags, the agents'
-# worktrees, the personal models.conf) that never reaches git, plus the project's tracked
-# declarations (cb-epr), which every clone needs. Same shape as the .claude block below: everything
-# ignored, except what is deliberately tracked. `.cerebro/*` and not `.cerebro/` — a negation only
-# works when the parent directory itself is not ignored.
+# Cerebro's own directory in a consumer. Two things the fleet writes while it runs are ignored:
+# the agents' worktrees and their state files and stop flags. Everything else in it is tracked -
+# the project's declarations (project.conf, roster.conf, traps.md; cb-epr) and models.conf, which
+# this project commits so every clone runs the fleet on the same models (eb6ffdb). A project that
+# wants models.conf personal adds `.cerebro/models.conf` here. A new runtime artifact must be
+# added to this list, or it arrives committable: that is the trade for committing models.conf.
 .cerebro/worktrees
 .cerebro/state

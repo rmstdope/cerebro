@@ -12,11 +12,12 @@
 # deliberate - it is what keeps `default_branch main  # for now' from naming a branch "main # for
 # now" - and it is stated here rather than left to be discovered.
 #
-# TRACKED, by a `.gitignore' negation inside the otherwise-ignored .cerebro/ (cb-epr).
-# `.cerebro/models.conf' is a personal preference and rightly ignored; how a project installs itself
-# and what its gate is called are facts EVERY clone needs. An ignored declaration vanishes on a
-# fresh clone, and every new machine then silently skips the step - surfacing much later as a
-# confusing failure inside somebody's worktree.
+# TRACKED (cb-epr).
+# How a project installs itself and what its gate is called are facts EVERY clone needs, so this
+# file is tracked (`.gitignore' names the fleet's runtime directories and nothing else;
+# `.cerebro/models.conf' is tracked or ignored as the project chooses). An ignored declaration
+# vanishes on a fresh clone, and every new machine then silently skips the step - surfacing much
+# later as a confusing failure inside somebody's worktree.
 #
 # It lived at <consumer>/.claude/cerebro-project.conf until cb-epr. A file still sitting there is
 # the ONE case this script fails on (exit 2, naming the `mv'): see THIS NEVER FAILS below.

@@ -326,11 +326,12 @@ mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd
 
 - `.cerebro/` is the harness's own directory in the consumer — agent state files, stop flags and
   agent worktrees (ah-v82), **and since cb-epr the project's own declarations** (`project.conf`,
-  `roster.conf`, `traps.md`). So the consumer's `.gitignore` ignores it the way it ignores
-  `.claude/`: `.cerebro/*` plus a negation per tracked declaration, never `.cerebro/` — a negation
-  only works when the parent directory itself is not ignored. Everything-except is the fail-safe
-  direction: the fleet invents runtime artifacts far more often than it invents declarations, so a
-  new one arrives ignored rather than committable by accident. `.claude/` holds only what Claude
+  `roster.conf`, `traps.md`). So the consumer's `.gitignore` names the
+  two things the fleet writes while it runs — `.cerebro/worktrees` and `.cerebro/state` — and
+  tracks the rest: the declarations, and `models.conf`, which this project commits so every clone
+  runs the same models (`eb6ffdb`; a project that wants it personal ignores it). A deny-list rather
+  than everything-except: the price is that a new runtime artifact has to be added to it, and that
+  price was taken so models.conf could be tracked without a negation per tracked file. `.claude/` holds only what Claude
   Code itself discovers (`agents/`, `skills/`, `settings.json`) plus this repository's own
   submodule mount.
 - **This repository is a consumer of itself** (cb-i3l.1). `.claude/cerebro` is a committed symlink

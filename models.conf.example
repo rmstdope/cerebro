@@ -1,7 +1,8 @@
 # Which model each agent runs on, overriding what its `agents/<role>.md` declares.
 #
 # Copy to `.cerebro/models.conf` **in the consumer repository** (not here — this submodule is shared
-# by every consumer, and `.cerebro/` is ignored wholesale, so the file is yours and needs no commit):
+# by every consumer). Whether to commit it is the project's: tracked, every clone runs the fleet on
+# the same models; listed in `.gitignore`, it is yours alone.
 #
 #     cp .claude/cerebro/models.conf.example .cerebro/models.conf
 #

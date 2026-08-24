@@ -65,7 +65,7 @@ every agent on the roster with its state, the bead or PR it is on, and how long 
 |---|---|
 | `s` | start the agent on this row, in an Emacs-owned `vterm` session |
 | `k` | kill it, confirming harder when it is mid-bead |
-| `f` | tell an implementer to finish — mid-bead it completes the bead first, idle it stops at once |
+| `f` | tell an agent to finish — an implementer completes its bead, an interactive role its pass, and neither starts again until you press `s` |
 | `RET` | focus the detail window, to type to the agent shown there |
 | `TAB` | cycle list → beads → detail → list |
 | `n` / `p` | next / previous row |
@@ -77,15 +77,20 @@ re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exa
 
 Two things it does for you without being asked: it starts `prune-worktrees.sh --watch` alongside the
 buffer (see *Leftover worktrees*), and it replaces an implementer that reports itself `done` with a
-fresh session.  It also owns the **cadence of the interactive roles**: they no
-longer sleep inside their own sessions, they write `waiting` and end their turn, and the poll wakes
-them — `cerebro-wake-interval-default` (ten minutes) and `cerebro-wake-intervals` (Psylocke at five)
-are `M-x customize` variables you can change while the fleet runs. The For column of a waiting row
-counts down to its wake; `waiting !` means it answered neither of the two pokes and wants looking at.
-And a stop flag on a waiting role takes it down at once, which is what was impossible while it slept.
+fresh session.  It also runs the **interactive roles** the way it runs the
+implementers: a role that writes `waiting` (Forge, `idle`) is ended half a minute later — its buffer
+kept, `RET` shows it — and started fresh when its trigger fires: a planner when the planned buffer is
+short, a P0 is unplanned or (the first planner) a P4 wants ranking; Psylocke when a merged bead is
+unverified or a verdict is stale; Moira and Cypher when an issue or an outside PR moved on GitHub,
+and hourly regardless; Forge daily. A role you have not started this Emacs is never started: `s` (or
+`autostart` in `roster.conf`) arms it, `k` and `f` disarm it, and none of that is written to any
+file. `cerebro-wake-intervals` is the floor between two starts of one role, changeable while the
+fleet runs.
 
 **Reading a row.** Green `●` is working, yellow `●` is idle, yellow `◐` is an interactive role
-`waiting` between passes, a bold yellow `?` is an agent waiting on
+`waiting` between passes — it is ended within half a minute — blue `◌` is **standby**: the view ended
+this role after its pass and starts a fresh one when the trigger in the For column fires, and `RET`
+shows its last pass. A bold yellow `?` is an agent waiting on
 *you*, green `◍` is done and about to be replaced, grey `○` is dead. The State column names the
 **phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `triage`/`plan` for
 a planner; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
@@ -480,9 +485,9 @@ Honest numbers from building this repository's own harness:
   describes the PR as it opened, which is worth knowing when you read one later.
 - **Nothing merges unreviewed and nothing merges red.** The `main` ruleset enforces the second on the
   server; the first is the agents following the rule.
-- **Interactive agents cost tokens while they sleep**, a little: each wakes on its own cadence
-  (planners and Moira every ten minutes, Psylocke every five) and a quiet pass is a few `bd` and `gh`
-  calls. Sessions you are not using are worth ending.
+- **Interactive agents cost nothing between passes** — the view ends them — and a fresh start
+  re-reads the role's instructions; a role whose trigger is true but whose pass cannot clear it
+  restarts once per `cerebro-wake-intervals`.
 
 ## When something goes wrong
 

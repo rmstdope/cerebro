@@ -63,7 +63,8 @@ The glyph carries the state and the weight carries the urgency:
 |--------------------|----------------------------------------------------------------|
 | green `●`          | working, or an interactive agent that is up                     |
 | yellow `●`         | idle — a session is up with no bead, which may want a nudge     |
-| yellow `◐`         | waiting — an interactive role between passes; the For column says when it wakes, and `waiting !` means it answered neither poke |
+| yellow `◐`         | waiting — an interactive role between passes; it is ended within half a minute |
+| blue `◌`           | standby — the view ended this role after its pass and starts a fresh one when the trigger in the For column fires; `RET` shows its last pass |
 | yellow `?`, **bold** | asking: it needs an answer from you, and the whole row says so |
 | green `◍`          | done, and about to be replaced by a fresh session               |
 | grey `○`           | dead — nobody is there                                          |
@@ -201,6 +202,36 @@ same five-second poll that refreshes the list acts on what each one reports in
 
 Only implementers Emacs itself started are supervised: one running in somebody's own terminal is
 theirs to end, and a dead one stays dead rather than fighting your own `k`.
+
+## Supervising the interactive roles
+
+The same poll runs the interactive roles the same way, and for the same reason: a session that
+carries one pass is one whose context is that pass and nothing before it.
+
+- **`waiting`**, or **`idle`** for a role that ends its pass with that instead (Forge) — the session
+  is ended `cerebro-end-grace` (30s) later, long enough for the one line it prints after writing the
+  state to land. Its **buffer is kept** as the record of the pass, renamed `*fleet: <Name> (ended
+  HH:MM)*` and made read-only; the row goes to **standby** and `RET` shows it.
+- **standby** — nothing is running, and the For column says what would start one: `→ buffer < 4` for
+  a planner, `→ merged, unverified` for the verifier, a countdown (`→43m`, `→21h04`, `→due`) for a
+  role on a cadence. When the trigger comes true the view starts a fresh session and says which and
+  why: `cerebro: started Psylocke — 2 merged, unverified`.
+- **`waiting` or `idle` with `.cerebro/state/<name>.stop` present** — ended at once, whatever the
+  grace says: nothing is in flight for it to protect. The flag is removed with it and the name is
+  disarmed, so nothing starts in its place.
+
+**Arming lives in this Emacs and nowhere else.** `s` — and `autostart` in `roster.conf` — arms a
+role; `k` and `f` disarm it. Nothing is written to any file, so a new Emacs starts nothing until you
+start something: opening the fleet view does not resurrect a fleet you took down last night.
+
+`f` on a running role writes the flag and says *told <Name> to finish its pass - it stays down until
+you press s*; on a standby row there is no pass to finish, and it says *<Name> is on standby - press
+k to disarm it, or s to start it now*. `k` on a standby row asks *Disarm <Name>?* and forgets the
+kept buffer.
+
+`cerebro-wake-intervals` is no longer a sleep the role asks for: it is the **floor between two
+starts** of one role, which is what stops a trigger its pass cannot clear — a P0 nobody can plan, a
+verification you have not run — restarting it on every tick.
 
 Run the tests with:
 

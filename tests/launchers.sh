@@ -186,8 +186,6 @@ pass "roster --bogus exits 2"
 # Tracked, by a `.gitignore` negation inside the otherwise-ignored `.cerebro/` (cb-epr), beside
 # `.cerebro/project.conf`: which agents exist is a fact every clone needs, and an ignored file would
 # vanish on a fresh clone with the fleet silently reverting to the X-Men.
-# Cleaned up at the end of this block rather than by the EXIT trap: the cases below rewrite that
-# trap with their own directories, and a name added here would be dropped from it again.
 roster_consumer="$(consumer_new roster-consumer --copy)"
 roster_at="$roster_consumer/.claude/cerebro/scripts/roster"
 consumer_roster_file="$roster_consumer/.cerebro/roster.conf"

@@ -16,18 +16,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
-# Fixtures and background processes are cleaned up from one trap, so a failed assertion leaves
-# neither a mktemp directory nor a `sleep' behind - `fail' exits, so per-case cleanup would not run.
-fixtures=()
+# The background `sleep's this suite starts to stand in for live sessions. The library's EXIT trap
+# calls suite_cleanup first, before it removes anything, so a failed assertion leaves none of them
+# running - `fail' exits, so per-case cleanup would not run. The fixtures themselves need no entry
+# here: consumer_new builds them under $work_dir, which that same trap removes.
 strays=()
 
-# The library's EXIT trap calls this first, before it removes anything: a `sleep' left running
-# would otherwise outlive the suite - `fail' exits, so per-case cleanup would not run.
 suite_cleanup() {
   local p
   for p in ${strays+"${strays[@]}"}; do kill "$p" 2>/dev/null || true; done
-  local d
-  for d in ${fixtures+"${fixtures[@]}"}; do rm -rf "$d"; done
 }
 
 # The same fixture shape tests/agent-state.sh uses: a git repo with its own scripts/ directory

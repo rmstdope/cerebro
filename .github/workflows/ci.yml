@@ -37,6 +37,10 @@ jobs:
           # this step, and a failed `changes' job skips nothing (see the `if:' on the gated jobs).
           # No `set' line of any kind here: that -e is the safety net now, and defusing it is what
           # turned the first docs-only pull request red (cb-ypx, cb-e33).
+          #
+          # Without `shell: bash' the interpreter is `bash -e {0}' - -e, and NOT -o pipefail (cb-e33
+          # measured it). ci-needed's status still reaches the step because it is the LAST command
+          # in the pipe. Do not append anything after it.
           printf '%s\n' "$changed" | bash scripts/ci-needed >> "$GITHUB_OUTPUT"
 
       - name: Lint (advisory, never blocks)

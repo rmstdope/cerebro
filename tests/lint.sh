@@ -230,6 +230,16 @@ set -e
 $out"
 pass "the plan check sees a child bead id with dotted suffixes"
 
+# The documented invocation passes a relative path from wherever the planner is sitting, while the
+# checks run from the repository root: a plan re-opened there is no plan at all, and reports clean.
+set +e
+out="$(cd "$plan_dir" && bash "$lint" --plan bad-fence.md 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "plan check, a relative plan path: expected exit 1, got $status
+$out"
+pass "the plan check reads a plan named relative to the caller's directory"
+
 set +e
 out="$(bash "$lint" --plan "$plan_dir/absent.md" 2>&1)"
 status=$?

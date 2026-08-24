@@ -40,10 +40,13 @@ if [[ "${1:-}" == "--plan" ]]; then
     echo "lint: cannot read $plan" >&2
     exit 2
   fi
+  # Resolve it here, in the caller's directory, because the checks below `cd' into the root: the
+  # documented invocation passes a relative path from wherever the planner is sitting, and a
+  # relative path re-opened from the root would read no plan at all and report it clean.
+  plan="$(cd "$(dirname "$plan")" && pwd)/$(basename "$plan")"
   set -- ""
 fi
 root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-[[ -z "$root" ]] && root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ ! -d "$root" ]]; then
   echo "lint: not a directory: $root" >&2
   echo "usage: scripts/lint [root]" >&2

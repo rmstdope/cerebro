@@ -29,7 +29,7 @@ git -C "$consumer" remote add origin "$origin"
 mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/.cerebro/worktrees"
 echo hello > "$consumer/README.md"
 git -C "$consumer" add README.md
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q -m init
+git_q -C "$consumer" commit -q -m init
 git -C "$consumer" push -q origin main
 for s in consumer-root project-conf default-branch prepare-worktree; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"

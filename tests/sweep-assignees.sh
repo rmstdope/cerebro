@@ -42,8 +42,7 @@ minutes_ago() {
 # The sweep needs no origin and no branch: it reads `bd` and nothing else. A git repository is all
 # it wants, so `consumer-root` has a root to answer with.
 consumer="$(consumer_new repo --link consumer-root project-conf sweep-assignees.sh)"
-git -c user.name=test -c user.email=test@example.com -C "$consumer" \
-  commit -q --allow-empty -m "init"
+git_q -C "$consumer" commit -q --allow-empty -m "init"
 
 cat > "$beads_file" <<JSON
 [

@@ -96,15 +96,17 @@ pass "--mount names the physical relative path for a submodule vendored elsewher
 # else. The superproject probe would answer with the GRANDPARENT here - it reports the superproject
 # of whatever repository this checkout belongs to, and a copied mount belongs to the consumer's own
 # repo - so the validated arithmetic has to come first (Copilot, PR #84).
+#
+# Hand-built rather than `consumer_with_submodule`: there the CEREBRO checkout is the submodule, and
+# here the CONSUMER is - the opposite shape, and the only one this case is about (cb-dul).
 grandparent="$work_dir/grandparent"
 git init -q "$grandparent"
-git -C "$grandparent" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
+git_q -C "$grandparent" commit -q --allow-empty -m init
 nested_src="$work_dir/nested-src"
 mkdir -p "$nested_src"
 git init -q "$nested_src"
-git -C "$nested_src" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-git -C "$grandparent" -c user.name=test -c user.email=test@example.com \
-  -c protocol.file.allow=always submodule add -q "$nested_src" child
+git_q -C "$nested_src" commit -q --allow-empty -m init
+git_q -C "$grandparent" -c protocol.file.allow=always submodule add -q "$nested_src" child
 nested="$grandparent/child"
 mkdir -p "$nested/.claude/cerebro/scripts"
 cp "$repo_root/scripts/consumer-root" "$nested/.claude/cerebro/scripts/consumer-root"
@@ -160,8 +162,8 @@ git init -q "$self_consumer"
 cp "$repo_root/scripts/consumer-root" "$self_consumer/scripts/consumer-root"
 chmod +x "$self_consumer/scripts/consumer-root"
 ln -s ".." "$self_consumer/.claude/cerebro"
-git -C "$self_consumer" -c user.name=test -c user.email=test@example.com add -A
-git -C "$self_consumer" -c user.name=test -c user.email=test@example.com commit -q -m "self-consumer"
+git_q -C "$self_consumer" add -A
+git_q -C "$self_consumer" commit -q -m "self-consumer"
 
 self_root="$(cd "$self_consumer" && pwd -P)"
 self_out="$("$self_consumer/.claude/cerebro/scripts/consumer-root")"

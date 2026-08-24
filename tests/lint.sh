@@ -66,7 +66,7 @@ mkdir -p "$fixture"
 cp -R agents skills docs emacs templates tests scripts CLAUDE.md README.md .github .gitignore "$fixture/"
 git init -q "$fixture"
 git -C "$fixture" add -A >/dev/null 2>&1
-git -C "$fixture" -c user.name=test -c user.email=test@example.com commit -q -m init
+git_q -C "$fixture" commit -q -m init
 
 # The unmodified copy is the baseline the planted violation is measured against, not a claim
 # that it is clean.

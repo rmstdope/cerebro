@@ -40,16 +40,15 @@ export PATH="$stub_dir:$PATH"
 # Unlike `sweep-assignees.sh` this one needs git as well as `bd`: the whole of its arithmetic is
 # `git log <sha>..origin/<branch>`. So the consumer gets an `origin` of its own - a bare repository
 # it can fetch from - rather than a bare `git init`.
-git_id=(-c user.name=test -c user.email=test@example.com)
 origin="$work_dir/origin.git"
 git init -q --bare -b main "$origin"
 
 consumer="$(consumer_new repo --link consumer-root project-conf default-branch sweep-verdicts.sh)"
-git "${git_id[@]}" -C "$consumer" commit -q --allow-empty -m "init"
+git_q -C "$consumer" commit -q --allow-empty -m "init"
 verdict_sha="$(git -C "$consumer" rev-parse HEAD)"
 # Three commits after the verdict's own, so the distance is a number this suite can pin exactly.
 for n in 1 2 3; do
-  git "${git_id[@]}" -C "$consumer" commit -q --allow-empty -m "later $n"
+  git_q -C "$consumer" commit -q --allow-empty -m "later $n"
 done
 git -C "$consumer" remote add origin "$origin"
 git -C "$consumer" push -q origin main
@@ -57,7 +56,7 @@ git -C "$consumer" push -q origin main
 # A commit that exists in the clone but is NOT an ancestor of the branch - the force-push and
 # drifted-worktree case, which must read null rather than a count.
 git -C "$consumer" checkout -q -b sideline "$verdict_sha"
-git "${git_id[@]}" -C "$consumer" commit -q --allow-empty -m "off the branch"
+git_q -C "$consumer" commit -q --allow-empty -m "off the branch"
 off_branch_sha="$(git -C "$consumer" rev-parse HEAD)"
 git -C "$consumer" checkout -q main
 

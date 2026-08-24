@@ -464,4 +464,25 @@ grep -q 'ADVISORY: rule mount-round-trip could not be checked - its path grep ex
 $out"
 pass "a failing path grep is reported at its own step"
 
+# Plan mode: an awk that dies leaves `hits' empty, and the plan used to be called clean by a rule
+# that never ran - the mode a planner trusts before shipping a plan. The clean plan written above
+# is the input, so a firing rule cannot be mistaken for a real violation.
+set +e
+out="$(LINT_BREAK_AWK=1 PATH="$shim_dir:$PATH" bash "$lint" --plan "$plan_dir/context-only.md" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "plan check with a failing awk: expected exit 1, got $status
+$out"
+grep -q 'could not be checked - its awk exited 2' <<<"$out" \
+  || fail "plan check with a failing awk: no advisory says a rule never ran
+$out"
+if grep -q 'plan clean' <<<"$out"; then
+  fail "plan check with a failing awk: the plan was still called clean
+$out"
+fi
+tail -n1 <<<"$out" | grep -q 'could not be run on the plan - fix scripts/lint' \
+  || fail "plan check with a failing awk: the verdict blames the plan instead of the lint
+$out"
+pass "a plan is not called clean by a rule that never ran"
+
 echo "all lint assertions passed"

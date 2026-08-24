@@ -141,7 +141,10 @@ plan_rule() {
         if (t ~ /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)+$/) dest = t
       }
     }
-  ' "$plan")"
+  ' "$plan")"; local rc=$?
+  # awk exits 0 whether or not any line printed, so anything non-zero here is the lint failing to
+  # run this rule on the plan - never a clean verdict.
+  (( rc != 0 )) && { unchecked "$name" "awk" "$rc"; return; }
   if [[ -n "$hits" ]]; then
     advisory "the plan quotes into $name's files what rule $name forbids: $msg" "$hits"
   fi
@@ -258,7 +261,9 @@ rule mount-round-trip - 'claude/cerebro" 2>/dev/null && pwd -P' '^scripts/' '^sc
   "the mount round trip is spelled outside consumer-root"
 
 if [[ -n "${plan:-}" ]]; then
-  if [[ $status -eq 0 ]]; then
+  if (( unchecked > 0 )); then
+    echo "lint: $unchecked rule(s) could not be run on the plan - fix scripts/lint before trusting this verdict"
+  elif [[ $status -eq 0 ]]; then
     ok "the plan's quoted blocks pass every rule that can be run on a plan"
     echo "lint: plan clean"
   else

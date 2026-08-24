@@ -814,18 +814,16 @@ The navigator will ask how much is getting done. Answer from the beads, in three
 # understands the other. The repository is developed on macOS and its CI is Linux, so write both.
 WEEK_AGO=$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d)
 
-W=.claude/cerebro/scripts/work-beads
-
-$W --closed-after "$(date +%Y-%m-%d)"                                             # today
-$W --closed-after "$WEEK_AGO"                                                     # 7 days
-$W --closed-after "$(git log -1 --format=%cI "$(git describe --tags --abbrev=0)")" # since release
+.claude/cerebro/scripts/work-beads --status closed --closed-after "$(date +%Y-%m-%d)"                                             # today
+.claude/cerebro/scripts/work-beads --status closed --closed-after "$WEEK_AGO"                                                     # 7 days
+.claude/cerebro/scripts/work-beads --status closed --closed-after "$(git log -1 --format=%cI "$(git describe --tags --abbrev=0)")" # since release
 ```
 
 Count them, and name the beads for the day's window — a list of ids and titles is what makes the
 number mean something.
 
-- **`work-beads` is the one place** that knows which closed beads are real work: it always passes the
-  status it means, and drops epics (bookkeeping — an epic closes when its last child does, so
+- **`work-beads` is the one place** that knows which closed beads are real work: it refuses a call
+  that does not name its status, and drops epics (bookkeeping — an epic closes when its last child does, so
   counting both reports the same work twice) and bd's own `event` audit records. Its header explains
   each of those, so nothing here has to repeat them.
 - **The release window is the tag's commit date**, which `--closed-after` takes as RFC3339. Fetch
@@ -839,7 +837,7 @@ so plainly rather than omitting it.
 does what it claims:
 
 ```bash
-.claude/cerebro/scripts/work-beads | jq -r '.[]
+.claude/cerebro/scripts/work-beads --status closed | jq -r '.[]
   | select(([.labels[]? | select(. == "verification:passed" or . == "verification:not-needed")] | length) == 0)
   | .id'
 ```

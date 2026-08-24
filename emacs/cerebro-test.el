@@ -3456,6 +3456,60 @@ the new `'unknown\=' bucket alongside a typo."
          (agent (car agents)))
     (should (eq (cerebro-agent-state agent) 'idle))))
 
+(ert-deftest cerebro-test/entry-state-column-shows-a-session-count-past-one ()
+  "A name with two sessions in this fleet carries a yellow \=` ×N\=' after the
+state, flag first and count second (cb-63m).  One session, or a row nobody
+counted, shows nothing."
+  (let ((now (current-time))
+        (counted (lambda (agent n)
+                   (setf (cerebro-agent-sessions agent) n)
+                   agent)))
+    (should (equal (aref (cadr (cerebro--entry
+                                (funcall counted
+                                         (cerebro-test--agent "Xavier" "planner" 'interactive
+                                                              'working nil "cb-63m" "build")
+                                         2)
+                                now))
+                         2)
+                   "build ×2"))
+    (should (equal (aref (cadr (cerebro--entry
+                                (funcall counted
+                                         (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                              'working nil "cb-63m" "ci")
+                                         2)
+                                now t))
+                         2)
+                   "ci ■ ×2"))
+    (should (equal (aref (cadr (cerebro--entry
+                                (funcall counted
+                                         (cerebro-test--agent "Beast" "planner" 'interactive 'up)
+                                         3)
+                                now))
+                         2)
+                   "up ×3"))
+    (should (equal (aref (cadr (cerebro--entry
+                                (funcall counted
+                                         (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                              'working nil "cb-63m" "build")
+                                         1)
+                                now))
+                         2)
+                   "build"))
+    (should (equal (aref (cadr (cerebro--entry
+                                (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                     'working nil "cb-63m" "build")
+                                now))
+                         2)
+                   "build"))
+    ;; The marker is the warning face, so it reads as something to act on.
+    (let ((cell (aref (cadr (cerebro--entry
+                             (funcall counted
+                                      (cerebro-test--agent "Xavier" "planner" 'interactive 'up)
+                                      2)
+                             now))
+                      2)))
+      (should (eq (get-text-property (1- (length cell)) 'face cell) 'warning)))))
+
 (ert-deftest cerebro-test/entry-state-column-shows-the-phase ()
   (let ((now (current-time)))
     (should (equal (aref (cadr (cerebro--entry
@@ -4312,13 +4366,17 @@ where one is given, most-specific-first, the way `models.conf' resolves."
 (ert-deftest cerebro-test/column-widths-match-todays-table-for-todays-fleet ()
   "Computed, not configured - and for this fleet the computation has to
 produce exactly the table that is there today, or the promotion pass has
-changed behaviour."
+changed behaviour.
+
+The State floor is 12 rather than 10 since cb-63m: `working ■ ×2\=' is twelve
+characters, and `tabulated-list-mode\=' truncates a cell at its column
+silently - at 10 the marker would be cut off while this test still passed."
   (should (equal (cerebro--column-widths
                   '("Xavier" "Cerebro" "Psylocke" "Wolverine")
                   '("planner" "orchestrator" "verifier" "implementer")
                   '("ah-qled.9" "ah-t65"))
-                 '(14 13 10 10 10)))
-  (should (= (cerebro--width-for '(14 13 10 10 10)) 59)))
+                 '(14 13 12 10 10)))
+  (should (= (cerebro--width-for '(14 13 12 10 10)) 61)))
 
 (ert-deftest cerebro-test/column-widths-grow-for-a-long-name-or-a-long-id ()
   "A consumer's names and ids are not this project's. The Bead column is 10

@@ -570,11 +570,16 @@ string when neither is."
   "TEXT in bold when EMPHASIZE, otherwise TEXT unchanged."
   (if emphasize (propertize text 'face 'bold) text))
 
-(defconst cerebro--column-minimums '(14 13 10 10 10)
+(defconst cerebro--column-minimums '(14 13 12 10 10)
   "The floor for each column: Agent, Role, State, Bead, Bead/Phase.
 
 This project\='s table, kept as the floor so a short roster still gets a
-readable one rather than columns that hug their own contents.")
+readable one rather than columns that hug their own contents.
+
+State is 12 rather than 10 because the longest thing it can say is
+`working ■ ×2\=' - a flagged, duplicated session (cb-63m) - and
+`tabulated-list-mode\=' truncates a cell at its column without saying so, so
+a floor short of the vocabulary makes the view lie rather than wrap.")
 
 (defun cerebro--column-widths (names roles bead-ids)
   "Pure.  The five column widths for a fleet of NAMES filling ROLES, showing
@@ -651,7 +656,14 @@ rather than pushing the rest of the row right - see ah-lyc."
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
          (state-col (cerebro--emphasize
                      (concat (cerebro--state-label agent)
-                             (if (and flagged in-flight) " ■" ""))
+                             (if (and flagged in-flight) " ■" "")
+                             ;; Flag first, then the count: the flag is about
+                             ;; the bead in flight, the count about the
+                             ;; session running it (cb-63m).
+                             (if (cerebro--duplicated-p agent)
+                                 (propertize (format " ×%d" (cerebro-agent-sessions agent))
+                                             'face 'warning)
+                               ""))
                      attention))
          (bead-col (cerebro--emphasize
                     (cond (external "—")

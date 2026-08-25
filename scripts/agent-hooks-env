@@ -13,8 +13,9 @@
 #                         command without knowing where the submodule is mounted.
 #   CEREBRO_HOOK_SETTINGS the settings file to pass to `claude --settings`.
 #
-# The first two are exported because the hook subprocess inherits them through `claude`; the third
-# is only read by the launcher itself, one line later.
+# All three are exported: the first two because the hook subprocess inherits them through `claude`,
+# and the third so a child that expects to inherit it gets it too, even though today it is only read
+# by the launcher itself, one line later.
 #
 # A file of its own rather than four lines inside `launch' only because the hooks are a subject:
 # `launch' says what starts a session, this says what the session's hooks need, and `hooks/' holds
@@ -26,6 +27,6 @@ _agent_hooks_env_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 export CEREBRO_AGENT_NAME="$1"
 export CEREBRO_SCRIPTS="$_agent_hooks_env_dir"
-CEREBRO_HOOK_SETTINGS="$_agent_hooks_env_dir/../hooks/question-state.settings.json"
+export CEREBRO_HOOK_SETTINGS="$_agent_hooks_env_dir/../hooks/question-state.settings.json"
 
 unset _agent_hooks_env_dir

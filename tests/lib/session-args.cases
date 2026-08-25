@@ -4,7 +4,11 @@
 #   scripts/agent-alive       (bash)                via tests/agent-alive.sh
 #
 # The rule: a pid is <name>'s session of the fleet at <root> when its own command line carries a
-# whole-word `--name <name>' AND a `--settings' path under <root>, as a whole path component.
+# whole-word `--name <name>' AND a path under <root>, anywhere in the command line, as a whole path
+# component. That path used to have to ride on `--settings' specifically; it no longer does (see
+# ah-ybsr) - a wrapper (cmux) rewrites `--settings' from a path into merged inline JSON, so the root
+# now travels on `--append-system-prompt' instead (scripts/launch), and the rule asks the whole
+# command line rather than one named flag's value.
 # Add a case here and BOTH suites run it; a case that only one side answers is a divergence, which
 # is what this file exists to make impossible. Before this table each side kept its own list and
 # the two drifted, twice.
@@ -38,3 +42,9 @@ dead   Cyclops  {root}   --name Cyclops
 dead   Cyclops  {root}   --name Cyclops --settings {other}/.claude/cerebro/hooks/question-state.settings.json
 alive  Cyclops  {other}  --name Cyclops --settings {other}/.claude/cerebro/hooks/question-state.settings.json
 dead   Cyclops  {root}   --name Cyclops --settings {root}-hud/.claude/cerebro/hooks/question-state.settings.json
+
+# the carrier the launcher uses when a wrapper has rewritten --settings into inline JSON: the root
+# rides on --append-system-prompt, and only a whole path component under this consumer counts
+alive  Cyclops  {root}   --name Cyclops --append-system-prompt This session is Cyclops of the cerebro fleet rooted at {root}/. do not remove it.
+dead   Cyclops  {root}   --name Cyclops --append-system-prompt This session is Cyclops of the cerebro fleet rooted at {other}/. do not remove it.
+dead   Cyclops  {root}   --name Cyclops --append-system-prompt This session is Cyclops of the cerebro fleet rooted at {root}-hud/. do not remove it.

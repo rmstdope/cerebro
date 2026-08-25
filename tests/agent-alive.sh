@@ -74,13 +74,20 @@ cases="$repo_root/tests/lib/session-args.cases"
 [[ -r "$cases" ]] || fail "session-args table: cannot read $cases"
 tmp="$(new_fixture)"
 other="$(new_fixture)"
-# The three directories the table's --settings paths may name. agent-alive resolves the settings
-# directory physically before comparing, so a directory that does not exist reads dead whatever the
-# row expects - and {root}-hud is the sibling-prefix case, a checkout beside this one whose path
-# merely starts with this one's.
+# The three directories a row's --settings or --append-system-prompt text may name. Rows do not
+# require any of these to exist any more (the rule now reads the whole command line, not a
+# resolved --settings directory) but they are kept so a row naming one still finds a real path -
+# and {root}-hud is the sibling-prefix case, a checkout beside this one whose path merely starts
+# with this one's.
 mkdir -p "$tmp/.claude/cerebro/hooks" "$other/.claude/cerebro/hooks" "$tmp-hud/.claude/cerebro/hooks"
-printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-session"
-chmod +x "$tmp/fake-session"
+# Lives in $work_dir, ONE level above every fixture root, deliberately - not in $tmp. agent-alive's
+# rule now asks whether $repo_root appears ANYWHERE in the process's command line, and a process's
+# own invocation path is part of that command line: a fake session launched from inside its own
+# fixture root would carry that root whatever its --name/--append-system-prompt said, which would
+# make the "carries no root at all" row (see the table) misreport alive for a reason that has
+# nothing to do with the rule under test.
+printf '#!/usr/bin/env bash\nsleep 30\n' > "$work_dir/fake-session"
+chmod +x "$work_dir/fake-session"
 rows=0
 while read -r expect name root args; do
   case "$expect" in ''|'#'*) continue ;; esac
@@ -94,7 +101,7 @@ while read -r expect name root args; do
   # Unquoted on purpose: a row is a command line, and the process must carry it as separate
   # arguments the way `scripts/launch' passes them. No row carries a quoted or globbing argument.
   # shellcheck disable=SC2086
-  bash "$tmp/fake-session" $args &
+  bash "$work_dir/fake-session" $args &
   pid=$!
   strays+=("$pid")
   for child in $(pgrep -P "$pid" 2>/dev/null || true); do strays+=("$child"); done

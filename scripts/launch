@@ -167,12 +167,33 @@ if [[ -n "$models_conf" ]]; then
   done
 fi
 
+# The consumer root, carried where a wrapper that rewrites --settings (cmux) cannot touch it
+# (ah-ybsr). It used to ride on `--settings <root>/.../question-state.settings.json', which
+# `cerebro--root-in-args-p'/`agent-alive' looked for in the command line; cmux keeps every flag this
+# launcher passes but rewrites `--settings' from a path into merged inline JSON, so the root
+# disappeared from it entirely. This is an array, not `${x:+--flag "$sentence"}' (see --model,
+# below): that form is unquoted at the exec, so a value with spaces would word-split into one argv
+# entry per word, which a sentence cannot survive. Guarded rather than unconditional because
+# `consumer_root' is deliberately allowed to be empty - this launcher runs from outside a consumer
+# in the tests.
+#
+# The trailing slash on the root is required: `cerebro--root-in-args-p' builds its needle as the
+# root with one `/' appended, so that `/repos/atlantis-hud' does not match a sibling
+# `/repos/atlantis-hud-hud' - `${consumer_root%/}/' normalises whether or not `consumer_root' ever
+# grows a trailing slash of its own. The sentence carries no apostrophe, for the same bash-3.2
+# reason as the models.conf line above and this file's own convention.
+sysprompt=()
+if [[ -n "$consumer_root" ]]; then
+  sysprompt=(--append-system-prompt "This session is $name of the cerebro fleet rooted at ${consumer_root%/}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")
+fi
+
 exec claude \
   --agent "$role" \
   --name "$name" \
   --remote-control "$name" \
   ${model:+--model "$model"} \
   ${effort:+--effort "$effort"} \
+  "${sysprompt[@]+"${sysprompt[@]}"}" \
   --settings "$CEREBRO_HOOK_SETTINGS" \
   --permission-mode auto \
   "$@" \

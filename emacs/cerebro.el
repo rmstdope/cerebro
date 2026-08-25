@@ -161,7 +161,9 @@ whatever the frame has left (was a constant of 20 for eighteen agents)."
   phase-since                          ; ISO-8601 string, or nil
   wake-at                              ; ISO-8601 string when `waiting', else nil
   sessions                             ; processes of this name in this consumer, or nil
-  raw)                                 ; the state file's `state' string verbatim, or nil
+  raw                                  ; the state file's `state' string verbatim, or nil
+  unverified-pid)                      ; the pid, when the session could not be proved this
+                                       ; fleet's but names this agent (ah-ybsr); nil otherwise
 
 (defun cerebro--canonical-root (root)
   "ROOT as one spelling: absolute, tilde expanded, one trailing slash.
@@ -338,14 +340,19 @@ one built on `process-attributes\=', which is a handful of calls - this
 consumer\='s own sessions - once per tick."
   (seq-filter (lambda (proc) (and (funcall live-p (car proc)) t)) procs))
 
-(defun cerebro--derive-from-state (name role kind parsed owned-p)
+(defun cerebro--derive-from-state (name role kind parsed owned-p &optional unverified-pid)
   "Build one `cerebro-agent' for NAME from a live, parsed state file PARSED.
 
 ROLE and KIND are the row's static fields; OWNED-P is whether Emacs itself
 started this session. Shared between an implementer and an interactive agent
 once each has confirmed the file it read names a still-live pid - this is
 the one place a raw `state' string becomes the `cerebro-agent-state' symbol
-the rest of the view reads."
+the rest of the view reads.
+
+UNVERIFIED-PID, when non-nil, is the pid whose liveness came back
+`unverified' rather than `proven' (`cerebro--session-liveness', ah-ybsr):
+the file is trusted rather than substituted with a default, and this is what
+tells the row to say so."
   (let* ((raw-state (alist-get 'state parsed))
          (state (cond ((equal raw-state "working") 'working)
                       ;; The bead is merged and closed and the session has
@@ -383,24 +390,29 @@ the rest of the view reads."
                                 :phase (alist-get 'phase parsed)
                                 :phase-since (alist-get 'phase_since parsed)
                                 :wake-at (alist-get 'wake_at parsed)
-                                :raw raw-state)))
+                                :raw raw-state
+                                :unverified-pid unverified-pid)))
 
 (defun cerebro--derive-interactive (entry states session-alive-p args owned)
   "Derive one interactive agent's row from (NAME . ROLE) ENTRY.
 
 STATES is an alist of (NAME . parsed-state-json-or-nil), the same one an
 implementer's row is derived from; SESSION-ALIVE-P a predicate on (PID NAME) -
-is that pid still *this* agent's session, not merely a live one; ARGS is
-the system process args list, already narrowed to this consumer by
-`cerebro--consumer-args'; OWNED the names Emacs itself started.
+is that pid still *this* agent's session, not merely a live one, answering
+`t', the symbol `unverified' or nil (`cerebro--session-alive-p''s own
+contract, ah-ybsr); ARGS is the system process args list, already narrowed
+to this consumer by `cerebro--consumer-args'; OWNED the names Emacs itself
+started.
 
 Liveness is the state file first, the process scan second: when STATES has
-an entry for NAME whose pid is still alive, the row comes from the file -
-`working'/`idle'/`asking' and a phase, exactly like an implementer's row.
-Otherwise (no entry, or a pid that is no longer this agent's session - the
-file, if any, is a previous session's, and the pid may since have been
-recycled onto something else) this falls back to the three process-scan branches
-below, so a session started by hand outside this fleet
+an entry for NAME whose pid is still alive - proven or merely unverified,
+both truthy - the row comes from the file - `working'/`idle'/`asking' and a
+phase, exactly like an implementer's row; an unverified pid also marks the
+row rather than being treated as proof. Otherwise (no entry, or a pid that
+is flatly not this agent's session - the file, if any, is a previous
+session's, and the pid may since have been recycled onto something else)
+this falls back to the three process-scan branches below, so a session
+started by hand outside this fleet
 \(`.claude/cerebro/scripts/launch Xavier' in a terminal\) with no file at all
 still shows `up' - as long as it is a session of *this* consumer's fleet,
 which is what ARGS having been filtered establishes."
@@ -408,10 +420,12 @@ which is what ARGS having been filtered establishes."
          (role (cdr entry))
          (parsed (cdr (assoc name states)))
          (pid (and parsed (alist-get 'pid parsed)))
-         (alive (and pid (funcall session-alive-p pid name)))
+         (liveness (and pid (funcall session-alive-p pid name)))
+         (alive (and liveness t))
          (owned-p (and (member name owned) t)))
     (if alive
-        (cerebro--derive-from-state name role 'interactive parsed owned-p)
+        (cerebro--derive-from-state name role 'interactive parsed owned-p
+                                    (and (eq liveness 'unverified) pid))
       (cond
        ((member name owned)
         (make-cerebro-agent :name name :role role :kind 'interactive
@@ -428,11 +442,13 @@ which is what ARGS having been filtered establishes."
 
 STATES is an alist of (NAME . parsed-state-json-or-nil); SESSION-ALIVE-P a
 predicate on (PID NAME) - see `cerebro--session-alive-p', which requires the
-pid's own command line to name this agent, since pids are recycled; OWNED the
-names Emacs itself started."
+pid's own command line to name this agent, since pids are recycled, and
+answers `t', the symbol `unverified' or nil (ah-ybsr); OWNED the names Emacs
+itself started."
   (let* ((parsed (cdr (assoc name states)))
          (pid (and parsed (alist-get 'pid parsed)))
-         (alive (and pid (funcall session-alive-p pid name)))
+         (liveness (and pid (funcall session-alive-p pid name)))
+         (alive (and liveness t))
          (owned-p (and (member name owned) t)))
     (cond
      ;; A session Emacs started is alive whatever the file says: `cerebro--owned'
@@ -449,7 +465,8 @@ names Emacs itself started."
      ((not alive)
       (make-cerebro-agent :name name :role "implementer" :kind 'implementer
                                   :state 'dead :bead nil :since nil :external nil))
-     (t (cerebro--derive-from-state name "implementer" 'implementer parsed owned-p)))))
+     (t (cerebro--derive-from-state name "implementer" 'implementer parsed owned-p
+                                    (and (eq liveness 'unverified) pid))))))
 
 (defun cerebro--derive (roster interactive-agents states session-alive-p args owned)
   "Return the fleet as a list of `cerebro-agent', interactive first.
@@ -811,6 +828,15 @@ rather than pushing the rest of the row right - see ah-lyc."
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
          (state-col (cerebro--emphasize
                      (concat (cerebro--state-label agent)
+                             ;; The unverified marker comes first: it
+                             ;; qualifies the state word itself (this row is
+                             ;; trusted, not proven), where the flag is about
+                             ;; the bead in flight and the count about the
+                             ;; session running it - two different questions
+                             ;; from "what does this state mean" (ah-ybsr).
+                             (if (cerebro-agent-unverified-pid agent)
+                                 (propertize " ?" 'face 'shadow)
+                               "")
                              (if (and flagged in-flight) " ■" "")
                              ;; Flag first, then the count: the flag is about
                              ;; the bead in flight, the count about the
@@ -2298,6 +2324,11 @@ reached once that has been killed."
   (let* ((name (cerebro-agent-name agent))
          (last (alist-get name cerebro--last-exit nil nil #'equal)))
     (cond
+     ((cerebro-agent-unverified-pid agent)
+      (format (concat "Unverified: pid %d is running and names %s, but its command line carries no"
+                      " path under this checkout - showing the state file.\n%s is running outside"
+                      " Emacs - no live view. Use the terminal that started it.")
+              (cerebro-agent-unverified-pid agent) name name))
      ((cerebro-agent-external agent)
       (format "%s is running outside Emacs - no live view. Use the terminal that started it."
               name))
@@ -2706,6 +2737,40 @@ writing the same file."
                         (cerebro--state-file-path repo-root name))))
           roster))
 
+(defun cerebro--session-liveness (pid name root)
+  "`proven', `unverified' or nil for PID as NAME's session of the fleet at ROOT.
+
+Reads only the named pid's args, not the whole process list - this is asked
+once per agent on every refresh, where `cerebro--system-processes' is a scan
+the fleet view deliberately caches.
+
+Three answers, not two (ah-ybsr): a wrapper (cmux) can rewrite `--settings'
+from a path into merged inline JSON, so a session that is genuinely this
+agent's can carry no discriminator ROOT-in-args-p can find, even though it
+carries `--name NAME'.  Collapsing that into \"dead\" is the defect this
+splits out of - the same broken predicate that showed every agent `idle' or
+`up' regardless of what its state file said.
+
+- nil - no pid, no args, or the args do not carry a whole-word `--name NAME'.
+  This is the recycled-pid case (cb-lzi/9420ff2) and it is *positive evidence
+  against*: a bare number is not an identity, so a caller must keep treating
+  this exactly as a dead session.
+- `proven' - `cerebro--session-args-p' is non-nil: the args carry `--name
+  NAME' AND a path under ROOT.  Exactly what \"alive\" meant before this.
+- `unverified' - the args name NAME but carry no path under ROOT.  There is
+  no evidence against this being the session the state file describes, only
+  an absence of proof - a caller should trust the file and say so, not
+  substitute a confident default.
+
+The two-part test is `cerebro--session-args-p'; this function only fetches
+the args of one pid and tells `nil' apart from `unverified' within what that
+function calls no."
+  (let ((args (and pid (alist-get 'args (process-attributes pid)))))
+    (cond
+     ((not (and args (cerebro--name-in-args-p name (list args)))) nil)
+     ((cerebro--root-in-args-p root (list args)) 'proven)
+     (t 'unverified))))
+
 (defun cerebro--session-alive-p (pid name root)
   "Non-nil if PID is a live process and is NAME's own session of the fleet at ROOT.
 
@@ -2718,20 +2783,22 @@ not an identity; the launcher passes `--name <Name>' to every session
 \(`scripts/launch'), which makes the process's own command line the proof
 that this pid is still the one the file was written about.
 
-Reads only the named pid's args, not the whole process list - this is asked
-once per agent on every refresh, where `cerebro--system-processes' is a scan
-the fleet view deliberately caches.
-
 ROOT is the third discriminator (cb-lzi): a recycled pid can land on a
 same-named session of ANOTHER consumer - every consumer on the built-in
 roster has a Xavier - and name plus pid alone would call that one ours.
 Required, not optional: a default would silently be the two-discriminator
 rule this bead removes.
 
-The rule itself is `cerebro--session-args-p\='; this function only fetches
-the args of one pid."
-  (let ((args (and pid (alist-get 'args (process-attributes pid)))))
-    (and args (cerebro--session-args-p args name root))))
+Built on `cerebro--session-liveness' and keeps this function's own
+generalised-boolean contract: `t' for `proven', the symbol `unverified' for
+`unverified' - non-nil, and not `eq' to `unverified', so every existing
+caller and every ERT test that injects `(lambda (pid name) t)' keeps working
+unchanged.  A caller that cares which of the two it got tests
+`(eq ... \\='unverified)'; every other caller already treats both as alive."
+  (pcase (cerebro--session-liveness pid name root)
+    ('proven t)
+    ('unverified 'unverified)
+    (_ nil)))
 
 (defun cerebro--system-processes ()
   "Every system process as (PID . ARGS), ARGS its command line string.

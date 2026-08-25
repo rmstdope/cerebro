@@ -475,6 +475,14 @@ while IFS=$'\t' read -r name role kind; do
   echo "$out" | grep -q '^ARG:--permission-mode$' || fail "launch $name: missing --permission-mode"
   echo "$out" | grep -A1 '^ARG:--permission-mode$' | grep -q '^ARG:auto$' || fail "launch $name: expected auto"
 
+  # The consumer root, carried where a wrapper that rewrites --settings (cmux) cannot touch it
+  # (ah-ybsr): scripts/agent-alive and cerebro--root-in-args-p both look for a path under this
+  # consumer anywhere in the command line, and --settings can no longer be trusted to carry one.
+  echo "$out" | grep -q '^ARG:--append-system-prompt$' \
+    || fail "launch $name: missing --append-system-prompt, so the fleet view cannot prove the session"
+  echo "$out" | grep -A1 '^ARG:--append-system-prompt$' | grep -qF "${fixture_dir%/}/" \
+    || fail "launch $name: --append-system-prompt carries no path under the consumer, got: $out"
+
   # The prompt is the last ARG, and it has one embedded newline, so it prints as the last two
   # lines of output (`tac` is not on macOS by default, so this avoids it).
   prompt="$(echo "$out" | tail -2)"

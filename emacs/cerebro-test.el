@@ -39,6 +39,7 @@ test body cannot compute this itself.")
 ;; before that distinction existed still mean what it meant.
 (defun cerebro-test--always-alive (_pid &optional _name) t)
 (defun cerebro-test--never-alive (_pid &optional _name) nil)
+(defun cerebro-test--unverified (_pid &optional _name) 'unverified)
 
 (ert-deftest cerebro-test/derive-implementer-working-from-live-state-file ()
   (let* ((states '(("Cyclops" . ((state . "working") (bead . "ah-f9c")
@@ -90,6 +91,45 @@ test body cannot compute this itself.")
                                           #'cerebro-test--always-alive nil '("Gambit")))
          (agent (car agents)))
     (should-not (cerebro-agent-external agent))))
+
+(ert-deftest cerebro-test/derive-implementer-keeps-the-file-when-unverified ()
+  "The regression test for Wolverine reading `idle' mid-build (ah-ybsr): a
+liveness that cannot prove the pid carries this consumer's own root -
+`unverified', not `nil' - must not fall back to a default the way `dead'
+does. The state file's own state, bead and phase are what the row shows,
+with `unverified-pid' set to say the file was trusted rather than proven."
+  (let* ((states '(("Cyclops" . ((state . "working") (bead . "ah-f9c")
+                                  (phase . "build") (pid . 4242)))))
+         (agents (cerebro--derive '("Cyclops") nil states
+                                  #'cerebro-test--unverified nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'working))
+    (should (equal (cerebro-agent-bead agent) "ah-f9c"))
+    (should (equal (cerebro-agent-phase agent) "build"))
+    (should (= (cerebro-agent-unverified-pid agent) 4242))))
+
+(ert-deftest cerebro-test/derive-implementer-dead-when-pid-is-not-this-agent ()
+  "A `nil' liveness - the recycled-pid case - still reads dead, and carries
+no `unverified-pid': the hardening for `unverified' must not swallow
+positive evidence against."
+  (let* ((states '(("Cyclops" . ((state . "working") (bead . "ah-f9c") (pid . 4242)))))
+         (agents (cerebro--derive '("Cyclops") nil states
+                                  #'cerebro-test--never-alive nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'dead))
+    (should (null (cerebro-agent-unverified-pid agent)))))
+
+(ert-deftest cerebro-test/derive-interactive-keeps-the-file-when-unverified ()
+  "The interactive sibling: `waiting' and its `wake-at' survive an
+unverified liveness exactly as an implementer's `working'/bead/phase do."
+  (let* ((states '(("Xavier" . ((state . "waiting") (wake_at . "2026-01-01T00:00:00Z")
+                                 (pid . 5151)))))
+         (agents (cerebro--derive nil '(("Xavier" . "planner")) states
+                                  #'cerebro-test--unverified nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'waiting))
+    (should (equal (cerebro-agent-wake-at agent) "2026-01-01T00:00:00Z"))
+    (should (= (cerebro-agent-unverified-pid agent) 5151))))
 
 (ert-deftest cerebro-test/derive-interactive-up-from-process-args ()
   (let* ((args '("claude --agent planner --name Xavier --print"))
@@ -1029,6 +1069,22 @@ stale by definition."
                    (cerebro-test--agent "Xavier" "planner" 'interactive 'up t))
                   (concat "Xavier is running outside Emacs - no live view. "
                           "Use the terminal that started it."))))
+
+(ert-deftest cerebro-test/placeholder-names-the-unverified-pid ()
+  "`RET' on an unverified row names the cause - the marker alone says
+something is off, never what (ah-ybsr). This branch must be checked before
+the `external' one: an unverified row also carries `:external t'
+\(`cerebro--derive-from-state' sets it from `(not owned-p)', and a session
+this Emacs started never reaches `unverified' - it is launched directly, not
+through the wrapper\), so without ordering it would fall into the plainer
+\"running outside Emacs\" wording instead."
+  (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working t)))
+    (setf (cerebro-agent-unverified-pid agent) 4242)
+    (should (equal (cerebro--placeholder agent)
+                    (concat "Unverified: pid 4242 is running and names Cyclops, but its command"
+                            " line carries no path under this checkout - showing the state file.\n"
+                            "Cyclops is running outside Emacs - no live view. Use the terminal"
+                            " that started it.")))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-bri: a session that dies before it gets going keeps its last line readable
@@ -3985,6 +4041,31 @@ counted, shows nothing."
                       2)))
       (should (eq (get-text-property (1- (length cell)) 'face cell) 'warning)))))
 
+(ert-deftest cerebro-test/entry-marks-an-unverified-row ()
+  "An `unverified-pid' adds a grey \=` ?\=' to the State column, BEFORE the
+flag and the session count: it qualifies the state word itself, the way the
+flag is about the bead in flight and the count about the session
+\(cb-63m\) - not the other way around (ah-ybsr)."
+  (let ((now (current-time)))
+    ;; the slot set: the marker appears
+    (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                      'working nil "ah-aao" "build")))
+      (setf (cerebro-agent-unverified-pid agent) 4242)
+      (should (equal (aref (cadr (cerebro--entry agent now)) 2) "build ?")))
+    ;; the slot unset: no marker
+    (should (equal (aref (cadr (cerebro--entry
+                                (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                     'working nil "ah-aao" "build")
+                                now))
+                         2)
+                   "build"))
+    ;; marker, flag and count together: " ? ■ ×2", in that order
+    (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                      'working nil "ah-aao" "build")))
+      (setf (cerebro-agent-unverified-pid agent) 4242)
+      (setf (cerebro-agent-sessions agent) 2)
+      (should (equal (aref (cadr (cerebro--entry agent now t)) 2) "build ? ■ ×2")))))
+
 (ert-deftest cerebro-test/entry-state-column-shows-the-phase ()
   (let ((now (current-time)))
     (should (equal (aref (cadr (cerebro--entry
@@ -4354,23 +4435,81 @@ than dressing a dead session in the file's `working'."
 
 (ert-deftest cerebro-test/session-alive-p-rejects-the-same-name-in-another-consumer ()
   "The cross product 7bd5962 and 9420ff2 each left open (cb-lzi).
-A live pid whose command line names this agent, but under ANOTHER consumer's root."
+A live pid whose command line names this agent, but under ANOTHER consumer's
+root, is not `proven' this consumer's session - and since ah-ybsr it is not
+flatly `nil' either: the args carry `--name Rogue', so this is exactly the
+`unverified' case (\"no path under ROOT\" asks about THIS root, not about
+whether some other root was found), not the recycled-pid `nil' case. Read as
+a generalised boolean it is truthy - `cerebro--live-sessions' now counts it
+as live, which is the deliberate trade the bead's plan calls out: the sweeps'
+failure mode becomes \"leaves a bead alone\" rather than \"clears a live
+implementer's assignee\"."
   (let ((process (start-process "cerebro-test-session" nil
                                 "bash" "-c" "sleep 30" "--name" "Rogue"
                                 "--settings" "/Users/x/repos/atlantis-hud/.claude/cerebro/hooks/q.json")))
     (unwind-protect
         (progn
-          (should-not (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro"))
-          (should (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/atlantis-hud")))
+          (should (eq (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro")
+                      'unverified))
+          (should (eq (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/atlantis-hud")
+                      t)))
       (delete-process process))))
 
 (ert-deftest cerebro-test/session-alive-p-rejects-a-session-that-names-no-root ()
-  "A hand-typed `claude --name Rogue' with no --settings reads dead on this path too.
-The same trade `cerebro--consumer-args' already made."
+  "A hand-typed `claude --name Rogue' with no --settings at all still names
+Rogue, so this is `unverified' rather than flatly dead since ah-ybsr - there
+is no path to compare against ROOT, and no evidence the session is not
+Rogue's own, only an absence of proof."
   (let ((process (start-process "cerebro-test-session" nil
                                 "bash" "-c" "sleep 30" "--name" "Rogue")))
     (unwind-protect
-        (should-not (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro"))
+        (should (eq (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro")
+                    'unverified))
+      (delete-process process))))
+
+(ert-deftest cerebro-test/session-liveness-unverified-when-name-but-no-root ()
+  "`cerebro--session-args-p' says no when the args name the agent but carry no
+root under this consumer - that used to mean flatly dead.
+`cerebro--session-liveness' has to tell that case apart from one that does
+not even name this agent (`nil', positive evidence against - the
+recycled-pid case) so a caller can trust the state file rather than
+substitute a default (ah-ybsr)."
+  ;; names this agent, no root at all: `unverified' - probably this session's
+  ;; own file, wrapped by something that has rewritten away the carrier.
+  (let ((process (start-process "cerebro-test-session" nil
+                                "bash" "-c" "sleep 30" "--name" "Storm")))
+    (unwind-protect
+        (should (eq (cerebro--session-liveness (process-id process) "Storm" "/Users/x/repos/cerebro")
+                    'unverified))
+      (delete-process process)))
+  ;; names neither this agent nor any root: `nil', not `unverified' - the
+  ;; recycled-pid case must stay positive evidence against.
+  (let ((process (start-process "cerebro-test-session" nil
+                                "bash" "-c" "sleep 30" "--name" "Somebody-else")))
+    (unwind-protect
+        (should (eq (cerebro--session-liveness (process-id process) "Storm" "/Users/x/repos/cerebro")
+                    nil))
+      (delete-process process)))
+  ;; both: `proven', same as `cerebro--session-args-p' already says yes to.
+  (let ((process (start-process "cerebro-test-session" nil
+                                "bash" "-c" "sleep 30" "--name" "Storm"
+                                "--settings" "/Users/x/repos/cerebro/.claude/cerebro/hooks/q.json")))
+    (unwind-protect
+        (should (eq (cerebro--session-liveness (process-id process) "Storm" "/Users/x/repos/cerebro")
+                    'proven))
+      (delete-process process))))
+
+(ert-deftest cerebro-test/session-alive-p-returns-unverified-through-the-compatibility-contract ()
+  "`cerebro--session-alive-p' keeps its generalised-boolean contract: `t' for
+`proven', the symbol `unverified' for `unverified', so every existing caller
+and every ERT test that injects `(lambda (pid name) t)' keeps working
+unchanged - `t' is non-nil and is not `eq' to `unverified'."
+  (let ((process (start-process "cerebro-test-session" nil
+                                "bash" "-c" "sleep 30" "--name" "Storm")))
+    (unwind-protect
+        (let ((result (cerebro--session-alive-p (process-id process) "Storm" "/Users/x/repos/cerebro")))
+          (should (eq result 'unverified))
+          (should result))
       (delete-process process))))
 
 ;; ---------------------------------------------------------------------------

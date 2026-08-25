@@ -188,8 +188,8 @@ planner`), which is the one place a name and a role stop being interchangeable:
 - **Cerebro** (`orchestrator`, Opus/medium) — stops implementers on request by writing their stop
   flag; it cannot start one, since that means starting a session. **Starts nothing on its own.** The
   worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
-  (`ah-4ao`; see `docs/cerebro-jobs.md`); what is left for a Cerebro session is release cutting,
-  diagnosing a stuck implementer, and anything needing a forced reassignment.
+  (`ah-4ao`; see `docs/cerebro-jobs.md`); what is left for a Cerebro session is handing a release
+  request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in
   its own git worktree, PR, answer the Copilot review, merge, close, report `done`. Interactive, so
   it cannot end itself — the Emacs fleet view ends it and starts a fresh session, which is what keeps

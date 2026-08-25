@@ -23,8 +23,20 @@ of `orchestrator.md`, `planner.md`, `plan-bead`, `implementer.md`, `implement-be
 One pass over what has merged, then sleep, then another. Each pass:
 
 ```bash
-bd dolt pull
+bd dolt pull                                                     # the board: other machines' verdicts and merges
+git fetch origin "$(.claude/cerebro/scripts/default-branch)"     # the refs: bd dolt pull moves beads, not git
 ```
+
+> `origin/main` is a local ref, and `bd dolt pull` does not move it — it moves beads. The
+> candidate search below reads that ref, so a pass that does not fetch cannot see a bead merged
+> on another machine: it reports "not in `origin/main` yet", leaves the bead
+> `verification:pending`, and does the same on every pass after, until something unrelated
+> happens to fetch. The worktree already refetches before every build; this is the same rule for
+> the search. **If the fetch fails** — offline, remote gone, credentials expired — say so in one
+> line, `could not fetch origin <branch>: <git's last line>`, and go straight to *Ending a pass*
+> without searching for candidates. A search against a ref that may be stale is exactly the
+> wrong verdict this rule exists to prevent, and the worktree reset would refuse on the same
+> fetch a minute later anyway.
 
 ### Telling the fleet view what you are doing
 
@@ -78,7 +90,7 @@ session with nothing in flight, which is a session the navigator may `k`.
 
 | Moment | Call |
 |---|---|
-| A pass starts, before `bd dolt pull` | `.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID` |
+| A pass starts, before `bd dolt pull` and the fetch | `.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID` |
 | A candidate is selected to prepare | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase prepare --pid $PPID` |
 | Any question at all (rule 1) | `... asking --bead <id> --phase <prepare\|verify> --pid $PPID`, then the question, then `... working ...` on the answer |
 | The briefing is given and the app is running | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
@@ -572,7 +584,7 @@ something to verify.
 `cat .cerebro/state/Psylocke.state.json` before you write it (see *Check it, twice a pass*): ending a
 pass is the moment a forgotten `asking` would sit unnoticed until somebody looks, and it is the
 cheapest place to catch one. The next pass opens with `working --phase prepare`, before
-`bd dolt pull`.
+`bd dolt pull` and the fetch beside it.
 
 ## What Psylocke never does
 

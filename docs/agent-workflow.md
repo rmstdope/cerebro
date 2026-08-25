@@ -425,7 +425,9 @@ sleeps **five minutes** between passes, so a bead that merges while you are at l
 after you are back.
 
 She verifies in her own worktree, `.cerebro/worktrees/psylocke`, reset to `origin/main` immediately
-before every use — never the shared checkout, and never a build started before she fetched. She tells
+before every use — never the shared checkout, and never a build started before she fetched. Every
+pass fetches before it looks for candidates, so a bead merged from another machine is offered on the
+next pass rather than never. She tells
 you the sha she is about to build before she ever asks you to look at anything, and if a port she
 needs is already serving something, she refuses to reuse it rather than risk verifying against a
 build that is not the one that merged. When a verification is later found to have judged the wrong

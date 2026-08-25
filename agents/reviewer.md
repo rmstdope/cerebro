@@ -197,6 +197,10 @@ A PR is user-experience-touching iff some changed path is one of the project's a
 change reaches the screen. A refactor behind an unchanged surface is not, and neither is a test-only
 or docs-only PR — say so in one line and skip this section, the same way the verifier does.
 
+Nor is any PR in a project that declares `verification none` in its `.cerebro/project.conf`
+(`.claude/cerebro/scripts/project-conf verification`) — it has said there is nothing a person can
+launch and look at. Say so in one line and skip this section.
+
 When it is:
 
 1. **Prepare everything before you ask for a minute.** Reset the worktree, warm the build

@@ -1584,6 +1584,64 @@ The shell copy is `scripts/planner-buffer --want\='; see that script and the
 floor\='s docstring for why there are two."
   (max cerebro-planner-buffer-floor live-implementers))
 
+(defcustom cerebro-role-start-spacing '(("planner" . 30))
+  "Minimum seconds between two starts of one ROLE, as (ROLE . SECONDS).
+
+A role only two agents hold can have its condition come true for both at
+once, and the planners do: they answer the same buffer rule off the same
+panel, so a tick where it is true is a tick where it is true for Xavier and
+for Beast.  The view started them in one breath more than once.
+
+That is a race rather than an inefficiency.  A planner marks its candidate
+with `planning:<its own name>\=' *after* the research rather than before, so
+two sessions can be most of the way through planning one bead before either
+writes anything the other could have seen.
+
+Spacing counts PEERS only - see `cerebro--role-start-too-soon-p\=' - so a role
+is never held by its own last start.  A role absent from this list is never
+spaced: one holder cannot collide with itself, and `implementer\=' is started
+by `cerebro--supervise\=' rather than from here at all."
+  :type '(alist :key-type string :value-type integer)
+  :group 'cerebro)
+
+(defun cerebro--role-start-spacing (role)
+  "The spacing declared for ROLE in `cerebro-role-start-spacing\=', or nil."
+  (cdr (assoc role cerebro-role-start-spacing)))
+
+(defun cerebro--role-peers (agent agents)
+  "Pure.  The names in AGENTS holding AGENT\='s role, excluding AGENT itself.
+
+Who a start could race with.  A role with one holder has none, which is what
+makes the spacing check answer \"no\" for every role but the planners without
+naming any of them."
+  (let ((role (cerebro-agent-role agent))
+        (name (cerebro-agent-name agent)))
+    (delq nil (mapcar (lambda (other)
+                        (and (equal (cerebro-agent-role other) role)
+                             (not (equal (cerebro-agent-name other) name))
+                             (cerebro-agent-name other)))
+                      agents))))
+
+(defun cerebro--role-start-too-soon-p (peers starts spacing now)
+  "Pure.  Non-nil when one of PEERS was started less than SPACING before NOW.
+
+STARTS is `cerebro--started-at\=', the (NAME . `float-time\=') alist every launch
+writes.  SPACING nil - a role that declares none - is never too soon.
+
+It covers both halves of the race with one comparison.  Two starts in one
+tick: `cerebro--launch\=' writes STARTS, so the second agent in
+`cerebro--start-due\='s loop already sees the first.  Two starts in
+consecutive ticks: the same record is still there five seconds later.
+
+A peer with no entry has not been started by this Emacs and cannot have been
+started too recently."
+  (and spacing
+       (seq-some (lambda (peer)
+                   (let ((at (cdr (assoc peer starts))))
+                     (and at (< (- now at) spacing))))
+                 peers)
+       t))
+
 (defun cerebro--trigger-fingerprint (role context)
   "Pure.  Everything ROLE\='s condition rules read out of CONTEXT, or nil.
 
@@ -3250,7 +3308,13 @@ trigger read as well as what it decided."
                         (equal (alist-get 'last-fingerprint context)
                                (cerebro--trigger-fingerprint
                                 (cerebro-agent-role agent) context))
-                        t)))))
+                        t))
+             ;; A condition that was true and did not start anything, because
+             ;; another holder of this role had just been started. Without
+             ;; this the line reads "reason: buffer 0 of 2" with no start
+             ;; beside it, which is the same unanswerable "why did nothing
+             ;; happen" the rest of this record exists to close.
+             (cons 'spaced_out (and (alist-get 'spaced-out context) t)))))
     (setf (alist-get name cerebro--log-seen nil nil #'equal) reason)))
 
 (defun cerebro--supervise (agents repo-root now)
@@ -4205,13 +4269,28 @@ no vterm there is nothing to start a session in at all, and saying so once
 per tick per role would be worse than saying nothing - `cerebro--autostart\='
 is where that is said."
   (when (cerebro--vterm-available-p)
-    (let ((context (cerebro--trigger-context repo-root now)))
+    (let ((context (cerebro--trigger-context repo-root now))
+          (now-float (float-time now)))
       (dolist (agent cerebro--agents)
         (when (eq (cerebro-agent-state agent) 'standby)
           (let* ((agent-context (cerebro--agent-context agent context))
-                 (reason (cerebro--trigger agent agent-context)))
+                 (reason (cerebro--trigger agent agent-context))
+                 ;; A true condition is not yet a start: a role two agents
+                 ;; hold answers it for both at once, and two planners racing
+                 ;; for one candidate is what that costs
+                 ;; (`cerebro-role-start-spacing'). Checked inside the loop
+                 ;; rather than before it, because `cerebro--launch' writes
+                 ;; `cerebro--started-at' - so the second planner in this very
+                 ;; loop already sees the first.
+                 (too-soon (and reason
+                                (cerebro--role-start-too-soon-p
+                                 (cerebro--role-peers agent cerebro--agents)
+                                 cerebro--started-at
+                                 (cerebro--role-start-spacing (cerebro-agent-role agent))
+                                 now-float)))
+                 (agent-context (cons (cons 'spaced-out too-soon) agent-context)))
             (cerebro--log-evaluation repo-root agent reason agent-context)
-            (when reason
+            (when (and reason (not too-soon))
               (with-demoted-errors "cerebro: %S"
                 (let ((cerebro--log-start-reason reason))
                   (cerebro--launch agent))

@@ -253,6 +253,11 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
+- **A role two agents hold is started one at a time.** The planners answer the same buffer rule off
+  the same panel, so a tick where it is true is true for both, and the view started Xavier and
+  Beast in one breath. They then race for one candidate, because `planning:<name>` is taken after
+  the research rather than before. `cerebro-role-start-spacing` holds the second for 30s; it counts
+  peers only, so a role is never held by its own restart.
 - **Agents never decide anything a user sees**, never take work off another agent (except the
   documented crashed-agent recovery), and never act outside a planned bead.
 - Each agent announces its own name in its first message — the human watches several sessions at once.

@@ -5375,6 +5375,53 @@ the first alone."
                                      context)
                    "P0 cb-9zz unplanned"))))
 
+(ert-deftest cerebro-test/two-planners-are-not-started-in-the-same-breath ()
+  "One planner start per `cerebro-role-start-spacing\=', because two racing.
+
+Both planners answer the same buffer rule off the same panel, so a tick where
+it is true is a tick where it is true for both - and the fleet started Xavier
+and Beast in one breath more than once. They then race for the same candidate:
+the `planning:<name>\=' label is taken after the research, not before, so two
+sessions can be most of the way through planning one bead before either writes
+anything the other can see.
+
+Spacing is per ROLE and counts PEERS only. A role\='s own restart is not the
+race - nothing to collide with - and holding it would undo the retry that
+`cerebro-test/a-launch-that-never-became-a-session-is-not-a-pass\=' asks for."
+  (let ((spacing 30))
+    ;; A peer started ten seconds ago: too soon.
+    (should (cerebro--role-start-too-soon-p '("Beast") '(("Beast" . 990.0)) spacing 1000.0))
+    ;; Forty seconds ago: the spacing has passed.
+    (should-not (cerebro--role-start-too-soon-p '("Beast") '(("Beast" . 960.0)) spacing 1000.0))
+    ;; Exactly the spacing is not too soon - the window is closed at its end.
+    (should-not (cerebro--role-start-too-soon-p '("Beast") '(("Beast" . 970.0)) spacing 1000.0))
+    ;; A peer this Emacs has never started cannot have started too recently.
+    (should-not (cerebro--role-start-too-soon-p '("Beast") nil spacing 1000.0))
+    ;; No peers at all - one planner, or a role with a single holder.
+    (should-not (cerebro--role-start-too-soon-p nil '(("Beast" . 999.0)) spacing 1000.0))
+    ;; A role with no spacing declared is never held.
+    (should-not (cerebro--role-start-too-soon-p '("Beast") '(("Beast" . 999.0)) nil 1000.0))
+    ;; Any one recent peer is enough, whichever it is.
+    (should (cerebro--role-start-too-soon-p '("Beast" "Ororo")
+                                            '(("Beast" . 100.0) ("Ororo" . 995.0))
+                                            spacing 1000.0))))
+
+(ert-deftest cerebro-test/role-peers-are-the-other-holders-of-one-role ()
+  (let ((agents (list (cerebro-test--interactive "Xavier" "planner" 'standby)
+                      (cerebro-test--interactive "Beast" "planner" 'standby)
+                      (cerebro-test--interactive "Psylocke" "verifier" 'standby))))
+    (should (equal (cerebro--role-peers (car agents) agents) '("Beast")))
+    (should (equal (cerebro--role-peers (nth 1 agents) agents) '("Xavier")))
+    ;; The only holder of its role has no peers, so nothing can space it out.
+    (should (null (cerebro--role-peers (nth 2 agents) agents)))))
+
+(ert-deftest cerebro-test/the-planners-are-the-role-that-is-spaced-out ()
+  "The setting is an alist keyed on role, like every other per-role knob here,
+and the planners are the one entry: they are the only role two agents hold."
+  (should (equal (cerebro--role-start-spacing "planner") 30))
+  (should (null (cerebro--role-start-spacing "verifier")))
+  (should (null (cerebro--role-start-spacing "implementer"))))
+
 (ert-deftest cerebro-test/the-cadence-roles-are-not-held-by-the-guard ()
   "Moira and Cypher come back on the hour whatever the fleet looks like -
 what they watch moves outside it, so \"nothing changed here\" is not evidence

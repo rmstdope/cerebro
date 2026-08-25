@@ -1,0 +1,47 @@
+<!doctype html><meta charset="utf-8"><title>cb-98u — a roster row that arms without starting</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:13px;margin:14px 0 4px;color:#eee}
+.row{display:flex;gap:24px;flex-wrap:wrap}.panel{padding:14px 18px;border:1px solid #333;min-width:64ch}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.5;white-space:pre}.hd{text-decoration:underline}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.s{color:#569cd6}.e{color:#f14c4c}.y{color:gold}.m{color:#c586c0}
+.note{color:#eee;max-width:100ch;background:#333;padding:8px 12px;margin-top:16px}
+.echo{background:#000;color:#ddd;padding:4px 8px;margin-top:6px}
+</style>
+<h1>cb-98u — roster.conf says <code>Forge  architect  standby</code> and <code>Cypher  reviewer  standby</code>; nothing is spawned at M-x cerebro</h1>
+<p class="note">Same fleet in every panel, one minute after M-x cerebro. Xavier and Psylocke carry <code>autostart</code> and were started. Forge and Cypher carry <code>standby</code>: armed, never started this Emacs. Question 1 is the two ways their rows can read. The For column is the existing standby label for the role (Forge's hourly cadence counts down from the moment the view armed it; Cypher's too, plus "PR moved"). The last panel is what RET shows on such a row, since there is no kept buffer of a last pass.</p>
+<div class="row">
+<div class="panel dark"><h2>Option A — reads exactly like a retired role: <code>standby</code></h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="i">◆</span> Cerebro        orchestrator  idle                  1m
+<span class="g">●</span> Xavier         planner       plan       cb-98u     58s 58s
+<span class="s">◌</span> Beast          planner       standby               → buffer &lt; 2
+<span class="s">◌</span> Forge          architect     standby               →59m
+<span class="s">◌</span> Cypher         reviewer      standby               →59m
+<span class="g">●</span> Psylocke       verifier      prepare               1m 1m
+<span class="d">○</span> Cyclops        implementer   dead</pre>
+<h3>Beast (autostarted, then ended after a pass) and Forge (never started) are indistinguishable on the row. RET tells them apart: Beast shows its kept buffer, Forge the placeholder below.</h3>
+<div class="echo">cerebro: autostarted Xavier, Psylocke; armed Forge and Cypher</div></div>
+
+<div class="panel dark"><h2>Option B — a word of its own until the first start: <code>armed</code></h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="i">◆</span> Cerebro        orchestrator  idle                  1m
+<span class="g">●</span> Xavier         planner       plan       cb-98u     58s 58s
+<span class="s">◌</span> Beast          planner       standby               → buffer &lt; 2
+<span class="m">◌</span> Forge          architect     armed                 →59m
+<span class="m">◌</span> Cypher         reviewer      armed                 →59m
+<span class="g">●</span> Psylocke       verifier      prepare               1m 1m
+<span class="d">○</span> Cyclops        implementer   dead</pre>
+<h3>Same glyph, a second colour and word. After Forge's first start and first end it reads <code>standby</code> like Beast. Cost: a sixth state word through every decision function (start, kill, finish, supervise, the trigger loop, the glyph table) for a distinction RET already makes.</h3>
+<div class="echo">cerebro: autostarted Xavier, Psylocke; armed Forge and Cypher</div></div>
+
+<div class="panel dark"><h2>RET on Forge's row (either option) — the placeholder, since no pass has run</h2>
+<h3>Proposed:</h3><pre>Forge is not running.
+roster.conf arms it: the view starts it when its own trigger fires (→59m).
+Press s to start it now, k to leave it down.</pre>
+<h3>Today's line, for comparison (what a never-started, unarmed role shows):</h3><pre>Forge is not running. Press s to start it.</pre></div>
+
+<div class="panel dark"><h2>Echo line variants at M-x cerebro (question 3)</h2>
+<h3>(i) one line, both halves:</h3><div class="echo">cerebro: autostarted Xavier, Psylocke; armed Forge and Cypher</div>
+<h3>(ii) roster with standby rows only, no autostart:</h3><div class="echo">cerebro: nothing to autostart; armed Forge and Cypher</div>
+<h3>(iii) say nothing about arming — only the autostart half as today:</h3><div class="echo">cerebro: autostarted Xavier, Psylocke</div></div>
+</div>
+<p class="note">Not shown: an implementer row carrying <code>standby</code>. Today an implementer on standby is started on the next tick unconditionally ("session ended, retry 1"), so the word would mean <code>autostart</code> with a five-second delay and a lie in the For column. cb-1or (P3) is where implementers get a real wake condition; until then the plan has <code>scripts/roster</code> refuse <code>standby</code> on an implementer row (exit 2, naming the line) — question 4.</p>

@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+#
+# The one place the harness asks: "how much planned, claimable work is there, and how many beads
+# does the fleet want?" Prints one plain answer per mode on stdout.
+#
+#     .claude/cerebro/scripts/planner-buffer --count                     planned=<p> want=<m>
+#     .claude/cerebro/scripts/planner-buffer --planned                   <p>
+#     .claude/cerebro/scripts/planner-buffer --want                      <m>
+#     .claude/cerebro/scripts/planner-buffer --print-excluded-labels     one label per line
+#     .claude/cerebro/scripts/planner-buffer --print-floor               the floor, as a number
+#
+# It exists because that one rule was written twice, in two languages, by two readers that have to
+# agree: `cerebro--trigger's planner arm in emacs/cerebro.el, and a hand-written `bd list' in
+# skills/plan-bead/SKILL.md. They drifted, and each drift cost sessions - a trigger counting beads
+# the skill's own queries excluded started a planner to find nothing to do and started it again when
+# that pass ended (de05dc3), and one change to the rule took five files and missed a sixth
+# (78722b2). The two sides also counted the running implementers differently: the skill skipped an
+# implementer whose stop flag was set, the elisp counted every one that was not dead.
+#
+# The elisp keeps a pure copy of the predicate, because `cerebro--trigger-context' is evaluated once
+# per standby row per five-second tick and cannot afford a subprocess. What replaces a shared
+# implementation there is a contract test - `cerebro-test/the-trigger-counts-what-planner-buffer-counts'
+# holds `cerebro-parked-labels' and `cerebro-planner-buffer-floor' to the two `--print-*' modes
+# below, exactly as the panel is held to `scripts/work-beads'.
+#
+# It fails LOUDLY - non-zero, a message on stderr, nothing on stdout - when the bead query fails.
+# A reader of this output is deciding whether to start a planning session, and an empty buffer that
+# really means "the query broke" starts one every five seconds.
+
+set -euo pipefail
+
+# Labels that say a bead is the navigator's rather than a planner's: a bead parked with `human' is
+# waiting on a person, and a P4 the navigator declined to rank is not a candidate either. Counting
+# either would starve the queue while the number looked healthy. The elisp copy is
+# `cerebro-parked-labels'; emacs/cerebro-test.el holds the two to each other.
+excluded_labels=("human" "triage:declined")
+
+# The buffer floor: never fewer than this many planned beads, whatever the fleet looks like -
+# including a fleet with nothing running, since the navigator starts an implementer expecting it to
+# have something to claim. The elisp copy is `cerebro-planner-buffer-floor'.
+floor=2
+
+usage() {
+  echo "usage: planner-buffer --count | --planned | --want | --print-excluded-labels | --print-floor" >&2
+  exit 2
+}
+
+mode=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --count|--planned|--want)
+      mode="$1"; shift ;;
+    # Answered before any root is resolved, so these work with no repository at all: the ERT
+    # contract test runs from cerebro's own tree, where `consumer-root --shared' refuses.
+    --print-excluded-labels)
+      printf '%s\n' "${excluded_labels[@]}"; exit 0 ;;
+    --print-floor)
+      printf '%s\n' "$floor"; exit 0 ;;
+    *)
+      echo "planner-buffer: unknown argument '$1'" >&2
+      usage ;;
+  esac
+done
+
+[[ -n "$mode" ]] || usage
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The planned, open beads an implementer could claim right now. The query is `work-beads --status
+# open' rather than a `bd list' of its own: that script already resolves the shared root, excludes
+# epics and events belt-and-brace, and fails loudly - see its header for the three bd quirks a fresh
+# `bd list' here would have to learn again.
+#
+# Captured into a variable before the pipe rather than piped straight into `jq': under `pipefail' a
+# failure of work-beads inside a pipeline is this script's failure too, but it must leave stdout
+# EMPTY, and a pipeline that has already started writing cannot promise that. Same shape work-beads
+# itself uses.
+planned_count() {
+  local raw excluded_json
+  if ! raw="$("$script_dir/work-beads" --status open)"; then
+    echo "planner-buffer: work-beads failed - cannot count the buffer" >&2
+    exit 1
+  fi
+  excluded_json="$(printf '%s\n' "${excluded_labels[@]}" | jq -R . | jq -s .)"
+  if ! printf '%s' "$raw" | jq --argjson excluded "$excluded_json" \
+        '[.[] | select((.labels // []) | index("planned") != null)
+              | select((.labels // []) | any(. as $l | $excluded | index($l) != null) | not)]
+         | length' 2>/dev/null; then
+    echo "planner-buffer: the bead list is not JSON this script can count" >&2
+    exit 1
+  fi
+}
+
+# How many implementers are running, and so how many planned beads the fleet wants. Liveness is
+# `scripts/agent-alive's to answer and never a bare `kill -0': pids are recycled, so a bare check
+# makes a dead implementer look alive, which inflates the number the buffer is sized from and puts
+# both planners to sleep over a short queue.
+#
+# An implementer whose stop flag is set is skipped: it finishes the bead it holds and retires, so it
+# will take no other, and a bead planned for it is a bead planned for nobody.
+#
+# The shared checkout, never the enclosing tree: from a worktree `.cerebro/state' is the worktree's,
+# while `agent-alive' reads the checkout the fleet actually writes into, and both halves of this
+# loop must be looking at the same files.
+want_count() {
+  local state name n=0
+  if ! state="$("$script_dir/consumer-root" --shared 2>/dev/null)"; then
+    echo "planner-buffer: not in a git repository, or this copy of cerebro has no consumer" >&2
+    exit 1
+  fi
+  state="$state/.cerebro/state"
+  # Walk the implementer roster, not the state directory: roster names are single words, so nothing
+  # here word-splits on a checkout path with a space in it. `agent-alive' exits 1 for "not running"
+  # and 2 for a name it does not know; under `set -e' an `&&' in a `for' body does not abort, which
+  # is why the test is written this way and not as a bare call on its own line.
+  for name in $("$script_dir/roster" --implementers); do
+    [ -e "$state/$name.stop" ] && continue
+    "$script_dir/agent-alive" "$name" && n=$((n+1))
+  done
+  echo $(( n > floor ? n : floor ))
+}
+
+# The counts land in variables before anything is printed, and that is load-bearing rather than
+# tidy: an `exit 1' inside a `$(...)' exits only that subshell, and a failed command substitution
+# used as an ARGUMENT does not trip `set -e' - so `printf ... "$(planned_count)"' would print
+# `planned= want=2' and exit 0 on a broken query, which is exactly the empty-buffer-that-means-the-
+# query-broke this script exists to prevent. In an assignment it aborts the script, which is what
+# the header promises.
+case "$mode" in
+  --planned) planned_count ;;
+  --want)    want_count ;;
+  --count)
+    planned="$(planned_count)"
+    want="$(want_count)"
+    printf 'planned=%s want=%s\n' "$planned" "$want" ;;
+esac

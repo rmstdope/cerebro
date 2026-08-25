@@ -167,7 +167,9 @@ planner`), which is the one place a name and a role stop being interchangeable:
   plans a Sonnet agent could build unattended. Decide architecture themselves; take every
   user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
   builders, sized from how many are running (one each, never fewer than two) and refilled one bead
-  per pass, with no wake interval to wait out. They divide
+  per pass, with no wake interval to wait out — the rule itself lives in `scripts/planner-buffer`,
+  which the skill calls and `cerebro-test/the-trigger-counts-what-planner-buffer-counts` holds the
+  fleet view to. They divide
   the work through the `planning:<name>` label alone, and a whole split family through a
   `planner:<name>` label on its parent — taken before research and pushed at once (after the
   state file names the bead, which is what makes an abandoned label safe to tell apart from a held
@@ -404,6 +406,12 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state`: it
   prints nothing and the exit status is the whole answer, since it runs once per agent on every
   planner pass.
+- `scripts/planner-buffer` is the one place the planner buffer rule is answered for the shell —
+  the excluded labels, the floor, the planned count and the wanted number. The elisp trigger keeps a
+  pure copy of the predicate (`cerebro-parked-labels`, `cerebro-planner-buffer-floor`,
+  `cerebro--planner-want`) because it runs every five seconds and may not spawn a process; the ERT
+  contract test is what keeps the copy honest. It counts an implementer told to finish as not
+  running — it takes no further bead — which is one of the two drifts the split had already caused.
 - `scripts/app-paths` is the one place "which paths are this project's application" is answered
   (ah-qled.6) — the `app_paths` key, and `--classify <path>...` over changed paths. Unlike every
   other reader here it **fails when it does not know**: no declaration means exit 3 and a line on

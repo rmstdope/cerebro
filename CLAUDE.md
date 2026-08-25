@@ -52,10 +52,17 @@ Planned work is tracked in **beads** (`bd`), with the prefix `cb`; `skills/beads
 the commands. GitHub issues are the external inbox only. Every bead is created unranked at P4 and
 ranked later with the navigator; a bead is planned in one session and implemented in another.
 
-The board syncs through the Dolt remote rather than through git — a clone gets the code, `bd sync`
+The board syncs through the Dolt remote rather than through git — a clone gets the code, `bd`
 gets the work. That is deliberate, not an omission (cb-4yo): no `.beads/*.jsonl` snapshot is
 tracked, and the root `.gitignore` keeps a stray `bd export` out of every commit. Reading the
-board means `bd sync`, never browsing git.
+board means asking `bd`, never browsing git.
+
+**A fresh clone runs `bd bootstrap`**, which reads `sync.remote` from `.beads/config.yaml` and
+clones the board from `refs/dolt/data` on the git remote; after that it is `bd dolt pull` and
+`bd dolt push`. There is no `bd sync` — this file said there was until somebody installed bd and
+found out, which cost an afternoon of "the board is empty". `bd bootstrap` refuses if a database
+already exists, so a `bd list` run before the bootstrap leaves an empty `cb` that has to be moved
+aside first.
 
 ## Development practices
 

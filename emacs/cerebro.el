@@ -1586,10 +1586,27 @@ changed nothing the trigger measures, which is the only case a loop can come
 out of.
 
 `last-fingerprint\=' absent - a role this Emacs has not started - is not a
-match, so a first start is never held."
+match, so a first start is never held.
+
+And it holds a pass that RAN, never a launch that never became one.  The
+fingerprint is recorded when a launch is *attempted* (`cerebro--launch\='),
+which is before anything has proved a session exists, so a launch that dies
+without leaving a recorded exit - the row falls back to standby rather than
+dead - would otherwise buy this guard\='s silence for nothing.  That parked a
+planner indefinitely on a P4 only his own triage pass could take: the board
+could not change, because he was the one who would have changed it.
+
+A pass that ran leaves an `ended-at\=' later than its `started-at\='.  A launch
+that produced nothing leaves the previous pass\='s, which is earlier.  Both are
+already in the context, so this stays a comparison like everything else here."
   (let ((last (alist-get 'last-fingerprint context))
-        (now (cerebro--trigger-fingerprint role context)))
-    (and reason (not (and last now (equal last now))) reason)))
+        (now (cerebro--trigger-fingerprint role context))
+        (started (alist-get 'started-at context))
+        (ended (alist-get 'ended-at context)))
+    (and reason
+         (not (and last now (equal last now)
+                   started ended (> ended started)))
+         reason)))
 
 (defun cerebro--trigger (agent context)
   "Pure.  Why AGENT, on standby, should start now - a string - or nil.
@@ -2506,7 +2523,10 @@ start replaces it, and `k\=' removes it.")
   "Alist of (NAME . FINGERPRINT) - what each role was last started *for*.
 
 `cerebro--trigger-fingerprint\=' of the context that was true when the view
-started the session, and `cerebro--unless-unchanged\=' is what reads it: a
+started the session - recorded when the launch is ATTEMPTED, since nothing
+here can see a session come up, which is why `cerebro--unless-unchanged\='
+also asks whether a pass actually ran before holding anything on it.
+`cerebro--unless-unchanged\=' is what reads it: a
 trigger that names the same thing again is a pass that could not clear it,
 and the answer is to wait for a change rather than for a clock.  Recorded on
 every start, `s\=' included, so a pass the navigator started by hand arms the

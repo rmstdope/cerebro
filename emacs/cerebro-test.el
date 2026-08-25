@@ -5291,6 +5291,42 @@ the next pass starts on the next tick with no interval to wait out."
                                      moved)
                    "buffer 1 of 3"))))
 
+(ert-deftest cerebro-test/a-launch-that-never-became-a-session-is-not-a-pass ()
+  "The guard holds a pass that changed nothing, never a pass that never ran.
+
+Seen in the fleet: a P4 arrived, the trigger fired, and the view recorded
+Xavier\='s start - reason and fingerprint - at the moment it *attempted* the
+launch. No session ever appeared: no state transition, no end, and no recorded
+abnormal exit either, so the row went back to standby. From then on the
+fingerprint matched on every tick and the guard held him, for a bead only his
+triage pass could take. The board could not change, because he was the one who
+would have changed it.
+
+A pass that ran leaves an end later than its start. A launch that produced
+nothing leaves the previous pass\='s end, which is earlier - so the two are
+told apart by the comparison already in the context, and the guard applies to
+the first alone."
+  (let* ((ran (cerebro-test--context '(p0-unplanned "cb-9zz")
+                                     '(started-at . 999200.0) '(ended-at . 999800.0)))
+         (never (cerebro-test--context '(p0-unplanned "cb-9zz")
+                                       '(started-at . 999200.0) '(ended-at . 999000.0)))
+         (fingerprint (cerebro--trigger-fingerprint "planner" ran))
+         (held (lambda (context)
+                 (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                   (cons (cons 'last-fingerprint fingerprint) context)))))
+    ;; A pass that ran and cleared nothing: held, which is the whole point.
+    (should (null (funcall held ran)))
+    ;; A launch that never became a session: retried on the next tick.
+    (should (equal (funcall held never) "P0 cb-9zz unplanned"))))
+
+(ert-deftest cerebro-test/a-role-this-emacs-never-started-is-never-held ()
+  "No start, no fingerprint, nothing to compare - and nothing to hold."
+  (let ((context (cerebro-test--context '(p0-unplanned "cb-9zz")
+                                        '(started-at) '(ended-at))))
+    (should (equal (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                     context)
+                   "P0 cb-9zz unplanned"))))
+
 (ert-deftest cerebro-test/the-cadence-roles-are-not-held-by-the-guard ()
   "Moira and Cypher come back on the hour whatever the fleet looks like -
 what they watch moves outside it, so \"nothing changed here\" is not evidence

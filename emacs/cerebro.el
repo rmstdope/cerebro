@@ -2706,6 +2706,40 @@ writing the same file."
                         (cerebro--state-file-path repo-root name))))
           roster))
 
+(defun cerebro--session-liveness (pid name root)
+  "`proven', `unverified' or nil for PID as NAME's session of the fleet at ROOT.
+
+Reads only the named pid's args, not the whole process list - this is asked
+once per agent on every refresh, where `cerebro--system-processes' is a scan
+the fleet view deliberately caches.
+
+Three answers, not two (ah-ybsr): a wrapper (cmux) can rewrite `--settings'
+from a path into merged inline JSON, so a session that is genuinely this
+agent's can carry no discriminator ROOT-in-args-p can find, even though it
+carries `--name NAME'.  Collapsing that into \"dead\" is the defect this
+splits out of - the same broken predicate that showed every agent `idle' or
+`up' regardless of what its state file said.
+
+- nil - no pid, no args, or the args do not carry a whole-word `--name NAME'.
+  This is the recycled-pid case (cb-lzi/9420ff2) and it is *positive evidence
+  against*: a bare number is not an identity, so a caller must keep treating
+  this exactly as a dead session.
+- `proven' - `cerebro--session-args-p' is non-nil: the args carry `--name
+  NAME' AND a path under ROOT.  Exactly what \"alive\" meant before this.
+- `unverified' - the args name NAME but carry no path under ROOT.  There is
+  no evidence against this being the session the state file describes, only
+  an absence of proof - a caller should trust the file and say so, not
+  substitute a confident default.
+
+The two-part test is `cerebro--session-args-p'; this function only fetches
+the args of one pid and tells `nil' apart from `unverified' within what that
+function calls no."
+  (let ((args (and pid (alist-get 'args (process-attributes pid)))))
+    (cond
+     ((not (and args (cerebro--name-in-args-p name (list args)))) nil)
+     ((cerebro--root-in-args-p root (list args)) 'proven)
+     (t 'unverified))))
+
 (defun cerebro--session-alive-p (pid name root)
   "Non-nil if PID is a live process and is NAME's own session of the fleet at ROOT.
 
@@ -2718,20 +2752,22 @@ not an identity; the launcher passes `--name <Name>' to every session
 \(`scripts/launch'), which makes the process's own command line the proof
 that this pid is still the one the file was written about.
 
-Reads only the named pid's args, not the whole process list - this is asked
-once per agent on every refresh, where `cerebro--system-processes' is a scan
-the fleet view deliberately caches.
-
 ROOT is the third discriminator (cb-lzi): a recycled pid can land on a
 same-named session of ANOTHER consumer - every consumer on the built-in
 roster has a Xavier - and name plus pid alone would call that one ours.
 Required, not optional: a default would silently be the two-discriminator
 rule this bead removes.
 
-The rule itself is `cerebro--session-args-p\='; this function only fetches
-the args of one pid."
-  (let ((args (and pid (alist-get 'args (process-attributes pid)))))
-    (and args (cerebro--session-args-p args name root))))
+Built on `cerebro--session-liveness' and keeps this function's own
+generalised-boolean contract: `t' for `proven', the symbol `unverified' for
+`unverified' - non-nil, and not `eq' to `unverified', so every existing
+caller and every ERT test that injects `(lambda (pid name) t)' keeps working
+unchanged.  A caller that cares which of the two it got tests
+`(eq ... \\='unverified)'; every other caller already treats both as alive."
+  (pcase (cerebro--session-liveness pid name root)
+    ('proven t)
+    ('unverified 'unverified)
+    (_ nil)))
 
 (defun cerebro--system-processes ()
   "Every system process as (PID . ARGS), ARGS its command line string.

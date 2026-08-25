@@ -1,0 +1,95 @@
+<!doctype html><meta charset="utf-8"><title>ah-ybsr — where the consumer root travels in argv</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff;margin-bottom:4px}
+h2{font-size:14px;margin:0 0 8px}
+.lede{color:#eee;background:#333;padding:10px 14px;max-width:112ch;margin:12px 0 20px;line-height:1.5}
+.panel{padding:14px 18px;border:1px solid #333;background:#1e1e1e;color:#d4d4d4;max-width:112ch;margin-bottom:6px}
+pre{margin:0;line-height:1.55;white-space:pre-wrap;word-break:break-all}
+.opt{background:#f5f5f5;color:#111;padding:3px 9px;display:inline-block;margin:22px 0 8px;font-weight:bold}
+.note{color:#eee;max-width:112ch;background:#333;padding:9px 13px;margin:8px 0 20px;line-height:1.5}
+.add{color:#6a9955;font-weight:bold}.gone{color:#f04a4a;text-decoration:line-through}
+.dim{color:#777}.hl{background:rgba(106,153,85,.25);padding:0 2px}
+.term{background:#101010;border:1px solid #333;padding:12px 16px;max-width:112ch;color:#d4d4d4}
+.term .p{color:#6a9955}.term .u{color:#e5a13b}
+.verdict{font-weight:bold}
+</style>
+
+<h1>ah-ybsr — where the consumer root travels in argv</h1>
+<div class="lede">
+The rule needs two things in a session's own command line: <code>--name &lt;Name&gt;</code>, which survives,
+and <b>a path under this checkout</b>, which no longer does. It used to ride on
+<code>--settings &lt;root&gt;/.claude/cerebro/hooks/question-state.settings.json</code>; the wrapper rewrites
+<code>--settings</code> from a path into inline JSON, and the root disappears with it.<br><br>
+I checked my own live command line while writing this: <b>the root appears 0 times</b>. Every other flag
+the launcher passed came through untouched. So the root has to move to an argument the wrapper leaves
+alone — the question is which, and one of the candidates you would actually see.
+</div>
+
+<span class="opt">WHAT THE WRAPPER DOES TO THE LAUNCHER'S EXEC — measured, not assumed</span>
+<div class="panel"><pre>launcher passes:  --agent planner --name Xavier --remote-control Xavier --model opus --effort high
+                  <span class="gone">--settings /Users/henrikku/repos/atlantis-hud/.claude/cerebro/hooks/question-state.settings.json</span>
+                  --permission-mode auto "You are Xavier. Your agent definition (planner) is…"
+
+process carries:  --session-id cf75ef67…  <span class="add">--settings {"preferredNotifChannel":"…","hooks":{…"$CEREBRO_SCRIPTS/agent-asking"…}}</span>
+                  --agent planner --name Xavier --remote-control Xavier --model opus --effort high
+                  --permission-mode auto "You are Xavier. Your agent definition (planner) is…"</pre></div>
+<div class="note">
+The wrapper hoists its own two flags to the front, <b>rewrites <code>--settings</code> into merged inline
+JSON</b>, and passes everything else — including the whole trailing prompt — through verbatim. You can tell
+the settings file was read and merged rather than forwarded, because cerebro's own hook survives inside the
+blob as the literal unexpanded string <code>$CEREBRO_SCRIPTS/agent-asking</code>. The blob contains no path
+under the checkout, which is why the rule now fails for every agent.
+</div>
+
+<span class="opt">OPTION 1 — <code>--append-system-prompt</code> carries it (invisible to you)</span>
+<div class="panel"><pre>exec claude --agent planner --name Xavier --remote-control Xavier \
+     <span class="add">--append-system-prompt "This session is Xavier of the cerebro fleet rooted at <span class="hl">/Users/henrikku/repos/atlantis-hud/</span>."</span> \
+     --settings … --permission-mode auto "You are Xavier. …"</pre></div>
+<div class="term"><pre><span class="dim">what you see when the terminal opens:</span>
+
+<span class="p">&gt;</span> <span class="u">You are Xavier. Your agent definition (planner) is the whole of your instructions:
+  follow it from the top, and start now rather than waiting to be spoken to.</span>
+
+<span class="dim">— unchanged. The root is in the system prompt, which is never echoed.</span></pre></div>
+<div class="note">
+<b>Benefit:</b> takes exactly one value, so it can never swallow a following argument; invisible in your
+terminal; and the sentence it adds is true and harmless — the agent already knows its own name and repo.
+<b>Cost:</b> every agent's system prompt grows a line it did not have, and the discriminator now lives in
+something whose purpose is to talk to the model. A reader tidying prompts could delete it without
+realising the fleet view depends on it — so it needs a comment saying so, and a test.
+<span class="verdict">Preservation by the wrapper is inference (every non-settings flag survived), not proof.</span>
+</div>
+
+<span class="opt">OPTION 2 — the trailing prompt carries it (you see the path)</span>
+<div class="panel"><pre>exec claude --agent planner --name Xavier --remote-control Xavier --settings … --permission-mode auto \
+     "You are Xavier. Your agent definition (planner) is the whole of your instructions: follow it from
+      the top, and start now rather than waiting to be spoken to.
+      <span class="add">(fleet root: <span class="hl">/Users/henrikku/repos/atlantis-hud/</span>)</span>"</pre></div>
+<div class="term"><pre><span class="dim">what you see when the terminal opens:</span>
+
+<span class="p">&gt;</span> <span class="u">You are Xavier. Your agent definition (planner) is the whole of your instructions:
+  follow it from the top, and start now rather than waiting to be spoken to.
+  (fleet root: /Users/henrikku/repos/atlantis-hud/)</span>
+
+<span class="dim">— an absolute path, in every agent's opening message, in every terminal.</span></pre></div>
+<div class="note">
+<b>Benefit:</b> the only carrier whose survival is <b>proven rather than inferred</b> — I read my own
+prompt back out of <code>ps</code>, verbatim, wrapper and all. No new flag, no parsing question.
+<b>Cost:</b> you read that line every time an agent starts, and it is machine plumbing wearing the clothes
+of an instruction. It also puts a load-bearing token inside prose that somebody will one day reword.
+</div>
+
+<span class="opt">OPTION 3 — <code>--add-dir</code> carries it &nbsp;<span style="color:#c00">(I tested this and it is dangerous)</span></span>
+<div class="panel"><pre><span class="dim">$</span> claude -p <span class="add">--add-dir /tmp</span> "Reply with exactly: PROMPTSEEN"
+<span class="gone">Error: Input must be provided either through stdin or as a prompt argument when using --print</span>
+
+<span class="dim">$</span> claude -p <span class="add">--add-dir /tmp</span> --permission-mode auto "Reply with exactly: PROMPTSEEN"
+PROMPTSEEN</pre></div>
+<div class="note">
+<code>--add-dir</code> takes <code>&lt;directories…&gt;</code> — <b>variadic</b>. Next to the trailing prompt it
+<span class="verdict">ate the entire prompt</span>: the first command ran with no instructions at all. It only
+survives when another flag sits between it and the prompt. Since the whole premise here is that a wrapper is
+free to reorder and rewrite arguments, a carrier that silently launches an agent with <b>no instructions</b>
+if the following flag ever moves is not one I am willing to put under the fleet.
+<b>Recommended: reject.</b> It goes in the plan's traps so nobody reaches for it again.
+</div>

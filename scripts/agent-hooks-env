@@ -26,6 +26,6 @@ _agent_hooks_env_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 export CEREBRO_AGENT_NAME="$1"
 export CEREBRO_SCRIPTS="$_agent_hooks_env_dir"
-CEREBRO_HOOK_SETTINGS="$_agent_hooks_env_dir/../hooks/question-state.settings.json"
+export CEREBRO_HOOK_SETTINGS="$_agent_hooks_env_dir/../hooks/question-state.settings.json"
 
 unset _agent_hooks_env_dir

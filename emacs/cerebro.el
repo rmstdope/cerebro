@@ -1597,6 +1597,54 @@ The shell copy is `scripts/planner-buffer --want\='; see that script and the
 floor\='s docstring for why there are two."
   (max cerebro-planner-buffer-floor live-implementers))
 
+(defcustom cerebro-retry-backoff '(0 30 120 600)
+  "Seconds to wait before starting a role again, by consecutive failed starts.
+
+The Nth entry is the wait after N failed starts; past the end of the list the
+last entry is the ceiling.  A failed start is one that produced no pass at all
+\(`cerebro--start-failed-p\='), which is what a launch `scripts/launch-preflight\='
+refuses looks like from here: the view records a start, no session appears,
+and the role is standby again on the next tick.
+
+The first entry is 0 on purpose.  A session that died once should come back
+immediately - that is the case b94e782 exists for, and a clock there would
+cost the fleet a pass every time something went wrong once.  What escalates is
+the second failure and every one after it.
+
+Why it is needed at all: b94e782 traded a permanent park for an unbounded
+retry, and both are wrong.  With `main\=' one commit ahead of `origin/main\=' the
+preflight refused every launch, and the view attempted Xavier 135 times in a
+row, five seconds apart, with nothing to show for any of them."
+  :type '(repeat integer)
+  :group 'cerebro)
+
+(defun cerebro--start-failed-p (started ended)
+  "Pure.  Non-nil when the start at STARTED produced no pass by ENDED.
+
+The same comparison `cerebro--unless-unchanged\=' makes, named for what it
+means: a pass that ran leaves an end later than its start, and a launch that
+never became a session leaves the previous pass\='s, or nothing."
+  (and started (or (null ended) (<= ended started)) t))
+
+(defun cerebro--retry-delay (failures)
+  "Pure.  Seconds to wait after FAILURES consecutive failed starts.
+
+See `cerebro-retry-backoff\='.  Past the end of the schedule the last entry is
+the ceiling, so a launch that has been refused all morning is retried at a
+steady interval rather than at an ever-growing one nobody would see end."
+  (let ((schedule cerebro-retry-backoff))
+    (cond ((null schedule) 0)
+          ((<= failures 0) (car schedule))
+          ((>= failures (length schedule)) (car (last schedule)))
+          (t (nth (1- failures) schedule)))))
+
+(defvar-local cerebro--failed-starts nil
+  "Alist of (NAME . COUNT) - consecutive starts that produced no pass.
+
+Written by `cerebro--start-due\=' when it launches: incremented when the
+previous start of that name failed, and reset to zero when a pass has run
+since.  It is what `cerebro--retry-delay\=' is indexed by.")
+
 (defcustom cerebro-role-start-spacing '(("planner" . 30))
   "Minimum seconds between two starts of one ROLE, as (ROLE . SECONDS).
 
@@ -3362,7 +3410,12 @@ trigger read as well as what it decided."
              ;; this the line reads "reason: buffer 0 of 2" with no start
              ;; beside it, which is the same unanswerable "why did nothing
              ;; happen" the rest of this record exists to close.
-             (cons 'spaced_out (and (alist-get 'spaced-out context) t)))))
+             (cons 'spaced_out (and (alist-get 'spaced-out context) t))
+             ;; A condition that was true and started nothing because this
+             ;; role's last launches produced no session. Without the count
+             ;; beside it, a backed-off row and a broken one read alike.
+             (cons 'backed_off (and (alist-get 'backed-off context) t))
+             (cons 'failed_starts (alist-get 'failed-starts context)))))
     (setf (alist-get name cerebro--log-seen nil nil #'equal) reason)))
 
 (defun cerebro--supervise (agents repo-root now)
@@ -4336,9 +4389,30 @@ is where that is said."
                                  cerebro--started-at
                                  (cerebro--role-start-spacing (cerebro-agent-role agent))
                                  now-float)))
-                 (agent-context (cons (cons 'spaced-out too-soon) agent-context)))
+                 ;; A launch that produced no session is retried - b94e782 -
+                 ;; but not on every tick: with the preflight refusing, that
+                 ;; was 135 starts for one role, five seconds apart. The wait
+                 ;; is measured from the failed start itself, so the first
+                 ;; retry is still immediate.
+                 (name (cerebro-agent-name agent))
+                 (started (alist-get 'started-at agent-context))
+                 (failed (cerebro--start-failed-p started
+                                                  (alist-get 'ended-at agent-context)))
+                 (failures (or (cdr (assoc name cerebro--failed-starts)) 0))
+                 (backed-off (and reason failed
+                                  (< (- now-float started)
+                                     (cerebro--retry-delay failures))))
+                 (agent-context (append (list (cons 'spaced-out too-soon)
+                                              (cons 'backed-off backed-off)
+                                              (cons 'failed-starts failures))
+                                        agent-context)))
             (cerebro--log-evaluation repo-root agent reason agent-context)
-            (when (and reason (not too-soon))
+            (when (and reason (not too-soon) (not backed-off))
+              ;; Counted before the launch, from what the LAST one did: a
+              ;; start that follows a failure is one more failure until a pass
+              ;; proves otherwise, and a start that follows a pass starts over.
+              (setf (alist-get name cerebro--failed-starts nil nil #'equal)
+                    (if failed (1+ failures) 0))
               (with-demoted-errors "cerebro: %S"
                 (let ((cerebro--log-start-reason reason))
                   (cerebro--launch agent))

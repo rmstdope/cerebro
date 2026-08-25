@@ -5448,6 +5448,47 @@ the first alone."
                                      context)
                    "P0 cb-9zz unplanned"))))
 
+(ert-deftest cerebro-test/a-start-that-produced-no-pass-is-a-failed-start ()
+  "The same comparison the no-progress guard makes, named for what it means.
+
+A pass that ran leaves an `ended-at\=' later than its `started-at\='. A launch
+that never became a session leaves the previous pass\='s, which is earlier - or
+nothing at all, for a role this Emacs has started once and never seen finish."
+  (should (cerebro--start-failed-p 1000.0 900.0))
+  (should (cerebro--start-failed-p 1000.0 nil))
+  (should (cerebro--start-failed-p 1000.0 1000.0))
+  (should-not (cerebro--start-failed-p 1000.0 1100.0))
+  ;; Never started is not a failed start.
+  (should-not (cerebro--start-failed-p nil nil))
+  (should-not (cerebro--start-failed-p nil 900.0)))
+
+(ert-deftest cerebro-test/a-launch-that-keeps-failing-is-tried-less-often ()
+  "b94e782 traded a permanent park for a hot loop, and both are wrong.
+
+Before it, a launch that produced no session recorded its fingerprint and the
+no-progress guard parked the role for ever. After it the role is retried - and
+nothing bounded that, so a launch refused by `scripts/launch-preflight\=' was
+attempted every five seconds: 135 `start\=' lines for Xavier in one sitting,
+because local `main' was ahead of `origin/main\=' and the preflight said no to
+every one of them.
+
+The first retry stays immediate, which is the case b94e782 exists for - a
+session that died once should come back on the next tick. What escalates is
+the second and every one after it."
+  (should (equal (cerebro--retry-delay 0) 0))
+  (should (equal (cerebro--retry-delay 1) 0))
+  (should (equal (cerebro--retry-delay 2) 30))
+  (should (equal (cerebro--retry-delay 3) 120))
+  (should (equal (cerebro--retry-delay 4) 600))
+  ;; Capped: a launch that has failed all morning is tried every ten minutes,
+  ;; not once a day.
+  (should (equal (cerebro--retry-delay 50) 600))
+  ;; And the ceiling is the last entry of the schedule, whatever it is set to.
+  (let ((cerebro-retry-backoff '(0 10)))
+    (should (equal (cerebro--retry-delay 1) 0))
+    (should (equal (cerebro--retry-delay 2) 10))
+    (should (equal (cerebro--retry-delay 99) 10))))
+
 (ert-deftest cerebro-test/two-planners-are-not-started-in-the-same-breath ()
   "One planner start per `cerebro-role-start-spacing\=', because two racing.
 

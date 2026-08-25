@@ -2193,6 +2193,57 @@ still holds."
       (when (and proc (process-live-p proc)) (delete-process proc))
       (setq cerebro--inflight (assq-delete-all 'rt4 cerebro--inflight)))))
 
+(ert-deftest cerebro-test/run-async-starts-again-when-the-recorded-run-is-dead ()
+  "A key whose process is gone is free, not busy.
+
+The guard used to ask only whether an entry existed. Nothing but the sentinel
+ever removed one, and the sentinel fires only on a status change - so a process
+reaped without one (a machine suspended and resumed) left the key held forever,
+and every later refresh returned `busy\=' without starting anything. The fleet
+view sat five hours on a bead panel stamped three minutes after it started.
+`process-live-p\=', not presence: the same rule as `cerebro--session-alive-p\='."
+  (let ((dead (make-process :name " *cerebro-test-dead*" :command '("true") :noquery t))
+        got done)
+    (unwind-protect
+        (progn
+          (with-timeout (3 (ert-fail "the fixture process never exited"))
+            (while (process-live-p dead) (accept-process-output nil 0.05)))
+          (push (cons 'rt6 dead) cerebro--inflight)
+          (should (eq (cerebro--run-async 'rt6 default-directory '("echo" "hi")
+                                          (lambda (out) (setq got out done t)))
+                      'started))
+          (with-timeout (3 (ert-fail "the replacement run never answered"))
+            (while (not done) (accept-process-output nil 0.05)))
+          (should (equal (string-trim (or got "")) "hi"))
+          ;; And the stale entry is gone rather than shadowed by the new one.
+          (should-not (assq 'rt6 cerebro--inflight)))
+      (setq cerebro--inflight (assq-delete-all 'rt6 cerebro--inflight)))))
+
+(ert-deftest cerebro-test/run-async-late-sentinel-leaves-the-run-that-replaced-it ()
+  "A sentinel unregisters its OWN process, never whatever holds the key now.
+
+Freeing a dead key means a stale process\='s sentinel can still fire afterwards,
+with a live replacement already registered under that key. Deleting by key
+alone would unregister the replacement and let a second run stack on it -
+trading a permanent freeze for two concurrent `bd\='s."
+  (let (replacement)
+    (unwind-protect
+        (progn
+          (should (eq (cerebro--run-async 'rt7 default-directory '("true") #'ignore) 'started))
+          (let ((first (cdr (assq 'rt7 cerebro--inflight))))
+            (with-timeout (3 (ert-fail "the first run never exited"))
+              (while (process-live-p first) (accept-process-output nil 0.05))))
+          ;; A long second run takes the key while the first sentinel may still be pending.
+          (should (eq (cerebro--run-async 'rt7 default-directory '("sleep" "5") #'ignore) 'started))
+          (setq replacement (cdr (assq 'rt7 cerebro--inflight)))
+          (should (process-live-p replacement))
+          ;; Let any pending sentinel from the first run run to completion.
+          (accept-process-output nil 0.2)
+          (should (eq (cdr (assq 'rt7 cerebro--inflight)) replacement))
+          (should (eq (cerebro--run-async 'rt7 default-directory '("true") #'ignore) 'busy)))
+      (when (and replacement (process-live-p replacement)) (delete-process replacement))
+      (setq cerebro--inflight (assq-delete-all 'rt7 cerebro--inflight)))))
+
 (ert-deftest cerebro-test/run-async-kills-a-run-that-outlives-the-timeout ()
   (let ((cerebro-subprocess-timeout-seconds 0.2) got done proc)
     (cerebro--run-async 'rt5 default-directory '("sleep" "30")

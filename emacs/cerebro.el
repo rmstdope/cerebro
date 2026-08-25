@@ -1047,7 +1047,18 @@ answer treated as none. Generous: the sweeps fetch from origin and talk to
 (defvar cerebro--inflight nil
   "Runs still awaiting an answer: an alist of (KEY . PROCESS). One per KEY -
 `cerebro--run-async' refuses a second while the first is out, so a slow
-`bd' is waited for rather than stacked.")
+`bd' is waited for rather than stacked.
+
+An entry is a claim on the key, and like every other recorded handle here it
+is only as good as the process it names: `cerebro--run-async' asks
+`process-live-p' rather than trusting the entry to have been cleared.  It is
+removed by the sentinel, which fires only on a status change, so a process
+reaped without one - a machine suspended and resumed - would otherwise hold
+its key forever, and every later refresh would return `busy' having started
+nothing.  That froze a fleet view for five hours on a bead panel stamped
+three minutes after it opened, with `bd' answering in two seconds all the
+while.  Nothing re-arms it: this variable is global and `M-x cerebro' does
+not reset it, so the freeze survives closing the buffer and reopening it.")
 
 (defun cerebro--run-async (key repo-root argv callback)
   "Run ARGV (program, then args) in REPO-ROOT without blocking Emacs.
@@ -1058,7 +1069,14 @@ program missing, or `cerebro-subprocess-timeout-seconds' passing first, in
 which case the process is killed. Returns `started', or `busy' when a run
 under KEY is already in flight - then nothing is started and CALLBACK is
 never called. Never signals."
-  (if (assq key cerebro--inflight)
+  (if (let ((claim (assq key cerebro--inflight)))
+        ;; Presence is not enough - see `cerebro--inflight'. A claim whose
+        ;; process has gone is dropped here rather than waited on, which is
+        ;; what makes the key recoverable without restarting Emacs.
+        (cond ((null claim) nil)
+              ((process-live-p (cdr claim)) t)
+              (t (setq cerebro--inflight (assq-delete-all key cerebro--inflight))
+                 nil)))
       'busy
     ;; OUT is created outside the `condition-case' it is used in, so a
     ;; `make-process' error (the program is missing, say) can still kill it
@@ -1079,7 +1097,13 @@ never called. Never signals."
                    :sentinel
                    (lambda (proc _event)
                      (when (memq (process-status proc) '(exit signal))
-                       (setq cerebro--inflight (assq-delete-all key cerebro--inflight))
+                       ;; Unregister THIS process, never whatever holds the key
+                       ;; now. Since a dead claim is dropped above, a late
+                       ;; sentinel can arrive with a live replacement already
+                       ;; registered, and deleting by key alone would free it -
+                       ;; trading a permanent freeze for two concurrent runs.
+                       (when (eq (cdr (assq key cerebro--inflight)) proc)
+                         (setq cerebro--inflight (assq-delete-all key cerebro--inflight)))
                        (let ((timer (process-get proc 'cerebro-timeout)))
                          (when timer (cancel-timer timer)))
                        (let ((output (and (eq (process-status proc) 'exit)

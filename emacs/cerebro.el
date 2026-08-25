@@ -284,47 +284,33 @@ cannot be established honestly."
                                  (if (and tagged (= pid file-pid)) " (state file)" "")))
                        ordered ", "))))
 
-(defun cerebro--scan-blind-to (parked scanned-at)
-  "Pure.  Names in PARKED the process scan taken at SCANNED-AT cannot speak for.
+(defun cerebro--live-processes (procs live-p)
+  "Pure.  PROCS - (PID . ARGS) pairs - minus those whose pid LIVE-P denies.
 
-A role the view parked after that snapshot was taken: the scan still holds
-the arguments of a session this Emacs has since killed, and `--name <Name>\='
-in a dead process\='s command line is exactly what the fallback in
-`cerebro--derive-interactive\=' reads as \"up, started outside this fleet\".
+The scan is cached for `cerebro-system-scan-seconds\=' (30), so a snapshot is
+evidence about the moment it was taken and no later: for up to half a minute
+it lists processes that have since exited.  `--name <Name>\=' in one of those
+is exactly what the fallback in `cerebro--derive-interactive\=' reads as \"up,
+started outside this fleet\".
 
-That is what put a few seconds of `up\=' between `waiting\=' and `standby\=', with
-`RET\=' offering \"running outside Emacs - use the terminal that started it\"
-for a session the view had just ended itself.  Worse than cosmetic: `up\=' is
-not `dead\=', so `cerebro--derive-standby\=' could not turn it into the standby
-row that was the whole point of ending the pass.
+That is what put `up\=' between `waiting\=' and `standby\=', with `RET\=' offering
+\"running outside Emacs - use the terminal that started it\" for a session
+that had already ended.  Worse than cosmetic: `up\=' is not `dead\=', and
+`cerebro--derive-standby\=' converts `dead\=' alone, so the standby row that was
+the whole point of ending the pass was the one thing the role could not
+become until the cache expired.
 
-Self-expiring, and deliberately so.  The next scan is taken after the park,
-SCANNED-AT overtakes the park\='s `ended-at\=', and the name is believed again -
-by which time the process this is blind to has been killed and reaped.  A
-session the navigator really did start by hand seconds after a park is
-therefore late to appear rather than missing, which is the right way round:
-the view claiming somebody else\='s terminal is the error worth avoiding.
+Liveness rather than the park, because a role that ends its own turn exits
+without the view killing it - nothing parks it, and there is no park to date
+the snapshot against.  The pid simply stops being alive, which covers that
+case and the parked one together.  It is the same rule `cerebro--session-alive-p\='
+applies to the pid path: presence in a snapshot is not liveness, the way
+presence in an alist was not (8dced0d).
 
-SCANNED-AT nil - no scan yet in this buffer - is evidence about nobody, so
-every parked name is blind."
-  (let (names)
-    (dolist (entry parked (nreverse names))
-      (let ((ended (nth 1 entry)))
-        (when (or (null scanned-at) (null ended) (> ended scanned-at))
-          (push (car entry) names))))))
-
-(defun cerebro--args-without (args names)
-  "Pure.  ARGS minus every process whose command line names one of NAMES.
-
-The same shape as `cerebro--consumer-args\=': the scan is narrowed by dropping
-what it must not be read as saying, so `cerebro--derive-interactive\=' keeps
-one fallback and gains no parameter."
-  (if (null names)
-      args
-    (seq-remove (lambda (arg)
-                  (seq-some (lambda (name) (cerebro--name-in-args-p name (list arg)))
-                            names))
-                args)))
+LIVE-P is injected so the rule is testable as data; `cerebro--revert\=' passes
+one built on `process-attributes\=', which is a handful of calls - this
+consumer\='s own sessions - once per tick."
+  (seq-filter (lambda (proc) (and (funcall live-p (car proc)) t)) procs))
 
 (defun cerebro--derive-from-state (name role kind parsed owned-p)
   "Build one `cerebro-agent' for NAME from a live, parsed state file PARSED.
@@ -4324,15 +4310,14 @@ is where that is said."
                   repo-root (append (mapcar #'car interactive) roster)))
          ;; Machine-wide scan, narrowed twice: to this consumer's own sessions,
          ;; since another checkout's fleet has the same names and a name alone
-         ;; is not an identity across repositories (`cerebro--consumer-args');
-         ;; and then to what a snapshot this old is still entitled to say, since
-         ;; it may predate a park this view has made since
-         ;; (`cerebro--scan-blind-to').
-         (procs (cerebro--consumer-processes (cerebro--cached-system-processes) repo-root))
-         (args (cerebro--args-without
-                (mapcar #'cdr procs)
-                (cerebro--scan-blind-to cerebro--parked
-                                        (cdr cerebro--system-processes-cache))))
+         ;; is not an identity across repositories (`cerebro--consumer-processes');
+         ;; and then to the pids that are still alive, since the scan is cached
+         ;; for half a minute and a snapshot is evidence about when it was taken
+         ;; and no later (`cerebro--live-processes').
+         (procs (cerebro--live-processes
+                 (cerebro--consumer-processes (cerebro--cached-system-processes) repo-root)
+                 (lambda (pid) (process-attributes pid))))
+         (args (mapcar #'cdr procs))
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states

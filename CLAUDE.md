@@ -139,6 +139,9 @@ The advisory lint — the prose and configuration decisions, reported but never 
 bash scripts/lint            # exit 0 clean, 1 when an advisory fired, 2 on a bad root
 ```
 
+A rule whose grep or awk fails is itself an advisory naming the rule and the step, never an `ok`
+line — `|| true` could not tell a no-match from a grep that never ran (cb-u5e).
+
 CI (`.github/workflows/ci.yml`) runs both: ERT on Emacs 28.2 and 30.1, and every `tests/*.sh` on
 ubuntu-latest. A suite that only passes on macOS is a red PR.
 
@@ -370,8 +373,11 @@ what `skills/plan-bead/SKILL.md` calls in both places it needs liveness: sizing 
 running implementers, and deciding whether a `planning:` label is still held. Anything in bash that
 needs to know whether an agent is up calls this; a bare `kill -0` there is the pre-ah-bqi shape, and
 it makes a dead planner look alive, which strands the very label the reclaim loop exists to free.
-It is the bash copy of `cerebro--session-args-p` — pid, name and root — and `tests/agent-alive.sh`
-mirrors the ERT cases so the two cannot drift apart again (they did, twice: `7bd5962`, `9420ff2`).
+It is the bash copy of `cerebro--session-args-p` — pid, name and root — and both are held to one
+case table, `tests/lib/session-args.cases`, which `tests/agent-alive.sh` and `emacs/cerebro-test.el`
+both run in full, so a case added on either side fails the other until both answer it (they drifted
+twice before the table existed: `7bd5962`, `9420ff2`; lint check 16 advises if either suite stops
+reading it).
 
 ## Gotchas
 

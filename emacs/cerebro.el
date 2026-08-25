@@ -185,8 +185,8 @@ state-file path asks it of one pid's own args (`cerebro--session-alive-p\=');
 the process-scan path asks it of every process, as `cerebro--consumer-args\='
 followed by `cerebro--name-in-args-p\=' - the same two tests in the other
 order, which `cerebro-test/scan-path-and-pid-path-apply-one-rule\=' pins.
-`scripts/agent-alive\=' is the bash copy of this function and is held to it by
-`tests/agent-alive.sh\='."
+`scripts/agent-alive\=' is the bash copy of this function, and both are held
+to `tests/lib/session-args.cases\=', the one case table their two suites run."
   (and (stringp args)
        (cerebro--name-in-args-p name (list args))
        (cerebro--root-in-args-p root (list args))

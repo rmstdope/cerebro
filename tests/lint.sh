@@ -43,6 +43,7 @@ reported="$(grep -c -e '^ok - ' -e '^ADVISORY: ' <<<"$out" || true)"
   || fail "lint on this repository: expected at least ten checks to report, got $reported
 $out"
 tail -n1 <<<"$out" | grep -q -e '^lint: clean$' -e '^lint: advisories above are not failures' \
+                             -e '^lint: [0-9]* rule(s) could not be run' \
   || fail "lint on this repository: the last line is neither verdict
 $out"
 pass "the lint runs on this repository and reports every check"
@@ -392,5 +393,107 @@ grep -q 'scripts/roster' <<<"$out" \
   || fail "lint with a planted retired worktree path: the advisory does not name scripts/roster
 $out"
 pass "a retired worktree path in a script fires the rule naming the file"
+
+# --- a grep or an awk that fails is an advisory naming the rule, never an `ok' ------------------
+#
+# A rule whose grep exits 2 - a bad pattern, an exempt pattern read as an option - used to report
+# itself clean, because `|| true' cannot tell a no-match from a grep that never ran (cb-u5e). The
+# failure is simulated with a shim first on PATH: the real tool, unless the arguments carry the
+# marker in $LINT_BREAK_GREP, in which case it prints a message and exits 2 the way grep does. A
+# real bad pattern is not used because the platforms disagree about awk (gawk is fatal on a bad
+# dynamic regex, BSD awk is not), and the class under test is the exit status, not the regex.
+shim_dir="$work_dir/shim"
+mkdir -p "$shim_dir"
+real_grep="$(command -v grep)"
+real_awk="$(command -v awk)"
+cat > "$shim_dir/grep" <<SHIM
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ -n "\${LINT_BREAK_GREP:-}" && "\$a" == *"\$LINT_BREAK_GREP"* ]]; then
+    echo "grep: simulated failure for the suite" >&2
+    exit 2
+  fi
+done
+exec "$real_grep" "\$@"
+SHIM
+cat > "$shim_dir/awk" <<SHIM
+#!/usr/bin/env bash
+if [[ -n "\${LINT_BREAK_AWK:-}" ]]; then
+  echo "awk: simulated failure for the suite" >&2
+  exit 2
+fi
+exec "$real_awk" "\$@"
+SHIM
+chmod +x "$shim_dir/grep" "$shim_dir/awk"
+
+# The marker is `)?scripts/work-beads': it occurs in the work-beads-status row's hit pattern and
+# nowhere else a grep argument can come from. NOT the bare `work-beads' - the shim compares every
+# argument, and the file list is arguments too, so a marker that is also a path would break every
+# rule that reads that file.
+set +e
+out="$(LINT_BREAK_GREP=')?scripts/work-beads' PATH="$shim_dir:$PATH" bash "$lint" "$fixture" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "lint with a failing grep: expected exit 1, got $status
+$out"
+grep -q 'ADVISORY: rule work-beads-status could not be checked - its hit grep exited 2' <<<"$out" \
+  || fail "lint with a failing grep: no advisory names the rule and the step
+$out"
+if grep -q 'ok - rule work-beads-status: clean' <<<"$out"; then
+  fail "lint with a failing grep: the rule still reported itself clean
+$out"
+fi
+grep -q -e 'ok - rule bead-id: clean' -e 'ADVISORY: ' <<<"$out" \
+  || fail "lint with a failing grep: the other rules stopped reporting
+$out"
+tail -n1 <<<"$out" | grep -q '^lint: 1 rule(s) could not be run - fix scripts/lint' \
+  || fail "lint with a failing grep: the verdict does not say the lint is broken
+$out"
+pass "a grep that fails is an advisory naming the rule and the step, and the verdict says so"
+
+# A path grep that fails is reported at its own step, not folded into the hit grep's. The marker
+# `^scripts/' is the whole path pattern of the `mount-round-trip' row and a substring of
+# `retired-worktrees'' - so two rules fail at their path grep, and the assertion is on the first.
+set +e
+out="$(LINT_BREAK_GREP='^scripts/' PATH="$shim_dir:$PATH" bash "$lint" "$fixture" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "lint with a failing path grep: expected exit 1, got $status
+$out"
+grep -q 'ADVISORY: rule mount-round-trip could not be checked - its path grep exited 2' <<<"$out" \
+  || fail "lint with a failing path grep: the path step is not read
+$out"
+pass "a failing path grep is reported at its own step"
+
+# Plan mode: an awk that dies leaves `hits' empty, and the plan used to be called clean by a rule
+# that never ran - the mode a planner trusts before shipping a plan. The clean plan written above
+# is the input, so a firing rule cannot be mistaken for a real violation.
+set +e
+out="$(LINT_BREAK_AWK=1 PATH="$shim_dir:$PATH" bash "$lint" --plan "$plan_dir/context-only.md" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "plan check with a failing awk: expected exit 1, got $status
+$out"
+grep -q 'could not be checked - its awk exited 2' <<<"$out" \
+  || fail "plan check with a failing awk: no advisory says a rule never ran
+$out"
+if grep -q 'plan clean' <<<"$out"; then
+  fail "plan check with a failing awk: the plan was still called clean
+$out"
+fi
+tail -n1 <<<"$out" | grep -q 'could not be run on the plan - fix scripts/lint' \
+  || fail "plan check with a failing awk: the verdict blames the plan instead of the lint
+$out"
+pass "a plan is not called clean by a rule that never ran"
+# --- a liveness suite that stops reading the shared case table ------------------------------------
+sed -i.bak '/session-args.cases/d' "$fixture/tests/agent-alive.sh"
+set +e
+out="$(bash "$lint" "$fixture" 2>&1)"
+set -e
+grep -q '^ADVISORY: tests/agent-alive.sh no longer reads tests/lib/session-args.cases' <<<"$out" \
+  || fail "lint with a suite that dropped the case table: the advisory did not name tests/agent-alive.sh
+$out"
+mv "$fixture/tests/agent-alive.sh.bak" "$fixture/tests/agent-alive.sh"
+pass "a liveness suite that stops reading the case table fires an advisory naming the file"
 
 echo "all lint assertions passed"

@@ -828,6 +828,15 @@ rather than pushing the rest of the row right - see ah-lyc."
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
          (state-col (cerebro--emphasize
                      (concat (cerebro--state-label agent)
+                             ;; The unverified marker comes first: it
+                             ;; qualifies the state word itself (this row is
+                             ;; trusted, not proven), where the flag is about
+                             ;; the bead in flight and the count about the
+                             ;; session running it - two different questions
+                             ;; from "what does this state mean" (ah-ybsr).
+                             (if (cerebro-agent-unverified-pid agent)
+                                 (propertize " ?" 'face 'shadow)
+                               "")
                              (if (and flagged in-flight) " ■" "")
                              ;; Flag first, then the count: the flag is about
                              ;; the bead in flight, the count about the

@@ -4025,6 +4025,31 @@ counted, shows nothing."
                       2)))
       (should (eq (get-text-property (1- (length cell)) 'face cell) 'warning)))))
 
+(ert-deftest cerebro-test/entry-marks-an-unverified-row ()
+  "An `unverified-pid' adds a grey \=` ?\=' to the State column, BEFORE the
+flag and the session count: it qualifies the state word itself, the way the
+flag is about the bead in flight and the count about the session
+\(cb-63m\) - not the other way around (ah-ybsr)."
+  (let ((now (current-time)))
+    ;; the slot set: the marker appears
+    (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                      'working nil "ah-aao" "build")))
+      (setf (cerebro-agent-unverified-pid agent) 4242)
+      (should (equal (aref (cadr (cerebro--entry agent now)) 2) "build ?")))
+    ;; the slot unset: no marker
+    (should (equal (aref (cadr (cerebro--entry
+                                (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                                     'working nil "ah-aao" "build")
+                                now))
+                         2)
+                   "build"))
+    ;; marker, flag and count together: " ? ■ ×2", in that order
+    (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer
+                                      'working nil "ah-aao" "build")))
+      (setf (cerebro-agent-unverified-pid agent) 4242)
+      (setf (cerebro-agent-sessions agent) 2)
+      (should (equal (aref (cadr (cerebro--entry agent now t)) 2) "build ? ■ ×2")))))
+
 (ert-deftest cerebro-test/entry-state-column-shows-the-phase ()
   (let ((now (current-time)))
     (should (equal (aref (cadr (cerebro--entry

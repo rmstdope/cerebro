@@ -652,14 +652,24 @@ git push --force-with-lease
 force-push, a fix pushed onto a head that sat through a review — check that the head can merge at all:
 
 ```bash
-until state="$(gh pr view <n> --json mergeable,mergeStateStatus -q '"\(.mergeable) \(.mergeStateStatus)"')" \
-      && [ "${state%% *}" != "UNKNOWN" ] && [ "${state#* }" != "UNKNOWN" ]; do sleep 5; done
+want="$(git ls-remote --heads origin "$(git rev-parse --abbrev-ref HEAD)" | cut -f1)"
+until state="$(gh pr view <n> --json mergeable,mergeStateStatus,headRefOid \
+                 -q '"\(.mergeable) \(.mergeStateStatus) \(.headRefOid)"')" \
+      && [ "${state##* }" = "$want" ] \
+      && [ "${state%% *}" != "UNKNOWN" ] && [ "$(echo "$state" | cut -d' ' -f2)" != "UNKNOWN" ]; do
+  sleep 5
+done
+state="${state% *}"      # drop the sha again: the bullets below read the two words
 echo "$state"
 ```
 
 `mergeable` and `mergeStateStatus` both read `UNKNOWN` for a few seconds after every push while
-GitHub recomputes them, which is what the poll waits out — on either field, not just the first, so a
-`mergeStateStatus` that is still catching up cannot slip through as a false `MERGEABLE UNKNOWN`. Then:
+GitHub recomputes them — and while it does, GitHub can also serve the **previous head's** concrete
+verdict instead, so a `CONFLICTING DIRTY` read straight after a clean rebase and force-push may be
+about a head that no longer exists. That is why the poll compares `headRefOid` with the branch tip
+you just pushed and treats a mismatch exactly as `UNKNOWN`: a verdict about another head is not a
+verdict yet. It waits on both fields, not just the first, so a `mergeStateStatus` still catching up
+cannot slip through as a false `MERGEABLE UNKNOWN`. Then:
 
 - `CONFLICTING DIRTY` — the head cannot merge, and whatever `gh pr checks` would show you next
   describes an older head or a run GitHub will not meaningfully finish. **Do not enter the CI wait.**
@@ -671,7 +681,11 @@ GitHub recomputes them, which is what the poll waits out — on either field, no
 
 Observed here on 2026-08-15: after a rebase and force-push the PR already read
 `CONFLICTING`/`DIRTY`, and the implementer polled check state for a head that would never merge until
-the navigator interrupted. Twenty seconds of `gh pr view` is what that wait cost.
+the navigator interrupted. Twenty seconds of `gh pr view` is what that wait cost. And twice since, on
+consecutive days, the opposite: a `CONFLICTING DIRTY` served for the *old* head for twenty seconds to
+a minute after a clean force-push, which read literally would have sent a rebased branch into a
+second, no-op rebase and a second CI cycle. The `headRefOid` comparison is what tells those two cases
+apart.
 
 An update (or a resolved rebase) that brings in commits touching nothing the bead's own diff touches
 can still leave nothing new to test beyond what CI already ran — if the resulting diff against main
@@ -765,10 +779,14 @@ into it.
   serving — which looks exactly like a hang rather than a mistake.
 - **A stale lease is not an abandoned agent** unless it is genuinely stale — see `beads-workflow`
   before reclaiming anything.
-- **A CI wait against a conflicted head.** After a rebase, a force-push or an `update-branch`,
-  `gh pr view --json mergeable,mergeStateStatus` can already say `CONFLICTING`/`DIRTY` while the
-  check state you are about to poll still describes the previous head. Look at the merge state
-  before the checks — *Merging* has the loop. Cost a wasted check-state poll here once.
+- **A merge verdict about the wrong head.** After a rebase, a force-push or an `update-branch`,
+  `gh pr view --json mergeable,mergeStateStatus` describes whichever head GitHub last finished
+  computing — which may be the previous one. Read one way that is a `CONFLICTING`/`DIRTY` while the
+  check state you are about to poll still describes an older head; read the other it is a stale
+  `CONFLICTING` after a clean push that sends you into a needless second rebase. Look at the merge
+  state before the checks, and only believe it once `headRefOid` is the tip you pushed — *Merging*
+  has the loop. Cost a wasted check-state poll here once, and a near-miss on a wasted CI cycle
+  twice.
 - **An accessible name is a shared namespace.** A browser suite selects on the names controls
   expose, so a new control whose name contains — or is contained by — one an existing spec relies on
   makes that spec match two elements and fail, in a file with nothing to do with your change. Before

@@ -74,6 +74,36 @@ pass "the sync writes nothing at the consumer root"
   || fail "second run changed the agent link target"
 pass "a second run is idempotent"
 
+# --- a link into the mount whose source is gone is removed; a consumer's own link is not ---
+#
+# After a submodule bump that removes a skill or an agent, the link this script wrote for it
+# dangles. It is this script's link, so this script removes it - but ONLY a link that points
+# into the mount: a consumer's own link to somewhere else is its own business, dangling or not.
+ln -s "../cerebro/skills/gone" "$consumer/.claude/skills/gone"
+ln -s "../cerebro/agents/gone.md" "$consumer/.claude/agents/gone.md"
+ln -s "../../elsewhere/mine" "$consumer/.claude/skills/mine"
+
+out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
+
+[[ ! -L "$consumer/.claude/skills/gone" ]] \
+  || fail "a skill link into the mount with no source survived the sync"
+[[ ! -L "$consumer/.claude/agents/gone.md" ]] \
+  || fail "an agent link into the mount with no source survived the sync"
+echo "$out" | grep -qF "Removed stale skill link: $consumer/.claude/skills/gone" \
+  || fail "expected the sync to name the removed skill link, got: $out"
+echo "$out" | grep -qF "Removed stale agent link: $consumer/.claude/agents/gone.md" \
+  || fail "expected the sync to name the removed agent link, got: $out"
+[[ -L "$consumer/.claude/skills/mine" ]] \
+  || fail "a dangling link that does not point into the mount was removed; it is not this script's"
+echo "$out" | grep -q "mine" \
+  && fail "the sync talked about a link that is not its own, got: $out"
+pass "a link into the mount whose source is gone is removed, out loud; a consumer's own is not"
+
+out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
+echo "$out" | grep -q "Removed stale" \
+  && fail "a second sync still removes stale links, got: $out"
+pass "a second sync says nothing about it"
+
 # --- the guard: run from somewhere that is not a consumer repo's .claude/cerebro ---
 outside="$work_dir/x/cerebro/scripts"
 mkdir -p "$outside" "$work_dir/.claude"   # a sibling .claude that must NOT be mistaken for a consumer's

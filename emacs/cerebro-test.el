@@ -1957,43 +1957,83 @@ directory, where there is no longer anything by that name."
   (let ((face (get-text-property index 'face string)))
     (if (listp face) face (list face))))
 
-(ert-deftest cerebro-test/idle-glyph-is-yellow ()
-  "Idle is not the same kind of nothing as dead.
+(ert-deftest cerebro-test/idle-glyph-is-blue-and-unlike-its-neighbours ()
+  "Idle is not the same kind of nothing as dead, nor the same blue as standby.
 
 An idle implementer has a session up and no bead - something the navigator
-may want to act on - so it reads as yellow rather than as the grey that
-means there is nobody there at all."
+may want to act on - so it is neither the grey that means there is nobody
+there at all, nor the green of an agent with work in hand.  Blue is also
+`standby\='s, which is the one thing that makes this worth asserting: the two
+are kept apart by shape as well, and this test is what fails if anyone ever
+paints standby onto `cerebro-idle\=' or gives it the diamond."
   (should (memq 'cerebro-idle (cerebro-test--faces-at (cerebro--glyph 'idle) 0)))
   ;; Still distinguishable from the states either side of it.
   (should (memq 'success (cerebro-test--faces-at (cerebro--glyph 'working) 0)))
-  (should (memq 'shadow (cerebro-test--faces-at (cerebro--glyph 'dead) 0))))
+  (should (memq 'shadow (cerebro-test--faces-at (cerebro--glyph 'dead) 0)))
+  (should (memq 'cerebro-standby (cerebro-test--faces-at (cerebro--glyph 'standby) 0)))
+  (should-not (memq 'cerebro-idle (cerebro-test--faces-at (cerebro--glyph 'standby) 0)))
+  ;; The three that read alike before: pairwise different pictures now.
+  (let ((idle (substring-no-properties (cerebro--glyph 'idle)))
+        (dead (substring-no-properties (cerebro--glyph 'dead)))
+        (standby (substring-no-properties (cerebro--glyph 'standby))))
+    (should-not (equal idle dead))
+    (should-not (equal idle standby))
+    (should-not (equal dead standby))))
 
-(ert-deftest cerebro-test/idle-face-is-actually-yellow-and-not-bold ()
+(ert-deftest cerebro-test/idle-face-is-actually-blue-and-not-bold ()
   "`warning\=' is DarkOrange and bold, which is two wrongs at once.
 
 Emacs defines `warning\=' as `:foreground \"DarkOrange\" :weight bold\' on any
-colour display - so the idle dot was orange rather than yellow, and bold,
+colour display - so an idle glyph inheriting it would be orange, and bold,
 which is the weight this view reserves for an agent that wants an answer.
-`cerebro-idle\=' is a plain yellow instead, and customizable in one place for
-a theme where gold does not read."
+`cerebro-idle\=' names its own colour instead, and is customizable in one
+place for a theme where it does not read.  It is blue since cb-9qm, not the
+gold it carried before - the gold moved to `cerebro-waiting\=', which is what
+`waiting\=' and `unknown\=' are painted with now."
   (let ((spec (format "%S" (get 'cerebro-idle 'face-defface-spec))))
-    (should (string-match-p "gold\\|yellow" (downcase spec)))
+    (should (string-match-p "blue" (downcase spec)))
+    (should-not (string-match-p "gold" (downcase spec)))
     (should-not (string-match-p "bold" (downcase spec)))))
 
-(ert-deftest cerebro-test/idle-is-a-filled-dot-not-a-ring ()
-  "The colour was right and the shape defeated it.
+(ert-deftest cerebro-test/idle-is-a-filled-diamond-not-a-ring ()
+  "The shape lever has now been pulled twice on this one pair.
 
 Idle was U+25CC DOTTED CIRCLE and dead is U+25CB WHITE CIRCLE: two hollow
 rings that are the same picture at terminal sizes, so a yellow one read as
-\"an empty circle, just like the dead\" however yellow it was. Idle is a
-filled dot now - the thing that was actually asked for - and only the colour
-separates it from working, which is what the State column spells out anyway."
+\"an empty circle, just like the dead\" however yellow it was. It became a
+filled dot - and lost that argument too, because a filled dot is what
+`working\=' is and what `unknown\=' is, leaving colour alone to carry the
+difference from dead. It is U+25C6 BLACK DIAMOND now (cb-9qm): the only
+diamond in the vocabulary, so neither shape nor colour is carrying the
+distinction by itself."
   (let ((idle (substring-no-properties (cerebro--glyph 'idle)))
         (dead (substring-no-properties (cerebro--glyph 'dead)))
+        (standby (substring-no-properties (cerebro--glyph 'standby)))
         (working (substring-no-properties (cerebro--glyph 'working))))
-    (should (equal idle "●"))
-    (should (equal idle working))
+    (should (equal idle "◆"))
+    (should-not (equal idle working))
+    (should-not (equal idle standby))
     (should-not (equal idle dead))))
+
+(ert-deftest cerebro-test/waiting-and-unknown-stay-gold-on-their-own-face ()
+  "Only `idle\=' was asked to change colour, and it shared a face with two others.
+
+`waiting\=' and `unknown\=' were painted with `cerebro-idle\=' because the three
+meant the same thing at a glance - a session is up and there is nothing in
+hand.  Repainting that one face for cb-9qm would have taken all three to blue
+by accident, and blue `unknown\=' would then have been the same picture as blue
+`idle\='.  So the gold moved to a face of its own and these two moved with it."
+  (let ((waiting (cerebro--glyph 'waiting))
+        (unknown (cerebro--glyph 'unknown))
+        (spec (format "%S" (get 'cerebro-waiting 'face-defface-spec))))
+    (should (memq 'cerebro-waiting (cerebro-test--faces-at waiting 0)))
+    (should (memq 'cerebro-waiting (cerebro-test--faces-at unknown 0)))
+    (should-not (memq 'cerebro-idle (cerebro-test--faces-at waiting 0)))
+    (should-not (memq 'cerebro-idle (cerebro-test--faces-at unknown 0)))
+    (should (string-match-p "gold" (downcase spec)))
+    (should-not (string-match-p "bold" (downcase spec)))
+    ;; Unknown keeps the filled dot; it is idle that became the diamond.
+    (should (equal (substring-no-properties unknown) "●"))))
 
 (ert-deftest cerebro-test/asking-agent-is-bold-across-its-columns ()
   "An agent waiting on an answer has to be findable in a list of eighteen.
@@ -3808,7 +3848,7 @@ counted, shows nothing."
          (row (cadr (cerebro--entry agent now)))
          (glyph (aref row 0)))
     (should (equal (aref row 2) (truncate-string-to-width "finishing-up" 10 nil nil "…")))
-    (should (memq 'cerebro-idle (cerebro-test--faces-at glyph 0)))))
+    (should (memq 'cerebro-waiting (cerebro-test--faces-at glyph 0)))))
 
 (ert-deftest cerebro-test/for-column-shows-bead-and-phase-time ()
   (let ((now (encode-time (iso8601-parse "2026-08-15T09:30:00Z"))))

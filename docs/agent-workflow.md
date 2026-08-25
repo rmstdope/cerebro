@@ -93,7 +93,7 @@ comparisons rather than a clock: the counts leave out what is parked in your que
 last pass was started for. Anything that moves — a bead arrives, one is planned, an implementer
 comes up — starts the next pass at once.
 
-**Reading a row.** Green `●` is working, yellow `●` is idle, yellow `◐` is an interactive role
+**Reading a row.** Green `●` is working, blue `◆` is idle, yellow `◐` is an interactive role
 `waiting` between passes — it is ended within half a minute — blue `◌` is **standby**: the view ended
 this role after its pass and starts a fresh one when the trigger in the For column fires, and `RET`
 shows its last pass. A bold yellow `?` is an agent waiting on
@@ -389,6 +389,9 @@ She walks beads closed since her last pass, works out on her own which ones touc
 could see — a change to `.claude/`, `docs/`, or CI is marked and skipped without ever bothering you —
 and for the rest, prepares everything she can before she asks for your time: what the bead claimed,
 which shell to launch (web or desktop), which fixture report to load, and what you should look for.
+A project that declares `verification none` in `.cerebro/project.conf` has told her there is
+nothing to launch at all, and she marks every merged bead as needing no look, saying so in one line
+per pass.
 
 **She only ever asks when she is ready to hand you something to run.** Say yes and she briefs you,
 launches the app and waits for one of three verdicts:

@@ -483,25 +483,52 @@ makes `s\=' the way back."
   '((t :inherit font-lock-keyword-face))
   "The standby glyph: a dotted circle, for a role the view will start again.
 
-Blue rather than the grey of `dead\=' or the yellow of `idle\=': nothing is
-running, so it is not yellow\='s \"there is a session here, look at it\", and
-somebody *is* coming back, so it is not grey\='s \"nobody is there\"."
+Blue rather than the grey of `dead\=': somebody *is* coming back, so it is not
+grey\='s \"nobody is there\".  Hollow rather than the filled diamond of `idle\=',
+which is the other blue: nothing is running here at all, where an idle agent
+has a session up and no bead."
   :group 'cerebro)
 
 (defface cerebro-idle
+  '((default :weight normal)
+    ;; Blue that survives its background: a light blue disappears on a light
+    ;; one, so that case gets the darker royal blue.
+    (((class color) (background dark))  :foreground "DodgerBlue")
+    (((class color) (background light)) :foreground "RoyalBlue")
+    (t :inherit font-lock-keyword-face))
+  "The idle glyph: a filled diamond, blue, for a session that is up with no bead.
+
+Blue and a diamond, both, because each on its own has already failed once
+against `dead\=' (cb-9qm): the gold filled dot it used to be was still read as
+\"one of the circles\".  `standby\=' is the other blue and is hollow, so the two
+differ in fill and outline as well as meaning.
+
+Not the stock `warning' face, which Emacs defines as `:foreground
+\"DarkOrange\" :weight bold' on any colour display - orange where it was not
+asked for, and bold, which this view reserves for an agent waiting on an
+answer.  Customize this one face if blue does not read against your theme."
+  :group 'cerebro)
+
+(defface cerebro-waiting
   '((default :weight normal)
     ;; Yellow that survives its background: pure yellow disappears on a light
     ;; one, so that case gets the darker goldenrod.
     (((class color) (background dark))  :foreground "gold")
     (((class color) (background light)) :foreground "goldenrod")
     (t :inherit warning))
-  "The idle glyph: a filled dot, yellow, beside the green one for working.
+  "The waiting glyph, and the unknown one: gold, for a live session with
+nothing in hand.
+
+Shared by `waiting\=' (a hollow half-dot, an interactive role between passes)
+and `unknown\=' (a filled dot, a live session whose state word this view does
+not recognise).  Gold rather than the grey of `dead\=', because a session *is*
+there and may want looking at.
 
 Not the stock `warning' face, which Emacs defines as `:foreground
-\"DarkOrange\" :weight bold' on any colour display.  That was two wrongs at
-once here - orange where yellow was asked for, and bold, which this view
-reserves for an agent waiting on an answer.  Customize this one face if gold
-does not read against your theme."
+\"DarkOrange\" :weight bold' on any colour display - orange where gold was
+asked for, and bold, which this view reserves for an agent waiting on an
+answer.  `idle\=' used to carry this colour and is blue since cb-9qm, so that
+it could stop reading as one more circle beside `dead\='."
   :group 'cerebro)
 
 (defun cerebro--glyph (state)
@@ -511,29 +538,29 @@ does not read against your theme."
    ;; Waiting on the navigator: the one state that is asking for something.
    ((eq state 'asking) (propertize "?" 'face 'warning))           ; ?
    ((eq state 'done) (propertize "◍" 'face 'success))             ; ◍
-   ;; Yellow, not grey: an idle agent has a session up and no bead, which is
-   ;; something the navigator may want to act on. Dead is the grey one - there
-   ;; is nobody there at all - and the two must not read alike.
-   ;;
-   ;; A filled dot, and the same one `working' uses. It was U+25CC DOTTED
-   ;; CIRCLE, which is the same picture as dead's U+25CB WHITE CIRCLE at
-   ;; terminal sizes - so the yellow was applied and simply lost the argument
-   ;; with the shape. Only colour separates idle from working now, which the
-   ;; State column beside it spells out in words anyway.
-   ;; `unknown' is a live session the view does not understand - the same
-   ;; yellow as `idle', for the same reason: something the navigator may want
-   ;; to look at. Grey (`dead') would say nobody is there, which is untrue.
+   ;; Idle is a blue filled diamond - the only diamond in the vocabulary, so
+   ;; neither shape nor colour is carrying the difference from dead's grey
+   ;; hollow ○ or standby's blue hollow ◌ on its own. Both levers have been
+   ;; spent on this pair once each already: idle was U+25CC DOTTED CIRCLE,
+   ;; which is dead's U+25CB WHITE CIRCLE at terminal sizes; it became a
+   ;; filled ● in gold, which was then the same picture as `working' and
+   ;; `unknown' with only colour between them. Hence cb-9qm and U+25C6.
+   ;; `unknown' is a live session the view does not understand - gold, for the
+   ;; reason idle used to be: something the navigator may want to look at, and
+   ;; grey (`dead') would say nobody is there, which is untrue. It keeps the
+   ;; filled dot, and is the only gold one, so it cannot be mistaken for idle.
    ;; Waiting has a session up, nothing in flight, and a time it comes back
-   ;; (ah-hiib.3). Yellow like `idle' - both are agents with no work in hand -
-   ;; but a different shape, because the two mean opposite things about who
-   ;; acts next: an idle implementer is waiting for the navigator or the
-   ;; queue, a waiting role is waiting for this very poll.
-   ((eq state 'waiting) (propertize "◐" 'face 'cerebro-idle))          ; ◐
+   ;; (ah-hiib.3). Gold like `unknown' - both are live sessions with no work
+   ;; in hand - but a different shape, because who acts next differs: an idle
+   ;; implementer is waiting for the navigator or the queue, a waiting role is
+   ;; waiting for this very poll.
+   ((eq state 'waiting) (propertize "◐" 'face 'cerebro-waiting))       ; ◐
    ;; Standby: no session at all, and one coming back when the trigger in the
    ;; For column fires. Hollow, because nothing is running; blue, because
    ;; grey would say nobody is coming (cb-5yr).
    ((eq state 'standby) (propertize "◌" 'face 'cerebro-standby))       ; ◌
-   ((memq state '(idle unknown)) (propertize "●" 'face 'cerebro-idle))  ; ●
+   ((eq state 'idle) (propertize "◆" 'face 'cerebro-idle))             ; ◆
+   ((eq state 'unknown) (propertize "●" 'face 'cerebro-waiting))       ; ●
    (t (propertize "○" 'face 'shadow))))                           ; ○
 
 (defun cerebro--seconds-since (since now)

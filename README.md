@@ -70,7 +70,11 @@ install        npm ci        # omit it when there is nothing to install
 
 An absent key is a default, with one exception: without `app_paths` the fleet refuses to classify a
 change rather than guess, since a wrong guess either empties the release notes or sends you to
-verify documentation. This repository's own `.cerebro/project.conf` is a commented example, and
+verify documentation.
+A project with nothing a person can launch — a library, a build tool, a harness like this one —
+adds `verification none`, and the verifier marks every merged bead as needing no look instead of
+asking how to start an application that does not exist.
+This repository's own `.cerebro/project.conf` is a commented example, and
 the header of `scripts/project-conf` states the format.
 
 Check: `.claude/cerebro/scripts/project-conf project_name` prints the name, and

@@ -1216,6 +1216,7 @@ keypress's worth of intent would be its own kind of noise."
            (argv (cerebro--finding-command finding repo-root))
            (command-string (mapconcat #'identity argv " ")))
       (when (y-or-n-p (format "run: %s ? " command-string))
+        (cerebro--log repo-root 'sweep (list (cons 'command command-string)))
         (if (cerebro--run-sweep-command repo-root argv)
             (let ((pushed (cerebro--run-sweep-command repo-root (cerebro--bd-push-argv))))
               (cerebro--beads-render (current-buffer))
@@ -2642,6 +2643,13 @@ from afterwards (cb-5yr)."
             (cerebro--trigger-fingerprint
              (cerebro-agent-role agent)
              (cerebro--trigger-context (cerebro--repo-root) (current-time)))))
+    ;; Every start passes through here - `s', autostart, a trigger - so this
+    ;; is where one is recorded (`cerebro--log-start-reason').
+    (cerebro--log (cerebro--repo-root) 'start
+                  (list (cons 'agent (cerebro-agent-name agent))
+                        (cons 'role (cerebro-agent-role agent))
+                        (cons 'reason cerebro--log-start-reason)
+                        (cons 'by (if cerebro--log-start-reason "trigger" "navigator"))))
     ;; The navigator's quit guard: confirm before Emacs or a buffer kill
     ;; takes a live agent down.  vterm's own kill behaviour is tuned for
     ;; disposable shells and does not set this on its own.
@@ -2732,6 +2740,10 @@ name."
              (record (cerebro--exit-record event (cerebro--last-nonblank-line text))))
         (when record
           (setf (alist-get name cerebro--last-exit nil nil #'equal) (cdr record))
+          (cerebro--log (cerebro--repo-root) 'exit
+                        (list (cons 'agent name)
+                              (cons 'code (car record))
+                              (cons 'last_line (cdr record))))
           (message "%s exited (code %s): %s" name (car record) (cdr record)))))))
 
 ;;; Acting on the supervision decisions
@@ -2941,6 +2953,177 @@ with the sign reversed."
     (cerebro--delete-state-file repo-root name)
     (when clear-stop-flag (cerebro--clear-stop-flag repo-root name))))
 
+
+;;; ah: the view's own log - what it decided, and what it declined to do
+
+(defcustom cerebro-log-verbosity 'evaluations
+  "How much of what the fleet view decides is written to its log.
+
+`decisions\=' - only what the view did: a session started (with the trigger
+that fired), ended, retired, restarted, nudged, a launch refused, a sweep
+finding run.
+
+`changes\=' - the decisions, plus one line each time a standby role\='s trigger
+*answer* changes.  A planner that has been \"buffer 0 of 3\" for an hour is one
+line rather than seven hundred, and the line lands on the tick the answer
+changed.
+
+`evaluations\=' - the decisions, plus every trigger evaluation on every tick.
+The complete record, and the expensive one: a nine-agent fleet on a
+five-second tick writes on the order of a hundred thousand lines a day, which
+is why `cerebro-log-max-bytes\=' and `cerebro-log-generations\=' exist.
+
+Anything else logs the decisions alone: losing the record of a start is a
+worse failure than a typo in a setting."
+  :type '(choice (const decisions) (const changes) (const evaluations))
+  :group 'cerebro)
+
+(defcustom cerebro-log-max-bytes (* 25 1024 1024)
+  "Bytes the view\='s log may reach before it is rotated.
+
+Larger than the 5 MB `scripts/agent-state\=' uses for `transitions.jsonl\=',
+because that one is written when an agent changes state and this one can be
+written on every tick.  What the number is really sizing is how much history
+survives, so it is paired with `cerebro-log-generations\='."
+  :type 'integer
+  :group 'cerebro)
+
+(defcustom cerebro-log-generations 3
+  "How many rotated generations of the view\='s log are kept.
+
+`decisions.1.jsonl\=' and so on, oldest discarded.  Three at 25 MB is a couple
+of days at `evaluations\=' and months at `changes\='."
+  :type 'integer
+  :group 'cerebro)
+
+(defconst cerebro--log-decision-events
+  '(start end retire restart nudge standby refused exit sweep)
+  "The events written at every verbosity: what the view actually did.")
+
+(defun cerebro--log-event-p (event verbosity)
+  "Pure.  Whether EVENT is written at VERBOSITY.  See `cerebro-log-verbosity\='."
+  (or (memq event cerebro--log-decision-events)
+      (and (eq event 'evaluate) (memq verbosity '(changes evaluations)))))
+
+(defun cerebro--log-evaluation-p (name reason seen verbosity)
+  "Pure.  Whether NAME\='s evaluation answering REASON is written now.
+
+SEEN is an alist of (NAME . LAST-REASON).  At `evaluations\=' every tick is
+written; at `changes\=' only an answer that differs from this agent\='s last
+one, which is what makes a day of history fit in a file somebody might read."
+  (or (eq verbosity 'evaluations)
+      (not (and (assoc name seen)
+                (equal reason (cdr (assoc name seen)))))))
+
+(defun cerebro--log-line (event ts fields)
+  "Pure.  One JSON object, one line: EVENT, TS, then FIELDS in order.
+
+Nil values are written as `null\=' rather than dropped - \"evaluated, and there
+was no reason\" is the answer half these lines carry, and a missing key would
+read as \"not evaluated\".  `json-encode\=' would drop nothing here anyway; what
+this guarantees is the *shape*, which a reader written against it depends on."
+  (let ((json-encoding-pretty-print nil))
+    (json-encode (append (list (cons 'event (symbol-name event))
+                               (cons 'ts ts))
+                         fields))))
+
+(defun cerebro--log-rotate-p (size max-bytes)
+  "Pure.  Whether a log of SIZE bytes has passed MAX-BYTES.
+
+Nil SIZE - no file yet - is never a rotation."
+  (and size (> size max-bytes)))
+
+(defvar cerebro--log-start-reason nil
+  "The trigger that is starting a session, while one is being started.
+
+Let-bound by `cerebro--start-due\=' round its own launch, so the one place a
+session is started (`cerebro--launch\=') is also the one place a start is
+logged - `s\=', autostart and a trigger alike.  Nil means the navigator or the
+autostart did it, which is exactly what the log should say.")
+
+(defvar-local cerebro--log-seen nil
+  "Alist of (NAME . LAST-REASON) - each standby role\='s last logged answer.
+
+Only `cerebro-log-verbosity\=' `changes\=' reads it: at `evaluations\=' every tick
+is written and at `decisions\=' none is.  Buffer-local, like the rest of the
+view\='s state, and lost with the buffer - which costs one redundant line per
+role after `M-x cerebro\=', not a wrong one.")
+
+(defun cerebro--log-file (repo-root &optional generation)
+  "The view\='s log under REPO-ROOT, or its GENERATIONth rotated copy.
+
+Beside `scripts/agent-state\='s `transitions.jsonl\=' rather than in a directory
+of its own: the two halves of one event - the view deciding to start a role,
+that role\='s own first write seconds later - are read together or not at all,
+and `.cerebro/state\=' is already what `.gitignore\=' names and what
+`scripts/fleet-history\=' reads."
+  (expand-file-name (if generation
+                        (format ".cerebro/state/decisions.%d.jsonl" generation)
+                      ".cerebro/state/decisions.jsonl")
+                    repo-root))
+
+(defun cerebro--log-rotate (repo-root)
+  "Rotate the view\='s log under REPO-ROOT if it has passed its size.
+
+Generations shift up and the oldest is discarded, which is the whole of the
+retention policy: `cerebro-log-generations\=' files of `cerebro-log-max-bytes\='."
+  (let ((file (cerebro--log-file repo-root)))
+    (when (cerebro--log-rotate-p (file-attribute-size (file-attributes file))
+                                 cerebro-log-max-bytes)
+      (let ((n cerebro-log-generations))
+        (while (> n 1)
+          (let ((older (cerebro--log-file repo-root n))
+                (newer (cerebro--log-file repo-root (1- n))))
+            (when (file-exists-p newer) (rename-file newer older t)))
+          (setq n (1- n)))
+        (when (> cerebro-log-generations 0)
+          (rename-file file (cerebro--log-file repo-root 1) t))))))
+
+(defun cerebro--log (repo-root event fields)
+  "Append one line to the view\='s log for EVENT with FIELDS, under REPO-ROOT.
+
+Silent and unable to fail, for the reason `scripts/agent-state\=' gives about
+its own log: the fleet must never be brought down by a full disk.  `O_APPEND\='
+is what makes this safe beside the agents\=' own writer - one line is one
+`write\=', and two writers cannot interleave."
+  (when (and repo-root (cerebro--log-event-p event cerebro-log-verbosity))
+    (ignore-errors
+      (cerebro--log-rotate repo-root)
+      (write-region
+       (concat (cerebro--log-line
+                event (format-time-string "%Y-%m-%dT%H:%M:%SZ" nil t) fields)
+               "\n")
+       nil (cerebro--log-file repo-root) 'append 'silent))))
+
+(defun cerebro--log-evaluation (repo-root agent reason context)
+  "Log that AGENT\='s trigger was evaluated and answered REASON.
+
+The loud half of the log, and the half that answers \"why did nothing
+happen\" - a question the no-progress guard makes unanswerable any other way,
+since its whole effect is that nothing does.  So the line carries what the
+trigger read as well as what it decided."
+  (let ((name (cerebro-agent-name agent)))
+    (when (cerebro--log-evaluation-p name reason cerebro--log-seen
+                                     cerebro-log-verbosity)
+      (cerebro--log
+       repo-root 'evaluate
+       (list (cons 'agent name)
+             (cons 'role (cerebro-agent-role agent))
+             (cons 'reason reason)
+             (cons 'planned (alist-get 'planned context))
+             (cons 'live_implementers (alist-get 'live-implementers context))
+             (cons 'p0_unplanned (alist-get 'p0-unplanned context))
+             (cons 'p4_unranked (alist-get 'p4-unranked context))
+             (cons 'merged_unverified (alist-get 'merged-unverified context))
+             (cons 'stale_verdicts (alist-get 'stale-verdicts context))
+             (cons 'held_by_guard
+                   (and (null reason)
+                        (equal (alist-get 'last-fingerprint context)
+                               (cerebro--trigger-fingerprint
+                                (cerebro-agent-role agent) context))
+                        t)))))
+    (setf (alist-get name cerebro--log-seen nil nil #'equal) reason)))
+
 (defun cerebro--supervise (agents repo-root now)
   "Act on what `cerebro--supervise-action' says about each of AGENTS.
 
@@ -2952,7 +3135,18 @@ other agents down with it."
       (unless (eq (cerebro-agent-state agent) 'asking)
         (setq cerebro--nudged (delete name cerebro--nudged)))
       (with-demoted-errors "cerebro: %S"
-        (pcase (cerebro--supervise-action agent (cerebro--stop-flag-p repo-root name) now)
+        (pcase (let ((action (cerebro--supervise-action
+                              agent (cerebro--stop-flag-p repo-root name) now)))
+                 (when action
+                   (cerebro--log repo-root action
+                                 (list (cons 'agent name)
+                                       (cons 'role (cerebro-agent-role agent))
+                                       (cons 'state (symbol-name
+                                                     (cerebro-agent-state agent)))
+                                       (cons 'bead (cerebro-agent-bead agent))
+                                       (cons 'stop_flag
+                                             (and (cerebro--stop-flag-p repo-root name) t)))))
+                 action)
           ;; Kill before launching: `cerebro--launch' would refuse a second
           ;; session for a name it still holds, rather than making one vterm
           ;; would call `*fleet: <name>*<2>' and the list would never show.
@@ -3877,10 +4071,13 @@ is where that is said."
     (let ((context (cerebro--trigger-context repo-root now)))
       (dolist (agent cerebro--agents)
         (when (eq (cerebro-agent-state agent) 'standby)
-          (let ((reason (cerebro--trigger agent (cerebro--agent-context agent context))))
+          (let* ((agent-context (cerebro--agent-context agent context))
+                 (reason (cerebro--trigger agent agent-context)))
+            (cerebro--log-evaluation repo-root agent reason agent-context)
             (when reason
               (with-demoted-errors "cerebro: %S"
-                (cerebro--launch agent)
+                (let ((cerebro--log-start-reason reason))
+                  (cerebro--launch agent))
                 (message "%s" (cerebro--start-message
                                (cerebro-agent-name agent) reason))))))))))
 

@@ -311,6 +311,16 @@ abbreviated path, a relative path, a formatted time — is normalised by the rea
 (`cerebro--repo-root` through `cerebro--canonical-root`), never assumed canonical by a comparator,
 and a new reader is not done until its contract case exists.
 
+It writes one of its own beside them: **`.cerebro/state/decisions.jsonl`**, a line per decision —
+start (with the trigger that fired), end, retire, restart, nudge, sweep run, abnormal exit — and, at
+`cerebro-log-verbosity` `evaluations` (the default), a line per trigger evaluation per tick carrying
+what the trigger read and whether `cerebro--unless-unchanged` is what held it. That last is the only
+observable trace of a decision *not* to start, which is otherwise indistinguishable from a bug.
+`changes` logs an evaluation only when its answer differs from that agent's last; `decisions` logs
+none. Rotation is `cerebro-log-max-bytes` × `cerebro-log-generations`. The pure half is
+`cerebro--log-line`, `cerebro--log-event-p`, `cerebro--log-evaluation-p` and `cerebro--log-rotate-p`;
+the writer is silent and unable to fail, for the reason `scripts/agent-state` gives about its own log.
+
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
 
 - `<name>.state.json` — `{state: "idle"|"working"|"asking"|"waiting"|"done", phase, bead, since,

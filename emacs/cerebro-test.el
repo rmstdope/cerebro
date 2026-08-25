@@ -5074,6 +5074,101 @@ not an abnormal exit to be echoed at the navigator."
                    "3 merged, unverified"))))
 
 ;; ---------------------------------------------------------------------------
+;; The view's own log: what it decided, and what it declined to do
+
+(ert-deftest cerebro-test/a-log-line-is-one-json-object-with-the-event-first ()
+  "Same shape and the same directory as `scripts/agent-state's transition log,
+so one reader pairs the two halves of an event: the view deciding to start a
+role, and that role's own first write seconds later."
+  (let ((line (cerebro--log-line
+               'start "2026-08-25T09:30:00Z"
+               '((agent . "Xavier") (role . "planner") (reason . "buffer 0 of 3")))))
+    (should (equal (cerebro--try-parse-json line)
+                   '((event . "start") (ts . "2026-08-25T09:30:00Z")
+                     (agent . "Xavier") (role . "planner")
+                     (reason . "buffer 0 of 3"))))
+    ;; One line, always: a log is appended to by more than one writer.
+    (should-not (string-match-p "\n" line))))
+
+(ert-deftest cerebro-test/a-nil-field-is-logged-as-null-not-dropped ()
+  "\"Evaluated, and there was no reason\" is the answer the guard cases turn
+on, and a missing key would read as \"not evaluated\"."
+  (let ((parsed (cerebro--try-parse-json
+                 (cerebro--log-line 'evaluate "2026-08-25T09:30:00Z"
+                                    '((agent . "Xavier") (reason . nil))))))
+    (should (assq 'reason parsed))
+    (should (null (alist-get 'reason parsed)))))
+
+(ert-deftest cerebro-test/the-verbosity-decides-which-events-are-written ()
+  "Per-tick evaluations are the loud half - nine rows every five seconds - and
+they are what answers \"why did nothing happen\".  So they are a level rather
+than a rule: `evaluations' keeps them, `changes' keeps one line when an
+evaluation's answer differs from that agent's last, `decisions' keeps only
+what the view actually did."
+  (should (cerebro--log-event-p 'start 'decisions))
+  (should (cerebro--log-event-p 'end 'decisions))
+  (should-not (cerebro--log-event-p 'evaluate 'decisions))
+  (should (cerebro--log-event-p 'evaluate 'changes))
+  (should (cerebro--log-event-p 'evaluate 'evaluations))
+  ;; A level nobody recognises logs the decisions rather than nothing: losing
+  ;; the record of a start is worse than a typo in a setting.
+  (should (cerebro--log-event-p 'start 'nonsense))
+  (should-not (cerebro--log-event-p 'evaluate 'nonsense)))
+
+(ert-deftest cerebro-test/at-changes-only-a-different-answer-is-written ()
+  "The middle level, and the one that makes a day of history fit: a standby
+planner evaluated seventeen thousand times a day with the same answer is one
+line, and the line lands on the tick the answer changed."
+  (let ((seen '(("Xavier" . "buffer 0 of 3"))))
+    (should-not (cerebro--log-evaluation-p "Xavier" "buffer 0 of 3" seen 'changes))
+    (should (cerebro--log-evaluation-p "Xavier" nil seen 'changes))
+    (should (cerebro--log-evaluation-p "Beast" nil seen 'changes))
+    ;; At `evaluations' every tick is written, same answer or not.
+    (should (cerebro--log-evaluation-p "Xavier" "buffer 0 of 3" seen 'evaluations))))
+
+(ert-deftest cerebro-test/the-log-rotates-on-size-and-keeps-generations ()
+  "`agent-state' rotates its own log at 5 MB and keeps one generation. This one
+is written far faster - a line per standby role per five-second tick at
+`evaluations' - so the number is a setting, and what it protects is a day of
+history rather than a byte count."
+  (should (cerebro--log-rotate-p 5000 4096))
+  (should-not (cerebro--log-rotate-p 4095 4096))
+  ;; No file yet is not a rotation.
+  (should-not (cerebro--log-rotate-p nil 4096)))
+
+(ert-deftest cerebro-test/the-log-appends-and-rotates-under-a-real-root ()
+  "The writer, not just the decision: lines land beside the agents' own
+transition log, and the generations shift when the file passes its size."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-log-verbosity 'evaluations)
+        (cerebro-log-generations 2)
+        (cerebro-log-max-bytes 4096))
+    (unwind-protect
+        (let ((file (expand-file-name ".cerebro/state/decisions.jsonl" root)))
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (cerebro--log root 'start '((agent . "Xavier") (reason . "buffer 0 of 3")))
+          (cerebro--log root 'end '((agent . "Xavier")))
+          (should (equal (with-temp-buffer (insert-file-contents file)
+                                           (count-lines (point-min) (point-max)))
+                         2))
+          ;; Past the size: this file becomes generation 1 and a fresh one starts.
+          (write-region (make-string 5000 ?x) nil file)
+          (cerebro--log root 'start '((agent . "Beast")))
+          (should (file-exists-p (expand-file-name ".cerebro/state/decisions.1.jsonl" root)))
+          (should (equal (with-temp-buffer (insert-file-contents file)
+                                           (count-lines (point-min) (point-max)))
+                         1)))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/a-log-that-cannot-be-written-is-not-an-error ()
+  "The fleet must never be brought down by a full disk - the same rule
+`scripts/agent-state' states about its own log."
+  (let ((cerebro-log-verbosity 'evaluations))
+    (should (null (cerebro--log "/nonexistent/root" 'start '((agent . "X")))))
+    ;; And no root at all is simply nothing to write to.
+    (should (null (cerebro--log nil 'start '((agent . "X")))))))
+
+;; ---------------------------------------------------------------------------
 ;; The planners wake on a condition alone: no floor, and a guard instead
 
 (ert-deftest cerebro-test/a-parked-bead-is-not-work-a-planner-can-take ()

@@ -452,6 +452,42 @@ bd recall forge-watermark
 bd recall forge-weekly
 ```
 
+## What the fleet wrote down
+
+Two logs, both under `.cerebro/state/`, both git-ignored and local to this machine.
+
+**`transitions.jsonl`** is the agents' own: one line every time any of them writes its state
+(`scripts/agent-state`), carrying `from`, `to`, `phase`, `bead` and `pid`. `scripts/fleet-history`
+turns it into durations — how long a bead was held, how long anyone waited at `asking`, what is
+unusual this week:
+
+```bash
+.claude/cerebro/scripts/fleet-history --summary --since 24h
+.claude/cerebro/scripts/fleet-history --json --agent Cyclops
+```
+
+**`decisions.jsonl`** is the fleet view's, and it answers the other half: not what the agents did but
+what Emacs decided about them. One line per start (with the trigger that fired and whether it was a
+trigger or you), per end, retire, restart and nudge, per sweep finding run, per abnormal exit — and,
+at the default verbosity, one per trigger *evaluation*, on every five-second tick, carrying what the
+trigger read and whether the no-progress guard is what held it.
+
+That last part is the point: a planner that does not start looks identical from outside whether the
+guard is right or wrong, and this is the only place the difference is written down.
+
+```bash
+# Why did Xavier start, and what did it read?
+jq -c 'select(.agent == "Xavier" and .event == "start")' .cerebro/state/decisions.jsonl | tail
+# What is holding the planners right now?
+jq -c 'select(.role == "planner" and .event == "evaluate")' .cerebro/state/decisions.jsonl | tail -5
+```
+
+**It is loud.** A nine-agent fleet on a five-second tick writes on the order of a hundred thousand
+lines a day at `evaluations`. Three settings control that, all changeable while the fleet runs:
+`cerebro-log-verbosity` (`evaluations`, `changes` — one line when an answer *changes*, which is
+usually what you want after the first day — or `decisions`), `cerebro-log-max-bytes` (25 MB) and
+`cerebro-log-generations` (3).
+
 ## Your queue
 
 Everything waiting on you, from every agent and every terminal, in one place:

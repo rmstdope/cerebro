@@ -97,47 +97,28 @@ sync_links() {
   echo "Synced $updated $label link(s) from $source_dir to $dest_dir"
 }
 
-# The one file this script writes outside .claude/, and the one it may not merge: Emacs reads
-# exactly one `.dir-locals.el' per directory, so a consumer that has its own already has spent
-# the slot. It gets a line on stderr and keeps its file - guessing which of the two sets of
-# settings matters is not this script's call, and silently replacing them is the failure that
-# would be found weeks later.
+# Until cb-pq4 this script linked the consumer's root `.dir-locals.el' to
+# templates/consumer-dir-locals.el, so that `M-x cerebro' existed for every contributor. That
+# template is gone - the fleet view has its own command, `scripts/cerebro' - and every consumer
+# that ever synced still carries the link, which now dangles and which Emacs complains about on
+# every file opened. So the link that names the retired template is removed here, and ONLY that
+# one: a `.dir-locals.el' the project wrote itself, or linked somewhere of its own, is the
+# project's and is not touched. Same shape as the retired-path refusals in roster and
+# launch-preflight, and the same class of defect if skipped: found weeks later, in somebody
+# else's checkout.
 #
-# Why a link rather than a copy: a change to the form is then carried by a submodule bump, like
-# every skill and agent here. Why at all: `M-x cerebro' otherwise costs each contributor an edit
-# to their own init, and the fleet view is how this harness is driven.
-sync_dir_locals() {
-  local template="$SOURCE_ROOT/templates/consumer-dir-locals.el"
+# With this, the script writes nothing outside .claude/ at all.
+remove_retired_dir_locals() {
   local target="$consumer_root/.dir-locals.el"
-  local link="$REL_FROM_ROOT/templates/consumer-dir-locals.el"
 
-  # A submodule from before this template existed. Nothing to link, and nothing wrong.
-  [[ -f "$template" ]] || return 0
+  # -L, and no -e: the link is expected to dangle by the time this runs.
+  [[ -L "$target" ]] || return 0
+  [[ "$(readlink "$target")" == */templates/consumer-dir-locals.el ]] || return 0
 
-  if [[ -L "$target" ]]; then
-    # Ours, or the consumer's own link to somewhere else? `-L' alone would repoint the latter.
-    # Only a link that already names this template is refreshed - which is what moves it when
-    # the mount moves.
-    if [[ "$(readlink "$target")" == */templates/consumer-dir-locals.el ]]; then
-      ln -sfn "$link" "$target"
-      echo "Synced .dir-locals.el -> $link"
-    else
-      echo "Left $target alone: it is a symlink of this project's own." >&2
-    fi
-    return 0
-  fi
-
-  if [[ -e "$target" ]]; then
-    echo "Left $target alone: this project has its own." >&2
-    echo "  Emacs reads one per directory, so M-x cerebro is not installed by it." >&2
-    echo "  To enable it, copy the eval form from $template into that file." >&2
-    return 0
-  fi
-
-  ln -s "$link" "$target"
-  echo "Synced .dir-locals.el -> $link"
+  rm "$target"
+  echo "Removed stale .dir-locals.el link (templates/consumer-dir-locals.el is gone)"
 }
 
 sync_links "$SOURCE_ROOT/skills" "$CLAUDE_ROOT/skills" "skill" "dir"
 sync_links "$SOURCE_ROOT/agents" "$CLAUDE_ROOT/agents" "agent" "file"
-sync_dir_locals
+remove_retired_dir_locals

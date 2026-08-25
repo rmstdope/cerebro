@@ -5,24 +5,24 @@ buffer showing every agent on `scripts/roster` — with its
 state, and for one working a bead (an implementer, or one of the interactive agents
 mid-verification or mid-triage) the bead it is on and for how long.
 
-## Getting `M-x cerebro`
+## Getting the fleet view
 
-Nothing to install by hand: `scripts/sync-symlinks.sh` links
-`templates/consumer-dir-locals.el` in as the consumer's root `.dir-locals.el`, so the command
-exists for every contributor the moment any file of the project is open. Emacs asks each user
-once whether that file's `eval` form may run — answer `!`. The form only registers an autoload,
-so cerebro.el is read on the first `M-x cerebro` and not before.
+Nothing to install by hand — from anywhere inside the consumer:
 
-Two cases where you do it yourself:
+```bash
+.claude/cerebro/scripts/cerebro
+```
 
-- **The project already has a `.dir-locals.el`.** Emacs reads one per directory, so the sync
-  leaves it alone and says so. Copy the `eval` form out of the template into it.
-- **You want the command everywhere, not only inside the project.** In your init:
+That opens the fleet view in a fresh Emacs, loading your own init (which is where vterm, and so
+the view's live sessions, comes from). `EMACS` names the binary, for an Emacs.app that is not on
+`PATH`.
 
-  ```elisp
-  (add-to-list 'load-path "/path/to/consumer/.claude/cerebro/emacs")
-  (autoload 'cerebro "cerebro" "List the Cerebro agent fleet." t)
-  ```
+To have `M-x cerebro` in the Emacs you already work in, add to your init:
+
+```elisp
+(add-to-list 'load-path "/path/to/consumer/.claude/cerebro/emacs")
+(autoload 'cerebro "cerebro" "List the Cerebro agent fleet." t)
+```
 
 It supports a live detail window that follows the list selection, and starting/killing agents
 from the list:

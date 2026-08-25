@@ -55,7 +55,8 @@ else derives from it: the fleet view, the launcher, and the state files.
 ## The fleet view is the console
 
 ```
-M-x cerebro
+.claude/cerebro/scripts/cerebro   # from a terminal, in a fresh Emacs
+M-x cerebro                       # in your own
 ```
 
 Everything below can be done from a terminal, and almost nobody does. The Emacs fleet view lists

@@ -43,16 +43,15 @@ Check: `.claude/cerebro/scripts/consumer-root` prints your repository's absolute
 ### 3. Link the skills and agents
 
 Claude Code discovers `.claude/skills/<name>/SKILL.md` and `.claude/agents/<name>.md`. The sync
-writes relative symlinks there, and a `.dir-locals.el` at your root that gives every contributor
-`M-x cerebro` without editing their init.
+writes relative symlinks there, and nothing outside `.claude/`.
 
 ```bash
 .claude/cerebro/scripts/sync-symlinks.sh
 ```
 
-Check: it prints one `Synced N skill link(s) …` line, one `Synced N agent link(s) …` line, and
-`Synced .dir-locals.el -> .claude/cerebro/templates/consumer-dir-locals.el`. If you already had a
-`.dir-locals.el`, it says `Left … alone` instead and names the form to copy into yours.
+Check: it prints one `Synced N skill link(s) …` line and one `Synced N agent link(s) …` line. If a
+`.dir-locals.el` link from an earlier sync is at your root, it also prints
+`Removed stale .dir-locals.el link (templates/consumer-dir-locals.el is gone)`.
 
 ### 4. Declare the project: `.cerebro/project.conf`
 
@@ -134,8 +133,27 @@ The board is beads: `bd init` in your repository, then a Dolt remote
 (`bd dolt remote add origin <url>`) so every machine and session sees the same beads. Every bead is
 created unranked and ranked with you; a planner turns it into a plan; an implementer builds it.
 
-Then, from any file of the project, `M-x cerebro` — Emacs asks once whether the `.dir-locals.el`
-form may run; answer `!` — and press `s` on a planner's row. Or from a terminal:
+Then open the fleet view:
+
+```bash
+.claude/cerebro/scripts/cerebro
+```
+
+That opens it in a fresh Emacs — your own init is loaded, so the vterm the view needs for live
+sessions is whatever your Emacs has; set `EMACS` to a binary that is not on your `PATH`
+(`EMACS=/Applications/Emacs.app/Contents/MacOS/Emacs`). Press `s` on a planner's row.
+
+#### In your own Emacs
+
+To have `M-x cerebro` in the Emacs you already work in, add to your init, with the path of your
+checkout:
+
+```elisp
+(add-to-list 'load-path "/path/to/your/project/.claude/cerebro/emacs")
+(autoload 'cerebro "cerebro" "List the Cerebro agent fleet." t)
+```
+
+A session can also be started from a terminal without the fleet view:
 
 ```bash
 .claude/cerebro/scripts/launch Xavier
@@ -197,7 +215,7 @@ What it does:
 - Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/plan-bead -> ../cerebro/skills/plan-bead`), relative rather than absolute, so the same link is correct in the main checkout, in every worktree and on every machine.
 - Scans `.claude/cerebro/agents/*.md` and creates/updates symlinks in `.claude/agents/`.
 - Removes the old aggregate symlink `.claude/skills/cerebro` if present.
-- Links `.dir-locals.el` at the consumer root to `templates/consumer-dir-locals.el`, which is what gives every contributor `M-x cerebro`; a `.dir-locals.el` the project already has is left alone, with a line on stderr saying what to copy.
+- Removes a `.dir-locals.el` link at the consumer root left by a sync from before the fleet view had its own command; a `.dir-locals.el` the project wrote itself is never touched.
 
 Run it whenever:
 

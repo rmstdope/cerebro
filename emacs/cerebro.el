@@ -2194,16 +2194,32 @@ running, autostart did nothing."
         (_ (push (car entry) skipped))))
     (cons (nreverse started) (nreverse skipped))))
 
-(defun cerebro--autostart-message (results)
-  "The one echo line for RESULTS, or nil when RESULTS is empty.
+(defun cerebro--standby-arming (agents names)
+  "Pure.  The names among AGENTS that NAMES declares standby, in AGENTS order.
 
-A roster that declares no autostart says nothing at all: every consumer
+Every one of them, whatever its state: external, up, dead.  roster.conf is a
+statement about the fleet, not about what this Emacs happens to have found
+running - an agent started outside the view keeps its external row while that
+session lives, and when it ends the name goes standby and its trigger starts
+it (cb-98u)."
+  (let (armed)
+    (dolist (agent agents)
+      (let ((name (cerebro-agent-name agent)))
+        (when (member name names) (push name armed))))
+    (nreverse armed)))
+
+(defun cerebro--autostart-message (results &optional armed)
+  "The one echo line for RESULTS and ARMED, or nil when both are empty.
+
+A roster that declares neither word says nothing at all: every consumer
 that has not adopted the column sees no new line on `M-x cerebro\='.
 
 The started half is a plain comma list because each item may carry a
 parenthesis; the already-up half reads as English (\"Beast and Psylocke\"),
-being a list of bare names.  Both keep roster order."
-  (when results
+being a list of bare names, and so does ARMED - what `cerebro--standby-arming\='
+returned, the names a `standby\=' row armed without starting (cb-98u).  All
+three keep roster order."
+  (when (or results armed)
     (let* ((split (cerebro--autostart-names-and-skipped results))
            (started (car split))
            (skipped (cdr split))
@@ -2213,8 +2229,10 @@ being a list of bare names.  Both keep roster order."
            (tail (when skipped
                    (format "; %s %s already up"
                            (cerebro--english-list skipped)
-                           (if (cdr skipped) "are" "is")))))
-      (concat "cerebro: " head (or tail "")))))
+                           (if (cdr skipped) "are" "is"))))
+           (armed-tail (when armed
+                         (format "; armed %s" (cerebro--english-list armed)))))
+      (concat "cerebro: " head (or tail "") (or armed-tail "")))))
 
 (defun cerebro--english-list (names)
   "NAMES joined with commas and a final \" and \"."
@@ -2305,7 +2323,7 @@ is built from whatever agent is being shown, not from any one buffer.
 Cleared for a name by `cerebro--launch' the moment a new session for it is
 started, so a stale line never survives past the run that produced it.")
 
-(defun cerebro--placeholder (agent &optional retry-left failures)
+(defun cerebro--placeholder (agent &optional retry-left failures roster-armed trigger-label)
   "The detail-window text for AGENT when it has no live view.
 
 A dead agent with a recorded abnormal exit (`cerebro--last-exit') shows the
@@ -2320,7 +2338,15 @@ than leaving the navigator to read it off the row (cb-hzs).  They are
 passed in rather than read here because they are buffer-local to the fleet
 buffer and this runs from whatever buffer is showing.  A standby *role*
 keeps the plain line: its kept buffer is what `RET' shows, and this is only
-reached once that has been killed."
+reached once that has been killed.
+
+ROSTER-ARMED and TRIGGER-LABEL describe the one role that has a standby row
+and no pass behind it: one `.cerebro/roster.conf' armed with the `standby'
+word (cb-98u).  There is no kept buffer to show and nothing went wrong, so
+the plain line would leave the navigator to work out why a row that has
+never run says standby.  TRIGGER-LABEL is the row's own For column; empty
+for a role this view has no trigger rule for, which is a different sentence
+because `s' is then the only thing that starts it."
   (let* ((name (cerebro-agent-name agent))
          (last (alist-get name cerebro--last-exit nil nil #'equal)))
     (cond
@@ -2338,6 +2364,16 @@ reached once that has been killed."
                       " bead; the view starts it again %s.\nPress s to start it now,"
                       " k to leave it down.")
               name (cerebro--retry-when (or retry-left 0) (or failures 0))))
+     ((and (eq (cerebro-agent-state agent) 'standby)
+           (eq (cerebro-agent-kind agent) 'interactive)
+           roster-armed)
+      (if (and trigger-label (not (string-empty-p trigger-label)))
+          (format (concat "%s is not running.\nroster.conf arms it: the view starts it when its own"
+                          " trigger fires (%s).\nPress s to start it now, k to leave it down.")
+                  name trigger-label)
+        (format (concat "%s is not running.\nroster.conf arms it, but this role has no trigger: it is"
+                        " started with s only.\nPress s to start it, k to leave it down.")
+                name)))
      (last
       (format "%s is not running.\nIts last session ended with:\n  %s\nPress s to start it."
               name last))
@@ -2704,6 +2740,24 @@ would only replace the roster\='s own line with a worse one."
             (split-string (buffer-string) "\n" t "[ \t\r]+"))))
     (error nil)))
 
+(defun cerebro--standby-names (repo-root)
+  "The names `scripts/roster --standby\=' lists in REPO-ROOT, in file order.
+
+The other half of `cerebro--autostart-names\=' (cb-98u): a `standby\=' row says
+arm this agent without starting it, so the row reads `standby\=' from the
+moment the buffer comes up and the role\='s own trigger is what starts it.
+
+nil when the script refuses, or cannot be run at all, for the reason that
+one gives: `cerebro--fleet\=' has already read the same script for the same
+render, so a refusal has been reported once already."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((status (call-process (expand-file-name (cerebro--script "roster") repo-root)
+                                    nil t nil "--standby")))
+          (when (eq status 0)
+            (split-string (buffer-string) "\n" t "[ \t\r]+"))))
+    (error nil)))
+
 (defun cerebro--roster (repo-root)                 ; keeps its name and both callers
   "The implementer names, in roster order."
   (cerebro--fleet-roster (cerebro--fleet repo-root)))
@@ -2975,7 +3029,19 @@ the row itself is the live figure."
          (failures (or (cdr (assoc name cerebro--failed-starts)) 0))
          (left (cerebro--retry-wait failures (cdr (assoc name cerebro--started-at))
                                     (float-time)))
-         (text (cerebro--placeholder agent left failures))
+         ;; A parked entry with no STARTED-AT is one only arming writes:
+         ;; `cerebro--park-session' always records the start it is ending, so
+         ;; a role whose kept buffer was killed keeps today's plain line.
+         (roster-armed (let ((entry (cdr (assoc name cerebro--parked))))
+                         (and entry (null (nth 1 entry)))))
+         ;; One panel read per `RET', not per tick - which is what
+         ;; `cerebro--standby-label's "deliberately cheap" docstring allows.
+         (trigger-label
+          (and roster-armed
+               (cerebro--standby-label
+                agent (cerebro--agent-context
+                       agent (cerebro--trigger-context (cerebro--repo-root) (current-time))))))
+         (text (cerebro--placeholder agent left failures roster-armed trigger-label))
          (buffer (get-buffer-create (cerebro--placeholder-buffer-name agent))))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
@@ -3293,9 +3359,13 @@ is what keeps the echo line in roster order.
 Each launch is wrapped in `with-demoted-errors\=', as `cerebro--supervise\='
 does: one launcher that cannot start must not stop the others."
   (with-current-buffer buffer
-    (let ((names (cerebro--autostart-names repo-root)))
-      (when names
+    (let ((names (cerebro--autostart-names repo-root))
+          (standby (cerebro--standby-names repo-root)))
+      (when (or names standby)
         (if (not (cerebro--vterm-available-p))
+            ;; And nothing is ARMED either: `cerebro--start-due' is gated on
+            ;; vterm, so an armed name would show a row promising a trigger
+            ;; that cannot fire (cb-98u).
             (cerebro--report-error
              "autostart" "vterm is not installed, so nothing was autostarted")
           (let ((owned (cerebro--owned))
@@ -3311,9 +3381,34 @@ does: one launcher that cannot start must not stop the others."
                       (when (memq action '(launch launch-clearing-flag))
                         (cerebro--launch agent)))
                     (push (cons name action) results)))))
-            (cerebro--list-render buffer)
-            (let ((line (cerebro--autostart-message (nreverse results))))
-              (when line (message "%s" line)))))))))
+            ;; Arming is the other half of the same declaration (cb-98u): the
+            ;; name goes on `cerebro--armed', and a parked entry gives its
+            ;; trigger a moment to count from - ENDED-AT now, no STARTED-AT
+            ;; (it has never started), no kept buffer. Without that entry a
+            ;; cadence role would never fire at all, and Moira's `gh' trigger
+            ;; would count every open issue as moved and start her at once.
+            (let ((armed (cerebro--standby-arming cerebro--agents standby)))
+              (dolist (name armed)
+                (cl-pushnew name cerebro--armed :test #'equal)
+                ;; `unless': a kept buffer from a session this Emacs ended
+                ;; earlier is the record of a real pass and outranks this.
+                (unless (assoc name cerebro--parked)
+                  (setf (alist-get name cerebro--parked nil nil #'equal)
+                        (list (float-time) nil nil)))
+                (cerebro--log repo-root 'arm
+                              (list (cons 'agent name)
+                                    (cons 'role (cerebro--agent-role-named name))
+                                    (cons 'by "roster"))))
+              ;; The render runs AFTER arming: `cerebro--apply-standby' is
+              ;; what turns an armed, dead row into `standby'.
+              (cerebro--list-render buffer)
+              (let ((line (cerebro--autostart-message (nreverse results) armed)))
+                (when line (message "%s" line))))))))))
+
+(defun cerebro--agent-role-named (name)
+  "The role NAME holds in `cerebro--agents\=', or nil when it holds none."
+  (let ((agent (seq-find (lambda (a) (equal (cerebro-agent-name a) name)) cerebro--agents)))
+    (and agent (cerebro-agent-role agent))))
 
 (defun cerebro--stop-flag-path (repo-root name)
   "Where NAME's stop flag lives, as `orchestrator.md' documents it."
@@ -3531,7 +3626,7 @@ of days at `evaluations\=' and months at `changes\='."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire restart nudge standby refused exit sweep error)
+  '(start end retire restart nudge standby arm refused exit sweep error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 

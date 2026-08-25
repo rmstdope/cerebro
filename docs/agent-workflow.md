@@ -84,7 +84,9 @@ kept, `RET` shows it — and started fresh when its trigger fires: a planner whe
 short, a P0 is unplanned or (the first planner) a P4 wants ranking; Psylocke when a merged bead is
 unverified or a verdict is stale; Moira and Cypher when an issue or an outside PR moved on GitHub,
 and hourly regardless; Forge hourly too. A role you have not started this Emacs is never started: `s` (or
-`autostart` in `roster.conf`) arms it, `k` and `f` disarm it, and none of that is written to any
+`autostart` or `standby` in `roster.conf`) arms it — `standby` arms without starting, so the row
+reads `standby` from the moment the view opens and the trigger is what starts it — `k` and `f`
+disarm it, and none of that is written to any
 file. `cerebro-wake-intervals` is the floor between two starts of one role, changeable while the
 fleet runs — **the planners have none**: a short buffer is the fleet already idle, so they start on
 the next five-second tick. What keeps that from looping over a trigger no pass can clear is two
@@ -208,7 +210,9 @@ user-facing surface, so the queue keeps filling. It will not guess on your behal
 
 **You** start builders — one session each, `s` in the fleet view or `launch <Name>` in a
 terminal — unless their `.cerebro/roster.conf` line says `autostart`, in which case `M-x cerebro`
-starts them for you as it opens. There is no flag that puts a running implementer to work: **a running implementer is a
+starts them for you as it opens. `standby` is not a word an implementer row takes yet: the
+implementer trigger starts a standby implementer unconditionally, so it would be `autostart` with a
+five-second delay; `scripts/roster` refuses it until cb-1or gives implementers a wake condition. There is no flag that puts a running implementer to work: **a running implementer is a
 working one**, and it claims the next planned bead as soon as one exists. If you want another
 builder, start another session.
 

@@ -8,7 +8,7 @@ rather than a support for the rule.
 So the rules keep their claims and their costs, and this file keeps the provenance. **Nothing loads
 it.** It is read by a person asking "where did this rule come from", never carried into a session —
 if a prompt ever starts referencing it, the coupling it was written to remove has come back with
-worse structure. `scripts/lint` advises on both halves.
+worse structure.
 
 Ids are from one of two bead databases: `ah-` from `atlantis-hud`, the consumer cerebro grew up
 in, and `cb-` from this repository's own board, since cb-i3l.1 made it a consumer of itself.

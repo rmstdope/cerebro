@@ -5,8 +5,8 @@
 # and nothing else on stdout. A usage error prints no answer at all, so a mistake can never be
 # read as "skip".
 #
-# The list it encodes is a decision - which paths no suite opens - and decisions are advisories
-# (scripts/lint check 12), not tests. What is under test here is the bash the script is: which
+# The list it encodes is a decision - which paths no suite opens - and decisions are not tested
+# here, nor anywhere else since the lint was removed. What is under test is the bash the script is: which
 # stream carries what, its fail-safe on an empty diff, and that it names the path that reached the
 # gate. The stdout assertions are exact comparisons on purpose: one extra line would be appended to
 # $GITHUB_OUTPUT, whose parser is not this suite's to guess at.

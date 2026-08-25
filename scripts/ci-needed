@@ -20,7 +20,9 @@
 #
 # The skip list is a decision, and the reason lives beside each entry below. It is deliberately
 # small: a wider list buys nothing, and each entry is one more thing a future suite can silently
-# start reading. `scripts/lint' check 12 advises when one does.
+# start reading. NOTHING checks that any more: a suite that starts reading one of these paths
+# makes a green pull request that should have been red, so it must edit this list in the same pull
+# request.
 #
 # NOT under `tests/': the gate's suite loop is `tests/*.sh', and nothing under tests/ may be a
 # script whose stdout is an answer - the loop would run it as a suite. Its suite is
@@ -49,7 +51,7 @@ while IFS= read -r path; do
       # Nothing in tests/, tests/gate or emacs/*.el opens anything else under docs/.
       ;;
     README.md)
-      # Read only by scripts/lint, which is advisory and never blocks a merge.
+      # Read by nobody: the reason, for whoever edits this list next.
       ;;
     LICENSE)
       # Read by nothing.

@@ -721,7 +721,6 @@ bd list --exclude-label planned --exclude-label human \
 bd update <id> --add-label planning:<your-name>
 bd dolt push                                       # publish it at once
 # ... research, decide, discuss, write ...
-.claude/cerebro/scripts/lint --plan plan.md            # every rule a plan can break, over its quoted blocks (see below)
 bd update <id> --design-file plan.md --add-label planned --remove-label planning:<your-name>
 bd dolt push                                       # or the release is invisible elsewhere
 ```
@@ -1183,23 +1182,14 @@ is theirs. What must not survive this pass:
 - a user-visible string that is described rather than quoted;
 - a named file, function or type you have not verified;
 - an acceptance criterion that cannot be checked by running something or by looking at something
-  specific.
-
-**Then run the one check that is mechanical, and do not ship on a red one:**
-
-```bash
-.claude/cerebro/scripts/lint --plan plan.md
-```
-
-It runs every pattern rule the tree lint holds — a bead id or the provenance file's name in agent
-prose, one project's vocabulary or audience word, a `docs/` path quoted into a suite, a
-`work-beads` call with no `--status`, and the rest — over the plan's fenced blocks and
-blockquotes, each against the files the rule covers, judged by the last repository path the plan
-named before the block. A hit names the rule and the line. Your *Context* may cite beads and paths
-freely — the check reads blocks and quotes only — so a hit means: rewrite that block so it ships as
-written, and say the cost instead of naming the bead. Three plans in a row told an implementer to
-write an id into agent prose, and three implementers paid a cycle each to find out; five
-retrospectives record the wider family.
+  specific;
+- **a block an agent will paste that quotes a bead id, a provenance file, one project's vocabulary
+  or one project's audience word.** Your *Context* may cite beads and paths freely — it is read by
+  the implementer, not shipped. A fenced block or a blockquote is different: it becomes prose an
+  agent in every consumer reads, and can check none of. Rewrite it so it ships as written, and say
+  the cost instead of naming the bead. Three plans in a row told an implementer to write an id into
+  agent prose, and three implementers paid a cycle each to find out; five retrospectives record the
+  wider family. This was a mechanical check until it was removed — it is now yours to make.
 
 **A plan that reads well and specifies nothing is the failure mode**, and it is a comfortable one to
 produce because it is much shorter. If this pass finds nothing at all, you have almost certainly

@@ -43,10 +43,6 @@ jobs:
           # in the pipe. Do not append anything after it.
           printf '%s\n' "$changed" | bash scripts/ci-needed >> "$GITHUB_OUTPUT"
 
-      - name: Lint (advisory, never blocks)
-        continue-on-error: true
-        run: bash scripts/lint
-
   emacs-28:
     name: ERT (Emacs 28.2)
     runs-on: ubuntu-latest

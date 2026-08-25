@@ -52,7 +52,7 @@
 # the glob strings printed here are relative to wherever the caller stood.
 #
 # NOT `scripts/suite-runner.sh'. Nothing under scripts/ is globbed as a suite, but the name follows
-# tests/gate, scripts/lint and scripts/ci-needed - bare names whose header says what they are. And
+# tests/gate and scripts/ci-needed - bare names whose header says what they are. And
 # NOT `scripts/run-suites' either: `scripts/run-*' is the retired launcher-shim namespace that
 # tests/launchers.sh and tests/consumer-fixture.sh both guard (ah-qled.5.3), and a script that is
 # not a launcher has no business in it.

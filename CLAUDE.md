@@ -54,8 +54,8 @@ ranked later with the navigator; a bead is planned in one session and implemente
 
 The board syncs through the Dolt remote rather than through git — a clone gets the code, `bd sync`
 gets the work. That is deliberate, not an omission (cb-4yo): no `.beads/*.jsonl` snapshot is
-tracked, the root `.gitignore` keeps a stray `bd export` out of every commit, and
-`scripts/lint` advises on it. Reading the board means `bd sync`, never browsing git.
+tracked, and the root `.gitignore` keeps a stray `bd export` out of every commit. Reading the
+board means `bd sync`, never browsing git.
 
 ## Development practices
 
@@ -63,16 +63,16 @@ tracked, the root `.gitignore` keeps a stray `bd export` out of every commit, an
 - Code is written test-first. That is not a style preference here: the two suites are the only thing
   that can tell a change to this harness from a change that quietly breaks every consumer, since
   almost nothing in this repository executes in this repository.
-- **Tests assert behaviour; decisions are advisories.** A test here exercises the code this
-  repository ships — the elisp in `emacs/` and the bash in `scripts/`. Prose and configuration are
-  not code: an agent file, a skill file, a declaration file gets no test, because a suite that
-  greps prose fails on the day somebody changes their mind rather than on the day something breaks
-  (cb-194 — one line added to the roster turned the gate red in three places). The decisions worth
-  guarding live in `scripts/lint`, which runs at the end of `tests/gate` and as a
-  `continue-on-error` step in CI, and **never blocks a merge**. An advisory that fires on a
-  deliberate change means: update `scripts/lint` in the same pull request. `tests/lint.sh` tests
-  the lint's mechanics and never that this tree is clean: a firing advisory is not a red suite, on
-  `main` or in CI (cb-ypx).
+- **Tests assert behaviour, and nothing else is checked mechanically.** A test here exercises the
+  code this repository ships — the elisp in `emacs/` and the bash in `scripts/`. Prose and
+  configuration are not code: an agent file, a skill file, a declaration file gets no test, because
+  a suite that greps prose fails on the day somebody changes their mind rather than on the day
+  something breaks (cb-194 — one line added to the roster turned the gate red in three places).
+  These decisions were guarded by an advisory `scripts/lint` for a while, and that is gone too: over
+  its whole life it fired on no tree and in no CI run, while a quarter of the commits in that period
+  edited it. **So the invariants in this file are kept by reading it, not by a grep.** Anything
+  that matters enough to guard mechanically is worth restating as behaviour, in a suite, over code —
+  and a class of defect earns a check the *second* time it happens, not the first.
 - A change to a role's agent file or skill changes how the fleet behaves in every consumer. Say so
   in the bead, and keep the invariants above consistent with each other.
 - Prefer the simple design; say so when you decline a more general one.
@@ -129,15 +129,9 @@ Every suite sources `tests/lib/consumer.sh` for `fail`/`pass`, `git_q`, its work
 two throwaway-consumer shapes (`consumer_new`, `consumer_with_submodule`); `tests/lib/` is a
 directory precisely so the gate's `tests/*.sh` glob never runs it as a suite (cb-dul). A suite keeps
 its own assertions and any fixture that is not a consumer — a worktree fabricator, a corpus
-directory, the linted inputs. The library installs the one EXIT trap, so a suite adds to it with
+directory. The library installs the one EXIT trap, so a suite adds to it with
 `cleanup_add` rather than writing a `trap` that would silently replace it, and does its own killing
 in a `suite_cleanup` the trap calls first. `tests/consumer-lib.sh` is the library's own suite.
-
-The advisory lint — the prose and configuration decisions, reported but never blocking:
-
-```bash
-bash scripts/lint            # exit 0 clean, 1 when an advisory fired, 2 on a bad root
-```
 
 A rule whose grep or awk fails is itself an advisory naming the rule and the step, never an `ok`
 line — `|| true` could not tell a no-match from a grep that never ran (cb-u5e).
@@ -151,8 +145,10 @@ place that list lives, with the reason beside each entry, and the three required
 *skipped*, which GitHub counts as green (cb-ypx). The predicate answers on stdout, in
 `$GITHUB_OUTPUT`'s own `run=true|false` shape, so the workflow appends it unread and a crashed
 predicate is a red step rather than a skipped one. Anything else runs the whole matrix, and a push
-to `main` always does. `scripts/lint` check 12 advises when a suite starts reading a path on that
-list. The two ERT jobs are literal, not a matrix, because a skipped matrix job never expands into
+to `main` always does. **Nothing checks that list against what the suites actually open** — a new
+suite that starts reading a path on it makes a green pull request that should have been red, so a
+suite that reads `docs/`, `README.md`, `LICENSE` or `models.conf.example` must edit
+`scripts/ci-needed` in the same pull request. The two ERT jobs are literal, not a matrix, because a skipped matrix job never expands into
 the per-version check names branch protection requires.
 
 Sync symlinks into a consumer repo (run from that repo, not this one):
@@ -376,8 +372,7 @@ it makes a dead planner look alive, which strands the very label the reclaim loo
 It is the bash copy of `cerebro--session-args-p` — pid, name and root — and both are held to one
 case table, `tests/lib/session-args.cases`, which `tests/agent-alive.sh` and `emacs/cerebro-test.el`
 both run in full, so a case added on either side fails the other until both answer it (they drifted
-twice before the table existed: `7bd5962`, `9420ff2`; lint check 16 advises if either suite stops
-reading it).
+twice before the table existed: `7bd5962`, `9420ff2`).
 
 ## Gotchas
 
@@ -399,8 +394,8 @@ reading it).
   update --init --recursive`, which `launch-preflight` runs, has no fixed point on a repository that
   contains itself. **One script knows about the mount**: `consumer-root`, whose
   `mount_resolves_to` is the round trip through it, exposed as `--self-mounted` and `--mount`;
-  `roster` and `sync-symlinks.sh` ask it (cb-akc), and `scripts/lint` advises if the round trip is
-  ever spelled anywhere else. `prune-worktrees.sh` is the documented exception and keeps its git-dir
+  `roster` and `sync-symlinks.sh` ask it (cb-akc), and nothing else spells the round trip.
+  `prune-worktrees.sh` is the documented exception and keeps its git-dir
   comparison: it asks whether the mount and the consumer are **one repository**, so that one
   `git worktree list` covers both, and that parts company with the round trip for a vendored plain
   copy at the standard mount — where the mount is an ordinary directory of the consumer's own repo. A worktree carries the same committed

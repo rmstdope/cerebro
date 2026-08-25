@@ -1505,6 +1505,25 @@ having planned - so a blocked bead is a planner\='s work like any other."
   :type '(repeat string)
   :group 'cerebro)
 
+(defcustom cerebro-planner-buffer-floor 2
+  "The fewest planned, unclaimed beads the fleet wants, whatever is running.
+
+`skills/plan-bead\=' sizes the buffer at one planned bead per running
+implementer and never fewer than this, including a fleet with nothing
+running at all: the navigator starts an implementer expecting it to have
+something to claim, and a queue that begins filling only once it is up is a
+queue that is late.
+
+The shell-side owner of the whole rule - this floor and
+`cerebro-parked-labels\=' both - is `scripts/planner-buffer\=', which the
+skill calls instead of restating a query.  This copy exists because
+`cerebro--trigger-context\=' is evaluated once per standby row per
+five-second tick and cannot afford a subprocess;
+`cerebro-test/the-trigger-counts-what-planner-buffer-counts\=' is what keeps
+the copy honest."
+  :type 'integer
+  :group 'cerebro)
+
 (defun cerebro--actionable-beads (beads)
   "Pure.  BEADS minus the ones parked in the navigator\='s queue.
 
@@ -1514,6 +1533,14 @@ know."
                 (seq-intersection (cerebro--bead-labels bead) cerebro-parked-labels
                                   #'equal))
               beads))
+
+(defun cerebro--planner-want (live-implementers)
+  "Pure.  How many planned, unclaimed beads the fleet wants right now.
+
+One per running implementer, never fewer than `cerebro-planner-buffer-floor\='.
+The shell copy is `scripts/planner-buffer --want\='; see that script and the
+floor\='s docstring for why there are two."
+  (max cerebro-planner-buffer-floor live-implementers))
 
 (defun cerebro--trigger-fingerprint (role context)
   "Pure.  Everything ROLE\='s condition rules read out of CONTEXT, or nil.
@@ -1616,8 +1643,12 @@ is merely waiting for it."
                 ;; two - a fleet with nothing running is started by the
                 ;; navigator, and starting one to find an empty queue is the
                 ;; one case a buffer cannot recover from in time. A pass
-                ;; plans one bead, so a buffer two short is two passes.
-                (want (max 2 (alist-get 'live-implementers context))))
+                ;; plans one bead, so a buffer two short is two passes. An
+                ;; implementer told to finish is not running for this
+                ;; purpose: it takes no further bead
+                ;; (`cerebro--trigger-context' excludes it). The rule's shell
+                ;; copy, which the skill calls, is `scripts/planner-buffer'.
+                (want (cerebro--planner-want (alist-get 'live-implementers context))))
             (cond
              ;; A P0 is planned the moment it appears, whichever planner sees
              ;; it: it is what the whole fleet is blocked behind.
@@ -1715,7 +1746,7 @@ floor that has half a minute left to run is not worth a different word."
          (cadence (cdr (assoc role cerebro-cadence-triggers))))
     (cond
      ((equal role "planner")
-      (format "→ buffer < %d" (max 2 (alist-get 'live-implementers context))))
+      (format "→ buffer < %d" (cerebro--planner-want (alist-get 'live-implementers context))))
      ((equal role "verifier") "→ merged, unverified")
      (cadence
       (concat (cerebro--countdown
@@ -4031,7 +4062,6 @@ is a *resolver* - a function of ENDED-AT returning what
 `cerebro--gh-moved\=' returns - which that one calls once per standby row.
 Nil before the first answer, and `failed\=' when the last thing to happen
 was a failure, are both plain values: neither depends on whose pass it is."
-  (ignore repo-root)
   (let* ((panel (cerebro--beads-panel-buffer))
          (beads (and panel (buffer-local-value 'cerebro--beads panel)))
          ;; What a planner may actually take, both sides of the buffer rule:
@@ -4056,10 +4086,19 @@ was a failure, are both plain values: neither depends on whose pass it is."
                 (mapcar (lambda (bead) (alist-get 'id bead)) unplanned))
           (cons 'merged-unverified (length merged))
           (cons 'stale-verdicts (seq-count #'cerebro--stale-verdict-p open-beads))
+          ;; An implementer told to finish is not running for this purpose:
+          ;; it finishes the bead it holds and retires, so a bead planned for
+          ;; it is a bead planned for nobody. `skills/plan-bead' has always
+          ;; skipped it and this count did not, which is one of the two
+          ;; drifts `scripts/planner-buffer' now owns the rule to prevent.
+          ;; One stat per implementer per tick, which is within what this
+          ;; docstring's "deliberately cheap" allows.
           (cons 'live-implementers
                 (seq-count (lambda (agent)
                              (and (eq (cerebro-agent-kind agent) 'implementer)
-                                  (not (eq (cerebro-agent-state agent) 'dead))))
+                                  (not (eq (cerebro-agent-state agent) 'dead))
+                                  (not (cerebro--stop-flag-p
+                                        repo-root (cerebro-agent-name agent)))))
                            cerebro--agents))
           (cons 'first-planner
                 (car (cerebro--fleet-role-names (cerebro--fleet repo-root) "planner")))

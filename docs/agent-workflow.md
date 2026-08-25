@@ -55,7 +55,8 @@ else derives from it: the fleet view, the launcher, and the state files.
 ## The fleet view is the console
 
 ```
-M-x cerebro
+.claude/cerebro/scripts/cerebro   # from a terminal, in a fresh Emacs
+M-x cerebro                       # in your own
 ```
 
 Everything below can be done from a terminal, and almost nobody does. The Emacs fleet view lists
@@ -166,7 +167,8 @@ What they divide, and how:
   state file, and says which it freed. Three beads sat stranded for a day before this existed. You
   can see them yourself in the fleet view: **Being planned** populated with both planner rows idle is
   the shape of it.
-- **The buffer**, by counting `planned` beads only — what an idle implementer could actually claim.
+- **The buffer**, by counting `planned` beads only — what an idle implementer could actually claim
+  (`scripts/planner-buffer --count` is the number both the planner and the fleet view are reading).
   Both planners may therefore fill at the same time, which is what a second planner is *for*; the
   overshoot is at most one bead each. Counting held beads too was tried and starved the queue: two
   held candidates were enough to make a small fleet's target look met, and both planners slept over a

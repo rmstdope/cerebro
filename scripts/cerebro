@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#
+# Opens the fleet view. The one script here meant for a person to type rather than for an agent
+# to call, from anywhere inside a consumer:
+#
+#     .claude/cerebro/scripts/cerebro
+#
+# It runs `emacs -L <mount>/emacs -l cerebro -f cerebro' in a fresh Emacs, cd'd to the consumer
+# root - that is what `cerebro--repo-root' climbs from - and exec's it, so nothing sits between
+# the terminal and Emacs.
+#
+# NEVER -q or -Q. vterm is how the fleet view holds live sessions and it comes from the
+# contributor's own init, so loading that init is the point of this script rather than an
+# oversight. `emacs --batch' has no init either, which is why it prints `vterm is not installed'.
+#
+# $EMACS names the binary to run, for a macOS user whose Emacs.app is not on PATH:
+#
+#     EMACS=/Applications/Emacs.app/Contents/MacOS/Emacs .claude/cerebro/scripts/cerebro
+#
+#   exit 0   never returns - Emacs replaces this process.
+#   exit 2   a usage error (any argument at all), not inside a consumer, this checkout has no
+#            emacs/cerebro.el, or no Emacs to run. One line on stderr each, the same shape
+#            `launch' and `launch-preflight' use.
+
+set -euo pipefail
+
+# Nothing is passed through: an argument after `-f cerebro' would be opened as a file, silently.
+if [[ $# -gt 0 ]]; then
+  echo "usage: cerebro (no arguments; run it from anywhere inside the consumer)" >&2
+  exit 2
+fi
+
+# -P (physical) throughout, as sync-symlinks.sh explains: consumer-root hands back physical paths
+# and the -L value below is compared against them.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+
+# The enclosing tree, exactly as sync-symlinks.sh takes it: the fleet view reads the shared
+# checkout's state itself, so the enclosing tree is the right one to open on.
+consumer="$("$SCRIPT_DIR/consumer-root" 2>/dev/null)" || {
+  echo "cerebro: not inside a consumer - run this from a repository that mounts cerebro at .claude/cerebro" >&2
+  exit 2
+}
+
+# A vendored partial copy: refuse here rather than letting `-l cerebro' fail with a backtrace.
+if [[ ! -f "$SOURCE_ROOT/emacs/cerebro.el" ]]; then
+  echo "cerebro: $SOURCE_ROOT/emacs/cerebro.el is missing - this checkout of cerebro has no fleet view" >&2
+  exit 2
+fi
+
+emacs_bin="${EMACS:-emacs}"
+if ! command -v "$emacs_bin" >/dev/null 2>&1; then
+  echo "cerebro: emacs is not on PATH - install Emacs, or set EMACS to its binary" >&2
+  exit 2
+fi
+
+# cd first, so the initial buffer's `default-directory' is the consumer root - what
+# `cerebro--repo-root' climbs from, and what any vterm the view opens inherits. The -L value is
+# absolute, so the command is correct from a subdirectory and for a submodule mounted elsewhere.
+cd "$consumer"
+exec "$emacs_bin" --no-splash -L "$SOURCE_ROOT/emacs" -l cerebro -f cerebro

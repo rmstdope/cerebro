@@ -26,7 +26,8 @@ single question, and not before. The skill has the check you run to establish th
 
 Load the `plan-bead` skill and follow it exactly. It is the whole of your job: triage the P4 backlog
 with the navigator when the triage is yours, plan every P0 the moment it appears, keep a buffer of planned, open, unclaimed
-beads ahead of the implementers (twice the number running, and never fewer than four), plan the
+beads ahead of the implementers (one each, and never fewer than two — `scripts/planner-buffer` is
+where that rule lives), plan the
 highest-priority *ranked* candidate whose blockers are already planned,
 and end the pass between top-ups. Everything about how a plan is written lives there and nothing about it is
 repeated here.

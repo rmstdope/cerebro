@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Cerebro is an **AI harness**, not an application: agent definitions, skills, docs, a sync script, and
 an Emacs fleet viewer. It is consumed by other repositories as a git submodule at `.claude/cerebro`,
 whose `scripts/sync-symlinks.sh` symlinks the skills and agents into the consumer's discovery paths,
-and `templates/consumer-dir-locals.el` in as the consumer's root `.dir-locals.el` so that `M-x
-cerebro` exists for everyone working in that repository.
+and `scripts/cerebro` opens the fleet view (`M-x cerebro`, in a fresh Emacs) for everyone working in
+that repository.
 
 Almost nothing here executes in this repository. The agents and skills describe a workflow that runs
 in a *consumer* repo, and the launchers in `scripts/` only make sense from a consumer root, where
@@ -167,7 +167,9 @@ planner`), which is the one place a name and a role stop being interchangeable:
   plans a Sonnet agent could build unattended. Decide architecture themselves; take every
   user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
   builders, sized from how many are running (one each, never fewer than two) and refilled one bead
-  per pass, with no wake interval to wait out. They divide
+  per pass, with no wake interval to wait out — the rule itself lives in `scripts/planner-buffer`,
+  which the skill calls and `cerebro-test/the-trigger-counts-what-planner-buffer-counts` holds the
+  fleet view to. They divide
   the work through the `planning:<name>` label alone, and a whole split family through a
   `planner:<name>` label on its parent — taken before research and pushed at once (after the
   state file names the bead, which is what makes an abandoned label safe to tell apart from a held
@@ -274,8 +276,8 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 
 ## emacs/cerebro.el
 
-`M-x cerebro` lists the fleet (every agent on `scripts/roster` — the interactive roles first, then
-the implementers) with state,
+`M-x cerebro` lists the fleet (`scripts/cerebro` opens it from a terminal) — every agent on
+`scripts/roster`, the interactive roles first, then the implementers — with state,
 current bead and elapsed time; `s` starts, `k` kills, `f` tells an implementer to finish (writes its
 stop flag; the bead in flight is unaffected), `RET` focuses the detail window. Emacs 28+, no
 dependencies except optional **vterm** for live sessions.
@@ -404,6 +406,12 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state`: it
   prints nothing and the exit status is the whole answer, since it runs once per agent on every
   planner pass.
+- `scripts/planner-buffer` is the one place the planner buffer rule is answered for the shell —
+  the excluded labels, the floor, the planned count and the wanted number. The elisp trigger keeps a
+  pure copy of the predicate (`cerebro-parked-labels`, `cerebro-planner-buffer-floor`,
+  `cerebro--planner-want`) because it runs every five seconds and may not spawn a process; the ERT
+  contract test is what keeps the copy honest. It counts an implementer told to finish as not
+  running — it takes no further bead — which is one of the two drifts the split had already caused.
 - `scripts/app-paths` is the one place "which paths are this project's application" is answered
   (ah-qled.6) — the `app_paths` key, and `--classify <path>...` over changed paths. Unlike every
   other reader here it **fails when it does not know**: no declaration means exit 3 and a line on
@@ -428,11 +436,9 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   the one place "how is this checkout mounted in it" is answered — `--self-mounted` and `--mount`.
 - `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
   asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a
-  submodule-bump PR commit them (ah-cuc). It writes one link outside `.claude/`: the consumer's root
-  `.dir-locals.el`, pointing at `templates/consumer-dir-locals.el`, which is what makes `M-x cerebro`
-  available to every contributor without one of them editing their init. It is the one file the sync
-  **may not merge** — Emacs reads exactly one per directory — so a consumer that already has one, or
-  that has pointed that path at something of its own, keeps it and gets a line on stderr instead.
+  submodule-bump PR commit them (ah-cuc). It writes nothing outside `.claude/` (cb-pq4): the
+  `.dir-locals.el` it used to install is gone, and the one thing it does at the consumer root is
+  remove a link to the retired template, out loud.
   The two git hooks ask git directly (`--show-toplevel`) rather than `consumer-root`: a hook's cwd
   is already inside the tree it fires in, so the enclosing tree is `--show-toplevel` by definition.
 - `githooks/install.sh` sets `core.hooksPath`, which is repository-wide and replaces `.git/hooks`

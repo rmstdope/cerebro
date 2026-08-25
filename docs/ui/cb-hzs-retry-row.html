@@ -1,0 +1,44 @@
+<!doctype html><meta charset="utf-8"><title>cb-hzs — the chosen row (Option A, cb-eat rule)</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:13px;margin:14px 0 4px;color:#eee}
+.row{display:flex;gap:24px;flex-wrap:wrap}.panel{padding:14px 18px;border:1px solid #333;min-width:64ch}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.5;white-space:pre}.hd{text-decoration:underline}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.s{color:#569cd6}.e{color:#f14c4c}.y{color:gold}
+.note{color:#eee;max-width:100ch;background:#333;padding:8px 12px;margin-top:16px}
+</style>
+<h1>cb-hzs — the chosen row: Option A wording, cb-eat rule for an abnormal exit</h1>
+<p class="note">Same fleet in every panel. Only the Cyclops row differs. The first panel is today (nothing happens). The next two are the two wordings for the For column while the view waits out the backoff (0s, 30s, 2m, 10m, 10m …). The last panel is the case where the session printed a reason on the way out (an abnormal exit): the cb-eat rule for roles is "dead with the line, until you press s" — question 1 asks whether implementers follow it.</p>
+<div class="row">
+<div class="panel dark"><h2>Today</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 2
+<span class="d">○</span> Cyclops        implementer   dead
+<span class="i">◆</span> Rogue          implementer   idle                  12m
+<span class="g">●</span> Storm          implementer   build      cb-9qm     5m 5m</pre>
+<h3>Cyclops stays dead until you press s.</h3></div>
+
+<div class="panel dark"><h2>Option A — "retry in", with the count</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 2
+<span class="s">◌</span> Cyclops        implementer   standby               ↻ retry in 2m, 3 failed
+<span class="i">◆</span> Rogue          implementer   idle                  12m
+<span class="g">●</span> Storm          implementer   build      cb-9qm     5m 5m</pre>
+<h3>… and on the tick it is due, then the launch:</h3><pre><span class="s">◌</span> Cyclops        implementer   standby               ↻ retry now, 3 failed
+<span class="i">◆</span> Cyclops        implementer   idle                  4s</pre>
+<h3>First death (no failures yet): comes back on the next tick, so the row reads</h3><pre><span class="s">◌</span> Cyclops        implementer   standby               ↻ retry now</pre></div>
+
+<div class="panel dark"><h2>Option B — "back in", no count on the row</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 2
+<span class="s">◌</span> Cyclops        implementer   standby               ↻ back in 2m
+<span class="i">◆</span> Rogue          implementer   idle                  12m
+<span class="g">●</span> Storm          implementer   build      cb-9qm     5m 5m</pre>
+<h3>… and on the tick it is due:</h3><pre><span class="s">◌</span> Cyclops        implementer   standby               ↻ back now</pre>
+<h3>The count lives only in the log (`failed_starts`) and behind RET.</h3></div>
+
+<div class="panel dark"><h2>Abnormal exit (a reason was printed) — the cb-eat rule applied to implementers</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 2
+<span class="d">○</span> Cyclops        implementer   dead                  <span class="e">✗ main has 1 commits origin/main does not - push or reset…</span>
+<span class="i">◆</span> Rogue          implementer   idle                  12m
+<span class="g">●</span> Storm          implementer   build      cb-9qm     5m 5m</pre>
+<h3>Stays dead until s. The alternative (question 1, "always retry") shows the same red line in the For column but on a standby row, and keeps trying on the backoff.</h3></div>
+</div>
+<p class="note">Cost of A over B: about 12 more columns on the row, and a number that changes every retry. Benefit: a launcher refused all morning is visible as "3 failed … 9 failed" without opening the log. `k` on either standby row disarms it (same as a role: stay down). `s` starts it now and resets the count.</p>

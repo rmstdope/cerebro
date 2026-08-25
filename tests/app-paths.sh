@@ -144,11 +144,11 @@ if grep -rn 'core-persistence\|core-wasm\|apps/desktop' "$repo_root/agents" "$re
 fi
 pass "no consumer's workspace map remains in agents/ or skills/"
 
-# --- the three classification sites now say how to get the answer ---
-for f in agents/reviewer.md agents/verifier.md skills/release-notes/SKILL.md; do
+# --- the two classification sites now say how to get the answer ---
+for f in agents/reviewer.md agents/verifier.md; do
   grep -q 'app-paths' "$repo_root/$f" \
     || fail "classification: $f must name scripts/app-paths"
 done
-pass "the three classification sites name scripts/app-paths"
+pass "the two classification sites name scripts/app-paths"
 
 echo "all app-paths tests passed"

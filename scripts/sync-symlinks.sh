@@ -94,6 +94,20 @@ sync_links() {
     updated=$((updated + 1))
   done
 
+  # A link this script wrote for a skill or agent the mount no longer ships dangles after a
+  # submodule bump. Remove it, and say so - but ONLY a link that points into the mount: a
+  # consumer's own link to somewhere else is not this script's, dangling or not.
+  local prefix="$REL_SOURCE/$(basename "$source_dir")/"
+  local link link_target
+  for link in "$dest_dir"/*; do
+    [[ -L "$link" ]] || continue
+    link_target="$(readlink "$link")"
+    [[ "$link_target" == "$prefix"* ]] || continue
+    [[ -e "$link" ]] && continue          # -e follows the link: the source is still there
+    rm "$link"
+    echo "Removed stale $label link: $link (its source is gone from the mount)"
+  done
+
   echo "Synced $updated $label link(s) from $source_dir to $dest_dir"
 }
 

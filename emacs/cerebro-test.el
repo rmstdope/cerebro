@@ -290,6 +290,54 @@ passes one passes the other, for every row of this table."
     (should (eq (cerebro-agent-state xavier) 'up))
     (should (cerebro-agent-external xavier))))
 
+(ert-deftest cerebro-test/a-scan-older-than-a-park-cannot-speak-for-that-role ()
+  "The view killed it; a snapshot from before that does not get a vote.
+
+Between `waiting\=' and `standby\=' a parked role showed `up\=', external, for a
+few seconds, and `RET\=' on it offered \"running outside Emacs - use the
+terminal that started it\" for a session this Emacs had just ended itself.
+`cerebro--park-session\=' removes the `cerebro--sessions\=' entry and the state
+file, so the row falls through to the process scan - which is cached for
+`cerebro-system-scan-seconds\=' and still held the dead session\='s arguments.
+Reading `up\=' also kept it out of the `dead\=' -> `standby\=' conversion, so the
+row the navigator wanted was the one thing it could not become."
+  (let ((parked '(("Beast" 1000.0 900.0 nil) ("Xavier" 500.0 400.0 nil))))
+    ;; Scanned before Beast was parked: the scan cannot speak for Beast, and
+    ;; still speaks for Xavier, parked long before it.
+    (should (equal (cerebro--scan-blind-to parked 950.0) '("Beast")))
+    ;; Scanned after both: it speaks for both again, which is what lets a
+    ;; session the navigator starts by hand show up.
+    (should (null (cerebro--scan-blind-to parked 1100.0)))
+    ;; No scan yet is no evidence about anybody.
+    (should (equal (sort (cerebro--scan-blind-to parked nil) #'string<)
+                   '("Beast" "Xavier")))))
+
+(ert-deftest cerebro-test/args-without-drops-only-the-named-role ()
+  (let ((args '("claude --agent planner --name Beast --remote-control Beast"
+                "claude --agent planner --name Xavier --remote-control Xavier")))
+    (should (equal (cerebro--args-without args '("Beast"))
+                   '("claude --agent planner --name Xavier --remote-control Xavier")))
+    (should (equal (cerebro--args-without args nil) args))
+    (should (null (cerebro--args-without args '("Beast" "Xavier"))))))
+
+(ert-deftest cerebro-test/a-parked-role-reads-dead-not-up-until-the-next-scan ()
+  "The whole chain: a stale scan, a park, and the row that results."
+  (let* ((args '("claude --agent planner --name Xavier --remote-control Xavier"))
+         (parked '(("Xavier" 1000.0 900.0 nil)))
+         (stale (cerebro--args-without args (cerebro--scan-blind-to parked 950.0)))
+         (fresh (cerebro--args-without args (cerebro--scan-blind-to parked 1100.0))))
+    ;; Scan older than the park: dead, which `cerebro--derive-standby' turns
+    ;; into the standby row the navigator is waiting for.
+    (should (eq (cerebro-agent-state
+                 (car (cerebro--derive nil cerebro-test--interactive nil
+                                       #'cerebro-test--never-alive stale nil)))
+                'dead))
+    ;; Scan newer than the park: believed again.
+    (should (eq (cerebro-agent-state
+                 (car (cerebro--derive nil cerebro-test--interactive nil
+                                       #'cerebro-test--never-alive fresh nil)))
+                'up))))
+
 (ert-deftest cerebro-test/derive-interactive-up-when-owned ()
   (let* ((agents (cerebro--derive nil cerebro-test--interactive nil
                                           #'cerebro-test--never-alive nil '("Xavier")))

@@ -284,6 +284,48 @@ cannot be established honestly."
                                  (if (and tagged (= pid file-pid)) " (state file)" "")))
                        ordered ", "))))
 
+(defun cerebro--scan-blind-to (parked scanned-at)
+  "Pure.  Names in PARKED the process scan taken at SCANNED-AT cannot speak for.
+
+A role the view parked after that snapshot was taken: the scan still holds
+the arguments of a session this Emacs has since killed, and `--name <Name>\='
+in a dead process\='s command line is exactly what the fallback in
+`cerebro--derive-interactive\=' reads as \"up, started outside this fleet\".
+
+That is what put a few seconds of `up\=' between `waiting\=' and `standby\=', with
+`RET\=' offering \"running outside Emacs - use the terminal that started it\"
+for a session the view had just ended itself.  Worse than cosmetic: `up\=' is
+not `dead\=', so `cerebro--derive-standby\=' could not turn it into the standby
+row that was the whole point of ending the pass.
+
+Self-expiring, and deliberately so.  The next scan is taken after the park,
+SCANNED-AT overtakes the park\='s `ended-at\=', and the name is believed again -
+by which time the process this is blind to has been killed and reaped.  A
+session the navigator really did start by hand seconds after a park is
+therefore late to appear rather than missing, which is the right way round:
+the view claiming somebody else\='s terminal is the error worth avoiding.
+
+SCANNED-AT nil - no scan yet in this buffer - is evidence about nobody, so
+every parked name is blind."
+  (let (names)
+    (dolist (entry parked (nreverse names))
+      (let ((ended (nth 1 entry)))
+        (when (or (null scanned-at) (null ended) (> ended scanned-at))
+          (push (car entry) names))))))
+
+(defun cerebro--args-without (args names)
+  "Pure.  ARGS minus every process whose command line names one of NAMES.
+
+The same shape as `cerebro--consumer-args\=': the scan is narrowed by dropping
+what it must not be read as saying, so `cerebro--derive-interactive\=' keeps
+one fallback and gains no parameter."
+  (if (null names)
+      args
+    (seq-remove (lambda (arg)
+                  (seq-some (lambda (name) (cerebro--name-in-args-p name (list arg)))
+                            names))
+                args)))
+
 (defun cerebro--derive-from-state (name role kind parsed owned-p)
   "Build one `cerebro-agent' for NAME from a live, parsed state file PARSED.
 
@@ -4201,11 +4243,17 @@ is where that is said."
          ;; whichever of them have none.
          (states (cerebro--gather-states
                   repo-root (append (mapcar #'car interactive) roster)))
-         ;; Machine-wide scan, narrowed to this consumer's own sessions: another
-         ;; checkout's fleet has the same names, and a name alone is not an
-         ;; identity across repositories (see `cerebro--consumer-args').
+         ;; Machine-wide scan, narrowed twice: to this consumer's own sessions,
+         ;; since another checkout's fleet has the same names and a name alone
+         ;; is not an identity across repositories (`cerebro--consumer-args');
+         ;; and then to what a snapshot this old is still entitled to say, since
+         ;; it may predate a park this view has made since
+         ;; (`cerebro--scan-blind-to').
          (procs (cerebro--consumer-processes (cerebro--cached-system-processes) repo-root))
-         (args (mapcar #'cdr procs))
+         (args (cerebro--args-without
+                (mapcar #'cdr procs)
+                (cerebro--scan-blind-to cerebro--parked
+                                        (cdr cerebro--system-processes-cache))))
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states

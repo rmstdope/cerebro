@@ -2324,6 +2324,11 @@ reached once that has been killed."
   (let* ((name (cerebro-agent-name agent))
          (last (alist-get name cerebro--last-exit nil nil #'equal)))
     (cond
+     ((cerebro-agent-unverified-pid agent)
+      (format (concat "Unverified: pid %d is running and names %s, but its command line carries no"
+                      " path under this checkout - showing the state file.\n%s is running outside"
+                      " Emacs - no live view. Use the terminal that started it.")
+              (cerebro-agent-unverified-pid agent) name name))
      ((cerebro-agent-external agent)
       (format "%s is running outside Emacs - no live view. Use the terminal that started it."
               name))

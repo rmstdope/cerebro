@@ -1070,6 +1070,22 @@ stale by definition."
                   (concat "Xavier is running outside Emacs - no live view. "
                           "Use the terminal that started it."))))
 
+(ert-deftest cerebro-test/placeholder-names-the-unverified-pid ()
+  "`RET' on an unverified row names the cause - the marker alone says
+something is off, never what (ah-ybsr). This branch must be checked before
+the `external' one: an unverified row also carries `:external t'
+\(`cerebro--derive-from-state' sets it from `(not owned-p)', and a session
+this Emacs started never reaches `unverified' - it is launched directly, not
+through the wrapper\), so without ordering it would fall into the plainer
+\"running outside Emacs\" wording instead."
+  (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working t)))
+    (setf (cerebro-agent-unverified-pid agent) 4242)
+    (should (equal (cerebro--placeholder agent)
+                    (concat "Unverified: pid 4242 is running and names Cyclops, but its command"
+                            " line carries no path under this checkout - showing the state file.\n"
+                            "Cyclops is running outside Emacs - no live view. Use the terminal"
+                            " that started it.")))))
+
 ;; ---------------------------------------------------------------------------
 ;; ah-bri: a session that dies before it gets going keeps its last line readable
 

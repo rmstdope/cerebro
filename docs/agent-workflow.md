@@ -42,7 +42,7 @@ there are twelve on the roster.
 | Agent | Role | Runs on | What it is for |
 |---|---|---|---|
 | **Xavier**, **Beast** | `planner` | Opus / high | Turn unplanned beads into plans an implementer can build unattended |
-| **Cerebro** | `orchestrator` | Opus / medium | Watches the fleet, reports on it, stops implementers, cuts releases |
+| **Cerebro** | `orchestrator` | Opus / medium | Watches the fleet, reports on it, stops implementers, hands a release request to the project's release skill |
 | **Moira** | `user-feedback` | Sonnet | Owns the GitHub issue inbox: acknowledges, triages into beads, keeps reporters told |
 | **Psylocke** | `verifier` | Sonnet | Puts merged work in front of you and records your verdict |
 | **Cypher** | `reviewer` | Opus / high | Reviews pull requests that came from outside the fleet |
@@ -237,8 +237,8 @@ locally. The orchestrator will say so if you ask for more, once, and then do as 
 
 ### The orchestrator
 
-**Cerebro** is one interactive session that watches the fleet, reports on it, stops implementers and
-cuts releases. It starts nothing — not even an implementer, because starting one means starting a
+**Cerebro** is one interactive session that watches the fleet, reports on it, stops implementers, and
+hands a release request to the project's own release skill. It starts nothing — not even an implementer, because starting one means starting a
 session, and only you can do that.
 
 ```bash
@@ -255,8 +255,8 @@ cut a minor release
 ```
 
 It is called Cerebro because it finds the mutants and points them at the work. Since the fleet view
-took over the timed sweeps, what is left for a Cerebro session is release cutting, diagnosing a stuck
-implementer, and anything needing a forced reassignment — which is why most days you will not run one
+took over the timed sweeps, what is left for a Cerebro session is handing a release request to the
+project's release skill, diagnosing a stuck implementer, and anything needing a forced reassignment — which is why most days you will not run one
 at all.
 
 ### What "take one down" means

@@ -49,9 +49,9 @@ that is kept by name because it is reset rather than merged.
 
 ## Stays with a session, started when wanted
 
-- **Release cutting** (`orchestrator.md`, "Cutting a release"). Judgement about what belongs in a
-  release, plus a long `gh run watch` — not a fixed decision table, and not something to compress
-  into a keybinding.
+- **Handing a release to the project's release skill** (`orchestrator.md`, "A release is the
+  project's skill"). The judgement about what belongs in a release, and the long watch on its build,
+  live in that skill, not here.
 - **Diagnosing a stuck implementer.** Reading a transcript, working out why an agent has gone quiet
   or is looping, is exactly the kind of open-ended reading a model does and a decision table cannot.
 - **Anything `bd update --force`-shaped.** Reassigning a claim, overriding a lease, anything the

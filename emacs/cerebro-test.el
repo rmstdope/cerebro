@@ -5558,6 +5558,146 @@ transition log, and the generations shift when the file passes its size."
     (should (null (cerebro--log nil 'start '((agent . "X")))))))
 
 ;; ---------------------------------------------------------------------------
+;; The error log: what went wrong, in a file the navigator can be pointed at
+
+(ert-deftest cerebro-test/an-error-is-logged-beside-the-decisions-not-among-them ()
+  "The question this answers is \"where do I look\" - so the answer is one
+short file rather than a needle in a hundred thousand evaluations.  Every
+other event keeps the file it has always had."
+  (should (equal (cerebro--log-basename 'error) "errors"))
+  (should (equal (cerebro--log-basename 'start) "decisions"))
+  (should (equal (cerebro--log-basename 'evaluate) "decisions"))
+  (should (string-suffix-p ".cerebro/state/errors.jsonl"
+                           (cerebro--log-file "/r" nil "errors")))
+  (should (string-suffix-p ".cerebro/state/errors.2.jsonl"
+                           (cerebro--log-file "/r" 2 "errors")))
+  ;; The default is still the decisions log, so every existing caller is
+  ;; unchanged by the base having become a parameter.
+  (should (string-suffix-p ".cerebro/state/decisions.jsonl"
+                           (cerebro--log-file "/r"))))
+
+(ert-deftest cerebro-test/an-error-is-written-at-every-verbosity-but-none ()
+  "An error is not a level of detail: `decisions' is a navigator asking for
+less noise, not for a fleet that fails silently.  `none' still means nothing
+at all - it is what the suite binds so ERT cannot append to the live log."
+  (dolist (verbosity '(decisions changes evaluations nonsense))
+    (should (cerebro--log-event-p 'error verbosity)))
+  (should-not (cerebro--log-event-p 'error 'none)))
+
+(ert-deftest cerebro-test/the-error-log-carries-what-went-wrong-and-where ()
+  "The writer, not just the decision: a line lands in `errors.jsonl', it names
+the part of the view the error came from, and the decisions log is left
+alone - the two are read for different questions."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-log-verbosity 'evaluations))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (cerebro--log-error root "autostart"
+                              "vterm is not installed, so nothing was autostarted")
+          (let ((parsed (cerebro--try-parse-json
+                         (with-temp-buffer
+                           (insert-file-contents
+                            (expand-file-name ".cerebro/state/errors.jsonl" root))
+                           (string-trim (buffer-string))))))
+            (should (equal (alist-get 'event parsed) "error"))
+            (should (equal (alist-get 'context parsed) "autostart"))
+            (should (equal (alist-get 'message parsed)
+                           "vterm is not installed, so nothing was autostarted"))
+            (should (alist-get 'ts parsed)))
+          (should-not (file-exists-p
+                       (expand-file-name ".cerebro/state/decisions.jsonl" root))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/the-first-line-makes-the-directory-it-goes-in ()
+  "A consumer whose fleet has never run has no `.cerebro/state\=' - the agents
+make it themselves, on their first state write, and an agent that never
+started never makes it.  Which is the exact case the error log exists for, so
+it cannot be the case it silently drops."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-log-verbosity 'evaluations))
+    (unwind-protect
+        (progn
+          (should-not (file-directory-p (expand-file-name ".cerebro/state" root)))
+          (cerebro--log-error root "autostart" "vterm is not installed")
+          (should (file-exists-p (expand-file-name ".cerebro/state/errors.jsonl" root)))
+          ;; And the decisions log answers the same way, for the same reason.
+          (cerebro--log root 'start '((agent . "Xavier")))
+          (should (file-exists-p (expand-file-name ".cerebro/state/decisions.jsonl" root))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/an-error-log-that-cannot-be-written-is-not-an-error ()
+  "Same rule as the decisions log, and it matters more here: the one path that
+must never signal is the one that runs when something has already gone wrong."
+  (let ((cerebro-log-verbosity 'evaluations))
+    (should (null (cerebro--log-error "/nonexistent/root" "autostart" "boom")))
+    (should (null (cerebro--log-error nil "autostart" "boom")))))
+
+(ert-deftest cerebro-test/a-reported-error-is-both-said-and-recorded ()
+  "The echo area is where the navigator sees it and the log is where they find
+it afterwards - one call does both, so neither can be forgotten."
+  (let (said logged)
+    (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () "/fake/repo"))
+              ((symbol-function 'cerebro--log-error)
+               (lambda (root context message) (push (list root context message) logged)))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) said) nil)))
+      (cerebro--report-error "autostart" "%s is not installed" "vterm")
+      (should (equal said '("cerebro: vterm is not installed")))
+      (should (equal logged '(("/fake/repo" "autostart" "vterm is not installed")))))))
+
+(ert-deftest cerebro-test/a-demoted-error-is-recorded-rather-than-swallowed ()
+  "`with-demoted-errors' is how the timer survives one broken agent, and it is
+also how the reason vanished: the body is demoted exactly as before, but the
+error now lands in the log with the part of the view it came from."
+  (let (logged)
+    (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () "/fake/repo"))
+              ((symbol-function 'cerebro--log-error)
+               (lambda (_root context message) (push (cons context message) logged)))
+              ((symbol-function 'message) (lambda (&rest _) nil)))
+      ;; The value of a body that does not signal is its own.
+      (should (equal (cerebro--with-logged-errors "tick" (+ 1 1)) 2))
+      (should (null logged))
+      ;; And one that does is nil, with the error recorded under its context.
+      (should (null (cerebro--with-logged-errors "tick" (error "boom") 2)))
+      (should (equal (caar logged) "tick"))
+      (should (string-match-p "boom" (cdar logged))))))
+
+(ert-deftest cerebro-test/autostart-without-vterm-lands-in-the-error-log ()
+  "The failure that made this log exist: eight declared agents, an
+empty fleet, and the only trace a message the layout painted over half a
+second later."
+  (let (logged)
+    (cerebro-test--with-autostart
+      (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () nil))
+                ((symbol-function 'cerebro--log-error)
+                 (lambda (_root context message) (push (cons context message) logged))))
+        (cerebro)
+        (should (equal (caar logged) "autostart"))
+        (should (string-match-p "vterm" (cdar logged)))
+        ;; And still said out loud, in the words it always used.
+        (should (member "cerebro: vterm is not installed, so nothing was autostarted"
+                        cerebro-test--autostart-messages))))))
+
+(ert-deftest cerebro-test/a-roster-that-refuses-is-recorded-before-it-signals ()
+  "`M-x cerebro' shows the roster's own refusal, which is the loud half; the
+log is what still has it once the navigator has moved on."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        logged)
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--log-error)
+                   (lambda (_root context message) (push (cons context message) logged)))
+                  ((symbol-function 'call-process)
+                   (lambda (&rest _)
+                     (insert "roster: .cerebro/roster.conf line 3: 'autostrt' is not a word\n")
+                     2)))
+          (let ((cerebro--fleet-cache nil))
+            (should-error (cerebro--fleet root)))
+          (should (equal (caar logged) "roster"))
+          (should (string-match-p "autostrt" (cdar logged))))
+      (delete-directory root t))))
+
+;; ---------------------------------------------------------------------------
 ;; The planners wake on a condition alone: no floor, and a guard instead
 
 (ert-deftest cerebro-test/a-parked-bead-is-not-work-a-planner-can-take ()

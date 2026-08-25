@@ -466,7 +466,21 @@ bd recall forge-weekly
 
 ## What the fleet wrote down
 
-Two logs, both under `.cerebro/state/`, both git-ignored and local to this machine.
+Three logs, all under `.cerebro/state/`, all git-ignored and local to this machine.
+
+**`errors.jsonl`** is the first one to open when something did not happen. One line per thing that
+went wrong, naming the part of the view it came from:
+
+```bash
+tail .cerebro/state/errors.jsonl
+{"event":"error","ts":"2026-08-25T09:47:03Z","context":"autostart",
+ "message":"vterm is not installed, so nothing was autostarted"}
+```
+
+Everything the fleet view used to say once in the echo area and then lose — an autostart that
+started nothing, a roster it would not parse, a launcher that refused, a `bd` or `gh` that would not
+answer, one agent whose session could not be replaced — lands here as well as there. It stays short:
+in a fleet that is working it never gets a line.
 
 **`transitions.jsonl`** is the agents' own: one line every time any of them writes its state
 (`scripts/agent-state`), carrying `from`, `to`, `phase`, `bead` and `pid`. `scripts/fleet-history`

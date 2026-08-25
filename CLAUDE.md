@@ -317,15 +317,29 @@ abbreviated path, a relative path, a formatted time — is normalised by the rea
 (`cerebro--repo-root` through `cerebro--canonical-root`), never assumed canonical by a comparator,
 and a new reader is not done until its contract case exists.
 
-It writes one of its own beside them: **`.cerebro/state/decisions.jsonl`**, a line per decision —
+It writes two of its own beside them. **`.cerebro/state/errors.jsonl`** is the short one and the
+one to be pointed at: a line per thing that went wrong — `{event, ts, context, message}`, where
+`context` names the part of the view it came from (`autostart`, `roster`, `launch`, `sweep`,
+`supervise <Name>`). Every path that used to demote an error to a message goes through
+`cerebro--with-logged-errors` or `cerebro--report-error`, which say the same words in the echo area
+*and* keep them, because the echo area is painted over by the next render and a fleet that failed to
+start half an hour ago has no other trace. It is a separate file from the one below for the
+one reason that matters: the navigator is sent to it by opening it, which a hundred thousand
+evaluations a day would make useless. An error is written at every verbosity but `none` — `none`
+means nothing at all, which is what the suite binds.
+
+**`.cerebro/state/decisions.jsonl`** is the loud one: a line per decision —
 start (with the trigger that fired), end, retire, restart, nudge, sweep run, abnormal exit — and, at
 `cerebro-log-verbosity` `evaluations` (the default), a line per trigger evaluation per tick carrying
 what the trigger read and whether `cerebro--unless-unchanged` is what held it. That last is the only
 observable trace of a decision *not* to start, which is otherwise indistinguishable from a bug.
 `changes` logs an evaluation only when its answer differs from that agent's last; `decisions` logs
-none. Rotation is `cerebro-log-max-bytes` × `cerebro-log-generations`. The pure half is
-`cerebro--log-line`, `cerebro--log-event-p`, `cerebro--log-evaluation-p` and `cerebro--log-rotate-p`;
-the writer is silent and unable to fail, for the reason `scripts/agent-state` gives about its own log.
+none. Both files rotate on `cerebro-log-max-bytes` × `cerebro-log-generations` — one policy, since
+a healthy fleet never fills the error log at all. The pure half is `cerebro--log-line`,
+`cerebro--log-event-p`, `cerebro--log-evaluation-p`, `cerebro--log-rotate-p` and
+`cerebro--log-basename` (which of the two files an event belongs in); the writer is silent and
+unable to fail, for the reason `scripts/agent-state` gives about its own log — and the error writer
+more so, being the one path that runs when something has already gone wrong.
 
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
 

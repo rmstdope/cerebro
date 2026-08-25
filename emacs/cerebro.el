@@ -83,6 +83,32 @@ detail window underneath inherit this width and, like the table, are
 narrower for it - their titles get less room than they used to, an accepted
 trade.")
 
+;;; Errors - said once, and kept
+
+;; The writers live with the rest of the log (`cerebro--log-error',
+;; `cerebro--report-error'); the macro is here because it is used long before
+;; that section and a macro must be defined before its first call site is
+;; compiled.
+
+(defmacro cerebro--with-logged-errors (context &rest body)
+  "Run BODY, demoting an error to a message the way `with-demoted-errors\=' does
+and recording it in the view\='s error log under CONTEXT.
+
+`with-demoted-errors\=' is how the five-second timer survives one broken agent,
+one `bd\=' that will not answer, one launcher that cannot start - and it is also
+how the reason for all three used to vanish, since the echo area is painted
+over by the next render.  Same demotion, same nil, one extra line in
+a file that is still there tomorrow."
+  (declare (indent 1) (debug (form body)))
+  ;; Gensym rather than a named variable: BODY is arbitrary code from nine
+  ;; call sites, and a handler binding it could see would be a bug nothing
+  ;; here would catch.
+  (let ((err (gensym "cerebro--err")))
+    `(condition-case ,err
+         (progn ,@body)
+       (error (cerebro--report-error ,context "%s" (error-message-string ,err))
+              nil))))
+
 ;;; The pure core
 
 ;;; The fleet roster (replaces `cerebro-interactive-agents' and `cerebro--role-launch-commands')
@@ -1181,7 +1207,8 @@ never called. Never signals."
                                           (zerop (process-exit-status proc))
                                           (with-current-buffer out (buffer-string)))))
                          (kill-buffer out)
-                         (with-demoted-errors "cerebro: %S" (funcall callback output)))))))
+                         (cerebro--with-logged-errors (format "%s callback" key)
+                           (funcall callback output)))))))
             (process-put proc 'cerebro-timeout
                          (run-at-time cerebro-subprocess-timeout-seconds nil
                                       (lambda ()
@@ -1191,7 +1218,8 @@ never called. Never signals."
             'started)
         (error
          (when (buffer-live-p out) (kill-buffer out))
-         (with-demoted-errors "cerebro: %S" (funcall callback nil))
+         (cerebro--with-logged-errors (format "%s callback" key)
+           (funcall callback nil))
          'started)))))
 
 (defun cerebro--parse-json (text)
@@ -2622,7 +2650,12 @@ refusal is never cached as a fleet."
                               (expand-file-name (cerebro--script "roster") repo-root)
                               nil t nil)))
                  (unless (eq status 0)
-                   (error "cerebro: %s" (string-trim (buffer-string)))))
+                   ;; Recorded before it is signalled: the signal is the loud
+                   ;; half, which `M-x cerebro' shows and the navigator then
+                   ;; scrolls away from.
+                   (let ((text (string-trim (buffer-string))))
+                     (cerebro--log-error repo-root "roster" text)
+                     (error "cerebro: %s" text))))
                (buffer-string))))))
 
 (defun cerebro--autostart-names (repo-root)
@@ -2980,6 +3013,11 @@ from afterwards (cb-5yr)."
   (when (cerebro--session (cerebro-agent-name agent))
     (error "cerebro: %s already has a live session" (cerebro-agent-name agent)))
   (unless (cerebro--vterm-available-p)
+    ;; Logged as well as signalled, and for the same reason the autostart
+    ;; message is: this is the refusal that looks, to the navigator, like `s'
+    ;; having done nothing at all.
+    (cerebro--log-error (ignore-errors (cerebro--repo-root)) "launch"
+                        "vterm is not installed - install emacs-libvterm")
     (user-error "cerebro needs vterm for live sessions - install emacs-libvterm"))
   (add-hook 'vterm-exit-functions #'cerebro--note-exit)
   (setq cerebro--last-exit
@@ -3191,7 +3229,8 @@ does: one launcher that cannot start must not stop the others."
     (let ((names (cerebro--autostart-names repo-root)))
       (when names
         (if (not (cerebro--vterm-available-p))
-            (message "cerebro: vterm is not installed, so nothing was autostarted")
+            (cerebro--report-error
+             "autostart" "vterm is not installed, so nothing was autostarted")
           (let ((owned (cerebro--owned))
                 results)
             (dolist (agent cerebro--agents)
@@ -3199,7 +3238,7 @@ does: one launcher that cannot start must not stop the others."
                 (when (member name names)
                   (let ((action (cerebro--autostart-action
                                  agent owned (cerebro--stop-flag-p repo-root name))))
-                    (with-demoted-errors "cerebro: %S"
+                    (cerebro--with-logged-errors (format "autostart %s" name)
                       (when (eq action 'launch-clearing-flag)
                         (cerebro--clear-stop-flag repo-root name))
                       (when (memq action '(launch launch-clearing-flag))
@@ -3425,8 +3464,14 @@ of days at `evaluations\=' and months at `changes\='."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire restart nudge standby refused exit sweep)
-  "The events written at every verbosity: what the view actually did.")
+  '(start end retire restart nudge standby refused exit sweep error)
+  "The events written at every verbosity: what the view did, and what went
+wrong while it did it.
+
+`error\=' is on this list rather than behind a level of its own because an
+error is not a level of detail: a navigator who sets `decisions\=' is asking
+for less noise, not for a fleet that fails silently.  `none\=' still
+loses it, along with everything else - that is what `none\=' means.")
 
 (defun cerebro--log-event-p (event verbosity)
   "Pure.  Whether EVENT is written at VERBOSITY.  See `cerebro-log-verbosity\='.
@@ -3482,35 +3527,54 @@ is written and at `decisions\=' none is.  Buffer-local, like the rest of the
 view\='s state, and lost with the buffer - which costs one redundant line per
 role after `M-x cerebro\=', not a wrong one.")
 
-(defun cerebro--log-file (repo-root &optional generation)
-  "The view\='s log under REPO-ROOT, or its GENERATIONth rotated copy.
+(defun cerebro--log-basename (event)
+  "Pure.  Which log EVENT belongs in: \"errors\" or \"decisions\".
+
+Two files, not one, and the reason is the question each answers.  The
+decisions log is a hundred thousand lines a day at `evaluations\=' and is read
+by searching it for an agent; the error log is read by opening it, because
+the navigator has been pointed at it by a message that said something went
+wrong.  An error buried in the first is a file nobody can be sent
+to."
+  (if (eq event 'error) "errors" "decisions"))
+
+(defun cerebro--log-file (repo-root &optional generation base)
+  "The BASE log under REPO-ROOT, or its GENERATIONth rotated copy.
+
+BASE is `cerebro--log-basename\='s answer and defaults to the decisions log,
+so a caller that has no view on the matter gets the file this function
+always named.
 
 Beside `scripts/agent-state\='s `transitions.jsonl\=' rather than in a directory
 of its own: the two halves of one event - the view deciding to start a role,
 that role\='s own first write seconds later - are read together or not at all,
 and `.cerebro/state\=' is already what `.gitignore\=' names and what
 `scripts/fleet-history\=' reads."
-  (expand-file-name (if generation
-                        (format ".cerebro/state/decisions.%d.jsonl" generation)
-                      ".cerebro/state/decisions.jsonl")
-                    repo-root))
+  (let ((base (or base "decisions")))
+    (expand-file-name (if generation
+                          (format ".cerebro/state/%s.%d.jsonl" base generation)
+                        (format ".cerebro/state/%s.jsonl" base))
+                      repo-root)))
 
-(defun cerebro--log-rotate (repo-root)
-  "Rotate the view\='s log under REPO-ROOT if it has passed its size.
+(defun cerebro--log-rotate (repo-root &optional base)
+  "Rotate the BASE log under REPO-ROOT if it has passed its size.
 
 Generations shift up and the oldest is discarded, which is the whole of the
-retention policy: `cerebro-log-generations\=' files of `cerebro-log-max-bytes\='."
-  (let ((file (cerebro--log-file repo-root)))
+retention policy: `cerebro-log-generations\=' files of `cerebro-log-max-bytes\='.
+One policy for both files rather than two settings: the error log is written
+when something goes wrong, so in a healthy fleet it never reaches the size at
+all, and a second pair of settings would only be a second thing to explain."
+  (let ((file (cerebro--log-file repo-root nil base)))
     (when (cerebro--log-rotate-p (file-attribute-size (file-attributes file))
                                  cerebro-log-max-bytes)
       (let ((n cerebro-log-generations))
         (while (> n 1)
-          (let ((older (cerebro--log-file repo-root n))
-                (newer (cerebro--log-file repo-root (1- n))))
+          (let ((older (cerebro--log-file repo-root n base))
+                (newer (cerebro--log-file repo-root (1- n) base)))
             (when (file-exists-p newer) (rename-file newer older t)))
           (setq n (1- n)))
         (when (> cerebro-log-generations 0)
-          (rename-file file (cerebro--log-file repo-root 1) t))))))
+          (rename-file file (cerebro--log-file repo-root 1 base) t))))))
 
 (defun cerebro--log (repo-root event fields)
   "Append one line to the view\='s log for EVENT with FIELDS, under REPO-ROOT.
@@ -3520,13 +3584,45 @@ its own log: the fleet must never be brought down by a full disk.  `O_APPEND\='
 is what makes this safe beside the agents\=' own writer - one line is one
 `write\=', and two writers cannot interleave."
   (when (and repo-root (cerebro--log-event-p event cerebro-log-verbosity))
-    (ignore-errors
-      (cerebro--log-rotate repo-root)
-      (write-region
-       (concat (cerebro--log-line
-                event (format-time-string "%Y-%m-%dT%H:%M:%SZ" nil t) fields)
-               "\n")
-       nil (cerebro--log-file repo-root) 'append 'silent))))
+    (let ((base (cerebro--log-basename event)))
+      (ignore-errors
+        ;; `.cerebro/state' is made by whichever agent writes its state first,
+        ;; and a fleet that never started never has one - which is exactly the
+        ;; fleet with something to say.  So the writer makes it, and
+        ;; a directory that cannot be made is swallowed like everything else
+        ;; here: a full disk must not take the view down.
+        (make-directory (file-name-directory (cerebro--log-file repo-root nil base)) t)
+        (cerebro--log-rotate repo-root base)
+        (write-region
+         (concat (cerebro--log-line
+                  event (format-time-string "%Y-%m-%dT%H:%M:%SZ" nil t) fields)
+                 "\n")
+         nil (cerebro--log-file repo-root nil base) 'append 'silent)))))
+
+(defun cerebro--log-error (repo-root context message)
+  "Record MESSAGE in the error log under REPO-ROOT, blamed on CONTEXT.
+
+CONTEXT is the part of the view the error came from - \"autostart\",
+\"roster\", \"tick\" - and is what makes the file readable without knowing
+the code: the navigator is looking for what failed, not for a backtrace.
+
+Silent and unable to fail, like `cerebro--log\=', and more so: this is the
+path that runs when something has already gone wrong, so it is the last
+place that may signal."
+  (cerebro--log repo-root 'error
+                (list (cons 'context context) (cons 'message message))))
+
+(defun cerebro--report-error (context format-string &rest args)
+  "Say FORMAT-STRING with ARGS once, and keep it in the error log under CONTEXT.
+
+The echo area is where the navigator sees an error and the log is where they
+find it afterwards, and the two used to be separate decisions - which is how
+eight declared agents failed to start with the only trace a message the
+layout painted over half a second later.  One call does both."
+  (let ((text (apply #'format format-string args)))
+    (cerebro--log-error (ignore-errors (cerebro--repo-root)) context text)
+    (message "cerebro: %s" text)
+    text))
 
 (defun cerebro--log-evaluation (repo-root agent reason context)
   "Log that AGENT\='s trigger was evaluated and answered REASON.
@@ -3578,7 +3674,7 @@ other agents down with it."
     (let ((name (cerebro-agent-name agent)))
       (unless (eq (cerebro-agent-state agent) 'asking)
         (setq cerebro--nudged (delete name cerebro--nudged)))
-      (with-demoted-errors "cerebro: %S"
+      (cerebro--with-logged-errors (format "supervise %s" name)
         (pcase (let ((action (cerebro--supervise-action
                               agent (cerebro--stop-flag-p repo-root name) now)))
                  (when action
@@ -4250,9 +4346,9 @@ buffer on its own cadences once the fleet buffer's tick is running (ah-6uo)."
         ;; redraws when it answers. Still demoted: a `bd' or `gh' that
         ;; errors synchronously (program missing) must not stop the fleet
         ;; view opening.
-        (with-demoted-errors "cerebro: %S" (cerebro--sweep buffer))
-        (with-demoted-errors "cerebro: %S" (cerebro--history buffer))
-        (with-demoted-errors "cerebro: %S" (cerebro--beads-render buffer))
+        (cerebro--with-logged-errors "sweep" (cerebro--sweep buffer))
+        (cerebro--with-logged-errors "history" (cerebro--history buffer))
+        (cerebro--with-logged-errors "beads" (cerebro--beads-render buffer))
         (setq cerebro--swept-at (float-time)
               cerebro--history-at (float-time))))
     buffer))
@@ -4592,7 +4688,7 @@ is where that is said."
               ;; proves otherwise, and a start that follows a pass starts over.
               (setf (alist-get name cerebro--failed-starts nil nil #'equal)
                     (if failed (1+ failures) 0))
-              (with-demoted-errors "cerebro: %S"
+              (cerebro--with-logged-errors (format "start %s" name)
                 (let ((cerebro--log-start-reason reason))
                   (cerebro--launch agent))
                 (message "%s" (cerebro--start-message
@@ -4828,11 +4924,11 @@ left and runs every `cerebro-system-scan-seconds'."
         ;; From the fleet buffer, because that is where the answers are read
         ;; back from (`cerebro--trigger-context'), and on its own ten-minute
         ;; cadence rather than this five-second one (cb-5yr.2).
-        (with-demoted-errors "cerebro: %S"
+        (cerebro--with-logged-errors "gh"
           (cerebro--refresh-gh-when-due buffer (float-time now))))
       (let ((panel (get-buffer cerebro-beads-buffer-name)))
         (when (buffer-live-p panel)
-          (with-demoted-errors "cerebro: %S"
+          (cerebro--with-logged-errors "panel"
             (cerebro--refresh-panel-when-due panel (float-time now))))))))
 
 (defun cerebro--follow ()

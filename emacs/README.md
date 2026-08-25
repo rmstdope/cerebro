@@ -62,7 +62,7 @@ The glyph carries the state and the weight carries the urgency:
 | Row                | Means                                                          |
 |--------------------|----------------------------------------------------------------|
 | green `●`          | working, or an interactive agent that is up                     |
-| yellow `●`         | idle — a session is up with no bead, which may want a nudge     |
+| blue `◆`           | idle — a session is up with no bead, which may want a nudge     |
 | yellow `◐`         | waiting — an interactive role between passes; it is ended within half a minute |
 | blue `◌`           | standby — the view ended this role after its pass and starts a fresh one when the trigger in the For column fires; `RET` shows its last pass |
 | yellow `?`, **bold** | asking: it needs an answer from you, and the whole row says so |
@@ -78,11 +78,13 @@ finished session used to come back green hours later once the operating system h
 something else. The fleet view now deletes an agent's state file whenever it ends that agent's
 session, so the file rarely outlives the pid in the first place.
 
-Idle and working are the same dot and differ only in colour, which is what the State column beside
-them spells out in words. The yellow is the `cerebro-idle` face — its own face rather than the stock
-`warning`, which Emacs defines as DarkOrange **and bold**: orange where yellow was wanted, and bold
-where bold is supposed to mean something else. Customize that one face if gold does not read against
-your theme.
+Idle is the one diamond in the list, so it shares neither shape nor colour with dead's grey ring or
+working's green dot — both of which it did share one of, in turn, and was mistaken for each time. The
+other blue is standby's `◌`, hollow where idle is filled. The gold that `waiting` and `unknown` carry
+is the `cerebro-waiting` face and the blue is `cerebro-idle`; both are their own faces rather than
+the stock `warning`, which Emacs defines as DarkOrange **and bold**: orange where it was not wanted,
+and bold where bold is supposed to mean something else. Customize `cerebro-idle` if blue does not
+read against your theme, and `cerebro-waiting` if gold does not.
 
 ## The bead panel
 

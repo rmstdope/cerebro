@@ -93,7 +93,7 @@ comparisons rather than a clock: the counts leave out what is parked in your que
 last pass was started for. Anything that moves — a bead arrives, one is planned, an implementer
 comes up — starts the next pass at once.
 
-**Reading a row.** Green `●` is working, yellow `●` is idle, yellow `◐` is an interactive role
+**Reading a row.** Green `●` is working, blue `◆` is idle, yellow `◐` is an interactive role
 `waiting` between passes — it is ended within half a minute — blue `◌` is **standby**: the view ended
 this role after its pass and starts a fresh one when the trigger in the For column fires, and `RET`
 shows its last pass. A bold yellow `?` is an agent waiting on

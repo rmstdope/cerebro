@@ -121,8 +121,17 @@ want_count() {
   echo $(( n > floor ? n : floor ))
 }
 
+# The counts land in variables before anything is printed, and that is load-bearing rather than
+# tidy: an `exit 1' inside a `$(...)' exits only that subshell, and a failed command substitution
+# used as an ARGUMENT does not trip `set -e' - so `printf ... "$(planned_count)"' would print
+# `planned= want=2' and exit 0 on a broken query, which is exactly the empty-buffer-that-means-the-
+# query-broke this script exists to prevent. In an assignment it aborts the script, which is what
+# the header promises.
 case "$mode" in
   --planned) planned_count ;;
   --want)    want_count ;;
-  --count)   printf 'planned=%s want=%s\n' "$(planned_count)" "$(want_count)" ;;
+  --count)
+    planned="$(planned_count)"
+    want="$(want_count)"
+    printf 'planned=%s want=%s\n' "$planned" "$want" ;;
 esac

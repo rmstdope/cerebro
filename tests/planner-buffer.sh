@@ -139,6 +139,18 @@ set -e
 grep -q 'planner-buffer' "$stub_dir/err" || fail "a failed bead query does not name planner-buffer on stderr"
 pass "fails loudly when the bead query fails"
 
+# --- and the same for the mode the skill actually calls -------------------------------------------
+# `--count' builds its line from both counts, so a failing count must abort the script before
+# anything is printed rather than leaving `planned= want=2' on stdout and exiting 0.
+set +e
+out="$(run_count --count 2>"$stub_dir/err")"
+status=$?
+set -e
+[ "$status" -ne 0 ] || fail "--count exited 0 when the bead query failed"
+[ -z "$out" ] || fail "--count printed '$out' on stdout when the bead query failed"
+grep -q 'planner-buffer' "$stub_dir/err" || fail "--count does not name planner-buffer on stderr"
+pass "fails loudly on --count too, which is the mode the skill calls"
+
 set_stub "$beads"
 
 # ------------------------------------------------------------------------------------------------

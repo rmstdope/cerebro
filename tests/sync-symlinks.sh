@@ -35,9 +35,6 @@ EOF
 cat > "$cerebro_dir/agents/demo.md" <<'EOF'
 # Demo agent
 EOF
-mkdir -p "$cerebro_dir/templates"
-cp "$repo_root/templates/consumer-dir-locals.el" "$cerebro_dir/templates/consumer-dir-locals.el"
-
 "$cerebro_dir/scripts/sync-symlinks.sh"
 
 skill_link="$consumer/.claude/skills/demo"
@@ -59,23 +56,18 @@ pass "agent link is relative: ../cerebro/agents/demo.md"
 [[ -e "$agent_link" ]] || fail "relative agent link does not resolve"
 pass "relative links resolve correctly"
 
-# --- .dir-locals.el: installed at the consumer ROOT, not under .claude ---
+# --- the sync writes nothing outside .claude/ (cb-pq4) ---
 #
-# It is what gives every contributor `M-x cerebro' without editing their init. The link lives one
-# level higher than the skill and agent links, so it carries its own relative arithmetic - from
-# the consumer root rather than from $CLAUDE_ROOT/<sub>/.
+# It used to install a `.dir-locals.el' at the consumer ROOT, the one file it could not merge -
+# so a consumer that had its own got no fleet view at all. The fleet view has its own command
+# now (scripts/cerebro), and the consumer root is the project's alone.
 dir_locals="$consumer/.dir-locals.el"
-[[ -L "$dir_locals" ]] || fail "expected $dir_locals to be a symlink"
-dir_locals_target="$(readlink "$dir_locals")"
-[[ "$dir_locals_target" == ".claude/cerebro/templates/consumer-dir-locals.el" ]] \
-  || fail "expected '.claude/cerebro/templates/consumer-dir-locals.el', got '$dir_locals_target'"
-[[ -e "$dir_locals" ]] || fail "the .dir-locals.el link does not resolve"
-pass ".dir-locals.el is linked from the consumer root and resolves"
+[[ ! -e "$dir_locals" && ! -L "$dir_locals" ]] \
+  || fail "the sync wrote $dir_locals: it must write nothing outside .claude/"
+pass "the sync writes nothing at the consumer root"
 
-# --- running again leaves both links unchanged and still exits 0 ---
+# --- running again leaves the links unchanged and still exits 0 ---
 "$cerebro_dir/scripts/sync-symlinks.sh"
-[[ "$(readlink "$dir_locals")" == ".claude/cerebro/templates/consumer-dir-locals.el" ]] \
-  || fail "second run changed the .dir-locals.el link target"
 [[ "$(readlink "$skill_link")" == "../cerebro/skills/demo" ]] \
   || fail "second run changed the skill link target"
 [[ "$(readlink "$agent_link")" == "../cerebro/agents/demo.md" ]] \
@@ -119,9 +111,6 @@ EOF
 cat > "$self_consumer/agents/demo.md" <<'EOF'
 # Demo agent
 EOF
-mkdir -p "$self_consumer/templates"
-cp "$repo_root/templates/consumer-dir-locals.el" "$self_consumer/templates/consumer-dir-locals.el"
-
 "$self_consumer/.claude/cerebro/scripts/sync-symlinks.sh" >/dev/null
 
 self_skill_link="$self_consumer/.claude/skills/demo"
@@ -136,25 +125,23 @@ pass "a self-consumer's links read ../cerebro/... like every other consumer's"
 [[ -e "$self_agent_link" ]] || fail "self-consumer agent link does not resolve"
 pass "a self-consumer's links resolve through the mount"
 
-[[ "$(readlink "$self_consumer/.dir-locals.el")" == ".claude/cerebro/templates/consumer-dir-locals.el" ]] \
-  || fail "self-consumer .dir-locals.el: got '$(readlink "$self_consumer/.dir-locals.el")'"
-[[ -e "$self_consumer/.dir-locals.el" ]] || fail "self-consumer .dir-locals.el does not resolve"
-pass "a self-consumer's .dir-locals.el links through the mount too"
+[[ ! -e "$self_consumer/.dir-locals.el" && ! -L "$self_consumer/.dir-locals.el" ]] \
+  || fail "a self-consumer got a .dir-locals.el: the sync writes nothing outside .claude/"
+pass "a self-consumer's root is left alone too"
 
-# --- a consumer that already has its own .dir-locals.el keeps it, untouched ---
+# --- a consumer's own .dir-locals.el is not touched, and not mentioned ---
 #
-# Emacs reads exactly one per directory, so installing ours would silently replace whatever
-# indent, compile-command or project settings the consumer had. The sync says so and moves on:
-# this is the one file it cannot merge, and guessing is worse than a line on stderr.
+# It is the project's file and always was; what has gone is the sync having anything to say about
+# it. Nothing is written, and nothing is printed - the "left it alone" lines went with the
+# function that needed them.
 own="$work_dir/own"
 mkdir -p "$own/.claude"
 git init -q "$own"
 own_cerebro="$own/.claude/cerebro"
-mkdir -p "$own_cerebro/scripts" "$own_cerebro/skills/demo" "$own_cerebro/agents" "$own_cerebro/templates"
+mkdir -p "$own_cerebro/scripts" "$own_cerebro/skills/demo" "$own_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$own_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$own_cerebro/scripts/consumer-root"
 chmod +x "$own_cerebro/scripts/sync-symlinks.sh" "$own_cerebro/scripts/consumer-root"
-cp "$repo_root/templates/consumer-dir-locals.el" "$own_cerebro/templates/consumer-dir-locals.el"
 echo "# Demo skill" > "$own_cerebro/skills/demo/SKILL.md"
 echo "# Demo agent" > "$own_cerebro/agents/demo.md"
 printf '((nil . ((indent-tabs-mode . nil))))\n' > "$own/.dir-locals.el"
@@ -166,9 +153,9 @@ out="$("$own_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 [[ "$(cat "$own/.dir-locals.el")" == "$before" ]] \
   || fail "the consumer's own .dir-locals.el was modified"
 echo "$out" | grep -q "\.dir-locals\.el" \
-  || fail "expected the sync to say it left the consumer's .dir-locals.el alone, got: $out"
+  && fail "the sync mentioned the consumer's own .dir-locals.el, got: $out"
 [[ -L "$own/.claude/skills/demo" ]] || fail "the skill links must still be written"
-pass "a consumer's own .dir-locals.el is left alone, out loud, and the rest still syncs"
+pass "a consumer's own .dir-locals.el is left alone, silently, and the rest still syncs"
 
 # --- a foreign symlink at that path is left alone too ---
 #
@@ -177,21 +164,20 @@ foreign="$work_dir/foreign"
 mkdir -p "$foreign/.claude" "$foreign/elsewhere"
 git init -q "$foreign"
 foreign_cerebro="$foreign/.claude/cerebro"
-mkdir -p "$foreign_cerebro/scripts" "$foreign_cerebro/skills" "$foreign_cerebro/agents" "$foreign_cerebro/templates"
+mkdir -p "$foreign_cerebro/scripts" "$foreign_cerebro/skills" "$foreign_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$foreign_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$foreign_cerebro/scripts/consumer-root"
 chmod +x "$foreign_cerebro/scripts/sync-symlinks.sh" "$foreign_cerebro/scripts/consumer-root"
-cp "$repo_root/templates/consumer-dir-locals.el" "$foreign_cerebro/templates/consumer-dir-locals.el"
 printf '((nil . ((indent-tabs-mode . nil))))\n' > "$foreign/elsewhere/dir-locals.el"
 ln -s "elsewhere/dir-locals.el" "$foreign/.dir-locals.el"
 
 "$foreign_cerebro/scripts/sync-symlinks.sh" >/dev/null 2>&1
 
 [[ "$(readlink "$foreign/.dir-locals.el")" == "elsewhere/dir-locals.el" ]] \
-  || fail "a .dir-locals.el symlink the consumer made was repointed at the template"
+  || fail "a .dir-locals.el symlink the consumer made was removed or repointed"
 pass "a .dir-locals.el symlink pointing somewhere else is left alone"
 
-# --- a submodule older than the template: nothing to link, and no failure ---
+# --- a submodule with no templates/ at all: nothing to do, and no failure ---
 old_sub="$work_dir/old"
 mkdir -p "$old_sub/.claude"
 git init -q "$old_sub"
@@ -203,7 +189,39 @@ chmod +x "$old_cerebro/scripts/sync-symlinks.sh" "$old_cerebro/scripts/consumer-
 
 "$old_cerebro/scripts/sync-symlinks.sh" >/dev/null
 
-[[ ! -e "$old_sub/.dir-locals.el" ]] || fail "linked a template that is not in this submodule"
-pass "a submodule with no templates/ syncs the rest and links no .dir-locals.el"
+[[ ! -e "$old_sub/.dir-locals.el" ]] || fail "wrote a .dir-locals.el at a consumer root"
+pass "a submodule with no templates/ syncs the rest and writes no .dir-locals.el"
+
+# --- migration: a link left by a sync from before the fleet view had its own command ---
+#
+# Every consumer that ever synced carries `.dir-locals.el -> .../templates/consumer-dir-locals.el'.
+# The template is gone, so each of those is a dangling link Emacs complains about on every file
+# opened. The sync removes exactly that one, out loud - and nothing else at the root.
+migrating="$work_dir/migrating"
+mkdir -p "$migrating/.claude"
+git init -q "$migrating"
+mig_cerebro="$migrating/.claude/cerebro"
+mkdir -p "$mig_cerebro/scripts" "$mig_cerebro/skills/demo" "$mig_cerebro/agents"
+cp "$repo_root/scripts/sync-symlinks.sh" "$mig_cerebro/scripts/sync-symlinks.sh"
+cp "$repo_root/scripts/consumer-root" "$mig_cerebro/scripts/consumer-root"
+chmod +x "$mig_cerebro/scripts/sync-symlinks.sh" "$mig_cerebro/scripts/consumer-root"
+echo "# Demo skill" > "$mig_cerebro/skills/demo/SKILL.md"
+echo "# Demo agent" > "$mig_cerebro/agents/demo.md"
+# Dangling by construction: this fixture has no templates/, exactly like a consumer that has
+# bumped the submodule past this change.
+ln -s ".claude/cerebro/templates/consumer-dir-locals.el" "$migrating/.dir-locals.el"
+
+out="$("$mig_cerebro/scripts/sync-symlinks.sh" 2>&1)"
+
+[[ ! -e "$migrating/.dir-locals.el" && ! -L "$migrating/.dir-locals.el" ]] \
+  || fail "the retired .dir-locals.el link survived the sync"
+echo "$out" | grep -qF "Removed stale .dir-locals.el link (templates/consumer-dir-locals.el is gone)" \
+  || fail "expected the sync to say it removed the stale link, got: $out"
+pass "a retired .dir-locals.el link is removed, out loud"
+
+out="$("$mig_cerebro/scripts/sync-symlinks.sh" 2>&1)"
+echo "$out" | grep -q "\.dir-locals\.el" \
+  && fail "a second sync still talks about .dir-locals.el, got: $out"
+pass "a second sync says nothing about it"
 
 echo "all sync-symlinks tests passed"

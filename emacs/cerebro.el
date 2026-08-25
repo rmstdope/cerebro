@@ -1627,7 +1627,19 @@ is merely waiting for it."
              ;; backlog.
              ((and (alist-get 'first-planner-p context) (> p4 0))
               (format "%d unranked" p4))
-             ((< planned want) (format "buffer %d of %d" planned want)))))
+             ;; A short buffer is a reason to plan only while there is
+             ;; something to plan. `actionable-ids' is the unplanned list -
+             ;; already minus what the navigator holds, and minus what a
+             ;; planner holds, since a bead labelled `planning' is a bucket of
+             ;; its own (`cerebro--partition-beads'). Two planners over one
+             ;; bead is what found this: Beast taking the last one moved it out
+             ;; of unplanned, the buffer stayed short, and Xavier was started
+             ;; to find an empty queue. The no-progress guard cannot cover it -
+             ;; that same taking changes the fingerprint - so the rule asks,
+             ;; the way the P0 and P4 rules already do by being derived from
+             ;; this list.
+             ((and (< planned want) (alist-get 'actionable-ids context))
+              (format "buffer %d of %d" planned want)))))
          ("verifier"
           (let ((stale (alist-get 'stale-verdicts context))
                 (merged (alist-get 'merged-unverified context)))

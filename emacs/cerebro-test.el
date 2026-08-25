@@ -5084,6 +5084,36 @@ not an abnormal exit to be echoed at the navigator."
   (cerebro--trigger (cerebro-test--interactive "X" role 'standby)
                     (apply #'cerebro-test--context overrides)))
 
+(ert-deftest cerebro-test/the-buffer-rule-needs-something-to-plan ()
+  "A short buffer with nothing left unplanned starts nobody.
+
+Seen in the fleet: two planners, one bead left. Beast took it and labelled it
+`planning:Beast\=', which moved it out of UNPLANNED into BEING-PLANNED - and that
+very change is what woke Xavier. The buffer was still short, so the rule fired;
+`actionable-ids\=' was empty, so there was nothing a pass could take. Xavier
+started, found the queue empty and ended.
+
+The taking is what makes it fire, which is why the no-progress guard cannot
+help: it holds a trigger naming what the role\='s OWN last pass was started for,
+and a bead moving from unplanned to held changes the fingerprint. So the rule
+itself has to ask whether there is work, the way the P0 and P4 rules already do
+by being derived from the unplanned list."
+  (let ((held '(planned . 0)) (want '(live-implementers . 2)))
+    ;; Nothing unplanned: short buffer or not, a pass has nothing to take.
+    (should (null (cerebro-test--trigger "planner" held want '(actionable-ids))))
+    ;; The same fleet with one bead free: that is a pass worth starting.
+    (should (equal (cerebro-test--trigger "planner" held want '(actionable-ids "cb-9zz"))
+                   "buffer 0 of 2"))
+    ;; And a full buffer still starts nobody, whatever is unplanned.
+    (should (null (cerebro-test--trigger "planner" '(planned . 2) want
+                                         '(actionable-ids "cb-9zz" "cb-8yy"))))
+    ;; A P0 is not subject to it: it is planned the moment it appears, and it
+    ;; is in the unplanned list by construction.
+    (should (equal (cerebro-test--trigger "planner" held want
+                                          '(actionable-ids "cb-9zz")
+                                          '(p0-unplanned "cb-9zz"))
+                   "P0 cb-9zz unplanned"))))
+
 (ert-deftest cerebro-test/trigger-table ()
   "One `should' per row of the plan's table, and the negative beside it."
   (let ((cerebro-cadence-triggers '(("user-feedback" . 3600) ("reviewer" . 3600)
@@ -5100,18 +5130,27 @@ not an abnormal exit to be echoed at the navigator."
     (should (null (cerebro-test--trigger "planner" '(p4-unranked . 7)
                                          '(first-planner-p))))
     ;; The buffer: one planned, unclaimed bead per running implementer, and
-    ;; never fewer than two whatever the fleet looks like.
-    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 3))
+    ;; never fewer than two whatever the fleet looks like. Every row carries
+    ;; something unplanned, because a short buffer is only a reason to start
+    ;; while there is a bead to take - see
+    ;; `cerebro-test/the-buffer-rule-needs-something-to-plan'.
+    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 3)
+                                          '(actionable-ids "cb-9zz"))
                    "buffer 1 of 3"))
-    (should (equal (cerebro-test--trigger "planner" '(planned . 0) '(live-implementers . 1))
+    (should (equal (cerebro-test--trigger "planner" '(planned . 0) '(live-implementers . 1)
+                                          '(actionable-ids "cb-9zz"))
                    "buffer 0 of 2"))
-    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 0))
+    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 0)
+                                          '(actionable-ids "cb-9zz"))
                    "buffer 1 of 2"))
     ;; Enough is enough: one each above the floor, and nobody plans ahead of
     ;; that.
-    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(live-implementers . 2))))
-    (should (null (cerebro-test--trigger "planner" '(planned . 3) '(live-implementers . 2))))
-    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(live-implementers . 0))))
+    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(live-implementers . 2)
+                                         '(actionable-ids "cb-9zz"))))
+    (should (null (cerebro-test--trigger "planner" '(planned . 3) '(live-implementers . 2)
+                                         '(actionable-ids "cb-9zz"))))
+    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(live-implementers . 0)
+                                         '(actionable-ids "cb-9zz"))))
     ;; The verifier: a stale verdict before a merged bead.
     (should (equal (cerebro-test--trigger "verifier" '(stale-verdicts . 2)) "2 stale verdicts"))
     (should (equal (cerebro-test--trigger "verifier" '(stale-verdicts . 1)) "1 stale verdict"))

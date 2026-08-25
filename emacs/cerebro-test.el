@@ -39,6 +39,7 @@ test body cannot compute this itself.")
 ;; before that distinction existed still mean what it meant.
 (defun cerebro-test--always-alive (_pid &optional _name) t)
 (defun cerebro-test--never-alive (_pid &optional _name) nil)
+(defun cerebro-test--unverified (_pid &optional _name) 'unverified)
 
 (ert-deftest cerebro-test/derive-implementer-working-from-live-state-file ()
   (let* ((states '(("Cyclops" . ((state . "working") (bead . "ah-f9c")
@@ -90,6 +91,45 @@ test body cannot compute this itself.")
                                           #'cerebro-test--always-alive nil '("Gambit")))
          (agent (car agents)))
     (should-not (cerebro-agent-external agent))))
+
+(ert-deftest cerebro-test/derive-implementer-keeps-the-file-when-unverified ()
+  "The regression test for Wolverine reading `idle' mid-build (ah-ybsr): a
+liveness that cannot prove the pid carries this consumer's own root -
+`unverified', not `nil' - must not fall back to a default the way `dead'
+does. The state file's own state, bead and phase are what the row shows,
+with `unverified-pid' set to say the file was trusted rather than proven."
+  (let* ((states '(("Cyclops" . ((state . "working") (bead . "ah-f9c")
+                                  (phase . "build") (pid . 4242)))))
+         (agents (cerebro--derive '("Cyclops") nil states
+                                  #'cerebro-test--unverified nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'working))
+    (should (equal (cerebro-agent-bead agent) "ah-f9c"))
+    (should (equal (cerebro-agent-phase agent) "build"))
+    (should (= (cerebro-agent-unverified-pid agent) 4242))))
+
+(ert-deftest cerebro-test/derive-implementer-dead-when-pid-is-not-this-agent ()
+  "A `nil' liveness - the recycled-pid case - still reads dead, and carries
+no `unverified-pid': the hardening for `unverified' must not swallow
+positive evidence against."
+  (let* ((states '(("Cyclops" . ((state . "working") (bead . "ah-f9c") (pid . 4242)))))
+         (agents (cerebro--derive '("Cyclops") nil states
+                                  #'cerebro-test--never-alive nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'dead))
+    (should (null (cerebro-agent-unverified-pid agent)))))
+
+(ert-deftest cerebro-test/derive-interactive-keeps-the-file-when-unverified ()
+  "The interactive sibling: `waiting' and its `wake-at' survive an
+unverified liveness exactly as an implementer's `working'/bead/phase do."
+  (let* ((states '(("Xavier" . ((state . "waiting") (wake_at . "2026-01-01T00:00:00Z")
+                                 (pid . 5151)))))
+         (agents (cerebro--derive nil '(("Xavier" . "planner")) states
+                                  #'cerebro-test--unverified nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'waiting))
+    (should (equal (cerebro-agent-wake-at agent) "2026-01-01T00:00:00Z"))
+    (should (= (cerebro-agent-unverified-pid agent) 5151))))
 
 (ert-deftest cerebro-test/derive-interactive-up-from-process-args ()
   (let* ((args '("claude --agent planner --name Xavier --print"))

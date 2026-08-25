@@ -3033,6 +3033,23 @@ is this one.  Run as CI runs ERT, from the repository root."
     (should (equal (sort (copy-sequence cerebro-skipped-issue-types) #'string<)
                    (sort (process-lines "bash" script "--print-excluded-types") #'string<)))))
 
+(ert-deftest cerebro-test/the-trigger-counts-what-planner-buffer-counts ()
+  "The two owners of the planner buffer rule cannot drift apart.
+`scripts/planner-buffer' is the shell-side one, which `skills/plan-bead'
+calls; `cerebro-parked-labels' and `cerebro-planner-buffer-floor' are this
+one, which the trigger reads every five-second tick without a subprocess.
+Run as CI runs ERT, from the repository root."
+  ;; Absolute, and run through `bash' rather than directly, for the reasons
+  ;; the work-beads contract above gives.
+  (let ((script (expand-file-name "scripts/planner-buffer")))
+    (unless (file-exists-p script)
+      (ert-skip "scripts/planner-buffer not found - run ERT from the repository root"))
+    (should (equal (sort (copy-sequence cerebro-parked-labels) #'string<)
+                   (sort (process-lines "bash" script "--print-excluded-labels") #'string<)))
+    (should (equal cerebro-planner-buffer-floor
+                   (string-to-number
+                    (car (process-lines "bash" script "--print-floor")))))))
+
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 3: turning a sweep's facts into a decision
 
@@ -5313,6 +5330,17 @@ of anything.  The guard holds a condition, never a cadence."
                     (cons (cons 'last-fingerprint fingerprint) context))
                    "60m since its last pass"))))
 
+(ert-deftest cerebro-test/planner-want-is-one-each-above-the-floor ()
+  "One planned bead per running implementer, and never fewer than the floor.
+The floor is a `defcustom' rather than the literal 2 the two call sites used
+to spell, so `scripts/planner-buffer' can be held to it."
+  (should (equal (cerebro--planner-want 0) 2))
+  (should (equal (cerebro--planner-want 2) 2))
+  (should (equal (cerebro--planner-want 5) 5))
+  (let ((cerebro-planner-buffer-floor 4))
+    (should (equal (cerebro--planner-want 3) 4))
+    (should (equal (cerebro--planner-want 6) 6))))
+
 (ert-deftest cerebro-test/the-planners-have-no-floor ()
   "The floor was the only thing damping a trigger a pass could not clear, and
 the guard does that job by asking whether anything changed.  A clock in its
@@ -5491,6 +5519,36 @@ it, and the roster - all of which this tick has already read."
               ;; No `gh' answer in this buffer, so nothing for the two rows
               ;; the key feeds - and not `failed', which would say it went away.
               (should (null (alist-get 'gh context))))))
+      (kill-buffer panel))))
+
+(ert-deftest cerebro-test/an-implementer-told-to-finish-wants-no-bead ()
+  "A stop-flagged implementer finishes the bead it holds and takes no other,
+so a bead planned for it is a bead planned for nobody.  `skills/plan-bead'
+has always skipped it and this count did not, so with four up and one told to
+finish the skill wanted three and the view wanted four - and the view started
+a planner whose pass found a full buffer and ended."
+  (let ((panel (get-buffer-create "*cerebro-beads-stop-test*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--fleet) (lambda (_) nil))
+                  ((symbol-function 'cerebro--beads-panel-buffer) (lambda () panel)))
+          (with-current-buffer panel (setq cerebro--beads (list nil nil nil nil nil)))
+          (with-temp-buffer
+            (setq cerebro--agents
+                  (list (cerebro-test--agent "Rogue" "implementer" 'implementer 'working)
+                        (cerebro-test--agent "Gambit" "implementer" 'implementer 'working)))
+            ;; Both up and neither told to finish: two. Without this the case
+            ;; below could pass by counting nothing at all.
+            (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil)))
+              (should (equal (alist-get 'live-implementers
+                                        (cerebro--trigger-context "/tmp/nowhere"
+                                                                  (seconds-to-time 5.0)))
+                             2)))
+            (cl-letf (((symbol-function 'cerebro--stop-flag-p)
+                       (lambda (_root name) (equal name "Gambit"))))
+              (should (equal (alist-get 'live-implementers
+                                        (cerebro--trigger-context "/tmp/nowhere"
+                                                                  (seconds-to-time 5.0)))
+                             1)))))
       (kill-buffer panel))))
 
 (ert-deftest cerebro-test/trigger-context-without-a-panel-says-nothing-is-wanted ()

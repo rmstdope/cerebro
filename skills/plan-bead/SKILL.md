@@ -561,13 +561,21 @@ each, and never fewer than two**. A pass plans **one bead** and ends; the fleet 
 is short again, which on a moving fleet is seconds later.
 
 ```bash
-# The buffer, and the only count that matters:
-bd list --label planned --status open --exclude-label human --exclude-type epic --json | jq length
+# The buffer, and the only count that matters - `planned=<p> want=<m>', short whenever p < m:
+.claude/cerebro/scripts/planner-buffer --count
 ```
 
+**That script is where the rule lives**, both halves of it: which beads count, and how many are
+wanted. It was written out here as a `bd list` and again in elisp in the fleet view's trigger, and
+the two drifted twice — once counting beads these queries excluded, so a planner was started to find
+nothing to do, and once counting an implementer this file had always skipped. Every paragraph below
+says *why* the rule is what it is; `scripts/planner-buffer` is *what* it is, and a change to it is
+one edit there rather than four.
+
 `human` is excluded because a bead waiting on the navigator is not available to an implementer, so
-counting it would starve the queue while the number looked healthy. `epic` is a split parent, which
-has children rather than a plan.
+counting it would starve the queue while the number looked healthy — as is `triage:declined`, a P4
+the navigator declined to rank, for the same reason. `epic` is a split parent, which has children
+rather than a plan. The script owns that list; `--print-excluded-labels` prints it.
 
 **Count `planned` only. A bead carrying `planning` is not in the buffer** — not yours, not the other
 planner's. The buffer measures what an idle implementer could claim *right now*, and a bead being
@@ -587,32 +595,23 @@ two.
 state file under `.cerebro/state/` whose `pid` is alive, minus any implementer whose stop flag
 is set (it finishes its bead and retires, so it will not take another). **The
 interactive agents — every non-implementer row of `scripts/roster`, the other planner included —
-write the same file you do**, so the
-loop below filters to the implementer roster explicitly; without that filter your own file inflates
-`n` by one, and the buffer target moves under you for no reason.
+write the same file you do**, which is why the script walks the implementer roster
+explicitly rather than the state directory; without that filter your own file would inflate `n` by
+one, and the buffer target would move under you for no reason.
 
-**Liveness is `scripts/agent-alive`'s to answer, never a bare `kill -0`.** Pids are recycled, so a
-bare `kill -0` makes a dead implementer look alive — `agent-alive` checks the pid's own `--name`, the
+**Liveness is `scripts/agent-alive`'s to answer, never a bare `kill -0`** — which is what
+`planner-buffer --want` calls, walking the implementer roster rather than the state directory. Pids
+are recycled, so a bare `kill -0` makes a dead implementer look alive — `agent-alive` checks the pid's own `--name`, the
 rule `cerebro--session-alive-p` follows in elisp, and here a phantom implementer inflates the count
 the buffer is sized from and puts both planners to sleep over a short queue.
 
 ```bash
-# The shared checkout, never the enclosing tree: from a worktree of your own `.cerebro/state` is
-# the worktree's, while `agent-alive` reads the checkout the fleet actually writes into,
-# and both halves of this loop must be looking at the same files.
-state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"
-n=0
-# Walk the implementer roster, not the state directory: roster names are single words, so nothing
-# here word-splits on a checkout path with a space in it - and `agent-alive` already answers "no
-# file, no pid, not that session" as one exit status, so no file test is needed either.
-for name in $(.claude/cerebro/scripts/roster --implementers); do
-  [ -e "$state/$name.stop" ] && continue
-  .claude/cerebro/scripts/agent-alive "$name" && n=$((n+1))
-done
-m=$(( n > 2 ? n : 2 )); echo "n=$n implementers, so the buffer is short below $m"
+# `m' on its own, if the count line above is not what you want:
+.claude/cerebro/scripts/planner-buffer --want
 ```
 
-**There is one number, `m = max(2, n)`**: the buffer is short whenever the planned, unclaimed count
+**There is one number, `m = max(2, n)`** — `scripts/planner-buffer --want` computes it, and
+`--print-floor` is where the 2 is declared: the buffer is short whenever the planned, unclaimed count
 is **below `m`**, and a pass that finds it short plans **one bead**. Three implementers want three
 planned beads; four want four. **Two is the floor whatever the fleet looks like**, including a fleet
 with nothing running — the navigator starts an implementer expecting it to have something to claim,

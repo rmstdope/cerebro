@@ -99,9 +99,16 @@ this role after its pass and starts a fresh one when the trigger in the For colu
 shows its last pass. A bold yellow `?` is an agent waiting on
 *you*, green `◍` is done and about to be replaced, grey `○` is dead.
 
+`◌` on an **implementer** row is one whose session died without finishing a bead. The view starts it
+again on the same backoff a role waits out, and the For column says when and how many starts have
+come to nothing — `↻ retry now`, `↻ retry in 2m, 3 failed`. `k` leaves it down, `s` starts it now and
+clears the count, and `f` says as much rather than writing a flag nothing would read. A stop flag
+written before it died still means *no further bead*: it is retired instead of retried.
+
 A dead row with a red `✗ …` in the Bead/Phase column is a session that died on its own — most often
-a launcher that refused, and the line is the reason it printed. The view does not start that name
-again, however it is armed, until you press `s`; `RET` shows the whole line.
+a launcher that refused, and the line is the reason it printed, an implementer included. The view
+does not start that name again, however it is armed, until you press `s`; `RET` shows the whole
+line.
 
 The State column names the
 **phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `triage`/`plan` for
@@ -580,8 +587,9 @@ and overwritten by the next one to take a candidate from that family. It is not 
 not need to be.
 
 **A row says an agent is up when it is not.** State files are written by the agent and removed by the
-fleet view when it ends a session; one left behind by a crash is ignored as soon as its pid is dead
-or belongs to something else. If a row is still wrong, delete the file:
+fleet view when it ends a session — and when it starts a fresh session under that name, so a file a
+crashed session left behind goes as soon as anything replaces it. One still on disk is ignored as
+soon as its pid is dead or belongs to something else. If a row is still wrong, delete the file:
 
 ```bash
 rm .cerebro/state/<name>.state.json

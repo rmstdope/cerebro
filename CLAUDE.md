@@ -347,7 +347,10 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
   restart branches (deletion before the launch), and `k` (`cerebro--kill-session-buffer`, flag left
   alone — `f` then `k` means stay gone). Enumerating two of the three is how the same omission came
   to be fixed twice while `k` went on leaking a state file (ah-bqi); add a fourth caller by calling
-  that function, not by listing artifacts again.
+  that function, not by listing artifacts again. A session that ends by *itself* reaches none of
+  those, so since cb-hzs `cerebro--launch` deletes the file before it spawns: one present then is
+  always a previous session's, since a name with a live session is refused. Retiring an implementer
+  also disarms it, the way retiring a role does — armed is what promises a retry.
 - `scripts/roster` — the fleet: name, role and kind per agent, read once per buffer by
   `cerebro--fleet`.
 

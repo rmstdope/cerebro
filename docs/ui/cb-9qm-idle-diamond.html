@@ -1,0 +1,39 @@
+<!doctype html><meta charset="utf-8"><title>cb-9qm — the chosen glyph (Option C)</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff}h2{font-size:14px;margin:0 0 8px}
+.row{display:flex;gap:24px;flex-wrap:wrap}.panel{padding:14px 18px;border:1px solid #333;min-width:60ch}
+.dark{background:#1e1e1e;color:#d4d4d4}.light{background:#fdfdfd;color:#222}
+pre{margin:0;line-height:1.5;white-space:pre}.hd{text-decoration:underline}
+.dark .g{color:#6a9955}.light .g{color:#1f7a1f}
+.dark .d{color:#777}.light .d{color:#999}
+.dark .w{color:#e5a13b;font-weight:bold}.light .w{color:#c66500;font-weight:bold}
+.dark .y{color:gold}.light .y{color:goldenrod}
+.dark .i{color:DodgerBlue}.light .i{color:RoyalBlue}
+.dark .s{color:#569cd6}.light .s{color:#3b6fd6}
+.note{color:#eee;max-width:90ch;background:#333;padding:8px 12px;margin-top:16px}
+.key{margin-top:10px;font-size:12px;opacity:.85}
+</style>
+<h1>cb-9qm — the chosen glyph (Option C)</h1>
+<div class="row">
+<div class="panel dark"><h2>dark theme</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="g">●</span> Cerebro        orchestrator  sweep                 3m 3m
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 2
+<span class="y">◐</span> Beast          planner       waiting               ↻ 10m
+<span class="i">◆</span> Rogue          implementer   idle                  12m
+<span class="d">○</span> Storm          implementer   dead
+<span class="g">●</span> Jubilee        implementer   build      cb-9qm     5m 5m
+<span class="w">?</span> <b>Psylocke       verifier      asking     cb-5yr.1   20m 20m</b>
+<span class="y">●</span> Cyclops        implementer   unknown               2m</pre>
+<div class="key">idle: <span class="i">◆</span> DodgerBlue · standby: <span class="s">◌</span> #569cd6 · waiting/unknown: <span class="y">◐ ●</span> gold (unchanged) · dead: <span class="d">○</span> grey</div></div>
+<div class="panel light"><h2>light theme</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="g">●</span> Cerebro        orchestrator  sweep                 3m 3m
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 2
+<span class="y">◐</span> Beast          planner       waiting               ↻ 10m
+<span class="i">◆</span> Rogue          implementer   idle                  12m
+<span class="d">○</span> Storm          implementer   dead
+<span class="g">●</span> Jubilee        implementer   build      cb-9qm     5m 5m
+<span class="w">?</span> <b>Psylocke       verifier      asking     cb-5yr.1   20m 20m</b>
+<span class="y">●</span> Cyclops        implementer   unknown               2m</pre>
+<div class="key">idle: <span class="i">◆</span> RoyalBlue · standby: <span class="s">◌</span> #3b6fd6 · waiting/unknown: <span class="y">◐ ●</span> goldenrod (unchanged) · dead: <span class="d">○</span> grey</div></div>
+</div>
+<p class="note">Idle becomes a filled blue diamond; standby keeps its blue dotted ring. Cost: a new glyph in the vocabulary (◆ U+25C6), which some terminal fonts render narrower than ● and can jog the Agent column by a cell; and idle no longer shares its shape with working, so the 'same dot, different colour' sentence in the README goes. Benefit: hue, fill and outline all differ between idle and standby, so no single lever carries it. Waiting (◐) and unknown (●) stay gold as in A.</p>

@@ -5,8 +5,9 @@
 #     .claude/cerebro/scripts/agent-alive <Name>
 #
 #   exit 0   <Name>'s state file names a pid that is running AND whose command line carries
-#            `--name <Name>' AND a `--settings' path under this consumer - so it is still that
-#            session, of this fleet, not a recycled pid or another checkout's agent of the same name
+#            `--name <Name>' AND a path under this consumer, anywhere in the command line - so it
+#            is still that session, of this fleet, not a recycled pid or another checkout's agent
+#            of the same name
 #   exit 1   not alive: no state file, no pid in it, the pid is gone, or the pid is alive but is
 #            somebody else's process or belongs to another consumer's fleet
 #   exit 2   usage error, or <Name> is not on scripts/roster
@@ -75,20 +76,21 @@ grep -Eq -- "--name[[:space:]]+${name}([[:space:]]|\$)" <<<"$args" || exit 1
 # The third discriminator, the same one cerebro--session-args-p asks for in elisp (cb-lzi): the
 # session must belong to THIS consumer's fleet. A recycled pid can land on a same-named session of
 # another checkout - every consumer on the built-in roster has a Cyclops - and pid plus name alone
-# would call that one ours, which here would let a planner free a label somebody holds. Every
-# session `scripts/launch' starts carries `--settings <root>/.../question-state.settings.json'
-# (scripts/launch, scripts/agent-hooks-env); a session that carries none is not one this script can
-# prove is ours, and reads dead - the same trade cerebro--consumer-args made (9420ff2).
+# would call that one ours, which here would let a planner free a label somebody holds.
 #
-# Resolved physically before comparing, because `consumer-root --shared' is a `pwd -P' path and
-# the launcher's `--settings' path is not: on macOS every mktemp fixture is /var/... to the
-# launcher and /private/var/... to consumer-root, and a consumer cloned under a symlink is the same
-# case outside a test. `cd' into the directory rather than `realpath', which is not on macOS.
-settings="$(sed -nE 's/.*--settings[[:space:]]+([^[:space:]]+).*/\1/p' <<<"$args")"
-[[ -n "$settings" ]] || exit 1
-settings_dir="$(cd "$(dirname "$settings")" 2>/dev/null && pwd -P)" || exit 1
-case "$settings_dir" in
-  "$repo_root"/*) ;;
+# This used to extract the `--settings' value specifically and resolve its directory physically
+# before comparing. It could only ever see one argument, and the one a wrapper is free to rewrite:
+# cmux keeps every flag `scripts/launch' passes but rewrites `--settings' from a path into merged
+# inline JSON, so the root disappeared from it entirely (ah-ybsr). The rule is, and always was, "the
+# command line carries a path under this consumer" - `cerebro--root-in-args-p' asks that of the
+# whole args string in elisp, and this now asks the same question of the same text: `$repo_root' is
+# already `consumer-root --shared', a `pwd -P' result, and `scripts/launch' embeds that identical
+# physical string (via `--append-system-prompt', now that `--settings' cannot carry it), so no
+# further resolution step is needed and - the settings value having vanished into a JSON blob - none
+# is possible any more. The trailing `/' is what makes it a whole path component, so a sibling
+# checkout whose path merely starts with this one's (`{root}-hud') does not match.
+case "$args" in
+  *"$repo_root"/*) ;;
   *) exit 1 ;;
 esac
 

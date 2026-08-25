@@ -63,7 +63,8 @@ a bead is planned in one session and implemented in another.
 > `launch-preflight` refuse, naming the `mv`.*
 
 - `.cerebro/project.conf` — how the project installs itself, what its fast and full gates are
-  called, which paths are the application, where retrospectives live.
+  called, which paths are the application, where retrospectives live, and — with
+  `verification none` — that nothing in it can be verified by looking.
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
   built-in fleet. An optional third word, `autostart`, makes the fleet view start that agent as it
   comes up (cb-0r6).

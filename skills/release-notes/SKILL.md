@@ -76,7 +76,9 @@ work they were.
 
 Two corroborations, both cheap:
 
-- a bead already carrying `verification:not-needed` was ruled out by Psylocke on this same test;
+- a bead already carrying `verification:not-needed` was ruled out by Psylocke on this same test —
+  **unless the project declares `verification none`** (`.claude/cerebro/scripts/project-conf
+  verification`), where every merged bead carries that label and it says nothing about paths;
 - a bead carrying `verification:passed` has been watched working by the navigator, which is the
   strongest evidence it is worth a line.
 

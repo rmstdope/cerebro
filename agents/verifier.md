@@ -256,6 +256,35 @@ of what pass you are on — safe to restart from nothing at any time.
 
 ### Deciding what is worth a look
 
+**First, once per pass, ask whether this project can be verified by looking at all:**
+
+```bash
+.claude/cerebro/scripts/project-conf verification      # `none', or nothing
+```
+
+`none` is a project saying *there is nothing here a person can launch and judge* — a harness, a
+library, a build tool. It is a decision, written in the declaration, and it is not the same as an
+unset `launch_targets`, which is an omission and is still asked about below. When it says `none`:
+
+- Mark **every bead in the work list that carries no `verification:*` label** `not-needed`, in one
+  command per bead:
+
+  ```bash
+  bd set-state <id> verification=not-needed --reason "this project declares verification none: nothing to launch"
+  bd dolt push
+  ```
+
+- **Leave a bead carrying `verification:pending` or `verification:failed` alone**, and name it in
+  the report: a verdict was offered or rendered before the declaration existed, and a declaration
+  does not retract a person's finding. The navigator decides what to do with it.
+- Report it in **one line, every pass, with the ids**: `Marked N beads not-needed: this project
+  declares verification none — <id>, <id>, …`. Never silently. The line is what keeps a
+  declaration somebody forgot about visible until the day the project grows something launchable.
+- Then go to *Ending a pass*: nothing below applies, and there is nothing to prepare.
+
+Any value other than `none` is unrecognised: say so in one line (`verification is "<value>",
+which I do not understand; treating it as unset`) and carry on as if the key were absent.
+
 For each id in the work list, find what it touched:
 
 ```bash
@@ -356,6 +385,8 @@ you can ahead of the question:
   quietly report there was nothing to verify: a guessed command is the one failure this whole
   declaration exists to prevent, and a silent skip means nobody ever looks at the application.
   Offer to write what they tell you into the consumer's conf, so the next pass does not ask again.
+  If what they tell you is that there is nothing to run — no application at all — offer to write
+  `verification none` instead (see *Deciding what is worth a look*), so no pass ever asks again.
 - **A warm build.** `--prewarm` on `prepare-worktree` above already ran whatever the project
   declared as its `prewarm` build, after the reset — never build it again once the navigator has
   said yes. A project that declares none has nothing to warm, and that is an ordinary state.

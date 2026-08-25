@@ -2888,6 +2888,22 @@ failure to explain. Returns (CODE . LAST-LINE)."
        (string-match "\\`exited abnormally with code \\([0-9]+\\)" event)
        (cons (match-string 1 event) last-line)))
 
+(defun cerebro--exit-code (event)
+  "Pure.  The code to log for a session that ended on EVENT.
+
+`cerebro--exit-record\=' answers a narrower question - is this worth showing on
+the row as a failure - and is nil for a clean quit.  That is right for the row
+and wrong for the log: an implementer went from `idle\=' to `dead\=' with no
+`exit\=' line anywhere, because a status of 0 was recorded nowhere at all, and
+\"without apparent reason\" was this code declining to say.
+
+`finished\=' is 0; an abnormal exit is its number; anything else - `killed\=', a
+signal - is the sentinel\='s own word."
+  (cond ((string-match "\\`exited abnormally with code \\([0-9]+\\)" event)
+         (match-string 1 event))
+        ((string-prefix-p "finished" event) "0")
+        (t (string-trim event))))
+
 (defcustom cerebro-exit-line-width 60
   "Columns of a dead session\='s last line shown on its row before an ellipsis.
 
@@ -2937,13 +2953,20 @@ name."
                       (buffer-substring-no-properties
                        (max (point-min) (- (point-max) cerebro--exit-tail-chars))
                        (point-max))))
-             (record (cerebro--exit-record event (cerebro--last-nonblank-line text))))
+             (last-line (cerebro--last-nonblank-line text))
+             (record (cerebro--exit-record event last-line)))
+        ;; EVERY exit is logged, clean ones included. The row and the echo
+        ;; area stay abnormal-only - a clean quit is not a failure to show
+        ;; anybody - but the log is where "why is this row dead" is answered
+        ;; after the fact, and a session that exited with status 0 used to
+        ;; leave nothing there at all.
+        (cerebro--log (cerebro--repo-root) 'exit
+                      (list (cons 'agent name)
+                            (cons 'code (cerebro--exit-code event))
+                            (cons 'abnormal (and record t))
+                            (cons 'last_line last-line)))
         (when record
           (setf (alist-get name cerebro--last-exit nil nil #'equal) (cdr record))
-          (cerebro--log (cerebro--repo-root) 'exit
-                        (list (cons 'agent name)
-                              (cons 'code (car record))
-                              (cons 'last_line (cdr record))))
           (message "%s exited (code %s): %s" name (car record) (cdr record)))))))
 
 ;;; Acting on the supervision decisions
@@ -3173,9 +3196,16 @@ The complete record, and the expensive one: a nine-agent fleet on a
 five-second tick writes on the order of a hundred thousand lines a day, which
 is why `cerebro-log-max-bytes\=' and `cerebro-log-generations\=' exist.
 
+`none\=' - nothing at all.  The one value that can lose a decision, so it has
+to be asked for by name: it is what the test suite binds, since
+`cerebro--repo-root\=' resolves from `default-directory\=' and ERT would
+otherwise append fabricated starts and exits to the live log the navigator
+reads to answer \"why did nothing happen\".
+
 Anything else logs the decisions alone: losing the record of a start is a
 worse failure than a typo in a setting."
-  :type '(choice (const decisions) (const changes) (const evaluations))
+  :type '(choice (const decisions) (const changes) (const evaluations)
+                 (const none))
   :group 'cerebro)
 
 (defcustom cerebro-log-max-bytes (* 25 1024 1024)
@@ -3201,9 +3231,14 @@ of days at `evaluations\=' and months at `changes\='."
   "The events written at every verbosity: what the view actually did.")
 
 (defun cerebro--log-event-p (event verbosity)
-  "Pure.  Whether EVENT is written at VERBOSITY.  See `cerebro-log-verbosity\='."
-  (or (memq event cerebro--log-decision-events)
-      (and (eq event 'evaluate) (memq verbosity '(changes evaluations)))))
+  "Pure.  Whether EVENT is written at VERBOSITY.  See `cerebro-log-verbosity\='.
+
+`none\=' silences everything; every other value - including one this list has
+never seen - still records what the view did."
+  (and (not (eq verbosity 'none))
+       (or (memq event cerebro--log-decision-events)
+           (and (eq event 'evaluate) (memq verbosity '(changes evaluations))))
+       t))
 
 (defun cerebro--log-evaluation-p (name reason seen verbosity)
   "Pure.  Whether NAME\='s evaluation answering REASON is written now.

@@ -9,6 +9,15 @@
 (require 'ert)
 (require 'cerebro)
 
+;; The suite exercises code that writes the fleet view's own log, and
+;; `cerebro--repo-root' resolves from `default-directory' - which, running the
+;; tests, is this repository. So ERT was appending fabricated `start' and
+;; `exit' lines to the LIVE .cerebro/state/decisions.jsonl: twelve Forge exits
+;; reading "cerebro: boom" and six Cyclops starts, from one morning's gate
+;; runs. That log is the record the navigator reads to answer "why did nothing
+;; happen", and a test writing to it makes the one piece of evidence untrue.
+(setq cerebro-log-verbosity 'none)
+
 (defconst cerebro-test--repo-root
   (expand-file-name ".." (file-name-directory
                            (or load-file-name buffer-file-name)))
@@ -1023,6 +1032,37 @@ stale by definition."
 
 ;; ---------------------------------------------------------------------------
 ;; ah-bri: a session that dies before it gets going keeps its last line readable
+
+(ert-deftest cerebro-test/the-log-writes-nothing-at-none ()
+  "`none\=' is the one verbosity that writes nothing at all.
+
+Every other value logs the decisions whatever it is - losing the record of a
+start is worse than a typo in a setting - so silence has to be asked for by
+name.  It is what the suite binds, so that running the tests cannot write into
+the log the navigator reads."
+  (dolist (event '(start end exit retire restart sweep evaluate))
+    (should-not (cerebro--log-event-p event 'none)))
+  ;; And every other value still records what the view did.
+  (dolist (verbosity '(decisions changes evaluations nil some-typo))
+    (should (cerebro--log-event-p 'start verbosity))
+    (should (cerebro--log-event-p 'exit verbosity))))
+
+(ert-deftest cerebro-test/every-exit-has-a-code-to-log ()
+  "A session that ends leaves a line whatever it died of.
+
+`cerebro--exit-record\=' answers a different question - is this worth putting
+on the row as a failure - and says nil for a clean quit.  That is right for
+the row and wrong for the log: an implementer went from `idle\=' to `dead\=' with
+no `exit\=' line anywhere, because exiting with status 0 was recorded nowhere
+at all.  \"Without apparent reason\" was the code declining to say."
+  (should (equal (cerebro--exit-code "finished\n") "0"))
+  (should (equal (cerebro--exit-code "exited abnormally with code 2\n") "2"))
+  (should (equal (cerebro--exit-code "killed\n") "killed"))
+  (should (equal (cerebro--exit-code "hangup\n") "hangup"))
+  ;; The row's own record is unchanged: a clean quit is not a failure to show.
+  (should (null (cerebro--exit-record "finished\n" "all done")))
+  (should (equal (cerebro--exit-record "exited abnormally with code 2\n" "boom")
+                 '("2" . "boom"))))
 
 (ert-deftest cerebro-test/exit-record-only-for-abnormal-exits ()
   (should (equal (cerebro--exit-record "exited abnormally with code 2\n" "cerebro: x")

@@ -5,9 +5,9 @@
 #     .claude/cerebro/scripts/agent-alive <Name>
 #
 #   exit 0   <Name>'s state file names a pid that is running AND whose command line carries
-#            `--name <Name>' AND a path under this consumer, anywhere in the command line - so it
-#            is still that session, of this fleet, not a recycled pid or another checkout's agent
-#            of the same name
+#            cerebro's own marker sentence - "This session is <Name> of the cerebro fleet rooted at
+#            <root>/." - so it is still that session, of this fleet, not a recycled pid or another
+#            checkout's agent of the same name
 #   exit 1   not alive: no state file, no pid in it, the pid is gone, or the pid is alive but is
 #            somebody else's process or belongs to another consumer's fleet
 #   exit 2   usage error, or <Name> is not on scripts/roster
@@ -17,9 +17,10 @@
 # elisp that lit a finished session's row green ten hours after it ended, and in the skills it makes
 # a dead planner look alive - stranding the very `planning' label the reclaim loop exists to free,
 # and inflating the count the planning buffer is sized from. Every session `scripts/launch' starts
-# carries `--name <Name>' in its args, so the name is the identity and the pid alone is not. And a
-# name is unique inside one consumer, not on the machine (9420ff2), so the root is the third
-# discriminator - see cerebro--session-args-p, of which this script is the bash copy. Its cases are
+# opens its prompt with cerebro's marker sentence, so the name is the identity and the pid alone is
+# not. And a name is unique inside one consumer, not on the machine (9420ff2), so the root is the
+# third discriminator - both cut from that one sentence (cb-d59.3), so no provider's flag spelling
+# is evidence. See cerebro--session-args-p, of which this script is the bash copy. Its cases are
 # tests/lib/session-args.cases, which tests/agent-alive.sh and emacs/cerebro-test.el both run - add
 # a case there, not in one suite.
 #
@@ -68,29 +69,31 @@ pid="$(jq -r '.pid // empty' "$state_file" 2>/dev/null || true)"
 args="$(ps -o args= -p "$pid" 2>/dev/null)" || exit 1
 [[ -n "$args" ]] || exit 1
 
-# The bash counterpart of cerebro--name-in-args-p. The trailing ([[:space:]]|$) is the word
-# boundary elisp spells `\_>': without it, one roster name that is a prefix of another silently
-# reads as alive.
-grep -Eq -- "--name[[:space:]]+${name}([[:space:]]|\$)" <<<"$args" || exit 1
+# The bash counterpart of cerebro--name-in-args-p. The needle is the opening of cerebro's own
+# marker sentence, up to and including the space after "rooted at" - which is what keeps one roster
+# name that is a prefix of another (Cyclops / Cyclopsly) from silently reading as alive, the job the
+# elisp `\_>' word boundary used to do on `--name'. Quoted inside the pattern, so a `*?[' in a name
+# is literal.
+case "$args" in
+  *"This session is $name of the cerebro fleet rooted at "*) ;;
+  *) exit 1 ;;
+esac
 
 # The third discriminator, the same one cerebro--session-args-p asks for in elisp (cb-lzi): the
 # session must belong to THIS consumer's fleet. A recycled pid can land on a same-named session of
 # another checkout - every consumer on the built-in roster has a Cyclops - and pid plus name alone
 # would call that one ours, which here would let a planner free a label somebody holds.
 #
-# This used to extract the `--settings' value specifically and resolve its directory physically
-# before comparing. It could only ever see one argument, and the one a wrapper is free to rewrite:
-# cmux keeps every flag `scripts/launch' passes but rewrites `--settings' from a path into merged
-# inline JSON, so the root disappeared from it entirely (ah-ybsr). The rule is, and always was, "the
-# command line carries a path under this consumer" - `cerebro--root-in-args-p' asks that of the
-# whole args string in elisp, and this now asks the same question of the same text: `$repo_root' is
-# already `consumer-root --shared', a `pwd -P' result, and `scripts/launch' embeds that identical
-# physical string (via `--append-system-prompt', now that `--settings' cannot carry it), so no
-# further resolution step is needed and - the settings value having vanished into a JSON blob - none
-# is possible any more. The trailing `/' is what makes it a whole path component, so a sibling
-# checkout whose path merely starts with this one's (`{root}-hud') does not match.
+# This used to extract the `--settings' value specifically, then any path under the consumer
+# (ah-ybsr). Since cb-d59.3 it is the second half of the marker sentence: `scripts/launch' opens
+# every session's prompt with it, and the prompt is the one argv slot every agent CLI accepts, so
+# neither half of this rule contains a provider's spelling any more. `$repo_root' is already
+# `consumer-root --shared', a `pwd -P' result, and `scripts/launch' embeds that identical physical
+# string, so no further resolution step is needed. The trailing `/' is what makes it a whole path
+# component, so a sibling checkout whose path merely starts with this one's (`{root}-hud') does not
+# match.
 case "$args" in
-  *"$repo_root"/*) ;;
+  *"cerebro fleet rooted at ${repo_root%/}/"*) ;;
   *) exit 1 ;;
 esac
 

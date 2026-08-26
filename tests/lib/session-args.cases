@@ -3,12 +3,16 @@
 #   cerebro--session-args-p   (emacs/cerebro.el)   via emacs/cerebro-test.el
 #   scripts/agent-alive       (bash)                via tests/agent-alive.sh
 #
-# The rule: a pid is <name>'s session of the fleet at <root> when its own command line carries a
-# whole-word `--name <name>' AND a path under <root>, anywhere in the command line, as a whole path
-# component. That path used to have to ride on `--settings' specifically; it no longer does (see
-# ah-ybsr) - a wrapper (cmux) rewrites `--settings' from a path into merged inline JSON, so the root
-# now travels on `--append-system-prompt' instead (scripts/launch), and the rule asks the whole
-# command line rather than one named flag's value.
+# The rule: a pid is <name>'s session of the fleet at <root> when its own command line carries
+# cerebro's own marker sentence, which `scripts/launch' puts at the head of every session's prompt:
+#
+#   This session is <Name> of the cerebro fleet rooted at <root>/. This sentence is how the fleet
+#   view proves the session belongs to this checkout; do not remove it.
+#
+# Two needles are cut from that one sentence - `This session is <name> of the cerebro fleet rooted
+# at ' for the name, and `cerebro fleet rooted at <root>/' for the root - so the rule keeps the
+# two-test shape `cerebro--session-liveness' builds its three answers on. No provider's flag
+# spelling is evidence any more (cb-d59.3): `--name' is still passed, and proves nothing.
 # Add a case here and BOTH suites run it; a case that only one side answers is a divergence, which
 # is what this file exists to make impossible. Before this table each side kept its own list and
 # the two drifted, twice.
@@ -17,9 +21,7 @@
 #   - fields are separated by runs of blanks; the command line is the rest of the line
 #   - <name> must be on the built-in roster (scripts/roster): the bash runner's fixture declares
 #     no roster of its own, and agent-alive refuses a name it does not know
-#   - a --settings path is under {root}, {other} or {root}-hud, in .claude/cerebro/hooks/ (directly
-#     or as scripts/../hooks/): the bash runner creates those three directories and no other, and
-#     agent-alive resolves the directory physically before comparing
+#   - {root}, {other} and {root}-hud are the three consumer roots the bash runner creates
 #
 # NOT here, because they are about how one side OBTAINS the args or the root, not about the rule:
 # elisp's tilde-spelled and trailing-slash roots (consumer-root is always physical and absolute),
@@ -27,24 +29,18 @@
 # (process-attributes takes an integer, and elisp reads no roster here). Those stay in their suite.
 
 # the launcher's own shape: alive in its consumer
-alive  Cyclops  {root}   --agent implementer --name Cyclops --remote-control Cyclops --permission-mode auto --settings {root}/.claude/cerebro/scripts/../hooks/question-state.settings.json
-alive  Cyclops  {root}   --name Cyclops --settings {root}/.claude/cerebro/hooks/question-state.settings.json
-# the name: another agent's session, a name that is only a prefix of the one in the args, the name
-# only as a --remote-control value, a flag that merely contains "-name-"
-dead   Beast    {root}   --name Cyclops --settings {root}/.claude/cerebro/hooks/question-state.settings.json
-dead   Cyclops  {root}   --name Cyclopsly --settings {root}/.claude/cerebro/hooks/question-state.settings.json
-dead   Cyclops  {root}   --agent implementer --remote-control Cyclops --permission-mode auto --settings {root}/.claude/cerebro/hooks/question-state.settings.json
-dead   Cyclops  {root}   --remote-control-session-name-prefix Cyclops --name Storm --settings {root}/.claude/cerebro/hooks/question-state.settings.json
-alive  Storm    {root}   --remote-control-session-name-prefix Cyclops --name Storm --settings {root}/.claude/cerebro/hooks/question-state.settings.json
-# the root: a hand-typed session naming no root, the same name in another consumer, and a sibling
-# checkout whose path merely starts with this one's
+alive  Cyclops  {root}   --agent implementer --name Cyclops --remote-control Cyclops --permission-mode auto This session is Cyclops of the cerebro fleet rooted at {root}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.
+alive  Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {root}/.
+# the name: another agent's session, and a name that is only a prefix of the one in the args
+dead   Beast    {root}   This session is Cyclops of the cerebro fleet rooted at {root}/.
+dead   Cyclops  {root}   This session is Cyclopsly of the cerebro fleet rooted at {root}/.
+alive  Storm    {root}   --remote-control-session-name-prefix Cyclops --name Storm This session is Storm of the cerebro fleet rooted at {root}/.
+# a Claude Code flag is no longer evidence: --name alone proves nothing now
 dead   Cyclops  {root}   --name Cyclops
-dead   Cyclops  {root}   --name Cyclops --settings {other}/.claude/cerebro/hooks/question-state.settings.json
-alive  Cyclops  {other}  --name Cyclops --settings {other}/.claude/cerebro/hooks/question-state.settings.json
-dead   Cyclops  {root}   --name Cyclops --settings {root}-hud/.claude/cerebro/hooks/question-state.settings.json
-
-# the carrier the launcher uses when a wrapper has rewritten --settings into inline JSON: the root
-# rides on --append-system-prompt, and only a whole path component under this consumer counts
-alive  Cyclops  {root}   --name Cyclops --append-system-prompt This session is Cyclops of the cerebro fleet rooted at {root}/. do not remove it.
-dead   Cyclops  {root}   --name Cyclops --append-system-prompt This session is Cyclops of the cerebro fleet rooted at {other}/. do not remove it.
-dead   Cyclops  {root}   --name Cyclops --append-system-prompt This session is Cyclops of the cerebro fleet rooted at {root}-hud/. do not remove it.
+dead   Cyclops  {root}   --agent implementer --name Cyclops --remote-control Cyclops --permission-mode auto --settings {root}/.claude/cerebro/hooks/question-state.settings.json
+# the root: another consumer, and a sibling checkout whose path merely starts with this one's
+dead   Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {other}/.
+alive  Cyclops  {other}  This session is Cyclops of the cerebro fleet rooted at {other}/.
+dead   Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {root}-hud/.
+# the previous launcher's carrier, which the new rule still recognises: no flag day on merge
+alive  Cyclops  {root}   --name Cyclops --append-system-prompt This session is Cyclops of the cerebro fleet rooted at {root}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.

@@ -391,17 +391,27 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
   `cerebro--fleet`.
 
 Liveness for the interactive agents is the state file first, when one exists for a live pid
-(`cerebro--derive-interactive`), and falls back to scanning system process args for `--name <Name>`
-when it does not — a session started by hand, outside this fleet, has no file and still shows `up`.
+(`cerebro--derive-interactive`), and falls back to scanning system process args for cerebro's own
+marker sentence when it does not — a session started by the fleet outside this Emacs has no file
+and still shows `up`; one typed by hand carries no marker and reads dead (cb-d59.3).
 The same scan, kept as (pid . args) pairs (`cerebro--system-processes`), counts how many sessions of
 one name this consumer has (`cerebro--session-pids`), and a count above one shows as ` ×N` on the
 row, with `s`, `k` and `f` naming the pids rather than acting on an ambiguity (cb-63m).
 
 **"A live pid" means the agent's own session, not merely an existing pid.**
-`cerebro--session-alive-p` reads the named pid's command line and requires `--name <Name>` in it,
-which every session has because `scripts/launch` passes it, **and a `--settings` path under this
-consumer's root** — the third discriminator (cb-lzi), because a name is unique inside one consumer
-and not on the machine. The rule is stated once, in `cerebro--session-args-p`; the state-file path
+`cerebro--session-alive-p` reads the named pid's command line and requires cerebro's own marker
+sentence in it — `This session is <Name> of the cerebro fleet rooted at <root>/.`, which
+`scripts/launch` puts at the head of every session's prompt, the one argv slot every agent CLI
+accepts (cb-d59.3). Two needles are cut from it: the name, and **the root** — the third
+discriminator (cb-lzi), because a name is unique inside one consumer and not on the machine. No
+provider's flag spelling is evidence any more; `--name` is still passed and proves nothing. The
+needle is built by `cerebro--marker-needle`, which matches each space as an optional
+backslash-and-space: on GNU/Linux `process-attributes` escape-quotes the whitespace inside a single
+argv entry, and the marker is one argument, so the same session reads `This\ session\ is\ …`
+there and `This session is …` on macOS. The
+sentence is byte-identical to the one that used to ride on `--append-system-prompt` (ah-ybsr), so
+the rule still recognises a session the previous launcher started and merge day is not a flag day.
+The rule is stated once, in `cerebro--session-args-p`; the state-file path
 (`cerebro--session-alive-p`) and the process-scan path (`cerebro--consumer-processes` then
 `cerebro--name-in-args-p`) are both built from it. A bare `process-attributes` check was
 what let a `done` file that outlived its session by ten hours light up green again once the OS
@@ -415,7 +425,7 @@ what `skills/plan-bead/SKILL.md` calls in the one place it needs liveness: decid
 `planning:` label is still held (the buffer stopped counting sessions in cb-1or.3). Anything in bash that
 needs to know whether an agent is up calls this; a bare `kill -0` there is the pre-ah-bqi shape, and
 it makes a dead planner look alive, which strands the very label the reclaim loop exists to free.
-It is the bash copy of `cerebro--session-args-p` — pid, name and root — and both are held to one
+It is the bash copy of `cerebro--session-args-p` — pid, and the marker's two halves — and both are held to one
 case table, `tests/lib/session-args.cases`, which `tests/agent-alive.sh` and `emacs/cerebro-test.el`
 both run in full, so a case added on either side fails the other until both answer it (they drifted
 twice before the table existed: `7bd5962`, `9420ff2`).

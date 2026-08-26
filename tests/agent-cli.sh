@@ -138,12 +138,10 @@ read_argv() {
   while IFS= read -r -d '' tok; do argv+=("$tok"); done < <("$@")
 }
 
-marker="This session is Storm of the cerebro fleet rooted at /repos/x/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."
-
 read_argv "$agent_cli" --argv --role implementer --name Storm \
-  --model opus --effort high --marker "$marker" --settings /tmp/s.json
+  --model opus --effort high --settings /tmp/s.json
 expected=(--agent implementer --name Storm --remote-control Storm
-          --model opus --effort high --append-system-prompt "$marker"
+          --model opus --effort high
           --settings /tmp/s.json --permission-mode auto)
 [[ "${#argv[@]}" -eq "${#expected[@]}" ]] \
   || fail "--argv: expected ${#expected[@]} tokens, got ${#argv[@]}: ${argv[*]}"
@@ -153,16 +151,17 @@ for ((i = 0; i < ${#expected[@]}; i++)); do
 done
 pass "--argv emits the claude arm's flags in launch order"
 
-# The marker sentence has spaces, and word-splitting it is exactly what the array in `launch`
-# exists to prevent - so the whole sentence must arrive as ONE token.
-[[ "${argv[11]}" == "$marker" ]] || fail "--argv: the marker should be one token, got '${argv[11]}'"
-pass "--argv carries a marker sentence with spaces as one token"
+# cb-d59.3: the marker moved into the prompt, which is the one argv slot every agent CLI accepts,
+# so no arm of --argv emits it - and composing it is `launch`'s job, not this table's.
+printf '%s' "${argv[*]}" | grep -q -- '--append-system-prompt' \
+  && fail "--argv still emits --append-system-prompt: ${argv[*]}"
+pass "--argv emits no --append-system-prompt, the marker having moved into the prompt"
 
 read_argv "$agent_cli" --argv --role planner --name Xavier
 expected=(--agent planner --name Xavier --remote-control Xavier --permission-mode auto)
 [[ "${argv[*]}" == "${expected[*]}" ]] \
   || fail "--argv (nothing optional): expected '${expected[*]}', got '${argv[*]}'"
-pass "--argv omits --model, --effort, --append-system-prompt and --settings when not given"
+pass "--argv omits --model, --effort and --settings when not given"
 
 prompt="You are Storm. Your agent definition (implementer) is the whole of your instructions: follow it from
 the top, and start now rather than waiting to be spoken to."

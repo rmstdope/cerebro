@@ -525,17 +525,21 @@ while IFS=$'\t' read -r name role kind; do
   echo "$out" | grep -q '^ARG:--permission-mode$' || fail "launch $name: missing --permission-mode"
   echo "$out" | grep -A1 '^ARG:--permission-mode$' | grep -q '^ARG:auto$' || fail "launch $name: expected auto"
 
-  # The consumer root, carried where a wrapper that rewrites --settings (cmux) cannot touch it
-  # (ah-ybsr): scripts/agent-alive and cerebro--root-in-args-p both look for a path under this
-  # consumer anywhere in the command line, and --settings can no longer be trusted to carry one.
+  # The marker sentence, which since cb-d59.3 opens the PROMPT rather than riding on a flag:
+  # scripts/agent-alive and cerebro--session-args-p cut both their needles from it, so no
+  # provider's flag spelling is evidence any more - and the prompt is the one argv slot every
+  # agent CLI accepts.
+  marker_line="This session is $name of the cerebro fleet rooted at "
+  prompt="$(echo "$out" | sed -n "/^ARG:${marker_line}/,\$p")"
+  [[ -n "$prompt" ]] \
+    || fail "launch $name: the prompt does not carry the marker, so the fleet view cannot prove the session"
+  echo "$prompt" | grep -qF "${fixture_dir%/}/" \
+    || fail "launch $name: the marker names no path under the consumer, got: $out"
   echo "$out" | grep -q '^ARG:--append-system-prompt$' \
-    || fail "launch $name: missing --append-system-prompt, so the fleet view cannot prove the session"
-  echo "$out" | grep -A1 '^ARG:--append-system-prompt$' | grep -qF "${fixture_dir%/}/" \
-    || fail "launch $name: --append-system-prompt carries no path under the consumer, got: $out"
+    && fail "launch $name: --append-system-prompt is still passed"
 
-  # The prompt is the last ARG, and it has one embedded newline, so it prints as the last two
-  # lines of output (`tac` is not on macOS by default, so this avoids it).
-  prompt="$(echo "$out" | tail -2)"
+  # The prompt is the last ARG: the marker, a blank line, then the instruction. It is read from
+  # the marker line onwards rather than by counting lines from the end.
   echo "$prompt" | grep -q "$name" || fail "launch $name: prompt does not name $name"
   echo "$prompt" | grep -q "$role" || fail "launch $name: prompt does not name $role"
   echo "$prompt" | grep -q "fill the buffer" && fail "launch $name: prompt still has the old per-role drift"
@@ -837,8 +841,8 @@ pass "self-consumer roster: the retired .claude/ path refuses too"
 # round it. The refusal belongs where the name is known, which is here.
 #
 # The fake session is the recipe tests/agent-alive.sh uses: a script file (never `bash -c', whose
-# implicit exec would drop `--name' from the args) carrying the `--settings' path that proves which
-# consumer's fleet it belongs to.
+# implicit exec would drop its arguments) carrying cerebro's marker sentence, which since cb-d59.3
+# is the whole proof of which name and which consumer's fleet the session belongs to.
 # `sed -n 1p' rather than `head -n 1': head closes the pipe on its first line, and under
 # `set -o pipefail' roster's EPIPE would kill this suite rather than name an implementer.
 dup_name="$("$fixture_scripts/roster" --implementers | sed -n 1p)"
@@ -846,10 +850,8 @@ dup_name="$("$fixture_scripts/roster" --implementers | sed -n 1p)"
 
 printf '#!/usr/bin/env bash\nsleep 30\n' > "$fixture_dir/fake-session"
 chmod +x "$fixture_dir/fake-session"
-# agent-alive resolves the --settings directory physically, so hooks/ must exist.
-mkdir -p "$fixture_dir/.claude/cerebro/hooks"
 bash "$fixture_dir/fake-session" --name "$dup_name" \
-  --settings "$fixture_dir/.claude/cerebro/scripts/../hooks/question-state.settings.json" &
+  "This session is $dup_name of the cerebro fleet rooted at ${fixture_dir%/}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it." &
 dup_pid=$!
 # The `sleep' is a child of that bash rather than the bash itself; both are registered, or the
 # child outlives a kill of the wrapper for the rest of its thirty seconds.

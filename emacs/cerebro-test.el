@@ -2769,20 +2769,40 @@ trading a permanent freeze for two concurrent `bd\='s."
 ;; ah-9dv: the bead panel requests instead of blocking
 
 (ert-deftest cerebro-test/request-beads-asks-bd-briefly ()
-  (let (argv got)
+  (let (argv got linked)
     (cl-letf (((symbol-function 'cerebro--run-async)
                (lambda (_key _root a callback)
                  (setq argv a)
                  (funcall callback "[]")
                  'started)))
-      (cerebro--request-beads "/repo" (lambda (beads) (setq got beads))))
+      (cerebro--request-beads "/repo" (lambda (beads &optional l)
+                                        (setq got beads linked l))))
     (should (equal (car argv) "bd"))
     (should (equal (cadr argv) "list"))
     (should (member "--brief" argv))
     (should (member "--json" argv))
     ;; "[]" is a successful, empty answer - a five-list partition of nothing,
     ;; not "bd did not answer".
-    (should (equal got (list nil nil nil nil nil)))))
+    (should (equal got (list nil nil nil nil nil)))
+    (should (null linked)))
+  ;; The same call answers the linked beads: the panel partition deliberately
+  ;; leaves out what is settled (`cerebro--settled-p'), and a VERIFIED is
+  ;; exactly the transition Moira has to see, so it comes off the raw list
+  ;; rather than out of the partition (cb-b4m).
+  (let (got linked)
+    (cl-letf (((symbol-function 'cerebro--run-async)
+               (lambda (_key _root _argv callback)
+                 (funcall callback
+                          (concat "[{\"id\":\"cb-3qh\",\"status\":\"closed\","
+                                  "\"external_ref\":\"gh-58\","
+                                  "\"updated_at\":\"2026-08-24T12:36:41Z\"}]"))
+                 'started)))
+      (cerebro--request-beads "/repo" (lambda (beads &optional l)
+                                        (setq got beads linked l))))
+    (should got)
+    (should (equal linked
+                   (list (list "cb-3qh" 58
+                               (cerebro-test--gh-time "2026-08-24T12:36:41Z")))))))
 
 (ert-deftest cerebro-test/request-beads-treats-invalid-output-as-no-answer ()
   "`bd' exiting zero but printing garbage must not read as a valid empty
@@ -2794,7 +2814,7 @@ clear the \"bd did not answer\" indicator (PR #42 review)."
                (lambda (_key _root _argv callback)
                  (funcall callback "this is not json")
                  'started)))
-      (cerebro--request-beads "/repo" (lambda (beads) (setq got beads))))
+      (cerebro--request-beads "/repo" (lambda (beads &optional _l) (setq got beads))))
     (should (null got))))
 
 (ert-deftest cerebro-test/panel-header-says-what-the-rows-date-from ()
@@ -5531,11 +5551,15 @@ session that printed a reason on the way out stays dead with that line until
     ;; Never started by this Emacs.
     (should (eq (cerebro-agent-state (nth 2 out)) 'dead))))
 
-(ert-deftest cerebro-test/up-names-are-the-implementers-with-a-session ()
-  "An implementer has no kept buffer and no `cerebro--parked' entry, so
-\"did the last start produce anything\" is answered by whether the view ever
-saw the session up.  Every state but `dead' and `standby' is up; an
-interactive role keeps `cerebro--parked' and is never listed here."
+(ert-deftest cerebro-test/up-names-are-every-agent-with-a-session ()
+  "Every state but `dead' and `standby' is up, whatever the kind.
+
+An agent with no kept buffer and no `cerebro--parked' entry - one whose park
+failed, or whose session simply died - has \"when did the last pass end\"
+answered by whether the view ever saw the session up.  That was an
+implementer's question alone until cb-b4m, when every interactive role turned
+out to reach the same path: with nil `ended-at', Moira's condition read every
+open issue as moved and started her every ten minutes for a day."
   (should (equal (cerebro--up-names
                   (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working)
                         (cerebro-test--agent "Rogue" "implementer" 'implementer 'idle)
@@ -5544,8 +5568,38 @@ interactive role keeps `cerebro--parked' and is never listed here."
                         (cerebro-test--agent "Jubilee" "implementer" 'implementer 'unknown)
                         (cerebro-test--agent "Bishop" "implementer" 'implementer 'dead)
                         (cerebro-test--agent "Iceman" "implementer" 'implementer 'standby)
-                        (cerebro-test--interactive "Psylocke" "verifier" 'idle)))
-                 '("Cyclops" "Rogue" "Storm" "Gambit" "Jubilee"))))
+                        (cerebro-test--interactive "Psylocke" "verifier" 'idle)
+                        (cerebro-test--interactive "Moira" "user-feedback" 'standby)
+                        (cerebro-test--interactive "Cypher" "reviewer" 'dead)))
+                 '("Cyclops" "Rogue" "Storm" "Gambit" "Jubilee" "Psylocke"))))
+
+(ert-deftest cerebro-test/an-interactive-context-falls-back-to-when-it-was-last-seen-up ()
+  "An interactive role\='s `ended-at' is its park when it has one, and the last
+tick that saw it up when it has not.
+
+The fallback was an implementer's alone, and a role with no parked entry got
+nil - which `cerebro--gh-moved' read as \"everything moved\" (cb-b4m).  A park
+that throws, a session that died, an Emacs restarted mid-pass: each leaves a
+role with no entry, and none of them means the world is new."
+  (with-temp-buffer
+    (setq cerebro--seen-up '(("Moira" . 5.0))
+          cerebro--parked nil)
+    (let ((mine (cerebro--agent-context
+                 (cerebro-test--interactive "Moira" "user-feedback" 'standby)
+                 (list (cons 'now 10.0) (cons 'gh nil)))))
+      (should (equal (alist-get 'ended-at mine) 5.0)))
+    ;; The park outranks it: it is the moment the pass actually ended.
+    (setq cerebro--parked '(("Moira" . (7.0 4.0 nil))))
+    (let ((mine (cerebro--agent-context
+                 (cerebro-test--interactive "Moira" "user-feedback" 'standby)
+                 (list (cons 'now 10.0) (cons 'gh nil)))))
+      (should (equal (alist-get 'ended-at mine) 7.0)))
+    ;; Neither: nil, and every rule measured against it reads "nothing".
+    (setq cerebro--seen-up nil cerebro--parked nil)
+    (let ((mine (cerebro--agent-context
+                 (cerebro-test--interactive "Moira" "user-feedback" 'standby)
+                 (list (cons 'now 10.0) (cons 'gh nil)))))
+      (should (null (alist-get 'ended-at mine))))))
 
 (ert-deftest cerebro-test/an-implementer-context-prefers-its-parked-entry ()
   "An implementer that ended its pass is parked like a role since cb-1or.1, so
@@ -5586,6 +5640,19 @@ none, so it is when the view last derived its session as up."
         ;; A name with no failures reads zero rather than nil: it indexes
         ;; the backoff schedule.
         (should (equal (alist-get 'failed-starts hers) 0))))))
+
+(ert-deftest cerebro-test/an-interactive-context-measures-linked-beads-against-its-own-pass ()
+  "`linked-moved' is `linked' filtered by this role\='s own `ended-at', the way
+`gh' is - so the fleet gathers the list once a tick and each standby row asks
+about its own last pass."
+  (with-temp-buffer
+    (setq cerebro--seen-up nil
+          cerebro--parked '(("Moira" . (7.0 4.0 nil))))
+    (let ((mine (cerebro--agent-context
+                 (cerebro-test--interactive "Moira" "user-feedback" 'standby)
+                 (list (cons 'now 10.0) (cons 'gh nil)
+                       (cons 'linked '(("cb-1" 5 6.0) ("cb-2" 9 8.0)))))))
+      (should (equal (alist-get 'linked-moved mine) '(("cb-2" 9 8.0)))))))
 
 (ert-deftest cerebro-test/an-implementer-fingerprint-is-the-planned-ids ()
   "Ids, not a count.  An implementer started for a planned bead it cannot
@@ -5941,7 +6008,7 @@ session - so it goes before the fresh one starts."
           '((now . 1000000.0) (ended-at . 999000.0) (started-at . 990000.0)
             (floor . 600) (first-planner-p . t) (implementers . 2)
             (planned . 4) (p0-unplanned) (p4-unranked . 0) (actionable-ids)
-            (merged-unverified . 0) (stale-verdicts . 0) (gh))))
+            (merged-unverified . 0) (stale-verdicts . 0) (gh) (linked-moved))))
 
 (defun cerebro-test--trigger (role &rest overrides)
   (cerebro--trigger (cerebro-test--interactive "X" role 'standby)
@@ -6029,6 +6096,22 @@ by being derived from the unplanned list."
     (should (equal (cerebro-test--trigger "reviewer" '(gh nil (40)))
                    "PR #40 moved"))
     (should (null (cerebro-test--trigger "user-feedback" '(gh nil nil))))
+    ;; And the bead side of Moira's job: a linked bead that changed since her
+    ;; last pass is a status comment owed to an issue, and the issue's own
+    ;; `updatedAt' does not move for it (cb-b4m).
+    (should (equal (cerebro-test--trigger "user-feedback" '(gh nil nil)
+                                          '(linked-moved ("cb-3qh" 58 999500.0)))
+                   "bead cb-3qh moved (issue #58)"))
+    ;; The issue comes first: a person is waiting on one, and the bead is the
+    ;; fleet's own bookkeeping.
+    (should (equal (cerebro-test--trigger "user-feedback" '(gh (41 17) nil)
+                                          '(linked-moved ("cb-3qh" 58 999500.0)))
+                   "issue #41 moved"))
+    ;; A reader that failed does not hide the bead side: they are two
+    ;; conditions, not one with a fallback.
+    (should (equal (cerebro-test--trigger "user-feedback" '(gh . failed)
+                                          '(linked-moved ("cb-3qh" 58 999500.0)))
+                   "bead cb-3qh moved (issue #58)"))
     (should (null (cerebro-test--trigger "reviewer" '(gh . failed))))
     ;; The cadence floor, on its own.
     (should (null (cerebro-test--trigger "user-feedback" '(gh . failed)
@@ -7107,15 +7190,45 @@ that moved after the role's last pass ended - in the order `gh' listed them."
         (ended (cerebro-test--gh-time "2026-08-24T12:00:00Z")))
     (should (equal (cerebro--gh-moved issues prs "navigator" ended)
                    '((31 17) (40))))
-    ;; Never ended in this Emacs: there is no moment to compare against, so
-    ;; everything still open counts - the draft and the navigator's own PR
-    ;; excepted, which are excluded by what they are rather than by when.
-    (should (equal (cerebro--gh-moved issues prs "navigator" nil)
-                   '((10 31 17) (40 41))))
+    ;; No end to measure against: nothing moved (cb-b4m).  It used to be
+    ;; everything still open, and with one open issue that started Moira on
+    ;; every tick the floor allowed, for a day - "I have no idea what has
+    ;; changed" is not a reason to start a session, it is a reason not to.
+    (should (equal (cerebro--gh-moved issues prs "navigator" nil) '(nil nil)))
     ;; No login yet: nothing has been shown to be somebody else's, so no PR
     ;; can start Cypher - the issues are unaffected.
     (should (equal (cerebro--gh-moved issues prs nil ended) '((31 17) nil)))
     (should (equal (cerebro--gh-moved nil nil "navigator" ended) '(nil nil)))))
+
+(ert-deftest cerebro-test/linked-beads-are-the-ones-with-a-github-ref ()
+  "Which beads carry a GitHub issue, and when each last changed.
+
+Moira\='s second job is keeping a linked issue\='s status comments in step with
+its bead, and those changes happen on the board: the issue\='s own `updatedAt'
+does not move for a CLAIMED or a MERGED (cb-b4m).  So the bead is the thing to
+watch, and `external_ref' of the form `gh-<n>' is what makes one hers."
+  (let ((beads '(((id . "cb-3qh") (external_ref . "gh-58")
+                  (updated_at . "2026-08-24T12:36:41Z"))
+                 ((id . "cb-none") (updated_at . "2026-08-24T13:00:00Z"))
+                 ((id . "cb-jira") (external_ref . "jira-9")
+                  (updated_at . "2026-08-24T13:00:00Z"))
+                 ((id . "cb-odd") (external_ref . "gh-x")
+                  (updated_at . "2026-08-24T13:00:00Z"))
+                 ((id . "cb-bad") (external_ref . "gh-7")
+                  (updated_at . "not a time")))))
+    (should (equal (cerebro--linked-beads beads)
+                   (list (list "cb-3qh" 58 (cerebro-test--gh-time "2026-08-24T12:36:41Z")))))
+    (should (null (cerebro--linked-beads nil)))))
+
+(ert-deftest cerebro-test/linked-moved-is-measured-against-the-last-pass ()
+  "The linked beads that changed since this role\='s pass ended - and, with no
+end to measure against, none of them, exactly as `cerebro--gh-moved' answers."
+  (let ((linked '(("cb-1" 5 6.0) ("cb-2" 9 8.0))))
+    (should (equal (cerebro--linked-moved linked 7.0) '(("cb-2" 9 8.0))))
+    (should (equal (cerebro--linked-moved linked 1.0) linked))
+    (should (null (cerebro--linked-moved linked 9.0)))
+    (should (null (cerebro--linked-moved linked nil)))
+    (should (null (cerebro--linked-moved nil 1.0)))))
 
 (ert-deftest cerebro-test/gh-reader-marks-failure-and-keeps-the-last-answer ()
   "A `gh' that stops answering leaves the last answer standing and says so:

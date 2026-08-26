@@ -2055,16 +2055,19 @@ floor that has half a minute left to run is not worth a different word."
   (let* ((role (cerebro-agent-role agent))
          (cadence (cdr (assoc role cerebro-cadence-triggers))))
     (cond
-     ;; An implementer on standby is one whose session died, so what it is
-     ;; waiting for is a clock rather than a condition: when the view tries
-     ;; again, and how many starts have come to nothing (cb-hzs).
+     ;; An implementer on standby is one between beads, so what it waits for
+     ;; is a condition, named the way a planner's row names its buffer rule
+     ;; (cb-1or.1).  The clock is shown only while a failed start is actually
+     ;; backing off - that is the one time there is a moment to count down
+     ;; to, and it is a launcher refusing rather than a pass that ended.
      ((equal role "implementer")
       (let* ((failures (alist-get 'failed-starts context))
              (left (cerebro--retry-wait failures (alist-get 'started-at context)
                                         (alist-get 'now context))))
-        (concat "↻ retry "
-                (if (> left 0) (concat "in " (cerebro--retry-figure left)) "now")
-                (if (> failures 0) (format ", %d failed" failures) ""))))
+        (if (> left 0)
+            (format "↻ retry in %s%s" (cerebro--retry-figure left)
+                    (if (> failures 0) (format ", %d failed" failures) ""))
+          "→ planned bead")))
      ((equal role "planner")
       (format "→ buffer < %d" (cerebro--planner-want (alist-get 'live-implementers context))))
      ((equal role "verifier") "→ merged, unverified")
@@ -2342,13 +2345,15 @@ missing, an un-synced submodule - leaves something readable behind rather
 than the row going `up' for a moment and then silently `dead' (ah-bri).
 
 RETRY-LEFT (seconds) and FAILURES describe a standby implementer\='s next
-start (`cerebro--retry-when'): its session ended without finishing a bead
-and the view will start it again, which is worth saying outright rather
-than leaving the navigator to read it off the row (cb-hzs).  They are
+start (`cerebro--retry-when').  A RETRY-LEFT above zero is a launcher that
+refused backing off, and the line says when it comes back (cb-hzs);
+otherwise the session finished its pass and the line names the condition
+that brings it back, since cb-1or.1 there is one.  They are
 passed in rather than read here because they are buffer-local to the fleet
 buffer and this runs from whatever buffer is showing.  A standby *role*
 keeps the plain line: its kept buffer is what `RET' shows, and this is only
-reached once that has been killed.
+reached once that has been killed - as it is for an implementer, whose
+buffer is kept the same way now.
 
 ROSTER-ARMED and TRIGGER-LABEL describe the one role that has a standby row
 and no pass behind it: one `.cerebro/roster.conf' armed with the `standby'
@@ -2370,10 +2375,15 @@ because `s' is then the only thing that starts it."
               name))
      ((and (eq (cerebro-agent-state agent) 'standby)
            (eq (cerebro-agent-kind agent) 'implementer))
-      (format (concat "%s is not running.\nIts last session ended without finishing a"
-                      " bead; the view starts it again %s.\nPress s to start it now,"
-                      " k to leave it down.")
-              name (cerebro--retry-when (or retry-left 0) (or failures 0))))
+      (if (> (or retry-left 0) 0)
+          (format (concat "%s is not running.\nIts last session ended without finishing a"
+                          " bead; the view starts it again %s.\nPress s to start it now,"
+                          " k to leave it down.")
+                  name (cerebro--retry-when retry-left (or failures 0)))
+        (format (concat "%s is not running.\nIts last session finished its pass; the view"
+                        " starts it again when a planned bead is waiting.\nPress s to start"
+                        " it now, k to leave it down.")
+                name)))
      ((and (eq (cerebro-agent-state agent) 'standby)
            (eq (cerebro-agent-kind agent) 'interactive)
            roster-armed)

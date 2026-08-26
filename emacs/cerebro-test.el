@@ -1255,14 +1255,23 @@ leaves the navigator to work out whether anything is coming."
     (should (equal (cerebro--retry-when 0 3) "now (3 failed starts)"))
     (should (equal (cerebro--retry-when 45 1) "in 45s (1 failed start)"))
     (should (equal (cerebro--retry-when 120 3) "in 2m (3 failed starts)"))
-    (should
-     (equal (cerebro--placeholder
-             (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
-             120 3)
-            (concat "Cyclops is not running.\n"
-                    "Its last session ended without finishing a bead;"
-                    " the view starts it again in 2m (3 failed starts).\n"
-                    "Press s to start it now, k to leave it down.")))
+    (let ((cyclops (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+      ;; While a failed start is backing off it says when it comes back.
+      (should
+       (equal (cerebro--placeholder cyclops 120 3)
+              (concat "Cyclops is not running.\n"
+                      "Its last session ended without finishing a bead;"
+                      " the view starts it again in 2m (3 failed starts).\n"
+                      "Press s to start it now, k to leave it down.")))
+      ;; Otherwise it finished its pass and waits on the condition, whether
+      ;; or not there are failures behind it whose backoff has run out.
+      (dolist (failures '(0 3))
+        (should
+         (equal (cerebro--placeholder cyclops 0 failures)
+                (concat "Cyclops is not running.\n"
+                        "Its last session finished its pass; the view starts it"
+                        " again when a planned bead is waiting.\n"
+                        "Press s to start it now, k to leave it down.")))))
     ;; A standby *role* keeps the line it has always had: its kept buffer is
     ;; what `RET' shows, and this is only reached when that has been killed.
     (should (equal (cerebro--placeholder
@@ -6364,22 +6373,22 @@ starts have come to nothing - a launcher refused all morning reads as
 \"9 failed\" rather than as a row that has simply stopped moving."
   (let ((cerebro-retry-backoff '(0 30 120 600))
         (cyclops (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+    ;; The ordinary case since cb-1or.1: nothing failed, so the row names the
+    ;; condition it waits for, the way a planner's names its buffer rule.
     (should (equal (cerebro--standby-label
                     cyclops (cerebro-test--context '(failed-starts . 0)
                                                    '(started-at . 999990.0)))
-                   "↻ retry now"))
-    (should (equal (cerebro--standby-label
-                    cyclops (cerebro-test--context '(failed-starts . 3)
-                                                   '(started-at . 990000.0)))
-                   "↻ retry now, 3 failed"))
+                   "→ planned bead"))
+    ;; The clock only while a failed start is actually backing off.
     (should (equal (cerebro--standby-label
                     cyclops (cerebro-test--context '(failed-starts . 3)
                                                    '(started-at . 999925.0)))
                    "↻ retry in 45s, 3 failed"))
+    ;; A retry that is due waits on the condition like any other standby row.
     (should (equal (cerebro--standby-label
                     cyclops (cerebro-test--context '(failed-starts . 3)
-                                                   '(started-at . 999999.0)))
-                   "↻ retry in 2m, 3 failed"))
+                                                   '(started-at . 990000.0)))
+                   "→ planned bead"))
     ;; Past the end of the schedule the last entry is the ceiling, so a
     ;; launcher refused all morning is retried steadily and says so.
     (should (equal (cerebro--standby-label

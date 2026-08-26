@@ -3035,7 +3035,8 @@ the row itself is the live figure."
          (roster-armed (let ((entry (cdr (assoc name cerebro--parked))))
                          (and entry (null (nth 1 entry)))))
          ;; One panel read per `RET', not per tick - which is what
-         ;; `cerebro--standby-label's "deliberately cheap" docstring allows.
+         ;; `cerebro--trigger-context's "deliberately cheap" docstring allows:
+         ;; it counts what the tick has already read and makes no `bd' call.
          (trigger-label
           (and roster-armed
                (cerebro--standby-label
@@ -3397,7 +3398,8 @@ does: one launcher that cannot start must not stop the others."
                         (list (float-time) nil nil)))
                 (cerebro--log repo-root 'arm
                               (list (cons 'agent name)
-                                    (cons 'role (cerebro--agent-role-named name))
+                                    (cons 'role (let ((a (cerebro--find-agent name)))
+                                                  (and a (cerebro-agent-role a))))
                                     (cons 'by "roster"))))
               ;; The render runs AFTER arming: `cerebro--apply-standby' is
               ;; what turns an armed, dead row into `standby'.
@@ -3405,10 +3407,6 @@ does: one launcher that cannot start must not stop the others."
               (let ((line (cerebro--autostart-message (nreverse results) armed)))
                 (when line (message "%s" line))))))))))
 
-(defun cerebro--agent-role-named (name)
-  "The role NAME holds in `cerebro--agents\=', or nil when it holds none."
-  (let ((agent (seq-find (lambda (a) (equal (cerebro-agent-name a) name)) cerebro--agents)))
-    (and agent (cerebro-agent-role agent))))
 
 (defun cerebro--stop-flag-path (repo-root name)
   "Where NAME's stop flag lives, as `orchestrator.md' documents it."

@@ -1471,6 +1471,51 @@ takes its line from the errors.jsonl entry its own launcher wrote."
               (kill-buffer buf))))
       (delete-directory root t))))
 
+(ert-deftest cerebro-test/note-exit-logs-an-error-for-an-exit-the-launcher-did-not-explain ()
+  "errors.jsonl is the file the navigator is told to open, and it held nothing
+about the day the fleet could not start.  Every abnormal exit the launcher did
+not already account for gets a line there, blamed on `session <Name>' (cb-ccl)
+- and one it DID account for gets none, since that line is already in this
+very file."
+  (let* ((root (file-name-as-directory (make-temp-file "cerebro-root" t)))
+         (errors (expand-file-name ".cerebro/state/errors.jsonl" root))
+         (cerebro-log-verbosity 'decisions))
+    (cl-flet ((run (setup)
+                (let ((cerebro--last-exit nil) (cerebro--sessions nil)
+                      (buf (generate-new-buffer "*fleet: Cyclops*")))
+                  (unwind-protect
+                      (progn
+                        (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+                        (with-current-buffer buf
+                          (setq default-directory root)
+                          (setq cerebro--session-started (float-time))
+                          (funcall setup))
+                        (cerebro--note-exit buf "exited abnormally with code 2\n"))
+                    (kill-buffer buf))))
+              (lines ()
+                (if (file-exists-p errors)
+                    (with-temp-buffer (insert-file-contents errors) (buffer-string))
+                  "")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
+            (make-directory (expand-file-name ".claude/cerebro" root) t)
+            (make-directory (expand-file-name ".cerebro/state" root) t)
+            ;; Nothing printed, nothing from the launcher.
+            (run #'ignore)
+            (should (string-match-p "\"context\":\"session Cyclops\"" (lines)))
+            (should (string-match-p "exited with code 2 and printed nothing" (lines)))
+            ;; A line in the buffer: the error names it.
+            (delete-file errors)
+            (run (lambda () (insert "boom\n")))
+            (should (string-match-p "exited with code 2: boom" (lines)))
+            ;; The launcher already said why: no second line about it.
+            (delete-file errors)
+            (with-temp-file errors
+              (insert "{\"event\":\"error\",\"ts\":\"2099-01-01T00:00:00Z\",\"context\":\"launch Cyclops\",\"message\":\"claude is not on PATH\"}\n"))
+            (run #'ignore)
+            (should-not (string-match-p "session Cyclops" (lines))))
+        (delete-directory root t)))))
+
 (ert-deftest cerebro-test/note-exit-logs-abnormal-true-without-a-line ()
   "The incident log carried 274 exits reading {\"code\":\"2\",\"abnormal\":null}:
 with no line there was no record, and `abnormal\=' was computed from the record

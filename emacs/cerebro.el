@@ -4540,7 +4540,7 @@ as `busy' by the first chain's still-running one (PR #42 review).")
 (defvar-local cerebro--beads nil
   "The last partition `bd' answered with, or nil before the first.")
 
-(defvar-local cerebro--linked-beads nil
+(defvar-local cerebro--linked nil
   "The beads linked to a GitHub issue as of the last answer, or nil.
 
 \(ID ISSUE-NUMBER UPDATED-AT), from `cerebro--linked-beads' over the same
@@ -4618,7 +4618,7 @@ finish rather than joined by a second (`cerebro--run-async' says `busy')."
                     (setq cerebro--beads-requested-at nil)
                     (if beads
                         (setq cerebro--beads beads
-                              cerebro--linked-beads linked
+                              cerebro--linked linked
                               cerebro--beads-as-of (float-time)
                               cerebro--beads-failed-at nil)
                       (setq cerebro--beads-failed-at (float-time))))
@@ -5020,7 +5020,7 @@ was a failure, are both plain values: neither depends on whose pass it is."
           ;; The linked beads as the panel last saw them; which of them moved
           ;; is measured against the role's own pass, so that part is
           ;; `cerebro--agent-context's (cb-b4m).
-          (cons 'linked (and panel (buffer-local-value 'cerebro--linked-beads panel))))))
+          (cons 'linked (and panel (buffer-local-value 'cerebro--linked panel))))))
 
 (defun cerebro--agent-context (agent context)
   "CONTEXT with the facts that are AGENT\='s rather than the fleet\='s.

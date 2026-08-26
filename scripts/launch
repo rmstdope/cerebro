@@ -82,7 +82,11 @@ fi
 # the view's own restart, which deletes the state file before it launches, is never refused here.
 if [[ -n "$consumer_root" ]] && "$here/agent-alive" "$name" 2>/dev/null; then
   pid="$(jq -r '.pid // "?"' "$consumer_root/.cerebro/state/$name.state.json" 2>/dev/null || echo '?')"
-  echo "launch: $name is already running in this fleet (pid $pid); end it first" >&2
+  # Said and recorded by `launch-refused` (cb-ccl): this is the one refusal of this script's the
+  # fleet view can hit, so it is the one whose line must survive a vterm buffer that died before it
+  # was drawn. The usage / not-on-the-roster / misspelt refusals above are terminal typos and keep
+  # their own `launch:` lines.
+  "$here/launch-refused" "$name" "$name is already running in this fleet (pid $pid); end it first"
   exit 2
 fi
 

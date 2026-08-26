@@ -105,6 +105,18 @@ echo "$out" | grep -q "uncommitted changes" || fail "dirty: expected a message n
 grep -q "my edit" "$c/file.txt" || fail "dirty: the edit was lost"
 pass "a dirty checkout is refused, and the edit survives"
 
+# --- ...and the refusal reaches errors.jsonl, which is the file the navigator is sent to (cb-ccl) --
+#
+# The incident this comes from: this exact refusal, 274 times in a day, with stderr the only place it
+# was ever said and vterm never drawing it before the session died.
+log="$c/.cerebro/state/errors.jsonl"
+[[ -f "$log" ]] || fail "dirty: expected the refusal at $log"
+[[ "$(tail -n1 "$log" | jq -r .context)" == "launch Xavier" ]] \
+  || fail "dirty: expected context='launch Xavier', got: $(tail -n1 "$log")"
+tail -n1 "$log" | jq -r .message | grep -q "uncommitted changes" \
+  || fail "dirty: expected the logged message to name the changes, got: $(tail -n1 "$log")"
+pass "a refused launch is recorded in errors.jsonl"
+
 # --- a diverged checkout is refused ----------------------------------------------------------------
 c="$(make_consumer diverged)"
 advance_origin diverged 1

@@ -357,29 +357,19 @@ echo "$err" | grep -q "one word too many" \
   || fail "roster with both words: expected the 'one word too many' line, got: $err"
 pass "roster: autostart and standby on one row refuse as a fourth word"
 
-# `standby` on an implementer row is refused until cb-1or gives implementers a wake condition: the
-# implementer trigger starts a standby implementer unconditionally, so the word there would be
-# `autostart` with a five-second delay and a retry line for a session that never ran. The refusal is
-# the parser's, so every mode refuses.
+# `standby` on an implementer row arms it like any other (cb-1or.2): since cb-1or.1 the implementer
+# trigger is a real condition - a planned, unclaimed bead - so the refusal that stood here guarded
+# nothing. The word is accepted in every mode, and the default output stays three columns.
 printf 'Ada  planner\nTuring  implementer  standby\n' > "$consumer_roster_file"
-for mode in "" "--autostart" "--standby" "--entry Ada" "--implementers"; do
-  set +e
-  # shellcheck disable=SC2086
-  out="$("$roster_at" $mode 2>/dev/null)"
-  status=$?
-  # shellcheck disable=SC2086
-  err="$("$roster_at" $mode 2>&1 >/dev/null)"
-  set -e
-  [[ $status -eq 2 ]] || fail "roster ${mode:-(bare)} with a standby implementer: expected exit 2, got $status"
-  [[ -z "$out" ]] || fail "roster ${mode:-(bare)} with a standby implementer: expected nothing on stdout, got: $out"
-  echo "$err" | grep -q "line 2" \
-    || fail "roster ${mode:-(bare)}: the refusal should name the line, got: $err"
-  echo "$err" | grep -q "standby" \
-    || fail "roster ${mode:-(bare)}: the refusal should name the word, got: $err"
-  echo "$err" | grep -q "implementer" \
-    || fail "roster ${mode:-(bare)}: the refusal should say it is about implementers, got: $err"
-done
-pass "roster: standby on an implementer row refuses, naming the file, line and word"
+[[ "$("$roster_at" --standby)" == "Turing" ]] \
+  || fail "roster --standby: expected Turing, got: $("$roster_at" --standby)"
+"$roster_at" >/dev/null 2>&1 || fail "roster: a standby implementer row should be accepted"
+turing_row="$("$roster_at" | grep '^Turing')"
+[[ "$turing_row" == "$(printf 'Turing\timplementer\timplementer')" ]] \
+  || fail "roster: the standby word must not reach the KIND column, got: $turing_row"
+[[ "$("$roster_at" --implementers)" == "Turing" ]] \
+  || fail "roster --implementers: expected Turing, got: $("$roster_at" --implementers)"
+pass "roster: standby on an implementer row arms it like any other"
 rm -f "$consumer_roster_file"
 
 # An empty file says nothing, so the built-in table answers - and so does a file of nothing but

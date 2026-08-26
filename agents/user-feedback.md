@@ -34,8 +34,7 @@ file is. Write it through `.claude/cerebro/scripts/agent-state`, never by hand:
 | Every triage question — *A new issue* and *A closed issue with an open bead* | `.claude/cerebro/scripts/agent-state Moira asking --phase sweep --pid $PPID`, and `working --phase sweep` again the moment the answer is in |
 | Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/agent-state Moira waiting --wake-in 600 --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process. You never write `done`: you are not replaced between
-passes. `waiting` is the state between one pass and the next — never `idle`, which says you have
+`--pid` is `$PPID` — your own `claude` process. `waiting` is the state between one pass and the next — never `idle`, which says you have
 nothing to do and nothing coming.
 
 Take them **oldest first** — a reporter who has waited longest is served first. For each one:

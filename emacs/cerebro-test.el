@@ -6151,6 +6151,62 @@ by being derived from the unplanned list."
       (should (equal (implementer '(planned-ids "cb-1") '(started-at))
                      "1 planned, unclaimed")))))
 
+(ert-deftest cerebro-test/the-triage-line-names-up-to-eight-beads ()
+  (should (equal (cerebro--triage-message '("cb-1" "cb-2"))
+                 "[cerebro] Unranked beads are waiting for a ranking: cb-1, cb-2. Triage them with the navigator."))
+  (should (equal (cerebro--triage-message '("cb-1"))
+                 "[cerebro] Unranked beads are waiting for a ranking: cb-1. Triage them with the navigator."))
+  (let ((ten (mapcar (lambda (n) (format "cb-%02d" n)) (number-sequence 1 10))))
+    (should (equal (cerebro--triage-message ten)
+                   (concat "[cerebro] Unranked beads are waiting for a ranking: "
+                           "cb-01, cb-02, cb-03, cb-04, cb-05, cb-06, cb-07, cb-08 and 2 more. "
+                           "Triage them with the navigator.")))
+    (should (string-suffix-p " and 1 more. Triage them with the navigator."
+                             (cerebro--triage-message (seq-take ten 9))))
+    (should-not (string-match-p "more" (cerebro--triage-message (seq-take ten 8))))))
+
+(defun cerebro-test--cerebro (state &optional external)
+  (make-cerebro-agent :name "Cerebro" :role "orchestrator" :kind 'interactive
+                      :state state :external external :since "2026-08-14T09:00:00Z"))
+
+(ert-deftest cerebro-test/an-idle-cerebro-is-told-once-per-change ()
+  "Told when the set differs from what it was last told; not again while it
+is the same and recent; again on the clock (cb-5lx.2)."
+  (let ((cerebro-triage-repeat 600)
+        (idle-for 1800) (panel-age 10) (now 1000000.0))
+    (should (eq (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil idle-for panel-age now)
+                'tell))
+    (should (eq (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1" "cb-2")
+                                        (cons '("cb-1") 999900.0) idle-for panel-age now)
+                'tell))
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1")
+                                          (cons '("cb-1") 999900.0) idle-for panel-age now)))
+    (should (eq (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1")
+                                        (cons '("cb-1") 999400.0) idle-for panel-age now)
+                'repeat))))
+
+(ert-deftest cerebro-test/no-line-lands-in-a-session-that-cannot-take-it ()
+  "Never into a question dialog or over output (`working\=', `asking\='); never
+where no state file says it is safe (`up\=', `unknown\='); never where there is
+no session; never into a session this view does not own; never into a
+role that is not Cerebro; and never on figures older than the idle it is
+judging - the panel is thirty seconds behind bd, and a line judged on
+figures read before Cerebro went idle names beads it has just ranked."
+  (let ((cerebro-triage-repeat 600))
+    (dolist (state '(working asking up unknown dead standby waiting))
+      (should (null (cerebro--triage-action (cerebro-test--cerebro state) '("cb-1") nil 1800 10 1000000.0))))
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle t) '("cb-1") nil 1800 10 1000000.0)))
+    (should (null (cerebro--triage-action
+                   (make-cerebro-agent :name "Xavier" :role "planner" :kind 'interactive
+                                       :state 'idle :since "2026-08-14T09:00:00Z")
+                   '("cb-1") nil 1800 10 1000000.0)))
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) nil nil 1800 10 1000000.0)))
+    ;; Panel read 40s ago, Cerebro idle for 20s: the figures predate the idle.
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil 20 40 1000000.0)))
+    ;; No panel yet, or a torn state file: nothing is typed.
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil 1800 nil 1000000.0)))
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil nil 10 1000000.0)))))
+
 (ert-deftest cerebro-test/an-unranked-bead-starts-an-armed-cerebro ()
   "Cerebro is started for one thing - a bead waiting for a ranking - so the
 triage pass it runs on startup has something to ask about (cb-5lx.2).  The

@@ -3693,6 +3693,74 @@ are needed - a timer fires with no buffer current."
   "Type `cerebro--nudge-message' into AGENT's session."
   (cerebro--type-into-session agent cerebro--nudge-message))
 
+;;; cb-5lx.2: telling an idle Cerebro about an unranked bead
+
+(defcustom cerebro-triage-repeat 600
+  "Seconds before an idle Cerebro is told again about the same unranked beads.
+
+A line typed into a session can be lost - typed while the composer had
+text in it, or into a session that was mid-redraw - and Cerebro writes
+nothing back to say it heard.  So the same set is repeated on this clock
+while Cerebro stays idle and the set stays: a lost line costs ten
+minutes, and a session that cannot act at all shows as a row stuck on
+`idle\=' with a `triage\=' event in the log every ten minutes, which is the
+whole diagnosis (cb-5lx.2)."
+  :type 'integer
+  :group 'cerebro)
+
+(defconst cerebro--triage-ids-shown 8
+  "How many bead ids the triage line names before saying `and N more\='.")
+
+(defvar-local cerebro--triage-told nil
+  "Per orchestrator name, (IDS . AT): the sorted unranked ids it was last told,
+and the `float-time\=' it was told them.
+
+What `cerebro--triage-action\=' compares against.  Forgotten for a name the
+moment the set is empty, so a set that comes back - the navigator removing
+a `triage:declined\=' - is told as a change and not as a repeat.")
+
+(defun cerebro--triage-message (ids)
+  "Pure.  The line typed into an idle Cerebro for unranked IDS (sorted).
+
+Ids and no count: the panel counts a P4 epic\='s children one by one where
+Cerebro folds them into one question, so a count here would be a number
+Cerebro cannot reproduce.  Capped at `cerebro--triage-ids-shown\='."
+  (let* ((shown (seq-take ids cerebro--triage-ids-shown))
+         (extra (- (length ids) (length shown))))
+    (format "[cerebro] Unranked beads are waiting for a ranking: %s%s. Triage them with the navigator."
+            (string-join shown ", ")
+            (if (> extra 0) (format " and %d more" extra) ""))))
+
+(defun cerebro--triage-action (agent ids told idle-for panel-age now)
+  "Pure.  `tell\=', `repeat\=', or nil: whether to type the line into AGENT now.
+
+IDS is the sorted unranked set; TOLD is AGENT\='s `cerebro--triage-told\=' entry,
+(IDS . AT), or nil; IDLE-FOR is seconds since AGENT\='s state last changed
+\(`cerebro--seconds-since\=' of its `since\='), nil when the file did not say;
+PANEL-AGE is seconds since the panel\='s figures were requested
+\(`beads-read-at\='), nil before the panel has answered; NOW is `float-time\='.
+
+Nil unless every one of these holds: AGENT\='s role is \"orchestrator\", its
+kind `interactive\=' and it is not external; its state is exactly `idle\=' -
+never `working\=' or `asking\=', where the line would land inside a question
+or bury output, never `up\=' or `unknown\=', where there is no state file
+to say a line is safe, and never a state with no session; IDS is
+non-empty; and the panel was read *after* the agent went idle, PANEL-AGE
+below IDLE-FOR, so the set was not measured before Cerebro ranked it.
+
+Then `tell\=' when IDS differs from what it was last told, `repeat\=' when it
+is the same set and AT is `cerebro-triage-repeat\=' or more ago, nil
+otherwise."
+  (let ((state (cerebro-agent-state agent)))
+    (and (equal (cerebro-agent-role agent) "orchestrator")
+         (eq (cerebro-agent-kind agent) 'interactive)
+         (not (cerebro-agent-external agent))
+         (eq state 'idle)
+         ids idle-for panel-age
+         (< panel-age idle-for)
+         (cond ((not (equal ids (car told))) 'tell)
+               ((>= (- now (cdr told)) cerebro-triage-repeat) 'repeat)))))
+
 (defun cerebro--forget-session (agent)
   "Kill AGENT's session buffer, without asking and without refreshing.
 

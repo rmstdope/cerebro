@@ -1,0 +1,74 @@
+<!doctype html><meta charset="utf-8"><title>cb-d59.3 — the marker moves into the prompt you can see</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff;margin-bottom:4px}
+.lede{color:#eee;background:#333;padding:10px 14px;max-width:112ch;margin:12px 0 20px;line-height:1.5}
+.panel{padding:14px 18px;border:1px solid #333;background:#1e1e1e;color:#d4d4d4;max-width:112ch;margin-bottom:6px}
+pre{margin:0;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.opt{background:#f5f5f5;color:#111;padding:3px 9px;display:inline-block;margin:22px 0 8px;font-weight:bold}
+.note{color:#eee;max-width:112ch;background:#333;padding:9px 13px;margin:8px 0 20px;line-height:1.5}
+.add{color:#6a9955;font-weight:bold}.gone{color:#f04a4a;text-decoration:line-through}
+.dim{color:#777}.hl{background:rgba(106,153,85,.25);padding:0 2px}
+.term{background:#101010;border:1px solid #333;padding:12px 16px;max-width:112ch;color:#d4d4d4}
+.term .u{color:#e5a13b}.term .b{color:#569cd6}
+</style>
+
+<h1>cb-d59.3 — the marker moves into the prompt you can see</h1>
+<div class="lede">
+Today the sentence that proves a session is ours rides on <code>--append-system-prompt</code>: you never
+see it, it is folded into the system prompt. Copilot has no such flag (measured, M12) and refuses a bare
+trailing prompt argument (M3) — the prompt must be <code>-i "&lt;one string&gt;"</code>. So the marker has to
+travel <b>inside the opening prompt itself</b>, which is the one argument every CLI accepts.<br><br>
+That prompt is the session's <b>first user message</b>, and you see it in the vterm. So the only thing
+still to decide is what that first message looks like. The sentence is unchanged either way, which is what
+keeps every session already running from going <code>dead</code> the moment this merges.
+</div>
+
+<span class="opt">OPTION A — marker first, then the instruction</span>
+<div class="term"><pre><span class="b">&gt;</span> <span class="u">This session is Xavier of the cerebro fleet rooted at /Users/henrikku/repos/cerebro/. This
+  sentence is how the fleet view proves the session belongs to this checkout; do not remove it.
+
+  You are Xavier. Your agent definition (planner) is the whole of your instructions: follow it from
+  the top, and start now rather than waiting to be spoken to.</span></pre></div>
+<div class="note">
+The identity leads. It is also ~200 bytes earlier in the command line, which is the margin that matters
+if anything ever truncates <code>ps</code> output — the liveness rule reads that line.
+</div>
+
+<span class="opt">OPTION B — instruction first, marker last</span>
+<div class="term"><pre><span class="b">&gt;</span> <span class="u">You are Xavier. Your agent definition (planner) is the whole of your instructions: follow it from
+  the top, and start now rather than waiting to be spoken to.
+
+  This session is Xavier of the cerebro fleet rooted at /Users/henrikku/repos/cerebro/. This
+  sentence is how the fleet view proves the session belongs to this checkout; do not remove it.</span></pre></div>
+<div class="note">
+Reads the way the session reads today: the instruction is the point, the marker is a footnote. Costs the
+truncation margin above, and puts the bookkeeping line last, where a long prompt would push it further out.
+</div>
+
+<span class="opt">WHAT CHANGES IN THE COMMAND LINE (either option)</span>
+<div class="panel"><pre>exec claude --agent planner --name Xavier --remote-control Xavier --model opus --effort high \
+            <span class="gone">--append-system-prompt "This session is Xavier of the cerebro fleet rooted at /…/cerebro/. …"</span> \
+            --settings /…/question-state.settings.json --permission-mode auto \
+            <span class="add">"This session is Xavier of the cerebro fleet rooted at /…/cerebro/. …
+
+             You are Xavier. Your agent definition (planner) is…"</span></pre></div>
+<div class="note">
+<code>--name Xavier</code> <b>stays</b> — it is still Claude Code's own flag, and Copilot has one too. What
+changes is that it stops being <b>evidence</b>: the rule reads the marker and nothing else, so neither
+<code>cerebro--session-args-p</code> nor <code>scripts/agent-alive</code> ever learns a second provider exists.
+</div>
+
+<span class="opt">THE WORDING — keep it, or say it as a message to the agent</span>
+<div class="panel"><pre>KEEP (recommended)
+  <span class="add">This session is Xavier of the cerebro fleet rooted at /Users/henrikku/repos/cerebro/. This
+  sentence is how the fleet view proves the session belongs to this checkout; do not remove it.</span>
+
+REWORD
+  <span class="hl">You are Xavier of the cerebro fleet, rooted at /Users/henrikku/repos/cerebro/. Leave this
+  line in place: it is how the fleet view knows this session is yours.</span></pre></div>
+<div class="note">
+Keeping it is not only taste. Every session running right now carries the old sentence on
+<code>--append-system-prompt</code>, so an unchanged sentence means the new rule already recognises them and
+<b>nothing goes <code>dead</code> when this merges</b>. A reword makes merge day a flag day: every live agent
+reads dead until it is restarted.
+</div>

@@ -445,14 +445,24 @@ presence in an alist was not."
     (should (eq (cerebro-agent-state xavier) 'up))
     (should-not (cerebro-agent-external xavier))))
 
-(ert-deftest cerebro-test/derive-interactive-treats-done-as-unknown ()
-  ;; `scripts/agent-state' refuses `done' from an interactive name, so a live
-  ;; file carrying it anyway is a bug, not a finished bead - it must not be
-  ;; handed to `cerebro--supervise-action' as a `done' implementer would be.
+(ert-deftest cerebro-test/derive-treats-done-as-unknown-for-every-kind ()
+  ;; cb-1or.2 retired `done\='.  `scripts/agent-state\=' refuses it from every
+  ;; name now, so a live file carrying it is a session older than the running
+  ;; fleet: it shows its raw word in yellow, exactly as any word this list has
+  ;; never seen does, and is never acted on.
   (let* ((states '(("Forge" . ((state . "done") (bead . nil)
                                  (since . "2026-08-15T09:00:00Z") (pid . 777)))))
          (agents (cerebro--derive nil '(("Forge" . "architect")) states
                                           #'cerebro-test--always-alive nil nil))
+         (agent (car agents)))
+    (should (eq (cerebro-agent-state agent) 'unknown))
+    (should (equal (cerebro-agent-raw agent) "done")))
+  ;; The implementer half, which used to derive `done\='.
+  (let* ((states '(("Cyclops" . ((state . "done") (bead . "ah-f9c")
+                                 (since . "2026-08-14T09:00:00Z") (pid . 42)))))
+         (agents (cerebro--derive '("Cyclops") nil states
+                                          #'cerebro-test--always-alive nil
+                                          '("Cyclops")))
          (agent (car agents)))
     (should (eq (cerebro-agent-state agent) 'unknown))
     (should (equal (cerebro-agent-raw agent) "done"))))
@@ -1111,7 +1121,7 @@ untagged and the order is ascending."
   "Ownership is checked before the derived state, so no gap in how a state
 is derived can start a second session over one this Emacs holds (ah-u3i's
 `*fleet: <name>*<2>' double session)."
-  (dolist (state '(dead asking done unknown))
+  (dolist (state '(dead asking waiting unknown))
     (should (eq (cerebro--start-action
                   (cerebro-test--agent "Cyclops" "implementer" 'implementer state)
                   '("Cyclops"))
@@ -1495,7 +1505,7 @@ tick, and `f' refuses outright for a dead or externally-idle one rather than
 writing a flag at all. This test constructs the row directly, bypassing
 `cerebro--finish-action', to prove the rendering rule holds regardless."
   (let ((now (current-time)))
-    (dolist (state '(dead idle done))
+    (dolist (state '(dead idle))
       (let* ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer state))
              (state-col (aref (cadr (cerebro--entry agent now t)) 2)))
         (should-not (string-match-p "■" state-col))))
@@ -1621,34 +1631,6 @@ point is."
              (set-window-buffer ,window ,buffer)
              ,@body))
        (kill-buffer elsewhere))))
-
-;; ---------------------------------------------------------------------------
-;; ah-aao: a restart only refreshes a detail window that was watching it
-
-(ert-deftest cerebro-test/detail-showing-p-tracks-the-window ()
-  (let* ((cerebro--sessions nil)
-         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
-         (session-name (cerebro--session-buffer-name agent))
-         (session (get-buffer-create session-name))
-         (proc (start-process "cerebro-test" session "sleep" "30"))
-         (other (generate-new-buffer " *cerebro-test-other*")))
-    (set-process-query-on-exit-flag proc nil)
-    (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) session)
-    (unwind-protect
-        (cerebro-test--with-layout list-buffer detail-window
-          (set-window-buffer detail-window session)
-          (should (cerebro--detail-showing-p agent))
-          (set-window-buffer detail-window other)
-          (should-not (cerebro--detail-showing-p agent))
-          (let ((dead-window detail-window))
-            (delete-window detail-window)
-            (setq-local cerebro--detail-window dead-window)
-            (should-not (cerebro--detail-showing-p agent)))
-          (setq-local cerebro--detail-window nil)
-          (should-not (cerebro--detail-showing-p agent)))
-      (when (process-live-p proc) (delete-process proc))
-      (kill-buffer session)
-      (kill-buffer other))))
 
 ;; Entering through `cerebro--launch' rather than a lower seam: without this,
 ;; `cerebro--launch' could go back to displaying its buffer directly and every
@@ -1869,19 +1851,16 @@ window there would reintroduce the window-choosing this bead removes."
 ;; ---------------------------------------------------------------------------
 ;; Interactive implementers: one bead per session, and who ends it
 
-(ert-deftest cerebro-test/derive-implementer-done-and-asking-states ()
-  "The state file gained two states when implementers became interactive."
-  (let* ((states '(("Cyclops" . ((state . "done") (bead . "ah-f9c")
-                                  (since . "2026-08-14T09:00:00Z") (pid . 42)))
-                   ("Storm" . ((state . "asking") (bead . "ah-a1b")
+(ert-deftest cerebro-test/derive-implementer-asking-state ()
+  "The state file gained `asking\=' when implementers became interactive."
+  (let* ((states '(("Storm" . ((state . "asking") (bead . "ah-a1b")
                                 (since . "2026-08-14T09:00:00Z") (pid . 43)))))
-         (agents (cerebro--derive '("Cyclops" "Storm") nil states
+         (agents (cerebro--derive '("Storm") nil states
                                           #'cerebro-test--always-alive nil
-                                          '("Cyclops" "Storm"))))
-    (should (eq (cerebro-agent-state (nth 0 agents)) 'done))
-    (should (eq (cerebro-agent-state (nth 1 agents)) 'asking))
-    ;; The bead stays visible in both - it is what the navigator needs to see.
-    (should (equal (cerebro-agent-bead (nth 1 agents)) "ah-a1b"))))
+                                          '("Storm"))))
+    (should (eq (cerebro-agent-state (nth 0 agents)) 'asking))
+    ;; The bead stays visible - it is what the navigator needs to see.
+    (should (equal (cerebro-agent-bead (nth 0 agents)) "ah-a1b"))))
 
 (defun cerebro-test--supervised (state &optional external since)
   (make-cerebro-agent :name "Cyclops" :role "implementer" :kind 'implementer
@@ -1890,23 +1869,15 @@ window there would reintroduce the window-choosing this bead removes."
 
 (defconst cerebro-test--now (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))
 
-(ert-deftest cerebro-test/supervise-restarts-a-finished-implementer ()
-  "One bead per session: a finished session is replaced, not reused.
-
-This is the whole reason the sessions are short - a fresh one starts with a
-clean context instead of the residue of every bead before it."
-  (should (eq (cerebro--supervise-action (cerebro-test--supervised 'done) nil
-                                                  cerebro-test--now)
-              'restart)))
-
-(ert-deftest cerebro-test/supervise-retires-a-finished-implementer-under-stop ()
-  "A stop flag lets the bead finish and then takes the terminal down.
-
-The flag is read here, between beads, and never mid-bead: an implementer
-killed in flight strands a claim, a worktree and an open PR."
-  (should (eq (cerebro--supervise-action (cerebro-test--supervised 'done) t
-                                                  cerebro-test--now)
-              'retire)))
+(ert-deftest cerebro-test/a-done-file-is-not-acted-on ()
+  "cb-1or.2 retired `done\=', so a file carrying it derives to `unknown\=' and
+this function answers nothing about it - flag or no flag.  Acting on it would
+mean supervising a session older than the running fleet."
+  (let ((agent (make-cerebro-agent :name "Cyclops" :role "implementer"
+                                   :kind 'implementer :state 'unknown
+                                   :raw "done" :bead "ah-f9c")))
+    (should (null (cerebro--supervise-action agent nil cerebro-test--now)))
+    (should (null (cerebro--supervise-action agent t cerebro-test--now)))))
 
 (ert-deftest cerebro-test/supervise-leaves-a-working-implementer-alone ()
   "`idle' is covered separately below - it retires under a stop flag; this
@@ -1921,8 +1892,7 @@ test is only about states with a bead genuinely in flight."
 
 (ert-deftest cerebro-test/supervise-retires-an-idle-implementer-under-stop ()
   "Nothing is in flight for an idle implementer, so a stop flag means *stop
-now* rather than *finish* - unlike `done', which waits for nothing further to
-strand."
+now* rather than *finish* - unlike `waiting', which is a pass already over."
   (should (eq (cerebro--supervise-action (cerebro-test--supervised 'idle) t
                                                   cerebro-test--now)
               'retire))
@@ -1934,8 +1904,9 @@ strand."
 
 (ert-deftest cerebro-test/supervise-never-touches-a-terminal-emacs-does-not-own ()
   "An implementer started outside Emacs belongs to whoever started it."
-  (should (null (cerebro--supervise-action (cerebro-test--supervised 'done t) nil
-                                                    cerebro-test--now))))
+  (should (null (cerebro--supervise-action
+                 (cerebro-test--supervised 'waiting t "2026-08-14T09:00:00Z") nil
+                 cerebro-test--now))))
 
 (ert-deftest cerebro-test/supervise-leaves-a-dead-implementer-dead ()
   "Restarting a dead one would fight the navigator's own `k'.
@@ -1959,18 +1930,6 @@ retry the standby row promises is the one thing that must not happen."
   (should (null (cerebro--supervise-action
                  (cerebro-test--interactive "Psylocke" "verifier" 'standby) t
                  cerebro-test--now))))
-
-(ert-deftest cerebro-test/retiring-an-implementer-disarms-it ()
-  "Armed is what promises a retry, so retiring one has to take it back -
-otherwise the flag ends the session and the next tick starts it again."
-  (let ((agent (cerebro-test--supervised 'done)))
-    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) t))
-              ((symbol-function 'cerebro--end-session) (lambda (&rest _) nil))
-              ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
-      (with-temp-buffer
-        (setq cerebro--armed '("Cyclops" "Psylocke"))
-        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
-        (should (equal cerebro--armed '("Psylocke")))))))
 
 (ert-deftest cerebro-test/finish-action-on-a-standby-implementer-says-which-key ()
   "There is no pass to finish and no session to stop, so `f' says which key
@@ -2016,7 +1975,7 @@ abandoned one."
                  nil cerebro-test--now))))
 
 (ert-deftest cerebro-test/entry-shows-the-new-states ()
-  (dolist (state '(done asking))
+  (dolist (state '(asking))
     (let* ((agent (cerebro-test--supervised state nil "2026-08-14T09:00:00Z"))
            (row (nth 1 (cerebro--entry agent cerebro-test--now))))
       (should (equal (aref row 2) (symbol-name state)))
@@ -2095,14 +2054,12 @@ kind of race that surfaces once a fortnight and never reproduces."
       (funcall (nth 2 (car scheduled)))
       (should (= returned 0)))))
 
-(ert-deftest cerebro-test/supervise-restart-kills-then-launches ()
-  "Restart is a kill and a fresh launch, in that order.
-
-Launching first would leave two sessions for one name, and `cerebro--launch'
-would refuse the second rather than let vterm call it `*fleet: Cyclops*<2>'
-and leave it invisible to the list."
+(ert-deftest cerebro-test/supervise-does-nothing-with-a-done-file ()
+  "The retired word reaches no branch: nothing is killed and nothing launched."
   (let ((calls nil)
-        (agent (cerebro-test--supervised 'done)))
+        (agent (make-cerebro-agent :name "Cyclops" :role "implementer"
+                                   :kind 'implementer :state 'unknown
+                                   :raw "done" :bead "ah-f9c")))
     (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
               ((symbol-function 'cerebro--forget-session)
                (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
@@ -2110,55 +2067,12 @@ and leave it invisible to the list."
                (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls))))
       (with-temp-buffer
         (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
-        (should (equal (reverse calls) '((kill . "Cyclops") (launch . "Cyclops"))))))))
-
-(ert-deftest cerebro-test/restart-shows-the-session-only-where-it-was-watched ()
-  "A restart only refreshes a detail window that was showing that agent.
-
-The showing-check has to run before `cerebro--forget-session' kills the
-buffer the window is showing - after that the window shows whatever the
-kill left behind, and the check would be meaningless.  Placement now goes
-through `cerebro--show-detail', the same function `s' uses."
-  (let ((calls nil)
-        (agent (cerebro-test--supervised 'done)))
-    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
-              ((symbol-function 'cerebro--forget-session)
-               (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
-              ((symbol-function 'cerebro--launch)
-               (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls)))
-              ((symbol-function 'cerebro--show-detail)
-               (lambda (a) (push (cons 'shown (cerebro-agent-name a)) calls))))
-      ;; Watching: a detail window showing the agent's own session.
-      (let ((watching t))
-        (cl-letf (((symbol-function 'cerebro--detail-showing-p)
-                   (lambda (a)
-                     (push (cons 'checked (cerebro-agent-name a)) calls)
-                     watching)))
-          (with-temp-buffer
-            (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)))
-        (should (equal (reverse calls)
-                        (list (cons 'checked "Cyclops")
-                              (cons 'kill "Cyclops")
-                              (cons 'launch "Cyclops")
-                              (cons 'shown "Cyclops")))))
-      ;; Not watching: nothing in the detail window was showing this agent.
-      (setq calls nil)
-      (let ((watching nil))
-        (cl-letf (((symbol-function 'cerebro--detail-showing-p)
-                   (lambda (a)
-                     (push (cons 'checked (cerebro-agent-name a)) calls)
-                     watching)))
-          (with-temp-buffer
-            (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)))
-        (should (equal (reverse calls)
-                        (list (cons 'checked "Cyclops")
-                              (cons 'kill "Cyclops")
-                              (cons 'launch "Cyclops"))))))))
+        (should (null calls))))))
 
 (ert-deftest cerebro-test/supervise-retire-kills-without-launching ()
   "A stop flag means this name does not come back until the navigator says so."
   (let ((calls nil)
-        (agent (cerebro-test--supervised 'done)))
+        (agent (cerebro-test--supervised 'idle)))
     (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) t))
               ((symbol-function 'cerebro--forget-session)
                (lambda (a) (push (cons 'kill (cerebro-agent-name a)) calls)))
@@ -2185,7 +2099,7 @@ unguarded `delete-file' on a missing file would be swallowed silently."
 is what let the next session inherit an instruction from a session that no
 longer exists."
   (let ((root (make-temp-file "cerebro-test-" t))
-        (agent (cerebro-test--supervised 'done)))
+        (agent (cerebro-test--supervised 'idle)))
     (unwind-protect
         (progn
           (cerebro--write-stop-flag root "Cyclops")
@@ -2194,23 +2108,6 @@ longer exists."
             (with-temp-buffer
               (cerebro--supervise (list agent) root cerebro-test--now)))
           (should-not (cerebro--stop-flag-p root "Cyclops")))
-      (delete-directory root t))))
-
-(ert-deftest cerebro-test/restart-leaves-no-flag-to-remove ()
-  "The mirror of the retire case: no flag, nothing to clear, the launch
-still happens exactly once."
-  (let ((root (make-temp-file "cerebro-test-" t))
-        (agent (cerebro-test--supervised 'done))
-        (launched nil))
-    (unwind-protect
-        (progn
-          (cl-letf (((symbol-function 'cerebro--forget-session) (lambda (_a) nil))
-                    ((symbol-function 'cerebro--launch)
-                     (lambda (&rest _) (setq launched (1+ (or launched 0))))))
-            (with-temp-buffer
-              (cerebro--supervise (list agent) root cerebro-test--now)))
-          (should-not (cerebro--stop-flag-p root "Cyclops"))
-          (should (= launched 1)))
       (delete-directory root t))))
 
 (ert-deftest cerebro-test/supervise-ends-an-idle-session-under-stop ()
@@ -2387,7 +2284,7 @@ the role and the state makes the row itself the signal."
 
 (ert-deftest cerebro-test/a-row-nobody-is-waiting-on-is-not-bold ()
   "Bold has to mean something, so only `asking' gets it."
-  (dolist (state '(working idle done dead))
+  (dolist (state '(working idle waiting dead))
     (let* ((agent (cerebro-test--supervised state nil "2026-08-14T09:00:00Z"))
            (row (nth 1 (cerebro--entry agent cerebro-test--now))))
       (dolist (column '(0 1 2))
@@ -4245,7 +4142,7 @@ flag is about the bead in flight and the count about the session
 is up, whatever the fleet view makes of its state - so `s\=' must treat them
 as already running rather than launching a second session over them (the
 `*fleet: <name>*<2>\=' bug this folds in a fix for)."
-  (dolist (state '(asking done unknown))
+  (dolist (state '(asking waiting unknown))
     (should (eq (cerebro--start-action
                  (cerebro-test--agent "Cyclops" "implementer" 'implementer state)
                  '("Cyclops"))
@@ -4479,7 +4376,7 @@ survive that change."
   (lambda (_pid name) (equal name owner)))
 
 (ert-deftest cerebro-test/recycled-pid-does-not-keep-an-implementer-alive ()
-  (let* ((states '(("Rogue" . ((state . "done") (bead . "ah-6uo")
+  (let* ((states '(("Rogue" . ((state . "waiting") (bead . "ah-6uo")
                                (since . "2026-08-16T02:43:32Z") (pid . 92395)))))
          (agent (car (cerebro--derive '("Rogue") nil states
                                       (cerebro-test--session-of "somebody-else")
@@ -4625,36 +4522,16 @@ unchanged - `t' is non-nil and is not `eq' to `unverified'."
   "The file describes a session that is over; left behind, it is what the pid
 recycling above turns into a phantom row (see the tests just above)."
   (let ((root (make-temp-file "cerebro-test-" t))
-        (agent (cerebro-test--supervised 'done)))
+        (agent (cerebro-test--supervised 'idle)))
     (unwind-protect
         (let ((path (cerebro--state-file-path root "Cyclops")))
           (make-directory (file-name-directory path) t)
-          (write-region "{\"state\":\"done\",\"pid\":42}" nil path nil 'quiet)
+          (write-region "{\"state\":\"idle\",\"pid\":42}" nil path nil 'quiet)
           (cerebro--write-stop-flag root "Cyclops")
           (cl-letf (((symbol-function 'cerebro--forget-session) (lambda (_a) nil))
                     ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
             (with-temp-buffer
               (cerebro--supervise (list agent) root cerebro-test--now)))
-          (should-not (file-exists-p path)))
-      (delete-directory root t))))
-
-(ert-deftest cerebro-test/restart-removes-the-state-file-before-launching ()
-  "A restart ends one session and starts another under the same name. The old
-file is the *previous* session's, and leaving it is how a recycled pid gets a
-fresh session read as the finished one it replaced - restarted again, forever."
-  (let ((root (make-temp-file "cerebro-test-" t))
-        (agent (cerebro-test--supervised 'done))
-        (order nil))
-    (unwind-protect
-        (let ((path (cerebro--state-file-path root "Cyclops")))
-          (make-directory (file-name-directory path) t)
-          (write-region "{\"state\":\"done\",\"pid\":42}" nil path nil 'quiet)
-          (cl-letf (((symbol-function 'cerebro--forget-session) (lambda (_a) nil))
-                    ((symbol-function 'cerebro--launch)
-                     (lambda (&rest _) (push (file-exists-p path) order))))
-            (with-temp-buffer
-              (cerebro--supervise (list agent) root cerebro-test--now)))
-          (should (equal order '(nil)))
           (should-not (file-exists-p path)))
       (delete-directory root t))))
 
@@ -5009,7 +4886,7 @@ navigator would be destroyed by it.
 `idle' is absent since cb-5yr - it is one of the two states that end a pass,
 and is answered there.  The rest still reach nothing: a role mid-pass, or one
 with a state file the view cannot read, is left alone."
-  (dolist (state '(done asking working))
+  (dolist (state '(unknown asking working))
     (let ((agent (make-cerebro-agent :name "Xavier" :role "planner" :kind 'interactive
                                              :state state :bead "ah-f9c"
                                              :since "2026-08-14T08:00:00Z")))
@@ -5330,8 +5207,8 @@ this role is coming back."
     (should (eq (cerebro-agent-state (nth 2 out)) 'dead))
     ;; A live role is whatever its state file said.
     (should (eq (cerebro-agent-state (nth 3 out)) 'waiting))
-    ;; An armed implementer whose session died without `done' is on standby
-    ;; too (cb-hzs): `done' is a restart, and every other end reached nothing.
+    ;; An armed implementer whose session died without ending its pass is on
+    ;; standby too (cb-hzs).
     (should (eq (cerebro-agent-state (nth 4 out)) 'standby))
     ;; Pure: the input list is not mutated.
     (should (eq (cerebro-agent-state (nth 0 agents)) 'dead))))
@@ -5359,7 +5236,7 @@ interactive role keeps `cerebro--parked' and is never listed here."
                   (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working)
                         (cerebro-test--agent "Rogue" "implementer" 'implementer 'idle)
                         (cerebro-test--agent "Storm" "implementer" 'implementer 'asking)
-                        (cerebro-test--agent "Gambit" "implementer" 'implementer 'done)
+                        (cerebro-test--agent "Gambit" "implementer" 'implementer 'waiting)
                         (cerebro-test--agent "Jubilee" "implementer" 'implementer 'unknown)
                         (cerebro-test--agent "Bishop" "implementer" 'implementer 'dead)
                         (cerebro-test--agent "Iceman" "implementer" 'implementer 'standby)
@@ -5668,7 +5545,7 @@ not an abnormal exit to be echoed at the navigator."
 
 (ert-deftest cerebro-test/launch-arms-every-kind-and-deletes-the-stale-state-file ()
   "Every start arms, whatever the kind: an implementer whose session dies
-without `done' is brought back the way a role is (cb-hzs).  And a state file
+without ending its pass is brought back the way a role is (cb-hzs).  And a state file
 present when a launch runs is always the previous session's - nothing else
 could have written it, since `cerebro--launch' refuses a name with a live
 session - so it goes before the fresh one starts."

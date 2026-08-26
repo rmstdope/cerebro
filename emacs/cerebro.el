@@ -16,10 +16,9 @@
 ;; Data sources:
 ;;   - an agent's status file, `.cerebro/state/<name>.state.json',
 ;;     written by the agent itself at every state transition (see ah-vcf.1,
-;;     ah-u3i and ah-2n3.2): { state: "idle"|"working"|"asking"|"done", phase,
-;;     bead, since, phase_since, pid }.  Every implementer writes one; since
-;;     ah-2n3.2 the interactive roles do too, `done' excepted - it is an
-;;     implementer's state alone.
+;;     ah-u3i and ah-2n3.2): { state: "idle"|"working"|"asking"|"waiting",
+;;     phase, bead, since, phase_since, pid }.  Every implementer writes one;
+;;     since ah-2n3.2 the interactive roles do too.
 ;;   - `scripts/roster', the fleet: name, role and kind per agent, in
 ;;     display order.
 ;;   - liveness for the interactive roles (Xavier, Cerebro, Moira, Psylocke,
@@ -154,8 +153,8 @@ whatever the frame has left (was a constant of 20 for eighteen agents)."
 (cl-defstruct cerebro-agent
   "One row of the fleet list."
   name role kind                       ; kind: 'interactive | 'implementer
-  state                                ; 'up | 'working | 'idle | 'dead | 'done | 'asking
-                                       ;  | 'waiting | 'unknown
+  state                                ; 'up | 'working | 'idle | 'dead | 'asking
+                                       ;  | 'waiting | 'standby | 'unknown
   bead since external
   phase                                ; "build"|"gate"|"review"|"ci"|"rebase"|"merge" or nil
   phase-since                          ; ISO-8601 string, or nil
@@ -355,15 +354,6 @@ the file is trusted rather than substituted with a default, and this is what
 tells the row to say so."
   (let* ((raw-state (alist-get 'state parsed))
          (state (cond ((equal raw-state "working") 'working)
-                      ;; The bead is merged and closed and the session has
-                      ;; nothing left to do; `cerebro--supervise' replaces
-                      ;; it, because an interactive session cannot end
-                      ;; itself the way a --print one did. `done' is an
-                      ;; implementer's state alone - `scripts/agent-state'
-                      ;; refuses it from an interactive name - so a stray one
-                      ;; here is a bug, not a finished bead, and must not be
-                      ;; handed to `cerebro--supervise-action' as if it were.
-                      ((equal raw-state "done") (if (eq kind 'implementer) 'done 'unknown))
                       ;; Blocked on a question only the navigator can
                       ;; answer, with a bead still in flight.
                       ((equal raw-state "asking") 'asking)
@@ -372,8 +362,10 @@ tells the row to say so."
                       ;; to make (ah-hiib.3).  Every agent's state since
                       ;; cb-1or.1, an implementer's included: a bead merged
                       ;; and closed, one handed back, or nothing to claim are
-                      ;; all one idea, and `done' is the older spelling of it
-                      ;; that cb-1or.2 retires.
+                      ;; all one idea.  `done', the older spelling, was
+                      ;; retired by cb-1or.2 and now falls through to
+                      ;; `unknown' below like any word this list has never
+                      ;; seen.
                       ((equal raw-state "waiting") 'waiting)
                       ((equal raw-state "idle") 'idle)
                       ;; A raw state this list has never seen - a typo in
@@ -509,8 +501,8 @@ exactly what `cerebro--derive\=' calls `dead\='.  Armed is the only thing that
 separates \"nobody is coming\" from \"a trigger will bring one back\".
 
 External agents are excluded with everything else this view does not own.
-Implementers are not: `done\=' is still `cerebro--supervise\='s to replace
-between beads, but every other way a session can end - the process quits,
+Implementers are not: since cb-1or.1 one ends its pass with `waiting\=' like
+a role, and every other way a session can end - the process quits,
 the launcher refuses, the machine sleeps - reached nothing at all, and the
 row sat dead until the navigator pressed `s\=' (cb-hzs).  An armed
 implementer with no session is one whose session ended without finishing,
@@ -596,7 +588,6 @@ it could stop reading as one more circle beside `dead\='."
    ((memq state '(working up)) (propertize "●" 'face 'success))   ; ●
    ;; Waiting on the navigator: the one state that is asking for something.
    ((eq state 'asking) (propertize "?" 'face 'warning))           ; ?
-   ((eq state 'done) (propertize "◍" 'face 'success))             ; ◍
    ;; Idle is a blue filled diamond - the only diamond in the vocabulary, so
    ;; neither shape nor colour is carrying the difference from dead's grey
    ;; hollow ○ or standby's blue hollow ◌ on its own. Both levers have been
@@ -1091,7 +1082,7 @@ itself, which is what keeps this off the five-second tick and testable
 without a subprocess.
 
 An agent that has finished, or whose session died and left an interval
-nobody will ever close, has no line: `scripts/fleet-history' treats `done'
+nobody will ever close, has no line: `scripts/fleet-history' treats `waiting'
 as terminal and drops an interval open beyond a day. What is left is what
 is actually running, which is what the section claims to show.
 
@@ -1501,10 +1492,6 @@ grace that has expired."
 STOP-FLAG-P is whether `.cerebro/state/<name>.stop' exists.  The
 answers are:
 
-`restart' - AGENT finished its bead.  An interactive session cannot end
-            itself the way a `--print' one did, so Emacs ends it and starts
-            a fresh one, which is what keeps a session to one bead and its
-            context free of every bead before it.
 `retire'  - AGENT finished its bead and a stop flag says do not start
             another; or AGENT is on `standby' under one - its session died
             before it could finish, and the flag still means no further bead,
@@ -1530,8 +1517,7 @@ answers are:
             makes a session one pass deep the way an implementer's is one
             bead deep.  An implementer reaches it the same way since
             cb-1or.1 - a bead merged and closed, one handed back, or nothing
-            to claim are one pass ending - and `restart' survives beside it
-            only until cb-1or.2 retires `done'.  This replaced `poke', which
+            to claim are one pass ending.  This replaced `poke', which
             typed into the session it had rather than starting a new one.
 
 Only a session Emacs itself started is supervised.  One running in
@@ -1541,20 +1527,18 @@ restarting it would fight the navigator's own `k'.
 The `kind' guard is load-bearing now that the interactive agents write the
 same state file an implementer does (ah-2n3.2): Xavier, Cerebro, Moira,
 Psylocke and Forge can show `asking' or, if one ever writes it in error,
-`unknown', but never `restart'ed, `retire'd or `nudge'd from here - they are
+`unknown', but never `retire'd or `nudge'd from here - they are
 never replaced between beads because they have none.
 
 Since ah-hiib.3 that guard is *per-arm* rather than wrapped round the whole
 body, because `poke' is the one answer that belongs to the interactive roles
 alone.  The warning it used to carry still stands and is now the reason for
-the shape: `restart', `retire' and `nudge' name an implementer's kind
+the shape: `retire' and `nudge' name an implementer's kind
 explicitly, so unifying this function cannot let a planner be restarted
 mid-mockup-conversation by accident.  Being external still excludes
 everything: every answer here ends in Emacs acting on a session it owns."
   (unless (cerebro-agent-external agent)
     (pcase (cerebro-agent-state agent)
-      ('done (and (eq (cerebro-agent-kind agent) 'implementer)
-                  (if stop-flag-p 'retire 'restart)))
       ;; An implementer's `idle' is unchanged. An interactive one is ended
       ;; only when its role says `idle' is how it finishes a pass
       ;; (`cerebro-idle-ends-pass-roles' - Forge, at the end of a sweep).
@@ -2135,10 +2119,10 @@ for every kind - a role's launcher is no longer a fact this file knows."
   "Non-nil if AGENT's state means a session is up (interactive or implementer).
 
 Alive is every state a session can be in except `dead' - including `asking'
-and `done' (which the fleet poll replaces within about five seconds) and
+and `waiting' (which the fleet poll ends within `cerebro-end-grace') and
 `unknown' (a process is up; the view merely does not recognise what its
 state file says it is doing). Anything narrower than that reintroduces the
-`*fleet: <name>*<2>' bug: `s' on an `asking' or `done' implementer used to
+`*fleet: <name>*<2>' bug: `s' on an `asking' or `waiting' implementer used to
 read as \"not alive\" and start a second session over the first.
 
 `standby\=' joins `dead\=' (cb-5yr): there is no process at all, so `s\=' must
@@ -3082,13 +3066,6 @@ the row itself is the live figure."
       (cerebro-session-mode 1))
     buffer))
 
-(defun cerebro--detail-showing-p (agent)
-  "Non-nil when the detail window is live and shows AGENT's session buffer."
-  (and cerebro--detail-window
-       (window-live-p cerebro--detail-window)
-       (let ((buffer (cerebro--session (cerebro-agent-name agent))))
-         (and buffer (eq (window-buffer cerebro--detail-window) buffer)))))
-
 (defun cerebro--show-detail (agent)
   "Put AGENT's live session, or a placeholder, in the detail window.
 
@@ -3126,8 +3103,7 @@ vterm is never given the chance to choose a window, so nothing has to be
 taken back from it afterwards - no `display-buffer-overriding-action',
 no `save-window-excursion', and one code path whoever the caller is.
 The caller places the buffer, or does not: `cerebro-start' shows it in
-the detail window through `cerebro--show-detail'; a restart shows it only
-where the navigator was already watching.
+the detail window through `cerebro--show-detail'.
 
 `default-directory' reaches the session by inheritance: `generate-new-buffer'
 copies it from the current buffer, which is why `cerebro--launch' let-binds
@@ -3189,8 +3165,8 @@ from afterwards (cb-5yr)."
   ;; this function refuses a name that still has a live session, and `s' on
   ;; one running outside Emacs never reaches here. Left behind, it names a
   ;; pid that has gone, which the sweeps and `scripts/fleet-history' read as
-  ;; a claim about a live session (cb-hzs). `cerebro--supervise's restart
-  ;; branch still deletes before it launches; this one is then a no-op.
+  ;; a claim about a live session (cb-hzs). `cerebro--supervise' takes the
+  ;; file with it when it ends a session; this one is then a no-op.
   (cerebro--delete-state-file (cerebro--repo-root) (cerebro-agent-name agent))
   (let* ((default-directory (cerebro--repo-root))
          (cmd (cerebro--launch-command agent))
@@ -3201,10 +3177,10 @@ from afterwards (cb-5yr)."
     ;; Starting an agent is what arms it: from here the view will start it
     ;; again on its own trigger until `k' or `f' says otherwise (cb-5yr).
     ;; An implementer is armed too (cb-hzs) - a session that dies without
-    ;; `done' reaches nothing otherwise, and sat dead until the navigator
-    ;; pressed `s'. `done' is still `cerebro--supervise's to replace, which
-    ;; needs no memory of having been started; arming is what covers every
-    ;; other way a session can end.
+    ;; ending its pass reaches nothing otherwise, and sat dead until the
+    ;; navigator pressed `s'. A pass that ends with `waiting' is parked and
+    ;; started again on its trigger; arming is what covers every other way a
+    ;; session can end.
     (cl-pushnew (cerebro-agent-name agent) cerebro--armed :test #'equal)
     ;; The floor a trigger is gated on is measured from here: the state
     ;; file that would otherwise carry it is deleted when the session ends.
@@ -3321,7 +3297,7 @@ The impure counterpart to `cerebro--exit-record' and
 BUFFER's text (never the whole buffer - see there), finds the agent through
 `cerebro--sessions' - not by the buffer's name - and updates the global
 alist and the echo area. BUFFER can be nil - vterm's sentinel passes it
-after the buffer itself has already been killed (`k', retire, restart) -
+after the buffer itself has already been killed (`k', retire, end) -
 and a buffer that is not one of ours is left alone.
 
 Reads `cerebro--session-name' rather than `cerebro--session': the sentinel
@@ -3500,7 +3476,7 @@ via `cerebro--recorded-buffer', not `cerebro--session': a session whose
 process has already exited still has a buffer to clean up, and requiring a
 live process here would leave it for the next launch to collide with.
 Forgets the entry in `cerebro--sessions' too, so a launch right
-afterwards - a restart - sees no session even before the process sentinel
+afterwards sees no session even before the process sentinel
 has run."
   (let ((name (cerebro-agent-name agent)))
     (let ((buffer (cerebro--recorded-buffer name)))
@@ -3591,7 +3567,7 @@ is the record of the pass the role just finished.  Anything ending a session
 calls one or the other; neither lists the artifacts a third time.
 
 CLEAR-STOP-FLAG stays explicit rather than inferred from the state: a flag
-written between a restart being decided and this running is the navigator
+written between an end being decided and this running is the navigator
 pressing `f', and swallowing it silently is the inherited-instruction bug
 with the sign reversed."
   (let ((name (cerebro-agent-name agent)))
@@ -3606,7 +3582,7 @@ with the sign reversed."
   "How much of what the fleet view decides is written to its log.
 
 `decisions\=' - only what the view did: a session started (with the trigger
-that fired), ended, retired, restarted, nudged, a launch refused, a sweep
+that fired), ended, retired, nudged, a launch refused, a sweep
 finding run.
 
 `changes\=' - the decisions, plus one line each time a standby role\='s trigger
@@ -3650,7 +3626,7 @@ of days at `evaluations\=' and months at `changes\='."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire restart nudge standby arm refused exit sweep error)
+  '(start end retire nudge standby arm refused exit sweep error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 
@@ -3874,28 +3850,18 @@ other agents down with it."
                                        (cons 'stop_flag
                                              (and (cerebro--stop-flag-p repo-root name) t)))))
                  action)
-          ;; Kill before launching: `cerebro--launch' would refuse a second
-          ;; session for a name it still holds, rather than making one vterm
-          ;; would call `*fleet: <name>*<2>' and the list would never show.
-          ;; Both branches end a session, so both take its state file with
-          ;; them (`cerebro--delete-state-file'). On a restart the deletion
-          ;; must come before the launch: the file is the *previous*
-          ;; session's, and the fresh one under the same name would otherwise
-          ;; be read as the finished session it replaced and restarted again.
-          ('restart (let ((watching (cerebro--detail-showing-p agent)))
-                      (cerebro--end-session agent repo-root)
-                      (cerebro--launch agent)
-                      (when watching (cerebro--show-detail agent))))
+          ;; Both branches below end a session, so both take its state file
+          ;; with them (`cerebro--delete-state-file').
           ('retire
            ;; An agent with a pass worth keeping keeps its buffer, exactly as
            ;; an ordinary end does - the flag says stay down, not forget the
            ;; pass - and is disarmed, so no trigger starts it again.  That is
            ;; every interactive role, and since cb-1or.1 a `waiting'
            ;; implementer too.  The condition reads the state and not only
-           ;; the kind because a `done', `idle' or `standby' implementer has
+           ;; the kind because an `idle' or `standby' implementer has
            ;; nothing worth keeping: `cerebro--end-session' takes its state
-           ;; file with it, and parking it would keep a buffer for a bead the
-           ;; `restart' path would have thrown away.
+           ;; file with it, and parking it would keep a buffer for a bead
+           ;; nothing will come back to.
            (if (or (eq (cerebro-agent-kind agent) 'interactive)
                    (eq (cerebro-agent-state agent) 'waiting))
                (progn (cerebro--park-session agent repo-root now)
@@ -5302,7 +5268,7 @@ between the check and the `delete-file' (another Emacs, a shell `rm', a
 second caller), which raises `file-missing' right where the check was
 meant to prevent it.  Deleting unconditionally and catching that signal
 closes the race instead of narrowing its window.  This is the one place
-that deletes a stop flag, so retire, restart and `s' can all call it
+that deletes a stop flag, so retire, end and `s' can all call it
 without checking first - and, since `cerebro--supervise' runs from a timer
 with demoted errors, an uncaught `file-missing' here would otherwise be
 swallowed silently rather than simply doing nothing."

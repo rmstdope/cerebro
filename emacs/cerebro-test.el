@@ -1886,6 +1886,52 @@ point is."
                                 detail-buffer-name))))))
       (when (get-buffer session-name) (kill-buffer session-name)))))
 
+(ert-deftest cerebro-test/session-buffer-outlives-its-process ()
+  "The session buffer\='s life is this view\='s to decide, never vterm\='s.
+
+vterm kills the buffer from its own sentinel the moment the process dies
+(`vterm-kill-buffer-on-exit\=' defaults to t), which is what turned every pass
+end into \"Selecting deleted buffer\" and lost the record of the pass.  Bound
+buffer-locally to nil, and *after* `vterm-mode\=': a major mode runs
+`kill-all-local-variables\=', so a binding made before it is discarded."
+  (let ((orig-require (symbol-function 'require))
+        (buffer nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'require)
+                   (lambda (feature &rest args)
+                     (or (eq feature 'vterm) (apply orig-require feature args))))
+                  ;; What a real major mode does, and the whole point of the
+                  ;; ordering this pins.
+                  ((symbol-function 'vterm-mode)
+                   (lambda () (kill-all-local-variables))))
+          (setq buffer (cerebro--make-session-buffer "*fleet: test*"))
+          (should (local-variable-p 'vterm-kill-buffer-on-exit buffer))
+          (should (null (buffer-local-value 'vterm-kill-buffer-on-exit buffer))))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest cerebro-test/launch-kills-the-previous-sessions-dead-buffer ()
+  "A buffer still recorded under this name belongs to a session whose process
+has died - a live one was refused above.  It outlives its process now, so it
+is killed here rather than orphaned when the new entry overwrites it."
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+         (session-name (cerebro--session-buffer-name agent))
+         (orig-require (symbol-function 'require))
+         (old (generate-new-buffer "*fleet: Cyclops (dead)*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root)
+                   (lambda () default-directory))
+                  ((symbol-function 'require)
+                   (lambda (feature &rest args)
+                     (or (eq feature 'vterm) (apply orig-require feature args))))
+                  ((symbol-function 'vterm-mode) #'ignore))
+          (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) old)
+          (cerebro--launch agent)
+          (should-not (buffer-live-p old))
+          (should (get-buffer session-name)))
+      (when (buffer-live-p old) (kill-buffer old))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
 (ert-deftest cerebro-test/launch-touches-no-window-even-a-dedicated-one ()
   "A dedicated detail window used to be where a signal could strand a
 half-built session (`set-window-buffer' refusing it between

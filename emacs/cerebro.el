@@ -3125,6 +3125,7 @@ the buffer outlives the process."
 ;; byte-compiler quiet about the symbols it only knows about once vterm is
 ;; actually loaded.
 (defvar vterm-shell)
+(defvar vterm-kill-buffer-on-exit)
 (declare-function vterm-mode "vterm" ())
 (declare-function vterm-send-string "vterm" (string &optional paste-p))
 (declare-function vterm-send-return "vterm" ())
@@ -3141,13 +3142,25 @@ no `save-window-excursion', and one code path whoever the caller is.
 The caller places the buffer, or does not: `cerebro-start' shows it in
 the detail window through `cerebro--show-detail'.
 
+The buffer outlives its process: `vterm-kill-buffer-on-exit' is bound
+buffer-locally to nil, so whether the buffer lives on is this view's
+decision (`cerebro--park-session' keeps it, `cerebro--end-session' and
+`cerebro--launch' kill it) rather than vterm's sentinel's.
+
 `default-directory' reaches the session by inheritance: `generate-new-buffer'
 copies it from the current buffer, which is why `cerebro--launch' let-binds
 it before calling this.  Neither the selected window nor the current buffer
 is changed.  Returns the buffer."
   (let ((buffer (generate-new-buffer name)))
     (with-current-buffer buffer
-      (vterm-mode))
+      (vterm-mode)
+      ;; Ours to keep or kill: `cerebro--park-session' keeps it as the record
+      ;; of the pass, `cerebro--end-session' kills it.  vterm's own sentinel
+      ;; kills the buffer the moment the process dies, which is what turned
+      ;; every pass end into "Selecting deleted buffer" and lost the record.
+      ;; After `vterm-mode', never before it: a major mode runs
+      ;; `kill-all-local-variables' and would discard the binding.
+      (setq-local vterm-kill-buffer-on-exit nil))
     buffer))
 
 (defun cerebro--vterm-available-p ()
@@ -3180,7 +3193,10 @@ line from the one before it.
 
 The buffer is recorded in `cerebro--sessions', which is what makes it ours;
 a name with a live session is refused here, whatever the derived state
-believes about it (ah-5pp).  An interactive name is *armed* here and its
+believes about it (ah-5pp).  A buffer recorded under this name that got past
+that refusal belongs to a session whose process has died, and since a session
+buffer outlives its process it is killed here rather than orphaned by the
+entry that replaces it.  An interactive name is *armed* here and its
 start time stamped, which is what a standby row and its trigger are derived
 from afterwards (cb-5yr)."
   (when (cerebro--session (cerebro-agent-name agent))
@@ -3204,6 +3220,11 @@ from afterwards (cb-5yr)."
   ;; a claim about a live session (cb-hzs). `cerebro--supervise' takes the
   ;; file with it when it ends a session; this one is then a no-op.
   (cerebro--delete-state-file (cerebro--repo-root) (cerebro-agent-name agent))
+  ;; A buffer still recorded under this name belongs to a session whose
+  ;; process has died - a live one was refused above.  It outlives its
+  ;; process now (`cerebro--make-session-buffer'), so it is killed here
+  ;; rather than left behind when the entry below is overwritten.
+  (cerebro--forget-session agent)
   (let* ((default-directory (cerebro--repo-root))
          (cmd (cerebro--launch-command agent))
          (vterm-shell (mapconcat #'shell-quote-argument cmd " "))

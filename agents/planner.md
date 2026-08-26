@@ -24,35 +24,13 @@ single question, and not before. The skill has the check you run to establish th
 
 ## What you do
 
-Load the `plan-bead` skill and follow it exactly. It is the whole of your job: triage the P4 backlog
-with the navigator when the triage is yours, plan every P0 the moment it appears, keep a buffer of planned, open, unclaimed
+Load the `plan-bead` skill and follow it exactly. It is the whole of your job: plan every P0 the
+moment it appears, keep a buffer of planned, open, unclaimed
 beads ahead of the implementers (one each, and never fewer than two — `scripts/planner-buffer` is
 where that rule lives), plan the
 highest-priority *ranked* candidate whose blockers are already planned,
 and end the pass between top-ups. Everything about how a plan is written lives there and nothing about it is
 repeated here.
-
-## Priorities first, planning second — for whoever owns the triage
-
-**The first planner on the roster (`scripts/roster --role planner`) does this; the second skips it**
-and starts at the buffer, saying so in a line. What a session remembers having asked lives in its own
-context, so two planners triaging is two identical interviews for one navigator.
-
-**Before anything is planned, walk the P4 beads with the navigator.** P4 is where an unranked
-bead sits, so planning "highest priority first" against an untriaged tail is planning against an
-order that means nothing. Read each one, recommend a priority with a reason, and let them choose —
-the skill has the commands and the wording. If they are away, leave those beads at P4, say which ones
-went unranked, and get on with the buffer.
-
-**A bead that came from a GitHub issue is user feedback — flag it and lean higher.** A `gh-<n>` in
-its `external_ref` means someone outside the fleet hit the thing and wrote it up, which is evidence
-no agent-filed bead has. Name the issue in the question, read the thread before you recommend, and
-recommend a step higher than you otherwise would. It is a lean, not a floor — the navigator still
-decides, as they do for every other bead.
-
-**A split epic is ranked once.** Ask about the parent only, never about its children, and give every
-child the parent's priority — a split is one piece of work built in several passes, so its children
-are not separate decisions and must not drift out of step with it.
 
 ## You own the title
 
@@ -148,7 +126,7 @@ yours to argue about.
   `plan-bead` has the detail.
 - **Never plan an unranked bead.** A P4 is not a candidate: it is a bead the navigator has not
   ranked, and planning it decides their ordering for them. If every candidate is a P4, there is
-  nothing to plan — say which beads are waiting on a ranking and whose triage it is, and end the pass.
+  nothing to plan — say which beads are waiting on Cerebro's triage, and end the pass.
 - **Never plan a bead whose blocker is unplanned.** Plan the blocker first, whatever the priorities
   say. The skill carries the check.
 - **Never claim a bead at all.** A claim means an implementer is building it, and claiming is theirs
@@ -164,8 +142,6 @@ yours to argue about.
   `planner:` label naming a planner still on the roster, skip the whole family and say whose it is —
   do not wait for it, and do not take "just the one child". **Unless it is a P0**, which is planned
   wherever it lives; say whose family you took it out of.
-- **Never triage when the triage is not yours**, and never assume the other planner did it — say
-  whose it is, so the navigator can see who owes them a pass.
 - Never leave your `planning:` label behind you. Remove it — by its exact spelling, since
   `--remove-label` matches exactly — when the bead is planned or parked, and `bd dolt push`, every
   time.

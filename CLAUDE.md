@@ -182,13 +182,13 @@ planner`), which is the one place a name and a role stop being interchangeable:
   the work through the `planning:<name>` label alone, and a whole split family through a
   `planner:<name>` label on its parent — taken before research and pushed at once (after the
   state file names the bead, which is what makes an abandoned label safe to tell apart from a held
-  one), freed again by whichever planner finds it held by nobody, and with
-  the P4 **triage pass belonging to the first planner on the roster only**, since two triaging
-  sessions interview the navigator twice over the same backlog. The buffer counts `planned` beads
+  one), freed again by whichever planner finds it held by nobody. The buffer counts `planned` beads
   and never held ones: a bead being planned is not claimable, and counting it put both
   planners to sleep over a two-bead queue (ah-2p.1).
 - **Cerebro** (`orchestrator`, Opus/medium) — stops implementers on request by writing their stop
-  flag; it cannot start one, since that means starting a session. **Starts nothing on its own.** The
+  flag; it cannot start one, since that means starting a session. Ranks the P4 backlog with the
+  navigator (the triage pass that was the first planner's until cb-5lx.1). **Starts nothing on its
+  own.** The
   worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
   (`ah-4ao`; see `docs/cerebro-jobs.md`); what is left for a Cerebro session is handing a release
   request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
@@ -367,8 +367,8 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
   `scripts/agent-state` (never by hand — see that script's header). Every implementer writes one, and since ah-2n3.2 so does each of
   the interactive agents; `waiting` is written by every kind since cb-1or.1. The launcher used to write the file and no longer does: it
   `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/`review`/`ci`/
-  `rebase`/`merge` for an implementer, or a role word (`triage`/`plan`, `prepare`/`verify`, `sweep`,
-  `sweep`/`release`, `daily`/`weekly`) for the interactive agents — meaningful with `working` and
+  `rebase`/`merge` for an implementer, or a role word (`plan`, `prepare`/`verify`, `sweep`,
+  `sweep`/`release`/`triage`, `daily`/`weekly`) for the interactive agents — meaningful with `working` and
   `asking`; `since` is the last change of `state` or `bead`, `phase_since` the last change of
   `phase`. Whoever changes the `state` vocabulary must change `cerebro--derive-from-state` with it —
   an unrecognised `state` now maps to `'unknown` and shows its raw word in yellow, not `idle`. **The
@@ -533,8 +533,8 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   `cerebro--parse-fleet` all take the last field as the KIND; any other third word, or a fourth,
   refuses with exit 2 naming the file, line and word, and `M-x cerebro` shows that refusal rather
   than an empty fleet (cb-0r6). When it exists and is non-empty it **replaces** the built-in table
-  rather than merging with it, because file order is load-bearing (first planner triages; Cerebro
-  takes implementer names in file order). It is **tracked**, beside `.cerebro/project.conf`, by a
+  rather than merging with it, because file order is load-bearing (Cerebro takes implementer names
+  in file order). It is **tracked**, beside `.cerebro/project.conf`, by a
   `.gitignore` negation inside the otherwise-ignored `.cerebro/` (cb-epr): which agents exist is a
   fact every clone needs, and an ignored declaration vanishes on a fresh clone. `roster`
   asks `consumer-root` for the root (cb-akc) — the one resolver, whose git step is optional and

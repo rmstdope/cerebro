@@ -17,8 +17,9 @@
 #
 # Adding a *second agent to an existing role* (as `planner` has, Xavier and Beast): one line here,
 # and nothing else structural — every reader is name-driven. What it does need is a look at whatever
-# that role does exactly once per fleet rather than once per session: `plan-bead` gives the P4
-# triage pass to the first planner listed here, so file order is load-bearing for more than display.
+# that role does exactly once per fleet rather than once per session; file order is what decides
+# such a question, and Cerebro takes implementer names in it, so it is load-bearing for more than
+# display.
 #
 #     roster                    every row, NAME<TAB>ROLE<TAB>KIND, in file order
 #     roster --implementers     the implementer names only, one per line, in file order
@@ -94,9 +95,8 @@ kind_of() {
 # otherwise-ignored .cerebro/ - cb-epr): which agents exist is a fact every clone needs, and an
 # ignored one would vanish on a fresh clone and silently revert the fleet to the names below.
 #
-# It REPLACES this table rather than merging with it. File order is load-bearing - `plan-bead' gives
-# the P4 triage pass to the first planner listed, and Cerebro takes the next unused implementer name
-# in file order - and a merged order is nobody's decision.
+# It REPLACES this table rather than merging with it. File order is load-bearing - Cerebro takes the
+# next unused implementer name in file order - and a merged order is nobody's decision.
 #
 # The file lived at <consumer>/.claude/cerebro-roster until cb-epr. At every candidate root, a file
 # still sitting there with none at the new path is a MIGRATION ERROR and exits 2: absence is the
@@ -224,8 +224,8 @@ case "${1:-}" in
     ;;
   --role)
     # A role can be held by more than one agent (two planners, ah-2p), so "who is the first of
-    # them" is a question with an answer rather than a tautology: file order is the answer, and
-    # `plan-bead' uses it to give the triage pass to exactly one planner.
+    # them" is a question with an answer rather than a tautology: file order is the answer.
+    # `plan-bead's reclaim loop and `agents/orchestrator.md's health check ask for the planners.
     role="${2:-}"
     if [[ -z "$role" ]]; then
       echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2

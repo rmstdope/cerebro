@@ -146,8 +146,8 @@ done <<<"$roster_out"
 pass "roster --implementers matches the implementer rows and excludes interactive names"
 
 # --role exists for the one question a role with more than one agent raises: which of them is it?
-# `plan-bead` asks it to decide which planner runs the triage pass, so that two planning sessions do
-# not walk the navigator through the same P4 backlog twice.
+# `plan-bead`'s reclaim loop and `agents/orchestrator.md`'s health check both ask it for the
+# planners.
 role_out="$("$builtin_dir/roster" --role planner)"
 expected_planners="$(printf '%s\n' "$roster_out" | awk -F'\t' '$2 == "planner" {print $1}')"
 [[ "$role_out" == "$expected_planners" ]] \
@@ -223,8 +223,8 @@ expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\
 pass "consumer roster: replaces the built-in table, in file order, past comments and blanks"
 
 # It replaces rather than merges: a name from the built-in table must not survive alongside it, or
-# file order - which decides which planner triages and which implementer name Cerebro takes next -
-# would be nobody's decision.
+# file order - which decides which implementer name Cerebro takes next - would be nobody's
+# decision.
 "$roster_at" | grep -q "Xavier" && fail "consumer roster: the built-in table was merged in, not replaced"
 pass "consumer roster: the built-in table is replaced, not merged"
 

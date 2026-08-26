@@ -96,8 +96,8 @@ Check: `.claude/cerebro/scripts/project-conf project_name` prints the name, and
 
 Absent, you run the built-in fleet. To run your own names, or fewer of them, write `NAME  ROLE` per
 line — the roles are the files in `.claude/cerebro/agents/`: `planner`, `implementer`,
-`orchestrator`, `verifier`, `reviewer`, `user-feedback`, `architect`. Order is load-bearing: the
-first planner listed triages the backlog, and implementers are taken in file order.
+`orchestrator`, `verifier`, `reviewer`, `user-feedback`, `architect`. Order is load-bearing:
+implementers are taken in file order.
 
 Check: `.claude/cerebro/scripts/roster` prints your fleet, one `name<TAB>role<TAB>kind` per line.
 

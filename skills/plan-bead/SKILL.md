@@ -43,9 +43,9 @@ Two planners share the work through labels and nothing else: no lease, no claim,
 between sessions. This section is where that machinery is stated — the labels, how they are read,
 the order they are written in, who owns a family, the check before you write, and how a hold left
 by a dead session comes back. Everywhere else in this skill gives the command and points here for
-the reason. Two further rules belong to the same story but are stated where they apply, because
-neither is about the labels: **count only what an implementer could claim** (*You keep a buffer sized
-to the fleet*) and **only the first planner triages** (*Then: triage the P4 backlog*).
+the reason. One further rule belongs to the same story but is stated where it applies, because it is
+not about the labels: **count only what an implementer could claim** (*You keep a buffer sized to the
+fleet*).
 
 ### The two labels, and who may remove them
 
@@ -119,8 +119,8 @@ about `bd show`; `bd list` answers differently, which is the trap.**
 - **In `bd show`, the parent's id is `.id`** — the dependency entry *is* the parent bead, embedded
   whole. In `bd list` the entry is a plain edge and the parent is `depends_on_id`.
 
-**The triage queries in *Then: triage the P4 backlog* pipe `bd list` and select on `.type`**, which is the right
-shape for that command — not an oversight, and not a thing to "correct" to match the one above.
+**Cerebro's ranking queries (`agents/orchestrator.md`, *Ranking the backlog*) pipe `bd list` and
+select on `.type`**, which is the right shape for that command — not an oversight, and not a thing to "correct" to match the one above.
 
 Confirm it on a bead you know to be a child before trusting a run of empty answers.
 
@@ -291,8 +291,6 @@ by hand:
 
 | Moment | Call |
 |---|---|
-| The triage pass starts | `.claude/cerebro/scripts/agent-state <your-name> working --phase triage --pid $PPID` |
-| Every triage question | `.claude/cerebro/scripts/agent-state <your-name> asking --phase triage --pid $PPID`, and `working --phase triage` again once answered |
 | A bead gets your `planning:<your-name>` label | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID` |
 | Every interview question while planning it | `.claude/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase plan --pid $PPID`, and `working` again once answered |
 | The P0 check (*P0 pre-empts the buffer*) | stays `working --phase plan`, same as any other bead being planned |
@@ -303,155 +301,19 @@ nothing to do and nothing coming. Writing another planner's name here
 puts your work on their row and hides your own, so the navigator sees one busy planner and one that
 has apparently died.
 
-## Then: triage the P4 backlog — if the triage is yours
+## Ranking is Cerebro's
 
-**Only the first planner on the roster triages.** Check before you start, every session:
+Every bead is created at P4, and P4 means *unranked* — nobody has decided where it sits yet. Cerebro
+walks the unranked beads with the navigator and writes what they choose (`agents/orchestrator.md`,
+*Ranking the backlog*); no planner ranks anything.
 
-```bash
-[ "$(.claude/cerebro/scripts/roster --role planner | head -1)" = "<your-name>" ] \
-  && echo "triage is mine" || echo "skip triage, go straight to the buffer"
-```
+So **an unranked bead is not a planning candidate** (*Choosing what to plan*). A P4 carrying
+`triage:declined` is one Cerebro asked about and got no answer for, and it is parked exactly like a
+`human` bead — both are in `scripts/planner-buffer --print-excluded-labels`, and both stay out of
+every query in this skill.
 
-The other planner skips this whole section and starts at *P0 pre-empts the buffer*. Triage is the
-one part of this role that is not divisible: two planners triaging means the navigator is walked
-through the same P4 backlog twice, in two windows, and answers it twice — the `triage:declined`
-label below stops a *later* pass re-asking, not a concurrent one. The buffer is what a second planner is
-for; ranking is not.
-
-If you are the one who skips it, say so in a line — "triage is <the first planner>'s; starting at
-the buffer" — rather than silently: a navigator who sees no triage pass anywhere should be able to
-tell which planner owes them one.
-
-**Before anything is planned, the priorities are agreed.** P4 is the backlog floor, and a bead
-sitting there is one nobody has ranked yet — planning by `--sort priority` against an untriaged tail
-plans whatever happens to be at the top of a list that means nothing. So the first thing the
-triaging session does, before it counts the buffer or picks a candidate, is walk the P4 beads with
-the navigator.
-
-```bash
-bd dolt pull
-# The beads to ask about: P4, unplanned, and not somebody's child.
-bd list --status open --exclude-label planned --exclude-label triage:declined --json \
-  | jq -r '[.[] | . as $b | ($b.dependencies // [])[]
-            | select(.type=="parent-child") | $b.id] as $children
-           | .[] | select(.priority==4)
-           | select(.id as $id | $children | index($id) | not)
-           | "\(.id)\t\(.external_ref // "-")\t\(.title)"'
-```
-
-A bead's parent is a `parent-child` edge in its own `dependencies`, pointing at the parent — there is
-no `parent` field to read.
-
-The `external_ref` column is there because it changes the recommendation: a `gh-<n>` in it means the
-bead came from a real person filing a real GitHub issue. See "A bead from a GitHub issue" below.
-
-Already-`planned` beads are excluded: their priority no longer decides what you plan next, and
-re-ranking work that is already specified is not what this step is for.
-
-**A child is never asked about — it takes its parent's priority.** A split epic is one piece of work
-that happens to be built in several passes, so ranking its children separately invites an ordering
-the navigator never meant: a P1 epic with a P4 third child stalls halfway through, and asking about
-five children of one epic spends five questions on a decision that was one decision. Ask about the
-epic; the children follow it.
-
-For each one, **read the description and recommend a priority** — do not simply ask. `bd show <id>`,
-then say which of P0–P4 you think it is and why in a sentence: a navigator-reported defect in shipped
-behaviour is a P0 or P1; work that unblocks a queued epic outranks work that stands alone; a tidy-up
-with no user-visible effect stays low. The navigator is deciding, but they are deciding against your
-reading of the bead, not against a bare id.
-
-### A bead from a GitHub issue outranks one you thought of yourself
-
-**A bead with a `gh-<n>` external ref is user feedback, and you say so out loud.** GitHub issues are
-the inbox for external requests and bug reports, so that ref means somebody outside this fleet hit
-the thing, cared enough to write it up, and is now waiting to hear what happened. Every other P4 bead
-was filed by an agent or by the navigator from inside the project. That is a real difference in
-evidence — a reported defect is one that demonstrably reaches the audience, where an agent's tidy-up is a
-guess about what might matter — and it is a difference the ranking should reflect.
-
-So, for any candidate with an `external_ref`:
-
-- **Recommend it a step higher than you otherwise would**, and say in the reason that it is user
-  feedback. A reported defect in shipped behaviour is a P0 or P1; a reported enhancement is a P2
-  rather than the P3 the same idea would get from an agent. This is a lean, not a floor: a genuinely
-  cosmetic report is still cosmetic, and inflating everything with a ref destroys the signal.
-- **Name the issue in the question**, not just the bead: `<bead-id> (gh-31, user-reported)`. The
-  navigator may recognise the reporter or the thread, and that recognition is often the whole
-  decision.
-- **Read the issue before recommending**, not only the bead. `gh issue view <n> --comments` — the
-  thread carries how badly it bit and whether anyone else chimed in, and a triage bead written from
-  it may have flattened all of that into one line. Moira brought it to the navigator once already;
-  what she recorded is a summary, not the evidence.
-
-Say how many of the beads in the pass came from issues before you ask, in one line — a triage where
-four of six are user-reported is a different conversation from one where none are.
-
-Ask with the question tool, batching up to four beads per call, options `P0`–`P4` with your
-recommendation first and marked `(Recommended)`, and the reason in each option's description. Apply
-each answer as it comes (use numeric priorities `0`–`4` for `bd update`, i.e. `P0`→`0` … `P4`→`4`):
-
-```bash
-bd update <id> --priority=<n>
-```
-
-**If the bead has children, set them to the same priority in the same breath** — `bd update` takes
-several ids at once:
-
-```bash
-bd list --status open --json \
-  | jq -r --arg parent <id> '.[] | select((.dependencies // [])[]
-           | select(.type=="parent-child") | .depends_on_id == $parent) | .id'
-bd update <child> <child> ... --priority=<n>
-```
-
-Then reconcile the rest of the tree, so no epic ranked in an earlier session is left with children
-that disagree with it. Run this after the pass and **repeat it until it prints nothing** — one run
-moves a priority down one level, and a subtask under a task under an epic is two levels:
-
-```bash
-bd list --status open --json > /tmp/bd-open.json
-jq -r '(INDEX(.id)) as $by | .[] | . as $c | ($c.dependencies // [])[]
-       | select(.type=="parent-child") | $by[.depends_on_id]
-       | select(. != null and .priority != $c.priority)
-       | "\($c.id)\t\(.priority)"' /tmp/bd-open.json
-# then, per priority: bd update <child> <child> ... --priority=<n>
-```
-
-The parent wins every time, including when the child is ranked higher: the epic is where the
-navigator made the decision, and a child that outranks its own parent jumps the queue ahead of work
-the navigator put first.
-
-Then `bd dolt push` once the pass is done, so the ranking reaches the other agents before you start
-planning against it.
-
-**If the navigator is away, do not stall.** Say which beads you could not get a ranking for, leave
-them at P4, **label each one `triage:declined` and `bd dolt push`**, and go on to the buffer — an
-unanswered triage costs you ordering, not the queue.
-
-```bash
-bd update <id> --add-label triage:declined     # asked, not answered: do not ask again
-```
-
-That label is the whole of what a triage pass remembers. Your context is gone the moment the pass
-ends, so a question you asked and got no answer to is one the next session would put to the
-navigator again — the same beads, the same options, in a fresh window. The navigator removes the
-label when they want to be asked again, and a bead they *do* rank leaves the list by its priority.
-Remove it yourself if you ever rank one that still carries it. Do not
-apply your own recommendation unasked: priority is what the navigator uses to steer the fleet, and
-taking that silently is the one thing this step exists to prevent.
-
-Triage runs **on every pass**, this one included — not once and then never again. It is the only
-way a bead is ever ranked, and an unranked bead is not a candidate for planning at all (see
-*Choosing what to plan*), so a pass you skip is a pass in which every bead filed since the last one
-stays unplannable.
-
-It is short after the first pass, and that is the point: what shortens is what you **ask about**. A
-bead the navigator already ranked has left the list by its priority; one they declined to rank
-carries `triage:declined` and the query above excludes it. So a pass whose query returns nothing is
-a pass with no triage to do, and you go straight on to the buffer.
-
-Nothing here relies on your remembering the last pass, and that is deliberate: a pass is a session,
-so anything the next one needs is on the bead or it is lost.
+A pass whose every candidate is unranked has nothing to plan. Report the beads waiting on a ranking
+and end the pass: **do not rank one yourself, and do not plan one to keep busy.**
 
 ## P0 pre-empts the buffer
 
@@ -460,8 +322,8 @@ queue already is. A P0 is a bead the navigator has said is the most urgent thing
 is the only thing standing between it and an implementer picking it up; a P0 sitting unplanned behind
 a healthy buffer is the fleet working on the wrong thing while the right thing waits.
 
-Check at the top of every pass, after that pass's triage — and check it **before you count the buffer**, because the buffer's answer does not matter
-here:
+Check at the top of every pass, **before you count the buffer**, because the buffer's answer does not
+matter here:
 
 ```bash
 bd list --status open --exclude-label planned --exclude-label human \
@@ -635,9 +497,8 @@ The cycle:
    ends, so a buffer two short is two passes rather than one long one. If there is nothing you may
    plan, report the beads waiting on a ranking and go to step 4.
 4. **End the pass.** Write `waiting` and end your turn; the next pass is a fresh session, woken by
-   the buffer, a P0 or a P4. See *Ending a pass*.
-5. **A fresh session begins at the top of this skill**, re-measuring `n`, triaging what arrived
-   since the last pass if the triage is yours (*Then: triage the P4 backlog*), and freeing any
+   the buffer or a P0. See *Ending a pass*.
+5. **A fresh session begins at the top of this skill**, re-measuring `n` and freeing any
    abandoned label again — a session died between passes is exactly when one appears. A new P0 —
    plan it, always, and then continue. Otherwise: `m` or more in the buffer, end the pass again;
    **fewer than `m`, plan one more**.
@@ -645,8 +506,7 @@ The cycle:
 **One bead per pass is the rule, and it is not a limit on how much you may do.** It is what keeps a
 session's context one bead deep, the way an implementer's is: everything the next pass needs is on
 the board, so a pass that plans one bead well beats one that plans three against a fleet that moved
-underneath it. A triage pass, and freeing an abandoned label, are not beads and do not count against
-it.
+underneath it. Freeing an abandoned label is not a bead and does not count against it.
 
 **The P0 check is the exception, and that is the point.** It runs on every pass and acts on every
 hit — every unplanned P0, not one of them — and it fires with the buffer full at `m`, where step 5
@@ -662,7 +522,7 @@ blocked behind a bead the navigator holds — and end the pass as usual; new bea
 pass will find them. Never invent work to hit the number.
 
 **A backlog of nothing but unranked beads is an empty backlog.** Say so — name the beads waiting on
-a ranking, say whose triage it is, and end the pass. Do not plan one to keep busy, and do not rank one
+a ranking, say that they are waiting on Cerebro's triage, and end the pass. Do not plan one to keep busy, and do not rank one
 yourself. An idle implementer costs an hour; a bead planned in an order the navigator never chose
 costs their hold on the queue, and they may never learn it happened. That holds when the navigator
 is away too, which is the case it was decided for: leave the beads unranked, report them, and go
@@ -740,11 +600,10 @@ is planned whether or not the queue needs topping up. See *P0 pre-empts the buff
 **A P4 is not a candidate at all**, which is why the query filters it out rather than leaving it at
 the bottom of the sort. P4 here does not mean *low priority*; it means *nobody has ranked this yet* —
 every bead in this repository is created at P4, whoever files it. Planning one decides the
-navigator's ordering for them, silently, and that is the single thing the triage step exists to
+navigator's ordering for them, silently, and that is the single thing the ranking step exists to
 prevent: their chance to say "close this", "this is actually a P0", or "this goes behind the other
 thing" is gone the moment a plan exists and an implementer picks it up. Ranking it yourself is worse
-still — see *Then: triage the P4 backlog*, where a priority is recommended and never applied
-unasked. If every remaining candidate is a P4, there is nothing to plan; the
+still — see *Ranking is Cerebro's*. If every remaining candidate is a P4, there is nothing to plan; the
 buffer cycle above says what to do about that.
 
 Several at the same priority is not a decision — take any of them and move on rather than weighing
@@ -1000,7 +859,7 @@ Split it. `bd create --parent <id>` for the children, and `bd dep add` for the o
 **Create every child at the parent's priority**, not at P4 — the rule that a bead is created unranked
 is about work nobody has weighed yet, and a split epic has already been ranked by the navigator. So
 `bd create --parent <id> -p <the parent's priority>`, and if the parent is itself still P4 the
-children are P4 with it, and the whole family gets ranked in one question at the next triage.
+children are P4 with it, and the whole family gets ranked in one question at Cerebro's next triage.
 
 **Take your hold off every child as you create them, and put a `planner:` label on the new parent.** `bd create --parent` inherits the parent's
 labels, and you are holding the parent — so each child arrives carrying a `planning` label nobody

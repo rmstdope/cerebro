@@ -38,9 +38,7 @@
 # fourth word, which already refuses. Any OTHER third word, or a fourth word, is refused with exit 2
 # naming the file, the line and the word: a typo of `autostart' that read as "no" would be a fleet
 # that quietly does not start, which is the failure this refusal exists to prevent. `standby' on an
-# IMPLEMENTER row is refused too, until cb-1or gives implementers a wake condition - the implementer
-# trigger starts a standby implementer unconditionally, which would make the word a slower
-# `autostart'. The words are exposed through `--autostart' and `--standby' ALONE - the default
+# implementer row arms it the same way (cb-1or.2): its trigger is a planned, unclaimed bead. The words are exposed through `--autostart' and `--standby' ALONE - the default
 # output stays three columns, because `launch', `agent-state' and `cerebro--parse-fleet' all take
 # the last field as the KIND.
 #
@@ -158,16 +156,6 @@ parse_rows() {
     esac
     if [[ -n "$rest" ]]; then
       echo "roster: $source line $lineno: '$rest' is one word too many - a row is NAME ROLE and optionally autostart or standby" >&2
-      exit 2
-    fi
-    # `standby' on an implementer row is refused until cb-1or gives implementers a wake condition of
-    # their own: the implementer arm of `cerebro--trigger' starts a standby implementer
-    # unconditionally, so the word here would be `autostart' with a five-second delay and a retry
-    # line on the row for a session that never ran. Refused HERE, inside `parse_rows', like every
-    # other refusal - the `|| exit $?' propagation the comments below describe is what carries an
-    # `exit 2' out of the `$( )' that captures these rows.
-    if [[ "$third" == "standby" && "$(kind_of "$role")" == "implementer" ]]; then
-      echo "roster: $source line $lineno: 'standby' is not a word an implementer row takes yet - implementers are started, not armed" >&2
       exit 2
     fi
     printf '%s\t%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")" "$third"

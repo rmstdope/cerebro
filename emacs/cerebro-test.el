@@ -717,6 +717,27 @@ reason it starts nothing - it would re-arm whatever `k\=' has just disarmed."
                                        cerebro-test--autostart-logged))
                    1))))))
 
+(ert-deftest cerebro-test/roster-standby-arms-an-implementer-without-starting ()
+  "An implementer row takes `standby\=' too (cb-1or.2): since cb-1or.1 its
+trigger is a real condition - a planned, unclaimed bead - so the word arms it
+exactly as it arms a role, and starts nothing."
+  (let ((cerebro-test--standby-fixture '("Two")))
+    (cerebro-test--with-autostart
+      (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () t)))
+        (cerebro)
+        (should (equal (reverse cerebro-test--autostart-launched) '("Alpha" "One")))
+        (with-current-buffer cerebro-buffer-name
+          (should (member "Two" cerebro--armed))
+          (let ((entry (cdr (assoc "Two" cerebro--parked))))
+            (should entry)
+            (should (numberp (nth 0 entry)))
+            (should (null (nth 1 entry)))
+            (should (null (nth 2 entry))))
+          (should (eq (cerebro-agent-state
+                       (seq-find (lambda (a) (equal (cerebro-agent-name a) "Two"))
+                                 cerebro--agents))
+                      'standby)))))))
+
 (ert-deftest cerebro-test/roster-standby-without-vterm-arms-nothing ()
   "Without vterm `cerebro--start-due\=' can start nothing, so an armed name
 would promise a trigger that cannot fire: nothing is armed either (cb-98u)."
@@ -5730,7 +5751,12 @@ by being derived from the unplanned list."
       ;; The backoff is `cerebro--start-due's, not this rule's: a name with
       ;; failed starts behind it still answers with the count.
       (should (equal (implementer '(planned-ids "cb-1" "cb-2") '(failed-starts . 3))
-                     "2 planned, unclaimed")))))
+                     "2 planned, unclaimed"))
+      ;; A roster-armed implementer this Emacs has never started (cb-1or.2)
+      ;; has a nil `started-at' and no floor to clear, exactly as a
+      ;; roster-armed role does.
+      (should (equal (implementer '(planned-ids "cb-1") '(started-at))
+                     "1 planned, unclaimed")))))
 
 ;; ---------------------------------------------------------------------------
 ;; The view's own log: what it decided, and what it declined to do

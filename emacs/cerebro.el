@@ -3678,7 +3678,12 @@ The query-on-exit flag goes with it, for the reason
 kill the view decided on.
 
 Read-only is set after the process is dead, since a live vterm resets it on
-some input paths.  `RET\=' in the kept buffer reaches `vterm-send-return\=',
+some input paths.  The buffer\='s liveness is checked twice, and the second
+check is the load-bearing one: killing the process can run a sentinel that
+kills the buffer with it, so the buffer this function was about to enter may
+be gone by the time it gets there.  A pass end must not fail on the record it
+was trying to keep - it keeps what it can and records nothing where there is
+nothing left.  `RET\=' in the kept buffer reaches `vterm-send-return\=',
 which is a no-op rather than an error once the process is gone."
   (let* ((name (cerebro-agent-name agent))
          (buffer (cerebro--recorded-buffer name))
@@ -3689,7 +3694,11 @@ which is a no-op rather than an error once the process is gone."
       (let ((process (get-buffer-process buffer)))
         (when process
           (set-process-query-on-exit-flag process nil)
-          (delete-process process)))
+          (delete-process process))))
+    ;; Checked again, not assumed: killing the process can run a sentinel
+    ;; that kills the buffer, and a pass end must not fail on the record it
+    ;; was trying to keep.  A buffer that is gone is simply not kept.
+    (when (buffer-live-p buffer)
       (with-current-buffer buffer
         (rename-buffer (cerebro--parked-buffer-name name now) t)
         (setq buffer-read-only t)))

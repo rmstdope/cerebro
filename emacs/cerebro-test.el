@@ -5741,6 +5741,36 @@ not an abnormal exit to be echoed at the navigator."
        (should (null messages))
        (should (null (alist-get "Psylocke" cerebro--last-exit nil nil #'equal)))))))
 
+(ert-deftest cerebro-test/park-keeps-what-it-can-when-killing-the-process-kills-the-buffer ()
+  "A pass end must not fail on the record it was trying to keep.
+
+vterm\='s own sentinel kills the session buffer the moment the process dies,
+and `delete-process\=' runs that sentinel before it returns - so the buffer
+`cerebro--park-session\=' is about to enter can already be gone.  Every step
+after it still runs: the state file goes, the session is forgotten, and the
+pass is recorded with no kept buffer rather than with an error."
+  (cerebro-test--parkable
+   "Psylocke"
+   (lambda (root agent buffer)
+     (setq cerebro--started-at '(("Psylocke" . 1000.0)))
+     (let ((original (symbol-function 'delete-process)))
+       (cl-letf (((symbol-function 'delete-process)
+                  (lambda (p)
+                    ;; What vterm\='s sentinel does, forced rather than waited
+                    ;; for: whether `delete-process\=' runs sentinels
+                    ;; synchronously differs between a `sleep\=' and a vterm.
+                    (let ((b (process-buffer p)))
+                      (funcall original p)
+                      (when (buffer-live-p b) (kill-buffer b))))))
+         (cerebro--park-session agent root
+                                (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))))
+     (should-not (buffer-live-p buffer))
+     (should-not (file-exists-p (expand-file-name ".cerebro/state/Psylocke.state.json" root)))
+     (should-not (cerebro--recorded-buffer "Psylocke"))
+     (let ((entry (cdr (assoc "Psylocke" cerebro--parked))))
+       (should (numberp (nth 0 entry)))
+       (should (null (nth 2 entry)))))))
+
 (ert-deftest cerebro-test/show-detail-prefers-a-parked-buffer-over-the-placeholder ()
   "`RET' on a standby row shows what the last pass printed."
   (let ((parked (generate-new-buffer "*fleet: Psylocke (ended 08:00)*"))

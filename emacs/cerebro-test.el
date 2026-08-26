@@ -6303,6 +6303,99 @@ the second and every one after it."
     (should (equal (cerebro--retry-delay 2) 10))
     (should (equal (cerebro--retry-delay 99) 10))))
 
+(ert-deftest cerebro-test/give-up-after-the-fifth-silent-failed-start ()
+  "A fleet that has failed to start thirty times is not going to succeed on
+the thirty-first without a human (cb-ccl).  The predicate is asked about the
+start being decided, so the fifth is the one that does not happen."
+  (let ((cerebro-give-up-after 5))
+    (should (cerebro--give-up-p t 4))
+    (should (cerebro--give-up-p t 9))
+    (should-not (cerebro--give-up-p t 3))
+    ;; A start that follows a pass is not a failure at all, whatever the
+    ;; count behind it says.
+    (should-not (cerebro--give-up-p nil 9))))
+
+(ert-deftest cerebro-test/start-due-gives-up-and-disarms ()
+  "The fifth silent failure launches nothing, leaves the name disarmed - so
+`cerebro--apply-standby' shows it `dead' rather than promising a retry - and
+says so in both logs."
+  (let* ((root (file-name-as-directory (make-temp-file "cerebro-root" t)))
+         (launched nil)
+         (said nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--launch)
+                   (lambda (a) (push (cerebro-agent-name a) launched)))
+                  ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) said)))
+                  ((symbol-function 'cerebro--trigger-context)
+                   (lambda (&rest _)
+                     '((now . 1000000.0) (implementers . 2) (planned . 4)
+                       (planned-ids "cb-1" "cb-2" "cb-3" "cb-4")
+                       (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                       (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+          (make-directory (expand-file-name ".claude/cerebro" root) t)
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (let ((cerebro-log-verbosity 'decisions)
+                (cerebro-give-up-after 5)
+                (cerebro--last-exit '(("Cyclops" :code "137" :line nil))))
+            (with-temp-buffer
+              (setq cerebro--agents
+                    (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby))
+                    cerebro--parked nil
+                    cerebro--seen-up nil
+                    cerebro--armed '("Cyclops")
+                    cerebro--started-at '(("Cyclops" . 900000.0))
+                    cerebro--failed-starts '(("Cyclops" . 4)))
+              (cerebro--start-due root (seconds-to-time 1000000.0))
+              (should-not launched)
+              (should-not (member "Cyclops" cerebro--armed))
+              (should (equal (alist-get "Cyclops" cerebro--last-exit nil nil #'equal)
+                             '(:code "137" :line nil :gave-up t)))
+              (should (member "Cyclops" (cerebro--failed-names cerebro--last-exit)))
+              (should (seq-find (lambda (m) (string-match-p "gave up after 5 failed starts" m))
+                                said))
+              (let ((decisions (with-temp-buffer
+                                 (insert-file-contents
+                                  (expand-file-name ".cerebro/state/decisions.jsonl" root))
+                                 (buffer-string)))
+                    (errors (with-temp-buffer
+                              (insert-file-contents
+                               (expand-file-name ".cerebro/state/errors.jsonl" root))
+                              (buffer-string))))
+                (should (string-match-p "\"event\":\"give-up\"" decisions))
+                (should (string-match-p "\"context\":\"start Cyclops\"" errors))
+                (should (string-match-p
+                         "gave up after 5 failed starts; the last session exited with code 137 and printed nothing"
+                         errors)))
+              ;; A name with no record at all still gets one, so the row has
+              ;; something to show.
+              (setq cerebro--last-exit nil
+                    cerebro--armed '("Cyclops"))
+              (cerebro--start-due root (seconds-to-time 1000000.0))
+              (should-not launched)
+              (should (equal (alist-get "Cyclops" cerebro--last-exit nil nil #'equal)
+                             '(:code "?" :line nil :gave-up t))))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/exit-line-and-placeholder-for-a-name-the-view-gave-up-on ()
+  "34 failed starts rendered identically to none.  A name the view has given
+up on says so on the row and behind `RET'."
+  (let ((cerebro-give-up-after 5))
+    (should (equal (cerebro--exit-line '(:code "137" :line nil :gave-up t) 5)
+                   "✗ exited with code 137, 5 failed starts — press s"))
+    ;; A line, if there is one, still wins: it is the actionable half.
+    (should (equal (cerebro--exit-line '(:code "2" :line "cerebro: boom" :gave-up t) 5)
+                   "✗ boom"))
+    (let ((cerebro--last-exit '(("Storm" :code "137" :line nil :gave-up t))))
+      (should (equal (cerebro--placeholder
+                      (cerebro-test--agent "Storm" "implementer" 'implementer 'dead)
+                      nil 5)
+                     (concat "Storm is not running.\n"
+                             "Its last 5 sessions ended without a pass (last exit code 137)"
+                             " and printed nothing; the view has stopped retrying.\n"
+                             "Press s to start it."))))))
+
 (ert-deftest cerebro-test/two-planners-are-not-started-in-the-same-breath ()
   "One planner start per `cerebro-role-start-spacing\=', because two racing.
 

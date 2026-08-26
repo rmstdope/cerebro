@@ -3770,7 +3770,7 @@ of days at `evaluations\=' and months at `changes\='."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire nudge standby arm refused exit sweep error)
+  '(start end retire nudge standby arm refused exit give-up sweep error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 
@@ -4935,6 +4935,15 @@ and this one is a few conses per standby row."
                         (equal name (alist-get 'first-planner context))))
             context)))
 
+(defun cerebro--give-up-p (failed failures)
+  "Pure.  Whether the start being decided would be one failed start too many.
+
+FAILED is whether the LAST start produced no pass, FAILURES the count behind
+it - the same two `cerebro--start-due\=' already computes for the backoff.  So
+the start under consideration would be number (1+ FAILURES), and
+`cerebro-give-up-after\=' is where that stops."
+  (and failed (>= (1+ failures) cerebro-give-up-after)))
+
 (defun cerebro--start-due (repo-root now)
   "Start every standby role in `cerebro--agents\=' whose trigger is true at NOW.
 
@@ -4993,16 +5002,36 @@ is where that is said."
                                         agent-context)))
             (cerebro--log-evaluation repo-root agent reason agent-context)
             (when (and reason (not too-soon) (not backed-off))
-              ;; Counted before the launch, from what the LAST one did: a
-              ;; start that follows a failure is one more failure until a pass
-              ;; proves otherwise, and a start that follows a pass starts over.
-              (setf (alist-get name cerebro--failed-starts nil nil #'equal)
-                    (if failed (1+ failures) 0))
-              (cerebro--with-logged-errors (format "start %s" name)
-                (let ((cerebro--log-start-reason reason))
-                  (cerebro--launch agent))
-                (message "%s" (cerebro--start-message
-                               (cerebro-agent-name agent) reason))))))))))
+              (if (cerebro--give-up-p failed failures)
+                  ;; Nothing is coming back on its own from here: the record
+                  ;; says so on the row, and the name leaves `cerebro--armed',
+                  ;; which is what `cerebro--apply-standby' reads to promise a
+                  ;; retry. `s' is the way back - `cerebro--launch' clears both
+                  ;; (cb-ccl).
+                  (let* ((old (alist-get name cerebro--last-exit nil nil #'equal))
+                         (code (or (plist-get old :code) "?"))
+                         (text (format (concat "gave up after %d failed starts; the last session"
+                                               " exited with code %s and printed nothing")
+                                       cerebro-give-up-after code)))
+                    (setf (alist-get name cerebro--last-exit nil nil #'equal)
+                          (list :code code :line nil :gave-up t))
+                    (setq cerebro--armed (delete name cerebro--armed))
+                    (cerebro--log repo-root 'give-up
+                                  (list (cons 'agent name)
+                                        (cons 'role (cerebro-agent-role agent))
+                                        (cons 'failed_starts cerebro-give-up-after)))
+                    (cerebro--log-error repo-root (format "start %s" name) text)
+                    (message "cerebro: %s %s" name text))
+                ;; Counted before the launch, from what the LAST one did: a
+                ;; start that follows a failure is one more failure until a pass
+                ;; proves otherwise, and a start that follows a pass starts over.
+                (setf (alist-get name cerebro--failed-starts nil nil #'equal)
+                      (if failed (1+ failures) 0))
+                (cerebro--with-logged-errors (format "start %s" name)
+                  (let ((cerebro--log-start-reason reason))
+                    (cerebro--launch agent))
+                  (message "%s" (cerebro--start-message
+                                 (cerebro-agent-name agent) reason)))))))))))
 
 (defvar cerebro--timer nil
   "The buffer-local auto-refresh timer, or nil.")

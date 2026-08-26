@@ -93,10 +93,11 @@ navigator in a terminal of its own:
 .claude/cerebro/scripts/launch Cyclops
 ```
 
-Each session takes **one** bead. When it is merged and closed the implementer writes `done` to
-`.cerebro/state/<name>.state.json`, and whoever is supervising — the Emacs fleet view, or that
-script — ends the session and starts a fresh one. So "one bead per session" is a property of how
-they run rather than a rule an agent has to keep, and no implementer's context grows across beads.
+Each session takes **one** bead. When it is merged and closed the implementer writes `waiting` to
+`.cerebro/state/<name>.state.json`, and the fleet view ends the session half a minute later, keeps
+its buffer as the record of the bead, and starts a fresh one under that name when there is another
+planned bead to take. So "one bead per session" is a property of how they run rather than a rule an
+agent has to keep, and no implementer's context grows across beads.
 
 An implementer cannot end itself: it is an interactive session, so its process outlives its turn and
 sits waiting for input. That is deliberate — it is what lets it be talked to and answered — and it
@@ -195,7 +196,7 @@ touch .cerebro/state/<name>.stop    # finish the current bead, then do not come 
 
 It is never read mid-bead, and that is deliberate: an implementer taken down in flight strands a
 claim, a worktree and an open PR. Nor is it read by the implementer itself — the supervisor reads it
-when an implementer reports `done`, or when it is `idle` (between beads, with nothing in flight),
+when an implementer reports `waiting`, or when it is `idle` (between beads, with nothing in flight),
 which are the only two moments at which nothing is stranded by ending it. An idle implementer is
 ended at once, within about five seconds of the poll picking the flag up — say so when you set a
 flag on one. A working or asking one still finishes its current bead first: writing that flag does
@@ -250,7 +251,7 @@ Storm", "shut Storm down", "pull Storm off", and the rest. If Storm is between b
 ends it within about one poll, with nothing to strand; otherwise it finishes the bead it is on first.
 
 Changed their mind before the bead finished? `rm` the flag and nothing happens — it is only read
-when the implementer reports `done` or is `idle`, so deleting it before either cancels the
+when the implementer reports `waiting` or is `idle`, so deleting it before either cancels the
 instruction entirely. Say that when you set one, because it is the cheap way back. Once the
 implementer is idle, though, be quick: the poll runs every five seconds, and a flag left in place
 ends the session before you get to change your mind.

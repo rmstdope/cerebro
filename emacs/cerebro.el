@@ -1426,9 +1426,10 @@ no pass can clear - is `cerebro--unless-unchanged\=', which asks whether
 anything changed instead of how long it has been.
 
 The implementers have none either, for the same reason and a starker one:
-a standby implementer is one whose session died, and every minute of it is a
-minute the fleet is short a builder.  What spaces a retry that keeps failing
-is `cerebro-retry-backoff\=', which is measured from the failed start itself.
+a standby implementer is one between beads, and a planned bead it has not
+taken is the fleet idle behind work that is ready.  What starts it is that
+bead (`cerebro--trigger'), not a clock, and what spaces a retry that keeps
+failing is `cerebro-retry-backoff\=', measured from the failed start itself.
 
 The verifier, at five minutes: Psylocke\='s own prose asks for five, and
 the log agrees - 90 idle intervals, median 4.7 min - because a bead can
@@ -2936,7 +2937,7 @@ outlive the fleet buffer, and `M-x cerebro' after a `q' must still know
 what it started.")
 
 (defvar-local cerebro--armed nil
-  "Interactive names the view will start again on their trigger (cb-5yr).
+  "Names the view will start again on their trigger (cb-5yr).
 
 Armed by `cerebro--launch\=' - every start, `s\=' or autostart - and disarmed by
 `k\=', by `f\=' once the pass ends, and by a stop flag on a waiting role.  Emacs

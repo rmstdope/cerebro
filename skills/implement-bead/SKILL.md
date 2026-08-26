@@ -517,6 +517,16 @@ locally.
 
 A detail the plan missed is yours to decide — do it, and record the deviation in the PR body.
 
+**A helper the plan cites for what it decides is read before it is built on.** A predicate, a
+filter, a query named as the test for something is a claim about what that symbol accepts, and a
+plan can be confidently wrong about it — a planner once cited one three times as the test for a
+thing it accepted the opposite of. Open it and read its body before the first increment that
+depends on it. If it does not accept what the plan says and the plan's intent is unambiguous, use
+what does and record the deviation in the PR body; if the intent is not, that is the plan being
+wrong about approach, and it goes back. The same care applies to your own PR body: a sentence there
+about what a helper or a label does is read by the reviewer and the navigator with the trust a
+plan gets, so run or read the thing before writing the sentence.
+
 Anything touching **approach, scope, or what the user sees** goes back, by the same hand-back block as a missing section, worktree included. You were given a plan precisely so those decisions were made elsewhere; making
 them here is the failure mode this split exists to prevent.
 

@@ -2059,19 +2059,23 @@ floor that has half a minute left to run is not worth a different word."
   (let* ((role (cerebro-agent-role agent))
          (cadence (cdr (assoc role cerebro-cadence-triggers))))
     (cond
-     ;; An implementer on standby is one between beads, so what it waits for
-     ;; is a condition, named the way a planner's row names its buffer rule
-     ;; (cb-1or.1).  The clock is shown only while a failed start is actually
-     ;; backing off - that is the one time there is a moment to count down
-     ;; to, and it is a launcher refusing rather than a pass that ended.
-     ((equal role "implementer")
-      (let* ((failures (alist-get 'failed-starts context))
+     ;; While a start is backing off, the clock and the count come before the
+     ;; role's own condition - for every kind, since cb-ccl.  It was an
+     ;; implementer's line only, and Psylocke at 32 failed starts read
+     ;; `→ merged, unverified': the row of a verifier waiting for a merge
+     ;; rather than of one nothing could start.  It is the one time there is a
+     ;; moment to count down to, and it is a launcher refusing rather than a
+     ;; pass that ended.
+     ((let* ((failures (or (alist-get 'failed-starts context) 0))
              (left (cerebro--retry-wait failures (alist-get 'started-at context)
                                         (alist-get 'now context))))
-        (if (> left 0)
-            (format "↻ retry in %s%s" (cerebro--retry-figure left)
-                    (if (> failures 0) (format ", %d failed" failures) ""))
-          "→ planned bead")))
+        (and (> left 0)
+             (format "↻ retry in %s%s" (cerebro--retry-figure left)
+                     (if (> failures 0) (format ", %d failed" failures) "")))))
+     ;; An implementer on standby is one between beads, so what it waits for
+     ;; is a condition, named the way a planner's row names its buffer rule
+     ;; (cb-1or.1).
+     ((equal role "implementer") "→ planned bead")
      ((equal role "planner")
       (format "→ buffer < %d" (cerebro--planner-want (alist-get 'implementers context))))
      ((equal role "verifier") "→ merged, unverified")

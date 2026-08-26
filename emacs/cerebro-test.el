@@ -6569,6 +6569,29 @@ starts have come to nothing - a launcher refused all morning reads as
                                                    '(started-at . 999999.0)))
                    "↻ retry in 10m, 9 failed"))))
 
+(ert-deftest cerebro-test/a-role-row-backing-off-shows-the-retry-clock ()
+  "Psylocke sat at 32 failed starts showing `→ merged, unverified' - the row
+of a verifier waiting for a merge, not of one nothing could start.  While a
+start is backing off the clock and the count come first, whatever the role
+(cb-ccl); once it is due the role's own condition is back."
+  (should (equal (cerebro--standby-label
+                  (cerebro-test--interactive "Psylocke" "verifier" 'standby)
+                  (cerebro-test--context '(failed-starts . 4) '(started-at . 999445.0)))
+                 "↻ retry in 45s, 4 failed"))
+  (should (equal (cerebro--standby-label
+                  (cerebro-test--interactive "Xavier" "planner" 'standby)
+                  (cerebro-test--context '(failed-starts . 4) '(started-at . 999445.0)))
+                 "↻ retry in 45s, 4 failed"))
+  ;; Nothing backing off: the condition, exactly as before.
+  (should (equal (cerebro--standby-label
+                  (cerebro-test--interactive "Psylocke" "verifier" 'standby)
+                  (cerebro-test--context '(failed-starts . 4) '(started-at . 990000.0)))
+                 "→ merged, unverified"))
+  (should (equal (cerebro--standby-label
+                  (cerebro-test--interactive "Xavier" "planner" 'standby)
+                  (cerebro-test--context '(failed-starts . 4) '(started-at . 990000.0)))
+                 "→ buffer < 2")))
+
 (ert-deftest cerebro-test/standby-label-forms ()
   "The For column of a standby row: what it is waiting for, not how long it
 has been there - there is no session for an elapsed time to describe."

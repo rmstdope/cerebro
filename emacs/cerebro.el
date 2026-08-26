@@ -136,14 +136,6 @@ is the fleet view's order."
   (mapcar (lambda (row) (cons (nth 0 row) (nth 1 row)))
           (seq-filter (lambda (row) (eq (nth 2 row) 'interactive)) fleet)))
 
-(defun cerebro--fleet-role-names (fleet role)
-  "The names in FLEET filling ROLE, in roster order.
-
-Roster order is load-bearing for a role two agents hold: the P4 triage pass
-belongs to the first planner alone (`skills/plan-bead\='), because two
-sessions triaging one backlog interview the navigator twice over it."
-  (mapcar #'car (seq-filter (lambda (row) (equal (nth 1 row) role)) fleet)))
-
 (defun cerebro--list-height (agent-count)
   "Lines the agent list needs for AGENT-COUNT agents: the rows, the header
 line and the mode line, so the list never scrolls and the bead panel gets
@@ -660,8 +652,8 @@ Not divided by role in code - the fleet list shows whatever word a state
 file carries, in the State column, and a wrong word for the role in that
 column is not worth a per-role table in Elisp any more than in the script.
 By role, for reference: `build gate review ci rebase merge' belong to an
-implementer; `triage plan' to a planner; `prepare verify' to Psylocke; `sweep',
-or `sweep release', to Moira and Cerebro; `daily weekly' to Forge; and
+implementer; `plan' to a planner; `prepare verify' to Psylocke; `sweep' to
+Moira; `sweep', `release' and `triage' to Cerebro; `daily weekly' to Forge; and
 `read check walk report' to Cypher, whose work item is a pull request
 rather than a bead.")
 
@@ -1622,8 +1614,8 @@ in minutes by anyone reading the fleet."
   "Labels that say a bead is the navigator\='s rather than a planner\='s.
 
 `skills/plan-bead\=' does not stall when the navigator is away: a bead it
-cannot decide alone is parked with `human\=', a P4 it asked about and got no
-answer for is marked `triage:declined\=', and the pass ends.  Both marks are
+cannot decide alone is parked with `human\=', a P4 Cerebro asked about and got
+no answer for is marked `triage:declined\=' by Cerebro, and the pass ends.  Both marks are
 durable precisely *because* the pass ends, and both of the skill\='s own
 queries exclude them.
 
@@ -1849,7 +1841,6 @@ hold: what Moira and Cypher watch moves outside this fleet, so the fleet
 looking unchanged is evidence of nothing."
   (pcase role
     ("planner" (list (alist-get 'p0-unplanned context)
-                     (alist-get 'p4-unranked context)
                      (alist-get 'planned context)
                      (alist-get 'implementers context)
                      (alist-get 'actionable-ids context)))
@@ -1888,8 +1879,8 @@ fingerprint is recorded when a launch is *attempted* (`cerebro--launch\='),
 which is before anything has proved a session exists, so a launch that dies
 without leaving a recorded exit - the row falls back to standby rather than
 dead - would otherwise buy this guard\='s silence for nothing.  That parked a
-planner indefinitely on a P4 only his own triage pass could take: the board
-could not change, because he was the one who would have changed it.
+planner indefinitely on a bead only its own pass could take: the board
+could not change, because it was the one who would have changed it.
 
 A pass that ran leaves an `ended-at\=' later than its `started-at\='.  A launch
 that produced nothing leaves the previous pass\='s, which is earlier.  Both are
@@ -1915,7 +1906,7 @@ CONTEXT is what `cerebro--trigger-context\=' gathers - `now\=',
 `gh\=' (nil for no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) and
 `linked\=' (`cerebro--linked-beads\=') - plus the per-agent facts
 `cerebro--agent-context\=' adds to it: `ended-at\=', `started-at\=', `floor\=',
-`failed-starts\=', `last-fingerprint\=', `first-planner-p\=' and
+`failed-starts\=', `last-fingerprint\=' and
 `linked-moved\=' (`linked\=' filtered by this role\='s own `ended-at\=').
 
 Every rule is gated on the floor first: `cerebro-wake-interval\=' is the
@@ -1950,7 +1941,6 @@ is merely waiting for it."
         (pcase role
          ("planner"
           (let ((p0 (alist-get 'p0-unplanned context))
-                (p4 (alist-get 'p4-unranked context))
                 (planned (alist-get 'planned context))
                 ;; The buffer `skills/plan-bead' asks for: one planned,
                 ;; unclaimed bead per implementer on the roster, never fewer
@@ -1967,11 +1957,6 @@ is merely waiting for it."
              ;; A P0 is planned the moment it appears, whichever planner sees
              ;; it: it is what the whole fleet is blocked behind.
              (p0 (format "P0 %s unplanned" (car p0)))
-             ;; The triage pass belongs to the first planner on the roster
-             ;; alone - two sessions interview the navigator twice over one
-             ;; backlog.
-             ((and (alist-get 'first-planner-p context) (> p4 0))
-              (format "%d unranked" p4))
              ;; A short buffer is a reason to plan only while there is
              ;; something to plan. `actionable-ids' is the unplanned list -
              ;; already minus what the navigator holds, and minus what a
@@ -5014,8 +4999,6 @@ was a failure, are both plain values: neither depends on whose pass it is."
                 (cerebro--implementer-count
                  cerebro--agents
                  (lambda (name) (cerebro--stop-flag-p repo-root name))))
-          (cons 'first-planner
-                (car (cerebro--fleet-role-names (cerebro--fleet repo-root) "planner")))
           (cons 'gh (cerebro--gh-resolver))
           ;; The linked beads as the panel last saw them; which of them moved
           ;; is measured against the role's own pass, so that part is
@@ -5058,9 +5041,7 @@ and this one is a few conses per standby row."
                   ;; `cerebro--unless-unchanged'.
                   (cons 'last-fingerprint
                         (cdr (assoc name cerebro--start-fingerprints)))
-                  (cons 'floor (cerebro-wake-interval name (cerebro-agent-role agent)))
-                  (cons 'first-planner-p
-                        (equal name (alist-get 'first-planner context))))
+                  (cons 'floor (cerebro-wake-interval name (cerebro-agent-role agent))))
             context)))
 
 (defun cerebro--give-up-p (failed failures)

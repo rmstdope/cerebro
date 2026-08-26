@@ -6006,7 +6006,7 @@ session - so it goes before the fresh one starts."
   "The trigger context, with nothing to do, plus OVERRIDES."
   (append overrides
           '((now . 1000000.0) (ended-at . 999000.0) (started-at . 990000.0)
-            (floor . 600) (first-planner-p . t) (implementers . 2)
+            (floor . 600) (implementers . 2)
             (planned . 4) (p0-unplanned) (p4-unranked . 0) (actionable-ids)
             (merged-unverified . 0) (stale-verdicts . 0) (gh) (linked-moved))))
 
@@ -6051,14 +6051,10 @@ by being derived from the unplanned list."
     ;; A planner: an unplanned P0 first, whichever planner it is.
     (should (equal (cerebro-test--trigger "planner" '(p0-unplanned "cb-9zz"))
                    "P0 cb-9zz unplanned"))
-    (should (equal (cerebro-test--trigger "planner" '(p0-unplanned "cb-9zz")
-                                          '(first-planner-p))
-                   "P0 cb-9zz unplanned"))
-    ;; The P4 triage pass belongs to the first planner on the roster alone.
-    (should (equal (cerebro-test--trigger "planner" '(p4-unranked . 7)) "7 unranked"))
-    (should (equal (cerebro-test--trigger "planner" '(p4-unranked . 1)) "1 unranked"))
-    (should (null (cerebro-test--trigger "planner" '(p4-unranked . 7)
-                                         '(first-planner-p))))
+    ;; An unranked bead starts no planner: ranking is Cerebro's (cb-5lx.1), and a
+    ;; planner started for one ends having planned nothing.
+    (should (null (cerebro-test--trigger "planner" '(p4-unranked . 7))))
+    (should (null (cerebro-test--trigger "planner" '(p4-unranked . 1))))
     ;; The buffer: one planned, unclaimed bead per running implementer, and
     ;; never fewer than two whatever the fleet looks like. Every row carries
     ;; something unplanned, because a short buffer is only a reason to start
@@ -6153,6 +6149,26 @@ by being derived from the unplanned list."
       ;; roster-armed role does.
       (should (equal (implementer '(planned-ids "cb-1") '(started-at))
                      "1 planned, unclaimed")))))
+
+(ert-deftest cerebro-test/two-planners-answer-every-trigger-identically ()
+  "No planner is first: the context carries nothing that tells Xavier from
+Beast, and a stale `first-planner-p\=' left in it by an older caller changes
+no answer.  Roster order is load-bearing for the implementer names Cerebro
+hands out, and for nothing about the planners."
+  (dolist (extra '(nil ((first-planner-p . t)) ((first-planner-p))))
+    (let ((overrides (append extra '((p4-unranked . 7)))))
+      (should (null (apply #'cerebro-test--trigger "planner" overrides)))
+      (should (equal (apply #'cerebro-test--trigger "planner"
+                            (cons '(p0-unplanned "cb-9zz") overrides))
+                     "P0 cb-9zz unplanned"))
+      (should (equal (apply #'cerebro-test--trigger "planner"
+                            (append '((planned . 1) (implementers . 3)
+                                      (actionable-ids "cb-9zz"))
+                                    overrides))
+                     "buffer 1 of 3"))))
+  ;; And the fingerprint no longer moves when only the unranked count does.
+  (should (equal (cerebro--trigger-fingerprint "planner" (cerebro-test--context '(p4-unranked . 1)))
+                 (cerebro--trigger-fingerprint "planner" (cerebro-test--context '(p4-unranked . 9))))))
 
 ;; ---------------------------------------------------------------------------
 ;; The view's own log: what it decided, and what it declined to do
@@ -6551,7 +6567,7 @@ says so in both logs."
                    (lambda (&rest _)
                      '((now . 1000000.0) (implementers . 2) (planned . 4)
                        (planned-ids "cb-1" "cb-2" "cb-3" "cb-4")
-                       (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                       (p0-unplanned) (p4-unranked . 0)
                        (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
           (make-directory (expand-file-name ".claude/cerebro" root) t)
           (make-directory (expand-file-name ".cerebro/state" root) t)
@@ -6893,7 +6909,7 @@ the next tick starting it again."
               ((symbol-function 'cerebro--trigger-context)
                (lambda (&rest _)
                  '((now . 1000000.0) (implementers . 2) (planned . 4)
-                   (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                   (p0-unplanned) (p4-unranked . 0)
                    (merged-unverified . 2) (stale-verdicts . 0) (gh)))))
       (with-temp-buffer
         (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)
@@ -6925,7 +6941,7 @@ retried at 30s, 2m and then every 10m rather than every five seconds."
                (lambda (&rest _)
                  '((now . 1000000.0) (implementers . 2) (planned . 4)
                    (planned-ids "cb-1" "cb-2" "cb-3" "cb-4")
-                   (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                   (p0-unplanned) (p4-unranked . 0)
                    (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
       (with-temp-buffer
         (setq cerebro--agents
@@ -6962,7 +6978,7 @@ retried at 30s, 2m and then every 10m rather than every five seconds."
                (lambda (&rest _)
                  '((now . 1000000.0) (implementers . 2) (planned . 0)
                    (planned-ids)
-                   (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                   (p0-unplanned) (p4-unranked . 0)
                    (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
       (with-temp-buffer
         (setq cerebro--agents
@@ -6994,7 +7010,7 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
                (lambda (&rest _)
                  '((now . 1000000.0) (implementers . 0) (planned . 2)
                    (planned-ids "cb-1" "cb-2")
-                   (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                   (p0-unplanned) (p4-unranked . 0)
                    (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
       (with-temp-buffer
         (setq cerebro--agents
@@ -7017,7 +7033,7 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
                    (lambda (&rest _)
                      '((now . 1000030.0) (implementers . 1) (planned . 2)
                        (planned-ids "cb-1" "cb-2")
-                       (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                       (p0-unplanned) (p4-unranked . 0)
                        (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
           (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000030.0)))
         (should (equal launched '("Rogue")))
@@ -7027,7 +7043,7 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
                    (lambda (&rest _)
                      '((now . 1000010.0) (implementers . 1) (planned . 2)
                        (planned-ids "cb-1" "cb-2")
-                       (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                       (p0-unplanned) (p4-unranked . 0)
                        (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
           (setq cerebro--started-at '(("Cyclops" . 1000000.0)))
           (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000010.0)))
@@ -7109,7 +7125,6 @@ it, and the roster - all of which this tick has already read."
               ;; Rogue is working and Gambit is dead, and both count: a dead
               ;; builder is one `s' away from needing a bead (cb-1or.3).
               (should (equal (alist-get 'implementers context) 2))
-              (should (equal (alist-get 'first-planner context) "Xavier"))
               ;; The ids behind that count, in panel order: what a standby
               ;; implementer is started for (cb-1or.1).
               (should (equal (alist-get 'planned-ids context) '("a" "b")))
@@ -7335,8 +7350,7 @@ arrived since. Per role, because each is measured against its own last pass."
   "One reader, two roles, two different \"since\": `cerebro--agent-context' is
 where the fleet's answer becomes this role's, because `ended-at' is its own."
   (let ((context (list (cons 'gh (lambda (ended-at)
-                                   (list (list (or ended-at 0)) nil)))
-                       (cons 'first-planner "Xavier"))))
+                                   (list (list (or ended-at 0)) nil))))))
     (cl-letf (((symbol-function 'cerebro-wake-interval) (lambda (&rest _) 3600)))
       (with-temp-buffer
         (setq cerebro--parked '(("Moira" 777.0 0.0 nil)) cerebro--started-at nil)
@@ -7344,15 +7358,6 @@ where the fleet's answer becomes this role's, because `ended-at' is its own."
                          (cerebro-test--interactive "Moira" "user-feedback" 'standby)
                          context)))
           (should (equal (alist-get 'gh resolved) '((777.0) nil))))))))
-
-(ert-deftest cerebro-test/fleet-role-names-are-the-names-filling-a-role-in-order ()
-  "Two agents hold `planner', and which of them is first is load-bearing: the
-P4 triage pass belongs to that one alone."
-  (should (equal (cerebro--fleet-role-names
-                  '(("Xavier" "planner" interactive) ("Psylocke" "verifier" interactive)
-                    ("Beast" "planner" interactive))
-                  "planner")
-                 '("Xavier" "Beast"))))
 
 ;; --- `f' and `k' on an interactive role -----------------------------------
 

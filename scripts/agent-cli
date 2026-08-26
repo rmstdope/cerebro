@@ -13,7 +13,7 @@
 #     agent-cli                       the provider this fleet runs on          -> claude
 #     agent-cli --binary              the executable to exec and to find       -> claude
 #     agent-cli --argv --role <role> --name <Name> [--model <m>] [--effort <e>]
-#                                     [--marker <sentence>] [--settings <path>]
+#                                     [--settings <path>]
 #                                     every argv token between the binary and the caller's own
 #                                     extra arguments, NUL-separated
 #     agent-cli --prompt-argv <text>  the tokens that carry a seed prompt, NUL-separated
@@ -27,6 +27,11 @@
 #     while IFS= read -r -d '' tok; do argv+=("$tok"); done < <(agent-cli --argv ...)
 #
 # a process substitution rather than a pipe, or the array is built in a subshell and lost.
+#
+# The prompt carries cerebro's marker sentence (cb-d59.3), and `--prompt-argv` knows nothing about
+# it: composing the prompt is provider-neutral work and belongs in `launch`, while this file stays a
+# table of one provider's spellings. A second arm emits `-i <text>` for the same verb and inherits
+# the marker for free.
 #
 # `--argv` deliberately stops short of the prompt: `launch` puts the caller's own extra arguments
 # between the flags and the prompt, which is what makes a `--model` typed on the command line beat
@@ -177,15 +182,14 @@ case "$verb" in
     ;;
   --argv)
     shift
-    role="" name="" model="" effort="" marker="" settings=""
-    have_marker="" have_settings=""
+    role="" name="" model="" effort="" settings=""
+    have_settings=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --role)     role="${2:-}"; shift 2 ;;
         --name)     name="${2:-}"; shift 2 ;;
         --model)    model="${2:-}"; shift 2 ;;
         --effort)   effort="${2:-}"; shift 2 ;;
-        --marker)   marker="${2:-}"; have_marker=1; shift 2 ;;
         --settings) settings="${2:-}"; have_settings=1; shift 2 ;;
         *) usage ;;
       esac
@@ -196,7 +200,6 @@ case "$verb" in
         printf '%s\0' --agent "$role" --name "$name" --remote-control "$name"
         [[ -n "$model" ]] && printf '%s\0' --model "$model"
         [[ -n "$effort" ]] && printf '%s\0' --effort "$effort"
-        [[ -n "$have_marker" ]] && printf '%s\0' --append-system-prompt "$marker"
         [[ -n "$have_settings" ]] && printf '%s\0' --settings "$settings"
         printf '%s\0' --permission-mode auto
         ;;

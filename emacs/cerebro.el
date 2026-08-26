@@ -23,14 +23,16 @@
 ;;     display order.
 ;;   - liveness for the interactive roles (Xavier, Cerebro, Moira, Psylocke,
 ;;     Forge) is the state file first, when one exists for a live pid, and
-;;     falls back to scanning system processes for the `--name <Name>'
-;;     argument `scripts/launch' passes when it does not - a session started
-;;     by hand, outside this fleet, has no file and still has to show `up'.
-;;     That scan is machine-wide and a name is unique only inside one
-;;     consumer, so it is narrowed to this repository's own sessions first
+;;     falls back to scanning system processes for cerebro's own marker
+;;     sentence - "This session is <Name> of the cerebro fleet rooted at
+;;     <root>/." - which `scripts/launch' puts at the head of every session's
+;;     prompt (cb-d59.3), the one argv slot every agent CLI accepts.  That
+;;     scan is machine-wide and a name is unique only inside one consumer, so
+;;     it is narrowed to this repository's own sessions first
 ;;     (`cerebro--consumer-args') - otherwise a second checkout's Xavier
-;;     shows as this one's.  The rule - name AND root, on one command line -
-;;     is `cerebro--session-args-p', and both paths are built from it (cb-lzi).
+;;     shows as this one's.  The rule - name AND root, both cut from that one
+;;     sentence - is `cerebro--session-args-p', and both paths are built from
+;;     it (cb-lzi, cb-d59.3).
 
 ;;; Code:
 
@@ -167,14 +169,29 @@ normalises here so no comparator downstream has to know."
   (file-name-as-directory (expand-file-name root)))
 
 (defun cerebro--name-in-args-p (name args)
-  "Non-nil if some string in ARGS names NAME via a whole-word \"--name NAME\"."
-  (let ((needle (concat "--name[ \t]+" (regexp-quote name) "\\_>")))
+  "Non-nil if some string in ARGS carries cerebro\='s marker sentence for NAME.
+
+The needle is the sentence\='s opening, up to and including the space after
+\"rooted at\": `scripts/launch\=' puts
+
+  This session is NAME of the cerebro fleet rooted at ROOT/. ...
+
+at the head of every session\='s prompt, which is the one argv slot every
+agent CLI accepts (cb-d59.3).  No provider\='s flag spelling is evidence any
+more - `--name NAME\=' is still passed and no longer proves anything.  The
+needle ends at \"rooted at \" so that a name which is a prefix of another
+\(Cyclops / Cyclopsly) cannot match, which is what the old `\\_>\' word
+boundary bought."
+  (let ((needle (concat "This session is " (regexp-quote name)
+                        " of the cerebro fleet rooted at ")))
     (cl-some (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
 
 (defun cerebro--root-in-args-p (root args)
-  "Non-nil if some string in ARGS carries a path under ROOT, as a whole component.
+  "Non-nil if some string in ARGS roots cerebro\='s marker sentence at ROOT.
 
-ROOT may carry a trailing slash (`cerebro--repo-root\=' is a
+The needle is \"cerebro fleet rooted at ROOT/\", the second half of the
+sentence `scripts/launch\=' puts at the head of every session\='s prompt
+\(cb-d59.3).  ROOT may carry a trailing slash (`cerebro--repo-root\=' is a
 `locate-dominating-file\=' result, which does), and /repos/cerebro is not
 /repos/cerebro-hud: the needle is ROOT with its slash normalised and one
 appended, so a sibling checkout named for the same prefix is not this
@@ -190,16 +207,18 @@ process names `/Users/<you>/repos/...\=' and never `~\=', so nothing matched,
 every agent read as having no live session, and `cerebro--derive-interactive\='
 showed `up\=' for a role whose state file said `waiting\=' - with no supervision
 behind it, which is the whole cb-5yr mechanism gone quiet (cb-5yr.1)."
-  (let ((needle (concat (regexp-quote (directory-file-name (expand-file-name root))) "/")))
+  (let ((needle (concat "cerebro fleet rooted at "
+                        (regexp-quote (directory-file-name (expand-file-name root))) "/")))
     (cl-some (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
 
 (defun cerebro--session-args-p (args name root)
   "Non-nil if the one command line ARGS is NAME's session of the fleet at ROOT.
 
-THE rule, stated once (cb-lzi): a whole-word `--name NAME\='
-\(`cerebro--name-in-args-p\=') AND a path under ROOT
-\(`cerebro--root-in-args-p\='), which every session `scripts/launch\=' starts
-carries in `--settings <root>/.../question-state.settings.json\='.  The
+THE rule, stated once (cb-lzi, re-keyed by cb-d59.3): cerebro\='s own marker
+sentence, which `scripts/launch\=' puts at the head of every session\='s
+prompt, naming NAME (`cerebro--name-in-args-p\=') AND rooted at ROOT
+\(`cerebro--root-in-args-p\=') - two needles cut from the one sentence, so
+no provider\='s flag spelling is evidence any more.  The
 state-file path asks it of one pid's own args (`cerebro--session-alive-p\=');
 the process-scan path asks it of every process, as `cerebro--consumer-args\='
 followed by `cerebro--name-in-args-p\=' - the same two tests in the other
@@ -221,15 +240,16 @@ showed another repository\='s planners as `up\=' here, for exactly those roles
 that had never run in this one - the state file is read first, so the lie
 only surfaced where there was no file to read.
 
-The discriminator is a path under ROOT in the process\='s own command line:
-`scripts/launch\=' passes every session `--settings <scripts>/../hooks/
-question-state.settings.json\=', which is inside the consumer whose fleet the
-session belongs to, wherever the submodule is mounted.  ROOT may carry a
-trailing slash (`cerebro--repo-root\=' returns a `locate-dominating-file\='
-result, which does) and must match a whole path component, so that a
-sibling checkout named for the same prefix is not this consumer.
+The discriminator is cerebro\='s marker sentence rooted at ROOT in the
+process\='s own command line: `scripts/launch\=' opens every session\='s prompt
+with \"This session is NAME of the cerebro fleet rooted at ROOT/.\", which
+names the consumer whose fleet the session belongs to, wherever the
+submodule is mounted (cb-d59.3).  ROOT may carry a trailing slash
+\(`cerebro--repo-root\=' returns a `locate-dominating-file\=' result, which
+does) and the needle ends it with one, so that a sibling checkout named for
+the same prefix is not this consumer.
 
-A session that names no root at all - a bare `claude --name Xavier\=' typed
+A session carrying no marker at all - a bare `claude --name Xavier\=' typed
 by hand, bypassing the launcher - is dropped rather than credited to this
 fleet.  That is the deliberate half of the trade: the scan can no longer
 prove such a session is ours, and claiming it is, is the defect being fixed."
@@ -248,10 +268,9 @@ count within one consumer and never across two (cb-lzi)."
 `cerebro--consumer-processes\=' - whose ARGS name NAME.
 
 Ascending, so the echo line that prints them is stable from one keypress to
-the next.  `cerebro--name-in-args-p\=' is the whole-word `--name NAME\=' test
-and already ignores `--remote-control NAME\=', which every session also
-carries: counting by a plain substring search would count each session
-twice."
+the next.  `cerebro--name-in-args-p\=' is the marker-sentence test, and a
+session carries exactly one marker: there is nothing here a plain substring
+search over the name could count twice."
   (sort (delq nil
               (mapcar (lambda (proc)
                         (and (cerebro--name-in-args-p name (list (cdr proc)))

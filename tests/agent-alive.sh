@@ -2,7 +2,8 @@
 #
 # Proves scripts/agent-alive answers "is this pid still that session" the way
 # cerebro--session-alive-p does in elisp: a pid alone is not an identity, so the process's own
-# command line must carry `--name <Name>'.
+# command line must carry cerebro's own marker sentence - "This session is <Name> of the cerebro
+# fleet rooted at <root>/." (cb-d59.3).
 #
 # No framework: plain bash, set -euo pipefail, exit non-zero on the first failed assertion. Run from
 # the submodule root:
@@ -53,7 +54,7 @@ run_alive() {
 
 # --- dead-for-a-live-pid-that-is-not-that-session ---
 # The pid-recycling case, and the whole reason this script exists: $$ is a live process whose args
-# carry no `--name Cyclops'.
+# carry no marker for Cyclops.
 tmp="$(new_fixture)"
 write_state "$tmp" Cyclops "{\"state\":\"working\",\"pid\":$$}"
 if run_alive "$tmp" Cyclops; then
@@ -74,18 +75,16 @@ cases="$repo_root/tests/lib/session-args.cases"
 [[ -r "$cases" ]] || fail "session-args table: cannot read $cases"
 tmp="$(new_fixture)"
 other="$(new_fixture)"
-# The three directories a row's --settings or --append-system-prompt text may name. Rows do not
-# require any of these to exist any more (the rule now reads the whole command line, not a
-# resolved --settings directory) but they are kept so a row naming one still finds a real path -
-# and {root}-hud is the sibling-prefix case, a checkout beside this one whose path merely starts
-# with this one's.
+# The three consumer roots a row may be rooted at. Rows do not require any of these to exist (the
+# rule reads the marker sentence in the command line, not a resolved path) but they are kept so a
+# row naming one still finds a real path - and {root}-hud is the sibling-prefix case, a checkout
+# beside this one whose path merely starts with this one's.
 mkdir -p "$tmp/.claude/cerebro/hooks" "$other/.claude/cerebro/hooks" "$tmp-hud/.claude/cerebro/hooks"
 # Lives in $work_dir, ONE level above every fixture root, deliberately - not in $tmp. agent-alive's
-# rule now asks whether $repo_root appears ANYWHERE in the process's command line, and a process's
-# own invocation path is part of that command line: a fake session launched from inside its own
-# fixture root would carry that root whatever its --name/--append-system-prompt said, which would
-# make the "carries no root at all" row (see the table) misreport alive for a reason that has
-# nothing to do with the rule under test.
+# rule asks whether the marker rooted at $repo_root appears ANYWHERE in the process's command line,
+# and a process's own invocation path is part of that command line: keeping the fake session out of
+# every fixture root is what stops an invocation path from standing in for a marker the row never
+# carried, for a reason that has nothing to do with the rule under test.
 printf '#!/usr/bin/env bash\nsleep 30\n' > "$work_dir/fake-session"
 chmod +x "$work_dir/fake-session"
 rows=0

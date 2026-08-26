@@ -171,29 +171,44 @@ if [[ -n "$models_conf" ]]; then
   done
 fi
 
-# The consumer root, carried where a wrapper that rewrites --settings (cmux) cannot touch it
-# (ah-ybsr). It used to ride on `--settings <root>/.../question-state.settings.json', which
-# `cerebro--root-in-args-p'/`agent-alive' looked for in the command line; cmux keeps every flag this
-# launcher passes but rewrites `--settings' from a path into merged inline JSON, so the root
-# disappeared from it entirely. This is an array, not `${x:+--flag "$sentence"}' (see --model,
-# below): that form is unquoted at the exec, so a value with spaces would word-split into one argv
-# entry per word, which a sentence cannot survive. Guarded rather than unconditional because
-# `consumer_root' is deliberately allowed to be empty - this launcher runs from outside a consumer
-# in the tests.
+# Cerebro's own marker sentence: the WHOLE of the liveness rule since cb-d59.3, and the reason
+# neither `cerebro--session-args-p' nor `scripts/agent-alive' contains a provider's spelling any
+# more. It used to ride on `--settings' and then on `--append-system-prompt' (ah-ybsr, cmux having
+# rewritten `--settings' into inline JSON); it now opens the PROMPT, which is the one argument
+# every agent CLI accepts - Copilot has no `--append-system-prompt' and refuses a bare trailing
+# prompt (docs/providers/copilot.md, M3/M12). Nothing goes dead on merge day: the sentence is
+# byte-identical, so a session started by the previous launcher still carries it, and the rule
+# reads the whole command line rather than one named flag's value. Guarded rather than
+# unconditional because `consumer_root' is deliberately allowed to be empty - this launcher runs
+# from outside a consumer in the tests.
 #
 # The trailing slash on the root is required: `cerebro--root-in-args-p' builds its needle as the
 # root with one `/' appended, so that `/repos/atlantis-hud' does not match a sibling
 # `/repos/atlantis-hud-hud' - `${consumer_root%/}/' normalises whether or not `consumer_root' ever
 # grows a trailing slash of its own. The sentence carries no apostrophe, for the same bash-3.2
 # reason as the models.conf line above and this file's own convention.
-marker=()
+marker=""
 if [[ -n "$consumer_root" ]]; then
-  marker=(--marker "This session is $name of the cerebro fleet rooted at ${consumer_root%/}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")
+  marker="This session is $name of the cerebro fleet rooted at ${consumer_root%/}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."
+fi
+
+# The marker leads the prompt, then exactly one blank line, then the instruction (cb-d59.3, Q1):
+# the identity sits as early in the command line as it can, which is what the liveness rule reads.
+# An `if' rather than `${marker:+...}' for this file's own bash-3.2 reason, and because the value
+# carries newlines and a full stop.
+instruction="You are $name. Your agent definition ($role) is the whole of your instructions: follow it from
+the top, and start now rather than waiting to be spoken to."
+
+prompt="$instruction"
+if [[ -n "$marker" ]]; then
+  prompt="$marker
+
+$instruction"
 fi
 
 # Which agent CLI this session runs on, and every argv token it takes, is `scripts/agent-cli`'s
 # answer and no longer spelt here (cb-d59.2). After this the only argv strings in this file are
-# agent-cli's own interface - `--role', `--name', `--model', `--effort', `--marker', `--settings',
+# agent-cli's own interface - `--role', `--name', `--model', `--effort', `--settings',
 # `--argv', `--prompt-argv', `--binary' - and not one of them is any provider's.
 #
 # NUL-separated and read through a PROCESS SUBSTITUTION, not a pipe: the prompt below carries an
@@ -206,13 +221,11 @@ while IFS= read -r -d '' tok; do argv+=("$tok"); done < <(
   "$here/agent-cli" --argv --role "$role" --name "$name" \
     ${model:+--model "$model"} \
     ${effort:+--effort "$effort"} \
-    "${marker[@]+"${marker[@]}"}" \
     --settings "$CEREBRO_HOOK_SETTINGS")
 
 prompt_argv=()
 while IFS= read -r -d '' tok; do prompt_argv+=("$tok"); done < <(
-  "$here/agent-cli" --prompt-argv "You are $name. Your agent definition ($role) is the whole of your instructions: follow it from
-the top, and start now rather than waiting to be spoken to.")
+  "$here/agent-cli" --prompt-argv "$prompt")
 
 # The caller's own arguments sit between the flags and the prompt, exactly where they used to: that
 # is what makes a `--model' typed on the command line beat the one resolved above.

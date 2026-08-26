@@ -132,36 +132,38 @@ unverified liveness exactly as an implementer's `working'/bead/phase do."
     (should (= (cerebro-agent-unverified-pid agent) 5151))))
 
 (ert-deftest cerebro-test/derive-interactive-up-from-process-args ()
-  (let* ((args '("claude --agent planner --name Xavier --print"))
+  (let* ((args '("claude --agent planner --name Xavier --print This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."))
          (agents (cerebro--derive nil cerebro-test--interactive nil
                                           #'cerebro-test--never-alive args nil))
          (xavier (car agents)))
     (should (eq (cerebro-agent-state xavier) 'up))
     (should (cerebro-agent-external xavier))))
 
-(ert-deftest cerebro-test/name-in-args-reads-only-the-name-flag ()
-  ;; ah-qym: every launch now carries `--remote-control NAME' too. The needle must still key on
-  ;; `--name' alone - a name that appears only as the remote-control value, or a flag that merely
-  ;; contains "-name-", must not make an agent look up.
+(ert-deftest cerebro-test/name-in-args-reads-the-marker-and-not-a-flag ()
+  ;; cb-d59.3: the name is proved by cerebro's own marker sentence in the prompt, not by any
+  ;; provider's flag. `--name Xavier' is still passed and is no longer evidence, and a name that
+  ;; is only a prefix of the one in the marker must not match.
   (should (cerebro--name-in-args-p
-           "Xavier" '("claude --agent planner --name Xavier --remote-control Xavier --permission-mode auto")))
+           "Xavier" '("claude --agent planner --name Xavier This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/.")))
   (should-not (cerebro--name-in-args-p
-               "Xavier" '("claude --agent planner --remote-control Xavier --permission-mode auto")))
+               "Xavier" '("claude --agent planner --name Xavier --remote-control Xavier --permission-mode auto")))
   (should-not (cerebro--name-in-args-p
-               "Xavier" '("claude --remote-control-session-name-prefix Xavier --name Storm")))
+               "Xavier" '("claude --name Xavier This session is Xavierly of the cerebro fleet rooted at /Users/x/repos/cerebro/.")))
   (should (cerebro--name-in-args-p
-           "Storm" '("claude --remote-control-session-name-prefix Xavier --name Storm"))))
+           "Storm" '("claude --name Storm This session is Storm of the cerebro fleet rooted at /Users/x/repos/cerebro/.")))
+  (should-not (cerebro--name-in-args-p
+               "Xavier" '("claude --name Storm This session is Storm of the cerebro fleet rooted at /Users/x/repos/cerebro/."))))
 
 ;; The process scan is machine-wide, and a name is only unique inside one consumer: every
 ;; consumer that takes the built-in roster has a Xavier. Scanning for `--name Xavier' alone
 ;; showed another repository's planners as `up' in this repository's fleet view, for any role
 ;; that had never run here and so had no state file to be read first.
 (defconst cerebro-test--other-consumer-args
-  "claude --agent planner --name Xavier --remote-control Xavier --settings /Users/x/repos/atlantis-hud/.claude/cerebro/scripts/../hooks/question-state.settings.json"
+  "claude --agent planner --name Xavier --remote-control Xavier This session is Xavier of the cerebro fleet rooted at /Users/x/repos/atlantis-hud/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."
   "One process's args: a session of the fleet rooted at /Users/x/repos/atlantis-hud.")
 
 (defconst cerebro-test--this-consumer-args
-  "claude --agent planner --name Xavier --remote-control Xavier --settings /Users/x/repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json"
+  "claude --agent planner --name Xavier --remote-control Xavier This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."
   "The same session, of the fleet rooted at /Users/x/repos/cerebro.")
 
 (ert-deftest cerebro-test/consumer-args-keeps-only-this-consumers-sessions ()
@@ -233,7 +235,7 @@ to catch."
         (should (eq expect (and (cerebro--session-args-p args name root) t)))))))
 
 (defconst cerebro-test--beast-args
-  "claude --agent planner --name Beast --settings /Users/x/repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json"
+  "claude --agent planner --name Beast This session is Beast of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."
   "Another name's session of the fleet rooted at /Users/x/repos/cerebro.")
 
 (defconst cerebro-test--duplicate-procs
@@ -294,8 +296,9 @@ for a role whose state file said `waiting\=', and supervising nobody.  Both
 entry points to the rule are pinned here, since both are string matches."
   (let* ((home (expand-file-name "~/"))
          (args (list (concat "claude --agent planner --name Xavier --remote-control Xavier"
-                             " --settings " home
-                             "repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json"))))
+                             " This session is Xavier of the cerebro fleet rooted at " home
+                             "repos/cerebro/. This sentence is how the fleet view proves the"
+                             " session belongs to this checkout; do not remove it."))))
     (should (equal (cerebro--consumer-args args "~/repos/cerebro/") args))
     (should (cerebro--session-args-p (car args) "Xavier" "~/repos/cerebro/"))
     ;; and the sibling rule still holds through the expansion
@@ -366,7 +369,7 @@ presence in an alist was not."
 
 (ert-deftest cerebro-test/a-role-whose-session-has-exited-reads-dead-not-up ()
   "The whole chain, for a role that ended its own turn and was never parked."
-  (let* ((procs '((11 . "claude --agent planner --name Xavier --remote-control Xavier")))
+  (let* ((procs '((11 . "claude --agent planner --name Xavier --remote-control Xavier This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
          (gone (cerebro--live-processes procs #'ignore))
          (still (cerebro--live-processes procs (lambda (_) t))))
     (should (eq (cerebro-agent-state
@@ -424,7 +427,7 @@ presence in an alist was not."
   ;; process scan rather than reading the dead file's state.
   (let* ((states '(("Xavier" . ((state . "working") (bead . nil)
                                  (since . "2026-08-14T09:00:00Z") (pid . 9999)))))
-         (args '("claude --agent planner --name Xavier --print"))
+         (args '("claude --agent planner --name Xavier --print This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."))
          (agents (cerebro--derive nil cerebro-test--interactive states
                                           #'cerebro-test--never-alive args nil))
          (xavier (car agents)))
@@ -881,9 +884,11 @@ on purpose."
       (should (equal root (concat (expand-file-name "~/") "repos/cerebro/")))
       (should-not (string-prefix-p "~" root))
       (should (cerebro--session-args-p
-               (concat "claude --agent planner --name Xavier --remote-control Xavier --settings "
+               (concat "claude --agent planner --name Xavier --remote-control Xavier"
+                       " This session is Xavier of the cerebro fleet rooted at "
                        (expand-file-name "~/")
-                       "repos/cerebro/.claude/cerebro/scripts/../hooks/question-state.settings.json")
+                       "repos/cerebro/. This sentence is how the fleet view proves the"
+                       " session belongs to this checkout; do not remove it.")
                "Xavier" root))))
   ;; Unstubbed, on a real temporary consumer: absolute and slash-terminated.
   (let ((tmp (make-temp-file "cerebro-repo-root-contract" t)))
@@ -4698,7 +4703,7 @@ than dressing a dead session in the file's `working'."
     (should (eq (cerebro-agent-state
                  (car (cerebro--derive nil '(("Xavier" . "planner")) states
                                        (cerebro-test--session-of "somebody-else")
-                                       '("claude --name Xavier --agent planner") nil)))
+                                       '("claude --name Xavier --agent planner This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.") nil)))
                 'up))))
 
 (ert-deftest cerebro-test/session-alive-p-rejects-a-pid-that-is-not-that-session ()
@@ -4707,10 +4712,10 @@ than dressing a dead session in the file's `working'."
   (should-not (cerebro--session-alive-p nil "Rogue" "/Users/x/repos/cerebro")))
 
 (ert-deftest cerebro-test/session-alive-p-accepts-the-agents-own-process ()
-  "A real process whose command line carries `--name Rogue' AND a path under the root."
+  "A real process whose command line carries the marker for Rogue, rooted here."
   (let ((process (start-process "cerebro-test-session" nil
                                 "bash" "-c" "sleep 30" "--name" "Rogue"
-                                "--settings" "/Users/x/repos/cerebro/.claude/cerebro/hooks/q.json")))
+                                "This session is Rogue of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (should (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro"))
       (delete-process process))))
@@ -4719,16 +4724,16 @@ than dressing a dead session in the file's `working'."
   "The cross product 7bd5962 and 9420ff2 each left open (cb-lzi).
 A live pid whose command line names this agent, but under ANOTHER consumer's
 root, is not `proven' this consumer's session - and since ah-ybsr it is not
-flatly `nil' either: the args carry `--name Rogue', so this is exactly the
-`unverified' case (\"no path under ROOT\" asks about THIS root, not about
-whether some other root was found), not the recycled-pid `nil' case. Read as
+flatly `nil' either: the args carry a cerebro marker naming Rogue, so this is
+exactly the `unverified' case (a cerebro session of this name that this
+checkout cannot prove is its own), not the recycled-pid `nil' case. Read as
 a generalised boolean it is truthy - `cerebro--live-sessions' now counts it
 as live, which is the deliberate trade the bead's plan calls out: the sweeps'
 failure mode becomes \"leaves a bead alone\" rather than \"clears a live
 implementer's assignee\"."
   (let ((process (start-process "cerebro-test-session" nil
                                 "bash" "-c" "sleep 30" "--name" "Rogue"
-                                "--settings" "/Users/x/repos/atlantis-hud/.claude/cerebro/hooks/q.json")))
+                                "This session is Rogue of the cerebro fleet rooted at /Users/x/repos/atlantis-hud/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (progn
           (should (eq (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro")
@@ -4737,35 +4742,36 @@ implementer's assignee\"."
                       t)))
       (delete-process process))))
 
-(ert-deftest cerebro-test/session-alive-p-rejects-a-session-that-names-no-root ()
-  "A hand-typed `claude --name Rogue' with no --settings at all still names
-Rogue, so this is `unverified' rather than flatly dead since ah-ybsr - there
-is no path to compare against ROOT, and no evidence the session is not
-Rogue's own, only an absence of proof."
+(ert-deftest cerebro-test/session-alive-p-rejects-a-session-carrying-no-marker ()
+  "A hand-typed `claude --name Rogue' carries no cerebro marker at all, and
+since cb-d59.3 the marker is the whole rule: a provider's flag is no longer
+evidence, so this is flatly `nil' rather than `unverified'.  That is the
+epic's accepted cost (cb-d59, decision 4) - a session started outside the
+fleet reads dead, where before it read `unverified'."
   (let ((process (start-process "cerebro-test-session" nil
                                 "bash" "-c" "sleep 30" "--name" "Rogue")))
     (unwind-protect
         (should (eq (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro")
-                    'unverified))
+                    nil))
       (delete-process process))))
 
-(ert-deftest cerebro-test/session-liveness-unverified-when-name-but-no-root ()
-  "`cerebro--session-args-p' says no when the args name the agent but carry no
-root under this consumer - that used to mean flatly dead.
-`cerebro--session-liveness' has to tell that case apart from one that does
-not even name this agent (`nil', positive evidence against - the
-recycled-pid case) so a caller can trust the state file rather than
-substitute a default (ah-ybsr)."
-  ;; names this agent, no root at all: `unverified' - probably this session's
-  ;; own file, wrapped by something that has rewritten away the carrier.
+(ert-deftest cerebro-test/session-liveness-unverified-when-the-marker-names-another-root ()
+  "`cerebro--session-args-p' says no when the marker names the agent but roots
+it somewhere that is not this consumer - that used to mean flatly dead.
+`cerebro--session-liveness' has to tell that case apart from one that carries
+no marker at all (`nil', positive evidence against - the recycled-pid case)
+so a caller can trust the state file rather than substitute a default
+\(ah-ybsr, re-keyed by cb-d59.3)."
+  ;; a cerebro session of this name, rooted elsewhere: `unverified'.
   (let ((process (start-process "cerebro-test-session" nil
-                                "bash" "-c" "sleep 30" "--name" "Storm")))
+                                "bash" "-c" "sleep 30"
+                                "This session is Storm of the cerebro fleet rooted at /Users/x/repos/atlantis-hud/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (should (eq (cerebro--session-liveness (process-id process) "Storm" "/Users/x/repos/cerebro")
                     'unverified))
       (delete-process process)))
-  ;; names neither this agent nor any root: `nil', not `unverified' - the
-  ;; recycled-pid case must stay positive evidence against.
+  ;; no marker at all: `nil', not `unverified' - the recycled-pid case must
+  ;; stay positive evidence against.
   (let ((process (start-process "cerebro-test-session" nil
                                 "bash" "-c" "sleep 30" "--name" "Somebody-else")))
     (unwind-protect
@@ -4775,7 +4781,7 @@ substitute a default (ah-ybsr)."
   ;; both: `proven', same as `cerebro--session-args-p' already says yes to.
   (let ((process (start-process "cerebro-test-session" nil
                                 "bash" "-c" "sleep 30" "--name" "Storm"
-                                "--settings" "/Users/x/repos/cerebro/.claude/cerebro/hooks/q.json")))
+                                "This session is Storm of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (should (eq (cerebro--session-liveness (process-id process) "Storm" "/Users/x/repos/cerebro")
                     'proven))
@@ -4787,7 +4793,8 @@ substitute a default (ah-ybsr)."
 and every ERT test that injects `(lambda (pid name) t)' keeps working
 unchanged - `t' is non-nil and is not `eq' to `unverified'."
   (let ((process (start-process "cerebro-test-session" nil
-                                "bash" "-c" "sleep 30" "--name" "Storm")))
+                                "bash" "-c" "sleep 30"
+                                "This session is Storm of the cerebro fleet rooted at /Users/x/repos/atlantis-hud/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (let ((result (cerebro--session-alive-p (process-id process) "Storm" "/Users/x/repos/cerebro")))
           (should (eq result 'unverified))

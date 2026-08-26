@@ -1158,6 +1158,14 @@ believed.
 So quote from the file in front of you. `file.ts:120` for anything an implementer has to find, and
 the real name of the real export — not a plausible one.
 
+**Existing is not the same as meaning what you think.** A symbol you cite as a *decision
+procedure* — a predicate, a filter, a query — needs its accepting set read, not just its name
+resolved. In one fleet a planner cited `parse_fleet_kind` three times as the test for whether a
+structure was a vessel: it existed, compiled, and was used by its neighbour; it also returned `Some`
+for a fort, which is the opposite of what the plan cited it for. One `grep -A 15` would have shown
+it. The same applies to any claim about what a mechanism *does*: if the plan asserts a bead reaches
+a queue, or a label routes somewhere, run the query before writing the sentence.
+
 **The one exception is a seam a blocker is about to create, and it is labelled as such.** When you
 are planning against work that has not landed, say so in the same breath: "`turnDiff.ts` does not
 exist yet — `<bead-id>` creates it with this surface (see its plan)". An implementer can build
@@ -1180,7 +1188,8 @@ is theirs. What must not survive this pass:
 - an increment whose failing test you could not sit down and write from the plan alone — the name,
   the file it goes in, and what it asserts;
 - a user-visible string that is described rather than quoted;
-- a named file, function or type you have not verified;
+- a named file, function or type you have not verified — or a predicate, filter or query you cite
+  for what it accepts without having read what it accepts;
 - an acceptance criterion that cannot be checked by running something or by looking at something
   specific;
 - **a block an agent will paste that quotes a bead id, a provenance file, one project's vocabulary

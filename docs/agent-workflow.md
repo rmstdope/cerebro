@@ -185,6 +185,7 @@ What they divide, and how:
   overshoot is at most one bead each. Counting held beads too was tried and starved the queue: two
   held candidates were enough to make a small fleet's target look met, and both planners slept over a
   queue of two.
+
 **Two planners is two sessions asking you questions.** That is the cost, and it is the thing to watch
 before adding the second: if Xavier's row spends most of its time on `asking` rather than `working`,
 the queue is bounded by your answers, and a second planner adds a second row waiting on you rather

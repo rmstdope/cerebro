@@ -1843,6 +1843,13 @@ looking unchanged is evidence of nothing."
                      (alist-get 'actionable-ids context)))
     ("verifier" (list (alist-get 'stale-verdicts context)
                       (alist-get 'merged-unverified context)))
+    ;; Ids rather than a count for a reason of its own: the panel's beads
+    ;; carry no dependencies, so a planned bead `bd ready' hides behind an
+    ;; unbuilt blocker starts an implementer that can claim nothing.  That
+    ;; pass changes no count at all, and a count here would start it again on
+    ;; the next tick, for ever.  The ids move the moment the planned list
+    ;; does, which is the only change worth another session (cb-1or.1).
+    ("implementer" (list (alist-get 'planned-ids context)))
     (_ nil)))
 
 (defun cerebro--unless-unchanged (role context reason)
@@ -2926,7 +2933,11 @@ omission - opening the fleet view must not resurrect a fleet the navigator
 took down last night.")
 
 (defvar-local cerebro--parked nil
-  "Alist of (NAME . (ENDED-AT STARTED-AT BUFFER)) for roles the view has ended.
+  "Alist of (NAME . (ENDED-AT STARTED-AT BUFFER)) for names the view has ended.
+
+Every agent with a pass worth keeping, an implementer included since
+cb-1or.1 - a bead merged and closed, one handed back, or nothing to claim
+all end a pass, and the buffer is the record of it.
 
 ENDED-AT and STARTED-AT are `float-time\=' values - when the session ended, and
 when it had started - and BUFFER is the kept session buffer holding its last
@@ -2934,7 +2945,7 @@ pass, or nil once something has killed it.  One entry per name: a fresh
 start replaces it, and `k\=' removes it.")
 
 (defvar-local cerebro--start-fingerprints nil
-  "Alist of (NAME . FINGERPRINT) - what each role was last started *for*.
+  "Alist of (NAME . FINGERPRINT) - what each agent was last started *for*.
 
 `cerebro--trigger-fingerprint\=' of the context that was true when the view
 started the session - recorded when the launch is ATTEMPTED, since nothing
@@ -2956,9 +2967,11 @@ described.")
 (defvar-local cerebro--seen-up nil
   "Alist of (NAME . FLOAT-TIME) - when this view last derived NAME as up.
 
-An implementer\='s `ended-at\=': it has no kept buffer and no `cerebro--parked\='
-entry, so \"did the last start produce anything\" (`cerebro--start-failed-p\=')
-is answered by whether the view saw the session alive after it was started.
+The `ended-at\=' of an implementer whose session DIED: one that ended its own
+pass is parked like a role since cb-1or.1 and reads its park instead
+(`cerebro--agent-context\=').  With no parked entry, \"did the last start
+produce anything\" (`cerebro--start-failed-p\=') is answered by whether the
+view saw the session alive after it was started.
 Written by `cerebro--revert\=' from `cerebro--up-names\=', once a tick.")
 
 (defun cerebro--session (name)
@@ -3190,15 +3203,14 @@ from afterwards (cb-5yr)."
             0))
     ;; And what it is being started *for*, which is what says whether the
     ;; pass after this one has anything new to do (`cerebro--trigger').
-    ;; Interactive only: `cerebro--trigger-fingerprint' is nil for
-    ;; "implementer", so the entry would say nothing, and gathering the
-    ;; context to compute it costs a `roster' subprocess per launch.
-    (when (eq (cerebro-agent-kind agent) 'interactive)
-      (setf (alist-get (cerebro-agent-name agent) cerebro--start-fingerprints
-                       nil nil #'equal)
-            (cerebro--trigger-fingerprint
-             (cerebro-agent-role agent)
-             (cerebro--trigger-context (cerebro--repo-root) (current-time)))))
+    ;; Every kind since cb-1or.1: an implementer has a condition of its own
+    ;; now - a planned, unclaimed bead - so it has something to compare, and
+    ;; the context gather this costs is once per launch, which is rare.
+    (setf (alist-get (cerebro-agent-name agent) cerebro--start-fingerprints
+                     nil nil #'equal)
+          (cerebro--trigger-fingerprint
+           (cerebro-agent-role agent)
+           (cerebro--trigger-context (cerebro--repo-root) (current-time))))
     ;; Every start passes through here - `s', autostart, a trigger - so this
     ;; is where one is recorded (`cerebro--log-start-reason').
     (cerebro--log (cerebro--repo-root) 'start
@@ -4769,12 +4781,14 @@ about her last pass and Cypher about his.
 Kept out of `cerebro--trigger-context\=' so that one is gathered once a tick
 and this one is a few conses per standby row."
   (let* ((name (cerebro-agent-name agent))
-         ;; When this agent's last session ended. A role's is the moment the
-         ;; view parked it; an implementer has no kept buffer and no parked
-         ;; entry, so it is the last tick that saw the session up (cb-hzs).
-         (ended-at (if (eq (cerebro-agent-kind agent) 'implementer)
-                       (cdr (assoc name cerebro--seen-up))
-                     (nth 0 (cdr (assoc name cerebro--parked)))))
+         ;; When this agent's last session ended.  The moment the view parked
+         ;; it, for every agent that ended a pass - since cb-1or.1 that is an
+         ;; implementer too.  Only one whose session simply *died* has no
+         ;; parked entry, and there the last tick that saw it up is the
+         ;; nearest thing to an end there is (cb-hzs).
+         (ended-at (or (nth 0 (cdr (assoc name cerebro--parked)))
+                       (and (eq (cerebro-agent-kind agent) 'implementer)
+                            (cdr (assoc name cerebro--seen-up)))))
          (gh (alist-get 'gh context)))
     (append (list (cons 'gh (if (functionp gh) (funcall gh ended-at) gh))
                   (cons 'ended-at ended-at)

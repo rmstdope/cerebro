@@ -5357,10 +5357,27 @@ interactive role keeps `cerebro--parked' and is never listed here."
                         (cerebro-test--interactive "Psylocke" "verifier" 'idle)))
                  '("Cyclops" "Rogue" "Storm" "Gambit" "Jubilee"))))
 
+(ert-deftest cerebro-test/an-implementer-context-prefers-its-parked-entry ()
+  "An implementer that ended its pass is parked like a role since cb-1or.1, so
+its `ended-at' is the park.  Only one whose session simply died has no parked
+entry, and there `cerebro--seen-up' still answers."
+  (with-temp-buffer
+    (setq cerebro--seen-up '(("Cyclops" . 5.0))
+          cerebro--parked '(("Cyclops" . (7.0 4.0 nil))))
+    (let ((mine (cerebro--agent-context
+                 (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
+                 (list (cons 'now 10.0) (cons 'gh nil)))))
+      (should (equal (alist-get 'ended-at mine) 7.0)))
+    (setq cerebro--parked nil)
+    (let ((mine (cerebro--agent-context
+                 (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
+                 (list (cons 'now 10.0) (cons 'gh nil)))))
+      (should (equal (alist-get 'ended-at mine) 5.0)))))
+
 (ert-deftest cerebro-test/an-implementer-context-ends-when-it-was-last-seen-up ()
   "`ended-at' is what `cerebro--start-failed-p' compares a start against.  A
-role's comes from `cerebro--parked'; an implementer has none, so it is when
-the view last derived its session as up."
+role's comes from `cerebro--parked'; an implementer whose session died has
+none, so it is when the view last derived its session as up."
   (with-temp-buffer
     (setq cerebro--seen-up '(("Cyclops" . 5.0))
           cerebro--failed-starts '(("Cyclops" . 2))
@@ -5379,6 +5396,49 @@ the view last derived its session as up."
         ;; A name with no failures reads zero rather than nil: it indexes
         ;; the backoff schedule.
         (should (equal (alist-get 'failed-starts hers) 0))))))
+
+(ert-deftest cerebro-test/an-implementer-fingerprint-is-the-planned-ids ()
+  "Ids, not a count.  An implementer started for a planned bead it cannot
+actually claim - one `bd ready' hides behind an unbuilt blocker - ends its
+pass having changed no count at all, and a count would start it again for
+ever.  The ids change the moment the planned list does, which is the only
+thing worth another session."
+  (should (equal (cerebro--trigger-fingerprint "implementer"
+                                               '((planned-ids "cb-1" "cb-2")))
+                 '(("cb-1" "cb-2"))))
+  (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+    ;; the same list its own last pass was started for: held
+    (should (null (cerebro--unless-unchanged
+                   "implementer"
+                   '((planned-ids "cb-1" "cb-2")
+                     (last-fingerprint ("cb-1" "cb-2"))
+                     (started-at . 1.0) (ended-at . 2.0))
+                   "2 planned, unclaimed")))
+    ;; a different list: through
+    (should (equal (cerebro--unless-unchanged
+                    "implementer"
+                    '((planned-ids "cb-1" "cb-3")
+                      (last-fingerprint ("cb-1" "cb-2"))
+                      (started-at . 1.0) (ended-at . 2.0))
+                    "2 planned, unclaimed")
+                   "2 planned, unclaimed"))
+    (ignore agent)))
+
+(ert-deftest cerebro-test/launch-records-an-implementer-fingerprint ()
+  "Every kind records one since cb-1or.1: an implementer has a condition now,
+so it has something for `cerebro--unless-unchanged' to compare."
+  (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+    (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'cerebro--make-session-buffer)
+               (lambda (_a) (generate-new-buffer " *cerebro-test-session*")))
+              ((symbol-function 'cerebro--repo-root) (lambda () "/fake/repo"))
+              ((symbol-function 'cerebro--log) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _) '((planned-ids "cb-1")))))
+      (with-temp-buffer
+        (cerebro--launch agent)
+        (should (equal (cdr (assoc "Cyclops" cerebro--start-fingerprints))
+                       '(("cb-1"))))))))
 
 (ert-deftest cerebro-test/standby-glyph-and-label ()
   "Its own glyph and its own word: `dead' means nobody is coming, and standby

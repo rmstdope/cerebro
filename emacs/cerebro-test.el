@@ -1886,6 +1886,52 @@ point is."
                                 detail-buffer-name))))))
       (when (get-buffer session-name) (kill-buffer session-name)))))
 
+(ert-deftest cerebro-test/session-buffer-outlives-its-process ()
+  "The session buffer\='s life is this view\='s to decide, never vterm\='s.
+
+vterm kills the buffer from its own sentinel the moment the process dies
+(`vterm-kill-buffer-on-exit\=' defaults to t), which is what turned every pass
+end into \"Selecting deleted buffer\" and lost the record of the pass.  Bound
+buffer-locally to nil, and *after* `vterm-mode\=': a major mode runs
+`kill-all-local-variables\=', so a binding made before it is discarded."
+  (let ((orig-require (symbol-function 'require))
+        (buffer nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'require)
+                   (lambda (feature &rest args)
+                     (or (eq feature 'vterm) (apply orig-require feature args))))
+                  ;; What a real major mode does, and the whole point of the
+                  ;; ordering this pins.
+                  ((symbol-function 'vterm-mode)
+                   (lambda () (kill-all-local-variables))))
+          (setq buffer (cerebro--make-session-buffer "*fleet: test*"))
+          (should (local-variable-p 'vterm-kill-buffer-on-exit buffer))
+          (should (null (buffer-local-value 'vterm-kill-buffer-on-exit buffer))))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest cerebro-test/launch-kills-the-previous-sessions-dead-buffer ()
+  "A buffer still recorded under this name belongs to a session whose process
+has died - a live one was refused above.  It outlives its process now, so it
+is killed here rather than orphaned when the new entry overwrites it."
+  (let* ((cerebro--sessions nil)
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead))
+         (session-name (cerebro--session-buffer-name agent))
+         (orig-require (symbol-function 'require))
+         (old (generate-new-buffer "*fleet: Cyclops (dead)*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--repo-root)
+                   (lambda () default-directory))
+                  ((symbol-function 'require)
+                   (lambda (feature &rest args)
+                     (or (eq feature 'vterm) (apply orig-require feature args))))
+                  ((symbol-function 'vterm-mode) #'ignore))
+          (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) old)
+          (cerebro--launch agent)
+          (should-not (buffer-live-p old))
+          (should (get-buffer session-name)))
+      (when (buffer-live-p old) (kill-buffer old))
+      (when (get-buffer session-name) (kill-buffer session-name)))))
+
 (ert-deftest cerebro-test/launch-touches-no-window-even-a-dedicated-one ()
   "A dedicated detail window used to be where a signal could strand a
 half-built session (`set-window-buffer' refusing it between
@@ -5143,6 +5189,51 @@ the session is parked exactly as an ordinary end parks it, then disarmed."
        ;; The instruction has been carried out, so it does not outlive it.
        (should-not (file-exists-p (expand-file-name ".cerebro/state/Moira.stop" root)))))))
 
+(ert-deftest cerebro-test/retire-carries-out-the-instruction-before-it-parks ()
+  "The instruction first, the record second.
+
+The flag and the arming are what would start the next session; parking is the
+step that can signal.  A name told to finish is never started again by a
+trigger, whatever happens to its buffer - and the park\='s failure is still
+reported, just no longer fatal to the instruction."
+  (let ((cerebro-end-grace 30)
+        (reported '()))
+    (cerebro-test--park-fixture
+     (cerebro-test--waiting nil "2026-08-14T09:29:59Z" nil)
+     (lambda (root _acted agent)
+       (setq cerebro--armed (list "Moira"))
+       (make-directory (expand-file-name ".cerebro/state" root) t)
+       (write-region "" nil (expand-file-name ".cerebro/state/Moira.stop" root))
+       (cl-letf (((symbol-function 'cerebro--park-session)
+                  (lambda (&rest _) (error "Selecting deleted buffer")))
+                 ((symbol-function 'cerebro--report-error)
+                  (lambda (&rest args) (push args reported))))
+         ;; Demoted, not signalled: `cerebro--with-logged-errors\=' wraps it.
+         (cerebro--supervise (list agent) root cerebro-test--now))
+       (should (= 1 (length reported)))
+       (should-not (member "Moira" cerebro--armed))
+       (should-not (file-exists-p (expand-file-name ".cerebro/state/Moira.stop" root)))))))
+
+(ert-deftest cerebro-test/retire-disarms-an-idle-implementer-before-ending-it ()
+  "The implementer branch of retire has the same order: armed is what would
+start the next session, so it goes before the step that can fail."
+  (let ((reported '())
+        (root (make-temp-file "cerebro-retire" t))
+        (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'idle)))
+    (unwind-protect
+        (with-temp-buffer
+          (setq cerebro--armed (list "Cyclops"))
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (write-region "" nil (expand-file-name ".cerebro/state/Cyclops.stop" root))
+          (cl-letf (((symbol-function 'cerebro--end-session)
+                     (lambda (&rest _) (error "Selecting deleted buffer")))
+                    ((symbol-function 'cerebro--report-error)
+                     (lambda (&rest args) (push args reported))))
+            (cerebro--supervise (list agent) root cerebro-test--now))
+          (should (= 1 (length reported)))
+          (should-not (member "Cyclops" cerebro--armed)))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/nudge-types-through-the-one-typing-path ()
   "It types through the helper rather than for itself - the only remaining
 caller of a path that has twice needed the same fix in two places."
@@ -5740,6 +5831,36 @@ not an abnormal exit to be echoed at the navigator."
          (cerebro--note-exit buffer "exited abnormally with code 1\n"))
        (should (null messages))
        (should (null (alist-get "Psylocke" cerebro--last-exit nil nil #'equal)))))))
+
+(ert-deftest cerebro-test/park-keeps-what-it-can-when-killing-the-process-kills-the-buffer ()
+  "A pass end must not fail on the record it was trying to keep.
+
+vterm\='s own sentinel kills the session buffer the moment the process dies,
+and `delete-process\=' runs that sentinel before it returns - so the buffer
+`cerebro--park-session\=' is about to enter can already be gone.  Every step
+after it still runs: the state file goes, the session is forgotten, and the
+pass is recorded with no kept buffer rather than with an error."
+  (cerebro-test--parkable
+   "Psylocke"
+   (lambda (root agent buffer)
+     (setq cerebro--started-at '(("Psylocke" . 1000.0)))
+     (let ((original (symbol-function 'delete-process)))
+       (cl-letf (((symbol-function 'delete-process)
+                  (lambda (p)
+                    ;; What vterm\='s sentinel does, forced rather than waited
+                    ;; for: whether `delete-process\=' runs sentinels
+                    ;; synchronously differs between a `sleep\=' and a vterm.
+                    (let ((b (process-buffer p)))
+                      (funcall original p)
+                      (when (buffer-live-p b) (kill-buffer b))))))
+         (cerebro--park-session agent root
+                                (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))))
+     (should-not (buffer-live-p buffer))
+     (should-not (file-exists-p (expand-file-name ".cerebro/state/Psylocke.state.json" root)))
+     (should-not (cerebro--recorded-buffer "Psylocke"))
+     (let ((entry (cdr (assoc "Psylocke" cerebro--parked))))
+       (should (numberp (nth 0 entry)))
+       (should (null (nth 2 entry)))))))
 
 (ert-deftest cerebro-test/show-detail-prefers-a-parked-buffer-over-the-placeholder ()
   "`RET' on a standby row shows what the last pass printed."

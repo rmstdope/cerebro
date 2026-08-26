@@ -3125,6 +3125,7 @@ the buffer outlives the process."
 ;; byte-compiler quiet about the symbols it only knows about once vterm is
 ;; actually loaded.
 (defvar vterm-shell)
+(defvar vterm-kill-buffer-on-exit)
 (declare-function vterm-mode "vterm" ())
 (declare-function vterm-send-string "vterm" (string &optional paste-p))
 (declare-function vterm-send-return "vterm" ())
@@ -3141,13 +3142,25 @@ no `save-window-excursion', and one code path whoever the caller is.
 The caller places the buffer, or does not: `cerebro-start' shows it in
 the detail window through `cerebro--show-detail'.
 
+The buffer outlives its process: `vterm-kill-buffer-on-exit' is bound
+buffer-locally to nil, so whether the buffer lives on is this view's
+decision (`cerebro--park-session' keeps it, `cerebro--end-session' and
+`cerebro--launch' kill it) rather than vterm's sentinel's.
+
 `default-directory' reaches the session by inheritance: `generate-new-buffer'
 copies it from the current buffer, which is why `cerebro--launch' let-binds
 it before calling this.  Neither the selected window nor the current buffer
 is changed.  Returns the buffer."
   (let ((buffer (generate-new-buffer name)))
     (with-current-buffer buffer
-      (vterm-mode))
+      (vterm-mode)
+      ;; Ours to keep or kill: `cerebro--park-session' keeps it as the record
+      ;; of the pass, `cerebro--end-session' kills it.  vterm's own sentinel
+      ;; kills the buffer the moment the process dies, which is what turned
+      ;; every pass end into "Selecting deleted buffer" and lost the record.
+      ;; After `vterm-mode', never before it: a major mode runs
+      ;; `kill-all-local-variables' and would discard the binding.
+      (setq-local vterm-kill-buffer-on-exit nil))
     buffer))
 
 (defun cerebro--vterm-available-p ()
@@ -3180,7 +3193,10 @@ line from the one before it.
 
 The buffer is recorded in `cerebro--sessions', which is what makes it ours;
 a name with a live session is refused here, whatever the derived state
-believes about it (ah-5pp).  An interactive name is *armed* here and its
+believes about it (ah-5pp).  A buffer recorded under this name that got past
+that refusal belongs to a session whose process has died, and since a session
+buffer outlives its process it is killed here rather than orphaned by the
+entry that replaces it.  An interactive name is *armed* here and its
 start time stamped, which is what a standby row and its trigger are derived
 from afterwards (cb-5yr)."
   (when (cerebro--session (cerebro-agent-name agent))
@@ -3204,6 +3220,11 @@ from afterwards (cb-5yr)."
   ;; a claim about a live session (cb-hzs). `cerebro--supervise' takes the
   ;; file with it when it ends a session; this one is then a no-op.
   (cerebro--delete-state-file (cerebro--repo-root) (cerebro-agent-name agent))
+  ;; A buffer still recorded under this name belongs to a session whose
+  ;; process has died - a live one was refused above.  It outlives its
+  ;; process now (`cerebro--make-session-buffer'), so it is killed here
+  ;; rather than left behind when the entry below is overwritten.
+  (cerebro--forget-session agent)
   (let* ((default-directory (cerebro--repo-root))
          (cmd (cerebro--launch-command agent))
          (vterm-shell (mapconcat #'shell-quote-argument cmd " "))
@@ -3678,7 +3699,12 @@ The query-on-exit flag goes with it, for the reason
 kill the view decided on.
 
 Read-only is set after the process is dead, since a live vterm resets it on
-some input paths.  `RET\=' in the kept buffer reaches `vterm-send-return\=',
+some input paths.  The buffer\='s liveness is checked twice, and the second
+check is the load-bearing one: killing the process can run a sentinel that
+kills the buffer with it, so the buffer this function was about to enter may
+be gone by the time it gets there.  A pass end must not fail on the record it
+was trying to keep - it keeps what it can and records nothing where there is
+nothing left.  `RET\=' in the kept buffer reaches `vterm-send-return\=',
 which is a no-op rather than an error once the process is gone."
   (let* ((name (cerebro-agent-name agent))
          (buffer (cerebro--recorded-buffer name))
@@ -3689,7 +3715,11 @@ which is a no-op rather than an error once the process is gone."
       (let ((process (get-buffer-process buffer)))
         (when process
           (set-process-query-on-exit-flag process nil)
-          (delete-process process)))
+          (delete-process process))))
+    ;; Checked again, not assumed: killing the process can run a sentinel
+    ;; that kills the buffer, and a pass end must not fail on the record it
+    ;; was trying to keep.  A buffer that is gone is simply not kept.
+    (when (buffer-live-p buffer)
       (with-current-buffer buffer
         (rename-buffer (cerebro--parked-buffer-name name now) t)
         (setq buffer-read-only t)))
@@ -4014,14 +4044,21 @@ other agents down with it."
            ;; nothing will come back to.
            (if (or (eq (cerebro-agent-kind agent) 'interactive)
                    (eq (cerebro-agent-state agent) 'waiting))
-               (progn (cerebro--park-session agent repo-root now)
-                      (cerebro--clear-stop-flag repo-root name)
-                      (setq cerebro--armed (delete name cerebro--armed)))
+               ;; The instruction first, the record second: the flag and
+               ;; the arming are what would start the next session, and
+               ;; parking is the step that can signal.  A name told to
+               ;; finish is never started again by a trigger, whatever
+               ;; happens to its buffer.
+               (progn (cerebro--clear-stop-flag repo-root name)
+                      (setq cerebro--armed (delete name cerebro--armed))
+                      (cerebro--park-session agent repo-root now))
              ;; An implementer is armed too now, so retiring one has to
              ;; disarm it: the flag ends this session, and armed is what
-             ;; would otherwise start the next (cb-hzs).
-             (progn (cerebro--end-session agent repo-root 'clear-stop-flag)
-                    (setq cerebro--armed (delete name cerebro--armed)))))
+             ;; would otherwise start the next (cb-hzs).  Disarmed first,
+             ;; for the reason the branch above is ordered as it is;
+             ;; `cerebro--end-session' keeps its own ownership of the flag.
+             (progn (setq cerebro--armed (delete name cerebro--armed))
+                    (cerebro--end-session agent repo-root 'clear-stop-flag))))
           ('end (cerebro--park-session agent repo-root now))
           ('nudge (unless (member name cerebro--nudged)
                     (push name cerebro--nudged)

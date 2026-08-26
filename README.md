@@ -82,6 +82,10 @@ verify documentation.
 A project with nothing a person can launch — a library, a build tool, a harness like this one —
 adds `verification none`, and the verifier marks every merged bead as needing no look instead of
 asking how to start an application that does not exist.
+A project whose verification has a procedure of its own — which shell to prefer, how its fixtures
+are chosen and proved, what shape a script should take for the person reading it — declares
+`verification_skill <skill name>` instead, and the verifier loads that skill before it prepares
+anything, following it wherever it is more specific than the verifier's own file.
 This repository's own `.cerebro/project.conf` is a commented example, and
 the header of `scripts/project-conf` states the format.
 

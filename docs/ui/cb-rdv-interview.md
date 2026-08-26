@@ -64,5 +64,6 @@ undone; visual style, platform conventions, accessibility, the three words it mu
 
 *(per epic: read-back, obvious children, then the rank — P0–P4 — for the epic; children follow it)*
 
-**Close:** files written, beads created (ids and titles listed), and the two commands left to the
-navigator: `git add -A && git commit`, and starting a planner.
+**Close:** files written, beads created (ids and titles listed), the commit sha, and the two
+commands left to the navigator: `git push origin <default_branch>`, and starting the fleet view to
+press `s` on a planner's row.

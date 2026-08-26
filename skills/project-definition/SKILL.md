@@ -228,12 +228,13 @@ One entry per trap: what happened, what it cost, and what to do about it. Empty 
 No `models.conf`. Absent means every agent runs the model its own agent file declares, which is the
 right default; the README says how to add one.
 
-**5. `.gitignore`** — append these, with the comment, unless both lines are already there:
+**5. `.gitignore`** — append these, with the comment, unless all three lines are already there:
 
 ```gitignore
 # Cerebro writes these while the fleet runs; the declarations beside them are tracked.
 .cerebro/worktrees
 .cerebro/state
+.cerebro/scratch
 ```
 
 **6. The board.** Skip this if `bd list` answered earlier — a board exists and is empty, and

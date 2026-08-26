@@ -129,12 +129,14 @@ declares. Ignore the first and commit the second:
 ```gitignore
 .cerebro/worktrees
 .cerebro/state
+.cerebro/scratch
 ```
 
 `worktrees/` is where every implementer builds; `state/` holds the agents' state files and stop
-flags. Everything else in `.cerebro/` is tracked — the declarations from steps 4 to 6, and
-`models.conf` if the fleet's models are the project's to share (add `.cerebro/models.conf` here to
-keep it personal instead). Then commit the submodule, the links, the declarations and `CLAUDE.md`.
+flags; `scratch/` holds the planners' drafts and rejected mockup variants. Everything else in
+`.cerebro/` is tracked — the declarations from steps 4 to 6, and `models.conf` if the fleet's
+models are the project's to share (add `.cerebro/models.conf` here to keep it personal instead).
+Then commit the submodule, the links, the declarations and `CLAUDE.md`.
 
 Check: `git check-ignore -v .cerebro/state/x` names the `.cerebro/state` line, and
 `git check-ignore .cerebro/project.conf` prints nothing.

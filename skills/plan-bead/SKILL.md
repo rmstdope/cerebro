@@ -852,7 +852,8 @@ called, what happens on a click, which of two behaviours is right. Propose, do n
 
 For a user-facing question, build **self-contained HTML mockups** in the `docs/ui/` house style — no
 build step, no external assets, inline SVG, opens straight in a browser — iterate them in the
-scratchpad, and discuss until the navigator decides.
+scratchpad — `<consumer>/.cerebro/scratch/`, which the consumer's `.gitignore` keeps out of every
+commit — and discuss until the navigator decides.
 
 ### Interview, don't ask
 

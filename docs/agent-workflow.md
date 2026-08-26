@@ -86,7 +86,8 @@ when the planned buffer is short or a P0 is unplanned;
 Psylocke when a merged bead is unverified or a verdict is stale; Moira when an issue moved on GitHub
 or a bead linked to one (`gh-<n>` in its `external_ref`) changed since her last pass, Cypher when an
 outside PR moved, both hourly regardless; Forge hourly too; an implementer when a planned,
-unclaimed bead exists. A role you have not started this Emacs is never started: `s` (or
+unclaimed bead exists; Cerebro when an unranked bead appears — an idle, running Cerebro is typed a
+line naming the beads instead, and again every ten minutes while they stay unranked. A role you have not started this Emacs is never started: `s` (or
 `autostart` or `standby` in `roster.conf`) arms it — `standby` arms without starting, so the row
 reads `standby` from the moment the view opens and the trigger is what starts it — `k` and `f`
 disarm it, and none of that is written to any
@@ -241,7 +242,8 @@ locally. The orchestrator will say so if you ask for more, once, and then do as 
 
 **Cerebro** is one interactive session that watches the fleet, reports on it, stops implementers, and
 hands a release request to the project's own release skill. It starts nothing — not even an implementer, because starting one means starting a
-session, and only you can do that.
+session, and only you can do that. The fleet view starts it, or types into it, for an unranked bead
+and for nothing else (cb-5lx.2).
 
 ```bash
 .claude/cerebro/scripts/launch Cerebro
@@ -510,7 +512,8 @@ unusual this week:
 
 **`decisions.jsonl`** is the fleet view's, and it answers the other half: not what the agents did but
 what Emacs decided about them. One line per start (with the trigger that fired and whether it was a
-trigger or you), per end, retire and nudge, per sweep finding run, per abnormal exit — and,
+trigger or you), per end, retire and nudge, per sweep finding run, per triage line typed, per
+abnormal exit — and,
 at the default verbosity, one per trigger *evaluation*, on every five-second tick, carrying what the
 trigger read and whether the no-progress guard is what held it.
 

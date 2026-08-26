@@ -1224,7 +1224,7 @@ Every other value logs the decisions whatever it is - losing the record of a
 start is worse than a typo in a setting - so silence has to be asked for by
 name.  It is what the suite binds, so that running the tests cannot write into
 the log the navigator reads."
-  (dolist (event '(start end exit retire restart sweep evaluate))
+  (dolist (event '(start end exit retire restart sweep evaluate triage))
     (should-not (cerebro--log-event-p event 'none)))
   ;; And every other value still records what the view did.
   (dolist (verbosity '(decisions changes evaluations nil some-typo))
@@ -6007,7 +6007,8 @@ session - so it goes before the fresh one starts."
   (append overrides
           '((now . 1000000.0) (ended-at . 999000.0) (started-at . 990000.0)
             (floor . 600) (implementers . 2)
-            (planned . 4) (p0-unplanned) (p4-unranked . 0) (actionable-ids)
+            (planned . 4) (p0-unplanned) (p4-unranked . 0) (unranked-ids)
+            (actionable-ids)
             (merged-unverified . 0) (stale-verdicts . 0) (gh) (linked-moved))))
 
 (defun cerebro-test--trigger (role &rest overrides)
@@ -6118,8 +6119,8 @@ by being derived from the unplanned list."
     (should (null (cerebro-test--trigger "architect" '(ended-at . 917000.0))))
     (should (equal (cerebro-test--trigger "architect" '(ended-at . 910000.0))
                    "24h since its last sweep"))
-    ;; Cerebro starts nothing on its own, and neither does anything the view
-    ;; has no rule for.
+    ;; Cerebro is started for an unranked bead and nothing else (cb-5lx.2); a
+    ;; role the view has no rule for starts never.
     (should (null (cerebro-test--trigger "orchestrator" '(p0-unplanned "cb-9zz")
                                          '(merged-unverified . 9))))
     (should (null (cerebro-test--trigger "sommelier" '(p0-unplanned "cb-9zz"))))
@@ -6149,6 +6150,136 @@ by being derived from the unplanned list."
       ;; roster-armed role does.
       (should (equal (implementer '(planned-ids "cb-1") '(started-at))
                      "1 planned, unclaimed")))))
+
+(ert-deftest cerebro-test/the-triage-line-names-up-to-eight-beads ()
+  (should (equal (cerebro--triage-message '("cb-1" "cb-2"))
+                 "[cerebro] Unranked beads are waiting for a ranking: cb-1, cb-2. Triage them with the navigator."))
+  (should (equal (cerebro--triage-message '("cb-1"))
+                 "[cerebro] Unranked beads are waiting for a ranking: cb-1. Triage them with the navigator."))
+  (let ((ten (mapcar (lambda (n) (format "cb-%02d" n)) (number-sequence 1 10))))
+    (should (equal (cerebro--triage-message ten)
+                   (concat "[cerebro] Unranked beads are waiting for a ranking: "
+                           "cb-01, cb-02, cb-03, cb-04, cb-05, cb-06, cb-07, cb-08 and 2 more. "
+                           "Triage them with the navigator.")))
+    (should (string-suffix-p " and 1 more. Triage them with the navigator."
+                             (cerebro--triage-message (seq-take ten 9))))
+    (should-not (string-match-p "more" (cerebro--triage-message (seq-take ten 8))))))
+
+(defun cerebro-test--cerebro (state &optional external)
+  (make-cerebro-agent :name "Cerebro" :role "orchestrator" :kind 'interactive
+                      :state state :external external :since "2026-08-14T09:00:00Z"))
+
+(ert-deftest cerebro-test/an-idle-cerebro-is-told-once-per-change ()
+  "Told when the set differs from what it was last told; not again while it
+is the same and recent; again on the clock (cb-5lx.2)."
+  (let ((cerebro-triage-repeat 600)
+        (idle-for 1800) (panel-age 10) (now 1000000.0))
+    (should (eq (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil idle-for panel-age now)
+                'tell))
+    (should (eq (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1" "cb-2")
+                                        (cons '("cb-1") 999900.0) idle-for panel-age now)
+                'tell))
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1")
+                                          (cons '("cb-1") 999900.0) idle-for panel-age now)))
+    (should (eq (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1")
+                                        (cons '("cb-1") 999400.0) idle-for panel-age now)
+                'repeat))))
+
+(ert-deftest cerebro-test/no-line-lands-in-a-session-that-cannot-take-it ()
+  "Never into a question dialog or over output (`working\=', `asking\='); never
+where no state file says it is safe (`up\=', `unknown\='); never where there is
+no session; never into a session this view does not own; never into a
+role that is not Cerebro; and never on figures older than the idle it is
+judging - the panel is thirty seconds behind bd, and a line judged on
+figures read before Cerebro went idle names beads it has just ranked."
+  (let ((cerebro-triage-repeat 600))
+    (dolist (state '(working asking up unknown dead standby waiting))
+      (should (null (cerebro--triage-action (cerebro-test--cerebro state) '("cb-1") nil 1800 10 1000000.0))))
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle t) '("cb-1") nil 1800 10 1000000.0)))
+    (should (null (cerebro--triage-action
+                   (make-cerebro-agent :name "Xavier" :role "planner" :kind 'interactive
+                                       :state 'idle :since "2026-08-14T09:00:00Z")
+                   '("cb-1") nil 1800 10 1000000.0)))
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) nil nil 1800 10 1000000.0)))
+    ;; Panel read 40s ago, Cerebro idle for 20s: the figures predate the idle.
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil 20 40 1000000.0)))
+    ;; No panel yet, or a torn state file: nothing is typed.
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil 1800 nil 1000000.0)))
+    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil nil 10 1000000.0)))))
+
+(ert-deftest cerebro-test/triage-tell-types-remembers-and-logs ()
+  (let* ((typed nil) (logged nil)
+         (ids '("cb-1" "cb-2"))
+         (agent (cerebro-test--cerebro 'idle))
+         (now (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))
+         (cerebro-triage-repeat 600))
+    (cl-letf (((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _) (list (cons 'unranked-ids ids)
+                                       (cons 'beads-read-at (- (float-time now) 5)))))
+              ((symbol-function 'cerebro--type-into-session)
+               (lambda (a m) (push (cons (cerebro-agent-name a) m) typed)))
+              ((symbol-function 'cerebro--log)
+               (lambda (_root event fields) (push (cons event fields) logged))))
+      (with-temp-buffer
+        (cerebro--triage-tell (list agent) "/tmp/nowhere" now)
+        (cerebro--triage-tell (list agent) "/tmp/nowhere" now)
+        (should (equal typed (list (cons "Cerebro" (cerebro--triage-message ids)))))
+        (should (equal (car (cdr (assoc "Cerebro" cerebro--triage-told))) ids))
+        (should (equal (length logged) 1))
+        (should (eq (car (car logged)) 'triage))
+        (should (equal (alist-get 'ids (cdr (car logged))) ids))
+        (should (null (alist-get 'repeat (cdr (car logged)))))
+        ;; Ten minutes later, same set: repeated, and said to be.
+        (let ((later (time-add now 601)))
+          (cl-letf (((symbol-function 'cerebro--trigger-context)
+                     (lambda (&rest _) (list (cons 'unranked-ids ids)
+                                             (cons 'beads-read-at (- (float-time later) 5))))))
+            (cerebro--triage-tell (list agent) "/tmp/nowhere" later)
+            (should (equal (length typed) 2))
+            (should (eq (alist-get 'repeat (cdr (car logged))) t))))
+        ;; The set empties: the record goes with it, so its return is a change.
+        (cl-letf (((symbol-function 'cerebro--trigger-context)
+                   (lambda (&rest _) (list (cons 'unranked-ids nil) (cons 'beads-read-at 0.0)))))
+          (cerebro--triage-tell (list agent) "/tmp/nowhere" now)
+          (should (null (assoc "Cerebro" cerebro--triage-told))))))))
+
+(ert-deftest cerebro-test/triage-tell-gathers-nothing-when-nobody-could-take-a-line ()
+  "The context gather costs a stat per implementer; a fleet with no idle,
+owned Cerebro pays it for nothing."
+  (let ((gathered 0))
+    (cl-letf (((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _) (cl-incf gathered) nil)))
+      (with-temp-buffer
+        (cerebro--triage-tell (list (cerebro-test--cerebro 'working)
+                                    (cerebro-test--cerebro 'idle t)
+                                    (cerebro-test--interactive "Xavier" "planner" 'idle))
+                              "/tmp/nowhere" (current-time))
+        (should (= gathered 0))))))
+
+(ert-deftest cerebro-test/an-unranked-bead-starts-an-armed-cerebro ()
+  "Cerebro is started for one thing - a bead waiting for a ranking - so the
+triage pass it runs on startup has something to ask about (cb-5lx.2).  The
+fingerprint is the ids, so a Cerebro whose pass ranked nothing is not started
+again for the same set."
+  (should (null (cerebro-test--trigger "orchestrator")))
+  (should (equal (cerebro-test--trigger "orchestrator" '(unranked-ids "cb-1" "cb-2"))
+                 "2 unranked"))
+  ;; Still nothing for a P0, a short buffer or merged work.
+  (should (null (cerebro-test--trigger "orchestrator" '(p0-unplanned "cb-9zz")
+                                       '(planned . 0) '(merged-unverified . 9))))
+  ;; The same set after a pass that ran: held.  A different set: started.
+  (should (null (cerebro-test--trigger "orchestrator" '(unranked-ids "cb-1")
+                                       '(last-fingerprint ("cb-1")))))
+  (should (equal (cerebro-test--trigger "orchestrator" '(unranked-ids "cb-1" "cb-3")
+                                        '(last-fingerprint ("cb-1")))
+                 "2 unranked"))
+  (should (equal (cerebro--trigger-fingerprint "orchestrator"
+                                               (cerebro-test--context '(unranked-ids "cb-1")))
+                 '(("cb-1"))))
+  ;; The standby row says what it waits for.
+  (should (equal (cerebro--standby-label (cerebro-test--interactive "Cerebro" "orchestrator" 'standby)
+                                         (cerebro-test--context))
+                 "→ unranked bead")))
 
 (ert-deftest cerebro-test/two-planners-answer-every-trigger-identically ()
   "No planner is first: the context carries nothing that tells Xavier from
@@ -6204,6 +6335,7 @@ evaluation's answer differs from that agent's last, `decisions' keeps only
 what the view actually did."
   (should (cerebro--log-event-p 'start 'decisions))
   (should (cerebro--log-event-p 'end 'decisions))
+  (should (cerebro--log-event-p 'triage 'decisions))
   (should-not (cerebro--log-event-p 'evaluate 'decisions))
   (should (cerebro--log-event-p 'evaluate 'changes))
   (should (cerebro--log-event-p 'evaluate 'evaluations))
@@ -6871,7 +7003,7 @@ has been there - there is no session for an elapsed time to describe."
     (should (equal (cerebro--standby-label
                     (cerebro-test--interactive "X" "orchestrator" 'standby)
                     (cerebro-test--context))
-                   ""))
+                   "→ unranked bead"))
     (should (equal (cerebro--standby-label
                     (cerebro-test--interactive "X" "sommelier" 'standby)
                     (cerebro-test--context))
@@ -7107,9 +7239,12 @@ it, and the roster - all of which this tick has already read."
                         '(((id . "c") (priority . 0))
                           ((id . "d") (priority . 4))
                           ((id . "e") (priority . 4))
+                          ((id . "b2") (priority . 4)
+                           (labels . ["triage:declined"]))
                           ((id . "f") (priority . 2)
                            (labels . ["verdict:stale"])))          ; unplanned
-                        '(((id . "g")) ((id . "h")) ((id . "i")))))) ; merged
+                        '(((id . "g")) ((id . "h")) ((id . "i"))))) ; merged
+            (setq cerebro--beads-read-at 3.5))
           (with-temp-buffer
             (setq cerebro--agents
                   (list (cerebro-test--agent "Rogue" "implementer" 'implementer 'working)
@@ -7120,6 +7255,11 @@ it, and the roster - all of which this tick has already read."
               (should (equal (alist-get 'planned context) 2))
               (should (equal (alist-get 'p0-unplanned context) '("c")))
               (should (equal (alist-get 'p4-unranked context) 2))
+              ;; The ids behind that count, sorted, and a P4 the navigator has
+              ;; parked is in neither (cb-5lx.2).
+              (should (equal (alist-get 'unranked-ids context) '("d" "e")))
+              ;; When the figures were asked for, not when they arrived.
+              (should (equal (alist-get 'beads-read-at context) 3.5))
               (should (equal (alist-get 'merged-unverified context) 3))
               (should (equal (alist-get 'stale-verdicts context) 1))
               ;; Rogue is working and Gambit is dead, and both count: a dead
@@ -7131,6 +7271,25 @@ it, and the roster - all of which this tick has already read."
               ;; No `gh' answer in this buffer, so nothing for the two rows
               ;; the key feeds - and not `failed', which would say it went away.
               (should (null (alist-get 'gh context))))))
+      (kill-buffer panel))))
+
+(ert-deftest cerebro-test/the-panel-records-when-it-asked-not-only-when-it-heard ()
+  "A bead ranked between the request and the answer is in neither; a reader
+deciding whether the figures postdate a transition needs the earlier clock."
+  (let ((panel (get-buffer-create "*cerebro-beads-test*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--draw-beads) #'ignore)
+                  ((symbol-function 'cerebro--update-panel-header) #'ignore)
+                  ((symbol-function 'cerebro--repo-root) (lambda () "/tmp/nowhere"))
+                  ((symbol-function 'cerebro--request-beads)
+                   (lambda (_root answer)
+                     (with-current-buffer panel (setq cerebro--beads-requested-at 41.0))
+                     (funcall answer (list nil nil nil nil nil) nil)
+                     'answered)))
+          (cerebro--beads-render panel)
+          (with-current-buffer panel
+            (should (equal cerebro--beads-read-at 41.0))
+            (should (null cerebro--beads-requested-at))))
       (kill-buffer panel))))
 
 (ert-deftest cerebro-test/an-implementer-told-to-finish-wants-no-bead ()
@@ -7671,8 +7830,16 @@ will start it; the plain line is what a role the view started and ended keeps."
                            "roster.conf arms it: the view starts it when its own"
                            " trigger fires (→59m).\n"
                            "Press s to start it now, k to leave it down.")))
-    (should (equal (cerebro--placeholder cerebro-agent nil nil t "")
+    (should (equal (cerebro--placeholder cerebro-agent nil nil t "→ unranked bead")
                    (concat "Cerebro is not running.\n"
+                           "roster.conf arms it: the view starts it when its own"
+                           " trigger fires (→ unranked bead).\n"
+                           "Press s to start it now, k to leave it down.")))
+    ;; And the other branch stays pinned by a role the view has no rule for.
+    (should (equal (cerebro--placeholder
+                    (cerebro-test--interactive "Sommelier" "sommelier" 'standby)
+                    nil nil t "")
+                   (concat "Sommelier is not running.\n"
                            "roster.conf arms it, but this role has no trigger: it is"
                            " started with s only.\n"
                            "Press s to start it, k to leave it down.")))

@@ -92,8 +92,10 @@ Not prose — files, each tracked so that every clone has it.
   the application, and the gate. Both gates name `tests/gate`, which runs exactly what
   `.github/workflows/ci.yml` runs (cb-i3l.2).
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
-  built-in fleet. An optional third word, `autostart`, makes the fleet view start that agent as it
-  comes up (cb-0r6).
+  built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that
+  agent as it comes up (cb-0r6), `standby` **arms** it without starting it (cb-98u) — its row reads
+  `standby` and its role's own trigger is what starts it. `standby` is refused on an implementer row
+  until cb-1or.
 - `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
   implementers before they start. Absent means it has paid for none yet, which is where every
   project starts.
@@ -512,8 +514,9 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   rename shim was removed once a release of the consumer had carried it (ah-qled.5.3).
 - **A consumer declares its own fleet in `<consumer>/.cerebro/roster.conf`** (ah-qled.5.1) — same
   `NAME  ROLE` shape as the `TABLE=` heredoc in `scripts/roster`, `#` comments and blank lines
-  ignored, `KIND` still derived, and an optional third word `autostart` read by `roster --autostart`
-  alone — the three default columns never change, since `launch`, `agent-state` and
+  ignored, `KIND` still derived, and an optional third word — `autostart`, read by
+  `roster --autostart`, or `standby`, read by `roster --standby` (cb-98u) — the three default
+  columns never change, since `launch`, `agent-state` and
   `cerebro--parse-fleet` all take the last field as the KIND; any other third word, or a fourth,
   refuses with exit 2 naming the file, line and word, and `M-x cerebro` shows that refusal rather
   than an empty fleet (cb-0r6). When it exists and is non-empty it **replaces** the built-in table

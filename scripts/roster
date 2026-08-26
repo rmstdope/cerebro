@@ -27,14 +27,22 @@
 #                               (exit 0) if nobody holds it
 #     roster --autostart        the names whose row carries `autostart', one per line, in file
 #                               order; nothing (exit 0) when no row does
+#     roster --standby          the names whose row carries `standby', one per line, in file
+#                               order; nothing (exit 0) when no row does
 #
-# A row is NAME ROLE and, optionally, a third word: `autostart', which says the fleet view starts
-# that agent as it comes up (cb-0r6). Omitting it means no, so every roster written before that
-# bead - and the TABLE below - behaves exactly as it did. Any OTHER third word, or a fourth word,
-# is refused with exit 2 naming the file, the line and the word: a typo of `autostart' that read as
-# "no" would be a fleet that quietly does not start, which is the failure this refusal exists to
-# prevent. The word is exposed through `--autostart' ALONE - the default output stays three columns,
-# because `launch', `agent-state' and `cerebro--parse-fleet' all take the last field as the KIND.
+# A row is NAME ROLE and, optionally, a third word, one of two. `autostart' says the fleet view
+# starts that agent as it comes up (cb-0r6); `standby' says the opposite half of the same thing -
+# ARM it without starting it (cb-98u), so its row reads `standby' and its role's own trigger is what
+# starts it. Omitting both means neither, so every roster written before those beads - and the TABLE
+# below - behaves exactly as it did. They are mutually exclusive by arithmetic: both on one row is a
+# fourth word, which already refuses. Any OTHER third word, or a fourth word, is refused with exit 2
+# naming the file, the line and the word: a typo of `autostart' that read as "no" would be a fleet
+# that quietly does not start, which is the failure this refusal exists to prevent. `standby' on an
+# IMPLEMENTER row is refused too, until cb-1or gives implementers a wake condition - the implementer
+# trigger starts a standby implementer unconditionally, which would make the word a slower
+# `autostart'. The words are exposed through `--autostart' and `--standby' ALONE - the default
+# output stays three columns, because `launch', `agent-state' and `cerebro--parse-fleet' all take
+# the last field as the KIND.
 #
 # Exact-match only, case-sensitive — the "it is spelt Storm" courtesy belongs to `launch`, where a
 # human types the name.
@@ -128,9 +136,9 @@ fi
 
 # $1 = what to call the source in a refusal: the consumer file's path, or `built-in table'.
 #
-# Emits FOUR tab-separated fields - NAME, ROLE, KIND, FLAG (`autostart' or empty). Only
-# `--autostart' looks at the fourth; every other mode drops it, so the public output is the three
-# columns every other reader assumes.
+# Emits FOUR tab-separated fields - NAME, ROLE, KIND, FLAG (`autostart', `standby' or empty). Only
+# `--autostart' and `--standby' look at the fourth; every other mode drops it, so the public output
+# is the three columns every other reader assumes.
 parse_rows() {
   local source="$1" lineno=0 name role third rest
   while IFS= read -r line; do
@@ -142,14 +150,24 @@ parse_rows() {
     read -r name role third rest <<<"$line"
     [[ -z "$name" ]] && continue
     case "$third" in
-      "" | autostart) ;;
+      "" | autostart | standby) ;;
       *)
-        echo "roster: $source line $lineno: '$third' is not a word roster knows - the third column is autostart or nothing" >&2
+        echo "roster: $source line $lineno: '$third' is not a word roster knows - the third column is autostart, standby or nothing" >&2
         exit 2
         ;;
     esac
     if [[ -n "$rest" ]]; then
-      echo "roster: $source line $lineno: '$rest' is one word too many - a row is NAME ROLE and optionally autostart" >&2
+      echo "roster: $source line $lineno: '$rest' is one word too many - a row is NAME ROLE and optionally autostart or standby" >&2
+      exit 2
+    fi
+    # `standby' on an implementer row is refused until cb-1or gives implementers a wake condition of
+    # their own: the implementer arm of `cerebro--trigger' starts a standby implementer
+    # unconditionally, so the word here would be `autostart' with a five-second delay and a retry
+    # line on the row for a session that never ran. Refused HERE, inside `parse_rows', like every
+    # other refusal - the `|| exit $?' propagation the comments below describe is what carries an
+    # `exit 2' out of the `$( )' that captures these rows.
+    if [[ "$third" == "standby" && "$(kind_of "$role")" == "implementer" ]]; then
+      echo "roster: $source line $lineno: 'standby' is not a word an implementer row takes yet - implementers are started, not armed" >&2
       exit 2
     fi
     printf '%s\t%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")" "$third"
@@ -209,13 +227,20 @@ case "${1:-}" in
       fi
     done < <(each_row)
     ;;
+  --standby)
+    while IFS=$'\t' read -r name role kind flag; do
+      if [[ "$flag" == "standby" ]]; then
+        printf '%s\n' "$name"
+      fi
+    done < <(each_row)
+    ;;
   --role)
     # A role can be held by more than one agent (two planners, ah-2p), so "who is the first of
     # them" is a question with an answer rather than a tautology: file order is the answer, and
     # `plan-bead' uses it to give the triage pass to exactly one planner.
     role="${2:-}"
     if [[ -z "$role" ]]; then
-      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart]" >&2
+      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
       exit 2
     fi
     # `if' rather than `[[ ... ]] &&': the latter leaves the loop - and so this script - exiting
@@ -230,7 +255,7 @@ case "${1:-}" in
   --entry)
     name="${2:-}"
     if [[ -z "$name" ]]; then
-      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart]" >&2
+      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
       exit 2
     fi
     found=""
@@ -247,7 +272,7 @@ case "${1:-}" in
     fi
     ;;
   *)
-    echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart]" >&2
+    echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
     exit 2
     ;;
 esac

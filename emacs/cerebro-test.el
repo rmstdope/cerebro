@@ -586,6 +586,12 @@ reading once the row has caught the eye (see ah-axj)."
 (defvar cerebro-test--autostart-launched nil)
 (defvar cerebro-test--autostart-cleared nil)
 (defvar cerebro-test--autostart-messages nil)
+(defvar cerebro-test--autostart-logged nil)
+(defvar cerebro-test--standby-fixture nil
+  "What the stubbed `cerebro--standby-names\=' returns.
+
+Defaults to nil so every autostart test written before cb-98u means exactly
+what it did: a roster that declares no standby row.")
 
 (defmacro cerebro-test--with-autostart (&rest body)
   "Run BODY with the fleet view's impure edges stubbed for autostart.
@@ -596,7 +602,8 @@ render path loads."
   (declare (indent 0))
   `(let ((cerebro-test--autostart-launched nil)
          (cerebro-test--autostart-cleared nil)
-         (cerebro-test--autostart-messages nil))
+         (cerebro-test--autostart-messages nil)
+         (cerebro-test--autostart-logged nil))
      (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () "/fake/repo"))
                ((symbol-function 'cerebro--fleet)
                 (lambda (_repo-root) cerebro-test--fleet-fixture))
@@ -606,6 +613,12 @@ render path loads."
                ((symbol-function 'cerebro--ensure-prune-watcher) (lambda (&rest _) nil))
                ((symbol-function 'cerebro--autostart-names)
                 (lambda (_repo-root) '("Alpha" "One")))
+               ((symbol-function 'cerebro--standby-names)
+                (lambda (_repo-root) cerebro-test--standby-fixture))
+               ((symbol-function 'cerebro--log)
+                (lambda (_root event fields)
+                  (push (cons event fields) cerebro-test--autostart-logged)
+                  nil))
                ((symbol-function 'cerebro--stop-flag-p)
                 (lambda (_repo-root name) (equal name "One")))
                ((symbol-function 'cerebro--clear-stop-flag)
@@ -656,6 +669,56 @@ once instead of erroring once per declared name."
       (should (null cerebro-test--autostart-launched))
       (should (member "cerebro: vterm is not installed, so nothing was autostarted"
                       cerebro-test--autostart-messages)))))
+
+(ert-deftest cerebro-test/roster-standby-arms-without-starting ()
+  "A `standby\=' row arms its agent as the fleet buffer comes up and starts
+nothing: the row reads `standby\=', its role\='s own trigger is what starts it,
+and the parked entry the arming writes is what a cadence trigger counts
+from (cb-98u).
+
+A second `M-x cerebro\=' on the live buffer arms nothing more, for the same
+reason it starts nothing - it would re-arm whatever `k\=' has just disarmed."
+  (let ((cerebro-test--standby-fixture '("Beta")))
+    (cerebro-test--with-autostart
+      (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () t)))
+        (cerebro)
+        (should (equal (reverse cerebro-test--autostart-launched) '("Alpha" "One")))
+        (with-current-buffer cerebro-buffer-name
+          (should (member "Beta" cerebro--armed))
+          (let ((entry (cdr (assoc "Beta" cerebro--parked))))
+            (should entry)
+            (should (numberp (nth 0 entry)))
+            (should (null (nth 1 entry)))
+            (should (null (nth 2 entry))))
+          (should (eq (cerebro-agent-state
+                       (seq-find (lambda (a) (equal (cerebro-agent-name a) "Beta"))
+                                 cerebro--agents))
+                      'standby)))
+        (should (member "cerebro: autostarted Alpha, One (cleared a stale stop flag); armed Beta"
+                        cerebro-test--autostart-messages))
+        (let ((arms (seq-filter (lambda (e) (eq (car e) 'arm)) cerebro-test--autostart-logged)))
+          (should (= (length arms) 1))
+          (should (equal (alist-get 'agent (cdr (car arms))) "Beta")))
+        ;; A second `M-x cerebro' on the live buffer changes none of it.
+        (cerebro)
+        (with-current-buffer cerebro-buffer-name
+          (should (= (length cerebro--armed) 1)))
+        (should (= (length (seq-filter (lambda (e) (eq (car e) 'arm))
+                                       cerebro-test--autostart-logged))
+                   1))))))
+
+(ert-deftest cerebro-test/roster-standby-without-vterm-arms-nothing ()
+  "Without vterm `cerebro--start-due\=' can start nothing, so an armed name
+would promise a trigger that cannot fire: nothing is armed either (cb-98u)."
+  (let ((cerebro-test--standby-fixture '("Beta")))
+    (cerebro-test--with-autostart
+      (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () nil)))
+        (cerebro)
+        (should (null cerebro-test--autostart-launched))
+        (with-current-buffer cerebro-buffer-name
+          (should (null cerebro--armed)))
+        (should (member "cerebro: vterm is not installed, so nothing was autostarted"
+                        cerebro-test--autostart-messages))))))
 
 (defun cerebro-test--agent (name role kind state &optional external bead phase)
   (make-cerebro-agent :name name :role role :kind kind :state state
@@ -712,6 +775,29 @@ once instead of erroring once per declared name."
             (dolist (row fleet)
               (should (file-exists-p (expand-file-name
                                        (format "agents/%s.md" (nth 1 row)) repo-root))))))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/standby-names-read-the-roster-script ()
+  "`cerebro--standby-names\=' runs the real script against a real roster, and
+the two words are read apart from each other (cb-98u).  A roster the script
+refuses reads as nil rather than signalling: `cerebro--fleet\=' has already
+reported that refusal for the same render."
+  (let ((tmp (make-temp-file "cerebro-standby-names" t)))
+    (unwind-protect
+        (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
+          (make-directory scripts t)
+          (make-directory (expand-file-name ".cerebro" tmp) t)
+          (copy-file (expand-file-name "scripts/roster" cerebro-test--repo-root)
+                     (expand-file-name "roster" scripts))
+          (copy-file (expand-file-name "scripts/consumer-root" cerebro-test--repo-root)
+                     (expand-file-name "consumer-root" scripts))
+          (with-temp-file (expand-file-name ".cerebro/roster.conf" tmp)
+            (insert "Ada  planner  autostart\nGrace  reviewer  standby\n"))
+          (should (equal (cerebro--standby-names tmp) '("Grace")))
+          (should (equal (cerebro--autostart-names tmp) '("Ada")))
+          (with-temp-file (expand-file-name ".cerebro/roster.conf" tmp)
+            (insert "Ada  planner  autostrat\n"))
+          (should (null (cerebro--standby-names tmp))))
       (delete-directory tmp t))))
 
 (ert-deftest cerebro-test/fleet-signals-when-roster-refuses ()
@@ -6775,3 +6861,124 @@ that stands, and `s' - which clears the record - is the way back."
         (should (eq (cerebro-agent-state (nth 0 cerebro--agents)) 'standby))
         (should (equal (aref (nth 1 (assoc "Psylocke" tabulated-list-entries)) 4)
                        "→ merged, unverified"))))))
+
+
+;; --- cb-98u: a `standby' word in roster.conf arms without starting ---------
+
+(ert-deftest cerebro-test/standby-arming-takes-every-declared-name-whatever-its-state ()
+  "roster.conf is a statement about the fleet, not about this Emacs: every
+declared name is armed whatever its state, external and up included.  An
+external session keeps the row external while it lives; when it ends the name
+goes standby and its trigger starts it."
+  (let ((agents (list (cerebro-test--interactive "Alpha" "planner" 'working)
+                      (cerebro-test--interactive "Beta" "verifier" 'dead)
+                      (cerebro-test--interactive "Gamma" "reviewer" 'dead t)
+                      (cerebro-test--agent "One" "implementer" 'implementer 'dead))))
+    (should (equal (cerebro--standby-arming agents '("Gamma" "Beta" "One"))
+                   '("Beta" "Gamma" "One")))
+    (should (null (cerebro--standby-arming agents nil)))
+    (should (equal (cerebro--standby-arming agents '("Alpha")) '("Alpha")))))
+
+(ert-deftest cerebro-test/autostart-message-names-what-was-armed ()
+  "One echo line carries both halves: what was started, and what was armed."
+  (should-not (cerebro--autostart-message nil nil))
+  (should (equal (cerebro--autostart-message
+                  '(("Alpha" . launch) ("One" . launch-clearing-flag)) nil)
+                 "cerebro: autostarted Alpha, One (cleared a stale stop flag)"))
+  (should (equal (cerebro--autostart-message nil '("Forge" "Cypher"))
+                 "cerebro: nothing to autostart; armed Forge and Cypher"))
+  (should (equal (cerebro--autostart-message
+                  '(("Xavier" . launch) ("Psylocke" . launch)) '("Forge" "Cypher"))
+                 "cerebro: autostarted Xavier, Psylocke; armed Forge and Cypher"))
+  (should (equal (cerebro--autostart-message
+                  '(("Xavier" . launch) ("Beast" . already-up)) '("Forge"))
+                 "cerebro: autostarted Xavier; Beast is already up; armed Forge")))
+
+(ert-deftest cerebro-test/arm-is-a-decision-event ()
+  (should (cerebro--log-event-p 'arm 'decisions))
+  (should-not (cerebro--log-event-p 'arm 'none))
+  (should (equal (cerebro--log-basename 'arm) "decisions")))
+
+(ert-deftest cerebro-test/a-roster-armed-cadence-role-counts-from-arming ()
+  "The parked entry arming writes is an ENDED-AT, so a cadence role counts from
+the moment the view armed it rather than never firing at all - and Moira's `gh'
+trigger compares against it rather than counting every open issue as moved,
+which would be autostart by another name."
+  (let ((cerebro-cadence-triggers '(("architect" . 3600))))
+    (should (null (cerebro--trigger
+                   (cerebro-test--interactive "Forge" "architect" 'standby)
+                   (cerebro-test--context '(started-at) '(ended-at . 1000.0)
+                                          '(now . 4000.0) '(floor . 600)))))
+    (should (equal (cerebro--trigger
+                    (cerebro-test--interactive "Forge" "architect" 'standby)
+                    (cerebro-test--context '(started-at) '(ended-at . 1000.0)
+                                           '(now . 4700.0) '(floor . 600)))
+                   "60m since its last sweep"))
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "Forge" "architect" 'standby)
+                    (cerebro-test--context '(started-at) '(ended-at . 1000.0)
+                                           '(now . 1060.0)))
+                   "→59m")))
+  (let ((issues '(((number . 1) (updatedAt . "2026-01-01T00:00:00Z"))
+                  ((number . 2) (updatedAt . "2026-01-01T00:00:00Z")))))
+    ;; One before the arming moment, one after: only the later number.
+    (let* ((early (cerebro--gh-instant "2026-01-01T00:00:00Z"))
+           (moved (cerebro--gh-moved
+                   (list (car issues)
+                         '((number . 2) (updatedAt . "2026-02-01T00:00:00Z")))
+                   nil nil (+ early 1))))
+      (should (equal (car moved) '(2))))))
+
+(ert-deftest cerebro-test/placeholder-for-a-roster-armed-role ()
+  "`RET' on a roster-armed row that has never run says what arms it and what
+will start it; the plain line is what a role the view started and ended keeps."
+  (let ((cerebro--last-exit nil)
+        (forge (cerebro-test--interactive "Forge" "architect" 'standby))
+        (cerebro-agent (cerebro-test--interactive "Cerebro" "orchestrator" 'standby)))
+    (should (equal (cerebro--placeholder forge nil nil t "→59m")
+                   (concat "Forge is not running.\n"
+                           "roster.conf arms it: the view starts it when its own"
+                           " trigger fires (→59m).\n"
+                           "Press s to start it now, k to leave it down.")))
+    (should (equal (cerebro--placeholder cerebro-agent nil nil t "")
+                   (concat "Cerebro is not running.\n"
+                           "roster.conf arms it, but this role has no trigger: it is"
+                           " started with s only.\n"
+                           "Press s to start it, k to leave it down.")))
+    (should (equal (cerebro--placeholder forge nil nil nil "→59m")
+                   "Forge is not running. Press s to start it."))
+    ;; Branch order: a standby implementer keeps its retry line whatever the
+    ;; roster says - and the roster refuses the word on its row anyway.
+    (let ((cerebro-retry-backoff '(0 30 120 600)))
+      (should (string-match-p
+               "starts it again"
+               (cerebro--placeholder
+                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
+                120 3 t "→59m"))))))
+
+(ert-deftest cerebro-test/placeholder-buffer-knows-a-roster-armed-role ()
+  "A parked entry with no STARTED-AT is one only arming writes:
+`cerebro--park-session' always records the start it is ending."
+  (let ((cerebro--last-exit nil)
+        (agent (cerebro-test--interactive "Forge" "architect" 'standby))
+        (buffer nil))
+    (unwind-protect
+        (with-temp-buffer
+          (cl-letf (((symbol-function 'cerebro-session-mode) #'ignore)
+                    ((symbol-function 'cerebro--repo-root) (lambda () "/fake/repo"))
+                    ((symbol-function 'cerebro--trigger-context)
+                     (lambda (_root _now) (cerebro-test--context)))
+                    ((symbol-function 'cerebro--agent-context)
+                     (lambda (_agent context)
+                       (append '((ended-at . 1000.0) (now . 1060.0) (started-at))
+                               context))))
+            (setq cerebro--parked '(("Forge" 1000.0 nil nil)))
+            (setq buffer (cerebro--placeholder-buffer agent))
+            (should (string-match-p "roster.conf arms it"
+                                    (with-current-buffer buffer (buffer-string))))
+            (kill-buffer buffer)
+            (setq cerebro--parked '(("Forge" 1000.0 900.0 nil)))
+            (setq buffer (cerebro--placeholder-buffer agent))
+            (should-not (string-match-p "roster.conf arms it"
+                                        (with-current-buffer buffer (buffer-string))))))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))

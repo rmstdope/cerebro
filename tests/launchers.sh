@@ -265,10 +265,11 @@ pass "consumer roster: all four modes read it, and KIND is still derived"
 # because `launch`, `agent-state` and `cerebro--parse-fleet` all assume exactly three fields.
 cat > "$consumer_roster_file" <<'ROSTER'
 Ada           planner        autostart
-Grace         planner
+Grace         planner        standby
+Hopper        reviewer       standby
 Turing        implementer    autostart
 ROSTER
-expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nTuring\timplementer\timplementer')"
+expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nHopper\treviewer\tinteractive\nTuring\timplementer\timplementer')"
 [[ "$("$roster_at")" == "$expected_rows" ]] \
   || fail "roster autostart: default output should still be three columns, got: $("$roster_at")"
 pass "roster: the autostart column leaves the default three-column output alone"
@@ -276,6 +277,13 @@ pass "roster: the autostart column leaves the default three-column output alone"
 [[ "$("$roster_at" --autostart)" == "$(printf 'Ada\nTuring')" ]] \
   || fail "roster --autostart: expected Ada and Turing in file order, got: $("$roster_at" --autostart)"
 pass "roster --autostart lists the declared names, in file order"
+
+# `standby` is the second third-column word (cb-98u): arm this agent, do not start it. It reads
+# through its own mode for the same reason `autostart` does - the default output stays three
+# columns - and the two words are mutually exclusive by the fourth-word refusal alone.
+[[ "$("$roster_at" --standby)" == "$(printf 'Grace\nHopper')" ]] \
+  || fail "roster --standby: expected Grace and Hopper in file order, got: $("$roster_at" --standby)"
+pass "roster --standby lists the declared names, in file order"
 
 [[ "$("$roster_at" --implementers)" == "Turing" ]] \
   || fail "roster --implementers with the column: got $("$roster_at" --implementers)"
@@ -292,11 +300,17 @@ status=$?
 [[ -z "$out" ]] || fail "built-in roster --autostart: expected nothing, got: $out"
 pass "roster --autostart is silent, and exits 0, when no row declares it"
 
+out="$("$builtin_dir/roster" --standby)"
+status=$?
+[[ $status -eq 0 ]] || fail "built-in roster --standby: expected exit 0, got $status"
+[[ -z "$out" ]] || fail "built-in roster --standby: expected nothing, got: $out"
+pass "roster --standby is silent, and exits 0, when no row declares it"
+
 # A third word that is not `autostart` refuses - and the refusal is the parser's, so every mode
 # refuses, not only the one that reads the column. `exit` inside a `$( )` ends the subshell alone,
 # which is what this asserts is propagated.
 printf 'Ada  planner  autostrat\n' > "$consumer_roster_file"
-for mode in "" "--autostart" "--entry Ada" "--implementers"; do
+for mode in "" "--autostart" "--standby" "--entry Ada" "--implementers"; do
   set +e
   # shellcheck disable=SC2086
   out="$("$roster_at" $mode 2>/dev/null)"
@@ -312,8 +326,10 @@ for mode in "" "--autostart" "--entry Ada" "--implementers"; do
     || fail "roster ${mode:-(bare)}: the refusal should name the line, got: $err"
   echo "$err" | grep -q "roster.conf" \
     || fail "roster ${mode:-(bare)}: the refusal should name the file, got: $err"
+  echo "$err" | grep -q "standby" \
+    || fail "roster ${mode:-(bare)}: the refusal should name every accepted word, got: $err"
 done
-pass "roster: a third word that is not autostart refuses, naming the file, line and word"
+pass "roster: a third word that is neither autostart nor standby refuses, naming the file, line and word"
 
 printf 'Ada  planner  autostart  extra\n' > "$consumer_roster_file"
 set +e
@@ -326,6 +342,44 @@ set -e
 echo "$err" | grep -q "one word too many" \
   || fail "roster with a fourth word: expected the 'one word too many' line, got: $err"
 pass "roster: a fourth word refuses"
+
+# The two words are mutually exclusive, and need no rule of their own: `autostart standby` on one
+# row is a fourth word, which already refuses.
+printf 'Ada  planner  autostart  standby\n' > "$consumer_roster_file"
+set +e
+out="$("$roster_at" 2>/dev/null)"
+status=$?
+err="$("$roster_at" 2>&1 >/dev/null)"
+set -e
+[[ $status -eq 2 ]] || fail "roster with both words: expected exit 2, got $status"
+[[ -z "$out" ]] || fail "roster with both words: expected nothing on stdout, got: $out"
+echo "$err" | grep -q "one word too many" \
+  || fail "roster with both words: expected the 'one word too many' line, got: $err"
+pass "roster: autostart and standby on one row refuse as a fourth word"
+
+# `standby` on an implementer row is refused until cb-1or gives implementers a wake condition: the
+# implementer trigger starts a standby implementer unconditionally, so the word there would be
+# `autostart` with a five-second delay and a retry line for a session that never ran. The refusal is
+# the parser's, so every mode refuses.
+printf 'Ada  planner\nTuring  implementer  standby\n' > "$consumer_roster_file"
+for mode in "" "--autostart" "--standby" "--entry Ada" "--implementers"; do
+  set +e
+  # shellcheck disable=SC2086
+  out="$("$roster_at" $mode 2>/dev/null)"
+  status=$?
+  # shellcheck disable=SC2086
+  err="$("$roster_at" $mode 2>&1 >/dev/null)"
+  set -e
+  [[ $status -eq 2 ]] || fail "roster ${mode:-(bare)} with a standby implementer: expected exit 2, got $status"
+  [[ -z "$out" ]] || fail "roster ${mode:-(bare)} with a standby implementer: expected nothing on stdout, got: $out"
+  echo "$err" | grep -q "line 2" \
+    || fail "roster ${mode:-(bare)}: the refusal should name the line, got: $err"
+  echo "$err" | grep -q "standby" \
+    || fail "roster ${mode:-(bare)}: the refusal should name the word, got: $err"
+  echo "$err" | grep -q "implementer" \
+    || fail "roster ${mode:-(bare)}: the refusal should say it is about implementers, got: $err"
+done
+pass "roster: standby on an implementer row refuses, naming the file, line and word"
 rm -f "$consumer_roster_file"
 
 # An empty file says nothing, so the built-in table answers - and so does a file of nothing but
@@ -361,6 +415,12 @@ out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at" --autostart)"
 [[ "$out" == "Ada" ]] || fail "roster --autostart under a narrowed PATH: got: $out"
 rm -f "$consumer_roster_file"
 pass "roster --autostart needs nothing but bash"
+
+printf 'Ada  planner  standby\n' > "$consumer_roster_file"
+out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at" --standby)"
+[[ "$out" == "Ada" ]] || fail "roster --standby under a narrowed PATH: got: $out"
+rm -f "$consumer_roster_file"
+pass "roster --standby needs nothing but bash"
 
 # --- a roster left at the retired .claude/ path refuses, loudly (cb-epr) ------------------------
 #

@@ -478,15 +478,18 @@ sessions Emacs itself started."
            roster)))
 
 (defun cerebro--up-names (agents)
-  "Pure.  The names in AGENTS whose implementer session is up.
+  "Pure.  The names in AGENTS whose session is up, whatever their kind.
 
 Up is every state but `dead\=' and `standby\=' - the two that mean there is no
-session - and interactive roles are never listed: they have
-`cerebro--parked\=', which records when a pass ended and is the answer this
-stands in for.  What the caller does with it is `cerebro--seen-up\='."
+session.  `cerebro--parked\=' is the better answer to when an agent\='s last
+pass ended and is preferred wherever there is one; this is what stands in when
+there is not, and every kind can reach that - a park that threw, a session that
+died, an Emacs restarted mid-pass.  It was the implementers\=' alone until
+cb-b4m, where an interactive role with no parked entry got a nil `ended-at\='
+and `cerebro--gh-moved\=' read that as everything having moved.  What the
+caller does with it is `cerebro--seen-up\='."
   (delq nil (mapcar (lambda (agent)
-                      (and (eq (cerebro-agent-kind agent) 'implementer)
-                           (not (memq (cerebro-agent-state agent) '(dead standby)))
+                      (and (not (memq (cerebro-agent-state agent) '(dead standby)))
                            (cerebro-agent-name agent)))
                     agents)))
 
@@ -1585,7 +1588,11 @@ everything: every answer here ends in Emacs acting on a session it owns."
 
 \(ROLE . SECONDS).  Moira and Cypher hourly, because what they watch moves
 outside this fleet - an issue, somebody else\='s pull request - and a floor is
-what covers whatever the `gh\=' reader could not see.  Forge hourly too: its
+what covers what no timestamp the view reads can show: a RELEASED comment,
+which follows a git tag rather than an issue or a bead, and a `gh\=' reader
+that failed or has never answered.  It is a floor and not the trigger: both
+of Moira\='s conditions answer within a tick since cb-b4m, the issue side from
+`gh\=' and the bead side from `cerebro--linked-beads\='.  Forge hourly too: its
 watermark makes a sweep with nothing new in it nearly free, and an hourly
 floor keeps a day's debt from arriving in one lump.
 
@@ -1904,10 +1911,12 @@ so it has to say what the navigator would otherwise have to go and look up.
 
 CONTEXT is what `cerebro--trigger-context\=' gathers - `now\=',
 `implementers\=', `planned\=', `p0-unplanned\=' (ids), `p4-unranked\=',
-`actionable-ids\=', `planned-ids\=', `merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for
-no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) - plus the five
-per-agent facts `cerebro--agent-context\=' adds to it: `ended-at\=',
-`started-at\=', `floor\=', `last-fingerprint\=' and `first-planner-p\='.
+`actionable-ids\=', `planned-ids\=', `merged-unverified\=', `stale-verdicts\=',
+`gh\=' (nil for no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) and
+`linked\=' (`cerebro--linked-beads\=') - plus the per-agent facts
+`cerebro--agent-context\=' adds to it: `ended-at\=', `started-at\=', `floor\=',
+`failed-starts\=', `last-fingerprint\=', `first-planner-p\=' and
+`linked-moved\=' (`linked\=' filtered by this role\='s own `ended-at\=').
 
 Every rule is gated on the floor first: `cerebro-wake-interval\=' is the
 minimum gap between two *starts* of one role.  A role this Emacs has never
@@ -1987,8 +1996,15 @@ is merely waiting for it."
          ;; The lists `cerebro--gh-moved' filtered for this role, or nil
          ;; before `gh' has answered and `failed' when it stopped - in both
          ;; of those the cadence floor below is the whole trigger.
+         ;; Both halves of Moira's job, in the order of who is waiting: an
+         ;; issue is a person, a linked bead is the fleet's own bookkeeping -
+         ;; a status comment owed to an issue whose own `updatedAt' does not
+         ;; move for it (cb-b4m).
          ("user-feedback"
-          (and (consp gh) (car gh) (format "issue #%s moved" (car (car gh)))))
+          (let ((moved (alist-get 'linked-moved context)))
+            (or (and (consp gh) (car gh) (format "issue #%s moved" (car (car gh))))
+                (and moved (format "bead %s moved (issue #%s)"
+                                   (nth 0 (car moved)) (nth 1 (car moved)))))))
          ("reviewer"
           (and (consp gh) (cadr gh) (format "PR #%s moved" (car (cadr gh)))))
          ;; A standby implementer is started for work, not for having died: a
@@ -2021,10 +2037,12 @@ conversion happens once, here."
 pull requests by an author other than ME, whose `updatedAt' is after
 ENDED-AT (`float-time').
 
-Nil ENDED-AT means the role has never ended in this Emacs, so there is no
-moment to compare against and everything open counts; a draft and the
-navigator's own pull request are still excluded, since those are excluded by
-what they are rather than by when they moved.  Nil ME - `gh api user' has
+Nil ENDED-AT is a role the view has no end for - never started here, or a
+pass it failed to record - and nothing counts: there is no moment to compare
+against, and \"I cannot tell what has changed\" is a reason not to start a
+session rather than a reason to start one on everything.  Read the other way
+round it started Moira every ten minutes for a day off one open issue
+(cb-b4m).  Nil ME - `gh api user' has
 not answered yet - excludes every pull request: authorship is the whole of
 what makes one Cypher's, and a pull request that cannot be shown to be
 somebody else's must not start him on the navigator's own.
@@ -2033,7 +2051,7 @@ Numbers in the order `gh' listed them, so the reason `cerebro--trigger'
 names is the first one `gh' would show the navigator."
   (let ((moved-p (lambda (item)
                    (let ((at (cerebro--gh-instant (alist-get 'updatedAt item))))
-                     (and at (or (null ended-at) (> at ended-at)))))))
+                     (and at ended-at (> at ended-at))))))
     (list (mapcar (lambda (issue) (alist-get 'number issue))
                   (seq-filter moved-p issues))
           (mapcar (lambda (pr) (alist-get 'number pr))
@@ -2044,6 +2062,42 @@ names is the first one `gh' would show the navigator."
                           (not (equal me (alist-get 'login (alist-get 'author pr))))
                           (funcall moved-p pr)))
                    prs)))))
+
+(defun cerebro--linked-beads (beads)
+  "Pure.  (ID ISSUE-NUMBER UPDATED-AT) for every bead in BEADS linked to a
+GitHub issue - an `external_ref\=' of the form \"gh-<n>\" - with UPDATED-AT as
+`float-time\=' (`cerebro--gh-instant\='), in the order BEADS came.
+
+What Moira is started for besides an issue that moved: her other job is
+keeping each linked issue\='s status comments in step with its bead - CLAIMED,
+MERGED, VERIFIED - and every one of those transitions happens on the board, so
+the issue\='s own `updatedAt\=' does not move for it.  Without this the hourly
+floor was the only thing covering them, an hour late (cb-b4m).
+
+A bead whose `updated_at\=' does not parse is left out rather than guessed at,
+the same way `cerebro--gh-moved\=' leaves out an item it cannot date.  `bd
+list --brief --json\=' omits a null `external_ref\=' rather than printing it,
+so this asks for the key rather than assuming it is there."
+  (delq nil
+        (mapcar (lambda (bead)
+                  (let ((ref (alist-get 'external_ref bead))
+                        (at (cerebro--gh-instant (alist-get 'updated_at bead))))
+                    (and (stringp ref) at
+                         (string-match "\\`gh-\\([0-9]+\\)\\'" ref)
+                         (list (alist-get 'id bead)
+                               (string-to-number (match-string 1 ref))
+                               at))))
+                beads)))
+
+(defun cerebro--linked-moved (linked ended-at)
+  "Pure.  The entries of LINKED (`cerebro--linked-beads\=') whose UPDATED-AT is
+after ENDED-AT.
+
+Nil ENDED-AT - no end to measure against - is nothing moved, for the reason
+`cerebro--gh-moved\=' gives: a view that cannot tell what has changed has a
+reason not to start a session, not a reason to start one on everything."
+  (and ended-at
+       (seq-filter (lambda (entry) (> (nth 2 entry) ended-at)) linked)))
 
 (defun cerebro--standby-label (agent context)
   "Pure.  The Bead/Phase column of AGENT\='s standby row: what it is waiting for.
@@ -3001,11 +3055,13 @@ described.")
 (defvar-local cerebro--seen-up nil
   "Alist of (NAME . FLOAT-TIME) - when this view last derived NAME as up.
 
-The `ended-at\=' of an implementer whose session DIED: one that ended its own
-pass is parked like a role since cb-1or.1 and reads its park instead
+The `ended-at\=' of any agent, of either kind, that has no parked entry: a
+pass the view ended is parked and reads its park instead
 (`cerebro--agent-context\=').  With no parked entry, \"did the last start
 produce anything\" (`cerebro--start-failed-p\=') is answered by whether the
-view saw the session alive after it was started.
+view saw the session alive after it was started - and so is every trigger
+measured against an end, which is why this is not the implementers\=' alone
+(cb-b4m).
 Written by `cerebro--revert\=' from `cerebro--up-names\=', once a tick.")
 
 (defun cerebro--session (name)
@@ -3558,9 +3614,11 @@ does: one launcher that cannot start must not stop the others."
             ;; Arming is the other half of the same declaration (cb-98u): the
             ;; name goes on `cerebro--armed', and a parked entry gives its
             ;; trigger a moment to count from - ENDED-AT now, no STARTED-AT
-            ;; (it has never started), no kept buffer. Without that entry a
-            ;; cadence role would never fire at all, and Moira's `gh' trigger
-            ;; would count every open issue as moved and start her at once.
+            ;; (it has never started), no kept buffer. Without that entry
+            ;; nothing measured against an end could fire at all: neither a
+            ;; cadence, nor Moira's two conditions, which both ask what moved
+            ;; since her last pass and count nothing when there is no pass to
+            ;; measure against (cb-b4m).
             (let ((armed (cerebro--standby-arming cerebro--agents standby)))
               (dolist (name armed)
                 (cl-pushnew name cerebro--armed :test #'equal)
@@ -4092,19 +4150,26 @@ if the list it partitions is."
         "open,in_progress,blocked,deferred,closed" "--json" "--brief"))
 
 (defun cerebro--request-beads (repo-root callback)
-  "Ask `bd' for the panel's beads without blocking; CALLBACK gets the four
-partition lists (see `cerebro--partition-beads') when the answer lands, or
-nil when `bd' did not answer - including `bd' exiting zero but printing
-something that is not JSON, which is not a valid empty answer either.
-Returns what `cerebro--run-async' returns."
+  "Ask `bd' for the panel's beads without blocking; CALLBACK gets the
+partition lists (see `cerebro--partition-beads') and the linked beads
+(`cerebro--linked-beads') when the answer lands, or nil and nil when `bd' did
+not answer - including `bd' exiting zero but printing something that is not
+JSON, which is not a valid empty answer either.
+Returns what `cerebro--run-async' returns.
+
+The linked beads come off the raw list rather than out of the partition,
+which deliberately leaves out what is settled (`cerebro--settled-p') - and a
+bead going VERIFIED is exactly the transition Moira has to see (cb-b4m).  One
+`bd' call answers both: a trigger evaluated once per standby row per
+five-second tick cannot afford a second."
   (cerebro--run-async
    'beads repo-root (cerebro--bd-list-argv)
    (lambda (out)
-     (funcall callback
-              (and out
-                   (let ((parsed (cerebro--try-parse-json out)))
-                     (and (not (eq parsed cerebro--parse-failed))
-                          (cerebro--partition-beads parsed))))))))
+     (let ((parsed (and out (cerebro--try-parse-json out))))
+       (if (or (null out) (eq parsed cerebro--parse-failed))
+           (funcall callback nil nil)
+         (funcall callback (cerebro--partition-beads parsed)
+                  (cerebro--linked-beads parsed)))))))
 
 (defun cerebro--bd-text (repo-root id)
   "The output of `bd show ID' run in REPO-ROOT, or nil if it failed.
@@ -4475,6 +4540,15 @@ as `busy' by the first chain's still-running one (PR #42 review).")
 (defvar-local cerebro--beads nil
   "The last partition `bd' answered with, or nil before the first.")
 
+(defvar-local cerebro--linked nil
+  "The beads linked to a GitHub issue as of the last answer, or nil.
+
+\(ID ISSUE-NUMBER UPDATED-AT), from `cerebro--linked-beads' over the same
+`bd' answer `cerebro--beads' is partitioned from.  What Moira\='s bead-side
+trigger is judged against (`cerebro--trigger-context'), and kept beside the
+partition rather than inside it because the partition leaves out what is
+settled, which is where a VERIFIED bead lands (cb-b4m).")
+
 (defvar-local cerebro--beads-as-of nil
   "`float-time' when `cerebro--beads' arrived, or nil.")
 
@@ -4538,12 +4612,13 @@ finish rather than joined by a second (`cerebro--run-async' says `busy')."
     (let ((root (with-current-buffer buffer (cerebro--repo-root))))
       (pcase (cerebro--request-beads
               root
-              (lambda (beads)
+              (lambda (beads &optional linked)
                 (when (buffer-live-p buffer)
                   (with-current-buffer buffer
                     (setq cerebro--beads-requested-at nil)
                     (if beads
                         (setq cerebro--beads beads
+                              cerebro--linked linked
                               cerebro--beads-as-of (float-time)
                               cerebro--beads-failed-at nil)
                       (setq cerebro--beads-failed-at (float-time))))
@@ -4941,7 +5016,11 @@ was a failure, are both plain values: neither depends on whose pass it is."
                  (lambda (name) (cerebro--stop-flag-p repo-root name))))
           (cons 'first-planner
                 (car (cerebro--fleet-role-names (cerebro--fleet repo-root) "planner")))
-          (cons 'gh (cerebro--gh-resolver)))))
+          (cons 'gh (cerebro--gh-resolver))
+          ;; The linked beads as the panel last saw them; which of them moved
+          ;; is measured against the role's own pass, so that part is
+          ;; `cerebro--agent-context's (cb-b4m).
+          (cons 'linked (and panel (buffer-local-value 'cerebro--linked panel))))))
 
 (defun cerebro--agent-context (agent context)
   "CONTEXT with the facts that are AGENT\='s rather than the fleet\='s.
@@ -4955,14 +5034,20 @@ and this one is a few conses per standby row."
   (let* ((name (cerebro-agent-name agent))
          ;; When this agent's last session ended.  The moment the view parked
          ;; it, for every agent that ended a pass - since cb-1or.1 that is an
-         ;; implementer too.  Only one whose session simply *died* has no
-         ;; parked entry, and there the last tick that saw it up is the
-         ;; nearest thing to an end there is (cb-hzs).
+         ;; implementer too.  With no parked entry - a session that simply
+         ;; *died*, a park that threw, an Emacs restarted mid-pass - the last
+         ;; tick that saw it up is the nearest thing to an end there is
+         ;; (cb-hzs), and that is every kind's answer since cb-b4m: nil here
+         ;; is what let Moira read every open issue as moved, on every tick
+         ;; the floor allowed, for a day.
          (ended-at (or (nth 0 (cdr (assoc name cerebro--parked)))
-                       (and (eq (cerebro-agent-kind agent) 'implementer)
-                            (cdr (assoc name cerebro--seen-up)))))
+                       (cdr (assoc name cerebro--seen-up))))
          (gh (alist-get 'gh context)))
     (append (list (cons 'gh (if (functionp gh) (funcall gh ended-at) gh))
+                  ;; The bead side of the same question, and measured the
+                  ;; same way: what changed since THIS role's pass (cb-b4m).
+                  (cons 'linked-moved
+                        (cerebro--linked-moved (alist-get 'linked context) ended-at))
                   (cons 'ended-at ended-at)
                   ;; What the backoff is indexed by, read here so the row and
                   ;; `cerebro--start-due' have one source for it.
@@ -5139,10 +5224,10 @@ is where that is said."
     ;; beside them (cb-63m).
     (setq agents (cerebro--apply-session-counts agents procs))
     (setq cerebro--agents agents)
-    ;; An implementer's `ended-at': the last tick that saw its session up
-    ;; (`cerebro--seen-up'). A role records the moment the view parked it;
-    ;; an implementer is never parked, so this is what tells a start that
-    ;; produced a session from one that produced nothing (cb-hzs).
+    ;; The fallback `ended-at': the last tick that saw a session up
+    ;; (`cerebro--seen-up'). A pass the view ended is parked and reads its
+    ;; park; this is what answers for everything else - a start that produced
+    ;; no session (cb-hzs), and a role with no park at all (cb-b4m).
     (let ((at (float-time now)))
       (dolist (name (cerebro--up-names agents))
         (setf (alist-get name cerebro--seen-up nil nil #'equal) at)))

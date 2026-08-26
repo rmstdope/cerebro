@@ -83,8 +83,9 @@ kept — and starts a fresh one when a planned bead exists, at most one implemen
 It runs the **interactive roles** exactly the same way: a role that writes `waiting` is ended half a
 minute later — its buffer kept, `RET` shows it — and started fresh when its trigger fires: a planner
 when the planned buffer is short, a P0 is unplanned or (the first planner) a P4 wants ranking;
-Psylocke when a merged bead is unverified or a verdict is stale; Moira and Cypher when an issue or an
-outside PR moved on GitHub, and hourly regardless; Forge hourly too; an implementer when a planned,
+Psylocke when a merged bead is unverified or a verdict is stale; Moira when an issue moved on GitHub
+or a bead linked to one (`gh-<n>` in its `external_ref`) changed since her last pass, Cypher when an
+outside PR moved, both hourly regardless; Forge hourly too; an implementer when a planned,
 unclaimed bead exists. A role you have not started this Emacs is never started: `s` (or
 `autostart` or `standby` in `roster.conf`) arms it — `standby` arms without starting, so the row
 reads `standby` from the moment the view opens and the trigger is what starts it — `k` and `f`

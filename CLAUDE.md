@@ -432,7 +432,11 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   than everything-except: the price is that a new runtime artifact has to be added to it, and that
   price was taken so models.conf could be tracked without a negation per tracked file. `.claude/` holds only what Claude
   Code itself discovers (`agents/`, `skills/`, `settings.json`) plus this repository's own
-  submodule mount.
+  submodule mount. Since cb-d59.4 `.github/agents/<role>.agent.md` and `.github/skills/<name>` hold
+  the same links under the names GitHub Copilot discovers, written by the same sync — **both
+  layouts, always, whatever `agent_cli` declares**, so switching provider is one line in
+  `.cerebro/project.conf` and nothing else. They are tracked here, and produced by running the
+  script rather than written by hand.
 - **This repository is a consumer of itself** (cb-i3l.1). `.claude/cerebro` is a committed symlink
   back to the checkout, so every path the harness assumes — `.claude/cerebro/scripts/launch`, the
   `../cerebro/...` links the sync writes — is literally true here, and the fleet runs the *working
@@ -483,9 +487,11 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   the one place "how is this checkout mounted in it" is answered — `--self-mounted` and `--mount`.
 - `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
   asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a
-  submodule-bump PR commit them (ah-cuc). It writes nothing outside `.claude/` (cb-pq4): the
-  `.dir-locals.el` it used to install is gone, and the one thing it does at the consumer root is
-  remove a link to the retired template, out loud.
+  submodule-bump PR commit them (ah-cuc). It writes into every discovery path
+  `scripts/agent-cli --layouts` names — `.claude/` and, since cb-d59.4, `.github/` — and mirrors a
+  project's own definitions from `.claude/` into the others, one way only. cb-pq4's actual rule is
+  intact: the consumer **root** is the project's alone, the `.dir-locals.el` it used to install is
+  gone, and the one thing it does there is remove a link to the retired template, out loud.
   The two git hooks ask git directly (`--show-toplevel`) rather than `consumer-root`: a hook's cwd
   is already inside the tree it fires in, so the enclosing tree is `--show-toplevel` by definition.
 - `githooks/install.sh` sets `core.hooksPath`, which is repository-wide and replaces `.git/hooks`

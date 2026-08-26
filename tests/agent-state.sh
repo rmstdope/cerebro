@@ -454,18 +454,25 @@ run_state "$tmp" Moira working --phase sweep --pid 42
 rm -rf "$tmp"
 pass "a-state-that-is-not-waiting-has-a-null-wake-at"
 
-# --- waiting-is-refused-from-an-implementer ---
+# --- waiting-from-an-implementer-records-a-wake-at ---
+# Since cb-1or.1 `waiting` is every agent's end-of-pass state, an implementer's included: it
+# ends a pass with nothing in flight, so there is no bead on the file.
 tmp="$(new_fixture)"
-set +e
-out="$(run_state "$tmp" Cyclops waiting --wake-in 600 --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "waiting-is-refused-from-an-implementer: expected exit 2, got $status"
-grep -q "waiting is an interactive agent's state" <<<"$out" \
-  || fail "waiting-is-refused-from-an-implementer: wrong message, got: $out"
-[[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "waiting-is-refused-from-an-implementer: file was written"
+run_state "$tmp" Cyclops waiting --wake-in 600 --pid 42
+f="$(state_file "$tmp" Cyclops)"
+[[ -f "$f" ]] || fail "waiting-from-an-implementer-records-a-wake-at: no state file was written"
+[[ "$(jq -r '.state' "$f")" == "waiting" ]] \
+  || fail "waiting-from-an-implementer-records-a-wake-at: state was $(jq -r '.state' "$f")"
+[[ "$(jq -r '.bead' "$f")" == "null" ]] \
+  || fail "waiting-from-an-implementer-records-a-wake-at: bead was $(jq -r '.bead' "$f")"
+since="$(jq -r '.since' "$f")"
+wake_at="$(jq -r '.wake_at' "$f")"
+since_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$since")"
+wake_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$wake_at")"
+[[ $((wake_epoch - since_epoch)) -eq 600 ]] \
+  || fail "waiting-from-an-implementer-records-a-wake-at: wake_at is $((wake_epoch - since_epoch))s after since, wanted 600"
 rm -rf "$tmp"
-pass "waiting-is-refused-from-an-implementer"
+pass "waiting-from-an-implementer-records-a-wake-at"
 
 # --- waiting-without-wake-in-is-refused ---
 tmp="$(new_fixture)"
@@ -477,6 +484,15 @@ set -e
 grep -q -- "--wake-in is required with waiting" <<<"$out" \
   || fail "waiting-without-wake-in-is-refused: wrong message, got: $out"
 [[ -f "$(state_file "$tmp" Moira)" ]] && fail "waiting-without-wake-in-is-refused: file was written"
+# The same refusal holds for an implementer, which may write `waiting` since cb-1or.1.
+set +e
+out="$(run_state "$tmp" Cyclops waiting --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "waiting-without-wake-in-is-refused: expected exit 2 for an implementer, got $status"
+grep -q -- "--wake-in is required with waiting" <<<"$out" \
+  || fail "waiting-without-wake-in-is-refused: wrong message for an implementer, got: $out"
+[[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "waiting-without-wake-in-is-refused: implementer file was written"
 rm -rf "$tmp"
 pass "waiting-without-wake-in-is-refused"
 

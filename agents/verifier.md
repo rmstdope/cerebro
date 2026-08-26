@@ -401,6 +401,12 @@ you can ahead of the question:
 - **A warm build.** `--prewarm` on `prepare-worktree` above already ran whatever the project
   declared as its `prewarm` build, after the reset — never build it again once the navigator has
   said yes. A project that declares none has nothing to warm, and that is an ordinary state.
+- **What this project's own verification asks of you.**
+  `project-conf verification_skill` names a skill carrying the project's verification
+  procedure — which shell to prefer, how its fixtures are chosen and proved, and the shape the
+  navigator expects a script in. **Load it before you prepare anything**, and follow it where it
+  is more specific than this file. **Unset means the step is skipped**: prepare from what is
+  below and nothing is missing.
 - **What to load.** `project-conf fixtures_doc` names the file describing the project's fixtures, if
   it has one; read it and pick the fixture that exercises what the bead changed. **Unset means the
   step is skipped** — do not go looking for fixtures the project never said it had.

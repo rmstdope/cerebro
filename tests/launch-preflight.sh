@@ -229,6 +229,10 @@ pass "a branch that does not exist on origin is reported rather than skipped in 
 # STALENESS, so this must stay as silent as it has always been.
 c="$(make_consumer unreachable main)"
 git -C "$c" remote set-url origin "$work_dir/no-such-origin.git"
+# The one case here that asserts on the WHOLE of stderr, so it is also the one that has to declare
+# an agent_cli: without a declaration `agent-cli` says so on every call (cb-d59.2, Q4), which is a
+# line about the CLI rather than about staleness and would make this case assert the wrong thing.
+printf 'agent_cli claude\n' > "$c/.cerebro/project.conf"
 before="$(head_of "$c")"
 set +e
 out="$(run_preflight "$c" 2>&1)"
@@ -337,5 +341,21 @@ run_preflight "$self_consumer" planner Xavier || fail "self-consumer: expected e
 [[ -f "$self_consumer/.claude/skills/plan-bead/SKILL.md" ]] \
   || fail "self-consumer: the skill link does not resolve to a SKILL.md"
 pass "cerebro mounted in its own checkout passes the preflight and gets working links"
+
+# --- an agent CLI this cerebro cannot run is refused, by agent-cli rather than by this script -----
+#
+# The provider is `scripts/agent-cli`'s answer since cb-d59.2, and the preflight asks rather than
+# spelling `claude` itself. A declaration it cannot run must therefore stop a launch here, where the
+# `claude`-missing refusal already does.
+c="$(make_consumer wrong-cli)"
+printf 'agent_cli emacs-doctor\n' > "$c/.cerebro/project.conf"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "wrong-cli: expected exit 2, got $status"
+echo "$out" | grep -q "is not an agent CLI cerebro knows" \
+  || fail "wrong-cli: expected agent-cli's own sentence, got: $out"
+pass "launch-preflight refuses when the consumer declares an agent CLI cerebro cannot run"
 
 echo "all launch-preflight tests passed"

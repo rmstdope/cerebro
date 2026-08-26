@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# Checked, then synced, before every launch: `claude` is on PATH, the consumer's checkout
+# Checked, then synced, before every launch: the agent CLI this fleet runs on (scripts/agent-cli,
+# cb-d59.2) is one this cerebro knows and its binary is on PATH, the consumer's checkout
 # is current with the fleet's default branch on origin (scripts/default-branch) so the session
 # reads today's instructions rather than a
 # days-old copy of them (ah-puoj), this checkout is a
 # consumer's .claude/cerebro (sync and the submodule check are skipped otherwise - a
 # standalone clone has nothing to link into and no agent files of its own to check),
 # the submodule bump actually brought in this role's agent file, and the link it
-# produces resolves. Every launcher runs this immediately before `exec claude`
+# produces resolves. Every launcher runs this immediately before it execs the agent CLI
 # (ah-cuc), so a session that cannot start says why instead of exiting silently
 # (ah-bri) - a launcher used to go `up` for half a second and then `dead` with
 # nothing to read anywhere when `agents/architect.md` was missing.
 #
 # usage: launch-preflight <role> <name>
-#   <role>  the --agent value the launcher is about to pass claude (architect, planner, ...)
+#   <role>  the role the launcher is about to start (architect, planner, ...)
 #   <name>  the display name for messages (Bishop, Cyclops, ...)
 #
-# Every check this script owns - claude on PATH, the submodule carrying the role's agent
-# file - exits 2 with one line on stderr naming what is wrong and the command that fixes
+# Every check this script owns - the agent CLI, asked of `agent-cli`, and the submodule carrying
+# the role's agent file - exits 2 with one line on stderr naming what is wrong and the command that fixes
 # it, the same exit code `launch` already uses for a usage error. Each of those lines is said by
 # `launch-refused`, which also appends it to the consumer's .cerebro/state/errors.jsonl (cb-ccl):
 # stderr alone goes to a vterm buffer that may die before it is drawn, and then a fleet that cannot
@@ -33,14 +34,19 @@ if [[ -z "$role" || -z "$name" ]]; then
   exit 2
 fi
 
-# Resolved before the first refusal rather than after the `claude` check: every refusal this script
+# Resolved before the first refusal rather than after the agent-cli check: every refusal this script
 # owns is said and recorded by `launch-refused` (cb-ccl), which lives beside it.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-if ! command -v claude >/dev/null 2>&1; then
-  "$script_dir/launch-refused" "$name" "claude is not on PATH - install Claude Code or fix PATH before starting $name"
-  exit 2
-fi
+# Which agent CLI this fleet runs on, and whether it can be launched at all, is `agent-cli`'s
+# answer and no longer spelt here (cb-d59.2): it refuses an undeclarable provider and a missing
+# binary, saying and recording both through `launch-refused` itself, and exits 3. This turns that
+# into the 2 every other refusal in this file uses - `launch-refused` always exits 0, so the code
+# does not propagate on its own.
+#
+# It keeps its position, FIRST, before `consumer-root`: outside a consumer `project-conf` resolves
+# no root, `agent-cli` answers `claude`, and the PATH check behaves exactly as it did.
+"$script_dir/agent-cli" --check "$name" || exit 2
 
 consumer="$("$script_dir/consumer-root" 2>/dev/null)" || exit 0
 parent="$consumer/.claude"                                    # .claude, in a consumer

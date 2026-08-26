@@ -17,7 +17,7 @@ file. The `## Summary` table below is therefore built row-for-row from the flags
 
 | what `scripts/launch` passes today | Copilot equivalent | measured? | note |
 |---|---|---|---|
-| `claude` | `copilot` | yes (M1) | already installed globally via npm; a Node loader that re-execs a native child |
+| `claude` | `copilot` | yes (M1) | already installed globally via npm; a Node loader that forks a native child |
 | `--agent <role>` | `--agent <role>` | yes (M4) | reads `.github/agents/<role>.agent.md`; relative symlink followed |
 | `--name <Name>` | `-n, --name <name>` | yes (M3) | same spelling; a real argv token; also sets the terminal title and is a `--resume` key |
 | `--remote-control <Name>` | **none** | yes (M12) | `--remote`/`--remote-export` is GitHub web/mobile control of a session, a different thing. Decision 7 already accepts this loss |
@@ -127,7 +127,7 @@ The process the launcher would record (the direct child of the shell, i.e. what 
 
 byte length `287`, nothing truncated.
 
-Its one descendant, the native binary the loader re-execs into:
+Its one descendant, the native binary the loader forks (both pids stay alive):
 
 ```
 51716 51714 /opt/homebrew/lib/node_modules/@github/copilot/node_modules/@github/copilot-darwin-arm64/copilot --name Cyclops --allow-all-tools -i This session is Cyclops of the cerebro fleet rooted at /Users/henrikku/repos/cerebro/.cerebro/worktrees/cb-d59.1/probe/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.

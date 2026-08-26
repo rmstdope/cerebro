@@ -63,10 +63,9 @@ The glyph carries the state and the weight carries the urgency:
 |--------------------|----------------------------------------------------------------|
 | green `●`          | working, or an interactive agent that is up                     |
 | blue `◆`           | idle — a session is up with no bead, which may want a nudge     |
-| yellow `◐`         | waiting — an interactive role between passes; it is ended within half a minute |
-| blue `◌`           | standby — the view ended this role after its pass and starts a fresh one when the trigger in the For column fires; `RET` shows its last pass |
+| yellow `◐`         | waiting — an agent between passes, an implementer's included; it is ended within half a minute |
+| blue `◌`           | standby — the view ended this agent after its pass and starts a fresh one when the trigger in the For column fires; `RET` shows its last pass |
 | yellow `?`, **bold** | asking: it needs an answer from you, and the whole row says so |
-| green `◍`          | done, and about to be replaced by a fresh session               |
 | grey `○`           | dead — nobody is there                                          |
 
 Bold is only ever "this row wants you", so it stays worth noticing: idle and dead share the quiet
@@ -191,11 +190,14 @@ Implementers are interactive sessions that take one bead each, so they cannot en
 same five-second poll that refreshes the list acts on what each one reports in
 `.cerebro/state/<name>.state.json`:
 
-- **`done`** — the bead is merged, closed and cleaned up. The session is ended and a fresh one
-  started for the next bead, which is how a session's context stays one bead deep.
-- **`done` with `.cerebro/state/<name>.stop` present** — ended, and no replacement; the flag is
-  removed with it. `s` on a name with a flag removes it too, and says so. That is what "stop an
-  implementer" means: it finishes what it is on, and then does not come back until started again.
+- **`waiting`** — the pass is over: the bead is merged, closed and cleaned up, or it was handed
+  back, or there was nothing to claim (cb-1or.1). The session is ended half a minute later and its
+  buffer kept; a fresh one starts when a planned, unclaimed bead exists, which is how a session's
+  context stays one bead deep.
+- **`waiting` with `.cerebro/state/<name>.stop` present** — ended, and no replacement; the flag is
+  removed with it and the name disarmed. `s` on a name with a flag removes it too, and says so. That
+  is what "stop an implementer" means: it finishes what it is on, and then does not come back until
+  started again.
 - **`asking`** — blocked on a question only the navigator can answer. Answer it in the detail
   window. After `cerebro-answer-timeout` (900s) with no answer, the session is told to hand the
   bead to the `human` queue and finish, once, so a fleet left alone does not sit blocked.

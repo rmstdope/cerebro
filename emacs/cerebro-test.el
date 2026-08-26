@@ -1224,7 +1224,7 @@ Every other value logs the decisions whatever it is - losing the record of a
 start is worse than a typo in a setting - so silence has to be asked for by
 name.  It is what the suite binds, so that running the tests cannot write into
 the log the navigator reads."
-  (dolist (event '(start end exit retire restart sweep evaluate))
+  (dolist (event '(start end exit retire restart sweep evaluate triage))
     (should-not (cerebro--log-event-p event 'none)))
   ;; And every other value still records what the view did.
   (dolist (verbosity '(decisions changes evaluations nil some-typo))
@@ -6207,6 +6207,55 @@ figures read before Cerebro went idle names beads it has just ranked."
     (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil 1800 nil 1000000.0)))
     (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil nil 10 1000000.0)))))
 
+(ert-deftest cerebro-test/triage-tell-types-remembers-and-logs ()
+  (let* ((typed nil) (logged nil)
+         (ids '("cb-1" "cb-2"))
+         (agent (cerebro-test--cerebro 'idle))
+         (now (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))
+         (cerebro-triage-repeat 600))
+    (cl-letf (((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _) (list (cons 'unranked-ids ids)
+                                       (cons 'beads-read-at (- (float-time now) 5)))))
+              ((symbol-function 'cerebro--type-into-session)
+               (lambda (a m) (push (cons (cerebro-agent-name a) m) typed)))
+              ((symbol-function 'cerebro--log)
+               (lambda (_root event fields) (push (cons event fields) logged))))
+      (with-temp-buffer
+        (cerebro--triage-tell (list agent) "/tmp/nowhere" now)
+        (cerebro--triage-tell (list agent) "/tmp/nowhere" now)
+        (should (equal typed (list (cons "Cerebro" (cerebro--triage-message ids)))))
+        (should (equal (car (cdr (assoc "Cerebro" cerebro--triage-told))) ids))
+        (should (equal (length logged) 1))
+        (should (eq (car (car logged)) 'triage))
+        (should (equal (alist-get 'ids (cdr (car logged))) ids))
+        (should (null (alist-get 'repeat (cdr (car logged)))))
+        ;; Ten minutes later, same set: repeated, and said to be.
+        (let ((later (time-add now 601)))
+          (cl-letf (((symbol-function 'cerebro--trigger-context)
+                     (lambda (&rest _) (list (cons 'unranked-ids ids)
+                                             (cons 'beads-read-at (- (float-time later) 5))))))
+            (cerebro--triage-tell (list agent) "/tmp/nowhere" later)
+            (should (equal (length typed) 2))
+            (should (eq (alist-get 'repeat (cdr (car logged))) t))))
+        ;; The set empties: the record goes with it, so its return is a change.
+        (cl-letf (((symbol-function 'cerebro--trigger-context)
+                   (lambda (&rest _) (list (cons 'unranked-ids nil) (cons 'beads-read-at 0.0)))))
+          (cerebro--triage-tell (list agent) "/tmp/nowhere" now)
+          (should (null (assoc "Cerebro" cerebro--triage-told))))))))
+
+(ert-deftest cerebro-test/triage-tell-gathers-nothing-when-nobody-could-take-a-line ()
+  "The context gather costs a stat per implementer; a fleet with no idle,
+owned Cerebro pays it for nothing."
+  (let ((gathered 0))
+    (cl-letf (((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _) (cl-incf gathered) nil)))
+      (with-temp-buffer
+        (cerebro--triage-tell (list (cerebro-test--cerebro 'working)
+                                    (cerebro-test--cerebro 'idle t)
+                                    (cerebro-test--interactive "Xavier" "planner" 'idle))
+                              "/tmp/nowhere" (current-time))
+        (should (= gathered 0))))))
+
 (ert-deftest cerebro-test/an-unranked-bead-starts-an-armed-cerebro ()
   "Cerebro is started for one thing - a bead waiting for a ranking - so the
 triage pass it runs on startup has something to ask about (cb-5lx.2).  The
@@ -6286,6 +6335,7 @@ evaluation's answer differs from that agent's last, `decisions' keeps only
 what the view actually did."
   (should (cerebro--log-event-p 'start 'decisions))
   (should (cerebro--log-event-p 'end 'decisions))
+  (should (cerebro--log-event-p 'triage 'decisions))
   (should-not (cerebro--log-event-p 'evaluate 'decisions))
   (should (cerebro--log-event-p 'evaluate 'changes))
   (should (cerebro--log-event-p 'evaluate 'evaluations))

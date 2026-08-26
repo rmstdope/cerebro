@@ -3761,6 +3761,43 @@ otherwise."
          (cond ((not (equal ids (car told))) 'tell)
                ((>= (- now (cdr told)) cerebro-triage-repeat) 'repeat)))))
 
+(defun cerebro--triage-tell (agents repo-root now)
+  "Type the triage line into every idle orchestrator in AGENTS that is due one.
+
+The impure half: reads the panel through `cerebro--trigger-context\=' (only
+when some AGENT could take a line - the gather is not free), decides with
+`cerebro--triage-action\=', types through `cerebro--type-into-session\=', records
+the set in `cerebro--triage-told\=', and logs a `triage\=' event per line typed.
+Errors are demoted per agent, as `cerebro--supervise\=' demotes its own."
+  (let ((candidates (seq-filter (lambda (a) (and (equal (cerebro-agent-role a) "orchestrator")
+                                                 (eq (cerebro-agent-state a) 'idle)
+                                                 (not (cerebro-agent-external a))))
+                                agents)))
+    (when candidates
+      (let* ((context (cerebro--trigger-context repo-root now))
+             (ids (alist-get 'unranked-ids context))
+             (read-at (alist-get 'beads-read-at context))
+             (now-float (float-time now)))
+        (dolist (agent candidates)
+          (let ((name (cerebro-agent-name agent)))
+            (cerebro--with-logged-errors (format "triage %s" name)
+              (if (null ids)
+                  (setq cerebro--triage-told (assoc-delete-all name cerebro--triage-told))
+                (let ((action (cerebro--triage-action
+                               agent ids (cdr (assoc name cerebro--triage-told))
+                               (cerebro--seconds-since (cerebro-agent-since agent) now)
+                               (and read-at (- now-float read-at))
+                               now-float)))
+                  (when action
+                    (cerebro--type-into-session agent (cerebro--triage-message ids))
+                    (setf (alist-get name cerebro--triage-told nil nil #'equal)
+                          (cons ids now-float))
+                    (cerebro--log repo-root 'triage
+                                  (list (cons 'agent name)
+                                        (cons 'role (cerebro-agent-role agent))
+                                        (cons 'ids ids)
+                                        (cons 'repeat (eq action 'repeat))))))))))))))
+
 (defun cerebro--forget-session (agent)
   "Kill AGENT's session buffer, without asking and without refreshing.
 
@@ -3886,7 +3923,7 @@ with the sign reversed."
 
 `decisions\=' - only what the view did: a session started (with the trigger
 that fired), ended, retired, nudged, a launch refused, a sweep
-finding run.
+finding run, a triage line typed.
 
 `changes\=' - the decisions, plus one line each time a standby role\='s trigger
 *answer* changes.  A planner that has been \"buffer 0 of 3\" for an hour is one
@@ -3929,9 +3966,13 @@ of days at `evaluations\=' and months at `changes\='."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire nudge standby arm refused exit give-up sweep error)
+  '(start end retire nudge standby arm refused exit give-up sweep triage error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
+
+`triage\=' is a line typed into an idle Cerebro naming unranked beads
+\(cb-5lx.2) - a decision the view took, so it is written at every verbosity
+like `nudge\='.
 
 `error\=' is on this list rather than behind a level of its own because an
 error is not a level of detail: a navigator who sets `decisions\=' is asking
@@ -5463,7 +5504,9 @@ avoid by coupling them the way an earlier version did (a sweep costs no
 The list first, then `cerebro--supervise' on what that just derived - never
 on a state file read five seconds ago - and then `cerebro--start-due', which
 starts a fresh session for every standby role whose trigger has come true
-(cb-5yr).  Then the bead panel, when its
+(cb-5yr), and `cerebro--triage-tell', which types one line into an idle
+Cerebro when an unranked bead is waiting for a ranking (cb-5lx.2).
+Then the bead panel, when its
 thirty seconds are up, the `gh' reader, when its ten minutes are (cb-5yr.2),
 and the sweeps, when their ten minutes are: one
 timer with the fleet buffer's lifetime, instead of a timer per panel each
@@ -5482,7 +5525,10 @@ left and runs every `cerebro-system-scan-seconds'."
           ;; After, not before: a role ended on this very tick is not on
           ;; standby until the next render restates it, which is what stops a
           ;; pass being ended and restarted inside one tick.
-          (cerebro--start-due repo-root now))
+          (cerebro--start-due repo-root now)
+          ;; And a line into an idle Cerebro, on the same freshly derived rows
+          ;; (cb-5lx.2).
+          (cerebro--triage-tell cerebro--agents repo-root now))
         ;; From the fleet buffer, because that is where the answers are read
         ;; back from (`cerebro--trigger-context'), and on its own ten-minute
         ;; cadence rather than this five-second one (cb-5yr.2).

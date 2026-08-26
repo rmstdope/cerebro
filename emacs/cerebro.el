@@ -1650,9 +1650,9 @@ having planned - so a blocked bead is a planner\='s work like any other."
 (defcustom cerebro-planner-buffer-floor 2
   "The fewest planned, unclaimed beads the fleet wants, whatever is running.
 
-`skills/plan-bead\=' sizes the buffer at one planned bead per running
-implementer and never fewer than this, including a fleet with nothing
-running at all: the navigator starts an implementer expecting it to have
+`skills/plan-bead\=' sizes the buffer at one planned bead per implementer on
+the roster, minus any told to finish, and never fewer than this - a roster of
+one builder still wants two, so a second builder started by hand has
 something to claim, and a queue that begins filling only once it is up is a
 queue that is late.
 
@@ -1676,13 +1676,14 @@ know."
                                   #'equal))
               beads))
 
-(defun cerebro--planner-want (live-implementers)
+(defun cerebro--planner-want (implementers)
   "Pure.  How many planned, unclaimed beads the fleet wants right now.
 
-One per running implementer, never fewer than `cerebro-planner-buffer-floor\='.
-The shell copy is `scripts/planner-buffer --want\='; see that script and the
-floor\='s docstring for why there are two."
-  (max cerebro-planner-buffer-floor live-implementers))
+One per implementer on the roster that has not been told to finish, never
+fewer than `cerebro-planner-buffer-floor\='.  The shell copy is
+`scripts/planner-buffer --want\='; see that script and the floor\='s
+docstring for why there are two."
+  (max cerebro-planner-buffer-floor implementers))
 
 (defcustom cerebro-retry-backoff '(0 30 120 600)
   "Seconds to wait before starting a role again, by consecutive failed starts.
@@ -1842,7 +1843,7 @@ looking unchanged is evidence of nothing."
     ("planner" (list (alist-get 'p0-unplanned context)
                      (alist-get 'p4-unranked context)
                      (alist-get 'planned context)
-                     (alist-get 'live-implementers context)
+                     (alist-get 'implementers context)
                      (alist-get 'actionable-ids context)))
     ("verifier" (list (alist-get 'stale-verdicts context)
                       (alist-get 'merged-unverified context)))
@@ -1901,7 +1902,7 @@ The string is the reason the echo line carries (`cerebro--start-message\='),
 so it has to say what the navigator would otherwise have to go and look up.
 
 CONTEXT is what `cerebro--trigger-context\=' gathers - `now\=',
-`live-implementers\=', `planned\=', `p0-unplanned\=' (ids), `p4-unranked\=',
+`implementers\=', `planned\=', `p0-unplanned\=' (ids), `p4-unranked\=',
 `actionable-ids\=', `planned-ids\=', `merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for
 no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) - plus the five
 per-agent facts `cerebro--agent-context\=' adds to it: `ended-at\=',
@@ -1942,16 +1943,16 @@ is merely waiting for it."
                 (p4 (alist-get 'p4-unranked context))
                 (planned (alist-get 'planned context))
                 ;; The buffer `skills/plan-bead' asks for: one planned,
-                ;; unclaimed bead per running implementer, never fewer than
-                ;; two - a fleet with nothing running is started by the
-                ;; navigator, and starting one to find an empty queue is the
-                ;; one case a buffer cannot recover from in time. A pass
-                ;; plans one bead, so a buffer two short is two passes. An
-                ;; implementer told to finish is not running for this
-                ;; purpose: it takes no further bead
+                ;; unclaimed bead per implementer on the roster, never fewer
+                ;; than two - since cb-1or.1 a builder between beads has no
+                ;; session and is started by a planned bead, so counting
+                ;; sessions sized the buffer at the floor on every quiet
+                ;; board (cb-1or.3). A pass plans one bead, so a buffer two
+                ;; short is two passes. An implementer told to finish is
+                ;; left out: it takes no further bead
                 ;; (`cerebro--trigger-context' excludes it). The rule's shell
                 ;; copy, which the skill calls, is `scripts/planner-buffer'.
-                (want (cerebro--planner-want (alist-get 'live-implementers context))))
+                (want (cerebro--planner-want (alist-get 'implementers context))))
             (cond
              ;; A P0 is planned the moment it appears, whichever planner sees
              ;; it: it is what the whole fleet is blocked behind.
@@ -2070,7 +2071,7 @@ floor that has half a minute left to run is not worth a different word."
                     (if (> failures 0) (format ", %d failed" failures) ""))
           "→ planned bead")))
      ((equal role "planner")
-      (format "→ buffer < %d" (cerebro--planner-want (alist-get 'live-implementers context))))
+      (format "→ buffer < %d" (cerebro--planner-want (alist-get 'implementers context))))
      ((equal role "verifier") "→ merged, unverified")
      (cadence
       (concat (cerebro--countdown
@@ -3827,7 +3828,7 @@ trigger read as well as what it decided."
              (cons 'reason reason)
              (cons 'planned (alist-get 'planned context))
              (cons 'planned_ids (alist-get 'planned-ids context))
-             (cons 'live_implementers (alist-get 'live-implementers context))
+             (cons 'implementers (alist-get 'implementers context))
              (cons 'p0_unplanned (alist-get 'p0-unplanned context))
              (cons 'p4_unranked (alist-get 'p4-unranked context))
              (cons 'merged_unverified (alist-get 'merged-unverified context))
@@ -4712,21 +4713,18 @@ gathered once a tick: see `cerebro--trigger-context'."
      ((null as-of) nil)
      (t (lambda (ended-at) (cerebro--gh-moved issues prs me ended-at))))))
 
-(defun cerebro--live-implementer-count (agents flagged-p)
-  "Pure.  How many of AGENTS are implementers that can still take a bead.
+(defun cerebro--implementer-count (agents flagged-p)
+  "Pure.  How many of AGENTS are implementers the fleet should have beads
+planned for: every implementer on the roster, minus those told to finish.
 
-FLAGGED-P is a predicate on a name: whether a stop flag is set for it.  An
-implementer told to finish is not running for this purpose - it finishes the
-bead it holds and retires, so a bead planned for it is a bead planned for
-nobody.  `skills/plan-bead\=' has always skipped it and this count did not,
-which is one of the two drifts `scripts/planner-buffer\=' now owns the rule to
-prevent.
-
-`dead\=' and `standby\=' are both excluded: neither has a session, and a
-standby one takes nothing until the view has brought it back (cb-hzs)."
+FLAGGED-P is a predicate on a name: whether a stop flag is set for it.  State
+is deliberately not read - since cb-1or.1 a builder between beads has no
+session, so `standby\=', `dead\=', `idle\=' and `working\=' all count
+(cb-1or.3).  An implementer told to finish takes no further bead, so a bead
+planned for it is planned for nobody.  The shell copy is
+`scripts/planner-buffer --want\='."
   (seq-count (lambda (agent)
                (and (eq (cerebro-agent-kind agent) 'implementer)
-                    (not (memq (cerebro-agent-state agent) '(dead standby)))
                     (not (funcall flagged-p (cerebro-agent-name agent)))))
              agents))
 
@@ -4784,9 +4782,9 @@ was a failure, are both plain values: neither depends on whose pass it is."
           (cons 'stale-verdicts (seq-count #'cerebro--stale-verdict-p open-beads))
           ;; One stat per implementer per tick, which is within what this
           ;; docstring's "deliberately cheap" allows; the rule itself is
-          ;; `cerebro--live-implementer-count'.
-          (cons 'live-implementers
-                (cerebro--live-implementer-count
+          ;; `cerebro--implementer-count'.
+          (cons 'implementers
+                (cerebro--implementer-count
                  cerebro--agents
                  (lambda (name) (cerebro--stop-flag-p repo-root name))))
           (cons 'first-planner

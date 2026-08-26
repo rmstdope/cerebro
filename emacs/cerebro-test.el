@@ -5728,7 +5728,7 @@ session - so it goes before the fresh one starts."
   "The trigger context, with nothing to do, plus OVERRIDES."
   (append overrides
           '((now . 1000000.0) (ended-at . 999000.0) (started-at . 990000.0)
-            (floor . 600) (first-planner-p . t) (live-implementers . 2)
+            (floor . 600) (first-planner-p . t) (implementers . 2)
             (planned . 4) (p0-unplanned) (p4-unranked . 0) (actionable-ids)
             (merged-unverified . 0) (stale-verdicts . 0) (gh))))
 
@@ -5750,7 +5750,7 @@ help: it holds a trigger naming what the role\='s OWN last pass was started for,
 and a bead moving from unplanned to held changes the fingerprint. So the rule
 itself has to ask whether there is work, the way the P0 and P4 rules already do
 by being derived from the unplanned list."
-  (let ((held '(planned . 0)) (want '(live-implementers . 2)))
+  (let ((held '(planned . 0)) (want '(implementers . 2)))
     ;; Nothing unplanned: short buffer or not, a pass has nothing to take.
     (should (null (cerebro-test--trigger "planner" held want '(actionable-ids))))
     ;; The same fleet with one bead free: that is a pass worth starting.
@@ -5786,22 +5786,22 @@ by being derived from the unplanned list."
     ;; something unplanned, because a short buffer is only a reason to start
     ;; while there is a bead to take - see
     ;; `cerebro-test/the-buffer-rule-needs-something-to-plan'.
-    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 3)
+    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(implementers . 3)
                                           '(actionable-ids "cb-9zz"))
                    "buffer 1 of 3"))
-    (should (equal (cerebro-test--trigger "planner" '(planned . 0) '(live-implementers . 1)
+    (should (equal (cerebro-test--trigger "planner" '(planned . 0) '(implementers . 1)
                                           '(actionable-ids "cb-9zz"))
                    "buffer 0 of 2"))
-    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(live-implementers . 0)
+    (should (equal (cerebro-test--trigger "planner" '(planned . 1) '(implementers . 0)
                                           '(actionable-ids "cb-9zz"))
                    "buffer 1 of 2"))
     ;; Enough is enough: one each above the floor, and nobody plans ahead of
     ;; that.
-    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(live-implementers . 2)
+    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(implementers . 2)
                                          '(actionable-ids "cb-9zz"))))
-    (should (null (cerebro-test--trigger "planner" '(planned . 3) '(live-implementers . 2)
+    (should (null (cerebro-test--trigger "planner" '(planned . 3) '(implementers . 2)
                                          '(actionable-ids "cb-9zz"))))
-    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(live-implementers . 0)
+    (should (null (cerebro-test--trigger "planner" '(planned . 2) '(implementers . 0)
                                          '(actionable-ids "cb-9zz"))))
     ;; The verifier: a stale verdict before a merged bead.
     (should (equal (cerebro-test--trigger "verifier" '(stale-verdicts . 2)) "2 stale verdicts"))
@@ -6135,10 +6135,10 @@ be a loop at the speed of the end grace."
   "The guard is a comparison, not a clock: the moment anything the trigger
 measures changes - a bead arrives, one is planned, an implementer comes up -
 the next pass starts on the next tick with no interval to wait out."
-  (let* ((before (cerebro-test--context '(planned . 1) '(live-implementers . 3)))
+  (let* ((before (cerebro-test--context '(planned . 1) '(implementers . 3)))
          (fingerprint (cerebro--trigger-fingerprint "planner" before))
          (moved (cons (cons 'last-fingerprint fingerprint)
-                      (cerebro-test--context '(planned . 1) '(live-implementers . 3)
+                      (cerebro-test--context '(planned . 1) '(implementers . 3)
                                              '(actionable-ids "cb-new")))))
     (should (null (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
                                     (cons (cons 'last-fingerprint fingerprint) before))))
@@ -6302,20 +6302,20 @@ the guard does that job by asking whether anything changed.  A clock in its
 place would only add latency to every real change."
   (should (equal (cerebro-wake-interval "Xavier" "planner") 0)))
 
-(ert-deftest cerebro-test/a-standby-implementer-is-not-a-live-implementer ()
-  "The buffer rule is sized to the builders that can take a bead.  One on
-standby has no session and takes nothing until it is back, so counting it
-plans work for nobody - the same reason an implementer told to finish is
-already excluded."
+(ert-deftest cerebro-test/every-implementer-on-the-roster-wants-a-bead ()
+  "Since cb-1or.1 a builder between beads has no session and is started by a
+planned bead, so the buffer is sized to the roster and not to what is up:
+standby, dead, idle and working all count, an interactive row never does,
+and one told to finish is the only implementer left out (cb-1or.3)."
   (let ((agents (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working)
                       (cerebro-test--agent "Rogue" "implementer" 'implementer 'idle)
                       (cerebro-test--agent "Storm" "implementer" 'implementer 'standby)
                       (cerebro-test--agent "Gambit" "implementer" 'implementer 'dead)
                       (cerebro-test--agent "Bishop" "implementer" 'implementer 'working)
                       (cerebro-test--interactive "Psylocke" "verifier" 'idle))))
-    (should (equal (cerebro--live-implementer-count
-                    agents (lambda (name) (equal name "Bishop")))
-                   2))))
+    (should (equal (cerebro--implementer-count agents (lambda (_) nil)) 5))
+    (should (equal (cerebro--implementer-count agents (lambda (name) (equal name "Bishop")))
+                   4))))
 
 (ert-deftest cerebro-test/an-implementer-is-started-for-a-planned-bead-and-not-for-having-died ()
   "The condition is work, not a death (cb-1or.1).  A standby implementer with
@@ -6403,11 +6403,11 @@ has been there - there is no session for an elapsed time to describe."
                                     ("architect" . 86400))))
     (should (equal (cerebro--standby-label
                     (cerebro-test--interactive "X" "planner" 'standby)
-                    (cerebro-test--context '(live-implementers . 3)))
+                    (cerebro-test--context '(implementers . 3)))
                    "→ buffer < 3"))
     (should (equal (cerebro--standby-label
                     (cerebro-test--interactive "X" "planner" 'standby)
-                    (cerebro-test--context '(live-implementers . 1)))
+                    (cerebro-test--context '(implementers . 1)))
                    "→ buffer < 2"))
     (should (equal (cerebro--standby-label
                     (cerebro-test--interactive "X" "verifier" 'standby)
@@ -6472,7 +6472,7 @@ the next tick starting it again."
                (lambda (fmt &rest args) (push (apply #'format fmt args) said)))
               ((symbol-function 'cerebro--trigger-context)
                (lambda (&rest _)
-                 '((now . 1000000.0) (live-implementers . 2) (planned . 4)
+                 '((now . 1000000.0) (implementers . 2) (planned . 4)
                    (p0-unplanned) (p4-unranked . 0) (first-planner-p)
                    (merged-unverified . 2) (stale-verdicts . 0) (gh)))))
       (with-temp-buffer
@@ -6503,7 +6503,7 @@ retried at 30s, 2m and then every 10m rather than every five seconds."
                (lambda (fmt &rest args) (push (apply #'format fmt args) said)))
               ((symbol-function 'cerebro--trigger-context)
                (lambda (&rest _)
-                 '((now . 1000000.0) (live-implementers . 2) (planned . 4)
+                 '((now . 1000000.0) (implementers . 2) (planned . 4)
                    (planned-ids "cb-1" "cb-2" "cb-3" "cb-4")
                    (p0-unplanned) (p4-unranked . 0) (first-planner-p)
                    (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
@@ -6540,7 +6540,7 @@ retried at 30s, 2m and then every 10m rather than every five seconds."
               ((symbol-function 'message) #'ignore)
               ((symbol-function 'cerebro--trigger-context)
                (lambda (&rest _)
-                 '((now . 1000000.0) (live-implementers . 2) (planned . 0)
+                 '((now . 1000000.0) (implementers . 2) (planned . 0)
                    (planned-ids)
                    (p0-unplanned) (p4-unranked . 0) (first-planner-p)
                    (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
@@ -6572,7 +6572,7 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
               ((symbol-function 'message) #'ignore)
               ((symbol-function 'cerebro--trigger-context)
                (lambda (&rest _)
-                 '((now . 1000000.0) (live-implementers . 0) (planned . 2)
+                 '((now . 1000000.0) (implementers . 0) (planned . 2)
                    (planned-ids "cb-1" "cb-2")
                    (p0-unplanned) (p4-unranked . 0) (first-planner-p)
                    (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
@@ -6595,7 +6595,7 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
                     (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby)))
         (cl-letf (((symbol-function 'cerebro--trigger-context)
                    (lambda (&rest _)
-                     '((now . 1000030.0) (live-implementers . 1) (planned . 2)
+                     '((now . 1000030.0) (implementers . 1) (planned . 2)
                        (planned-ids "cb-1" "cb-2")
                        (p0-unplanned) (p4-unranked . 0) (first-planner-p)
                        (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
@@ -6605,7 +6605,7 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
         (setq launched nil)
         (cl-letf (((symbol-function 'cerebro--trigger-context)
                    (lambda (&rest _)
-                     '((now . 1000010.0) (live-implementers . 1) (planned . 2)
+                     '((now . 1000010.0) (implementers . 1) (planned . 2)
                        (planned-ids "cb-1" "cb-2")
                        (p0-unplanned) (p4-unranked . 0) (first-planner-p)
                        (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
@@ -6686,7 +6686,9 @@ it, and the roster - all of which this tick has already read."
               (should (equal (alist-get 'p4-unranked context) 2))
               (should (equal (alist-get 'merged-unverified context) 3))
               (should (equal (alist-get 'stale-verdicts context) 1))
-              (should (equal (alist-get 'live-implementers context) 1))
+              ;; Rogue is working and Gambit is dead, and both count: a dead
+              ;; builder is one `s' away from needing a bead (cb-1or.3).
+              (should (equal (alist-get 'implementers context) 2))
               (should (equal (alist-get 'first-planner context) "Xavier"))
               ;; The ids behind that count, in panel order: what a standby
               ;; implementer is started for (cb-1or.1).
@@ -6714,13 +6716,13 @@ a planner whose pass found a full buffer and ended."
             ;; Both up and neither told to finish: two. Without this the case
             ;; below could pass by counting nothing at all.
             (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil)))
-              (should (equal (alist-get 'live-implementers
+              (should (equal (alist-get 'implementers
                                         (cerebro--trigger-context "/tmp/nowhere"
                                                                   (seconds-to-time 5.0)))
                              2)))
             (cl-letf (((symbol-function 'cerebro--stop-flag-p)
                        (lambda (_root name) (equal name "Gambit"))))
-              (should (equal (alist-get 'live-implementers
+              (should (equal (alist-get 'implementers
                                         (cerebro--trigger-context "/tmp/nowhere"
                                                                   (seconds-to-time 5.0)))
                              1)))))

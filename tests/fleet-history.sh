@@ -113,11 +113,11 @@ tmp="$(new_fixture)"
   line "$(ago 120)" Cyclops working build ah-aaa
   line "$(ago 100)" Cyclops working build ah-aaa false
   line "$(ago 80)"  Cyclops working build ah-aaa false
-  line "$(ago 60)"  Cyclops done   ""    ah-aaa
+  line "$(ago 60)"  Cyclops waiting ""    ah-aaa
 } > "$tmp/.cerebro/state/transitions.jsonl"
 
 out="$(run "$tmp" --json)"
-# One interval, not three: the two heartbeats extend it, and the closing `done` is terminal.
+# One interval, not three: the two heartbeats extend it, and the closing `waiting` is terminal.
 [[ "$(jq -r 'length' <<<"$out")" == 1 ]] || fail "two heartbeats extend one interval; expected 1 interval, got $(jq -r 'length' <<<"$out")"
 [[ "$(jq -r '.[0].minutes' <<<"$out")" == "60" ]] || fail "the interval spans the heartbeats, got $(jq -r '.[0].minutes' <<<"$out")"
 rm -rf "$tmp"
@@ -192,7 +192,7 @@ tmp="$(new_fixture)"
   line "$(ago 460)" Cyclops working review ah-aaa   # asking: 20m
   line "$(ago 450)" Cyclops asking  review ah-aaa
   line "$(ago 150)" Cyclops working review ah-aaa   # asking: 300m
-  line "$(ago 140)" Cyclops done    ""     ah-aaa
+  line "$(ago 140)" Cyclops waiting ""     ah-aaa
 } > "$tmp/.cerebro/state/transitions.jsonl"
 
 row="$(run "$tmp" --summary --agent Cyclops | jq -c '.[] | select(.state == "asking")')"
@@ -299,12 +299,13 @@ rm -rf "$tmp"
 pass "a state seen only once has no median to judge it by"
 
 # --- an agent that finished is not still running ------------------------------------------------
-# `done` is the end of a session, not a state an agent sits in. Left open, a bead delivered last
-# September is reported as having been in progress ever since.
+# `waiting` is the end of a pass, not a state an agent sits in: the fleet view ends the session
+# half a minute after it is written. Left open, every agent between passes is reported as waiting
+# for up to a day, until the staleness bound drops it.
 tmp="$(new_fixture)"
 {
   line "$(ago 200)" Cyclops working merge ah-aaa
-  line "$(ago 190)" Cyclops done    ""    ah-aaa
+  line "$(ago 190)" Cyclops waiting ""    ah-aaa
 } > "$tmp/.cerebro/state/transitions.jsonl"
 
 out="$(run "$tmp" --json)"

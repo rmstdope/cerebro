@@ -70,9 +70,10 @@
 #   - A null `from` IS a boundary even when `changed` is false: it means a fresh session, and the
 #     time before it belongs to the session that ended. Carrying an interval across it invents time
 #     an agent never spent.
-#   - `done` is TERMINAL. An implementer writing it has finished and is about to be replaced, so it
-#     closes the session rather than opening an interval nobody will ever close: left open, a bead
-#     delivered last September is reported as having been in progress ever since.
+#   - `waiting` is TERMINAL. An agent writing it has ended its pass and the fleet view ends the
+#     session, so it closes the session rather than opening an interval nobody will ever close:
+#     left open, every agent between passes is reported as waiting for up to a day, until the
+#     staleness bound drops it.
 #
 # It fails LOUDLY - non-zero, a message on stderr, NOTHING on stdout - when a log line will not
 # parse or no log exists at all. A caller deciding whether anything has stalled must never read a
@@ -205,8 +206,9 @@ if ! out="$(cat "${logs[@]}" | jq -s -R \
          | .cur = $l)
       else .
       end)
-    # The tail. `done` is terminal - the session ended there - so it opens nothing.
-    | .acc + (if .cur == null or .cur.to == "done" then []
+    # The tail. `waiting` is terminal - the fleet view ends the session half a minute after it is
+    # written and nothing is logged after it - so it opens nothing.
+    | .acc + (if .cur == null or .cur.to == "waiting" then []
               else [{
                 agent: .cur.agent, state: .cur.to, phase: .cur.phase, bead: .cur.bead,
                 from_ts: .cur.ts, to_ts: null,

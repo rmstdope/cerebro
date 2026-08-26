@@ -4706,6 +4706,26 @@ than dressing a dead session in the file's `working'."
                                        '("claude --name Xavier --agent planner This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.") nil)))
                 'up))))
 
+(defvar cerebro-test--fake-session-script nil
+  "Path to a script file the liveness fixtures below run as a fake session.")
+
+(defun cerebro-test--fake-session (&rest args)
+  "Start a live process whose command line is ARGS, and return it.
+
+A script FILE, never `bash -c\=': bash\='s exec optimisation replaces itself
+with the simple command it was given, and on GNU/Linux `/proc/<pid>/cmdline\='
+then reads `sleep 30\=' with every argument gone - which is how four marker
+fixtures passed on macOS and failed in CI (cb-d59.3).  `tests/agent-alive.sh\='
+records the same recipe for the same reason."
+  (unless (and cerebro-test--fake-session-script
+               (file-exists-p cerebro-test--fake-session-script))
+    (let ((path (make-temp-file "cerebro-test-fake-session" nil ".sh")))
+      (with-temp-file path (insert "#!/usr/bin/env bash\nsleep 30\n"))
+      (set-file-modes path #o755)
+      (setq cerebro-test--fake-session-script path)))
+  (apply #'start-process "cerebro-test-session" nil
+         "bash" cerebro-test--fake-session-script args))
+
 (ert-deftest cerebro-test/session-alive-p-rejects-a-pid-that-is-not-that-session ()
   "The impure half, against this very Emacs: alive, certainly, and not Rogue."
   (should-not (cerebro--session-alive-p (emacs-pid) "Rogue" "/Users/x/repos/cerebro"))
@@ -4713,8 +4733,7 @@ than dressing a dead session in the file's `working'."
 
 (ert-deftest cerebro-test/session-alive-p-accepts-the-agents-own-process ()
   "A real process whose command line carries the marker for Rogue, rooted here."
-  (let ((process (start-process "cerebro-test-session" nil
-                                "bash" "-c" "sleep 30" "--name" "Rogue"
+  (let ((process (cerebro-test--fake-session "--name" "Rogue"
                                 "This session is Rogue of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (should (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro"))
@@ -4731,8 +4750,7 @@ a generalised boolean it is truthy - `cerebro--live-sessions' now counts it
 as live, which is the deliberate trade the bead's plan calls out: the sweeps'
 failure mode becomes \"leaves a bead alone\" rather than \"clears a live
 implementer's assignee\"."
-  (let ((process (start-process "cerebro-test-session" nil
-                                "bash" "-c" "sleep 30" "--name" "Rogue"
+  (let ((process (cerebro-test--fake-session "--name" "Rogue"
                                 "This session is Rogue of the cerebro fleet rooted at /Users/x/repos/atlantis-hud/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (progn
@@ -4748,8 +4766,7 @@ since cb-d59.3 the marker is the whole rule: a provider's flag is no longer
 evidence, so this is flatly `nil' rather than `unverified'.  That is the
 epic's accepted cost (cb-d59, decision 4) - a session started outside the
 fleet reads dead, where before it read `unverified'."
-  (let ((process (start-process "cerebro-test-session" nil
-                                "bash" "-c" "sleep 30" "--name" "Rogue")))
+  (let ((process (cerebro-test--fake-session "--name" "Rogue")))
     (unwind-protect
         (should (eq (cerebro--session-alive-p (process-id process) "Rogue" "/Users/x/repos/cerebro")
                     nil))
@@ -4763,8 +4780,7 @@ no marker at all (`nil', positive evidence against - the recycled-pid case)
 so a caller can trust the state file rather than substitute a default
 \(ah-ybsr, re-keyed by cb-d59.3)."
   ;; a cerebro session of this name, rooted elsewhere: `unverified'.
-  (let ((process (start-process "cerebro-test-session" nil
-                                "bash" "-c" "sleep 30"
+  (let ((process (cerebro-test--fake-session
                                 "This session is Storm of the cerebro fleet rooted at /Users/x/repos/atlantis-hud/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (should (eq (cerebro--session-liveness (process-id process) "Storm" "/Users/x/repos/cerebro")
@@ -4772,15 +4788,13 @@ so a caller can trust the state file rather than substitute a default
       (delete-process process)))
   ;; no marker at all: `nil', not `unverified' - the recycled-pid case must
   ;; stay positive evidence against.
-  (let ((process (start-process "cerebro-test-session" nil
-                                "bash" "-c" "sleep 30" "--name" "Somebody-else")))
+  (let ((process (cerebro-test--fake-session "--name" "Somebody-else")))
     (unwind-protect
         (should (eq (cerebro--session-liveness (process-id process) "Storm" "/Users/x/repos/cerebro")
                     nil))
       (delete-process process)))
   ;; both: `proven', same as `cerebro--session-args-p' already says yes to.
-  (let ((process (start-process "cerebro-test-session" nil
-                                "bash" "-c" "sleep 30" "--name" "Storm"
+  (let ((process (cerebro-test--fake-session "--name" "Storm"
                                 "This session is Storm of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (should (eq (cerebro--session-liveness (process-id process) "Storm" "/Users/x/repos/cerebro")
@@ -4792,8 +4806,7 @@ so a caller can trust the state file rather than substitute a default
 `proven', the symbol `unverified' for `unverified', so every existing caller
 and every ERT test that injects `(lambda (pid name) t)' keeps working
 unchanged - `t' is non-nil and is not `eq' to `unverified'."
-  (let ((process (start-process "cerebro-test-session" nil
-                                "bash" "-c" "sleep 30"
+  (let ((process (cerebro-test--fake-session
                                 "This session is Storm of the cerebro fleet rooted at /Users/x/repos/atlantis-hud/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
     (unwind-protect
         (let ((result (cerebro--session-alive-p (process-id process) "Storm" "/Users/x/repos/cerebro")))

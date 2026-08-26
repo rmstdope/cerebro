@@ -188,7 +188,8 @@ planner`), which is the one place a name and a role stop being interchangeable:
 - **Cerebro** (`orchestrator`, Opus/medium) — stops implementers on request by writing their stop
   flag; it cannot start one, since that means starting a session. Ranks the P4 backlog with the
   navigator (the triage pass that was the first planner's until cb-5lx.1). **Starts nothing on its
-  own.** The
+  own** — and is itself started by the fleet view, or typed a line by it, for one thing: an unranked
+  bead (cb-5lx.2). The
   worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
   (`ah-4ao`; see `docs/cerebro-jobs.md`); what is left for a Cerebro session is handing a release
   request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
@@ -323,7 +324,8 @@ the fleet buffer and needs no confirmation - see `docs/cerebro-jobs.md` for why.
 
 The file is deliberately split into a **pure core** (`cerebro--derive*`, `cerebro--entry`,
 `cerebro--*-action`, `cerebro--launch-command`, `cerebro--claim-finding`, `cerebro--epic-finding`,
-`cerebro--finding-command`, `cerebro--findings-from-snapshot`) and a small set of **impure readers**
+`cerebro--finding-command`, `cerebro--findings-from-snapshot`, `cerebro--triage-action`,
+`cerebro--triage-message`) and a small set of **impure readers**
 at the bottom (`cerebro--fleet`, `cerebro--roster`, `cerebro--read-state-file`,
 `cerebro--system-processes`, `cerebro--owned`, `cerebro--gather-sweeps`, `cerebro--fleet-snapshot`). The tests only exercise the pure half, passing state in as plain data. Keep
 new logic on the pure side or it becomes untestable. The one qualification: **each impure reader

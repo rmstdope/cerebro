@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Proves `scripts/planner-buffer`: the one place the harness answers "how much planned, claimable
-# work is there, and how much is wanted". That question used to be answered twice, in two languages
+# work is there, and how much is wanted" - the wanted number being one bead per implementer on the
+# roster, minus any told to finish, never fewer than the floor. That question used to be answered twice, in two languages
 # - `cerebro--trigger`'s planner arm in `emacs/cerebro.el` and a hand-written `bd list` in
 # `skills/plan-bead/SKILL.md` - and the two drifted, each time costing sessions: a trigger counting
 # beads the skill excluded started a planner to find nothing to do (de05dc3), and one rule change
@@ -18,16 +19,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
-
-# The background `sleep's this suite starts to stand in for live implementer sessions. The library's
-# EXIT trap calls suite_cleanup first, before it removes anything, so a failed assertion leaves none
-# of them running - `fail' exits, so per-case cleanup would not run.
-strays=()
-
-suite_cleanup() {
-  local p
-  for p in ${strays+"${strays[@]}"}; do kill "$p" 2>/dev/null || true; done
-}
 
 # ------------------------------------------------------------------------------------------------
 # The declarations: what the script owns, printed for the elisp contract test to check itself
@@ -77,6 +68,10 @@ pass "refuses a call that names no mode"
 stub_dir="$(mktemp -d)"
 cleanup_add "$stub_dir"
 count_consumer="$(consumer_new count --copy)"
+# A roster of its own, or the built-in table's twelve implementers would be what `want' is sized
+# from since cb-1or.3: one builder on the roster, so `want' is the floor.
+mkdir -p "$count_consumer/.cerebro/state"
+printf 'Xavier planner\nCyclops implementer\n' > "$count_consumer/.cerebro/roster.conf"
 
 argv_file="$stub_dir/argv"
 stub_stdout="$stub_dir/stdout"
@@ -122,7 +117,7 @@ argv_has_pair "--status" "open" || fail "the bead query did not ask for open bea
 pass "asks for open beads, through work-beads"
 
 # --- the exact line the skill reads --------------------------------------------------------------
-# No live implementer in this fixture, so `want' is the floor.
+# One implementer on this fixture's roster, so `want' is the floor.
 line="$(run_count --count)"
 [ "$line" = "planned=1 want=2" ] || fail "--count printed '$line', not 'planned=1 want=2'"
 pass "prints the one line the skill reads"
@@ -154,33 +149,28 @@ pass "fails loudly on --count too, which is the mode the skill calls"
 set_stub "$beads"
 
 # ------------------------------------------------------------------------------------------------
-# The wanted number: one per running implementer, never fewer than the floor - and an implementer
-# told to finish is not running for this purpose, since it takes no further bead. That last is the
-# disagreement this script exists to end: the skill's own loop skipped a stop-flagged implementer
-# and the fleet view's count did not, so with four up and one told to finish the skill wanted three
-# and the view wanted four, and the view started a planner whose pass found a full buffer.
+# The wanted number: one per implementer on the ROSTER, never fewer than the floor - and an
+# implementer told to finish is left out, since it takes no further bead. Sessions are not counted
+# at all since cb-1or.3: since cb-1or.1 a builder between beads has no session and is started *by* a
+# planned bead, so counting sessions sized the buffer at the floor on every quiet board and woke two
+# builders of four.
+#
+# The stop flag is still the one disagreement this script exists to end: the skill's own loop
+# skipped a stop-flagged implementer and the fleet view's count did not, so with four on the roster
+# and one told to finish the skill wanted three and the view wanted four, and the view started a
+# planner whose pass found a full buffer.
 # ------------------------------------------------------------------------------------------------
 
+# A fixture whose roster declares exactly the implementers named, plus one planner so the file has
+# the shape a real one has. Nothing runs: since cb-1or.3 the wanted number is read off the roster
+# and the stop flags, never off a session.
 want_fixture() {
-  local tmp
-  tmp="$(consumer_new "$(fixture_name pb)" --link roster agent-alive consumer-root work-beads planner-buffer)"
-  # agent-alive resolves the settings directory physically before comparing, so a fake session whose
-  # --settings path names a directory that does not exist reads dead whatever else is true of it.
-  mkdir -p "$tmp/.claude/cerebro/hooks" "$tmp/.cerebro/state"
-  printf '#!/usr/bin/env bash\nsleep 30\n' > "$tmp/fake-session"
-  chmod +x "$tmp/fake-session"
+  local tmp name
+  tmp="$(consumer_new "$(fixture_name pb)" --link roster consumer-root work-beads planner-buffer)"
+  mkdir -p "$tmp/.cerebro/state"
+  printf 'Xavier planner\n' > "$tmp/.cerebro/roster.conf"
+  for name in "$@"; do printf '%s implementer\n' "$name" >> "$tmp/.cerebro/roster.conf"; done
   echo "$tmp"
-}
-
-# One live session for $2 in fixture $1, in the shape `scripts/launch' gives every agent - the
-# second `alive' row of tests/lib/session-args.cases.
-start_session() {
-  local tmp="$1" name="$2" pid
-  bash "$tmp/fake-session" --name "$name" \
-    --settings "$tmp/.claude/cerebro/hooks/question-state.settings.json" &
-  pid=$!
-  strays+=("$pid")
-  printf '%s' "{\"state\":\"working\",\"pid\":$pid}" > "$tmp/.cerebro/state/$name.state.json"
 }
 
 run_want() {
@@ -189,41 +179,43 @@ run_want() {
   bash "$tmp/.claude/cerebro/scripts/planner-buffer" "$@"
 }
 
-# --- nobody up: the floor, which is the whole point of having one --------------------------------
-tmp="$(want_fixture)"
+# --- one bead per implementer on the roster, running or not --------------------------------------
+tmp="$(want_fixture Cyclops Storm Wolverine)"
 want="$(run_want "$tmp" --want)"
-[ "$want" = "2" ] || fail "--want with nobody up printed '$want', not the floor"
-pass "wants the floor with no implementer running"
+[ "$want" = "3" ] || fail "--want with three implementers on the roster printed '$want'"
+pass "wants one bead per implementer on the roster, running or not"
 
-# --- one bead per running implementer ------------------------------------------------------------
-tmp="$(want_fixture)"
-start_session "$tmp" Cyclops
-start_session "$tmp" Storm
-start_session "$tmp" Wolverine
-want="$(run_want "$tmp" --want)"
-[ "$want" = "3" ] || fail "--want with three implementers up printed '$want'"
-pass "wants one bead per running implementer"
-
-# --- an implementer told to finish is not running for this purpose -------------------------------
+# --- an implementer told to finish takes no further bead -----------------------------------------
 touch "$tmp/.cerebro/state/Storm.stop"
 want="$(run_want "$tmp" --want)"
 [ "$want" = "2" ] || fail "--want with one of three told to finish printed '$want'"
 pass "skips an implementer told to finish"
 
-# --- a pid alone is not an identity ---------------------------------------------------------------
-# This shell is live and carries no `--name Rogue', so counting it would be the recycled-pid defect
-# `scripts/agent-alive' exists to prevent.
-tmp="$(want_fixture)"
-printf '%s' "{\"state\":\"working\",\"pid\":$$}" > "$tmp/.cerebro/state/Rogue.state.json"
+# --- the floor holds however many are told to finish ---------------------------------------------
+touch "$tmp/.cerebro/state/Cyclops.stop"
 want="$(run_want "$tmp" --want)"
-[ "$want" = "2" ] || fail "--want counted a recycled pid: printed '$want'"
-pass "does not count a live pid that is not that session"
+[ "$want" = "2" ] || fail "--want with two of three told to finish printed '$want', not the floor"
+pass "never fewer than the floor, however many are told to finish"
+
+# --- a roster of one still wants the floor -------------------------------------------------------
+tmp="$(want_fixture Cyclops)"
+want="$(run_want "$tmp" --want)"
+[ "$want" = "2" ] || fail "--want with one implementer on the roster printed '$want', not the floor"
+pass "wants the floor with a roster of one"
+
+# --- a session is not what is counted ------------------------------------------------------------
+# The pid check moved out of this script with the rule that needed it: `--want' no longer asks
+# whether anything is up, so neither a state file for a name off the roster nor one for a name on it
+# can move the number.
+tmp="$(want_fixture Cyclops Storm)"
+printf '%s' "{\"state\":\"working\",\"pid\":$$}" > "$tmp/.cerebro/state/Rogue.state.json"
+printf '%s' "{\"state\":\"working\",\"pid\":$$}" > "$tmp/.cerebro/state/Storm.state.json"
+want="$(run_want "$tmp" --want)"
+[ "$want" = "2" ] || fail "--want counted a session: printed '$want'"
+pass "a session, live or not, is not what is counted"
 
 # --- the count line reads the same wanted number --------------------------------------------------
-tmp="$(want_fixture)"
-start_session "$tmp" Cyclops
-start_session "$tmp" Storm
-start_session "$tmp" Wolverine
+tmp="$(want_fixture Cyclops Storm Wolverine)"
 line="$(PATH="$stub_dir:$PATH" bash "$tmp/.claude/cerebro/scripts/planner-buffer" --count)"
-[ "$line" = "planned=1 want=3" ] || fail "--count printed '$line' with three implementers up"
+[ "$line" = "planned=1 want=3" ] || fail "--count printed '$line' with three implementers on the roster"
 pass "the count line reads the same wanted number as --want"

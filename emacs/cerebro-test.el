@@ -6007,7 +6007,8 @@ session - so it goes before the fresh one starts."
   (append overrides
           '((now . 1000000.0) (ended-at . 999000.0) (started-at . 990000.0)
             (floor . 600) (implementers . 2)
-            (planned . 4) (p0-unplanned) (p4-unranked . 0) (actionable-ids)
+            (planned . 4) (p0-unplanned) (p4-unranked . 0) (unranked-ids)
+            (actionable-ids)
             (merged-unverified . 0) (stale-verdicts . 0) (gh) (linked-moved))))
 
 (defun cerebro-test--trigger (role &rest overrides)
@@ -7107,9 +7108,12 @@ it, and the roster - all of which this tick has already read."
                         '(((id . "c") (priority . 0))
                           ((id . "d") (priority . 4))
                           ((id . "e") (priority . 4))
+                          ((id . "b2") (priority . 4)
+                           (labels . ["triage:declined"]))
                           ((id . "f") (priority . 2)
                            (labels . ["verdict:stale"])))          ; unplanned
-                        '(((id . "g")) ((id . "h")) ((id . "i")))))) ; merged
+                        '(((id . "g")) ((id . "h")) ((id . "i"))))) ; merged
+            (setq cerebro--beads-read-at 3.5))
           (with-temp-buffer
             (setq cerebro--agents
                   (list (cerebro-test--agent "Rogue" "implementer" 'implementer 'working)
@@ -7120,6 +7124,11 @@ it, and the roster - all of which this tick has already read."
               (should (equal (alist-get 'planned context) 2))
               (should (equal (alist-get 'p0-unplanned context) '("c")))
               (should (equal (alist-get 'p4-unranked context) 2))
+              ;; The ids behind that count, sorted, and a P4 the navigator has
+              ;; parked is in neither (cb-5lx.2).
+              (should (equal (alist-get 'unranked-ids context) '("d" "e")))
+              ;; When the figures were asked for, not when they arrived.
+              (should (equal (alist-get 'beads-read-at context) 3.5))
               (should (equal (alist-get 'merged-unverified context) 3))
               (should (equal (alist-get 'stale-verdicts context) 1))
               ;; Rogue is working and Gambit is dead, and both count: a dead
@@ -7131,6 +7140,25 @@ it, and the roster - all of which this tick has already read."
               ;; No `gh' answer in this buffer, so nothing for the two rows
               ;; the key feeds - and not `failed', which would say it went away.
               (should (null (alist-get 'gh context))))))
+      (kill-buffer panel))))
+
+(ert-deftest cerebro-test/the-panel-records-when-it-asked-not-only-when-it-heard ()
+  "A bead ranked between the request and the answer is in neither; a reader
+deciding whether the figures postdate a transition needs the earlier clock."
+  (let ((panel (get-buffer-create "*cerebro-beads-test*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--draw-beads) #'ignore)
+                  ((symbol-function 'cerebro--update-panel-header) #'ignore)
+                  ((symbol-function 'cerebro--repo-root) (lambda () "/tmp/nowhere"))
+                  ((symbol-function 'cerebro--request-beads)
+                   (lambda (_root answer)
+                     (with-current-buffer panel (setq cerebro--beads-requested-at 41.0))
+                     (funcall answer (list nil nil nil nil nil) nil)
+                     'answered)))
+          (cerebro--beads-render panel)
+          (with-current-buffer panel
+            (should (equal cerebro--beads-read-at 41.0))
+            (should (null cerebro--beads-requested-at))))
       (kill-buffer panel))))
 
 (ert-deftest cerebro-test/an-implementer-told-to-finish-wants-no-bead ()

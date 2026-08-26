@@ -1902,6 +1902,7 @@ so it has to say what the navigator would otherwise have to go and look up.
 
 CONTEXT is what `cerebro--trigger-context\=' gathers - `now\=',
 `implementers\=', `planned\=', `p0-unplanned\=' (ids), `p4-unranked\=',
+`unranked-ids\=' (ids), `beads-read-at\=',
 `actionable-ids\=', `planned-ids\=', `merged-unverified\=', `stale-verdicts\=',
 `gh\=' (nil for no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) and
 `linked\=' (`cerebro--linked-beads\=') - plus the per-agent facts
@@ -4540,6 +4541,14 @@ settled, which is where a VERIFIED bead lands (cb-b4m).")
 (defvar-local cerebro--beads-requested-at nil
   "`float-time' of the request now in flight, or nil when none is.")
 
+(defvar-local cerebro--beads-read-at nil
+  "`float-time' when the request that produced `cerebro--beads\=' was made, or nil.
+
+`cerebro--beads-as-of\=' is when the answer arrived; this is when `bd\=' was
+asked.  A bead ranked between the two is in neither, so a reader deciding
+whether the figures postdate an agent's transition compares against this
+one, the earlier of the two (cb-5lx.2).")
+
 (defvar-local cerebro--beads-failed-at nil
   "`float-time' of the last request that got no answer, or nil once one has
 succeeded since.")
@@ -4600,13 +4609,15 @@ finish rather than joined by a second (`cerebro--run-async' says `busy')."
               (lambda (beads &optional linked)
                 (when (buffer-live-p buffer)
                   (with-current-buffer buffer
-                    (setq cerebro--beads-requested-at nil)
-                    (if beads
-                        (setq cerebro--beads beads
-                              cerebro--linked linked
-                              cerebro--beads-as-of (float-time)
-                              cerebro--beads-failed-at nil)
-                      (setq cerebro--beads-failed-at (float-time))))
+                    (let ((requested cerebro--beads-requested-at))
+                      (setq cerebro--beads-requested-at nil)
+                      (if beads
+                          (setq cerebro--beads beads
+                                cerebro--linked linked
+                                cerebro--beads-read-at requested
+                                cerebro--beads-as-of (float-time)
+                                cerebro--beads-failed-at nil)
+                        (setq cerebro--beads-failed-at (float-time)))))
                   (cerebro--draw-beads buffer)
                   (cerebro--update-panel-header buffer))))
         ('started (with-current-buffer buffer
@@ -4978,6 +4989,18 @@ was a failure, are both plain values: neither depends on whose pass it is."
                         (seq-filter (lambda (bead) (equal (alist-get 'priority bead) 0))
                                     unplanned)))
           (cons 'p4-unranked (cerebro--count-priority unplanned 4))
+          ;; The ids behind that count, sorted: what starts a standby Cerebro
+          ;; and what an idle one is told (cb-5lx.2).  Sorted so the same set
+          ;; in a different panel order is the same set.
+          (cons 'unranked-ids
+                (sort (mapcar (lambda (bead) (alist-get 'id bead))
+                              (seq-filter (lambda (bead) (equal (alist-get 'priority bead) 4))
+                                          unplanned))
+                      #'string<))
+          ;; When the figures above were *asked for*, not when they arrived:
+          ;; the only clock that says whether they postdate an agent's last
+          ;; transition.
+          (cons 'beads-read-at (and panel (buffer-local-value 'cerebro--beads-read-at panel)))
           ;; The ids rather than their number, because the fingerprint the
           ;; no-progress guard compares has to see one bead replaced by
           ;; another (`cerebro--trigger-fingerprint').

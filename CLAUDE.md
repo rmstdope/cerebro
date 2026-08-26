@@ -217,6 +217,12 @@ planner`), which is the one place a name and a role stop being interchangeable:
   range costs a `git log` and a line. Ends its own turn when the sweep is
   reported — the one role here that does not loop, because it holds no claim, lease or PR to strand.
 
+`skills/project-definition` is the one skill no role loads. The navigator invokes it by hand as
+`/project-definition`, once, in a consumer that holds nothing but a README and the harness: it
+interviews them about the software as a whole, writes the declarations, the root `CLAUDE.md` and the
+board with its Dolt remote, and files the opening epics and their obvious children. Everything it
+files is unplanned, because a planner plans against code that by then exists.
+
 `skills/beads-workflow/SKILL.md` is the shared substrate all of them read: work is tracked in **beads**
 (`bd`), not GitHub issues; GitHub issues are the external inbox only. The planner/builder handover is
 a single `planned` label; anything needing the human gets a `human` label and surfaces in `bd human list`.

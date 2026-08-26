@@ -1,0 +1,73 @@
+<!doctype html><meta charset="utf-8"><title>cb-d59 — parity with Copilot CLI: what maps, what does not</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:13px;margin:14px 0 4px;color:#eee}
+.row{display:flex;gap:24px;flex-wrap:wrap}.panel{padding:14px 18px;border:1px solid #333;min-width:66ch;max-width:84ch}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.5;white-space:pre-wrap}
+table{border-collapse:collapse;background:#1e1e1e;color:#d4d4d4;margin-top:8px}
+td,th{border:1px solid #444;padding:4px 8px;text-align:left;vertical-align:top}
+th{color:#fff}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.s{color:#569cd6}.e{color:#f14c4c}.y{color:gold}.m{color:#c586c0}
+.note{color:#eee;max-width:118ch;background:#333;padding:8px 12px;margin-top:16px}
+.echo{background:#000;color:#ddd;padding:4px 8px;margin-top:6px}
+.cost{color:#f0c674;margin-top:10px}
+</style>
+<h1>cb-d59 — the answer to &ldquo;can we add Copilot?&rdquo; is <span style="color:#6a9955">yes</span>. Here is the whole mapping, and the four things that do not map.</h1>
+<p class="note">Read from GitHub's own CLI command reference, custom-agents reference and hooks reference. The three capabilities the fleet view stands on all exist: <b>a real argv identity</b> (<code>--name NAME</code>, exactly our spelling), <b>custom agents</b> (<code>--agent NAME</code> reading <code>.agent.md</code> files whose required frontmatter is <code>name</code> + <code>description</code> — which every one of our seven agent files already has), and <b>hooks</b> (a <code>preToolUse</code> matcher on the <code>ask_user</code> tool, plus CLI-only <code>notification</code> and <code>permissionRequest</code>). Copilot even reads <code>CLAUDE.md</code> as an instruction file, so the root document needs no second copy.</p>
+
+<p class="note" style="background:#5a2222"><b>Status: proposed, not yet measured.</b> Every row below is read from GitHub&rsquo;s published CLI reference, not from a running <code>copilot</code>. <b>cb-d59.1 is the bead that turns this table into fact</b> and rewrites whatever it finds wrong. Nothing may be built against a row here until it has.</p>
+<h2 style="color:#fff;margin-top:20px">The mapping, flag by flag</h2>
+<table>
+<tr><th>what launch passes today</th><th>Copilot CLI</th><th></th></tr>
+<tr><td><code>claude</code></td><td><code>copilot</code></td><td class="g">binary</td></tr>
+<tr><td><code>--agent &lt;role&gt;</code></td><td><code>--agent &lt;role&gt;</code></td><td class="g">same spelling; files are <code>&lt;role&gt;.agent.md</code></td></tr>
+<tr><td><code>--name &lt;Name&gt;</code></td><td><code>--name &lt;Name&gt;</code></td><td class="g">same spelling, same argv token</td></tr>
+<tr><td><code>--model &lt;m&gt;</code></td><td><code>--model &lt;m&gt;</code></td><td class="y">different model ids; <code>models.conf</code> already per-consumer</td></tr>
+<tr><td><code>--effort &lt;e&gt;</code></td><td><code>--effort &lt;e&gt;</code></td><td class="e">low / medium / high only — <b>no <code>xhigh</code></b> (Forge)</td></tr>
+<tr><td><code>--permission-mode auto</code></td><td><code>--allow-all-tools</code></td><td class="g">equivalent</td></tr>
+<tr><td>trailing prompt</td><td><code>-i &lt;PROMPT&gt;</code></td><td class="g">interactive + seed prompt</td></tr>
+<tr><td><code>--append-system-prompt</code> (the marker)</td><td><span class="e">none</span></td><td class="g">solved by L2: the marker rides in the prompt</td></tr>
+<tr><td><code>--settings &lt;file&gt;</code> (the hooks)</td><td><span class="e">none</span></td><td class="y">hooks are path-discovered — question 2 below</td></tr>
+<tr><td><code>--remote-control &lt;Name&gt;</code></td><td><span class="e">none equivalent</span></td><td class="e">no steering from claude.ai / the phone</td></tr>
+<tr><td><code>.claude/agents/</code>, <code>.claude/skills/</code></td><td><code>.github/agents/</code>, <code>.github/skills/</code> <span class="d">or</span> <code>$COPILOT_HOME/</code></td><td class="y">question 2 below</td></tr>
+<tr><td><code>CLAUDE.md</code></td><td><code>CLAUDE.md</code></td><td class="g">read as-is; no second copy</td></tr>
+</table>
+
+<h1 style="margin-top:28px">Question 1 — Forge is <code>opus</code> at <code>xhigh</code>, and Copilot's effort scale stops at <code>high</code>.</h1>
+<div class="row">
+<div class="panel dark"><h2>Option A — map down, and say so</h2>
+<pre>$ .claude/cerebro/scripts/launch Forge
+<span class="y">launch: copilot has no xhigh effort; Forge runs at high</span></pre>
+<p class="cost">Every role starts on every provider. One line per launch of one role. The mapping lives in <code>agent-cli</code> beside the flag names.</p></div>
+<div class="panel dark"><h2>Option B — a Copilot consumer must declare it</h2>
+<pre>$ .claude/cerebro/scripts/launch Forge
+<span class="e">launch: agents/architect.md asks for xhigh effort, which copilot does not have - set `architect &lt;model&gt; high' in .cerebro/models.conf before starting Forge</span></pre>
+<p class="cost">Nothing is silently downgraded; the navigator chooses. Cost: a Copilot consumer cannot start Forge until it edits a file, and the same will be true of every future frontmatter value one provider lacks.</p></div>
+<div class="panel dark"><h2>Option C — the frontmatter stops being provider-neutral</h2>
+<pre><span class="g">agents/architect.md</span>
+model: opus
+effort: xhigh
+effort_copilot: high</pre>
+<p class="cost">Reads honestly and scales badly: every agent file grows a key per provider, and cerebro's own agent definitions start naming providers again — the thing this bead exists to stop.</p></div>
+</div>
+
+<h1 style="margin-top:28px">Question 2 — where does cerebro put Copilot's configuration? Copilot has no <code>--settings</code>: it discovers agents, skills and hooks by path.</h1>
+<div class="row">
+<div class="panel dark"><h2>Option A — <code>COPILOT_HOME</code> under <code>.cerebro/</code>, set by <code>launch</code></h2>
+<pre>.cerebro/copilot-home/
+  agents/architect.agent.md   <span class="d">-&gt; ../../../.claude/cerebro/agents/architect.md</span>
+  skills/plan-bead/           <span class="d">-&gt; ...</span>
+  hooks/question-state.json
+  settings.json</pre>
+<h3>Untracked, fleet-only, per-consumer. <code>sync-symlinks.sh</code> keeps its promise to write nothing outside the harness's own directories. A human running <code>copilot</code> by hand in the repo is unaffected by the fleet, and unhelped by it.</h3>
+<div class="echo">launch: agent_cli copilot; COPILOT_HOME=.cerebro/copilot-home</div>
+<p class="cost">Cost: <code>COPILOT_HOME</code> is an env var and never appears in argv, so it cannot be a liveness discriminator — which L2 already made unnecessary. Also: the fleet's login/credentials live under <code>~/.copilot</code>, so the home has to be seeded or the session is logged out. <b>That is the one thing this option can get wrong, and it is worth the spike proving before anything is built on it.</b></p></div>
+
+<div class="panel dark"><h2>Option B — the consumer's own <code>.github/</code>, tracked</h2>
+<pre>.github/agents/architect.agent.md   <span class="d">-&gt; ../../.claude/cerebro/agents/architect.md</span>
+.github/skills/plan-bead/           <span class="d">-&gt; ...</span>
+.github/hooks/cerebro-question-state.json</pre>
+<h3>The path Copilot documents first, and it needs no environment at all. Every human who runs <code>copilot</code> in the repository gets the fleet's agents and skills too — <code>/plan-bead</code> works for a person, not only for a session.</h3>
+<div class="echo">sync-symlinks.sh: linked 7 agents and 6 skills into .github/</div>
+<p class="cost">Cost: cerebro writes into the consumer's tracked tree for the first time — cb-pq4 deliberately stopped it doing exactly that. Committed symlinks in <code>.github/</code>, and a repository-wide hook file that fires for every <code>copilot</code> run in the repo, fleet or not.</p></div>
+</div>

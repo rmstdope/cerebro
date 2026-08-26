@@ -1405,6 +1405,72 @@ read the raw table rather than go through the liveness check."
       (cerebro--note-exit nil "exited abnormally with code 2\n")
       (should (null cerebro--last-exit)))))
 
+(ert-deftest cerebro-test/launch-refusal-picks-the-newest-line-for-the-name-since-the-start ()
+  "The launcher writes its own refusal to errors.jsonl (cb-ccl), and the view
+reads it back when vterm never drew the line.  Which line: this name's, from
+this session rather than an earlier one, and the last of them."
+  (let* ((since (float-time (encode-time (parse-time-string "2026-08-26T04:51:00Z"))))
+         (text (mapconcat
+                #'identity
+                (list "{\"event\":\"error\",\"ts\":\"2026-08-26T04:41:00Z\",\"context\":\"launch Storm\",\"message\":\"an older refusal\"}"
+                      "{\"event\":\"error\",\"ts\":\"2026-08-26T04:51:05Z\",\"context\":\"launch Rogue\",\"message\":\"another agent\"}"
+                      "not json at all {"
+                      "{\"event\":\"error\",\"ts\":\"2026-08-26T04:51:14Z\",\"context\":\"launch Storm\",\"message\":\"the checkout is 4 commits behind\"}")
+                "\n")))
+    (should (equal (cerebro--launch-refusal text "Storm" since)
+                   "the checkout is 4 commits behind"))
+    ;; A line older than this session is a previous session's refusal.
+    (should-not (cerebro--launch-refusal
+                 text "Storm"
+                 (float-time (encode-time (parse-time-string "2026-08-26T04:52:00Z")))))
+    ;; No start time known: the newest line for the name.
+    (should (equal (cerebro--launch-refusal text "Storm" nil)
+                   "the checkout is 4 commits behind"))
+    ;; A name with no line of its own.
+    (should-not (cerebro--launch-refusal text "Beast" nil))
+    (should-not (cerebro--launch-refusal "" "Storm" nil))
+    (should-not (cerebro--launch-refusal nil "Storm" nil))))
+
+(ert-deftest cerebro-test/file-tail-reads-the-end-and-never-signals ()
+  "The fallback reads at most the last few KiB of errors.jsonl, and a file
+that is not there is nil rather than an error - this runs from vterm's
+sentinel, where a signal would take the record down with it."
+  (let ((file (make-temp-file "cerebro-tail")))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "abcdefghij"))
+          (should (equal (cerebro--file-tail file 4) "ghij"))
+          (should (equal (cerebro--file-tail file 100) "abcdefghij"))
+          (should-not (cerebro--file-tail (concat file "-nope") 100)))
+      (delete-file file))))
+
+(ert-deftest cerebro-test/note-exit-falls-back-to-the-launcher-line ()
+  "The whole of cb-ccl's first half: a session whose buffer was never drawn
+takes its line from the errors.jsonl entry its own launcher wrote."
+  (let* ((root (file-name-as-directory (make-temp-file "cerebro-root" t)))
+         (cerebro--last-exit nil)
+         (cerebro--sessions nil)
+         (cerebro-log-verbosity 'decisions))
+    (unwind-protect
+        (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
+          (make-directory (expand-file-name ".claude/cerebro" root) t)
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (let ((buf (generate-new-buffer "*fleet: Cyclops*")))
+            (unwind-protect
+                (progn
+                  (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+                  (with-current-buffer buf
+                    (setq default-directory root)
+                    (setq cerebro--session-started
+                          (float-time (encode-time (parse-time-string "2026-08-26T04:51:00Z")))))
+                  (with-temp-file (expand-file-name ".cerebro/state/errors.jsonl" root)
+                    (insert "{\"event\":\"error\",\"ts\":\"2026-08-26T04:51:14Z\",\"context\":\"launch Cyclops\",\"message\":\"claude is not on PATH\"}\n"))
+                  (cerebro--note-exit buf "exited abnormally with code 2\n")
+                  (should (equal (alist-get "Cyclops" cerebro--last-exit nil nil #'equal)
+                                 '(:code "2" :line "claude is not on PATH"))))
+              (kill-buffer buf))))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/note-exit-logs-abnormal-true-without-a-line ()
   "The incident log carried 274 exits reading {\"code\":\"2\",\"abnormal\":null}:
 with no line there was no record, and `abnormal\=' was computed from the record

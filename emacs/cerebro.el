@@ -41,6 +41,7 @@
 (require 'tabulated-list)
 (require 'seq)
 (require 'subr-x)
+(require 'parse-time)      ; `parse-time-string', for the ts on a launcher's own error line
 
 (defgroup cerebro nil
   "The fleet view: what every agent is doing, and starting or stopping them."
@@ -3205,6 +3206,9 @@ from afterwards (cb-5yr)."
          (vterm-shell (mapconcat #'shell-quote-argument cmd " "))
          (session-name (cerebro--session-buffer-name agent))
          (buffer (cerebro--make-session-buffer session-name)))
+    ;; What tells this session's refusal in `errors.jsonl' from an earlier
+    ;; one's, when the exit sentinel comes to look (cb-ccl).
+    (with-current-buffer buffer (setq cerebro--session-started (float-time)))
     (setf (alist-get (cerebro-agent-name agent) cerebro--sessions nil nil #'equal) buffer)
     ;; Starting an agent is what arms it: from here the view will start it
     ;; again on its own trigger until `k' or `f' says otherwise (cb-5yr).
@@ -3354,6 +3358,55 @@ last line. A session that ran a while can hold megabytes of scrollback;
 only the very end can possibly hold the line printed just before it died,
 so `cerebro--note-exit' never reads more than this many characters of it.")
 
+(defvar-local cerebro--session-started nil
+  "When this session buffer was created, as a float.
+
+Set by `cerebro--launch\=' and read by `cerebro--note-exit\=', which uses it to
+tell this session\='s refusal in `errors.jsonl\=' from an older one\='s (cb-ccl).")
+
+(defun cerebro--file-tail (file bytes)
+  "The last BYTES of FILE as a string, or nil.  Impure; never signals.
+
+Impure and deliberately small: it is called from vterm\='s exit sentinel, where
+anything that signals takes the exit record down with it.  A tail rather than
+the whole file because `errors.jsonl\=' is short by design and only its end can
+hold the line a session that just died wrote."
+  (ignore-errors
+    (let ((size (file-attribute-size (file-attributes file))))
+      (and size
+           (with-temp-buffer
+             (insert-file-contents file nil (max 0 (- size bytes)) size)
+             (buffer-string))))))
+
+(defun cerebro--launch-refusal (text name since)
+  "Pure.  The message of the newest `launch NAME\=' error line in TEXT stamped at
+or after SINCE, or nil.
+
+TEXT is `errors.jsonl\=' - one JSON object a line, written by the launcher
+itself (`scripts/launch-refused\=', cb-ccl) as well as by this view.  SINCE is
+when the session that just died was started, as a float; nil accepts any
+timestamp.  Without it an agent refused once an hour ago would explain every
+silent death since.
+
+A malformed line is skipped rather than fatal: `json-parse-string\=' signals,
+and the file may end in a half-written line from the other writer."
+  (let (found)
+    (dolist (line (and text (split-string text "\n" t)))
+      (let ((parsed (ignore-errors (json-parse-string line :object-type 'alist))))
+        (when parsed
+          (let ((context (alist-get 'context parsed))
+                (ts (alist-get 'ts parsed))
+                (message (alist-get 'message parsed)))
+            (when (and (stringp context)
+                       (equal context (concat "launch " name))
+                       (stringp message)
+                       (or (null since)
+                           (let ((at (ignore-errors
+                                       (float-time (encode-time (parse-time-string ts))))))
+                             (and at (>= at since)))))
+              (setq found message))))))
+    found))
+
 (defun cerebro--note-exit (buffer event)
   "Record BUFFER's last line in `cerebro--last-exit' when EVENT is abnormal.
 
@@ -3376,24 +3429,32 @@ name."
                       (buffer-substring-no-properties
                        (max (point-min) (- (point-max) cerebro--exit-tail-chars))
                        (point-max))))
-             (last-line (cerebro--last-nonblank-line text))
+             ;; The root and the start time are read inside the buffer that
+             ;; died, before anything else: vterm runs `vterm-exit-functions'
+             ;; with whatever buffer happens to be current, and
+             ;; `cerebro--repo-root' *signals* from one with no mount above it
+             ;; - from `*scratch*' in `~', say - which would take the record
+             ;; down with it and leave the row with no account of the exit at
+             ;; all (cb-hzs). The session buffer's `default-directory' is the
+             ;; consumer root: `cerebro--launch' binds it around
+             ;; `cerebro--make-session-buffer' and `generate-new-buffer'
+             ;; inherits it.
+             (root (with-current-buffer buffer (ignore-errors (cerebro--repo-root))))
+             (started (with-current-buffer buffer cerebro--session-started))
+             (buffer-line (cerebro--last-nonblank-line text))
+             ;; What the launcher wrote about this start, if anything. Read
+             ;; even when the buffer had a line, because that answers a second
+             ;; question below: a refusal already in the file needs no second
+             ;; line from here (cb-ccl).
+             (refusal (and root
+                           (cerebro--launch-refusal
+                            (cerebro--file-tail (cerebro--log-file root nil "errors") 65536)
+                            name started)))
+             ;; The buffer first, the launcher's own line second: vterm draws
+             ;; on a 0.1s timer and a refused launcher exits inside a second,
+             ;; so the buffer is usually empty and the file is what is left.
+             (last-line (or buffer-line refusal))
              (record (cerebro--exit-record event last-line)))
-        ;; EVERY exit is logged, clean ones included. The row and the echo
-        ;; area stay abnormal-only - a clean quit is not a failure to show
-        ;; anybody - but the log is where "why is this row dead" is answered
-        ;; after the fact, and a session that exited with status 0 used to
-        ;; leave nothing there at all.
-        ;;
-        ;; The record comes first, and the root is resolved inside the buffer
-        ;; that died. vterm runs `vterm-exit-functions' with whatever buffer
-        ;; happens to be current, and `cerebro--repo-root' *signals* from one
-        ;; with no mount above it - from `*scratch*' in `~', say - which would
-        ;; take the record down with it and leave the row with no account of
-        ;; the exit at all (cb-hzs). The session buffer's `default-directory'
-        ;; is the consumer root: `cerebro--launch' binds it around
-        ;; `cerebro--make-session-buffer' and `generate-new-buffer' inherits
-        ;; it. `ignore-errors' because the log is documented as silent and
-        ;; unable to fail.
         (when record
           (setf (alist-get name cerebro--last-exit nil nil #'equal) record)
           (if (plist-get record :line)
@@ -3401,14 +3462,28 @@ name."
                        name (plist-get record :code) (plist-get record :line))
             (message "%s exited (code %s) and printed nothing"
                      name (plist-get record :code))))
-        (let ((root (with-current-buffer buffer
-                      (ignore-errors (cerebro--repo-root)))))
-          (when root
-            (cerebro--log root 'exit
-                          (list (cons 'agent name)
-                                (cons 'code (cerebro--exit-code event))
-                                (cons 'abnormal (and record t))
-                                (cons 'last_line last-line)))))))))
+        ;; EVERY exit is logged, clean ones included. The row and the echo
+        ;; area stay abnormal-only - a clean quit is not a failure to show
+        ;; anybody - but the log is where "why is this row dead" is answered
+        ;; after the fact, and a session that exited with status 0 used to
+        ;; leave nothing there at all.
+        (when root
+          (cerebro--log root 'exit
+                        (list (cons 'agent name)
+                              (cons 'code (cerebro--exit-code event))
+                              (cons 'abnormal (and record t))
+                              (cons 'last_line last-line)))
+          ;; An abnormal exit the launcher did not explain reaches the file
+          ;; the navigator is told to open (cb-ccl). Not one it DID explain:
+          ;; that line is already in this very file, and a second would be
+          ;; the duplicate.
+          (when (and record (not refusal))
+            (cerebro--log-error root (format "session %s" name)
+                                (if buffer-line
+                                    (format "exited with code %s: %s"
+                                            (plist-get record :code) buffer-line)
+                                  (format "exited with code %s and printed nothing"
+                                          (plist-get record :code))))))))))
 
 ;;; Acting on the supervision decisions
 

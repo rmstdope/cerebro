@@ -130,16 +130,6 @@ set -e
 rm -rf "$tmp"
 pass "rejects-phase-with-idle"
 
-# --- rejects-phase-with-done ---
-tmp="$(new_fixture)"
-set +e
-out="$(run_state "$tmp" Cyclops done --bead ah-f9c --phase merge --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "rejects-phase-with-done: expected exit 2, got $status"
-rm -rf "$tmp"
-pass "rejects-phase-with-done"
-
 # --- roster-check-is-not-a-regex ---
 tmp="$(new_fixture)"
 set +e
@@ -246,18 +236,22 @@ phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "verify" ]] || fail "interactive-
 rm -rf "$tmp"
 pass "interactive-agent-asking-with-bead-and-role-phase"
 
-# --- interactive-agent-refuses-done ---
+# --- done-is-refused-from-every-name ---
+# cb-1or.2 retired `done': it is an unknown word now, from an interactive name and from an
+# implementer's alike, and neither writes a file.
 tmp="$(new_fixture)"
-set +e
-out="$(run_state "$tmp" Forge done --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "interactive-agent-refuses-done: expected exit 2, got $status"
-grep -q "done is an implementer's state" <<<"$out" \
-  || fail "interactive-agent-refuses-done: wrong message, got: $out"
-[[ -f "$(state_file "$tmp" Forge)" ]] && fail "interactive-agent-refuses-done: file was written"
+for who in Forge Cyclops; do
+  set +e
+  out="$(run_state "$tmp" "$who" done --bead ah-f9c --pid 1 2>&1)"
+  status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "done-is-refused-from-every-name: $who expected exit 2, got $status"
+  grep -q "unknown state 'done'" <<<"$out" \
+    || fail "done-is-refused-from-every-name: $who wrong message, got: $out"
+  [[ -f "$(state_file "$tmp" "$who")" ]] && fail "done-is-refused-from-every-name: $who file was written"
+done
 rm -rf "$tmp"
-pass "interactive-agent-refuses-done"
+pass "done-is-refused-from-every-name"
 
 # --- off-roster-non-interactive-name-still-refused ---
 tmp="$(new_fixture)"

@@ -1590,8 +1590,9 @@ floor keeps a day's debt from arriving in one lump.
 
 A role absent here starts on its condition alone: a planner and the verifier
 have conditions that are true whenever there is work, so a floor would only
-start them with nothing to do.  `orchestrator\=' has neither, and is `s\=' only -
-Cerebro starts nothing on its own, including itself."
+start them with nothing to do.  `orchestrator\=' has a condition and no floor:
+an unranked bead starts it for the triage pass it runs on startup, and
+nothing else does (cb-5lx.2)."
   :type '(alist :key-type string :value-type integer)
   :group 'cerebro)
 
@@ -1835,7 +1836,7 @@ It has to carry ids and not only counts.  A planner that plans one bead while
 another arrives leaves every count where it was, and \"nothing changed\" would
 then be wrong in the one direction that costs the fleet work.
 
-Nil for a role with no condition rules - `orchestrator\=', anything a consumer
+Nil for a role with no condition rules - anything a consumer
 added - and for the cadence roles, whose reason is a clock this must not
 hold: what Moira and Cypher watch moves outside this fleet, so the fleet
 looking unchanged is evidence of nothing."
@@ -1853,6 +1854,9 @@ looking unchanged is evidence of nothing."
     ;; the next tick, for ever.  The ids move the moment the planned list
     ;; does, which is the only change worth another session (cb-1or.1).
     ("implementer" (list (alist-get 'planned-ids context)))
+    ;; The ids rather than the count, for the reason the planner arm gives: a
+    ;; bead ranked while another arrives leaves the count where it was.
+    ("orchestrator" (list (alist-get 'unranked-ids context)))
     (_ nil)))
 
 (defun cerebro--unless-unchanged (role context reason)
@@ -2001,6 +2005,12 @@ is merely waiting for it."
          ("implementer"
           (let ((ids (alist-get 'planned-ids context)))
             (and ids (format "%d planned, unclaimed" (length ids)))))
+         ;; Cerebro is started for one thing: an unranked bead, so that the
+         ;; triage pass it runs on startup (agents/orchestrator.md) has
+         ;; something to ask about.  It still starts no implementer (cb-5lx.2).
+         ("orchestrator"
+          (let ((ids (alist-get 'unranked-ids context)))
+            (and ids (format "%d unranked" (length ids)))))
          (_ nil)))
        (and cadence ended (>= (- now ended) cadence)
             (format "%s since its last %s"
@@ -2090,8 +2100,8 @@ reason not to start a session, not a reason to start one on everything."
 
 CONTEXT is `cerebro--trigger\='s.  A role whose trigger is a condition names
 the condition, since there is no time at which it becomes true; a role on a
-cadence counts down to its next start, which there is.  `orchestrator\=' and
-any role this view has no rule for show nothing rather than a guess.
+cadence counts down to its next start, which there is.  A role this view has
+no rule for shows nothing rather than a guess.
 
 Deliberately not gated on the floor: it says what the role is for, and a
 floor that has half a minute left to run is not worth a different word."
@@ -2118,6 +2128,7 @@ floor that has half a minute left to run is not worth a different word."
      ((equal role "planner")
       (format "→ buffer < %d" (cerebro--planner-want (alist-get 'implementers context))))
      ((equal role "verifier") "→ merged, unverified")
+     ((equal role "orchestrator") "→ unranked bead")
      (cadence
       (concat (cerebro--countdown
                (let ((ended (alist-get 'ended-at context)))

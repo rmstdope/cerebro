@@ -6119,8 +6119,8 @@ by being derived from the unplanned list."
     (should (null (cerebro-test--trigger "architect" '(ended-at . 917000.0))))
     (should (equal (cerebro-test--trigger "architect" '(ended-at . 910000.0))
                    "24h since its last sweep"))
-    ;; Cerebro starts nothing on its own, and neither does anything the view
-    ;; has no rule for.
+    ;; Cerebro is started for an unranked bead and nothing else (cb-5lx.2); a
+    ;; role the view has no rule for starts never.
     (should (null (cerebro-test--trigger "orchestrator" '(p0-unplanned "cb-9zz")
                                          '(merged-unverified . 9))))
     (should (null (cerebro-test--trigger "sommelier" '(p0-unplanned "cb-9zz"))))
@@ -6150,6 +6150,31 @@ by being derived from the unplanned list."
       ;; roster-armed role does.
       (should (equal (implementer '(planned-ids "cb-1") '(started-at))
                      "1 planned, unclaimed")))))
+
+(ert-deftest cerebro-test/an-unranked-bead-starts-an-armed-cerebro ()
+  "Cerebro is started for one thing - a bead waiting for a ranking - so the
+triage pass it runs on startup has something to ask about (cb-5lx.2).  The
+fingerprint is the ids, so a Cerebro whose pass ranked nothing is not started
+again for the same set."
+  (should (null (cerebro-test--trigger "orchestrator")))
+  (should (equal (cerebro-test--trigger "orchestrator" '(unranked-ids "cb-1" "cb-2"))
+                 "2 unranked"))
+  ;; Still nothing for a P0, a short buffer or merged work.
+  (should (null (cerebro-test--trigger "orchestrator" '(p0-unplanned "cb-9zz")
+                                       '(planned . 0) '(merged-unverified . 9))))
+  ;; The same set after a pass that ran: held.  A different set: started.
+  (should (null (cerebro-test--trigger "orchestrator" '(unranked-ids "cb-1")
+                                       '(last-fingerprint ("cb-1")))))
+  (should (equal (cerebro-test--trigger "orchestrator" '(unranked-ids "cb-1" "cb-3")
+                                        '(last-fingerprint ("cb-1")))
+                 "2 unranked"))
+  (should (equal (cerebro--trigger-fingerprint "orchestrator"
+                                               (cerebro-test--context '(unranked-ids "cb-1")))
+                 '(("cb-1"))))
+  ;; The standby row says what it waits for.
+  (should (equal (cerebro--standby-label (cerebro-test--interactive "Cerebro" "orchestrator" 'standby)
+                                         (cerebro-test--context))
+                 "→ unranked bead")))
 
 (ert-deftest cerebro-test/two-planners-answer-every-trigger-identically ()
   "No planner is first: the context carries nothing that tells Xavier from
@@ -6872,7 +6897,7 @@ has been there - there is no session for an elapsed time to describe."
     (should (equal (cerebro--standby-label
                     (cerebro-test--interactive "X" "orchestrator" 'standby)
                     (cerebro-test--context))
-                   ""))
+                   "→ unranked bead"))
     (should (equal (cerebro--standby-label
                     (cerebro-test--interactive "X" "sommelier" 'standby)
                     (cerebro-test--context))
@@ -7699,8 +7724,16 @@ will start it; the plain line is what a role the view started and ended keeps."
                            "roster.conf arms it: the view starts it when its own"
                            " trigger fires (→59m).\n"
                            "Press s to start it now, k to leave it down.")))
-    (should (equal (cerebro--placeholder cerebro-agent nil nil t "")
+    (should (equal (cerebro--placeholder cerebro-agent nil nil t "→ unranked bead")
                    (concat "Cerebro is not running.\n"
+                           "roster.conf arms it: the view starts it when its own"
+                           " trigger fires (→ unranked bead).\n"
+                           "Press s to start it now, k to leave it down.")))
+    ;; And the other branch stays pinned by a role the view has no rule for.
+    (should (equal (cerebro--placeholder
+                    (cerebro-test--interactive "Sommelier" "sommelier" 'standby)
+                    nil nil t "")
+                   (concat "Sommelier is not running.\n"
                            "roster.conf arms it, but this role has no trigger: it is"
                            " started with s only.\n"
                            "Press s to start it, k to leave it down.")))

@@ -176,8 +176,8 @@ planner`), which is the one place a name and a role stop being interchangeable:
 - **Xavier** and **Beast** (`planner`, Opus/high) — load `plan-bead`. Turn unplanned beads into
   plans a Sonnet agent could build unattended. Decide architecture themselves; take every
   user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
-  builders, sized from how many are running (one each, never fewer than two) and refilled one bead
-  per pass, with no wake interval to wait out — the rule itself lives in `scripts/planner-buffer`,
+  builders, sized from the roster's implementers minus any told to finish (one each, never fewer
+  than two) and refilled one bead per pass, with no wake interval to wait out — the rule itself lives in `scripts/planner-buffer`,
   which the skill calls and `cerebro-test/the-trigger-counts-what-planner-buffer-counts` holds the
   fleet view to. They divide
   the work through the `planning:<name>` label alone, and a whole split family through a
@@ -408,8 +408,8 @@ would otherwise protect a stale claim from being reclaimed.
 
 **The shell has the same rule, in `scripts/agent-alive <Name>`** — exit 0 alive, 1 dead, 2 for a
 usage error or a name that is not on the roster, so a typo can never read as "not running". It is
-what `skills/plan-bead/SKILL.md` calls in both places it needs liveness: sizing the buffer from the
-running implementers, and deciding whether a `planning:` label is still held. Anything in bash that
+what `skills/plan-bead/SKILL.md` calls in the one place it needs liveness: deciding whether a
+`planning:` label is still held (the buffer stopped counting sessions in cb-1or.3). Anything in bash that
 needs to know whether an agent is up calls this; a bare `kill -0` there is the pre-ah-bqi shape, and
 it makes a dead planner look alive, which strands the very label the reclaim loop exists to free.
 It is the bash copy of `cerebro--session-args-p` — pid, name and root — and both are held to one
@@ -453,6 +453,8 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   `cerebro--planner-want`) because it runs every five seconds and may not spawn a process; the ERT
   contract test is what keeps the copy honest. It counts an implementer told to finish as not
   running — it takes no further bead — which is one of the two drifts the split had already caused.
+  Since cb-1or.3 it counts the roster's implementers rather than running sessions — a builder
+  between beads has no session (cb-1or.1) — so `agent-alive` is no longer part of the rule.
 - `scripts/app-paths` is the one place "which paths are this project's application" is answered
   (ah-qled.6) — the `app_paths` key, and `--classify <path>...` over changed paths. Unlike every
   other reader here it **fails when it does not know**: no declaration means exit 3 and a line on

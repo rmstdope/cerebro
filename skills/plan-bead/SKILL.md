@@ -1,6 +1,6 @@
 ---
 name: plan-bead
-description: The planning role — plan every P0 immediately, keep a buffer of planned, unclaimed beads ahead of the implementers, sized from how many are running, turning each into something an agent can build unattended, deciding architecture yourself and every user-facing question with the navigator. Use when running a planning session.
+description: The planning role — plan every P0 immediately, keep a buffer of planned, unclaimed beads ahead of the implementers, sized from the roster's implementers, turning each into something an agent can build unattended, deciding architecture yourself and every user-facing question with the navigator. Use when running a planning session.
 ---
 
 # Planning a bead
@@ -556,7 +556,7 @@ Then go on to the buffer.
 ## You keep a buffer sized to the fleet
 
 You keep the implementers fed, and the measure of that is a **buffer of planned, open, unclaimed
-beads** — ready for anyone to pick up — whose size follows how many implementers are running: **one
+beads** — ready for anyone to pick up — whose size follows the implementers on the roster: **one
 each, and never fewer than two**. A pass plans **one bead** and ends; the fleet view starts the next pass the moment the buffer
 is short again, which on a moving fleet is seconds later.
 
@@ -591,19 +591,20 @@ than it needed to be — against a rule this file already states twice, that the
 never a ceiling. An under-full buffer costs an idle implementer, which is the expensive error of the
 two.
 
-**How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
-state file under `.cerebro/state/` whose `pid` is alive, minus any implementer whose stop flag
-is set (it finishes its bead and retires, so it will not take another). **The
-interactive agents — every non-implementer row of `scripts/roster`, the other planner included —
-write the same file you do**, which is why the script walks the implementer roster
-explicitly rather than the state directory; without that filter your own file would inflate `n` by
-one, and the buffer target would move under you for no reason.
+**How many implementers the fleet has** is `n`: the implementer rows of `scripts/roster`, minus any
+whose stop flag is set under `.cerebro/state/` (it finishes its bead and retires, so it will take no
+other). `planner-buffer --want` reads exactly that.
 
-**Liveness is `scripts/agent-alive`'s to answer, never a bare `kill -0`** — which is what
-`planner-buffer --want` calls, walking the implementer roster rather than the state directory. Pids
-are recycled, so a bare `kill -0` makes a dead implementer look alive — `agent-alive` checks the pid's own `--name`, the
-rule `cerebro--session-alive-p` follows in elisp, and here a phantom implementer inflates the count
-the buffer is sized from and puts both planners to sleep over a short queue.
+**It is deliberately not a count of running sessions.** Since cb-1or.1 an implementer ends its pass
+with `waiting`, the fleet view ends the session, and a fresh one is started *by* a planned bead — so
+on a quiet board no builder is running at all, a count of sessions is the floor, and a fleet of four
+plans two beads and wakes two builders for ever.
+
+Two overshoots come with that and are accepted. A builder the navigator retired with `f` while it
+was waiting is disarmed and still counts — armed-ness lives only in the running Emacs and no file
+records it, and a rule the two readers answer differently is the drift `scripts/planner-buffer`
+exists to end. A `dead` builder counts too, being one `s` away from building. The cost either way is
+one bead built when the navigator next presses `s`; the buffer is a floor, not a ceiling.
 
 ```bash
 # `m' on its own, if the count line above is not what you want:
@@ -613,10 +614,10 @@ the buffer is sized from and puts both planners to sleep over a short queue.
 **There is one number, `m = max(2, n)`** — `scripts/planner-buffer --want` computes it, and
 `--print-floor` is where the 2 is declared: the buffer is short whenever the planned, unclaimed count
 is **below `m`**, and a pass that finds it short plans **one bead**. Three implementers want three
-planned beads; four want four. **Two is the floor whatever the fleet looks like**, including a fleet
-with nothing running — the navigator starts an implementer expecting it to have something to claim,
-and a queue that begins filling only once it is up is a queue that is late. Measure `n` on every
-pass, since the fleet changes under you.
+planned beads; four want four. **Two is the floor whatever the fleet looks like**, including a
+roster of one — the navigator starting a second builder by hand expects it to have something to
+claim, and a queue that begins filling only once it is up is a queue that is late. Measure `n` on
+every pass: the roster and the stop flags change under you.
 
 The old rule filled to `2m` and waited for the buffer to drain to `m`. It was a rule about latency:
 refilling one bead at a time cost a ten-minute wake interval per bead, so a planner planned in

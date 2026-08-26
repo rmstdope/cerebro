@@ -89,7 +89,8 @@ aside first.
 Not prose — files, each tracked so that every clone has it.
 
 - `.cerebro/project.conf` — this project's name, default branch, audience, which paths are
-  the application, and the gate. Both gates name `tests/gate`, which runs exactly what
+  the application, which agent CLI its sessions run on (`agent_cli`, answered by
+  `scripts/agent-cli`), and the gate. Both gates name `tests/gate`, which runs exactly what
   `.github/workflows/ci.yml` runs (cb-i3l.2).
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
   built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that

@@ -885,4 +885,62 @@ pass "launch is not fooled by a live pid that is not that name's session"
 
 rm -f "$fixture_dir/.cerebro/state/$dup_name.state.json"
 
+# --- the seam: launch execs what agent-cli names, and spells no provider flag itself (cb-d59.2) ---
+#
+# Its own consumer, built with --copy so its `scripts/` are copies rather than symlinks: this case
+# OVERWRITES `agent-cli` inside the fixture, and overwriting a symlink would rewrite this
+# checkout's own script.
+#
+# The assertion is that `launch` carries no provider knowledge, not that one particular table row
+# is right - so the fixture's agent-cli answers with a provider that does not exist, and the case
+# passes only if every token the stub sees came from it.
+fake_consumer="$(consumer_new fake-provider --copy)"
+printf 'gate_fast make check\n' > "$fake_consumer/.cerebro/project.conf"
+cat > "$fake_consumer/.claude/cerebro/scripts/agent-cli" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  --binary) echo fake-cli ;;
+  --check)  exit 0 ;;
+  --argv)
+    shift
+    name=""
+    while [ $# -gt 0 ]; do
+      [ "$1" = "--name" ] && name="$2"
+      shift
+    done
+    printf '%s\0' --dialect fake --who "$name"
+    ;;
+  --prompt-argv) printf '%s\0' "$2" ;;
+  *) echo fake ;;
+esac
+FAKE
+chmod +x "$fake_consumer/.claude/cerebro/scripts/agent-cli"
+
+fake_dir="$(mktemp -d)"
+cleanup_add "$fake_dir"
+cp "$stub_dir/claude" "$fake_dir/fake-cli"
+cp "$stub_dir/claude" "$fake_dir/claude"
+
+out="$(PATH="$fake_dir:$PATH" bash "$fake_consumer/.claude/cerebro/scripts/launch" Xavier --model sonnet 2>/dev/null)"
+echo "$out" | grep -q '^ARG:--dialect$' \
+  || fail "fake provider: launch did not exec the binary agent-cli named, got: $out"
+pass "launch execs the binary agent-cli names, not claude"
+
+expected="ARG:--dialect
+ARG:fake
+ARG:--who
+ARG:Xavier
+ARG:--model
+ARG:sonnet"
+[[ "$(echo "$out" | grep '^ARG:' | head -6)" == "$expected" ]] \
+  || fail "fake provider: expected the fake arm's tokens then the caller's own, got: $out"
+for flag in --agent --remote-control --permission-mode --append-system-prompt --settings; do
+  echo "$out" | grep -q "^ARG:${flag}\$" \
+    && fail "fake provider: launch spelt $flag itself, which is the claude arm's to spell"
+done
+echo "$out" | tail -2 | grep -q "Xavier" \
+  || fail "fake provider: the prompt should still be the last argument, got: $out"
+pass "launch passes exactly the argv agent-cli emits, and adds none of its own"
+
 echo "all launcher tests passed"

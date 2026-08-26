@@ -24,8 +24,7 @@ by hand:
 | A question to the navigator | `.claude/cerebro/scripts/agent-state Cerebro asking --pid $PPID`, and `working` with the same phase again once answered |
 | *Staying alive between questions* | `.claude/cerebro/scripts/agent-state Cerebro idle --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process. You never write `done`: you are not replaced between
-questions, so `idle` is what you write while waiting for the navigator to ask for something.
+`--pid` is `$PPID` — your own `claude` process. `idle` is what you write while waiting for the navigator to ask for something.
 
 ## On startup
 

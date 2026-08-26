@@ -94,9 +94,8 @@ Not prose — files, each tracked so that every clone has it.
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
   built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that
   agent as it comes up (cb-0r6), `standby` **arms** it without starting it (cb-98u) — its row reads
-  `standby` and its role's own trigger is what starts it. `standby` is refused on an implementer row
-  until cb-1or.2 — though since cb-1or.1 the trigger behind it is a real condition, a planned,
-  unclaimed bead.
+  `standby` and its role's own trigger is what starts it. `standby` on an implementer row arms it
+  the same way (cb-1or.2); its trigger is a planned, unclaimed bead.
 - `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
   implementers before they start. Absent means it has paid for none yet, which is where every
   project starts.
@@ -242,14 +241,14 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   unanswered review comments. Implementers are interactive now, so an ended turn no longer kills the
   process — it just sits there until a human types something, which is not better.
 - **The state file is the contract, for every agent.** `.cerebro/state/<name>.state.json`
-  carries `idle`/`working`/`asking`/`waiting`/`done`; every agent in the fleet writes it, and
+  carries `idle`/`working`/`asking`/`waiting`; every agent in the fleet writes it, and
   `cerebro.el` acts on it. Since ah-u3i it also carries `phase` (an implementer's `build`/`gate`/`review`/`ci`/`rebase`/
   `merge`, or a role word for the interactive agents since ah-2n3.2, or null) and `phase_since`; `standby` is
   the one state no file ever carries, being derived from what this Emacs armed and has not seen die
   abnormally since (cb-5yr, cb-eat) — a refused launch is `dead` with its last line on the row,
   never `standby` —
   supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
-  phase vocabulary can only mislabel a column, never break the restart loop. An unrecognised `state`
+  phase vocabulary can only mislabel a column, never break the supervision loop. An unrecognised `state`
   string shows its raw word in yellow rather than reading as `idle`, which used to mean "fine" when
   it meant "an error". **`waiting` is every agent's end-of-pass state** (ah-hiib.3, cb-5yr,
   cb-1or.1), meaning *this pass is over and my turn has ended* — an implementer's bead merged and
@@ -258,10 +257,9 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   agent's own trigger (`cerebro--trigger`) — for an implementer, a planned, unclaimed bead — so a
   session's context is one pass deep the way an implementer's is one bead deep.
   `cerebro-wake-intervals` survives it as the minimum gap between two *starts* of one role. A stop
-  flag on a waiting agent ends it and disarms it. **`done` is an implementer's older spelling of it**
-  — `scripts/agent-state` refuses it from an interactive name, and a live file that carries it anyway
-  maps to `'unknown` rather than being handed to the restart/retire logic as a finished bead. Nothing
-  writes it since cb-1or.1 and cb-1or.2 retires it. **`asking` has a hook behind it**:
+  flag on a waiting agent ends it and disarms it. **`done`, the implementer's older spelling of it,
+  is retired (cb-1or.2)**: `scripts/agent-state` refuses it like any unknown word, and a live file
+  that carries it anyway maps to `'unknown` and is never acted on. **`asking` has a hook behind it**:
   `hooks/question-state.settings.json` + `scripts/agent-asking`, wired into the whole fleet by the
   two lines `scripts/launch` gives every session (`agent-hooks-env`, `--settings`), flip the file
   for the lifetime of a question tool call, because telling an agent three ways did not make it so.
@@ -348,7 +346,7 @@ evaluations a day would make useless. An error is written at every verbosity but
 means nothing at all, which is what the suite binds.
 
 **`.cerebro/state/decisions.jsonl`** is the loud one: a line per decision —
-start (with the trigger that fired), end, retire, restart, nudge, sweep run, abnormal exit — and, at
+start (with the trigger that fired), end, retire, nudge, sweep run, abnormal exit — and, at
 `cerebro-log-verbosity` `evaluations` (the default), a line per trigger evaluation per tick carrying
 what the trigger read and whether `cerebro--unless-unchanged` is what held it. That last is the only
 observable trace of a decision *not* to start, which is otherwise indistinguishable from a bug.
@@ -362,10 +360,10 @@ more so, being the one path that runs when something has already gone wrong.
 
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
 
-- `<name>.state.json` — `{state: "idle"|"working"|"asking"|"waiting"|"done", phase, bead, since,
+- `<name>.state.json` — `{state: "idle"|"working"|"asking"|"waiting", phase, bead, since,
   phase_since, wake_at, pid}`, written by **the agent itself** at each transition through
   `scripts/agent-state` (never by hand — see that script's header). Every implementer writes one, and since ah-2n3.2 so does each of
-  the interactive agents, `done` excepted; `waiting` is written by every kind since cb-1or.1. The launcher used to write the file and no longer does: it
+  the interactive agents; `waiting` is written by every kind since cb-1or.1. The launcher used to write the file and no longer does: it
   `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/`review`/`ci`/
   `rebase`/`merge` for an implementer, or a role word (`triage`/`plan`, `prepare`/`verify`, `sweep`,
   `sweep`/`release`, `daily`/`weekly`) for the interactive agents — meaningful with `working` and
@@ -376,10 +374,10 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
   one, because a killed agent cannot write a last transition and a file that outlives its session
   outlives its pid. There is one owner of that: `cerebro--end-session`, which removes the buffer and
   the `cerebro--sessions` entry (`cerebro--forget-session`), always the state file, and the stop flag
-  only when its caller asks. Its three callers are `cerebro--supervise`'s retire (flag cleared) and
-  restart branches (deletion before the launch), and `k` (`cerebro--kill-session-buffer`, flag left
-  alone — `f` then `k` means stay gone). Enumerating two of the three is how the same omission came
-  to be fixed twice while `k` went on leaking a state file (ah-bqi); add a fourth caller by calling
+  only when its caller asks. Its two callers are `cerebro--supervise`'s retire branch (flag cleared)
+  and `k` (`cerebro--kill-session-buffer`, flag left
+  alone — `f` then `k` means stay gone). Enumerating one of the two is how the same omission came
+  to be fixed twice while `k` went on leaking a state file (ah-bqi); add a third caller by calling
   that function, not by listing artifacts again. A session that ends by *itself* reaches none of
   those, so since cb-hzs `cerebro--launch` deletes the file before it spawns: one present then is
   always a previous session's, since a name with a live session is refused. Retiring an implementer

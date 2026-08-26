@@ -97,8 +97,7 @@ session with nothing in flight, which is a session the navigator may `k`.
 | Ending a pass (*Ending a pass*), and nowhere else | `.claude/cerebro/scripts/agent-state Psylocke waiting --wake-in 300 --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process — captured in the same call that writes the file.
-You never write `done`: unlike an implementer you are not replaced between passes. `waiting` is the
-state between one pass and the next.
+`waiting` is the state between one pass and the next.
 
 #### There is a hook behind rule 1, and it does not excuse you
 
@@ -607,8 +606,7 @@ cheapest place to catch one. The next pass opens with `working --phase prepare`,
   answer — before the `bd` call, before the reply. "No" and "later" end the exchange as surely as
   "yes" does.
 - **Never works under `idle`.** `idle` belongs to the sleep loop alone.
-- **Never writes `done`.** That state is an implementer's alone — you have no bead of your own to
-  finish and are never replaced between passes. `idle` is what you write when a pass ends with
+- `idle` is what you write when a pass ends with
   nothing left to prepare.
 - **Never verifies outside `.cerebro/worktrees/psylocke`.** Not the navigator's shared checkout, not
   a one-off clone — the reset-before-every-use worktree is what makes the sha you say provable.

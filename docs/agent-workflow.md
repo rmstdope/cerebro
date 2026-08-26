@@ -101,8 +101,7 @@ comes up — starts the next pass at once.
 passes — an implementer between beads included — and it is ended within half a minute; blue `◌` is
 **standby**: the view ended this agent after its pass and starts a fresh one when the trigger in the
 For column fires, and `RET` shows its last pass. A bold yellow `?` is an agent waiting on
-*you*, green `◍` is `done` — an implementer started before cb-1or.1, about to be replaced — grey `○`
-is dead.
+*you*, and grey `○` is dead.
 
 `◌` on an **implementer** row is one whose session died without finishing a bead. The view starts it
 again on the same backoff a role waits out, and the For column says when and how many starts have
@@ -213,10 +212,8 @@ user-facing surface, so the queue keeps filling. It will not guess on your behal
 
 **You** start builders — one session each, `s` in the fleet view or `launch <Name>` in a
 terminal — unless their `.cerebro/roster.conf` line says `autostart`, in which case `M-x cerebro`
-starts them for you as it opens. `standby` is not a word an implementer row takes yet:
-`scripts/roster` refuses it until cb-1or.2, though since cb-1or.1 the trigger behind it is a real
-condition — a planned, unclaimed bead — rather than the unconditional start that would have made it
-`autostart` with a five-second delay. There is no flag that puts a running implementer to work: **a
+starts them for you as it opens. `standby` on an implementer row arms it without starting it, and a
+planned, unclaimed bead is what starts it. There is no flag that puts a running implementer to work: **a
 running implementer is a working one**, and it claims the next planned bead as soon as one exists. If you want another
 builder, start another session.
 
@@ -277,7 +274,7 @@ mid-bead leaves a claimed bead, a worktree and an open PR for you to unpick by h
 builder — between beads, nothing claimed — is the one exception: it stops at once, since there is
 nothing in flight to strand.
 
-The implementer never reads the flag itself, and cannot end itself either. It says it is done; the
+The implementer never reads the flag itself, and cannot end itself either. It says its pass is over; the
 fleet view decides whether a replacement starts.
 
 Changed your mind before it noticed? `f` again offers to clear the flag, or:
@@ -504,7 +501,7 @@ unusual this week:
 
 **`decisions.jsonl`** is the fleet view's, and it answers the other half: not what the agents did but
 what Emacs decided about them. One line per start (with the trigger that fired and whether it was a
-trigger or you), per end, retire, restart and nudge, per sweep finding run, per abnormal exit — and,
+trigger or you), per end, retire and nudge, per sweep finding run, per abnormal exit — and,
 at the default verbosity, one per trigger *evaluation*, on every five-second tick, carrying what the
 trigger read and whether the no-progress guard is what held it.
 

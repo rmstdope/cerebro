@@ -67,7 +67,7 @@ by hand:
 | Once the sweep is decided (step 2 below) | `.claude/cerebro/scripts/agent-state Forge working --phase daily --pid $PPID` (or `--phase weekly`) |
 | After the report, ending your turn | `.claude/cerebro/scripts/agent-state Forge waiting --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process. Write `waiting`, never `done` and never `idle`:
+`--pid` is `$PPID` — your own `claude` process. Write `waiting`, never `idle`:
 `waiting` is the interactive roles' way of saying *this pass is over and my turn has ended*, and it is
 what puts you on standby. `idle` would mean a live session with nothing in hand, waiting to be spoken
 to, and would leave this session up for ever. The fleet view ends the session half a minute later,
@@ -226,7 +226,7 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
 - Never a second bead for a smell already filed — a seen-again note, or nothing.
 - Never posts to GitHub.
 - Never moves the watermark before the beads it covers are pushed.
-- Never writes `done` to the state file — that is an implementer's state alone — and never `idle`,
+- Never writes `idle`,
   which would say the session is up and free rather than finished. `waiting` is what you write once
   the sweep is reported.
 - Never `git checkout`/`switch`/`stash` in the shared checkout — reading is `git show`/`git

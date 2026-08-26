@@ -298,8 +298,7 @@ by hand:
 | The P0 check (*P0 pre-empts the buffer*) | stays `working --phase plan`, same as any other bead being planned |
 | Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process. You never write `done`: you are not replaced between
-beads. `waiting` is the state between one pass and the next — never `idle`, which says you have
+`--pid` is `$PPID` — your own `claude` process. `waiting` is the state between one pass and the next — never `idle`, which says you have
 nothing to do and nothing coming. Writing another planner's name here
 puts your work on their row and hides your own, so the navigator sees one busy planner and one that
 has apparently died.

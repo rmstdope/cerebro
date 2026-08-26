@@ -49,7 +49,7 @@ reply. An `asking` left behind tells the navigator you are still blocked on them
 
 `--bead` is the bead the PR implements when it names one, and `pr-<number>` when it does not — the
 column exists to say what you are working on, and for you that is usually a PR. `--pid` is `$PPID`.
-You never write `done`: you are not replaced between PRs. `waiting` is the state between passes.
+`waiting` is the state between passes.
 
 ## The work list: which PRs are yours
 

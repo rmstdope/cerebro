@@ -1760,7 +1760,7 @@ Written by `cerebro--start-due\=' when it launches: incremented when the
 previous start of that name failed, and reset to zero when a pass has run
 since.  It is what `cerebro--retry-delay\=' is indexed by.")
 
-(defcustom cerebro-role-start-spacing '(("planner" . 30))
+(defcustom cerebro-role-start-spacing '(("planner" . 30) ("implementer" . 30))
   "Minimum seconds between two starts of one ROLE, as (ROLE . SECONDS).
 
 A role only two agents hold can have its condition come true for both at
@@ -1775,8 +1775,10 @@ writes anything the other could have seen.
 
 Spacing counts PEERS only - see `cerebro--role-start-too-soon-p\=' - so a role
 is never held by its own last start.  A role absent from this list is never
-spaced: one holder cannot collide with itself, and `implementer\=' is started
-by `cerebro--supervise\=' rather than from here at all."
+spaced: one holder cannot collide with itself.  `implementer\=' is started
+from `cerebro--start-due\=' too since cb-1or.1, and 30 seconds between
+implementer starts is what keeps a queue that fills from starting the whole
+roster in one tick."
   :type '(alist :key-type string :value-type integer)
   :group 'cerebro)
 
@@ -1899,7 +1901,7 @@ so it has to say what the navigator would otherwise have to go and look up.
 
 CONTEXT is what `cerebro--trigger-context\=' gathers - `now\=',
 `live-implementers\=', `planned\=', `p0-unplanned\=' (ids), `p4-unranked\=',
-`actionable-ids\=', `merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for
+`actionable-ids\=', `planned-ids\=', `merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for
 no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) - plus the five
 per-agent facts `cerebro--agent-context\=' adds to it: `ended-at\=',
 `started-at\=', `floor\=', `last-fingerprint\=' and `first-planner-p\='.
@@ -1986,13 +1988,14 @@ is merely waiting for it."
           (and (consp gh) (car gh) (format "issue #%s moved" (car (car gh)))))
          ("reviewer"
           (and (consp gh) (cadr gh) (format "PR #%s moved" (car (cadr gh)))))
-         ;; Unconditional, because a standby implementer already IS the
-         ;; condition: armed, and with a session that ended without `done'
-         ;; (`cerebro--apply-standby').  The number is the attempt about to
-         ;; be made - `failed-starts' counts the ones behind it - so the
-         ;; first retry reads "retry 1" (cb-hzs).
+         ;; A standby implementer is started for work, not for having died: a
+         ;; planned, unclaimed bead is the whole condition (cb-1or.1).  Nil
+         ;; before the panel has answered.  A launch that produced no session
+         ;; is still retried on `cerebro-retry-backoff' - that is
+         ;; `cerebro--start-due's, not this rule's.
          ("implementer"
-          (format "session ended, retry %d" (1+ (alist-get 'failed-starts context))))
+          (let ((ids (alist-get 'planned-ids context)))
+            (and ids (format "%d planned, unclaimed" (length ids)))))
          (_ nil)))
        (and cadence ended (>= (- now ended) cadence)
             (format "%s since its last %s"
@@ -3812,6 +3815,7 @@ trigger read as well as what it decided."
              (cons 'role (cerebro-agent-role agent))
              (cons 'reason reason)
              (cons 'planned (alist-get 'planned context))
+             (cons 'planned_ids (alist-get 'planned-ids context))
              (cons 'live_implementers (alist-get 'live-implementers context))
              (cons 'p0_unplanned (alist-get 'p0-unplanned context))
              (cons 'p4_unranked (alist-get 'p4-unranked context))
@@ -4758,6 +4762,13 @@ was a failure, are both plain values: neither depends on whose pass it is."
           ;; another (`cerebro--trigger-fingerprint').
           (cons 'actionable-ids
                 (mapcar (lambda (bead) (alist-get 'id bead)) unplanned))
+          ;; The planned, claimable ids: what a standby implementer is
+          ;; started for, and what its fingerprint compares (cb-1or.1).  Nil
+          ;; before the panel has answered, which is what keeps "no figures
+          ;; yet" from starting a builder - `planned' above reads
+          ;; `most-positive-fixnum' there, so the rule keys on this instead.
+          (cons 'planned-ids
+                (mapcar (lambda (bead) (alist-get 'id bead)) planned))
           (cons 'merged-unverified (length merged))
           (cons 'stale-verdicts (seq-count #'cerebro--stale-verdict-p open-beads))
           ;; One stat per implementer per tick, which is within what this

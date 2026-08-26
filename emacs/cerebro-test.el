@@ -912,6 +912,17 @@ shape."
                                                 #'cerebro-test--always-alive nil nil))))
               (should (eq (cerebro-agent-state agent) 'waiting))
               (should (stringp (cerebro-agent-wake-at agent)))
+              (should (eq (cerebro-agent-bead agent) nil)))
+            ;; and the same end-of-pass shape from an implementer name (cb-1or.1)
+            (should (eq 0 (call-process agent-state nil nil nil
+                                        "Cyclops" "waiting" "--wake-in" "600"
+                                        "--pid" "4244")))
+            (let* ((parsed (cerebro--read-state-file
+                            (cerebro--state-file-path tmp "Cyclops")))
+                   (agent (car (cerebro--derive '("Cyclops") nil
+                                                (list (cons "Cyclops" parsed))
+                                                #'cerebro-test--always-alive nil nil))))
+              (should (eq (cerebro-agent-state agent) 'waiting))
               (should (eq (cerebro-agent-bead agent) nil)))))
       (delete-directory tmp t))))
 
@@ -1244,14 +1255,23 @@ leaves the navigator to work out whether anything is coming."
     (should (equal (cerebro--retry-when 0 3) "now (3 failed starts)"))
     (should (equal (cerebro--retry-when 45 1) "in 45s (1 failed start)"))
     (should (equal (cerebro--retry-when 120 3) "in 2m (3 failed starts)"))
-    (should
-     (equal (cerebro--placeholder
-             (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
-             120 3)
-            (concat "Cyclops is not running.\n"
-                    "Its last session ended without finishing a bead;"
-                    " the view starts it again in 2m (3 failed starts).\n"
-                    "Press s to start it now, k to leave it down.")))
+    (let ((cyclops (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+      ;; While a failed start is backing off it says when it comes back.
+      (should
+       (equal (cerebro--placeholder cyclops 120 3)
+              (concat "Cyclops is not running.\n"
+                      "Its last session ended without finishing a bead;"
+                      " the view starts it again in 2m (3 failed starts).\n"
+                      "Press s to start it now, k to leave it down.")))
+      ;; Otherwise it finished its pass and waits on the condition, whether
+      ;; or not there are failures behind it whose backoff has run out.
+      (dolist (failures '(0 3))
+        (should
+         (equal (cerebro--placeholder cyclops 0 failures)
+                (concat "Cyclops is not running.\n"
+                        "Its last session finished its pass; the view starts it"
+                        " again when a planned bead is waiting.\n"
+                        "Press s to start it now, k to leave it down.")))))
     ;; A standby *role* keeps the line it has always had: its kept buffer is
     ;; what `RET' shows, and this is only reached when that has been killed.
     (should (equal (cerebro--placeholder
@@ -4867,14 +4887,18 @@ replacing a real answer with an empty one - the same rule the sweeps follow."
     (should (eq (cerebro-agent-state agent) 'waiting))
     (should (equal (cerebro-agent-wake-at agent) "2026-08-14T09:30:00Z"))))
 
-(ert-deftest cerebro-test/waiting-from-an-implementer-is-unknown ()
-  "`scripts/agent-state' refuses it from an implementer, so a file that carries
-one anyway is a bug rather than a cadence - the same treatment `done' from an
-interactive name already gets."
-  (should (eq (cerebro-agent-state
-               (cerebro--derive-from-state "Cyclops" "implementer" 'implementer
-                                           '((state . "waiting") (pid . 42)) t))
-              'unknown)))
+(ert-deftest cerebro-test/waiting-from-an-implementer-is-waiting ()
+  "Since cb-1or.1 `waiting' is every agent's end-of-pass state, so an
+implementer's file carries it the same way a role's does - and the same
+`wake_at' with it, which the view is free to ignore."
+  (let ((agent (cerebro--derive-from-state
+                "Cyclops" "implementer" 'implementer
+                '((state . "waiting") (bead . nil) (since . "2026-08-14T09:20:00Z")
+                  (wake_at . "2026-08-14T09:30:00Z") (pid . 42))
+                t)))
+    (should (eq (cerebro-agent-state agent) 'waiting))
+    (should (equal (cerebro-agent-raw agent) "waiting"))
+    (should (equal (cerebro-agent-wake-at agent) "2026-08-14T09:30:00Z"))))
 
 (ert-deftest cerebro-test/the-interval-comes-from-the-custom-variable ()
   (let ((cerebro-wake-intervals '(("Psylocke" . 300)))
@@ -4897,15 +4921,85 @@ cleanly and now, whether or not its wake is due."
                  t cerebro-test--now)
                 'retire))))
 
-(ert-deftest cerebro-test/an-implementer-never-reaches-the-waiting-arm ()
-  "The kind guard is per-arm now, and this is the half it must keep excluding:
-an implementer has no cadence, and `waiting' from one is `unknown' anyway."
-  (let ((agent (make-cerebro-agent :name "Cyclops" :role "implementer"
-                                           :kind 'implementer :state 'waiting
-                                           :since "2026-08-14T09:00:00Z"
-                                           :wake-at "2026-08-14T09:20:00Z")))
-    (should (null (cerebro--supervise-action agent nil cerebro-test--now)))
-    (should (null (cerebro--supervise-action agent t cerebro-test--now)))))
+(ert-deftest cerebro-test/a-waiting-implementer-is-ended-after-the-grace ()
+  "The `waiting' arm's kind guard is gone (cb-1or.1): an implementer that has
+ended its pass is ended exactly the way a role is - after `cerebro-end-grace',
+at once under a stop flag, and never when the session is somebody else's."
+  (let ((cerebro-end-grace 30))
+    (cl-flet ((implementer (since &optional external)
+                (make-cerebro-agent :name "Cyclops" :role "implementer"
+                                    :kind 'implementer :state 'waiting
+                                    :since since :external external
+                                    :wake-at "2026-08-14T09:20:00Z")))
+      ;; stood in `waiting' for 31s - past the grace
+      (should (eq (cerebro--supervise-action
+                   (implementer "2026-08-14T09:29:29Z") nil cerebro-test--now)
+                  'end))
+      ;; 10s - not yet
+      (should (null (cerebro--supervise-action
+                     (implementer "2026-08-14T09:29:50Z") nil cerebro-test--now)))
+      ;; the flag lands at once, whatever `since' says
+      (should (eq (cerebro--supervise-action
+                   (implementer "2026-08-14T09:29:50Z") t cerebro-test--now)
+                  'retire))
+      ;; and a session Emacs does not own is nobody's to end
+      (should (null (cerebro--supervise-action
+                     (implementer "2026-08-14T09:29:29Z" t) nil cerebro-test--now)))
+      (should (null (cerebro--supervise-action
+                     (implementer "2026-08-14T09:29:29Z" t) t cerebro-test--now))))))
+
+(ert-deftest cerebro-test/supervise-parks-a-waiting-implementer ()
+  "An implementer that ended its pass keeps its buffer, the way a role does:
+`cerebro--supervise' parks it rather than ending the session outright, and the
+state file - which describes a session that is over - goes with the park."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-end-grace 30)
+        (parked nil)
+        (launched nil))
+    (unwind-protect
+        (let ((path (cerebro--state-file-path root "Cyclops"))
+              (agent (make-cerebro-agent :name "Cyclops" :role "implementer"
+                                         :kind 'implementer :state 'waiting
+                                         :since "2026-08-14T09:00:00Z")))
+          (make-directory (file-name-directory path) t)
+          (write-region "{\"state\":\"waiting\",\"pid\":42}" nil path nil 'quiet)
+          (cl-letf (((symbol-function 'cerebro--park-session)
+                     (lambda (a _root _now) (push (cerebro-agent-name a) parked)
+                       (delete-file (cerebro--state-file-path _root
+                                                              (cerebro-agent-name a)))))
+                    ((symbol-function 'cerebro--end-session)
+                     (lambda (&rest _) (push 'ended launched)))
+                    ((symbol-function 'cerebro--launch)
+                     (lambda (&rest _) (push 'launched launched))))
+            (with-temp-buffer
+              (cerebro--supervise (list agent) root cerebro-test--now)))
+          (should (equal parked '("Cyclops")))
+          (should (null launched))
+          (should-not (file-exists-p path)))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/supervise-retires-a-waiting-implementer-under-a-flag ()
+  "The flag says no further bead, so the session is parked - its buffer is the
+record of the pass it just finished - the flag cleared, and the name disarmed."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (parked nil))
+    (unwind-protect
+        (let ((agent (make-cerebro-agent :name "Cyclops" :role "implementer"
+                                         :kind 'implementer :state 'waiting
+                                         :since "2026-08-14T09:29:59Z")))
+          (cerebro--write-stop-flag root "Cyclops")
+          (cl-letf (((symbol-function 'cerebro--park-session)
+                     (lambda (a _root _now) (push (cerebro-agent-name a) parked)))
+                    ((symbol-function 'cerebro--end-session)
+                     (lambda (&rest _) (push 'ended parked)))
+                    ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
+            (with-temp-buffer
+              (setq cerebro--armed (list "Cyclops"))
+              (cerebro--supervise (list agent) root cerebro-test--now)
+              (should (equal parked '("Cyclops")))
+              (should-not (member "Cyclops" cerebro--armed))))
+          (should-not (cerebro--stop-flag-p root "Cyclops")))
+      (delete-directory root t))))
 
 (ert-deftest cerebro-test/an-interactive-role-is-still-never-restarted-or-nudged ()
   "The docstring's warning, pinned: making the guard per-arm must not let
@@ -5272,10 +5366,27 @@ interactive role keeps `cerebro--parked' and is never listed here."
                         (cerebro-test--interactive "Psylocke" "verifier" 'idle)))
                  '("Cyclops" "Rogue" "Storm" "Gambit" "Jubilee"))))
 
+(ert-deftest cerebro-test/an-implementer-context-prefers-its-parked-entry ()
+  "An implementer that ended its pass is parked like a role since cb-1or.1, so
+its `ended-at' is the park.  Only one whose session simply died has no parked
+entry, and there `cerebro--seen-up' still answers."
+  (with-temp-buffer
+    (setq cerebro--seen-up '(("Cyclops" . 5.0))
+          cerebro--parked '(("Cyclops" . (7.0 4.0 nil))))
+    (let ((mine (cerebro--agent-context
+                 (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
+                 (list (cons 'now 10.0) (cons 'gh nil)))))
+      (should (equal (alist-get 'ended-at mine) 7.0)))
+    (setq cerebro--parked nil)
+    (let ((mine (cerebro--agent-context
+                 (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
+                 (list (cons 'now 10.0) (cons 'gh nil)))))
+      (should (equal (alist-get 'ended-at mine) 5.0)))))
+
 (ert-deftest cerebro-test/an-implementer-context-ends-when-it-was-last-seen-up ()
   "`ended-at' is what `cerebro--start-failed-p' compares a start against.  A
-role's comes from `cerebro--parked'; an implementer has none, so it is when
-the view last derived its session as up."
+role's comes from `cerebro--parked'; an implementer whose session died has
+none, so it is when the view last derived its session as up."
   (with-temp-buffer
     (setq cerebro--seen-up '(("Cyclops" . 5.0))
           cerebro--failed-starts '(("Cyclops" . 2))
@@ -5294,6 +5405,49 @@ the view last derived its session as up."
         ;; A name with no failures reads zero rather than nil: it indexes
         ;; the backoff schedule.
         (should (equal (alist-get 'failed-starts hers) 0))))))
+
+(ert-deftest cerebro-test/an-implementer-fingerprint-is-the-planned-ids ()
+  "Ids, not a count.  An implementer started for a planned bead it cannot
+actually claim - one `bd ready' hides behind an unbuilt blocker - ends its
+pass having changed no count at all, and a count would start it again for
+ever.  The ids change the moment the planned list does, which is the only
+thing worth another session."
+  (should (equal (cerebro--trigger-fingerprint "implementer"
+                                               '((planned-ids "cb-1" "cb-2")))
+                 '(("cb-1" "cb-2"))))
+  (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+    ;; the same list its own last pass was started for: held
+    (should (null (cerebro--unless-unchanged
+                   "implementer"
+                   '((planned-ids "cb-1" "cb-2")
+                     (last-fingerprint ("cb-1" "cb-2"))
+                     (started-at . 1.0) (ended-at . 2.0))
+                   "2 planned, unclaimed")))
+    ;; a different list: through
+    (should (equal (cerebro--unless-unchanged
+                    "implementer"
+                    '((planned-ids "cb-1" "cb-3")
+                      (last-fingerprint ("cb-1" "cb-2"))
+                      (started-at . 1.0) (ended-at . 2.0))
+                    "2 planned, unclaimed")
+                   "2 planned, unclaimed"))
+    (ignore agent)))
+
+(ert-deftest cerebro-test/launch-records-an-implementer-fingerprint ()
+  "Every kind records one since cb-1or.1: an implementer has a condition now,
+so it has something for `cerebro--unless-unchanged' to compare."
+  (let ((agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+    (cl-letf (((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'cerebro--make-session-buffer)
+               (lambda (_a) (generate-new-buffer " *cerebro-test-session*")))
+              ((symbol-function 'cerebro--repo-root) (lambda () "/fake/repo"))
+              ((symbol-function 'cerebro--log) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _) '((planned-ids "cb-1")))))
+      (with-temp-buffer
+        (cerebro--launch agent)
+        (should (equal (cdr (assoc "Cyclops" cerebro--start-fingerprints))
+                       '(("cb-1"))))))))
 
 (ert-deftest cerebro-test/standby-glyph-and-label ()
   "Its own glyph and its own word: `dead' means nobody is coming, and standby
@@ -5685,7 +5839,21 @@ by being derived from the unplanned list."
     ;; A role this Emacs has never started has no floor to clear.
     (should (equal (cerebro-test--trigger "verifier" '(merged-unverified . 3)
                                           '(started-at))
-                   "3 merged, unverified"))))
+                   "3 merged, unverified"))
+    ;; An implementer: a planned, unclaimed bead and nothing else.
+    ;; `cerebro-test--trigger' builds an interactive agent, so these ask
+    ;; `cerebro--trigger' with an implementer one directly.
+    (cl-flet ((implementer (&rest overrides)
+                (cerebro--trigger
+                 (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
+                 (apply #'cerebro-test--context (append overrides '((floor . 0)))))))
+      (should (equal (implementer '(planned-ids "cb-1" "cb-2")) "2 planned, unclaimed"))
+      (should (equal (implementer '(planned-ids "cb-1")) "1 planned, unclaimed"))
+      (should (null (implementer '(planned-ids))))
+      ;; The backoff is `cerebro--start-due's, not this rule's: a name with
+      ;; failed starts behind it still answers with the count.
+      (should (equal (implementer '(planned-ids "cb-1" "cb-2") '(failed-starts . 3))
+                     "2 planned, unclaimed")))))
 
 ;; ---------------------------------------------------------------------------
 ;; The view's own log: what it decided, and what it declined to do
@@ -6096,11 +6264,14 @@ race - nothing to collide with - and holding it would undo the retry that
     (should (null (cerebro--role-peers (nth 2 agents) agents)))))
 
 (ert-deftest cerebro-test/the-planners-are-the-role-that-is-spaced-out ()
-  "The setting is an alist keyed on role, like every other per-role knob here,
-and the planners are the one entry: they are the only role two agents hold."
+  "The setting is an alist keyed on role, like every other per-role knob here:
+the roles more than one agent holds and whose condition comes true for all of
+them at once."
   (should (equal (cerebro--role-start-spacing "planner") 30))
   (should (null (cerebro--role-start-spacing "verifier")))
-  (should (null (cerebro--role-start-spacing "implementer"))))
+  ;; And the implementers since cb-1or.1: a queue that fills is a condition
+  ;; true for every standby builder on the same tick.
+  (should (equal (cerebro--role-start-spacing "implementer") 30)))
 
 (ert-deftest cerebro-test/the-cadence-roles-are-not-held-by-the-guard ()
   "Moira and Cypher come back on the hour whatever the fleet looks like -
@@ -6146,22 +6317,33 @@ already excluded."
                     agents (lambda (name) (equal name "Bishop")))
                    2))))
 
-(ert-deftest cerebro-test/an-implementer-that-died-is-started-on-the-next-tick ()
-  "A standby implementer is, by construction, an armed one whose session
-ended without `done'.  There is nothing further to ask: the rule is
-unconditional, and the backoff and the floor are what space the retries."
+(ert-deftest cerebro-test/an-implementer-is-started-for-a-planned-bead-and-not-for-having-died ()
+  "The condition is work, not a death (cb-1or.1).  A standby implementer with
+nothing planned stays down however many starts have failed behind it; one
+with a planned, unclaimed bead is started and the reason says how many."
   (let ((cyclops (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+    (should (null (cerebro--trigger
+                   cyclops (cerebro-test--context '(planned-ids)
+                                                  '(failed-starts . 0)
+                                                  '(started-at . 999000.0)
+                                                  '(floor . 0)))))
+    (should (null (cerebro--trigger
+                   cyclops (cerebro-test--context '(planned-ids)
+                                                  '(failed-starts . 5)
+                                                  '(started-at . 999000.0)
+                                                  '(floor . 0)))))
     (should (equal (cerebro--trigger
-                    cyclops (cerebro-test--context '(failed-starts . 0)
+                    cyclops (cerebro-test--context '(planned-ids "cb-1")
+                                                   '(failed-starts . 0)
                                                    '(started-at . 999000.0)
                                                    '(floor . 0)))
-                   "session ended, retry 1"))
-    ;; The number is the attempt being made, not the failures behind it.
+                   "1 planned, unclaimed"))
     (should (equal (cerebro--trigger
-                    cyclops (cerebro-test--context '(failed-starts . 2)
+                    cyclops (cerebro-test--context '(planned-ids "cb-1" "cb-2")
+                                                   '(failed-starts . 2)
                                                    '(started-at . 999000.0)
                                                    '(floor . 0)))
-                   "session ended, retry 3"))))
+                   "2 planned, unclaimed"))))
 
 (ert-deftest cerebro-test/the-implementers-have-no-floor ()
   "A dead builder is the fleet short one builder, and ten minutes of that is
@@ -6191,22 +6373,22 @@ starts have come to nothing - a launcher refused all morning reads as
 \"9 failed\" rather than as a row that has simply stopped moving."
   (let ((cerebro-retry-backoff '(0 30 120 600))
         (cyclops (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+    ;; The ordinary case since cb-1or.1: nothing failed, so the row names the
+    ;; condition it waits for, the way a planner's names its buffer rule.
     (should (equal (cerebro--standby-label
                     cyclops (cerebro-test--context '(failed-starts . 0)
                                                    '(started-at . 999990.0)))
-                   "↻ retry now"))
-    (should (equal (cerebro--standby-label
-                    cyclops (cerebro-test--context '(failed-starts . 3)
-                                                   '(started-at . 990000.0)))
-                   "↻ retry now, 3 failed"))
+                   "→ planned bead"))
+    ;; The clock only while a failed start is actually backing off.
     (should (equal (cerebro--standby-label
                     cyclops (cerebro-test--context '(failed-starts . 3)
                                                    '(started-at . 999925.0)))
                    "↻ retry in 45s, 3 failed"))
+    ;; A retry that is due waits on the condition like any other standby row.
     (should (equal (cerebro--standby-label
                     cyclops (cerebro-test--context '(failed-starts . 3)
-                                                   '(started-at . 999999.0)))
-                   "↻ retry in 2m, 3 failed"))
+                                                   '(started-at . 990000.0)))
+                   "→ planned bead"))
     ;; Past the end of the schedule the last entry is the ceiling, so a
     ;; launcher refused all morning is retried steadily and says so.
     (should (equal (cerebro--standby-label
@@ -6322,6 +6504,7 @@ retried at 30s, 2m and then every 10m rather than every five seconds."
               ((symbol-function 'cerebro--trigger-context)
                (lambda (&rest _)
                  '((now . 1000000.0) (live-implementers . 2) (planned . 4)
+                   (planned-ids "cb-1" "cb-2" "cb-3" "cb-4")
                    (p0-unplanned) (p4-unranked . 0) (first-planner-p)
                    (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
       (with-temp-buffer
@@ -6337,7 +6520,7 @@ retried at 30s, 2m and then every 10m rather than every five seconds."
         (should (null launched))
         (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000030.0))
         (should (equal launched '("Cyclops")))
-        (should (equal said '("cerebro: started Cyclops — session ended, retry 3")))
+        (should (equal said '("cerebro: started Cyclops — 4 planned, unclaimed")))
         (should (equal (cdr (assoc "Cyclops" cerebro--failed-starts)) 3))
         ;; Seen up after that start: the start produced a session, so the
         ;; count starts over and nothing is waited out.
@@ -6347,7 +6530,88 @@ retried at 30s, 2m and then every 10m rather than every five seconds."
               cerebro--failed-starts '(("Cyclops" . 2)))
         (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
         (should (equal launched '("Cyclops")))
-        (should (equal (cdr (assoc "Cyclops" cerebro--failed-starts)) 0))))))
+        (should (equal (cdr (assoc "Cyclops" cerebro--failed-starts)) 0))))
+    ;; And with nothing planned there is nothing to come back for, however
+    ;; long ago the last start was: the backoff is not the condition.
+    (setq launched nil)
+    (cl-letf (((symbol-function 'cerebro--launch)
+               (lambda (a) (push (cerebro-agent-name a) launched)))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'message) #'ignore)
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _)
+                 '((now . 1000000.0) (live-implementers . 2) (planned . 0)
+                   (planned-ids)
+                   (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                   (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+      (with-temp-buffer
+        (setq cerebro--agents
+              (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby))
+              cerebro--parked nil
+              cerebro--seen-up '(("Cyclops" . 999995.0))
+              cerebro--started-at '(("Cyclops" . 990000.0))
+              cerebro--failed-starts nil)
+        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
+        (should (null launched))))))
+
+(ert-deftest cerebro-test/implementers-start-one-at-a-time ()
+  "A queue that fills must not start the whole roster in one tick: the same
+spacing the planners answer to, applied to the implementers since cb-1or.1."
+  (let ((launched nil)
+        (cerebro-role-start-spacing '(("planner" . 30) ("implementer" . 30))))
+    (cl-letf (((symbol-function 'cerebro--launch)
+               ;; The real one writes `cerebro--started-at', which is what
+               ;; `cerebro--role-start-too-soon-p' reads - a stub that does
+               ;; not cannot make the spacing fire at all.
+               (lambda (a)
+                 (push (cerebro-agent-name a) launched)
+                 (setf (alist-get (cerebro-agent-name a) cerebro--started-at
+                                  nil nil #'equal)
+                       (float-time (seconds-to-time 1000000.0)))))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'message) #'ignore)
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _)
+                 '((now . 1000000.0) (live-implementers . 0) (planned . 2)
+                   (planned-ids "cb-1" "cb-2")
+                   (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                   (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+      (with-temp-buffer
+        (setq cerebro--agents
+              (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
+                    (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby))
+              cerebro--parked nil
+              cerebro--seen-up nil
+              cerebro--started-at nil
+              cerebro--start-fingerprints nil
+              cerebro--failed-starts nil)
+        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
+        (should (equal launched '("Cyclops")))
+        ;; 30 seconds later the other one goes - the first is up by then, so
+        ;; only one row is still standby and the spacing has run out for it.
+        (setq launched nil
+              cerebro--agents
+              (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working)
+                    (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby)))
+        (cl-letf (((symbol-function 'cerebro--trigger-context)
+                   (lambda (&rest _)
+                     '((now . 1000030.0) (live-implementers . 1) (planned . 2)
+                       (planned-ids "cb-1" "cb-2")
+                       (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                       (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+          (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000030.0)))
+        (should (equal launched '("Rogue")))
+        ;; And on the tick before that it is held, which is the whole point.
+        (setq launched nil)
+        (cl-letf (((symbol-function 'cerebro--trigger-context)
+                   (lambda (&rest _)
+                     '((now . 1000010.0) (live-implementers . 1) (planned . 2)
+                       (planned-ids "cb-1" "cb-2")
+                       (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                       (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+          (setq cerebro--started-at '(("Cyclops" . 1000000.0)))
+          (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000010.0)))
+        (should (null launched))))))
 
 (ert-deftest cerebro-test/start-due-does-nothing-without-vterm ()
   "There is nothing to run a session in, and a trigger firing once every five
@@ -6424,6 +6688,9 @@ it, and the roster - all of which this tick has already read."
               (should (equal (alist-get 'stale-verdicts context) 1))
               (should (equal (alist-get 'live-implementers context) 1))
               (should (equal (alist-get 'first-planner context) "Xavier"))
+              ;; The ids behind that count, in panel order: what a standby
+              ;; implementer is started for (cb-1or.1).
+              (should (equal (alist-get 'planned-ids context) '("a" "b")))
               ;; No `gh' answer in this buffer, so nothing for the two rows
               ;; the key feeds - and not `failed', which would say it went away.
               (should (null (alist-get 'gh context))))))
@@ -6472,7 +6739,11 @@ buffer and a backlog of nothing - that would start both planners at once."
         (should (equal (alist-get 'merged-unverified context) 0))
         (should (equal (alist-get 'stale-verdicts context) 0))
         ;; A buffer nothing has counted is not a buffer that is short.
-        (should (>= (alist-get 'planned context) 2))))))
+        (should (>= (alist-get 'planned context) 2))
+        ;; And no ids at all, which is what keeps "no figures yet" from
+        ;; starting a builder: `planned' reads `most-positive-fixnum' here,
+        ;; so the implementer rule must key on this and never on that.
+        (should (null (alist-get 'planned-ids context)))))))
 
 ;; --- the `gh' reader: what moved on GitHub since a role's pass ended ------
 

@@ -78,13 +78,14 @@ re-prioritise a bead on the spot, and `x` on a **Sweeps** finding to run the exa
 `bd reclaim` it maps to, after confirming.
 
 Two things it does for you without being asked: it starts `prune-worktrees.sh --watch` alongside the
-buffer (see *Leftover worktrees*), and it replaces an implementer that reports itself `done` with a
-fresh session.  It also runs the **interactive roles** the way it runs the
-implementers: a role that writes `waiting` is ended half a minute later — its buffer
-kept, `RET` shows it — and started fresh when its trigger fires: a planner when the planned buffer is
-short, a P0 is unplanned or (the first planner) a P4 wants ranking; Psylocke when a merged bead is
-unverified or a verdict is stale; Moira and Cypher when an issue or an outside PR moved on GitHub,
-and hourly regardless; Forge hourly too. A role you have not started this Emacs is never started: `s` (or
+buffer (see *Leftover worktrees*), and it ends an implementer that reports `waiting` — its buffer
+kept — and starts a fresh one when a planned bead exists, at most one implementer every 30 seconds.
+It runs the **interactive roles** exactly the same way: a role that writes `waiting` is ended half a
+minute later — its buffer kept, `RET` shows it — and started fresh when its trigger fires: a planner
+when the planned buffer is short, a P0 is unplanned or (the first planner) a P4 wants ranking;
+Psylocke when a merged bead is unverified or a verdict is stale; Moira and Cypher when an issue or an
+outside PR moved on GitHub, and hourly regardless; Forge hourly too; an implementer when a planned,
+unclaimed bead exists. A role you have not started this Emacs is never started: `s` (or
 `autostart` or `standby` in `roster.conf`) arms it — `standby` arms without starting, so the row
 reads `standby` from the moment the view opens and the trigger is what starts it — `k` and `f`
 disarm it, and none of that is written to any
@@ -96,11 +97,12 @@ comparisons rather than a clock: the counts leave out what is parked in your que
 last pass was started for. Anything that moves — a bead arrives, one is planned, an implementer
 comes up — starts the next pass at once.
 
-**Reading a row.** Green `●` is working, blue `◆` is idle, yellow `◐` is an interactive role
-`waiting` between passes — it is ended within half a minute — blue `◌` is **standby**: the view ended
-this role after its pass and starts a fresh one when the trigger in the For column fires, and `RET`
-shows its last pass. A bold yellow `?` is an agent waiting on
-*you*, green `◍` is done and about to be replaced, grey `○` is dead.
+**Reading a row.** Green `●` is working, blue `◆` is idle, yellow `◐` is an agent `waiting` between
+passes — an implementer between beads included — and it is ended within half a minute; blue `◌` is
+**standby**: the view ended this agent after its pass and starts a fresh one when the trigger in the
+For column fires, and `RET` shows its last pass. A bold yellow `?` is an agent waiting on
+*you*, green `◍` is `done` — an implementer started before cb-1or.1, about to be replaced — grey `○`
+is dead.
 
 `◌` on an **implementer** row is one whose session died without finishing a bead. The view starts it
 again on the same backoff a role waits out, and the For column says when and how many starts have
@@ -211,19 +213,20 @@ user-facing surface, so the queue keeps filling. It will not guess on your behal
 
 **You** start builders — one session each, `s` in the fleet view or `launch <Name>` in a
 terminal — unless their `.cerebro/roster.conf` line says `autostart`, in which case `M-x cerebro`
-starts them for you as it opens. `standby` is not a word an implementer row takes yet: the
-implementer trigger starts a standby implementer unconditionally, so it would be `autostart` with a
-five-second delay; `scripts/roster` refuses it until cb-1or gives implementers a wake condition. There is no flag that puts a running implementer to work: **a running implementer is a
-working one**, and it claims the next planned bead as soon as one exists. If you want another
+starts them for you as it opens. `standby` is not a word an implementer row takes yet:
+`scripts/roster` refuses it until cb-1or.2, though since cb-1or.1 the trigger behind it is a real
+condition — a planned, unclaimed bead — rather than the unconditional start that would have made it
+`autostart` with a five-second delay. There is no flag that puts a running implementer to work: **a
+running implementer is a working one**, and it claims the next planned bead as soon as one exists. If you want another
 builder, start another session.
 
 Implementers are named after X-Men — Cyclops, Storm, Wolverine, Rogue, and on down the roster — so
 that a fleet of them can be talked about without anyone counting session hashes.
 
 Each takes a planned bead, creates its own git worktree, works through the plan test-first, opens a
-PR, answers the Copilot review, waits for CI, merges and cleans up. Then it reports itself `done` and
-**that session ends**: the fleet view starts a fresh one in its place for the next bead. They run on
-Sonnet, each with its own context.
+PR, answers the Copilot review, waits for CI, merges and cleans up. Then it reports itself `waiting`
+and **that session ends**: the fleet view keeps its buffer and starts a fresh one under the same name
+when there is another planned bead. They run on Sonnet, each with its own context.
 
 The replacement is the point. One bead fills a session with a plan, a diff, a review and three CI
 runs, and nothing can clear that from the inside — so instead of clearing it, the session is thrown
@@ -268,7 +271,7 @@ at all.
 
 It means *finish*, not *stop now* — for a builder mid-bead. Pressing `f` in the fleet view (or asking
 Cerebro) writes a stop flag; for one that has claimed something it is read when the implementer
-reports itself done — bead merged, closed, worktree gone — and no fresh session starts in its place.
+reports `waiting` — bead merged, closed, worktree gone — and no fresh session starts in its place.
 So a builder that has just claimed something will be a while yet. That is deliberate: killing one
 mid-bead leaves a claimed bead, a worktree and an open PR for you to unpick by hand. An **idle**
 builder — between beads, nothing claimed — is the one exception: it stops at once, since there is
@@ -575,7 +578,8 @@ Honest numbers from building this repository's own harness:
   describes the PR as it opened, which is worth knowing when you read one later.
 - **Nothing merges unreviewed and nothing merges red.** The `main` ruleset enforces the second on the
   server; the first is the agents following the rule.
-- **Interactive agents cost nothing between passes** — the view ends them — and a fresh start
+- **Interactive agents cost nothing between passes** — the view ends them, implementers included
+  since cb-1or.1: one with nothing to build costs nothing — and a fresh start
   re-reads the role's instructions; a role whose trigger is true but whose pass cannot clear it
   restarts once per `cerebro-wake-intervals`.
 

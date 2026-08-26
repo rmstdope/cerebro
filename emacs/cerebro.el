@@ -367,14 +367,14 @@ tells the row to say so."
                       ;; Blocked on a question only the navigator can
                       ;; answer, with a bead still in flight.
                       ((equal raw-state "asking") 'asking)
-                      ;; The role has finished a pass and ENDED ITS TURN,
-                      ;; expecting to be woken (ah-hiib.3). An interactive
-                      ;; agent's state alone, the mirror image of `done':
-                      ;; an implementer is replaced between beads and has no
-                      ;; cadence, so a `waiting' file under one is a bug and
-                      ;; must not be handed to the poke logic as a cadence.
-                      ((equal raw-state "waiting")
-                       (if (eq kind 'interactive) 'waiting 'unknown))
+                      ;; The agent has finished a pass and ENDED ITS TURN,
+                      ;; expecting a fresh session when there is another pass
+                      ;; to make (ah-hiib.3).  Every agent's state since
+                      ;; cb-1or.1, an implementer's included: a bead merged
+                      ;; and closed, one handed back, or nothing to claim are
+                      ;; all one idea, and `done' is the older spelling of it
+                      ;; that cb-1or.2 retires.
+                      ((equal raw-state "waiting") 'waiting)
                       ((equal raw-state "idle") 'idle)
                       ;; A raw state this list has never seen - a typo in
                       ;; the skill, most likely.  A live process the view
@@ -1426,9 +1426,10 @@ no pass can clear - is `cerebro--unless-unchanged\=', which asks whether
 anything changed instead of how long it has been.
 
 The implementers have none either, for the same reason and a starker one:
-a standby implementer is one whose session died, and every minute of it is a
-minute the fleet is short a builder.  What spaces a retry that keeps failing
-is `cerebro-retry-backoff\=', which is measured from the failed start itself.
+a standby implementer is one between beads, and a planned bead it has not
+taken is the fleet idle behind work that is ready.  What starts it is that
+bead (`cerebro--trigger'), not a clock, and what spaces a retry that keeps
+failing is `cerebro-retry-backoff\=', measured from the failed start itself.
 
 The verifier, at five minutes: Psylocke\='s own prose asks for five, and
 the log agrees - 90 idle intervals, median 4.7 min - because a bead can
@@ -1521,17 +1522,17 @@ answers are:
             under that name does not inherit an instruction meant for this
             one.
 `nudge'   - AGENT has waited past `cerebro-answer-timeout' for an answer.
-`end'     - AGENT is an interactive role that has finished a pass -
-            `waiting', or `idle' for a role in
+`end'     - AGENT has finished a pass - `waiting', or `idle' for a role in
             `cerebro-idle-ends-pass-roles' that writes that instead - and
             `cerebro-end-grace' has passed since it said so (cb-5yr).  Its
             session is ended and its buffer kept; a fresh one starts when the
-            role's own trigger fires (`cerebro--trigger'), which is what
+            agent's own trigger fires (`cerebro--trigger'), which is what
             makes a session one pass deep the way an implementer's is one
-            bead deep.  Interactive-only, and the exact mirror of the three
-            above - an implementer is replaced between beads and has no pass
-            of its own.  This replaced `poke', which typed into the session
-            it had rather than starting a new one.
+            bead deep.  An implementer reaches it the same way since
+            cb-1or.1 - a bead merged and closed, one handed back, or nothing
+            to claim are one pass ending - and `restart' survives beside it
+            only until cb-1or.2 retires `done'.  This replaced `poke', which
+            typed into the session it had rather than starting a new one.
 
 Only a session Emacs itself started is supervised.  One running in
 somebody's own terminal is theirs to end, and a dead one stays dead -
@@ -1569,13 +1570,13 @@ everything: every answer here ends in Emacs acting on a session it owns."
           (if (member (cerebro-agent-role agent) cerebro-idle-ends-pass-roles)
               (cerebro--end-decision agent stop-flag-p now)
             (and stop-flag-p 'retire)))))
-      ;; Nothing is in flight for a waiting role - no bead, no claim, no
+      ;; Nothing is in flight for a waiting agent - no bead, no claim, no
       ;; worktree - so a stop flag lands cleanly and *now*, which is the
       ;; behaviour that was impossible while a role slept inside its own
-      ;; session and the flag had no gap to land in.
-      ('waiting
-       (and (eq (cerebro-agent-kind agent) 'interactive)
-            (cerebro--end-decision agent stop-flag-p now)))
+      ;; session and the flag had no gap to land in.  No kind guard since
+      ;; cb-1or.1: an implementer between beads has ended its pass in
+      ;; exactly the sense this arm means.
+      ('waiting (cerebro--end-decision agent stop-flag-p now))
       ;; A standby implementer is one the view means to start again
       ;; (cb-hzs).  A stop flag written before its session died still says
       ;; *no further bead*, so it is retired - the flag cleared with it -
@@ -1760,7 +1761,7 @@ Written by `cerebro--start-due\=' when it launches: incremented when the
 previous start of that name failed, and reset to zero when a pass has run
 since.  It is what `cerebro--retry-delay\=' is indexed by.")
 
-(defcustom cerebro-role-start-spacing '(("planner" . 30))
+(defcustom cerebro-role-start-spacing '(("planner" . 30) ("implementer" . 30))
   "Minimum seconds between two starts of one ROLE, as (ROLE . SECONDS).
 
 A role only two agents hold can have its condition come true for both at
@@ -1775,8 +1776,10 @@ writes anything the other could have seen.
 
 Spacing counts PEERS only - see `cerebro--role-start-too-soon-p\=' - so a role
 is never held by its own last start.  A role absent from this list is never
-spaced: one holder cannot collide with itself, and `implementer\=' is started
-by `cerebro--supervise\=' rather than from here at all."
+spaced: one holder cannot collide with itself.  `implementer\=' is started
+from `cerebro--start-due\=' too since cb-1or.1, and 30 seconds between
+implementer starts is what keeps a queue that fills from starting the whole
+roster in one tick."
   :type '(alist :key-type string :value-type integer)
   :group 'cerebro)
 
@@ -1843,6 +1846,13 @@ looking unchanged is evidence of nothing."
                      (alist-get 'actionable-ids context)))
     ("verifier" (list (alist-get 'stale-verdicts context)
                       (alist-get 'merged-unverified context)))
+    ;; Ids rather than a count for a reason of its own: the panel's beads
+    ;; carry no dependencies, so a planned bead `bd ready' hides behind an
+    ;; unbuilt blocker starts an implementer that can claim nothing.  That
+    ;; pass changes no count at all, and a count here would start it again on
+    ;; the next tick, for ever.  The ids move the moment the planned list
+    ;; does, which is the only change worth another session (cb-1or.1).
+    ("implementer" (list (alist-get 'planned-ids context)))
     (_ nil)))
 
 (defun cerebro--unless-unchanged (role context reason)
@@ -1892,7 +1902,7 @@ so it has to say what the navigator would otherwise have to go and look up.
 
 CONTEXT is what `cerebro--trigger-context\=' gathers - `now\=',
 `live-implementers\=', `planned\=', `p0-unplanned\=' (ids), `p4-unranked\=',
-`actionable-ids\=', `merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for
+`actionable-ids\=', `planned-ids\=', `merged-unverified\=', `stale-verdicts\=' and `gh\=' (nil for
 no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) - plus the five
 per-agent facts `cerebro--agent-context\=' adds to it: `ended-at\=',
 `started-at\=', `floor\=', `last-fingerprint\=' and `first-planner-p\='.
@@ -1979,13 +1989,14 @@ is merely waiting for it."
           (and (consp gh) (car gh) (format "issue #%s moved" (car (car gh)))))
          ("reviewer"
           (and (consp gh) (cadr gh) (format "PR #%s moved" (car (cadr gh)))))
-         ;; Unconditional, because a standby implementer already IS the
-         ;; condition: armed, and with a session that ended without `done'
-         ;; (`cerebro--apply-standby').  The number is the attempt about to
-         ;; be made - `failed-starts' counts the ones behind it - so the
-         ;; first retry reads "retry 1" (cb-hzs).
+         ;; A standby implementer is started for work, not for having died: a
+         ;; planned, unclaimed bead is the whole condition (cb-1or.1).  Nil
+         ;; before the panel has answered.  A launch that produced no session
+         ;; is still retried on `cerebro-retry-backoff' - that is
+         ;; `cerebro--start-due's, not this rule's.
          ("implementer"
-          (format "session ended, retry %d" (1+ (alist-get 'failed-starts context))))
+          (let ((ids (alist-get 'planned-ids context)))
+            (and ids (format "%d planned, unclaimed" (length ids)))))
          (_ nil)))
        (and cadence ended (>= (- now ended) cadence)
             (format "%s since its last %s"
@@ -2045,16 +2056,19 @@ floor that has half a minute left to run is not worth a different word."
   (let* ((role (cerebro-agent-role agent))
          (cadence (cdr (assoc role cerebro-cadence-triggers))))
     (cond
-     ;; An implementer on standby is one whose session died, so what it is
-     ;; waiting for is a clock rather than a condition: when the view tries
-     ;; again, and how many starts have come to nothing (cb-hzs).
+     ;; An implementer on standby is one between beads, so what it waits for
+     ;; is a condition, named the way a planner's row names its buffer rule
+     ;; (cb-1or.1).  The clock is shown only while a failed start is actually
+     ;; backing off - that is the one time there is a moment to count down
+     ;; to, and it is a launcher refusing rather than a pass that ended.
      ((equal role "implementer")
       (let* ((failures (alist-get 'failed-starts context))
              (left (cerebro--retry-wait failures (alist-get 'started-at context)
                                         (alist-get 'now context))))
-        (concat "↻ retry "
-                (if (> left 0) (concat "in " (cerebro--retry-figure left)) "now")
-                (if (> failures 0) (format ", %d failed" failures) ""))))
+        (if (> left 0)
+            (format "↻ retry in %s%s" (cerebro--retry-figure left)
+                    (if (> failures 0) (format ", %d failed" failures) ""))
+          "→ planned bead")))
      ((equal role "planner")
       (format "→ buffer < %d" (cerebro--planner-want (alist-get 'live-implementers context))))
      ((equal role "verifier") "→ merged, unverified")
@@ -2332,13 +2346,15 @@ missing, an un-synced submodule - leaves something readable behind rather
 than the row going `up' for a moment and then silently `dead' (ah-bri).
 
 RETRY-LEFT (seconds) and FAILURES describe a standby implementer\='s next
-start (`cerebro--retry-when'): its session ended without finishing a bead
-and the view will start it again, which is worth saying outright rather
-than leaving the navigator to read it off the row (cb-hzs).  They are
+start (`cerebro--retry-when').  A RETRY-LEFT above zero is a launcher that
+refused backing off, and the line says when it comes back (cb-hzs);
+otherwise the session finished its pass and the line names the condition
+that brings it back, since cb-1or.1 there is one.  They are
 passed in rather than read here because they are buffer-local to the fleet
 buffer and this runs from whatever buffer is showing.  A standby *role*
 keeps the plain line: its kept buffer is what `RET' shows, and this is only
-reached once that has been killed.
+reached once that has been killed - as it is for an implementer, whose
+buffer is kept the same way now.
 
 ROSTER-ARMED and TRIGGER-LABEL describe the one role that has a standby row
 and no pass behind it: one `.cerebro/roster.conf' armed with the `standby'
@@ -2360,10 +2376,15 @@ because `s' is then the only thing that starts it."
               name))
      ((and (eq (cerebro-agent-state agent) 'standby)
            (eq (cerebro-agent-kind agent) 'implementer))
-      (format (concat "%s is not running.\nIts last session ended without finishing a"
-                      " bead; the view starts it again %s.\nPress s to start it now,"
-                      " k to leave it down.")
-              name (cerebro--retry-when (or retry-left 0) (or failures 0))))
+      (if (> (or retry-left 0) 0)
+          (format (concat "%s is not running.\nIts last session ended without finishing a"
+                          " bead; the view starts it again %s.\nPress s to start it now,"
+                          " k to leave it down.")
+                  name (cerebro--retry-when retry-left (or failures 0)))
+        (format (concat "%s is not running.\nIts last session finished its pass; the view"
+                        " starts it again when a planned bead is waiting.\nPress s to start"
+                        " it now, k to leave it down.")
+                name)))
      ((and (eq (cerebro-agent-state agent) 'standby)
            (eq (cerebro-agent-kind agent) 'interactive)
            roster-armed)
@@ -2916,7 +2937,7 @@ outlive the fleet buffer, and `M-x cerebro' after a `q' must still know
 what it started.")
 
 (defvar-local cerebro--armed nil
-  "Interactive names the view will start again on their trigger (cb-5yr).
+  "Names the view will start again on their trigger (cb-5yr).
 
 Armed by `cerebro--launch\=' - every start, `s\=' or autostart - and disarmed by
 `k\=', by `f\=' once the pass ends, and by a stop flag on a waiting role.  Emacs
@@ -2926,7 +2947,11 @@ omission - opening the fleet view must not resurrect a fleet the navigator
 took down last night.")
 
 (defvar-local cerebro--parked nil
-  "Alist of (NAME . (ENDED-AT STARTED-AT BUFFER)) for roles the view has ended.
+  "Alist of (NAME . (ENDED-AT STARTED-AT BUFFER)) for names the view has ended.
+
+Every agent with a pass worth keeping, an implementer included since
+cb-1or.1 - a bead merged and closed, one handed back, or nothing to claim
+all end a pass, and the buffer is the record of it.
 
 ENDED-AT and STARTED-AT are `float-time\=' values - when the session ended, and
 when it had started - and BUFFER is the kept session buffer holding its last
@@ -2934,7 +2959,7 @@ pass, or nil once something has killed it.  One entry per name: a fresh
 start replaces it, and `k\=' removes it.")
 
 (defvar-local cerebro--start-fingerprints nil
-  "Alist of (NAME . FINGERPRINT) - what each role was last started *for*.
+  "Alist of (NAME . FINGERPRINT) - what each agent was last started *for*.
 
 `cerebro--trigger-fingerprint\=' of the context that was true when the view
 started the session - recorded when the launch is ATTEMPTED, since nothing
@@ -2956,9 +2981,11 @@ described.")
 (defvar-local cerebro--seen-up nil
   "Alist of (NAME . FLOAT-TIME) - when this view last derived NAME as up.
 
-An implementer\='s `ended-at\=': it has no kept buffer and no `cerebro--parked\='
-entry, so \"did the last start produce anything\" (`cerebro--start-failed-p\=')
-is answered by whether the view saw the session alive after it was started.
+The `ended-at\=' of an implementer whose session DIED: one that ended its own
+pass is parked like a role since cb-1or.1 and reads its park instead
+(`cerebro--agent-context\=').  With no parked entry, \"did the last start
+produce anything\" (`cerebro--start-failed-p\=') is answered by whether the
+view saw the session alive after it was started.
 Written by `cerebro--revert\=' from `cerebro--up-names\=', once a tick.")
 
 (defun cerebro--session (name)
@@ -3190,15 +3217,14 @@ from afterwards (cb-5yr)."
             0))
     ;; And what it is being started *for*, which is what says whether the
     ;; pass after this one has anything new to do (`cerebro--trigger').
-    ;; Interactive only: `cerebro--trigger-fingerprint' is nil for
-    ;; "implementer", so the entry would say nothing, and gathering the
-    ;; context to compute it costs a `roster' subprocess per launch.
-    (when (eq (cerebro-agent-kind agent) 'interactive)
-      (setf (alist-get (cerebro-agent-name agent) cerebro--start-fingerprints
-                       nil nil #'equal)
-            (cerebro--trigger-fingerprint
-             (cerebro-agent-role agent)
-             (cerebro--trigger-context (cerebro--repo-root) (current-time)))))
+    ;; Every kind since cb-1or.1: an implementer has a condition of its own
+    ;; now - a planned, unclaimed bead - so it has something to compare, and
+    ;; the context gather this costs is once per launch, which is rare.
+    (setf (alist-get (cerebro-agent-name agent) cerebro--start-fingerprints
+                     nil nil #'equal)
+          (cerebro--trigger-fingerprint
+           (cerebro-agent-role agent)
+           (cerebro--trigger-context (cerebro--repo-root) (current-time))))
     ;; Every start passes through here - `s', autostart, a trigger - so this
     ;; is where one is recorded (`cerebro--log-start-reason').
     (cerebro--log (cerebro--repo-root) 'start
@@ -3800,6 +3826,7 @@ trigger read as well as what it decided."
              (cons 'role (cerebro-agent-role agent))
              (cons 'reason reason)
              (cons 'planned (alist-get 'planned context))
+             (cons 'planned_ids (alist-get 'planned-ids context))
              (cons 'live_implementers (alist-get 'live-implementers context))
              (cons 'p0_unplanned (alist-get 'p0-unplanned context))
              (cons 'p4_unranked (alist-get 'p4-unranked context))
@@ -3860,10 +3887,17 @@ other agents down with it."
                       (cerebro--launch agent)
                       (when watching (cerebro--show-detail agent))))
           ('retire
-           ;; An interactive role keeps its buffer, exactly as an ordinary
-           ;; end does - the flag says stay down, not forget the pass - and
-           ;; is disarmed, so no trigger starts it again.
-           (if (eq (cerebro-agent-kind agent) 'interactive)
+           ;; An agent with a pass worth keeping keeps its buffer, exactly as
+           ;; an ordinary end does - the flag says stay down, not forget the
+           ;; pass - and is disarmed, so no trigger starts it again.  That is
+           ;; every interactive role, and since cb-1or.1 a `waiting'
+           ;; implementer too.  The condition reads the state and not only
+           ;; the kind because a `done', `idle' or `standby' implementer has
+           ;; nothing worth keeping: `cerebro--end-session' takes its state
+           ;; file with it, and parking it would keep a buffer for a bead the
+           ;; `restart' path would have thrown away.
+           (if (or (eq (cerebro-agent-kind agent) 'interactive)
+                   (eq (cerebro-agent-state agent) 'waiting))
                (progn (cerebro--park-session agent repo-root now)
                       (cerebro--clear-stop-flag repo-root name)
                       (setq cerebro--armed (delete name cerebro--armed)))
@@ -4739,6 +4773,13 @@ was a failure, are both plain values: neither depends on whose pass it is."
           ;; another (`cerebro--trigger-fingerprint').
           (cons 'actionable-ids
                 (mapcar (lambda (bead) (alist-get 'id bead)) unplanned))
+          ;; The planned, claimable ids: what a standby implementer is
+          ;; started for, and what its fingerprint compares (cb-1or.1).  Nil
+          ;; before the panel has answered, which is what keeps "no figures
+          ;; yet" from starting a builder - `planned' above reads
+          ;; `most-positive-fixnum' there, so the rule keys on this instead.
+          (cons 'planned-ids
+                (mapcar (lambda (bead) (alist-get 'id bead)) planned))
           (cons 'merged-unverified (length merged))
           (cons 'stale-verdicts (seq-count #'cerebro--stale-verdict-p open-beads))
           ;; One stat per implementer per tick, which is within what this
@@ -4762,12 +4803,14 @@ about her last pass and Cypher about his.
 Kept out of `cerebro--trigger-context\=' so that one is gathered once a tick
 and this one is a few conses per standby row."
   (let* ((name (cerebro-agent-name agent))
-         ;; When this agent's last session ended. A role's is the moment the
-         ;; view parked it; an implementer has no kept buffer and no parked
-         ;; entry, so it is the last tick that saw the session up (cb-hzs).
-         (ended-at (if (eq (cerebro-agent-kind agent) 'implementer)
-                       (cdr (assoc name cerebro--seen-up))
-                     (nth 0 (cdr (assoc name cerebro--parked)))))
+         ;; When this agent's last session ended.  The moment the view parked
+         ;; it, for every agent that ended a pass - since cb-1or.1 that is an
+         ;; implementer too.  Only one whose session simply *died* has no
+         ;; parked entry, and there the last tick that saw it up is the
+         ;; nearest thing to an end there is (cb-hzs).
+         (ended-at (or (nth 0 (cdr (assoc name cerebro--parked)))
+                       (and (eq (cerebro-agent-kind agent) 'implementer)
+                            (cdr (assoc name cerebro--seen-up)))))
          (gh (alist-get 'gh context)))
     (append (list (cons 'gh (if (functionp gh) (funcall gh ended-at) gh))
                   (cons 'ended-at ended-at)

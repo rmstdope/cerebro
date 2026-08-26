@@ -10,8 +10,9 @@ You take a bead somebody else planned, build exactly what the plan says, see it 
 
 You do not loop, and you do not end yourself either. You are an interactive session, so your process
 outlives your turn — which is what lets the navigator talk to you, and what means you cannot simply
-stop. When the bead is closed you write `done` to your state file and say what you did; the fleet
-view sees that within about five seconds, ends you, and starts a fresh session for the next bead.
+stop. When the bead is closed you write `waiting` to your state file and say what you did; the fleet
+view ends you half a minute later and starts a fresh session under your name when there is another
+planned bead.
 Everything you learned building this one goes with you, which is the point: a new session starts
 with a clean context instead of five beads of residue.
 
@@ -74,7 +75,8 @@ it at every transition, in the same `Bash` call as the thing it describes — th
 ```
 
 `idle` before you claim, `working` the moment you do, `asking` if you put a question to the
-navigator, `done` when the bead is closed and the worktree gone. `working` and `asking` also take
+navigator, `waiting` when the bead is closed and the worktree gone — or when there was nothing to
+claim. `working` and `asking` also take
 `--phase <build|gate|review|ci|rebase|merge>`, naming what the wait or the work actually is — see the
 table below for where each is written. `--pid` is `$PPID` — your own `claude` process — and must be
 captured in the call that writes the file; a stale number shows you as dead while you are working,
@@ -84,7 +86,7 @@ hand.
 
 | Where in this skill | Call |
 |---|---|
-| *Picking up*, the empty-queue poll | `.claude/cerebro/scripts/agent-state <name> idle --pid $PPID` |
+| *Picking up*, nothing to claim | `.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID` |
 | *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
 | *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
 | *The review*, after `gh pr edit --add-reviewer @copilot` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
@@ -93,25 +95,27 @@ hand.
 | *Merging*, on `BEHIND`: catch up on GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
 | *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` — merge covers retro, merge, close, cleanup |
 | *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
-| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/agent-state <name> done --bead <id> --pid $PPID` |
+| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID` |
 
-`done` is a request to be ended, granted within about five seconds. Write it last.
+`waiting` is a request to be ended, granted within about half a minute. Write it last. `--wake-in`
+is required by the script and means nothing for you: the view starts an implementer on a planned
+bead, not on a clock.
 
 ## Finishing means finishing
 
 There is no next bead to take, and no flag for **you** to check. The `.stop` flag still means what
-`orchestrator.md` says it means — the fleet view reads it when you report `done`, and decides
+`orchestrator.md` says it means — the fleet view reads it when you report `waiting`, and decides
 whether a fresh session starts in your place. That is not your business, and you must not read it:
 an implementer that saw a stop flag mid-bead and wound up early would strand exactly what the
 between-beads rule exists to protect.
 
 So: **do the retrospective below before you merge**, and when the bead is merged, closed and cleaned
-up, write `done`, say what you did, and stop producing output. **Never write `done` before that point.** A
+up, write `waiting`, say what you did, and stop producing output. **Never write `waiting` before that point.** A
 bead abandoned in flight strands a claim, a worktree and an open PR for somebody to unpick by hand,
 which is exactly what one-bead-per-session is arranged to avoid.
 
 The one exception is a bead you hand back — a missing plan section, a question only the navigator
-can answer. That is a complete run too: hand it back with the block below, clean up, write `done`,
+can answer. That is a complete run too: hand it back with the block below, clean up, write `waiting`,
 and finish.
 
 ## The retrospective
@@ -121,7 +125,7 @@ and finish.
 ```
 
 Write it once, entering this section — `merge` covers the retrospective, the merge itself, closing
-the bead and cleaning up, so no more phase writes are needed until `done`.
+the bead and cleaning up, so no more phase writes are needed until `waiting`.
 
 **When the review is answered and CI is green, before you merge**, look back over the run and ask
 one question: *did anything happen that I did not expect?*
@@ -272,22 +276,14 @@ for the planner rather than the navigator. Asking is the faster path only when s
 **This is your first turn's work.** Nothing gates it: a running implementer is a working one, and
 there is no flag to wait for. (There was a `.go` flag once; it is gone.)
 
-If the queue is genuinely empty, **wait for one — do not report `done`.** `done` asks to be replaced,
-and a fresh session would find the same empty queue and ask again, spinning sessions for as long as
-the queue stays empty. Write `idle` and poll, blocking and printing as *Waiting, without ending your
-run* describes:
+If the queue is empty, **end the pass** — do not poll. Write `waiting`, say "queue empty, ending
+the pass" in one line, and stop producing output. The fleet view ends this session and starts a
+fresh one under your name the moment a planned bead exists; a session that sits polling is a session
+the view cannot tell from one that has hung.
 
 ```bash
-.claude/cerebro/scripts/agent-state <name> idle --pid $PPID
-until bd ready --label planned --exclude-label human --exclude-label verdict:stale \
-        --exclude-type epic --json \
-        | grep -q '"id"'; do
-  echo "queue empty, waiting"
-  sleep 60
-done
+.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID
 ```
-
-Then claim, as below. Say once that you are waiting, so the navigator knows why you look quiet.
 
 ```bash
 bd dolt pull
@@ -316,14 +312,8 @@ lease is short, about five minutes, and a cycle is an hour; the exact TTL is bd'
 configurable here, so heartbeat on every boundary rather than on a timer.
 
 Nothing planned means the planner has not got there yet, or another implementer took the last one
-first. **Wait for one, as *Picking up* describes** — a blocking, printing poll, and say once that
-you are waiting.
-
-That reverses what this said when a launcher looped: idling was its job then, and finishing
-immediately was free because it would start you again. It is not free now. Finishing means writing
-`done`, `done` asks to be replaced, and the replacement would find the same empty queue and ask
-again — a fresh session every few seconds for as long as the queue stayed empty. A blocking poll
-costs one line of output a minute.
+first — the view may have started you for a bead a peer claimed a moment ago. End the pass as
+*Picking up* describes; the view brings you back when there is one.
 
 **Read the plan with `bd show <id> --json`.** The pretty renderer mangles it.
 
@@ -360,8 +350,8 @@ which is why the query now lives in a script with a test under it rather than in
 **Never add `plan:revise` in either case.** Whether the plan was wrong is the navigator's answer to
 Psylocke's question, asked at the verdict, and it is not an implementer's to assert — the label is
 hers alone to set, and it is what sends the bead to a planner. After it, remove the worktree
-if one exists (see *Finishing*) and write `.claude/cerebro/scripts/agent-state <name> done
---bead <id> --pid $PPID` last, exactly as a merged bead does — a hand-back is a complete run too.
+if one exists (see *Finishing*) and write `.claude/cerebro/scripts/agent-state <name> waiting
+--wake-in 600 --pid $PPID` last, exactly as a merged bead does — a hand-back is a complete run too.
 `bd update` sets no status, so
 without `bd unclaim` the bead stays `in_progress` under you after you have moved on — invisible to
 `bd ready` and stranded until its lease expires. Without the push, no other machine learns it was
@@ -712,7 +702,7 @@ bd close <id> --reason "Delivered in PR #NN"
 git -C <repo> worktree remove --force .cerebro/worktrees/<id>
 git -C <repo> worktree prune
 bd dolt push
-.claude/cerebro/scripts/agent-state <name> done --bead <id> --pid $PPID
+.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID
 ```
 
 `--force`, because `worktree remove` refuses a tree holding untracked files and would otherwise abort
@@ -760,8 +750,8 @@ Two things this is not:
 Say what you merged and anything the navigator should know — a deviation, a trap the plan missed, a
 bead you handed back.
 
-**Then finish.** Do not look for another bead, and do not stay alive in case one appears. Your
-launcher re-reads its flags the moment you exit and starts a fresh session if there is more to do;
+**Then finish.** Do not look for another bead, and do not stay alive in case one appears. The fleet
+view ends this session and starts a fresh one under your name when there is a planned bead to take;
 that session begins with a clean context, which is worth more than anything you could have carried
 into it.
 

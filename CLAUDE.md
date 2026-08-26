@@ -95,7 +95,8 @@ Not prose — files, each tracked so that every clone has it.
   built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that
   agent as it comes up (cb-0r6), `standby` **arms** it without starting it (cb-98u) — its row reads
   `standby` and its role's own trigger is what starts it. `standby` is refused on an implementer row
-  until cb-1or.
+  until cb-1or.2 — though since cb-1or.1 the trigger behind it is a real condition, a planned,
+  unclaimed bead.
 - `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
   implementers before they start. Absent means it has paid for none yet, which is where every
   project starts.
@@ -193,9 +194,9 @@ planner`), which is the one place a name and a role stop being interchangeable:
   (`ah-4ao`; see `docs/cerebro-jobs.md`); what is left for a Cerebro session is handing a release
   request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in
-  its own git worktree, PR, answer the Copilot review, merge, close, report `done`. Interactive, so
-  it cannot end itself — the Emacs fleet view ends it and starts a fresh session, which is what keeps
-  a session's context one bead deep.
+  its own git worktree, PR, answer the Copilot review, merge, close, end its pass with `waiting`.
+  Interactive, so it cannot end itself — the Emacs fleet view ends it and starts a fresh session when
+  a planned bead exists, which is what keeps a session's context one bead deep.
 - **Moira** (`user-feedback`, Sonnet) — owns GitHub issues: acknowledges, triages into beads, keeps
   the issue's status comments in step with its bead.
 - **Psylocke** (`verifier`, Sonnet) — loads no separate skill; her whole job lives in
@@ -250,16 +251,17 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   supervision (`cerebro--supervise-action`) reads `state` alone, never `phase`, so a typo in the
   phase vocabulary can only mislabel a column, never break the restart loop. An unrecognised `state`
   string shows its raw word in yellow rather than reading as `idle`, which used to mean "fine" when
-  it meant "an error". **`done` is an implementer's state alone** — `scripts/agent-state` refuses it
-  from an interactive name, and a live file that carries it anyway maps to `'unknown` rather than
-  being handed to the restart/retire logic as a finished bead. **`waiting` is the mirror image**
-  (ah-hiib.3, cb-5yr): an interactive role's state alone, refused from an implementer, meaning
-  *this pass is over and my turn has ended*. The fleet view ends that session half a minute later
+  it meant "an error". **`waiting` is every agent's end-of-pass state** (ah-hiib.3, cb-5yr,
+  cb-1or.1), meaning *this pass is over and my turn has ended* — an implementer's bead merged and
+  closed, one handed back, or nothing to claim. The fleet view ends that session half a minute later
   (`cerebro-end-grace`), keeps its buffer as the record of the pass, and starts a fresh one on the
-  role's own trigger (`cerebro--trigger`) — the poke that used to type into a waiting session is
-  gone, so a session's context is one pass deep the way an implementer's is one bead deep.
+  agent's own trigger (`cerebro--trigger`) — for an implementer, a planned, unclaimed bead — so a
+  session's context is one pass deep the way an implementer's is one bead deep.
   `cerebro-wake-intervals` survives it as the minimum gap between two *starts* of one role. A stop
-  flag on a waiting role ends it and disarms it. **`asking` has a hook behind it**:
+  flag on a waiting agent ends it and disarms it. **`done` is an implementer's older spelling of it**
+  — `scripts/agent-state` refuses it from an interactive name, and a live file that carries it anyway
+  maps to `'unknown` rather than being handed to the restart/retire logic as a finished bead. Nothing
+  writes it since cb-1or.1 and cb-1or.2 retires it. **`asking` has a hook behind it**:
   `hooks/question-state.settings.json` + `scripts/agent-asking`, wired into the whole fleet by the
   two lines `scripts/launch` gives every session (`agent-hooks-env`, `--settings`), flip the file
   for the lifetime of a question tool call, because telling an agent three ways did not make it so.
@@ -268,10 +270,12 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
-- **A role two agents hold is started one at a time.** The planners answer the same buffer rule off
-  the same panel, so a tick where it is true is true for both, and the view started Xavier and
+- **A role more than one agent holds is started one at a time.** The planners answer the same buffer
+  rule off the same panel, so a tick where it is true is true for both, and the view started Xavier and
   Beast in one breath. They then race for one candidate, because `planning:<name>` is taken after
-  the research rather than before. `cerebro-role-start-spacing` holds the second for 30s; it counts
+  the research rather than before. The implementers are the same shape since cb-1or.1: a queue that
+  fills is a condition true for every standby builder on one tick.
+  `cerebro-role-start-spacing` holds the second for 30s; it counts
   peers only, so a role is never held by its own restart.
 - **Agents never decide anything a user sees**, never take work off another agent (except the
   documented crashed-agent recovery), and never act outside a planned bead.
@@ -361,7 +365,7 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
 - `<name>.state.json` — `{state: "idle"|"working"|"asking"|"waiting"|"done", phase, bead, since,
   phase_since, wake_at, pid}`, written by **the agent itself** at each transition through
   `scripts/agent-state` (never by hand — see that script's header). Every implementer writes one, and since ah-2n3.2 so does each of
-  the interactive agents, `done` excepted. The launcher used to write the file and no longer does: it
+  the interactive agents, `done` excepted; `waiting` is written by every kind since cb-1or.1. The launcher used to write the file and no longer does: it
   `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/`review`/`ci`/
   `rebase`/`merge` for an implementer, or a role word (`triage`/`plan`, `prepare`/`verify`, `sweep`,
   `sweep`/`release`, `daily`/`weekly`) for the interactive agents — meaningful with `working` and

@@ -223,7 +223,7 @@ bd dolt push
 ```
 
 `--external-ref gh-<number>` is what makes the link, so it is not optional and cannot be added later
-by memory. Priority is **P4** unless the navigator says otherwise — ranking is the planners' triage step
+by memory. Priority is **P4** unless the navigator says otherwise — ranking is Cerebro's triage step
 with the navigator, and pre-empting it here puts a number on the queue that nobody agreed.
 
 `bd github pull <number>` exists and imports an issue verbatim; use it only when the navigator wants
@@ -535,7 +535,7 @@ beads you parked this way.
 - **Never claim a bead.** Claiming is the implementer's alone, repo-wide (`beads-workflow`), and you
   have no reason to want it — you create beads and read them, and both work unclaimed. A bead you
   claim is one an implementer cannot take, and it reads to everyone else as a build in flight.
-- **Never set a priority the navigator did not choose.** New beads land at P4 and the planners' triage
+- **Never set a priority the navigator did not choose.** New beads land at P4 and Cerebro's triage
   ranks them with the navigator.
 - **Never trust a comment as the link.** `external_ref` is the record; a comment is a courtesy to the
   reporter.

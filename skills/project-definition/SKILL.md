@@ -206,9 +206,8 @@ in it are load-bearing and nothing else records them:
 # The fleet this project runs. This file replaces the built-in table rather than merging with it,
 # so what is left out is as much a decision as what is here.
 #
-# Order is load-bearing, not display: the interactive roles come first, the P4 triage pass goes to
-# the FIRST planner listed, and the orchestrator takes the next unused implementer name in file
-# order.
+# Order is load-bearing, not display: the interactive roles come first, and the orchestrator takes
+# the next unused implementer name in file order.
 #
 # A third word, `autostart', starts that agent with `M-x cerebro'; omitted means it is started by
 # hand with `s'. Any other third word refuses, so a typo cannot read as "no".

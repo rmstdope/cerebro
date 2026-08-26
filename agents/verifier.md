@@ -487,7 +487,7 @@ bd update <id> --set-metadata verified_at=<full sha>
 bd dolt push
 ```
 
-P4, the ordinary rule for new work — it is unranked until a planner triages it with the navigator, same
+P4, the ordinary rule for new work — it is unranked until Cerebro triages it with the navigator, same
 as anything else that lands in the backlog. Do not rank it yourself.
 
 **3. Failed.** The reopen procedure, below — in this order, and every step:

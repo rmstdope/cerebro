@@ -43,7 +43,7 @@ there are twelve on the roster.
 | Agent | Role | Runs on | What it is for |
 |---|---|---|---|
 | **Xavier**, **Beast** | `planner` | Opus / high | Turn unplanned beads into plans an implementer can build unattended |
-| **Cerebro** | `orchestrator` | Opus / medium | Watches the fleet, reports on it, stops implementers, hands a release request to the project's release skill |
+| **Cerebro** | `orchestrator` | Opus / medium | Watches the fleet, reports on it, ranks the backlog with you, stops implementers, hands a release request to the project's release skill |
 | **Moira** | `user-feedback` | Sonnet | Owns the GitHub issue inbox: acknowledges, triages into beads, keeps reporters told |
 | **Psylocke** | `verifier` | Sonnet | Puts merged work in front of you and records your verdict |
 | **Cypher** | `reviewer` | Opus / high | Reviews pull requests that came from outside the fleet |
@@ -82,7 +82,7 @@ buffer (see *Leftover worktrees*), and it ends an implementer that reports `wait
 kept — and starts a fresh one when a planned bead exists, at most one implementer every 30 seconds.
 It runs the **interactive roles** exactly the same way: a role that writes `waiting` is ended half a
 minute later — its buffer kept, `RET` shows it — and started fresh when its trigger fires: a planner
-when the planned buffer is short, a P0 is unplanned or (the first planner) a P4 wants ranking;
+when the planned buffer is short or a P0 is unplanned;
 Psylocke when a merged bead is unverified or a verdict is stale; Moira when an issue moved on GitHub
 or a bead linked to one (`gh-<n>` in its `external_ref`) changed since her last pass, Cypher when an
 outside PR moved, both hourly regardless; Forge hourly too; an implementer when a planned,
@@ -116,9 +116,9 @@ does not start that name again, however it is armed, until you press `s`; `RET` 
 line.
 
 The State column names the
-**phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `triage`/`plan` for
+**phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `plan` for
 a planner; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
-Moira and Cerebro (`release` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
+Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
 timers — time on the bead, time in this phase — so three implementers sitting in `review` says
 Copilot is slow, and one in `ci` for an hour says something is stuck.
 
@@ -185,11 +185,6 @@ What they divide, and how:
   overshoot is at most one bead each. Counting held beads too was tried and starved the queue: two
   held candidates were enough to make a small fleet's target look met, and both planners slept over a
   queue of two.
-- **The triage pass belongs to Xavier alone** — the first planner on the roster. It is the one part
-  of the role that is not divisible, because what a session remembers asking lives in its own context
-  and nowhere on the bead: two triaging planners means being walked through the same P4 backlog
-  twice. Beast says so in a line when it starts and goes straight to the buffer.
-
 **Two planners is two sessions asking you questions.** That is the cost, and it is the thing to watch
 before adding the second: if Xavier's row spends most of its time on `asking` rather than `working`,
 the queue is bounded by your answers, and a second planner adds a second row waiting on you rather
@@ -261,8 +256,9 @@ cut a minor release
 ```
 
 It is called Cerebro because it finds the mutants and points them at the work. Since the fleet view
-took over the timed sweeps, what is left for a Cerebro session is handing a release request to the
-project's release skill, diagnosing a stuck implementer, and anything needing a forced reassignment — which is why most days you will not run one
+took over the timed sweeps, what is left for a Cerebro session is ranking the unranked backlog with
+you, handing a release request to the project's release skill, diagnosing a stuck implementer, and
+anything needing a forced reassignment — which is why most days you will not run one
 at all.
 
 ### What "take one down" means
@@ -411,7 +407,7 @@ launches the app and waits for one of three verdicts:
 
 - **Passed.** The bead is marked verified and that is the end of it.
 - **Passed, with a follow-up.** It works; something small about it is worth a look later. She files
-  that as an ordinary new bead — unranked, for a planner to triage with you next time round — and
+  that as an ordinary new bead — unranked, for Cerebro to rank with you next time round — and
   still marks the original passed.
 - **Failed.** She reopens the bead **at P0**, records what you saw, and asks one more thing: was the
   *plan* wrong, or was the *build* wrong? A build failure goes straight back to the implementers as

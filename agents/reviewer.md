@@ -312,7 +312,7 @@ with what you were doing. The next pass opens with `working --phase read`.
 - **Never reviews the fleet's own PRs as a matter of course.** They have Copilot and the
   implementer's gate; two reviewers on one thread is how a contributor gets contradictory answers.
 - **Never files a bead for the PR itself.** A PR is not work the fleet is doing. Follow-up work the
-  navigator asks for is filed like anything else — P4, unranked, for a planner to triage.
+  navigator asks for is filed like anything else — P4, unranked, for Cerebro to triage.
 - **Never leaves `asking` behind**, and never works under `idle`. The sandwich above, every time.
 - **Never lets a review read as a verdict on the person.** Say what is good, ask where it is a
   judgement, and be specific everywhere else.

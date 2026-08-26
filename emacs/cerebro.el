@@ -41,7 +41,6 @@
 (require 'tabulated-list)
 (require 'seq)
 (require 'subr-x)
-(require 'parse-time)      ; `parse-time-string', for the ts on a launcher's own error line
 
 (defgroup cerebro nil
   "The fleet view: what every agent is doing, and starting or stopping them."
@@ -3405,8 +3404,11 @@ and the file may end in a half-written line from the other writer."
                        (equal context (concat "launch " name))
                        (stringp message)
                        (or (null since)
-                           (let ((at (ignore-errors
-                                       (float-time (encode-time (parse-time-string ts))))))
+                           ;; `cerebro--gh-instant' is the one place an
+                           ;; ISO-8601 instant becomes a `float-time' here: it
+                           ;; goes through `iso8601-parse', which reads the
+                           ;; trailing `Z' as UTC on every Emacs this runs on.
+                           (let ((at (cerebro--gh-instant ts)))
                              (and at (>= at since)))))
               (setq found message))))))
     found))
@@ -5014,16 +5016,25 @@ is where that is said."
                   ;; (cb-ccl).
                   (let* ((old (alist-get name cerebro--last-exit nil nil #'equal))
                          (code (or (plist-get old :code) "?"))
+                         ;; `cerebro--failed-starts' counts the failures BEFORE
+                         ;; the start being decided, and the one that just
+                         ;; failed is what brought us here - so the count is
+                         ;; one higher than the counter says, and the counter
+                         ;; is brought up to it. Left behind, the echo area
+                         ;; said five while the row and `RET' said four about
+                         ;; the same five sessions.
+                         (total (1+ failures))
                          (text (format (concat "gave up after %d failed starts; the last session"
                                                " exited with code %s and printed nothing")
-                                       cerebro-give-up-after code)))
+                                       total code)))
                     (setf (alist-get name cerebro--last-exit nil nil #'equal)
                           (list :code code :line nil :gave-up t))
+                    (setf (alist-get name cerebro--failed-starts nil nil #'equal) total)
                     (setq cerebro--armed (delete name cerebro--armed))
                     (cerebro--log repo-root 'give-up
                                   (list (cons 'agent name)
                                         (cons 'role (cerebro-agent-role agent))
-                                        (cons 'failed_starts cerebro-give-up-after)))
+                                        (cons 'failed_starts total)))
                     (cerebro--log-error repo-root (format "start %s" name) text)
                     (message "cerebro: %s %s" name text))
                 ;; Counted before the launch, from what the LAST one did: a

@@ -1409,7 +1409,7 @@ read the raw table rather than go through the liveness check."
   "The launcher writes its own refusal to errors.jsonl (cb-ccl), and the view
 reads it back when vterm never drew the line.  Which line: this name's, from
 this session rather than an earlier one, and the last of them."
-  (let* ((since (float-time (encode-time (parse-time-string "2026-08-26T04:51:00Z"))))
+  (let* ((since (float-time (encode-time (iso8601-parse "2026-08-26T04:51:00Z"))))
          (text (mapconcat
                 #'identity
                 (list "{\"event\":\"error\",\"ts\":\"2026-08-26T04:41:00Z\",\"context\":\"launch Storm\",\"message\":\"an older refusal\"}"
@@ -1422,7 +1422,22 @@ this session rather than an earlier one, and the last of them."
     ;; A line older than this session is a previous session's refusal.
     (should-not (cerebro--launch-refusal
                  text "Storm"
-                 (float-time (encode-time (parse-time-string "2026-08-26T04:52:00Z")))))
+                 (float-time (encode-time (iso8601-parse "2026-08-26T04:52:00Z")))))
+    ;; The `Z' is UTC wherever this Emacs is: `parse-time-string' reads the
+    ;; wall clock in the local zone, so in any non-UTC timezone the launcher's
+    ;; own line was compared against a `float-time' on a different scale and
+    ;; the fallback silently rejected it (CI runs in UTC, which is why the
+    ;; first version of this test could not see it).
+    (let ((tz (getenv "TZ")))
+      (unwind-protect
+          (progn
+            (setenv "TZ" "Asia/Tokyo")
+            (should (equal (cerebro--launch-refusal text "Storm" since)
+                           "the checkout is 4 commits behind"))
+            (should-not (cerebro--launch-refusal
+                         text "Storm"
+                         (float-time (encode-time (iso8601-parse "2026-08-26T04:52:00Z"))))))
+        (setenv "TZ" tz)))
     ;; No start time known: the newest line for the name.
     (should (equal (cerebro--launch-refusal text "Storm" nil)
                    "the checkout is 4 commits behind"))
@@ -1462,7 +1477,7 @@ takes its line from the errors.jsonl entry its own launcher wrote."
                   (with-current-buffer buf
                     (setq default-directory root)
                     (setq cerebro--session-started
-                          (float-time (encode-time (parse-time-string "2026-08-26T04:51:00Z")))))
+                          (float-time (encode-time (iso8601-parse "2026-08-26T04:51:00Z")))))
                   (with-temp-file (expand-file-name ".cerebro/state/errors.jsonl" root)
                     (insert "{\"event\":\"error\",\"ts\":\"2026-08-26T04:51:14Z\",\"context\":\"launch Cyclops\",\"message\":\"claude is not on PATH\"}\n"))
                   (cerebro--note-exit buf "exited abnormally with code 2\n")
@@ -6355,6 +6370,11 @@ says so in both logs."
               (should (member "Cyclops" (cerebro--failed-names cerebro--last-exit)))
               (should (seq-find (lambda (m) (string-match-p "gave up after 5 failed starts" m))
                                 said))
+              ;; The row, the placeholder and the message all read one count.
+              ;; `cerebro--failed-starts' counts the failures BEFORE the start
+              ;; being decided, so leaving it at 4 had the echo area say five
+              ;; and the row say four about the same five sessions.
+              (should (equal (alist-get "Cyclops" cerebro--failed-starts nil nil #'equal) 5))
               (let ((decisions (with-temp-buffer
                                  (insert-file-contents
                                   (expand-file-name ".cerebro/state/decisions.jsonl" root))

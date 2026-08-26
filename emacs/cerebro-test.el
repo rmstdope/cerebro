@@ -5143,6 +5143,51 @@ the session is parked exactly as an ordinary end parks it, then disarmed."
        ;; The instruction has been carried out, so it does not outlive it.
        (should-not (file-exists-p (expand-file-name ".cerebro/state/Moira.stop" root)))))))
 
+(ert-deftest cerebro-test/retire-carries-out-the-instruction-before-it-parks ()
+  "The instruction first, the record second.
+
+The flag and the arming are what would start the next session; parking is the
+step that can signal.  A name told to finish is never started again by a
+trigger, whatever happens to its buffer - and the park\='s failure is still
+reported, just no longer fatal to the instruction."
+  (let ((cerebro-end-grace 30)
+        (reported '()))
+    (cerebro-test--park-fixture
+     (cerebro-test--waiting nil "2026-08-14T09:29:59Z" nil)
+     (lambda (root _acted agent)
+       (setq cerebro--armed (list "Moira"))
+       (make-directory (expand-file-name ".cerebro/state" root) t)
+       (write-region "" nil (expand-file-name ".cerebro/state/Moira.stop" root))
+       (cl-letf (((symbol-function 'cerebro--park-session)
+                  (lambda (&rest _) (error "Selecting deleted buffer")))
+                 ((symbol-function 'cerebro--report-error)
+                  (lambda (&rest args) (push args reported))))
+         ;; Demoted, not signalled: `cerebro--with-logged-errors\=' wraps it.
+         (cerebro--supervise (list agent) root cerebro-test--now))
+       (should (= 1 (length reported)))
+       (should-not (member "Moira" cerebro--armed))
+       (should-not (file-exists-p (expand-file-name ".cerebro/state/Moira.stop" root)))))))
+
+(ert-deftest cerebro-test/retire-disarms-an-idle-implementer-before-ending-it ()
+  "The implementer branch of retire has the same order: armed is what would
+start the next session, so it goes before the step that can fail."
+  (let ((reported '())
+        (root (make-temp-file "cerebro-retire" t))
+        (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'idle)))
+    (unwind-protect
+        (with-temp-buffer
+          (setq cerebro--armed (list "Cyclops"))
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (write-region "" nil (expand-file-name ".cerebro/state/Cyclops.stop" root))
+          (cl-letf (((symbol-function 'cerebro--end-session)
+                     (lambda (&rest _) (error "Selecting deleted buffer")))
+                    ((symbol-function 'cerebro--report-error)
+                     (lambda (&rest args) (push args reported))))
+            (cerebro--supervise (list agent) root cerebro-test--now))
+          (should (= 1 (length reported)))
+          (should-not (member "Cyclops" cerebro--armed)))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/nudge-types-through-the-one-typing-path ()
   "It types through the helper rather than for itself - the only remaining
 caller of a path that has twice needed the same fix in two places."

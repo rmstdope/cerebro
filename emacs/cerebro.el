@@ -4023,14 +4023,21 @@ other agents down with it."
            ;; nothing will come back to.
            (if (or (eq (cerebro-agent-kind agent) 'interactive)
                    (eq (cerebro-agent-state agent) 'waiting))
-               (progn (cerebro--park-session agent repo-root now)
-                      (cerebro--clear-stop-flag repo-root name)
-                      (setq cerebro--armed (delete name cerebro--armed)))
+               ;; The instruction first, the record second: the flag and
+               ;; the arming are what would start the next session, and
+               ;; parking is the step that can signal.  A name told to
+               ;; finish is never started again by a trigger, whatever
+               ;; happens to its buffer.
+               (progn (cerebro--clear-stop-flag repo-root name)
+                      (setq cerebro--armed (delete name cerebro--armed))
+                      (cerebro--park-session agent repo-root now))
              ;; An implementer is armed too now, so retiring one has to
              ;; disarm it: the flag ends this session, and armed is what
-             ;; would otherwise start the next (cb-hzs).
-             (progn (cerebro--end-session agent repo-root 'clear-stop-flag)
-                    (setq cerebro--armed (delete name cerebro--armed)))))
+             ;; would otherwise start the next (cb-hzs).  Disarmed first,
+             ;; for the reason the branch above is ordered as it is;
+             ;; `cerebro--end-session' keeps its own ownership of the flag.
+             (progn (setq cerebro--armed (delete name cerebro--armed))
+                    (cerebro--end-session agent repo-root 'clear-stop-flag))))
           ('end (cerebro--park-session agent repo-root now))
           ('nudge (unless (member name cerebro--nudged)
                     (push name cerebro--nudged)

@@ -489,6 +489,17 @@ started nothing, a roster it would not parse, a launcher that refused, a `bd` or
 answer, one agent whose session could not be replaced — lands here as well as there. It stays short:
 in a fleet that is working it never gets a line.
 
+Three contexts name a start that did not work, and they are worth telling apart (cb-ccl):
+
+- `launch <Name>` — the launcher's own refusal, written by `scripts/launch-refused` rather than by
+  the view. This is what the whole fleet being unable to start looks like: on 2026-08-26 the
+  preflight refused every launch for a day with a precise line on stderr, vterm never drew it before
+  the session died, and nothing anywhere kept it.
+- `session <Name>` — a session that exited abnormally and the launcher did not account for. The
+  message carries the exit code and the last line it printed, or says it printed none.
+- `start <Name>` — the view has stopped retrying that name, after `cerebro-give-up-after` (5) starts
+  in a row that produced no pass and no reason. `s` is the way back.
+
 **`transitions.jsonl`** is the agents' own: one line every time any of them writes its state
 (`scripts/agent-state`), carrying `from`, `to`, `phase`, `bead` and `pid`. `scripts/fleet-history`
 turns it into durations — how long a bead was held, how long anyone waited at `asking`, what is

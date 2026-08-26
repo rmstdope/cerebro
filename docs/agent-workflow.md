@@ -6,8 +6,9 @@ agents' word for the one person every user-facing decision belongs to.
 
 The agents' own instructions live in `.claude/cerebro/agents/<role>.md`, and for the three roles that
 have one, in `.claude/cerebro/skills/`: `plan-bead`, `implement-bead` and the shared
-`beads-workflow`. The verifier, the reviewer and the architect carry their whole job in their agent
-file. You do not need to read any of it to operate this.
+`beads-workflow` — and `project-definition`, which no role loads: you run it yourself, once, in a
+blank repository (the README says when). The verifier, the reviewer and the architect carry their
+whole job in their agent file. You do not need to read any of it to operate this.
 
 ![The Cerebro fleet: the humans it answers to, seven agent roles, the bead board and the fleet view](cerebro-fleet.svg)
 

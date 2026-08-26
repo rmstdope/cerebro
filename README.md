@@ -53,6 +53,14 @@ Check: it prints one `Synced N skill link(s) …` line and one `Synced N agent l
 `.dir-locals.el` link from an earlier sync is at your root, it also prints
 `Removed stale .dir-locals.el link (templates/consumer-dir-locals.el is gone)`.
 
+#### Or: let a session do steps 4 to 9
+
+With the tools, the submodule and the links in place, run `claude` at the root of your repository
+and type `/project-definition`. It interviews you about the project — what the software is, where it
+runs, what it is built with, what using it is like — and then writes every declaration below,
+initialises the board and files the first epics. The steps that follow are what it does, written out
+for reading or for doing by hand.
+
 ### 4. Declare the project: `.cerebro/project.conf`
 
 The one file every script reads a project fact from — `key value`, one per line, and everything

@@ -420,7 +420,8 @@ twice before the table existed: `7bd5962`, `9420ff2`).
 - `.cerebro/` is the harness's own directory in the consumer — agent state files, stop flags and
   agent worktrees (ah-v82), **and since cb-epr the project's own declarations** (`project.conf`,
   `roster.conf`, `traps.md`). So the consumer's `.gitignore` names the
-  two things the fleet writes while it runs — `.cerebro/worktrees` and `.cerebro/state` — and
+  three things the fleet writes while it runs — `.cerebro/worktrees`, `.cerebro/state` and
+  `.cerebro/scratch`, the planners' drafts (cb-27g) — and
   tracks the rest: the declarations, and `models.conf`, which this project commits so every clone
   runs the same models (`eb6ffdb`; a project that wants it personal ignores it). A deny-list rather
   than everything-except: the price is that a new runtime artifact has to be added to it, and that

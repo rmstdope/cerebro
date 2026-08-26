@@ -367,14 +367,14 @@ tells the row to say so."
                       ;; Blocked on a question only the navigator can
                       ;; answer, with a bead still in flight.
                       ((equal raw-state "asking") 'asking)
-                      ;; The role has finished a pass and ENDED ITS TURN,
-                      ;; expecting to be woken (ah-hiib.3). An interactive
-                      ;; agent's state alone, the mirror image of `done':
-                      ;; an implementer is replaced between beads and has no
-                      ;; cadence, so a `waiting' file under one is a bug and
-                      ;; must not be handed to the poke logic as a cadence.
-                      ((equal raw-state "waiting")
-                       (if (eq kind 'interactive) 'waiting 'unknown))
+                      ;; The agent has finished a pass and ENDED ITS TURN,
+                      ;; expecting a fresh session when there is another pass
+                      ;; to make (ah-hiib.3).  Every agent's state since
+                      ;; cb-1or.1, an implementer's included: a bead merged
+                      ;; and closed, one handed back, or nothing to claim are
+                      ;; all one idea, and `done' is the older spelling of it
+                      ;; that cb-1or.2 retires.
+                      ((equal raw-state "waiting") 'waiting)
                       ((equal raw-state "idle") 'idle)
                       ;; A raw state this list has never seen - a typo in
                       ;; the skill, most likely.  A live process the view
@@ -1521,17 +1521,17 @@ answers are:
             under that name does not inherit an instruction meant for this
             one.
 `nudge'   - AGENT has waited past `cerebro-answer-timeout' for an answer.
-`end'     - AGENT is an interactive role that has finished a pass -
-            `waiting', or `idle' for a role in
+`end'     - AGENT has finished a pass - `waiting', or `idle' for a role in
             `cerebro-idle-ends-pass-roles' that writes that instead - and
             `cerebro-end-grace' has passed since it said so (cb-5yr).  Its
             session is ended and its buffer kept; a fresh one starts when the
-            role's own trigger fires (`cerebro--trigger'), which is what
+            agent's own trigger fires (`cerebro--trigger'), which is what
             makes a session one pass deep the way an implementer's is one
-            bead deep.  Interactive-only, and the exact mirror of the three
-            above - an implementer is replaced between beads and has no pass
-            of its own.  This replaced `poke', which typed into the session
-            it had rather than starting a new one.
+            bead deep.  An implementer reaches it the same way since
+            cb-1or.1 - a bead merged and closed, one handed back, or nothing
+            to claim are one pass ending - and `restart' survives beside it
+            only until cb-1or.2 retires `done'.  This replaced `poke', which
+            typed into the session it had rather than starting a new one.
 
 Only a session Emacs itself started is supervised.  One running in
 somebody's own terminal is theirs to end, and a dead one stays dead -
@@ -1569,13 +1569,13 @@ everything: every answer here ends in Emacs acting on a session it owns."
           (if (member (cerebro-agent-role agent) cerebro-idle-ends-pass-roles)
               (cerebro--end-decision agent stop-flag-p now)
             (and stop-flag-p 'retire)))))
-      ;; Nothing is in flight for a waiting role - no bead, no claim, no
+      ;; Nothing is in flight for a waiting agent - no bead, no claim, no
       ;; worktree - so a stop flag lands cleanly and *now*, which is the
       ;; behaviour that was impossible while a role slept inside its own
-      ;; session and the flag had no gap to land in.
-      ('waiting
-       (and (eq (cerebro-agent-kind agent) 'interactive)
-            (cerebro--end-decision agent stop-flag-p now)))
+      ;; session and the flag had no gap to land in.  No kind guard since
+      ;; cb-1or.1: an implementer between beads has ended its pass in
+      ;; exactly the sense this arm means.
+      ('waiting (cerebro--end-decision agent stop-flag-p now))
       ;; A standby implementer is one the view means to start again
       ;; (cb-hzs).  A stop flag written before its session died still says
       ;; *no further bead*, so it is retired - the flag cleared with it -
@@ -3860,10 +3860,17 @@ other agents down with it."
                       (cerebro--launch agent)
                       (when watching (cerebro--show-detail agent))))
           ('retire
-           ;; An interactive role keeps its buffer, exactly as an ordinary
-           ;; end does - the flag says stay down, not forget the pass - and
-           ;; is disarmed, so no trigger starts it again.
-           (if (eq (cerebro-agent-kind agent) 'interactive)
+           ;; An agent with a pass worth keeping keeps its buffer, exactly as
+           ;; an ordinary end does - the flag says stay down, not forget the
+           ;; pass - and is disarmed, so no trigger starts it again.  That is
+           ;; every interactive role, and since cb-1or.1 a `waiting'
+           ;; implementer too.  The condition reads the state and not only
+           ;; the kind because a `done', `idle' or `standby' implementer has
+           ;; nothing worth keeping: `cerebro--end-session' takes its state
+           ;; file with it, and parking it would keep a buffer for a bead the
+           ;; `restart' path would have thrown away.
+           (if (or (eq (cerebro-agent-kind agent) 'interactive)
+                   (eq (cerebro-agent-state agent) 'waiting))
                (progn (cerebro--park-session agent repo-root now)
                       (cerebro--clear-stop-flag repo-root name)
                       (setq cerebro--armed (delete name cerebro--armed)))

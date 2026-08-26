@@ -912,6 +912,17 @@ shape."
                                                 #'cerebro-test--always-alive nil nil))))
               (should (eq (cerebro-agent-state agent) 'waiting))
               (should (stringp (cerebro-agent-wake-at agent)))
+              (should (eq (cerebro-agent-bead agent) nil)))
+            ;; and the same end-of-pass shape from an implementer name (cb-1or.1)
+            (should (eq 0 (call-process agent-state nil nil nil
+                                        "Cyclops" "waiting" "--wake-in" "600"
+                                        "--pid" "4244")))
+            (let* ((parsed (cerebro--read-state-file
+                            (cerebro--state-file-path tmp "Cyclops")))
+                   (agent (car (cerebro--derive '("Cyclops") nil
+                                                (list (cons "Cyclops" parsed))
+                                                #'cerebro-test--always-alive nil nil))))
+              (should (eq (cerebro-agent-state agent) 'waiting))
               (should (eq (cerebro-agent-bead agent) nil)))))
       (delete-directory tmp t))))
 
@@ -4867,14 +4878,18 @@ replacing a real answer with an empty one - the same rule the sweeps follow."
     (should (eq (cerebro-agent-state agent) 'waiting))
     (should (equal (cerebro-agent-wake-at agent) "2026-08-14T09:30:00Z"))))
 
-(ert-deftest cerebro-test/waiting-from-an-implementer-is-unknown ()
-  "`scripts/agent-state' refuses it from an implementer, so a file that carries
-one anyway is a bug rather than a cadence - the same treatment `done' from an
-interactive name already gets."
-  (should (eq (cerebro-agent-state
-               (cerebro--derive-from-state "Cyclops" "implementer" 'implementer
-                                           '((state . "waiting") (pid . 42)) t))
-              'unknown)))
+(ert-deftest cerebro-test/waiting-from-an-implementer-is-waiting ()
+  "Since cb-1or.1 `waiting' is every agent's end-of-pass state, so an
+implementer's file carries it the same way a role's does - and the same
+`wake_at' with it, which the view is free to ignore."
+  (let ((agent (cerebro--derive-from-state
+                "Cyclops" "implementer" 'implementer
+                '((state . "waiting") (bead . nil) (since . "2026-08-14T09:20:00Z")
+                  (wake_at . "2026-08-14T09:30:00Z") (pid . 42))
+                t)))
+    (should (eq (cerebro-agent-state agent) 'waiting))
+    (should (equal (cerebro-agent-raw agent) "waiting"))
+    (should (equal (cerebro-agent-wake-at agent) "2026-08-14T09:30:00Z"))))
 
 (ert-deftest cerebro-test/the-interval-comes-from-the-custom-variable ()
   (let ((cerebro-wake-intervals '(("Psylocke" . 300)))
@@ -4897,15 +4912,85 @@ cleanly and now, whether or not its wake is due."
                  t cerebro-test--now)
                 'retire))))
 
-(ert-deftest cerebro-test/an-implementer-never-reaches-the-waiting-arm ()
-  "The kind guard is per-arm now, and this is the half it must keep excluding:
-an implementer has no cadence, and `waiting' from one is `unknown' anyway."
-  (let ((agent (make-cerebro-agent :name "Cyclops" :role "implementer"
-                                           :kind 'implementer :state 'waiting
-                                           :since "2026-08-14T09:00:00Z"
-                                           :wake-at "2026-08-14T09:20:00Z")))
-    (should (null (cerebro--supervise-action agent nil cerebro-test--now)))
-    (should (null (cerebro--supervise-action agent t cerebro-test--now)))))
+(ert-deftest cerebro-test/a-waiting-implementer-is-ended-after-the-grace ()
+  "The `waiting' arm's kind guard is gone (cb-1or.1): an implementer that has
+ended its pass is ended exactly the way a role is - after `cerebro-end-grace',
+at once under a stop flag, and never when the session is somebody else's."
+  (let ((cerebro-end-grace 30))
+    (cl-flet ((implementer (since &optional external)
+                (make-cerebro-agent :name "Cyclops" :role "implementer"
+                                    :kind 'implementer :state 'waiting
+                                    :since since :external external
+                                    :wake-at "2026-08-14T09:20:00Z")))
+      ;; stood in `waiting' for 31s - past the grace
+      (should (eq (cerebro--supervise-action
+                   (implementer "2026-08-14T09:29:29Z") nil cerebro-test--now)
+                  'end))
+      ;; 10s - not yet
+      (should (null (cerebro--supervise-action
+                     (implementer "2026-08-14T09:29:50Z") nil cerebro-test--now)))
+      ;; the flag lands at once, whatever `since' says
+      (should (eq (cerebro--supervise-action
+                   (implementer "2026-08-14T09:29:50Z") t cerebro-test--now)
+                  'retire))
+      ;; and a session Emacs does not own is nobody's to end
+      (should (null (cerebro--supervise-action
+                     (implementer "2026-08-14T09:29:29Z" t) nil cerebro-test--now)))
+      (should (null (cerebro--supervise-action
+                     (implementer "2026-08-14T09:29:29Z" t) t cerebro-test--now))))))
+
+(ert-deftest cerebro-test/supervise-parks-a-waiting-implementer ()
+  "An implementer that ended its pass keeps its buffer, the way a role does:
+`cerebro--supervise' parks it rather than ending the session outright, and the
+state file - which describes a session that is over - goes with the park."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-end-grace 30)
+        (parked nil)
+        (launched nil))
+    (unwind-protect
+        (let ((path (cerebro--state-file-path root "Cyclops"))
+              (agent (make-cerebro-agent :name "Cyclops" :role "implementer"
+                                         :kind 'implementer :state 'waiting
+                                         :since "2026-08-14T09:00:00Z")))
+          (make-directory (file-name-directory path) t)
+          (write-region "{\"state\":\"waiting\",\"pid\":42}" nil path nil 'quiet)
+          (cl-letf (((symbol-function 'cerebro--park-session)
+                     (lambda (a _root _now) (push (cerebro-agent-name a) parked)
+                       (delete-file (cerebro--state-file-path _root
+                                                              (cerebro-agent-name a)))))
+                    ((symbol-function 'cerebro--end-session)
+                     (lambda (&rest _) (push 'ended launched)))
+                    ((symbol-function 'cerebro--launch)
+                     (lambda (&rest _) (push 'launched launched))))
+            (with-temp-buffer
+              (cerebro--supervise (list agent) root cerebro-test--now)))
+          (should (equal parked '("Cyclops")))
+          (should (null launched))
+          (should-not (file-exists-p path)))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/supervise-retires-a-waiting-implementer-under-a-flag ()
+  "The flag says no further bead, so the session is parked - its buffer is the
+record of the pass it just finished - the flag cleared, and the name disarmed."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (parked nil))
+    (unwind-protect
+        (let ((agent (make-cerebro-agent :name "Cyclops" :role "implementer"
+                                         :kind 'implementer :state 'waiting
+                                         :since "2026-08-14T09:29:59Z")))
+          (cerebro--write-stop-flag root "Cyclops")
+          (cl-letf (((symbol-function 'cerebro--park-session)
+                     (lambda (a _root _now) (push (cerebro-agent-name a) parked)))
+                    ((symbol-function 'cerebro--end-session)
+                     (lambda (&rest _) (push 'ended parked)))
+                    ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
+            (with-temp-buffer
+              (setq cerebro--armed (list "Cyclops"))
+              (cerebro--supervise (list agent) root cerebro-test--now)
+              (should (equal parked '("Cyclops")))
+              (should-not (member "Cyclops" cerebro--armed))))
+          (should-not (cerebro--stop-flag-p root "Cyclops")))
+      (delete-directory root t))))
 
 (ert-deftest cerebro-test/an-interactive-role-is-still-never-restarted-or-nudged ()
   "The docstring's warning, pinned: making the guard per-arm must not let

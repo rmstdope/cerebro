@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#
+# `launch-refused <Name> <message>` - the one place a launcher's refusal is said and recorded.
+#
+# On 2026-08-26 the whole fleet was unable to start for about a day: `launch-preflight` was exiting 2
+# with a precise, actionable line on stderr, and the navigator could find no sign of it anywhere -
+# not in errors.jsonl, not in decisions.jsonl, not on a row in `M-x cerebro`. The view's capture
+# (cb-eat) reads the dying vterm buffer, and vterm draws process output on a 0.1s timer while the
+# launcher exits within a second of starting, so there was nothing in the buffer to read. The
+# launcher writing its own refusal needs no pty, no timer and no view (cb-ccl).
+#
+# It prints exactly what the callers printed before - `cerebro: <message>` on stderr, which is what
+# the vterm line and the fleet row still show - and appends one line to the consumer's
+# .cerebro/state/errors.jsonl in the shape `cerebro--log-line` writes:
+#
+#   {"event":"error","ts":"2026-08-26T04:51:14Z","context":"launch Storm","message":"..."}
+#
+# `message` carries no `cerebro: ` prefix; `context` already says where it came from.
+#
+# **It always exits 0. The caller exits 2**, exactly as it does today. A refusal must never fail
+# because its log could not be written, so a missing consumer root, a missing `jq` and an unwritable
+# directory all cost the line and nothing else - `tests/launchers.sh` proves the launchers run on a
+# narrowed PATH, and this is on the refusal path only.
+#
+# No rotation here: the fleet view rotates errors.jsonl on `cerebro-log-max-bytes`, and a healthy
+# fleet never fills it.
+set -euo pipefail
+
+name="${1:-}"
+message="${2:-}"
+if [[ -z "$name" || -z "$message" ]]; then
+  echo "usage: launch-refused <Name> <message>" >&2
+  exit 2
+fi
+
+echo "cerebro: $message" >&2
+
+# Deliberately unable to fail, for the reason in the header: the `|| true` under `set -e` is the
+# point, not an oversight. Atomicity is `scripts/agent-state`'s - read the comment above its own
+# transitions.jsonl writer: `>>` opens with O_APPEND, and one `jq -c -n` into one `printf` is one
+# write(2), so this cannot interleave with the fleet view's own writes to the same file.
+{
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  root="$("$here/consumer-root" --shared 2>/dev/null || true)"
+  if [[ -n "${root:-}" ]] && command -v jq >/dev/null 2>&1; then
+    out_dir="$root/.cerebro/state"
+    mkdir -p "$out_dir"
+    # Every failure below is checked by hand rather than left to `set -e`: this whole block is the
+    # left side of an `|| true`, and errexit is suspended inside an AND-OR list, so an unchecked jq
+    # that exited 127 would go on to append an empty line.
+    if line="$(jq -c -n \
+      --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg context "launch $name" \
+      --arg message "$message" \
+      '{event: "error", ts: $ts, context: $context, message: $message}')" && [[ -n "$line" ]]; then
+      printf '%s\n' "$line" >> "$out_dir/errors.jsonl"
+    fi
+  fi
+} || true
+
+exit 0

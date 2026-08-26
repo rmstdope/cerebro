@@ -1246,15 +1246,45 @@ at all.  \"Without apparent reason\" was the code declining to say."
   ;; The row's own record is unchanged: a clean quit is not a failure to show.
   (should (null (cerebro--exit-record "finished\n" "all done")))
   (should (equal (cerebro--exit-record "exited abnormally with code 2\n" "boom")
-                 '("2" . "boom"))))
+                 '(:code "2" :line "boom"))))
 
 (ert-deftest cerebro-test/exit-record-only-for-abnormal-exits ()
+  "The record is a plist - (:code CODE :line LINE) - since cb-ccl; it was a
+cons of the two."
   (should (equal (cerebro--exit-record "exited abnormally with code 2\n" "cerebro: x")
-                  (cons "2" "cerebro: x")))
+                  '(:code "2" :line "cerebro: x")))
   (should (null (cerebro--exit-record "finished\n" "cerebro: x")))
   (should (null (cerebro--exit-record "killed\n" "cerebro: x")))
-  (should (null (cerebro--exit-record "hangup\n" "cerebro: x")))
-  (should (null (cerebro--exit-record "exited abnormally with code 2\n" nil))))
+  (should (null (cerebro--exit-record "hangup\n" "cerebro: x"))))
+
+(ert-deftest cerebro-test/exit-record-without-a-line-is-still-abnormal ()
+  "cb-ccl: a session that died with nothing drawn in its buffer used to make
+no record at all, so `abnormal\=' was logged null for an exit code of 2 and the
+name fell into the retry path as though it had simply gone away.  An abnormal
+exit is a record whether or not there is a line to show with it."
+  (should (equal (cerebro--exit-record "exited abnormally with code 2\n" nil)
+                 '(:code "2" :line nil)))
+  (should (equal (cerebro--exit-record "exited abnormally with code 137\n" nil)
+                 '(:code "137" :line nil)))
+  (should (null (cerebro--exit-record "finished\n" nil)))
+  (should (null (cerebro--exit-record "killed\n" nil))))
+
+(ert-deftest cerebro-test/a-silent-death-is-standby-a-refusal-is-dead ()
+  "cb-eat\='s rule, now that every abnormal exit makes a record: the names that
+keep a row `dead\=' are those with something to say for themselves - a line, or
+a give-up - and a session that died printing nothing is still promised a
+retry (cb-ccl)."
+  (let ((last-exit '(("A" :code "2" :line "cerebro: refused")
+                     ("B" :code "137" :line nil)
+                     ("C" :code "?" :line nil :gave-up t))))
+    (should (equal (sort (cerebro--failed-names last-exit) #'string<) '("A" "C")))
+    (should (null (cerebro--failed-names nil)))
+    (let ((out (cerebro--apply-standby
+                (list (cerebro-test--agent "A" "implementer" 'implementer 'dead)
+                      (cerebro-test--agent "B" "implementer" 'implementer 'dead))
+                '("A" "B") (cerebro--failed-names last-exit))))
+      (should (eq (cerebro-agent-state (nth 0 out)) 'dead))
+      (should (eq (cerebro-agent-state (nth 1 out)) 'standby)))))
 
 (ert-deftest cerebro-test/last-nonblank-line ()
   (should (equal (cerebro--last-nonblank-line "a\nb  \n\n   \n") "b"))
@@ -1262,7 +1292,7 @@ at all.  \"Without apparent reason\" was the code declining to say."
   (should (null (cerebro--last-nonblank-line "\n\n"))))
 
 (ert-deftest cerebro-test/placeholder-shows-the-last-exit-line ()
-  (let ((cerebro--last-exit '(("Forge" . "cerebro: boom"))))
+  (let ((cerebro--last-exit '(("Forge" :code "2" :line "cerebro: boom"))))
     (should (equal (cerebro--placeholder
                      (cerebro-test--agent "Forge" "architect" 'implementer 'dead))
                     (concat "Forge is not running.\n"
@@ -1344,7 +1374,7 @@ read the raw table rather than go through the liveness check."
                 (insert "starting up...\ncerebro: boom\n\n"))
               (cerebro--note-exit buf "exited abnormally with code 2\n")
               (should (equal (alist-get "Forge" cerebro--last-exit nil nil #'equal)
-                              "cerebro: boom")))
+                              '(:code "2" :line "cerebro: boom"))))
           (kill-buffer buf)))
       (let ((buf (generate-new-buffer "*fleet: Forge*")))
         (unwind-protect
@@ -1375,6 +1405,168 @@ read the raw table rather than go through the liveness check."
       (cerebro--note-exit nil "exited abnormally with code 2\n")
       (should (null cerebro--last-exit)))))
 
+(ert-deftest cerebro-test/launch-refusal-picks-the-newest-line-for-the-name-since-the-start ()
+  "The launcher writes its own refusal to errors.jsonl (cb-ccl), and the view
+reads it back when vterm never drew the line.  Which line: this name's, from
+this session rather than an earlier one, and the last of them."
+  (let* ((since (float-time (encode-time (iso8601-parse "2026-08-26T04:51:00Z"))))
+         (text (mapconcat
+                #'identity
+                (list "{\"event\":\"error\",\"ts\":\"2026-08-26T04:41:00Z\",\"context\":\"launch Storm\",\"message\":\"an older refusal\"}"
+                      "{\"event\":\"error\",\"ts\":\"2026-08-26T04:51:05Z\",\"context\":\"launch Rogue\",\"message\":\"another agent\"}"
+                      "not json at all {"
+                      "{\"event\":\"error\",\"ts\":\"2026-08-26T04:51:14Z\",\"context\":\"launch Storm\",\"message\":\"the checkout is 4 commits behind\"}")
+                "\n")))
+    (should (equal (cerebro--launch-refusal text "Storm" since)
+                   "the checkout is 4 commits behind"))
+    ;; A line older than this session is a previous session's refusal.
+    (should-not (cerebro--launch-refusal
+                 text "Storm"
+                 (float-time (encode-time (iso8601-parse "2026-08-26T04:52:00Z")))))
+    ;; The `Z' is UTC wherever this Emacs is: `parse-time-string' reads the
+    ;; wall clock in the local zone, so in any non-UTC timezone the launcher's
+    ;; own line was compared against a `float-time' on a different scale and
+    ;; the fallback silently rejected it (CI runs in UTC, which is why the
+    ;; first version of this test could not see it).
+    (let ((tz (getenv "TZ")))
+      (unwind-protect
+          (progn
+            (setenv "TZ" "Asia/Tokyo")
+            (should (equal (cerebro--launch-refusal text "Storm" since)
+                           "the checkout is 4 commits behind"))
+            (should-not (cerebro--launch-refusal
+                         text "Storm"
+                         (float-time (encode-time (iso8601-parse "2026-08-26T04:52:00Z"))))))
+        (setenv "TZ" tz)))
+    ;; No start time known: the newest line for the name.
+    (should (equal (cerebro--launch-refusal text "Storm" nil)
+                   "the checkout is 4 commits behind"))
+    ;; A name with no line of its own.
+    (should-not (cerebro--launch-refusal text "Beast" nil))
+    (should-not (cerebro--launch-refusal "" "Storm" nil))
+    (should-not (cerebro--launch-refusal nil "Storm" nil))))
+
+(ert-deftest cerebro-test/file-tail-reads-the-end-and-never-signals ()
+  "The fallback reads at most the last few KiB of errors.jsonl, and a file
+that is not there is nil rather than an error - this runs from vterm's
+sentinel, where a signal would take the record down with it."
+  (let ((file (make-temp-file "cerebro-tail")))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "abcdefghij"))
+          (should (equal (cerebro--file-tail file 4) "ghij"))
+          (should (equal (cerebro--file-tail file 100) "abcdefghij"))
+          (should-not (cerebro--file-tail (concat file "-nope") 100)))
+      (delete-file file))))
+
+(ert-deftest cerebro-test/note-exit-falls-back-to-the-launcher-line ()
+  "The whole of cb-ccl's first half: a session whose buffer was never drawn
+takes its line from the errors.jsonl entry its own launcher wrote."
+  (let* ((root (file-name-as-directory (make-temp-file "cerebro-root" t)))
+         (cerebro--last-exit nil)
+         (cerebro--sessions nil)
+         (cerebro-log-verbosity 'decisions))
+    (unwind-protect
+        (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
+          (make-directory (expand-file-name ".claude/cerebro" root) t)
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (let ((buf (generate-new-buffer "*fleet: Cyclops*")))
+            (unwind-protect
+                (progn
+                  (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+                  (with-current-buffer buf
+                    (setq default-directory root)
+                    (setq cerebro--session-started
+                          (float-time (encode-time (iso8601-parse "2026-08-26T04:51:00Z")))))
+                  (with-temp-file (expand-file-name ".cerebro/state/errors.jsonl" root)
+                    (insert "{\"event\":\"error\",\"ts\":\"2026-08-26T04:51:14Z\",\"context\":\"launch Cyclops\",\"message\":\"claude is not on PATH\"}\n"))
+                  (cerebro--note-exit buf "exited abnormally with code 2\n")
+                  (should (equal (alist-get "Cyclops" cerebro--last-exit nil nil #'equal)
+                                 '(:code "2" :line "claude is not on PATH"))))
+              (kill-buffer buf))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/note-exit-logs-an-error-for-an-exit-the-launcher-did-not-explain ()
+  "errors.jsonl is the file the navigator is told to open, and it held nothing
+about the day the fleet could not start.  Every abnormal exit the launcher did
+not already account for gets a line there, blamed on `session <Name>' (cb-ccl)
+- and one it DID account for gets none, since that line is already in this
+very file."
+  (let* ((root (file-name-as-directory (make-temp-file "cerebro-root" t)))
+         (errors (expand-file-name ".cerebro/state/errors.jsonl" root))
+         (cerebro-log-verbosity 'decisions))
+    (cl-flet ((run (setup)
+                (let ((cerebro--last-exit nil) (cerebro--sessions nil)
+                      (buf (generate-new-buffer "*fleet: Cyclops*")))
+                  (unwind-protect
+                      (progn
+                        (setf (alist-get "Cyclops" cerebro--sessions nil nil #'equal) buf)
+                        (with-current-buffer buf
+                          (setq default-directory root)
+                          (setq cerebro--session-started (float-time))
+                          (funcall setup))
+                        (cerebro--note-exit buf "exited abnormally with code 2\n"))
+                    (kill-buffer buf))))
+              (lines ()
+                (if (file-exists-p errors)
+                    (with-temp-buffer (insert-file-contents errors) (buffer-string))
+                  "")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
+            (make-directory (expand-file-name ".claude/cerebro" root) t)
+            (make-directory (expand-file-name ".cerebro/state" root) t)
+            ;; Nothing printed, nothing from the launcher.
+            (run #'ignore)
+            (should (string-match-p "\"context\":\"session Cyclops\"" (lines)))
+            (should (string-match-p "exited with code 2 and printed nothing" (lines)))
+            ;; A line in the buffer: the error names it.
+            (delete-file errors)
+            (run (lambda () (insert "boom\n")))
+            (should (string-match-p "exited with code 2: boom" (lines)))
+            ;; The launcher already said why: no second line about it.
+            (delete-file errors)
+            (with-temp-file errors
+              (insert "{\"event\":\"error\",\"ts\":\"2099-01-01T00:00:00Z\",\"context\":\"launch Cyclops\",\"message\":\"claude is not on PATH\"}\n"))
+            (run #'ignore)
+            (should-not (string-match-p "session Cyclops" (lines))))
+        (delete-directory root t)))))
+
+(ert-deftest cerebro-test/note-exit-logs-abnormal-true-without-a-line ()
+  "The incident log carried 274 exits reading {\"code\":\"2\",\"abnormal\":null}:
+with no line there was no record, and `abnormal\=' was computed from the record
+rather than from the event.  An exit code of 2 is abnormal whether or not the
+buffer had been drawn yet (cb-ccl)."
+  (let* ((root (file-name-as-directory (make-temp-file "cerebro-root" t)))
+         (cerebro--last-exit nil)
+         (cerebro--sessions nil)
+         (cerebro-log-verbosity 'decisions))
+    (unwind-protect
+        (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
+          (make-directory (expand-file-name ".claude/cerebro" root) t)
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (let ((buf (generate-new-buffer "*fleet: Storm*")))
+            (unwind-protect
+                (progn
+                  (setf (alist-get "Storm" cerebro--sessions nil nil #'equal) buf)
+                  (with-current-buffer buf (setq default-directory root))
+                  (cerebro--note-exit buf "exited abnormally with code 2\n")
+                  (should (equal (alist-get "Storm" cerebro--last-exit nil nil #'equal)
+                                 '(:code "2" :line nil)))
+                  (with-temp-buffer
+                    (insert-file-contents
+                     (expand-file-name ".cerebro/state/decisions.jsonl" root))
+                    (goto-char (point-max))
+                    (forward-line -1)
+                    (let ((line (json-parse-string
+                                 (buffer-substring-no-properties
+                                  (line-beginning-position) (line-end-position))
+                                 :object-type 'alist)))
+                      (should (equal (alist-get 'event line) "exit"))
+                      (should (eq (alist-get 'abnormal line) t))
+                      (should (eq (alist-get 'last_line line) :null)))))
+              (kill-buffer buf))))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/note-exit-resolves-the-root-from-the-session-buffer ()
   "vterm's sentinel runs `vterm-exit-functions' with whatever buffer happens
 to be current, and `cerebro--repo-root' signals from one with no mount above
@@ -1402,7 +1594,7 @@ all, because the row's whole account of an abnormal exit hangs on it."
                     (insert "cerebro: boom\n"))
                   (cerebro--note-exit buf "exited abnormally with code 2\n")
                   (should (equal (alist-get "Cyclops" cerebro--last-exit nil nil #'equal)
-                                 "cerebro: boom"))
+                                 '(:code "2" :line "cerebro: boom")))
                   (let ((log (expand-file-name ".cerebro/state/decisions.jsonl" root)))
                     (should (file-exists-p log))
                     (with-temp-buffer
@@ -1421,7 +1613,7 @@ all, because the row's whole account of an abnormal exit hangs on it."
                     (insert "cerebro: boom\n"))
                   (cerebro--note-exit buf "exited abnormally with code 2\n")
                   (should (equal (alist-get "Cyclops" cerebro--last-exit nil nil #'equal)
-                                 "cerebro: boom")))
+                                 '(:code "2" :line "cerebro: boom"))))
               (kill-buffer buf))))
       (delete-directory root t)
       (delete-directory elsewhere t))))
@@ -6126,6 +6318,104 @@ the second and every one after it."
     (should (equal (cerebro--retry-delay 2) 10))
     (should (equal (cerebro--retry-delay 99) 10))))
 
+(ert-deftest cerebro-test/give-up-after-the-fifth-silent-failed-start ()
+  "A fleet that has failed to start thirty times is not going to succeed on
+the thirty-first without a human (cb-ccl).  The predicate is asked about the
+start being decided, so the fifth is the one that does not happen."
+  (let ((cerebro-give-up-after 5))
+    (should (cerebro--give-up-p t 4))
+    (should (cerebro--give-up-p t 9))
+    (should-not (cerebro--give-up-p t 3))
+    ;; A start that follows a pass is not a failure at all, whatever the
+    ;; count behind it says.
+    (should-not (cerebro--give-up-p nil 9))))
+
+(ert-deftest cerebro-test/start-due-gives-up-and-disarms ()
+  "The fifth silent failure launches nothing, leaves the name disarmed - so
+`cerebro--apply-standby' shows it `dead' rather than promising a retry - and
+says so in both logs."
+  (let* ((root (file-name-as-directory (make-temp-file "cerebro-root" t)))
+         (launched nil)
+         (said nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--launch)
+                   (lambda (a) (push (cerebro-agent-name a) launched)))
+                  ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args) (push (apply #'format fmt args) said)))
+                  ((symbol-function 'cerebro--trigger-context)
+                   (lambda (&rest _)
+                     '((now . 1000000.0) (implementers . 2) (planned . 4)
+                       (planned-ids "cb-1" "cb-2" "cb-3" "cb-4")
+                       (p0-unplanned) (p4-unranked . 0) (first-planner-p)
+                       (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+          (make-directory (expand-file-name ".claude/cerebro" root) t)
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (let ((cerebro-log-verbosity 'decisions)
+                (cerebro-give-up-after 5)
+                (cerebro--last-exit '(("Cyclops" :code "137" :line nil))))
+            (with-temp-buffer
+              (setq cerebro--agents
+                    (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby))
+                    cerebro--parked nil
+                    cerebro--seen-up nil
+                    cerebro--armed '("Cyclops")
+                    cerebro--started-at '(("Cyclops" . 900000.0))
+                    cerebro--failed-starts '(("Cyclops" . 4)))
+              (cerebro--start-due root (seconds-to-time 1000000.0))
+              (should-not launched)
+              (should-not (member "Cyclops" cerebro--armed))
+              (should (equal (alist-get "Cyclops" cerebro--last-exit nil nil #'equal)
+                             '(:code "137" :line nil :gave-up t)))
+              (should (member "Cyclops" (cerebro--failed-names cerebro--last-exit)))
+              (should (seq-find (lambda (m) (string-match-p "gave up after 5 failed starts" m))
+                                said))
+              ;; The row, the placeholder and the message all read one count.
+              ;; `cerebro--failed-starts' counts the failures BEFORE the start
+              ;; being decided, so leaving it at 4 had the echo area say five
+              ;; and the row say four about the same five sessions.
+              (should (equal (alist-get "Cyclops" cerebro--failed-starts nil nil #'equal) 5))
+              (let ((decisions (with-temp-buffer
+                                 (insert-file-contents
+                                  (expand-file-name ".cerebro/state/decisions.jsonl" root))
+                                 (buffer-string)))
+                    (errors (with-temp-buffer
+                              (insert-file-contents
+                               (expand-file-name ".cerebro/state/errors.jsonl" root))
+                              (buffer-string))))
+                (should (string-match-p "\"event\":\"give-up\"" decisions))
+                (should (string-match-p "\"context\":\"start Cyclops\"" errors))
+                (should (string-match-p
+                         "gave up after 5 failed starts; the last session exited with code 137 and printed nothing"
+                         errors)))
+              ;; A name with no record at all still gets one, so the row has
+              ;; something to show.
+              (setq cerebro--last-exit nil
+                    cerebro--armed '("Cyclops"))
+              (cerebro--start-due root (seconds-to-time 1000000.0))
+              (should-not launched)
+              (should (equal (alist-get "Cyclops" cerebro--last-exit nil nil #'equal)
+                             '(:code "?" :line nil :gave-up t))))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/exit-line-and-placeholder-for-a-name-the-view-gave-up-on ()
+  "34 failed starts rendered identically to none.  A name the view has given
+up on says so on the row and behind `RET'."
+  (let ((cerebro-give-up-after 5))
+    (should (equal (cerebro--exit-line '(:code "137" :line nil :gave-up t) 5)
+                   "✗ exited with code 137, 5 failed starts — press s"))
+    ;; A line, if there is one, still wins: it is the actionable half.
+    (should (equal (cerebro--exit-line '(:code "2" :line "cerebro: boom" :gave-up t) 5)
+                   "✗ boom"))
+    (let ((cerebro--last-exit '(("Storm" :code "137" :line nil :gave-up t))))
+      (should (equal (cerebro--placeholder
+                      (cerebro-test--agent "Storm" "implementer" 'implementer 'dead)
+                      nil 5)
+                     (concat "Storm is not running.\n"
+                             "Its last 5 sessions ended without a pass (last exit code 137)"
+                             " and printed nothing; the view has stopped retrying.\n"
+                             "Press s to start it."))))))
+
 (ert-deftest cerebro-test/two-planners-are-not-started-in-the-same-breath ()
   "One planner start per `cerebro-role-start-spacing\=', because two racing.
 
@@ -6298,6 +6588,29 @@ starts have come to nothing - a launcher refused all morning reads as
                     cyclops (cerebro-test--context '(failed-starts . 9)
                                                    '(started-at . 999999.0)))
                    "↻ retry in 10m, 9 failed"))))
+
+(ert-deftest cerebro-test/a-role-row-backing-off-shows-the-retry-clock ()
+  "Psylocke sat at 32 failed starts showing `→ merged, unverified' - the row
+of a verifier waiting for a merge, not of one nothing could start.  While a
+start is backing off the clock and the count come first, whatever the role
+(cb-ccl); once it is due the role's own condition is back."
+  (should (equal (cerebro--standby-label
+                  (cerebro-test--interactive "Psylocke" "verifier" 'standby)
+                  (cerebro-test--context '(failed-starts . 4) '(started-at . 999445.0)))
+                 "↻ retry in 45s, 4 failed"))
+  (should (equal (cerebro--standby-label
+                  (cerebro-test--interactive "Xavier" "planner" 'standby)
+                  (cerebro-test--context '(failed-starts . 4) '(started-at . 999445.0)))
+                 "↻ retry in 45s, 4 failed"))
+  ;; Nothing backing off: the condition, exactly as before.
+  (should (equal (cerebro--standby-label
+                  (cerebro-test--interactive "Psylocke" "verifier" 'standby)
+                  (cerebro-test--context '(failed-starts . 4) '(started-at . 990000.0)))
+                 "→ merged, unverified"))
+  (should (equal (cerebro--standby-label
+                  (cerebro-test--interactive "Xavier" "planner" 'standby)
+                  (cerebro-test--context '(failed-starts . 4) '(started-at . 990000.0)))
+                 "→ buffer < 2")))
 
 (ert-deftest cerebro-test/standby-label-forms ()
   "The For column of a standby row: what it is waiting for, not how long it
@@ -6955,12 +7268,15 @@ standby rows only."
   "The row shows why the session died, in the columns a row has: the
 launcher's own `cerebro: ' prefix is nine columns spent saying nothing, and
 the rest is cut with an ellipsis rather than at the window edge."
-  (should (equal (cerebro--exit-line "cerebro: the checkout is 1 commits behind")
+  (should (equal (cerebro--exit-line '(:code "2" :line "cerebro: the checkout is 1 commits behind") 0)
                  "✗ the checkout is 1 commits behind"))
-  (should (equal (cerebro--exit-line "boom") "✗ boom"))
-  (should-not (cerebro--exit-line nil))
+  (should (equal (cerebro--exit-line '(:code "2" :line "boom") 0) "✗ boom"))
+  (should-not (cerebro--exit-line nil 0))
+  ;; An abnormal exit that printed nothing is a record with no line, and the
+  ;; row has nothing to show for it until the view gives up (cb-ccl).
+  (should-not (cerebro--exit-line '(:code "137" :line nil) 3))
   (let ((cerebro-exit-line-width 20))
-    (let ((out (cerebro--exit-line (make-string 100 ?x))))
+    (let ((out (cerebro--exit-line (list :code "2" :line (make-string 100 ?x)) 0)))
       (should (= (string-width out) 20))
       (should (string-suffix-p "…" out)))))
 
@@ -7012,7 +7328,7 @@ that stands, and `s' - which clears the record - is the way back."
             ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
             ((symbol-function 'cerebro--beads-panel-buffer) (lambda () nil))
             ((symbol-function 'tabulated-list-init-header) #'ignore))
-    (let ((cerebro--last-exit '(("Psylocke" . "cerebro: nope"))))
+    (let ((cerebro--last-exit '(("Psylocke" :code "2" :line "cerebro: nope"))))
       (with-temp-buffer
         (setq cerebro--armed '("Psylocke"))
         (cerebro--revert)

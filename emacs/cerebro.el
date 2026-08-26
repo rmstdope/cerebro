@@ -1690,6 +1690,23 @@ row, five seconds apart, with nothing to show for any of them."
   :type '(repeat integer)
   :group 'cerebro)
 
+(defcustom cerebro-give-up-after 5
+  "Consecutive starts that produced no pass and no reason before the view
+stops retrying a name.
+
+The backoff above bounds how *often* a refused start is retried; it never
+bounds how *many* times, so a name whose launcher refused for a reason the
+view could not read went on being started every ten minutes for ever.  On
+2026-08-26 four agents reached thirty-odd failed starts each while the fleet
+was down for a day.  A fleet that has failed this many times running is not
+going to succeed on the next one without a human (cb-ccl).
+
+Only a *silent* failure counts towards it: a launcher that said why parks the
+row `dead\=' with its line the moment it refuses (cb-eat), and never reaches
+this at all.  `s\=' is the way back from either."
+  :type 'integer
+  :group 'cerebro)
+
 (defun cerebro--start-failed-p (started ended)
   "Pure.  Non-nil when the start at STARTED produced no pass by ENDED.
 
@@ -2041,19 +2058,23 @@ floor that has half a minute left to run is not worth a different word."
   (let* ((role (cerebro-agent-role agent))
          (cadence (cdr (assoc role cerebro-cadence-triggers))))
     (cond
-     ;; An implementer on standby is one between beads, so what it waits for
-     ;; is a condition, named the way a planner's row names its buffer rule
-     ;; (cb-1or.1).  The clock is shown only while a failed start is actually
-     ;; backing off - that is the one time there is a moment to count down
-     ;; to, and it is a launcher refusing rather than a pass that ended.
-     ((equal role "implementer")
-      (let* ((failures (alist-get 'failed-starts context))
+     ;; While a start is backing off, the clock and the count come before the
+     ;; role's own condition - for every kind, since cb-ccl.  It was an
+     ;; implementer's line only, and Psylocke at 32 failed starts read
+     ;; `→ merged, unverified': the row of a verifier waiting for a merge
+     ;; rather than of one nothing could start.  It is the one time there is a
+     ;; moment to count down to, and it is a launcher refusing rather than a
+     ;; pass that ended.
+     ((let* ((failures (or (alist-get 'failed-starts context) 0))
              (left (cerebro--retry-wait failures (alist-get 'started-at context)
                                         (alist-get 'now context))))
-        (if (> left 0)
-            (format "↻ retry in %s%s" (cerebro--retry-figure left)
-                    (if (> failures 0) (format ", %d failed" failures) ""))
-          "→ planned bead")))
+        (and (> left 0)
+             (format "↻ retry in %s%s" (cerebro--retry-figure left)
+                     (if (> failures 0) (format ", %d failed" failures) "")))))
+     ;; An implementer on standby is one between beads, so what it waits for
+     ;; is a condition, named the way a planner's row names its buffer rule
+     ;; (cb-1or.1).
+     ((equal role "implementer") "→ planned bead")
      ((equal role "planner")
       (format "→ buffer < %d" (cerebro--planner-want (alist-get 'implementers context))))
      ((equal role "verifier") "→ merged, unverified")
@@ -2313,8 +2334,14 @@ once that bead is done)."
    (t 'write)))
 
 (defvar cerebro--last-exit nil
-  "Alist of NAME -> the last non-blank line an abnormally-exited session
-printed, for every name whose session has died since Emacs started.
+  "Alist of NAME -> what is known about that name\='s last abnormal exit, for
+every name whose session has died abnormally since Emacs started.
+
+The value is a plist: `:code\=' the exit status as a string, `:line\=' the last
+non-blank line the session printed or nil, and `:gave-up\=' t once the view has
+stopped retrying the name (cb-ccl).  It was the line alone until cb-ccl, which
+is why a session that printed nothing made no entry at all.  What keeps a row
+`dead\=' is `cerebro--failed-names\=', not the presence of an entry.
 
 Global, not buffer-local: `cerebro--note-exit' runs from vterm's process
 sentinel, which may not have the fleet buffer current, and the placeholder
@@ -2380,9 +2407,17 @@ because `s' is then the only thing that starts it."
         (format (concat "%s is not running.\nroster.conf arms it, but this role has no trigger: it is"
                         " started with s only.\nPress s to start it, k to leave it down.")
                 name)))
-     (last
+     ;; Ahead of the line branch: a name the view gave up on has a record with
+     ;; no line at all, and "not running. Press s" was the whole account of
+     ;; five consecutive failures (cb-ccl).
+     ((plist-get last :gave-up)
+      (format (concat "%s is not running.\nIts last %d sessions ended without a pass (last exit"
+                      " code %s) and printed nothing; the view has stopped retrying.\n"
+                      "Press s to start it.")
+              name (or failures cerebro-give-up-after) (or (plist-get last :code) "?")))
+     ((plist-get last :line)
       (format "%s is not running.\nIts last session ended with:\n  %s\nPress s to start it."
-              name last))
+              name (plist-get last :line)))
      (t (format "%s is not running. Press s to start it." name)))))
 
 ;;; Sweep findings (ah-4ao): turning `sweep-claims.sh'/`sweep-epics.sh' facts into a decision
@@ -3174,6 +3209,9 @@ from afterwards (cb-5yr)."
          (vterm-shell (mapconcat #'shell-quote-argument cmd " "))
          (session-name (cerebro--session-buffer-name agent))
          (buffer (cerebro--make-session-buffer session-name)))
+    ;; What tells this session's refusal in `errors.jsonl' from an earlier
+    ;; one's, when the exit sentinel comes to look (cb-ccl).
+    (with-current-buffer buffer (setq cerebro--session-started (float-time)))
     (setf (alist-get (cerebro-agent-name agent) cerebro--sessions nil nil #'equal) buffer)
     ;; Starting an agent is what arms it: from here the view will start it
     ;; again on its own trigger until `k' or `f' says otherwise (cb-5yr).
@@ -3242,10 +3280,35 @@ from afterwards (cb-5yr)."
 EVENT is the sentinel string vterm hands `vterm-exit-functions'. Only an
 abnormal exit is worth remembering - `finished' is a clean quit, `killed'
 is `k' or the poll ending a session on purpose (ah-bri), and neither is a
-failure to explain. Returns (CODE . LAST-LINE)."
-  (and last-line
-       (string-match "\\`exited abnormally with code \\([0-9]+\\)" event)
-       (cons (match-string 1 event) last-line)))
+failure to explain. Returns (:code CODE :line LAST-LINE), where LAST-LINE
+may be nil.
+
+A LINE-LESS record is the cb-ccl half. It used to take a line to make a
+record at all, and vterm draws process output on a 0.1s timer while a
+refused launcher exits within a second - so 274 refusals in one day made no
+record, were logged with `abnormal' null against an exit code of 2, and fell
+into the retry path as though the sessions had simply gone away. What the row
+and the standby rule read is `cerebro--failed-names', which asks whether the
+record has anything to say rather than whether one exists."
+  (and (string-match "\\`exited abnormally with code \\([0-9]+\\)" event)
+       (list :code (match-string 1 event) :line last-line)))
+
+(defun cerebro--failed-names (last-exit)
+  "Pure.  The names in LAST-EXIT whose record keeps their row `dead'.
+
+A record with a `:line' is a launcher that refused and said why; one with
+`:gave-up' is a name this view has stopped retrying.  Either way `s' is the
+way back and nothing else is coming, which is what `dead' says.
+
+A record with neither is a session that died printing nothing - the machine
+slept, the process was killed from outside - and that is promised a retry on
+the backoff, so its row stays `standby' (cb-ccl)."
+  (delq nil (mapcar (lambda (cell)
+                      (let ((record (cdr cell)))
+                        (and (or (plist-get record :line)
+                                 (plist-get record :gave-up))
+                             (car cell))))
+                    last-exit)))
 
 (defun cerebro--exit-code (event)
   "Pure.  The code to log for a session that ended on EVENT.
@@ -3271,24 +3334,84 @@ as a row can carry."
   :type 'integer
   :group 'cerebro)
 
-(defun cerebro--exit-line (last)
-  "Pure.  The Bead/Phase text for a dead row whose session printed LAST before
-it died, or nil for nil LAST.
+(defun cerebro--exit-line (record failures)
+  "Pure.  The Bead/Phase text for a dead row, from its `cerebro--last-exit'
+RECORD and FAILURES, that name's consecutive failed starts.  Nil when there
+is nothing to say.
 
-\"✗ \" then LAST with a leading \"cerebro: \" dropped - the launcher\='s own
-prefix, nine columns spent on nothing - truncated to `cerebro-exit-line-width\='
-with an ellipsis.  A plain string, like `cerebro--for-column\=': the red comes
-from `cerebro--entry\=' propertizing it."
-  (and last
-       (truncate-string-to-width
-        (concat "✗ " (string-remove-prefix "cerebro: " last))
-        cerebro-exit-line-width nil nil "…")))
+With a `:line', \"✗ \" then the line with a leading \"cerebro: \" dropped -
+the launcher's own prefix, nine columns spent on nothing.  With `:gave-up'
+and no line, the count and the code instead: a name that has failed five
+times running printing nothing rendered identically to one nothing had ever
+asked to start (cb-ccl).  Truncated to `cerebro-exit-line-width' with an
+ellipsis either way.  A plain string, like `cerebro--for-column': the red
+comes from `cerebro--entry' propertizing it."
+  (let* ((line (plist-get record :line))
+         (text (cond
+                (line (concat "✗ " (string-remove-prefix "cerebro: " line)))
+                ((plist-get record :gave-up)
+                 (format "✗ exited with code %s, %d failed starts — press s"
+                         (or (plist-get record :code) "?") (or failures 0))))))
+    (and text
+         (truncate-string-to-width text cerebro-exit-line-width nil nil "…"))))
 
 (defconst cerebro--exit-tail-chars 4000
   "How far back from the end of a dying session's buffer to look for its
 last line. A session that ran a while can hold megabytes of scrollback;
 only the very end can possibly hold the line printed just before it died,
 so `cerebro--note-exit' never reads more than this many characters of it.")
+
+(defvar-local cerebro--session-started nil
+  "When this session buffer was created, as a float.
+
+Set by `cerebro--launch\=' and read by `cerebro--note-exit\=', which uses it to
+tell this session\='s refusal in `errors.jsonl\=' from an older one\='s (cb-ccl).")
+
+(defun cerebro--file-tail (file bytes)
+  "The last BYTES of FILE as a string, or nil.  Impure; never signals.
+
+Impure and deliberately small: it is called from vterm\='s exit sentinel, where
+anything that signals takes the exit record down with it.  A tail rather than
+the whole file because `errors.jsonl\=' is short by design and only its end can
+hold the line a session that just died wrote."
+  (ignore-errors
+    (let ((size (file-attribute-size (file-attributes file))))
+      (and size
+           (with-temp-buffer
+             (insert-file-contents file nil (max 0 (- size bytes)) size)
+             (buffer-string))))))
+
+(defun cerebro--launch-refusal (text name since)
+  "Pure.  The message of the newest `launch NAME\=' error line in TEXT stamped at
+or after SINCE, or nil.
+
+TEXT is `errors.jsonl\=' - one JSON object a line, written by the launcher
+itself (`scripts/launch-refused\=', cb-ccl) as well as by this view.  SINCE is
+when the session that just died was started, as a float; nil accepts any
+timestamp.  Without it an agent refused once an hour ago would explain every
+silent death since.
+
+A malformed line is skipped rather than fatal: `json-parse-string\=' signals,
+and the file may end in a half-written line from the other writer."
+  (let (found)
+    (dolist (line (and text (split-string text "\n" t)))
+      (let ((parsed (ignore-errors (json-parse-string line :object-type 'alist))))
+        (when parsed
+          (let ((context (alist-get 'context parsed))
+                (ts (alist-get 'ts parsed))
+                (message (alist-get 'message parsed)))
+            (when (and (stringp context)
+                       (equal context (concat "launch " name))
+                       (stringp message)
+                       (or (null since)
+                           ;; `cerebro--gh-instant' is the one place an
+                           ;; ISO-8601 instant becomes a `float-time' here: it
+                           ;; goes through `iso8601-parse', which reads the
+                           ;; trailing `Z' as UTC on every Emacs this runs on.
+                           (let ((at (cerebro--gh-instant ts)))
+                             (and at (>= at since)))))
+              (setq found message))))))
+    found))
 
 (defun cerebro--note-exit (buffer event)
   "Record BUFFER's last line in `cerebro--last-exit' when EVENT is abnormal.
@@ -3312,35 +3435,61 @@ name."
                       (buffer-substring-no-properties
                        (max (point-min) (- (point-max) cerebro--exit-tail-chars))
                        (point-max))))
-             (last-line (cerebro--last-nonblank-line text))
+             ;; The root and the start time are read inside the buffer that
+             ;; died, before anything else: vterm runs `vterm-exit-functions'
+             ;; with whatever buffer happens to be current, and
+             ;; `cerebro--repo-root' *signals* from one with no mount above it
+             ;; - from `*scratch*' in `~', say - which would take the record
+             ;; down with it and leave the row with no account of the exit at
+             ;; all (cb-hzs). The session buffer's `default-directory' is the
+             ;; consumer root: `cerebro--launch' binds it around
+             ;; `cerebro--make-session-buffer' and `generate-new-buffer'
+             ;; inherits it.
+             (root (with-current-buffer buffer (ignore-errors (cerebro--repo-root))))
+             (started (with-current-buffer buffer cerebro--session-started))
+             (buffer-line (cerebro--last-nonblank-line text))
+             ;; What the launcher wrote about this start, if anything. Read
+             ;; even when the buffer had a line, because that answers a second
+             ;; question below: a refusal already in the file needs no second
+             ;; line from here (cb-ccl).
+             (refusal (and root
+                           (cerebro--launch-refusal
+                            (cerebro--file-tail (cerebro--log-file root nil "errors") 65536)
+                            name started)))
+             ;; The buffer first, the launcher's own line second: vterm draws
+             ;; on a 0.1s timer and a refused launcher exits inside a second,
+             ;; so the buffer is usually empty and the file is what is left.
+             (last-line (or buffer-line refusal))
              (record (cerebro--exit-record event last-line)))
+        (when record
+          (setf (alist-get name cerebro--last-exit nil nil #'equal) record)
+          (if (plist-get record :line)
+              (message "%s exited (code %s): %s"
+                       name (plist-get record :code) (plist-get record :line))
+            (message "%s exited (code %s) and printed nothing"
+                     name (plist-get record :code))))
         ;; EVERY exit is logged, clean ones included. The row and the echo
         ;; area stay abnormal-only - a clean quit is not a failure to show
         ;; anybody - but the log is where "why is this row dead" is answered
         ;; after the fact, and a session that exited with status 0 used to
         ;; leave nothing there at all.
-        ;;
-        ;; The record comes first, and the root is resolved inside the buffer
-        ;; that died. vterm runs `vterm-exit-functions' with whatever buffer
-        ;; happens to be current, and `cerebro--repo-root' *signals* from one
-        ;; with no mount above it - from `*scratch*' in `~', say - which would
-        ;; take the record down with it and leave the row with no account of
-        ;; the exit at all (cb-hzs). The session buffer's `default-directory'
-        ;; is the consumer root: `cerebro--launch' binds it around
-        ;; `cerebro--make-session-buffer' and `generate-new-buffer' inherits
-        ;; it. `ignore-errors' because the log is documented as silent and
-        ;; unable to fail.
-        (when record
-          (setf (alist-get name cerebro--last-exit nil nil #'equal) (cdr record))
-          (message "%s exited (code %s): %s" name (car record) (cdr record)))
-        (let ((root (with-current-buffer buffer
-                      (ignore-errors (cerebro--repo-root)))))
-          (when root
-            (cerebro--log root 'exit
-                          (list (cons 'agent name)
-                                (cons 'code (cerebro--exit-code event))
-                                (cons 'abnormal (and record t))
-                                (cons 'last_line last-line)))))))))
+        (when root
+          (cerebro--log root 'exit
+                        (list (cons 'agent name)
+                              (cons 'code (cerebro--exit-code event))
+                              (cons 'abnormal (and record t))
+                              (cons 'last_line last-line)))
+          ;; An abnormal exit the launcher did not explain reaches the file
+          ;; the navigator is told to open (cb-ccl). Not one it DID explain:
+          ;; that line is already in this very file, and a second would be
+          ;; the duplicate.
+          (when (and record (not refusal))
+            (cerebro--log-error root (format "session %s" name)
+                                (if buffer-line
+                                    (format "exited with code %s: %s"
+                                            (plist-get record :code) buffer-line)
+                                  (format "exited with code %s and printed nothing"
+                                          (plist-get record :code))))))))))
 
 ;;; Acting on the supervision decisions
 
@@ -3627,7 +3776,7 @@ of days at `evaluations\=' and months at `changes\='."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire nudge standby arm refused exit sweep error)
+  '(start end retire nudge standby arm refused exit give-up sweep error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 
@@ -4792,6 +4941,15 @@ and this one is a few conses per standby row."
                         (equal name (alist-get 'first-planner context))))
             context)))
 
+(defun cerebro--give-up-p (failed failures)
+  "Pure.  Whether the start being decided would be one failed start too many.
+
+FAILED is whether the LAST start produced no pass, FAILURES the count behind
+it - the same two `cerebro--start-due\=' already computes for the backoff.  So
+the start under consideration would be number (1+ FAILURES), and
+`cerebro-give-up-after\=' is where that stops."
+  (and failed (>= (1+ failures) cerebro-give-up-after)))
+
 (defun cerebro--start-due (repo-root now)
   "Start every standby role in `cerebro--agents\=' whose trigger is true at NOW.
 
@@ -4850,16 +5008,45 @@ is where that is said."
                                         agent-context)))
             (cerebro--log-evaluation repo-root agent reason agent-context)
             (when (and reason (not too-soon) (not backed-off))
-              ;; Counted before the launch, from what the LAST one did: a
-              ;; start that follows a failure is one more failure until a pass
-              ;; proves otherwise, and a start that follows a pass starts over.
-              (setf (alist-get name cerebro--failed-starts nil nil #'equal)
-                    (if failed (1+ failures) 0))
-              (cerebro--with-logged-errors (format "start %s" name)
-                (let ((cerebro--log-start-reason reason))
-                  (cerebro--launch agent))
-                (message "%s" (cerebro--start-message
-                               (cerebro-agent-name agent) reason))))))))))
+              (if (cerebro--give-up-p failed failures)
+                  ;; Nothing is coming back on its own from here: the record
+                  ;; says so on the row, and the name leaves `cerebro--armed',
+                  ;; which is what `cerebro--apply-standby' reads to promise a
+                  ;; retry. `s' is the way back - `cerebro--launch' clears both
+                  ;; (cb-ccl).
+                  (let* ((old (alist-get name cerebro--last-exit nil nil #'equal))
+                         (code (or (plist-get old :code) "?"))
+                         ;; `cerebro--failed-starts' counts the failures BEFORE
+                         ;; the start being decided, and the one that just
+                         ;; failed is what brought us here - so the count is
+                         ;; one higher than the counter says, and the counter
+                         ;; is brought up to it. Left behind, the echo area
+                         ;; said five while the row and `RET' said four about
+                         ;; the same five sessions.
+                         (total (1+ failures))
+                         (text (format (concat "gave up after %d failed starts; the last session"
+                                               " exited with code %s and printed nothing")
+                                       total code)))
+                    (setf (alist-get name cerebro--last-exit nil nil #'equal)
+                          (list :code code :line nil :gave-up t))
+                    (setf (alist-get name cerebro--failed-starts nil nil #'equal) total)
+                    (setq cerebro--armed (delete name cerebro--armed))
+                    (cerebro--log repo-root 'give-up
+                                  (list (cons 'agent name)
+                                        (cons 'role (cerebro-agent-role agent))
+                                        (cons 'failed_starts total)))
+                    (cerebro--log-error repo-root (format "start %s" name) text)
+                    (message "cerebro: %s %s" name text))
+                ;; Counted before the launch, from what the LAST one did: a
+                ;; start that follows a failure is one more failure until a pass
+                ;; proves otherwise, and a start that follows a pass starts over.
+                (setf (alist-get name cerebro--failed-starts nil nil #'equal)
+                      (if failed (1+ failures) 0))
+                (cerebro--with-logged-errors (format "start %s" name)
+                  (let ((cerebro--log-start-reason reason))
+                    (cerebro--launch agent))
+                  (message "%s" (cerebro--start-message
+                                 (cerebro-agent-name agent) reason)))))))))))
 
 (defvar cerebro--timer nil
   "The buffer-local auto-refresh timer, or nil.")
@@ -4909,7 +5096,7 @@ is where that is said."
     ;; however it is armed (cb-eat) - `cerebro--last-exit' is the record,
     ;; cleared by `cerebro--launch', so `s' is the way back.
     (setq agents (cerebro--apply-standby agents cerebro--armed
-                                         (mapcar #'car cerebro--last-exit)))
+                                         (cerebro--failed-names cerebro--last-exit)))
     ;; And the session count, for the same reason as standby: `cerebro--derive'
     ;; is given the args as strings, and a duplicate is a fact about the pids
     ;; beside them (cb-63m).
@@ -4939,7 +5126,10 @@ is where that is said."
                              ((eq (cerebro-agent-state a) 'dead)
                               (cerebro--exit-line
                                (alist-get (cerebro-agent-name a) cerebro--last-exit
-                                          nil nil #'equal))))))
+                                          nil nil #'equal)
+                               (or (alist-get (cerebro-agent-name a) cerebro--failed-starts
+                                              nil nil #'equal)
+                                   0))))))
                     agents))
            ;; The table is sized to what is in front of it, every revert: a
            ;; roster gains an agent, a bead id gets deeper, and the columns

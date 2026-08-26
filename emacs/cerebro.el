@@ -168,6 +168,19 @@ the one place a root is compared as a *string* (cb-5yr.1).  The reader
 normalises here so no comparator downstream has to know."
   (file-name-as-directory (expand-file-name root)))
 
+(defun cerebro--marker-needle (text)
+  "A regexp matching TEXT in a process\='s command line, escaped or not.
+
+`process-attributes\=' is a *display* spelling of the command line, and the
+two platforms disagree about one character: on GNU/Linux Emacs escape-quotes
+the whitespace inside a single argv entry, so cerebro\='s marker sentence -
+which is one argument - reads \"This\\ session\\ is\\ ...\"; on macOS it
+comes back with plain spaces.  A needle spelt with plain spaces therefore
+matched every fixture on the navigator\='s machine and no process at all in
+CI (cb-d59.3).  So each space in TEXT is matched as an optional backslash
+followed by a space, and everything else literally."
+  (mapconcat #'regexp-quote (split-string text " ") "\\\\? "))
+
 (defun cerebro--name-in-args-p (name args)
   "Non-nil if some string in ARGS carries cerebro\='s marker sentence for NAME.
 
@@ -182,8 +195,8 @@ more - `--name NAME\=' is still passed and no longer proves anything.  The
 needle ends at \"rooted at \" so that a name which is a prefix of another
 \(Cyclops / Cyclopsly) cannot match, which is what the old `\\_>\' word
 boundary bought."
-  (let ((needle (concat "This session is " (regexp-quote name)
-                        " of the cerebro fleet rooted at ")))
+  (let ((needle (cerebro--marker-needle
+                 (concat "This session is " name " of the cerebro fleet rooted at "))))
     (cl-some (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
 
 (defun cerebro--root-in-args-p (root args)
@@ -207,8 +220,9 @@ process names `/Users/<you>/repos/...\=' and never `~\=', so nothing matched,
 every agent read as having no live session, and `cerebro--derive-interactive\='
 showed `up\=' for a role whose state file said `waiting\=' - with no supervision
 behind it, which is the whole cb-5yr mechanism gone quiet (cb-5yr.1)."
-  (let ((needle (concat "cerebro fleet rooted at "
-                        (regexp-quote (directory-file-name (expand-file-name root))) "/")))
+  (let ((needle (cerebro--marker-needle
+                 (concat "cerebro fleet rooted at "
+                         (directory-file-name (expand-file-name root)) "/"))))
     (cl-some (lambda (a) (and (stringp a) (string-match-p needle a))) args)))
 
 (defun cerebro--session-args-p (args name root)

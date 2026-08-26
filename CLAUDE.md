@@ -405,6 +405,10 @@ sentence in it — `This session is <Name> of the cerebro fleet rooted at <root>
 accepts (cb-d59.3). Two needles are cut from it: the name, and **the root** — the third
 discriminator (cb-lzi), because a name is unique inside one consumer and not on the machine. No
 provider's flag spelling is evidence any more; `--name` is still passed and proves nothing. The
+needle is built by `cerebro--marker-needle`, which matches each space as an optional
+backslash-and-space: on GNU/Linux `process-attributes` escape-quotes the whitespace inside a single
+argv entry, and the marker is one argument, so the same session reads `This\ session\ is\ …`
+there and `This session is …` on macOS. The
 sentence is byte-identical to the one that used to ride on `--append-system-prompt` (ah-ybsr), so
 the rule still recognises a session the previous launcher started and merge day is not a flag day.
 The rule is stated once, in `cerebro--session-args-p`; the state-file path

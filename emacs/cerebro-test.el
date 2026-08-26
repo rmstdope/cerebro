@@ -304,6 +304,22 @@ entry points to the rule are pinned here, since both are string matches."
     ;; and the sibling rule still holds through the expansion
     (should-not (cerebro--consumer-args args "~/repos/cerebro-hud/"))))
 
+(ert-deftest cerebro-test/the-rule-reads-a-command-line-with-escaped-whitespace ()
+  "GNU/Linux `process-attributes\=' escape-quotes the whitespace inside one
+argv entry, and cerebro\='s marker is one argument: the very same session
+reads \"This\\ session\\ is\\ ...\" there and \"This session is ...\" on
+macOS.  Both spellings are the same session and both must answer alive - a
+needle spelt with plain spaces passed every fixture on the navigator\='s
+machine and matched no process at all in CI (cb-d59.3)."
+  (let ((escaped (concat "bash\\ /tmp/s.sh --name Rogue"
+                         " This\\ session\\ is\\ Rogue\\ of\\ the\\ cerebro\\"
+                         " fleet\\ rooted\\ at\\ /Users/x/repos/cerebro/.\\ This\\"
+                         " sentence\\ is\\ how\\ the\\ fleet\\ view\\ proves\\ it.")))
+    (should (cerebro--session-args-p escaped "Rogue" "/Users/x/repos/cerebro"))
+    ;; and the escaping buys nothing a plain reading would not also refuse
+    (should-not (cerebro--session-args-p escaped "Beast" "/Users/x/repos/cerebro"))
+    (should-not (cerebro--session-args-p escaped "Rogue" "/Users/x/repos/cerebro-hud"))))
+
 (ert-deftest cerebro-test/session-args-p-rejects-a-non-string ()
   "Not a string is not a command line, and so not a session.
 The one case the shared table cannot express: every row of it is a command
@@ -4712,11 +4728,10 @@ than dressing a dead session in the file's `working'."
 (defun cerebro-test--fake-session (&rest args)
   "Start a live process whose command line is ARGS, and return it.
 
-A script FILE, never `bash -c\=': bash\='s exec optimisation replaces itself
-with the simple command it was given, and on GNU/Linux `/proc/<pid>/cmdline\='
-then reads `sleep 30\=' with every argument gone - which is how four marker
-fixtures passed on macOS and failed in CI (cb-d59.3).  `tests/agent-alive.sh\='
-records the same recipe for the same reason."
+A script FILE, never `bash -c\=': bash\='s exec optimisation can replace itself
+with the simple command it was given, taking every argument with it, and the
+fixtures here exist precisely to be read back out of the process table.
+`tests/agent-alive.sh\=' records the same recipe for the same reason."
   (unless (and cerebro-test--fake-session-script
                (file-exists-p cerebro-test--fake-session-script))
     (let ((path (make-temp-file "cerebro-test-fake-session" nil ".sh")))

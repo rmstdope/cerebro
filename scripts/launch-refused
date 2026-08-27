@@ -26,6 +26,11 @@
 # fleet never fills it.
 set -euo pipefail
 
+# Outside the `|| true` group below, deliberately: a missing or broken library must be a loud
+# failure, not a swallowed one.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$here/jsonl-log.sh"
+
 name="${1:-}"
 message="${2:-}"
 if [[ -z "$name" || -z "$message" ]]; then
@@ -36,25 +41,26 @@ fi
 echo "cerebro: $message" >&2
 
 # Deliberately unable to fail, for the reason in the header: the `|| true` under `set -e` is the
-# point, not an oversight. Atomicity is `scripts/agent-state`'s - read the comment above its own
-# transitions.jsonl writer: `>>` opens with O_APPEND, and one `jq -c -n` into one `printf` is one
-# write(2), so this cannot interleave with the fleet view's own writes to the same file.
+# point, not an oversight - and `scripts/jsonl-log.sh` is where the second effect of that `|| true`
+# is written down, which is why the append below goes through `cerebro_jsonl_append` rather than a
+# bare `printf`. Atomicity is `scripts/agent-state`'s - read the comment above its own
+# transitions.jsonl writer: `>>` opens with O_APPEND, and one `jq -c -n` into one appending
+# `printf` is one write(2), so this cannot interleave with the fleet view's own writes to the same
+# file.
 {
-  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
   root="$("$here/consumer-root" --shared 2>/dev/null || true)"
   if [[ -n "${root:-}" ]] && command -v jq >/dev/null 2>&1; then
     out_dir="$root/.cerebro/state"
     mkdir -p "$out_dir"
-    # Every failure below is checked by hand rather than left to `set -e`: this whole block is the
-    # left side of an `|| true`, and errexit is suspended inside an AND-OR list, so an unchecked jq
-    # that exited 127 would go on to append an empty line.
-    if line="$(jq -c -n \
+    # `|| line=""` and cerebro_jsonl_append rather than a bare `printf` - see scripts/jsonl-log.sh
+    # for why a "cannot fail" block cannot trust an unchecked assignment.
+    line="$(jq -c -n \
       --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg context "launch $name" \
       --arg message "$message" \
-      '{event: "error", ts: $ts, context: $context, message: $message}')" && [[ -n "$line" ]]; then
-      printf '%s\n' "$line" >> "$out_dir/errors.jsonl"
-    fi
+      '{event: "error", ts: $ts, context: $context, message: $message}')" || line=""
+
+    cerebro_jsonl_append "$out_dir/errors.jsonl" "$line"
   fi
 } || true
 

@@ -174,7 +174,20 @@ fi
 
 # Defensive only: after a successful sync above, the link this checks for cannot be
 # missing unless the sync itself is broken - there is no test for this branch.
-if [[ ! -f "$parent/agents/$role.md" ]]; then
-  "$script_dir/launch-refused" "$name" "no agent definition at .claude/agents/$role.md - run .claude/cerebro/scripts/sync-symlinks.sh and try again"
+#
+# Where to look is the DECLARED provider's business (cb-d59.4): the sync writes every layout, but
+# only one of them is where the CLI about to be exec'd will look, and checking the other would pass
+# while that CLI found nothing. Both facts come from agent-cli - the provider from the bare verb,
+# its discovery paths from --layouts - so no path is spelt here.
+declared_cli="$("$script_dir/agent-cli" 2>/dev/null)" || declared_cli=""
+agents_dir="" agent_suffix=""
+while IFS=$'\t' read -r layout_p layout_ad _ layout_sx; do
+  [[ "$layout_p" == "$declared_cli" ]] || continue
+  agents_dir="$layout_ad"; agent_suffix="$layout_sx"
+  break
+done < <("$script_dir/agent-cli" --layouts)
+
+if [[ -n "$agents_dir" && ! -f "$consumer/$agents_dir/$role$agent_suffix" ]]; then
+  "$script_dir/launch-refused" "$name" "no agent definition at $agents_dir/$role$agent_suffix - run .claude/cerebro/scripts/sync-symlinks.sh and try again"
   exit 2
 fi

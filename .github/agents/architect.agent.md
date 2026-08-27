@@ -1,0 +1,1 @@
+../../.claude/cerebro/agents/architect.md

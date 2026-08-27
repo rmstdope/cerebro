@@ -20,6 +20,11 @@
 #     agent-cli --check <Name>        exit 0 if this fleet can launch; otherwise refuse through
 #                                     launch-refused and exit 3
 #     agent-cli --known               the providers this cerebro can run, one per line
+#     agent-cli --layouts             where each provider discovers agents and skills, one
+#                                     tab-separated row per provider: provider, agents directory,
+#                                     skills directory (both relative to the consumer root), and
+#                                     the agent-file suffix. A skill keeps its directory name in
+#                                     both, so there is no skill suffix column.
 #
 # NUL and not one token per line, because `launch`'s trailing prompt contains a newline: a
 # line-delimited protocol would split it into two argv entries. Read it back with
@@ -60,6 +65,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # the PATH check. That is the seam.
 KNOWN="claude"
 PLANNED="copilot"
+
+# The third table: where a provider LOOKS for agents and skills, which is a different question from
+# whether this fleet can start a session on it - so `copilot' has a row here while it is still in
+# PLANNED. `sync-symlinks.sh' writes every layout in every consumer whatever `agent_cli' says
+# (cb-d59.4), so that switching provider is one line in .cerebro/project.conf and nothing else.
+# The FIRST row is the canonical layout, and the sync's mirror pass reads it as such.
+LAYOUTS="claude	.claude/agents	.claude/skills	.md
+copilot	.github/agents	.github/skills	.agent.md"
 
 known_list() {
   local out="" p
@@ -126,7 +139,7 @@ resolve() {
 }
 
 usage() {
-  echo "usage: agent-cli [--binary | --known | --check <Name> | --argv ... | --prompt-argv <text>]" >&2
+  echo "usage: agent-cli [--binary | --known | --layouts | --check <Name> | --argv ... | --prompt-argv <text>]" >&2
   exit 2
 }
 
@@ -136,6 +149,15 @@ case "$verb" in
   --known)
     [[ $# -eq 1 ]] || usage
     for p in $KNOWN; do printf '%s\n' "$p"; done
+    exit 0
+    ;;
+  --layouts)
+    # Answered BEFORE resolve, and deliberately: a sync must get every provider's layout in a
+    # consumer that declares nothing (where resolve would print its fallback line in front of every
+    # sync) and in one declaring a provider this cerebro cannot run yet (where resolve would exit 3
+    # - and that is exactly the consumer needing the row).
+    [[ $# -eq 1 ]] || usage
+    printf '%b\n' "$LAYOUTS"
     exit 0
     ;;
   ""|--binary|--check|--argv|--prompt-argv) ;;

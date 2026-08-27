@@ -177,3 +177,46 @@ set -e
 [[ $no_role -eq 2 ]] || fail "--argv without --role: expected exit 2, got $no_role"
 [[ $no_name -eq 2 ]] || fail "--argv without --name: expected exit 2, got $no_name"
 pass "--argv without --role or without --name exits 2"
+
+# --- --layouts: where each provider discovers agents and skills ----------------------------------
+#
+# The one place a provider's discovery paths are written down (cb-d59.4). It answers for EVERY
+# provider whatever this consumer declared, so it runs before `resolve': a sync must be able to
+# write both layouts in a consumer that declares nothing, and in one declaring a provider this
+# cerebro cannot run yet.
+printf 'agent_cli claude\n' > "$conf"
+out="$("$agent_cli" --layouts 2>"$work_dir/err")"
+err="$(cat "$work_dir/err")"
+rows=()
+while IFS= read -r row; do rows+=("$row"); done <<<"$out"
+[[ "${#rows[@]}" -eq 2 ]] || fail "--layouts: expected two rows, got ${#rows[@]}: $out"
+IFS=$'\t' read -r p ad sd sx <<<"${rows[0]}"
+[[ "$p" == "claude" && "$ad" == ".claude/agents" && "$sd" == ".claude/skills" && "$sx" == ".md" ]] \
+  || fail "--layouts row 1: expected the claude layout, got '${rows[0]}'"
+IFS=$'\t' read -r p ad sd sx <<<"${rows[1]}"
+[[ "$p" == "copilot" && "$ad" == ".github/agents" && "$sd" == ".github/skills" && "$sx" == ".agent.md" ]] \
+  || fail "--layouts row 2: expected the copilot layout, got '${rows[1]}'"
+pass "--layouts prints one tab-separated row per provider, claude first"
+
+# Empty declaration: no `no agent_cli declared' line, because resolve never runs. And a declaration
+# this cerebro cannot run still gets both rows - that consumer is exactly the one needing them.
+: > "$conf"
+out="$("$agent_cli" --layouts 2>"$work_dir/err")"
+err="$(cat "$work_dir/err")"
+[[ -z "$err" ]] || fail "--layouts with no declaration: expected nothing on stderr, got: $err"
+printf 'agent_cli wat\n' > "$conf"
+set +e
+out="$("$agent_cli" --layouts 2>"$work_dir/err")"; status=$?
+set -e
+[[ $status -eq 0 ]] || fail "--layouts with an unrunnable declaration: expected exit 0, got $status"
+echo "$out" | grep -q '^copilot' \
+  || fail "--layouts must list copilot though it is not runnable, got: $out"
+pass "--layouts says nothing on stderr and lists copilot though it is not runnable"
+
+set +e
+"$agent_cli" --layouts x >/dev/null 2>&1; status=$?
+set -e
+[[ $status -eq 2 ]] || fail "--layouts with an argument: expected exit 2, got $status"
+pass "--layouts takes no arguments"
+
+printf 'agent_cli claude\n' > "$conf"

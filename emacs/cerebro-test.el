@@ -133,15 +133,13 @@ positive evidence against."
     (should (null (cerebro-agent-unverified-pid agent)))))
 
 (ert-deftest cerebro-test/derive-interactive-keeps-the-file-when-unverified ()
-  "The interactive sibling: `waiting' and its `wake-at' survive an
-unverified liveness exactly as an implementer's `working'/bead/phase do."
-  (let* ((states '(("Xavier" . ((state . "waiting") (wake_at . "2026-01-01T00:00:00Z")
-                                 (pid . 5151)))))
+  "The interactive sibling: `waiting' survives an unverified liveness
+exactly as an implementer's `working'/bead/phase do."
+  (let* ((states '(("Xavier" . ((state . "waiting") (pid . 5151)))))
          (agents (cerebro--derive nil '(("Xavier" . "planner")) states
                                   #'cerebro-test--unverified nil nil))
          (agent (car agents)))
     (should (eq (cerebro-agent-state agent) 'waiting))
-    (should (equal (cerebro-agent-wake-at agent) "2026-01-01T00:00:00Z"))
     (should (= (cerebro-agent-unverified-pid agent) 5151))))
 
 (ert-deftest cerebro-test/derive-interactive-up-from-process-args ()
@@ -1008,14 +1006,13 @@ shape."
                                                 (list (cons "Cyclops" parsed))
                                                 #'cerebro-test--always-alive nil nil))))
               (should (integerp (alist-get 'pid parsed)))   ; `pid: ($pid | tonumber)'
-              (should (eq (alist-get 'wake_at parsed) nil)) ; JSON null -> nil, not :null
               (should (eq (cerebro-agent-state agent) 'working))
               (should (equal (cerebro-agent-bead agent) "cb-1"))
               (should (equal (cerebro-agent-phase agent) "build"))
               (should (stringp (cerebro-agent-since agent))))
             ;; the interactive shape, with the one field only that role writes
             (should (eq 0 (call-process agent-state nil nil nil
-                                        "Xavier" "waiting" "--wake-in" "600"
+                                        "Xavier" "waiting"
                                         "--pid" "4243")))
             (let* ((parsed (cerebro--read-state-file
                             (cerebro--state-file-path tmp "Xavier")))
@@ -1023,11 +1020,10 @@ shape."
                                                 (list (cons "Xavier" parsed))
                                                 #'cerebro-test--always-alive nil nil))))
               (should (eq (cerebro-agent-state agent) 'waiting))
-              (should (stringp (cerebro-agent-wake-at agent)))
               (should (eq (cerebro-agent-bead agent) nil)))
             ;; and the same end-of-pass shape from an implementer name (cb-1or.1)
             (should (eq 0 (call-process agent-state nil nil nil
-                                        "Cyclops" "waiting" "--wake-in" "600"
+                                        "Cyclops" "waiting"
                                         "--pid" "4244")))
             (let* ((parsed (cerebro--read-state-file
                             (cerebro--state-file-path tmp "Cyclops")))
@@ -5227,35 +5223,32 @@ replacing a real answer with an empty one - the same rule the sweeps follow."
 ;; ---------------------------------------------------------------------------
 ;; ah-hiib.3: `waiting' - the monitor owns the cadence, the role owns the policy
 
-(defun cerebro-test--waiting (&optional name since wake-at external role)
+(defun cerebro-test--waiting (&optional name since external role)
   "An interactive agent in `waiting', for the wake tests."
   (make-cerebro-agent :name (or name "Moira") :role (or role "user-feedback")
                               :kind 'interactive :state 'waiting :bead nil
                               :since (or since "2026-08-14T09:20:00Z")
-                              :wake-at wake-at :external external))
+                              :external external))
 
 (ert-deftest cerebro-test/derives-waiting-from-an-interactive-state-file ()
   "`waiting' is the state a role writes when it has ended its turn."
   (let ((agent (cerebro--derive-from-state
                 "Moira" "user-feedback" 'interactive
                 '((state . "waiting") (bead . nil) (since . "2026-08-14T09:20:00Z")
-                  (wake_at . "2026-08-14T09:30:00Z") (pid . 42))
+                  (pid . 42))
                 t)))
-    (should (eq (cerebro-agent-state agent) 'waiting))
-    (should (equal (cerebro-agent-wake-at agent) "2026-08-14T09:30:00Z"))))
+    (should (eq (cerebro-agent-state agent) 'waiting))))
 
 (ert-deftest cerebro-test/waiting-from-an-implementer-is-waiting ()
   "Since cb-1or.1 `waiting' is every agent's end-of-pass state, so an
-implementer's file carries it the same way a role's does - and the same
-`wake_at' with it, which the view is free to ignore."
+implementer's file carries it the same way a role's does."
   (let ((agent (cerebro--derive-from-state
                 "Cyclops" "implementer" 'implementer
                 '((state . "waiting") (bead . nil) (since . "2026-08-14T09:20:00Z")
-                  (wake_at . "2026-08-14T09:30:00Z") (pid . 42))
+                  (pid . 42))
                 t)))
     (should (eq (cerebro-agent-state agent) 'waiting))
-    (should (equal (cerebro-agent-raw agent) "waiting"))
-    (should (equal (cerebro-agent-wake-at agent) "2026-08-14T09:30:00Z"))))
+    (should (equal (cerebro-agent-raw agent) "waiting"))))
 
 (ert-deftest cerebro-test/the-interval-comes-from-the-custom-variable ()
   (let ((cerebro-wake-intervals '(("Psylocke" . 300)))
@@ -5270,11 +5263,11 @@ cleanly and now, whether or not its wake is due."
   (let ((cerebro-wake-interval-default 600)
         (cerebro-wake-intervals nil))
     (should (eq (cerebro--supervise-action
-                 (cerebro-test--waiting nil "2026-08-14T09:29:00Z" "2026-08-14T09:40:00Z")
+                 (cerebro-test--waiting nil "2026-08-14T09:29:00Z")
                  t cerebro-test--now)
                 'retire))
     (should (eq (cerebro--supervise-action
-                 (cerebro-test--waiting nil "2026-08-14T09:00:00Z" "2026-08-14T09:20:00Z")
+                 (cerebro-test--waiting nil "2026-08-14T09:00:00Z")
                  t cerebro-test--now)
                 'retire))))
 
@@ -5286,8 +5279,7 @@ at once under a stop flag, and never when the session is somebody else's."
     (cl-flet ((implementer (since &optional external)
                 (make-cerebro-agent :name "Cyclops" :role "implementer"
                                     :kind 'implementer :state 'waiting
-                                    :since since :external external
-                                    :wake-at "2026-08-14T09:20:00Z")))
+                                    :since since :external external)))
       ;; stood in `waiting' for 31s - past the grace
       (should (eq (cerebro--supervise-action
                    (implementer "2026-08-14T09:29:29Z") nil cerebro-test--now)
@@ -5377,7 +5369,7 @@ with a state file the view cannot read, is left alone."
   "Distinguishable from `idle' - which for an implementer means safe to
 retire - and, since cb-5yr, carrying no countdown: a waiting role is ended
 within `cerebro-end-grace', not woken at a time it named."
-  (let* ((agent (cerebro-test--waiting nil "2026-08-14T09:20:00Z" "2026-08-14T09:35:00Z"))
+  (let* ((agent (cerebro-test--waiting nil "2026-08-14T09:20:00Z"))
          (row (nth 1 (cerebro--entry agent cerebro-test--now))))
     (should (equal (aref row 2) "waiting"))
     (should (equal (aref row 4) "10m"))))
@@ -5399,7 +5391,7 @@ within `cerebro-end-grace', not woken at a time it named."
 the session is parked exactly as an ordinary end parks it, then disarmed."
   (let ((cerebro-end-grace 30))
     (cerebro-test--park-fixture
-     (cerebro-test--waiting nil "2026-08-14T09:29:59Z" nil)
+     (cerebro-test--waiting nil "2026-08-14T09:29:59Z")
      (lambda (root acted agent)
        (setq cerebro--armed (list "Moira"))
        (make-directory (expand-file-name ".cerebro/state" root) t)
@@ -5420,7 +5412,7 @@ reported, just no longer fatal to the instruction."
   (let ((cerebro-end-grace 30)
         (reported '()))
     (cerebro-test--park-fixture
-     (cerebro-test--waiting nil "2026-08-14T09:29:59Z" nil)
+     (cerebro-test--waiting nil "2026-08-14T09:29:59Z")
      (lambda (root _acted agent)
        (setq cerebro--armed (list "Moira"))
        (make-directory (expand-file-name ".cerebro/state" root) t)
@@ -5473,7 +5465,8 @@ caller of a path that has twice needed the same fix in two places."
 it ends it and starts a fresh one.  Byte-compilation is what proves nothing
 still calls these; this is what proves they are not quietly still defined."
   (dolist (symbol '(cerebro--poke cerebro--poke-decision cerebro--wake-due-p
-                    cerebro--poke-message cerebro-poke-grace cerebro--wake-column))
+                    cerebro--poke-message cerebro-poke-grace cerebro--wake-column
+                    cerebro-agent-wake-at))
     (should-not (or (fboundp symbol) (boundp symbol)))))
 
 ;; ---------------------------------------------------------------------------

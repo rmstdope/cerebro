@@ -48,3 +48,34 @@ session has nothing to do with. `begin` removes any sidecar it finds when the fi
 `asking` — the one path that would otherwise carry it forward — so a crash can only ever cost the
 no-sidecar restore (`asking` → `working`, bead and phase read from the file itself), never a restore
 of somebody else's bead.
+
+## `copilot/cerebro-question-state.json`
+
+The same behaviour for GitHub Copilot, in Copilot's own hook schema — `preToolUse`, `postToolUse`
+and `postToolUseFailure`, each matching its `ask_user` tool, each running the same
+`"$CEREBRO_SCRIPTS/agent-asking"`. **`scripts/agent-asking` is shared and unchanged**: it reads
+`CEREBRO_AGENT_NAME` out of its own environment, which cb-d59.1 measured surviving `exec copilot`,
+and knows nothing about providers. Do not give it a provider branch.
+
+**Copilot has no `--settings`.** It discovers hooks from `.github/hooks/*.json` **in the
+repository**, so this file cannot be handed to it on the command line the way the Claude Code
+settings file is: `scripts/sync-symlinks.sh` links it into the consumer's `.github/hooks/`, and
+`scripts/agent-cli --hooks` is the one place the source and destination paths are written down.
+
+The link is written in **every** consumer, whatever `agent_cli` declares — the rule cb-d59.4 took
+for agents and skills, so switching a fleet to Copilot stays one line in `.cerebro/project.conf`.
+The accepted cost: a Claude-Code-only project carries a `.github/hooks/` file it never uses, and
+the hook fires for *any* `copilot` run in that repository. That is harmless — `agent-asking` exits 0
+doing nothing when `CEREBRO_AGENT_NAME` is unset.
+
+Two things to know before changing it:
+
+- **The two schemas are different files and different shapes.** Copilot's entry names the script in
+  `bash`; Claude Code's names it in `command` and carries a `timeout`. Copying one file's shape onto
+  the other produces a hook that is silently never run. A `matcher` matches the payload's internal
+  `toolName`, never the name a transcript renders.
+- **Whether Copilot follows a *symlinked* hook file is unmeasured.** cb-d59.1 measured it following
+  a relative symlink for an agent file (M4) and a skill directory (M5); its hook probe (M6) wrote a
+  real file. `cb-d59.6` measures this one. Until then: if a Copilot fleet never shows `asking`, the
+  symlink is the first suspect, and replacing the link with a copy of the file at the same path is
+  the fix.

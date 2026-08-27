@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      { "type": "command", "matcher": "ask_user", "bash": "\"$CEREBRO_SCRIPTS/agent-asking\" begin" }
+    ],
+    "postToolUse": [
+      { "type": "command", "matcher": "ask_user", "bash": "\"$CEREBRO_SCRIPTS/agent-asking\" end" }
+    ],
+    "postToolUseFailure": [
+      { "type": "command", "matcher": "ask_user", "bash": "\"$CEREBRO_SCRIPTS/agent-asking\" end" }
+    ]
+  }
+}

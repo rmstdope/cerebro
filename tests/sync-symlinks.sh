@@ -24,7 +24,13 @@ mkdir -p "$consumer/.claude"
 git init -q "$consumer"
 
 cerebro_dir="$consumer/.claude/cerebro"
-mkdir -p "$cerebro_dir/scripts" "$cerebro_dir/skills/demo" "$cerebro_dir/agents"
+mkdir -p "$cerebro_dir/scripts" "$cerebro_dir/skills/demo" "$cerebro_dir/agents" \
+         "$cerebro_dir/hooks/copilot"
+# The two hook schemas, side by side, exactly as the mount ships them: Claude Code's settings file
+# directly under hooks/, and the provider's own file one level down. Only the latter is ever linked.
+echo '{}' > "$cerebro_dir/hooks/copilot/cerebro-question-state.json"
+echo '# not a hook' > "$cerebro_dir/hooks/copilot/README.md"
+echo '{}' > "$cerebro_dir/hooks/question-state.settings.json"
 cp "$repo_root/scripts/sync-symlinks.sh" "$cerebro_dir/scripts/sync-symlinks.sh"
 chmod +x "$cerebro_dir/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$cerebro_dir/scripts/consumer-root"
@@ -79,6 +85,41 @@ copilot_skill_target="$(readlink "$copilot_skill_link")"
   || fail "expected copilot skill link '../../.claude/cerebro/skills/demo', got '$copilot_skill_target'"
 [[ -e "$copilot_skill_link/SKILL.md" ]] || fail "the copilot skill link does not resolve to SKILL.md"
 pass "a skill keeps its directory name in the copilot layout"
+
+# --- the provider hook file is linked into .github/hooks (cb-d59.5) -----------------------------
+#
+# Copilot has no `--settings': it discovers hooks from .github/hooks/*.json IN THE REPOSITORY. So
+# the sync links the mount's hooks/copilot/ there, in every consumer whatever agent_cli says - the
+# same rule the layouts above follow. `agent-cli --hooks' is where the two paths are written down.
+hook_link="$consumer/.github/hooks/cerebro-question-state.json"
+[[ -L "$hook_link" ]] || fail "expected $hook_link to be a symlink"
+hook_target="$(readlink "$hook_link")"
+[[ "$hook_target" == "../../.claude/cerebro/hooks/copilot/cerebro-question-state.json" ]] \
+  || fail "expected hook link '../../.claude/cerebro/hooks/copilot/cerebro-question-state.json', got '$hook_target'"
+[[ -e "$hook_link" ]] || fail "the hook link does not resolve"
+pass "the copilot question-state hook is linked into .github/hooks"
+
+echo "$first_out" | grep -qF "Synced 1 hook link(s) from $cerebro_dir/hooks/copilot to $consumer/.github/hooks" \
+  || fail "expected the hook link to be named in the same Synced shape, got: $first_out"
+pass "the hook link is named in the same Synced shape as the others"
+
+# --- Claude Code's settings file must never land in .github/hooks -------------------------------
+#
+# Copilot loads EVERY .json there, and the two schemas are different files and different shapes -
+# one would be loaded as a broken hook. That is the whole reason the source is hooks/copilot/ and
+# not hooks/, and this is what keeps it true if someone later widens the row.
+entries=("$consumer/.github/hooks"/*)
+[[ "${#entries[@]}" -eq 1 ]] \
+  || fail ".github/hooks should hold exactly the one hook link, got: ${entries[*]}"
+for e in "${entries[@]}"; do
+  [[ "$(readlink "$e")" == *question-state.settings.json ]] \
+    && fail "Claude Code's settings file was linked into .github/hooks: $e"
+done
+pass "the claude settings file is not linked into the copilot hook directory"
+
+[[ ! -e "$consumer/.github/hooks/README.md" && ! -L "$consumer/.github/hooks/README.md" ]] \
+  || fail "a non-json file beside the hook was linked into .github/hooks"
+pass "a non-json file beside the hook is not linked"
 
 # --- the tracked-directory line, and its silence -------------------------------------------------
 #
@@ -176,7 +217,9 @@ pass "refuses to run outside a consumer repo's .claude/cerebro, before touching 
 # with a "../" glued to the front of it. The mount is the answer: `.claude/cerebro` is a symlink
 # back to the checkout, so a link through it is correct and reads exactly like every consumer's.
 self_consumer="$work_dir/self"
-mkdir -p "$self_consumer/scripts" "$self_consumer/skills/demo" "$self_consumer/agents" "$self_consumer/.claude"
+mkdir -p "$self_consumer/scripts" "$self_consumer/skills/demo" "$self_consumer/agents" \
+         "$self_consumer/.claude" "$self_consumer/hooks/copilot"
+echo '{}' > "$self_consumer/hooks/copilot/cerebro-question-state.json"
 cp "$repo_root/scripts/sync-symlinks.sh" "$self_consumer/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$self_consumer/scripts/consumer-root"
 cp "$repo_root/scripts/agent-cli" "$self_consumer/scripts/agent-cli"
@@ -201,6 +244,12 @@ pass "a self-consumer's links read ../cerebro/... like every other consumer's"
 [[ -e "$self_skill_link/SKILL.md" ]] || fail "self-consumer skill link does not resolve to SKILL.md"
 [[ -e "$self_agent_link" ]] || fail "self-consumer agent link does not resolve"
 pass "a self-consumer's links resolve through the mount"
+
+self_hook_link="$self_consumer/.github/hooks/cerebro-question-state.json"
+[[ "$(readlink "$self_hook_link")" == "../../.claude/cerebro/hooks/copilot/cerebro-question-state.json" ]] \
+  || fail "self-consumer hook link: expected '../../.claude/cerebro/hooks/copilot/cerebro-question-state.json', got '$(readlink "$self_hook_link")'"
+[[ -e "$self_hook_link" ]] || fail "the self-consumer hook link does not resolve"
+pass "a self-consumer links the hook through the mount too"
 
 [[ ! -e "$self_consumer/.dir-locals.el" && ! -L "$self_consumer/.dir-locals.el" ]] \
   || fail "a self-consumer got a .dir-locals.el: the sync writes nothing outside .claude/"
@@ -271,6 +320,18 @@ chmod +x "$old_cerebro/scripts/agent-cli" "$old_cerebro/scripts/sync-symlinks.sh
 
 [[ ! -e "$old_sub/.dir-locals.el" ]] || fail "wrote a .dir-locals.el at a consumer root"
 pass "a submodule with no templates/ syncs the rest and writes no .dir-locals.el"
+
+# The same fixture ships no hooks/<provider>/ either, which is every consumer on an older submodule.
+# This script runs from launch-preflight before every session, so that must sync the rest and say
+# nothing rather than refuse - unlike a mount missing skills/ or agents/, which is broken.
+[[ -L "$old_sub/.claude/agents/demo.md" ]] || [[ ! -e "$old_cerebro/agents/demo.md" ]] \
+  || fail "the rest of the sync did not run"
+[[ ! -d "$old_sub/.github/hooks" ]] || [[ -z "$(ls -A "$old_sub/.github/hooks")" ]] \
+  || fail "a mount with no hooks/copilot still wrote something into .github/hooks"
+out="$("$old_cerebro/scripts/sync-symlinks.sh" 2>&1)"
+echo "$out" | grep -q "hook" \
+  && fail "a mount with no hooks/copilot talked about hooks, got: $out"
+pass "a mount that ships no provider hooks syncs the rest, silently"
 
 # --- migration: a link left by a sync from before the fleet view had its own command ---
 #
@@ -375,5 +436,20 @@ pass "a mirrored link whose source the project deleted is removed, out loud"
 echo "$out" | grep -q "mine" \
   && fail "the sync talked about a link that is not its own, got: $out"
 pass "a link in the copilot layout that points somewhere else is left alone"
+
+# --- the hook sweep: a link whose source is gone, and a link that is not this script's ----------
+rm "$cerebro_dir/hooks/copilot/cerebro-question-state.json"
+ln -s "../../elsewhere/mine.json" "$consumer/.github/hooks/mine.json"
+out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
+[[ ! -L "$hook_link" ]] || fail "a hook link whose source is gone from the mount survived the sync"
+echo "$out" | grep -qF "Removed stale hook link: $hook_link (its source is gone from the mount)" \
+  || fail "expected the sync to name the removed hook link, got: $out"
+pass "a hook link whose source is gone from the mount is removed, out loud"
+
+[[ -L "$consumer/.github/hooks/mine.json" ]] \
+  || fail "a dangling hook link pointing elsewhere was removed; it is not this script's"
+echo "$out" | grep -q "mine" \
+  && fail "the sync talked about a hook link that is not its own, got: $out"
+pass "a hook link pointing somewhere else is left alone"
 
 echo "all sync-symlinks tests passed"

@@ -513,6 +513,10 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   hook subprocess inherits through `claude`) and sets `CEREBRO_HOOK_SETTINGS` for the `--settings`
   flag. Source it *and* pass the flag: doing one without the other gets hooks that silently do
   nothing, which is by design — `agent-asking` exits 0 rather than failing a question.
+  `hooks/copilot/` holds the same behaviour in GitHub Copilot's schema. Copilot has no `--settings`
+  and discovers its hooks from the consumer's `.github/hooks/`, so `scripts/sync-symlinks.sh` links
+  it there — in every consumer, whatever `agent_cli` declares, the same rule the layouts follow —
+  and `scripts/agent-cli --hooks` is the one place those two paths are written down.
 - **The model an agent runs on is the agent definition's `model:`, unless the consumer overrides it.**
   `scripts/launch` reads `<consumer>/.cerebro/models.conf` if it exists — `<name|role|default>
   <model|-> [effort]`, most specific key wins, `-` meaning "pass no `--model`" — and says on stderr

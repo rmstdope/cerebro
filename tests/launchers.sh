@@ -1029,7 +1029,7 @@ expected="ARG:--agent
 ARG:planner
 ARG:--name
 ARG:Xavier
-ARG:--allow-all-tools
+ARG:--allow-all
 ARG:-i"
 [[ "$(awk '/^ARG:/ { print; if (++n == 6) exit }' <<<"$out")" == "$expected" ]] \
   || fail "copilot launch: expected the copilot arm's tokens in order, got: $out"
@@ -1038,6 +1038,12 @@ for flag in --remote-control --settings --permission-mode --append-system-prompt
     && fail "copilot launch: $flag reached copilot, which spells none of them"
 done
 pass "launch on copilot reaches the copilot binary with the copilot arm's tokens"
+
+grep -qx 'ARG:--allow-all' <<<"$out" \
+  || fail "copilot launch: --allow-all did not reach copilot, so paths and URLs still prompt: $out"
+grep -qx 'ARG:--allow-all-tools' <<<"$out" \
+  && fail "copilot launch: the narrower --allow-all-tools reached copilot: $out"
+pass "a copilot launch allows paths and URLs, not tools alone"
 
 marker_line="$(line_of "$out" '^ARG:-i$')"
 [[ -n "$marker_line" ]] || fail "copilot launch: no -i in the argv, got: $out"

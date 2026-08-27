@@ -222,7 +222,8 @@ sourced="$(bash -c '
   set -euo pipefail
   repo_root="'"$repo_root"'"
   source "$repo_root/tests/lib/consumer.sh"
-  echo "$work_dir"')"
+  echo "$work_dir"
+  suite_passed >/dev/null')"
 [[ -n "$sourced" ]] || fail "cleanup: the sourced shell printed no work_dir"
 [[ ! -e "$sourced" ]] || fail "cleanup: $sourced survived the sourcing shell"
 pass "the library's EXIT trap removes its work directory"
@@ -232,7 +233,8 @@ bash -c '
   set -euo pipefail
   repo_root="'"$repo_root"'"
   suite_cleanup() { touch "'"$marker"'"; }
-  source "$repo_root/tests/lib/consumer.sh"' >/dev/null
+  source "$repo_root/tests/lib/consumer.sh"
+  suite_passed >/dev/null' >/dev/null
 [[ -e "$marker" ]] || fail "cleanup: suite_cleanup was not called"
 pass "a suite's own suite_cleanup hook runs before the work directory goes"
 
@@ -242,7 +244,8 @@ bash -c '
   repo_root="'"$repo_root"'"
   source "$repo_root/tests/lib/consumer.sh"
   mkdir -p "'"$extra"'"
-  cleanup_add "'"$extra"'"' >/dev/null
+  cleanup_add "'"$extra"'"
+  suite_passed >/dev/null' >/dev/null
 [[ ! -e "$extra" ]] || fail "cleanup_add: $extra survived the sourcing shell"
 pass "cleanup_add registers a path outside the work directory with the same trap"
 
@@ -260,8 +263,9 @@ PATH="$narrow" bash -c '
   set -euo pipefail
   repo_root="'"$repo_root"'"
   source "$repo_root/tests/lib/consumer.sh"
-  [ -d "$work_dir" ]' \
+  [ -d "$work_dir" ]
+  suite_passed >/dev/null' \
   || fail "the library should source with nothing but bash and git on PATH"
 pass "the library sources under set -euo pipefail with no jq, bd or gh on PATH"
 
-echo "consumer-lib: all assertions passed"
+suite_passed

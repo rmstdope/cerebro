@@ -180,4 +180,4 @@ grep -q "cerebro.el is missing" <<<"$out" \
 [[ ! -f "$record" ]] || fail "no elisp: emacs was reached anyway"
 pass "refuses when this checkout of cerebro has no emacs/cerebro.el"
 
-echo "all cerebro tests passed"
+suite_passed

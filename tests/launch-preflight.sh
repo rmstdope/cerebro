@@ -358,4 +358,4 @@ grep -q "is not an agent CLI cerebro knows" <<<"$out" \
   || fail "wrong-cli: expected agent-cli's own sentence, got: $out"
 pass "launch-preflight refuses when the consumer declares an agent CLI cerebro cannot run"
 
-echo "all launch-preflight tests passed"
+suite_passed

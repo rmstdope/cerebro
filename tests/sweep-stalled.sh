@@ -160,4 +160,4 @@ pass "nothing claimed prints an empty array"
 if "$sweep" >/dev/null 2>&1; then fail "exited zero with no --json"; fi
 pass "refuses to run without --json"
 
-echo "all sweep-stalled tests passed"
+suite_passed

@@ -52,4 +52,4 @@ grep -qi "sync-symlinks" <<<"$out" \
   || fail "a missing sync script said nothing at all (said: $out)"
 pass "a missing sync script is reported rather than silently skipped"
 
-echo "all sync-if-changed.sh assertions passed"
+suite_passed

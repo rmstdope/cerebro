@@ -585,4 +585,4 @@ grep -q "must run from a consumer repo" <<<"$out" \
   || fail "foreign hint: expected the refusal line, got: $out"
 pass "a hint describing another checkout is refused, not followed into that tree"
 
-echo "all sync-symlinks tests passed"
+suite_passed

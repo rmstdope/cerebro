@@ -361,3 +361,4 @@ set -e
 pass "--hooks takes no arguments"
 
 printf 'agent_cli claude\n' > "$conf"
+suite_passed

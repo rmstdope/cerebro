@@ -1109,4 +1109,4 @@ grep -qF "CEREBRO_CONSUMER_MOUNT=.claude/cerebro" <<<"$out" \
   || fail "hint launch: the mount hint did not reach the session: $out"
 pass "the root hints are exported down the launched session's process tree"
 
-echo "all launcher tests passed"
+suite_passed

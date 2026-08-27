@@ -214,3 +214,4 @@ if grep -rn 'warm_build_cmd' "$repo_root/agents" "$repo_root/skills" "$repo_root
   fail "warm_build_cmd is a third spelling of ah-qled.2's prewarm - there must be only one"
 fi
 pass "the warm build is spelled prewarm everywhere, and nowhere else"
+suite_passed

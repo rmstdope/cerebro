@@ -70,4 +70,4 @@ grep -qi 'atlantis' "$repo_root/agents/verifier.md" \
   && fail "verifier.md names a consumer project; the whole point of the key is that it does not"
 pass "the verifier names no consumer project"
 
-echo "all verification-skill tests passed"
+suite_passed

@@ -395,9 +395,14 @@ Liveness for the interactive agents is the state file first, when one exists for
 (`cerebro--derive-interactive`), and falls back to scanning system process args for cerebro's own
 marker sentence when it does not — a session started by the fleet outside this Emacs has no file
 and still shows `up`; one typed by hand carries no marker and reads dead (cb-d59.3).
-The same scan, kept as (pid . args) pairs (`cerebro--system-processes`), counts how many sessions of
+The same scan, kept as (pid ppid . args) triples (`cerebro--system-processes`), counts how many sessions of
 one name this consumer has (`cerebro--session-pids`), and a count above one shows as ` ×N` on the
-row, with `s`, `k` and `f` naming the pids rather than acting on an ambiguity (cb-63m).
+row, with `s`, `k` and `f` naming the pids rather than acting on an ambiguity (cb-63m). **A session
+is a process tree rather than a process** (cb-3ks): a CLI whose launcher is a shim spawning the real
+binary as its own child passes the marker down, so both processes carry it, and
+`cerebro--drop-wrappers` collapses each tree to the one pid the state file names — the leaf, since
+an agent writes `--pid $PPID` from inside itself. Claude Code is one process per session, a tree of
+one, and is unaffected; a genuine second session sits in its own tree and is still counted.
 
 **"A live pid" means the agent's own session, not merely an existing pid.**
 `cerebro--session-alive-p` reads the named pid's command line and requires cerebro's own marker

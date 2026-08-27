@@ -1187,6 +1187,39 @@ one the navigator can see - and it beats `disarm\=', which acts on the name."
                (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'up) nil)
               'duplicate)))
 
+(ert-deftest cerebro-test/copilot-wrapper-does-not-refuse-the-keys ()
+  "The bead's headline symptom, end to end: on a Copilot fleet `s\=', `k\=' and
+`f\=' asked the navigator to choose between a shim and its own child on every
+row, every keypress, for as long as the fleet was up (cb-3ks).  A genuine
+second session must still refuse them."
+  (let* ((stray (cons 36037 (cons 1 cerebro-test--this-consumer-args)))
+         (xavier-from
+          (lambda (procs)
+            (let* ((mine (cerebro--consumer-processes procs "/Users/x/repos/cerebro"))
+                   (agents (cerebro--derive nil cerebro-test--interactive nil
+                                            #'cerebro-test--never-alive
+                                            (mapcar #'cerebro--proc-args mine) nil)))
+              (cl-find "Xavier" (cerebro--apply-session-counts agents mine)
+                       :key #'cerebro-agent-name :test #'equal))))
+         (one (funcall xavier-from cerebro-test--copilot-procs))
+         (two (funcall xavier-from (append cerebro-test--copilot-procs (list stray)))))
+    (should-not (eq (cerebro--start-action one nil) 'duplicate))
+    (should-not (eq (cerebro--kill-action one '("Xavier")) 'duplicate))
+    (should-not (eq (cerebro--finish-action one nil) 'duplicate))
+    (should (eq (cerebro--start-action two nil) 'duplicate))
+    (should (eq (cerebro--kill-action two '("Xavier")) 'duplicate))
+    (should (eq (cerebro--finish-action two nil) 'duplicate))))
+
+(ert-deftest cerebro-test/the-duplicate-message-still-tags-the-state-file-pid ()
+  "The navigator's chosen line, verbatim.  It reads this way only because the
+collapse keeps the leaf: on a Copilot fleet the state file names the platform
+binary, never the shim, so dropping parents is what keeps the `(state file)\='
+tag meaningful (cb-3ks, decision A)."
+  (should (equal (cerebro--duplicate-message "Xavier" '(36037 60514) 60514)
+                 (concat "Xavier has 2 sessions in this fleet: "
+                         "pid 60514 (state file), pid 36037 "
+                         "— end the extra one from its own terminal"))))
+
 (ert-deftest cerebro-test/autostart-never-launches-a-duplicated-name ()
   (should (eq (cerebro--autostart-action
                (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'dead) nil t)

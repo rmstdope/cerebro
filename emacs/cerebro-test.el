@@ -262,8 +262,60 @@ same-named session is not one of them (cb-lzi)."
                                                  "/Users/x/repos/atlantis-hud"))
                    '(47482)))))
 
-(ert-deftest cerebro-test/apply-session-counts-marks-a-name-with-two-sessions ()
-  (let* ((procs (cerebro--consumer-processes cerebro-test--duplicate-procs
+(defconst cerebro-test--copilot-marker
+  " This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."
+  "The marker sentence every process of Xavier's session carries.")
+
+(defconst cerebro-test--copilot-shim-args
+  (concat "node /opt/homebrew/bin/copilot --agent planner --name Xavier"
+          cerebro-test--copilot-marker)
+  "The node shim on PATH, which spawns the platform binary as its own child.")
+
+(defconst cerebro-test--copilot-binary-args
+  (concat "/opt/homebrew/lib/node_modules/@github/copilot/node_modules/"
+          "@github/copilot-darwin-arm64/copilot --agent planner --name Xavier"
+          cerebro-test--copilot-marker)
+  "The platform binary the shim spawns - the pid the state file names.")
+
+(defconst cerebro-test--copilot-procs
+  (list (cons 59806 (cons 59548 cerebro-test--copilot-shim-args))
+        (cons 60514 (cons 59806 cerebro-test--copilot-binary-args)))
+  "One ordinary Copilot session of Xavier, as two processes (cb-3ks).")
+
+(ert-deftest cerebro-test/a-wrapper-and-the-binary-it-spawns-are-one-session ()
+  "The live shape observed on this fleet, 2026-08-27: the `copilot\=' on PATH is
+a node shim that passes the whole argv - marker included - to the platform
+binary it spawns, so both processes are the same session and a naive count
+reads `×2\=' on every row forever (cb-3ks)."
+  (let* ((stray (cons 36037 (cons 1 cerebro-test--this-consumer-args)))
+         (mine (cerebro--consumer-processes
+                (append cerebro-test--copilot-procs (list stray))
+                "/Users/x/repos/cerebro"))
+         (pair (cerebro--consumer-processes cerebro-test--copilot-procs
+                                            "/Users/x/repos/cerebro")))
+    ;; The stray is a second session; the shim is not.
+    (should (equal (cerebro--session-pids "Xavier" mine) '(36037 60514)))
+    ;; Alone, the pair is one session - and the pid kept is the leaf, which is
+    ;; the one the state file names.
+    (should (equal (cerebro--session-pids "Xavier" pair) '(60514)))
+    (let* ((agents (cerebro--derive nil cerebro-test--interactive nil
+                                    #'cerebro-test--never-alive
+                                    (mapcar #'cerebro--proc-args pair) nil))
+           (counted (cerebro--apply-session-counts agents pair))
+           (xavier (cl-find "Xavier" counted :key #'cerebro-agent-name :test #'equal)))
+      (should (= (cerebro-agent-sessions xavier) 1))
+      (should-not (cerebro--duplicated-p xavier)))))
+
+(ert-deftest cerebro-test/a-process-with-no-parent-pid-is-its-own-session ()
+  "Where the platform reports no `ppid\=', nil must read as \"its own session\" -
+an over-count is a visible `×N\=' the navigator can act on, an under-count
+silently hides a real double-start."
+  (let ((procs (list (cons 11 (cons nil cerebro-test--this-consumer-args))
+                     (cons 22 (cons nil cerebro-test--this-consumer-args)))))
+    (should (equal (cerebro--session-pids "Xavier" procs) '(11 22)))
+    (should (equal (cerebro--drop-wrappers nil) nil))))
+
+(ert-deftest cerebro-test/apply-session-counts-marks-a-name-with-two-sessions ()  (let* ((procs (cerebro--consumer-processes cerebro-test--duplicate-procs
                                              "/Users/x/repos/cerebro"))
          (agents (cerebro--derive nil cerebro-test--interactive nil
                                   #'cerebro-test--never-alive

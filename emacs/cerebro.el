@@ -333,10 +333,11 @@ session\='s own process tree, which `cerebro--drop-wrappers\=' collapses - after
 the narrowing to one name, deliberately, so a session some other agent\='s
 session spawned is never swallowed."
   (sort (mapcar #'cerebro--proc-pid
-                (seq-filter (lambda (proc)
-                              (cerebro--name-in-args-p
-                               name (list (cerebro--proc-args proc))))
-                            procs))
+                (cerebro--drop-wrappers
+                 (seq-filter (lambda (proc)
+                               (cerebro--name-in-args-p
+                                name (list (cerebro--proc-args proc))))
+                             procs)))
         #'<))
 
 (defun cerebro--apply-session-counts (agents procs)

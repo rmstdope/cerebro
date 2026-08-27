@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-3tk — the wording as it will ship</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 60rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.5rem 0 .2rem; color: var(--dim); }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; white-space: pre-wrap; }
+  .prose { background:#fff; border:1px solid var(--line); border-left:3px solid #c8d1da;
+           border-radius:4px; padding:.7rem .9rem; margin:.4rem 0; font-size:14px; }
+  .del { color: var(--bad); }
+  .ins { color: var(--good); }
+  .note { color: var(--dim); font-size: 13.5px; }
+  .opt { border:1px solid var(--line); border-radius:8px; padding:.2rem 1rem 1rem; margin:.9rem 0; }
+  .opt h3 { color: var(--ink); }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .4rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<h1>cb-3tk — the wording as it will ship</h1>
+<p class="lede">A + C, chosen. This is every string an agent or a navigator will actually read.
+Nothing here is committed.</p>
+
+<h2>1. The command, in every role file</h2>
+<p>One identical line replaces six different spellings. Shown against the real files:</p>
+<table>
+<tr><th>File</th><th class="del">Today</th><th class="ins">After</th></tr>
+<tr><td><code>agents/architect.md:66</code></td><td class="del"><code>agent-state Forge waiting --pid $PPID</code> <em>(exits 2)</em></td><td class="ins"><code>end-pass Forge --pid $PPID</code></td></tr>
+<tr><td><code>agents/verifier.md:96</code></td><td class="del"><code>agent-state Psylocke waiting --wake-in 300 --pid $PPID</code></td><td class="ins"><code>end-pass Psylocke --pid $PPID</code></td></tr>
+<tr><td><code>agents/reviewer.md:271</code></td><td class="del"><code>agent-state Cypher waiting --wake-in 600 --pid $PPID</code></td><td class="ins"><code>end-pass Cypher --pid $PPID</code></td></tr>
+<tr><td><code>agents/user-feedback.md:34</code></td><td class="del"><code>agent-state Moira waiting --wake-in 600 --pid $PPID</code></td><td class="ins"><code>end-pass Moira --pid $PPID</code></td></tr>
+<tr><td><code>skills/plan-bead:290</code></td><td class="del"><code>agent-state &lt;your-name&gt; waiting --wake-in 600 --pid $PPID</code></td><td class="ins"><code>end-pass &lt;your-name&gt; --pid $PPID</code></td></tr>
+<tr><td><code>skills/implement-bead:98</code></td><td class="del"><code>agent-state &lt;name&gt; waiting --wake-in 600 --pid $PPID</code></td><td class="ins"><code>end-pass &lt;name&gt; --pid $PPID</code></td></tr>
+</table>
+<p class="note">All 26 occurrences of <code>--wake-in</code> leave the prose.</p>
+
+<h2>2. The paragraph that has to change</h2>
+<p>This sentence is repeated <strong>verbatim in five files</strong> (planner, reviewer, verifier,
+user-feedback, plan-bead) and is about a number that will no longer exist:</p>
+<div class="prose del">
+<code>--wake-in</code> is what you <em>ask</em> for, and the view owns what you get: the floor between
+two starts of your role is <code>cerebro-wake-interval</code>, a <code>defcustom</code> the navigator
+can change while the fleet runs, measured from your last start and not from the number you wrote.
+That is why the number is not yours to argue about.
+</div>
+
+<div class="opt">
+<h3>Wording 1 — keeps the "not yours to argue about" register</h3>
+<div class="prose ins">
+You do not ask for a wake and there is no number to write. The floor between two starts of your role
+is <code>cerebro-wake-interval</code>, a <code>defcustom</code> the navigator can change while the
+fleet runs, measured from your last start. Cadence was never yours, and there is no longer anything
+in this file that pretends otherwise.
+</div>
+<p class="note">Longer by a clause. Says <em>why</em> the number went, which the next reader of this
+paragraph will want.</p>
+</div>
+
+<div class="opt">
+<h3>Wording 2 — shorter, states the fact and stops</h3>
+<div class="prose ins">
+You do not schedule yourself. The floor between two starts of your role is
+<code>cerebro-wake-interval</code>, a <code>defcustom</code> the navigator can change while the fleet
+runs, measured from your last start.
+</div>
+<p class="note">Two sentences instead of four. Loses the history — a reader six months from now sees
+no trace that agents used to ask.</p>
+</div>
+
+<h2>3. <code>end-pass</code>'s own messages</h2>
+<p>The only strings a navigator sees from the new script are its usage line and its two refusals.</p>
+<h3>Usage, on <code>--help</code> or a malformed call</h3>
+<pre class="ins">usage: end-pass &lt;name&gt; --pid &lt;pid&gt;</pre>
+<h3>A name not on the roster</h3>
+<pre class="ins">end-pass: Stalin is not on the roster</pre>
+<h3>A missing or non-numeric pid</h3>
+<pre class="ins">end-pass: --pid is required (pass $PPID)</pre>
+<p class="note">All three are <code>scripts/agent-state</code>'s own wording with the program name
+changed, so the two scripts refuse in one voice.</p>
+
+<h2>4. The migration edge</h2>
+<p>After C, <code>--wake-in</code> is gone from <code>agent-state</code>. What should it do when
+something passes one anyway?</p>
+<div class="opt">
+<h3>Refuse</h3>
+<pre class="del">agent-state: unknown argument '--wake-in'</pre>
+<p class="note">Exit 2, like any other unknown argument. A session running prose from before the
+merge — one whose skill text is already in its context — fails its end-of-pass write once, loudly,
+and the navigator sees it on the row. Same failure mode as the bug this bead is fixing, but for one
+session rather than for ever.</p>
+</div>
+<div class="opt">
+<h3>Accept and ignore, for one release</h3>
+<pre class="ins">agent-state: --wake-in is ignored; the fleet view owns cadence (it will be removed)</pre>
+<p class="note">Nothing breaks on merge day. Costs a deprecation branch in the script and in its
+suite, and somebody has to come back and delete it — which is a second bead, or a comment nobody
+acts on.</p>
+</div>
+<p class="note"><strong>The fact that decides it:</strong> a session reads the skill and agent files
+from its own worktree at launch, so prose and script move together for every session started after
+the merge. Only a session <em>already running</em> across the merge holds the old text — and in this
+repository those are minutes long.</p>
+
+</body>
+</html>

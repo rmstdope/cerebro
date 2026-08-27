@@ -95,6 +95,10 @@ A project whose verification has a procedure of its own — which shell to prefe
 are chosen and proved, what shape a script should take for the person reading it — declares
 `verification_skill <skill name>` instead, and the verifier loads that skill before it prepares
 anything, following it wherever it is more specific than the verifier's own file.
+A role two or more agents hold has its starts spaced, so that a condition true for all of them at
+once does not start them in one breath; `role_start_spacing_<role> <seconds>` declares that gap for
+one role, `0` means never space that role, and an absent key leaves the fleet view's own built-in
+number in force.
 This repository's own `.cerebro/project.conf` is a commented example, and
 the header of `scripts/project-conf` states the format.
 

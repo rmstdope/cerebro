@@ -1860,6 +1860,14 @@ the remote: process start, skill load, `bd dolt pull\=', the candidate query,
 the state-file write, the label, the push.  Measured on this fleet that is
 about a minute, and it is the quantity a value here has to exceed.
 
+A project may declare that number for itself, and it wins: a
+`role_start_spacing_<role>\=' key in the consumer\='s own tracked
+`.cerebro/project.conf\=' is what `cerebro--project-spacing\=' reads, and this
+list is the fallback for a role the project says nothing about.  A number in
+one navigator\='s init decided whether every clone of a project raced until
+cb-3m0, which is the one fact of this shape that travelled to no clone.  `0\='
+there means never space that role.
+
 Spacing counts PEERS only - see `cerebro--role-start-too-soon-p\=' - so a role
 is never held by its own last start.  A role absent from this list is never
 spaced: one holder cannot collide with itself.  `implementer\=' is started
@@ -1869,9 +1877,36 @@ roster in one tick."
   :type '(alist :key-type string :value-type integer)
   :group 'cerebro)
 
-(defun cerebro--role-start-spacing (role)
-  "The spacing declared for ROLE in `cerebro-role-start-spacing\=', or nil."
-  (cdr (assoc role cerebro-role-start-spacing)))
+(defun cerebro--spacing-seconds (raw)
+  "Pure.  RAW as a spacing in seconds: an integer, nil, or the symbol `bad\='.
+
+nil is \"the project declared nothing\" - an absent key, an empty value, or
+the empty string `project-conf\=' prints for a key it does not have.  `bad\=' is
+\"the project declared something that is not a whole number of seconds\",
+which is a different answer and gets a different line in the echo area.
+
+Zero is legal and means \"never space this role\": it falls out of
+`cerebro--role-start-too-soon-p\=' for free, since (< (- now at) 0) is never
+true, and it is the only way a project can opt a two-holder role out once
+the per-role key exists.  A negative number is `bad\='."
+  (let ((text (and (stringp raw) (string-trim raw))))
+    (cond ((or (null text) (string-empty-p text)) nil)
+          ((string-match-p "\\`[0-9]+\\'" text) (string-to-number text))
+          (t 'bad))))
+
+(defun cerebro--role-start-spacing (role &optional project)
+  "The spacing declared for ROLE, or nil.
+
+PROJECT is the (ROLE . SECONDS) alist the consumer\='s own project.conf
+declares, and it wins: `cerebro-role-start-spacing\=' is the fallback for a
+role the project says nothing about, and nothing else.  A number in one
+navigator\='s init must not decide whether every clone of a project races.
+
+`or\=' is enough for that precedence and an `if\=' on truthiness would not be:
+0 is truthy in Emacs Lisp, so a declared \"never space this role\" passes
+through intact rather than being replaced by the fallback."
+  (or (cdr (assoc role project))
+      (cdr (assoc role cerebro-role-start-spacing))))
 
 (defun cerebro--role-peers (agent agents)
   "Pure.  The names in AGENTS holding AGENT\='s role, excluding AGENT itself.
@@ -2914,6 +2949,58 @@ would only replace the roster\='s own line with a worse one."
                                     nil t nil "--autostart")))
           (when (eq status 0)
             (split-string (buffer-string) "\n" t "[ \t\r]+"))))
+    (error nil)))
+
+(defvar-local cerebro--project-spacing-cache 'unread
+  "The project\='s declared role spacing, once read; `unread\=' until it is.
+
+Buffer-local and read once, like `cerebro--fleet-cache\=': this is consulted
+from `cerebro--start-due\=' on every five-second tick, and a fork per role per
+tick is not a thing the view may do.  `unread\=' rather than nil, because nil
+is the ordinary answer for a project that declares none.")
+
+(defun cerebro--project-spacing (repo-root roles)
+  "The (ROLE . SECONDS) pairs ROLES declare in REPO-ROOT\='s project.conf.
+
+One `scripts/project-conf role_start_spacing_<role>\=' per distinct role.  A
+role that declares nothing contributes nothing, so `cerebro-role-start-spacing\='
+answers for it; a role that declares something that is not a whole number of
+seconds contributes nothing either and is said out loud, once, through
+`cerebro--report-error\=' - the echo area for now and `errors.jsonl\=' for
+afterwards.
+
+Stdout only.  `project-conf\=' prints which branch it took to stderr on every
+call, and a destination of t would mix that explanation into the value;
+`cerebro--fleet\=' passes t deliberately because it wants the refusal text, and
+this reader must not.
+
+A non-zero exit is read as nothing declared rather than as a bad value:
+`project-conf\=' exits non-zero only for a programming error in the caller or
+for a declaration left at the retired .claude/ path, neither of which is a
+statement about spacing.  Errors are swallowed for the reason
+`cerebro--autostart-names\=' gives: a consumer with no submodule checked out
+degrades to the built-in numbers rather than taking the render down."
+  (condition-case nil
+      (delq nil
+            (mapcar
+             (lambda (role)
+               (let* ((key (concat "role_start_spacing_" role))
+                      (raw (with-temp-buffer
+                             (let ((status (call-process
+                                            (expand-file-name
+                                             (cerebro--script "project-conf") repo-root)
+                                            nil (list t nil) nil key)))
+                               (and (eq status 0) (buffer-string)))))
+                      (seconds (cerebro--spacing-seconds raw)))
+                 (cond ((eq seconds 'bad)
+                        (cerebro--report-error
+                         "project.conf"
+                         "project.conf: %s is not a whole number of seconds (%S); using %d"
+                         key (string-trim raw)
+                         (or (cdr (assoc role cerebro-role-start-spacing)) 0))
+                        nil)
+                       (seconds (cons role seconds)))))
+             (delete-dups (copy-sequence roles))))
     (error nil)))
 
 (defun cerebro--standby-names (repo-root)
@@ -4251,6 +4338,11 @@ trigger read as well as what it decided."
              ;; beside it, which is the same unanswerable "why did nothing
              ;; happen" the rest of this record exists to close.
              (cons 'spaced_out (and (alist-get 'spaced-out context) t))
+             ;; And the number that produced it. Forge found cb-3m0 by reading
+             ;; `spaced_out: true' here and having to guess what number was in
+             ;; force; with the value declared per project the guess gets
+             ;; worse rather than better.
+             (cons 'spacing (alist-get 'spacing context))
              ;; A condition that was true and started nothing because this
              ;; role's last launches produced no session. Without the count
              ;; beside it, a backed-off row and a broken one read alike.
@@ -5299,7 +5391,17 @@ per tick per role would be worse than saying nothing - `cerebro--autostart\='
 is where that is said."
   (when (cerebro--vterm-available-p)
     (let ((context (cerebro--trigger-context repo-root now))
-          (now-float (float-time now)))
+          (now-float (float-time now))
+          ;; Once per tick, out of the buffer-local cache: this loop runs every
+          ;; five seconds over every agent, and a fork per role per tick is not
+          ;; a thing the view may do.
+          (project-spacing
+           (if (eq cerebro--project-spacing-cache 'unread)
+               (setq cerebro--project-spacing-cache
+                     (cerebro--project-spacing
+                      repo-root
+                      (delete-dups (mapcar #'cerebro-agent-role cerebro--agents))))
+             cerebro--project-spacing-cache)))
       (dolist (agent cerebro--agents)
         (when (eq (cerebro-agent-state agent) 'standby)
           (let* ((agent-context (cerebro--agent-context agent context))
@@ -5307,15 +5409,18 @@ is where that is said."
                  ;; A true condition is not yet a start: a role two agents
                  ;; hold answers it for both at once, and two planners racing
                  ;; for one candidate is what that costs
-                 ;; (`cerebro-role-start-spacing'). Checked inside the loop
-                 ;; rather than before it, because `cerebro--launch' writes
-                 ;; `cerebro--started-at' - so the second planner in this very
-                 ;; loop already sees the first.
+                 ;; (`cerebro-role-start-spacing', or the project's own
+                 ;; `role_start_spacing_<role>', which wins). Checked inside
+                 ;; the loop rather than before it, because `cerebro--launch'
+                 ;; writes `cerebro--started-at' - so the second planner in
+                 ;; this very loop already sees the first.
+                 (spacing (cerebro--role-start-spacing (cerebro-agent-role agent)
+                                                       project-spacing))
                  (too-soon (and reason
                                 (cerebro--role-start-too-soon-p
                                  (cerebro--role-peers agent cerebro--agents)
                                  cerebro--started-at
-                                 (cerebro--role-start-spacing (cerebro-agent-role agent))
+                                 spacing
                                  now-float)))
                  ;; A launch that produced no session is retried - b94e782 -
                  ;; but not on every tick: with the preflight refusing, that
@@ -5337,6 +5442,7 @@ is where that is said."
                  ;; it too - one source, so the label and the decision cannot
                  ;; disagree about how far into the backoff this name is.
                  (agent-context (append (list (cons 'spaced-out too-soon)
+                                              (cons 'spacing spacing)
                                               (cons 'backed-off backed-off))
                                         agent-context)))
             (cerebro--log-evaluation repo-root agent reason agent-context)

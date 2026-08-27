@@ -22,11 +22,16 @@
 # It lived at <consumer>/.claude/cerebro-project.conf until cb-epr. A file still sitting there is
 # the ONE case this script fails on (exit 2, naming the `mv'): see THIS NEVER FAILS below.
 #
-# Two keys are worth naming here because their ABSENCE is meaningful rather than merely a default:
+# Three keys are worth naming here because their ABSENCE is meaningful rather than merely a default:
 #
 #   disk_floor_gb  — GB of free disk below which a bead must not start. ABSENT means no disk
 #                    preflight runs at all, and prune-worktrees.sh loses its pressure path.
 #   retro_dir      — where the fleet's retrospectives live, read by retro-sightings.
+#   role_start_spacing_<role>
+#                  — seconds between two starts of one role, one key per role. ABSENT means the
+#                    fleet view's own built-in gap; 0 means never space that role. Read by
+#                    emacs/cerebro.el, which is the only caller and the only elisp reader of this
+#                    file.
 #
 # THIS NEVER FAILS on absence. A missing file, a missing key and an unreadable file all exit 0 with
 # the default, because callers run under `set -euo pipefail' where a non-zero exit for "no such

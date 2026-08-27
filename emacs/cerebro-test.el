@@ -1034,6 +1034,81 @@ shape."
               (should (eq (cerebro-agent-bead agent) nil)))))
       (delete-directory tmp t))))
 
+(ert-deftest cerebro-test/project-conf-declares-the-role-spacing-the-view-uses ()
+  "The real `scripts/project-conf\=' on a real declaration, its output fed to the
+pure function that consumes it - the first value `cerebro.el\=' has ever taken
+from a project\='s own `project.conf\='.
+
+The malformed key in the fixture is deliberate: the reader must drop it rather
+than pass `bad\=' into the alist, where it would reach the `<\=' in
+`cerebro--role-start-too-soon-p\=' and signal on a live fleet."
+  (skip-unless (executable-find "git"))
+  (let ((tmp (make-temp-file "cerebro-spacing-contract" t)))
+    (unwind-protect
+        (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
+          (make-directory scripts t)
+          (make-directory (expand-file-name ".cerebro" tmp) t)
+          (dolist (s '("project-conf" "consumer-root" "root-hints.sh"))
+            (make-symbolic-link (expand-file-name (concat "scripts/" s)
+                                                  cerebro-test--repo-root)
+                                (expand-file-name s scripts)))
+          ;; `project-conf' resolves its consumer with `consumer-root --shared',
+          ;; which asks git for the main working tree.
+          (let ((default-directory (file-name-as-directory tmp)))
+            (should (eq 0 (call-process "git" nil nil nil "init" "-q"))))
+          (with-temp-file (expand-file-name ".cerebro/project.conf" tmp)
+            (insert "name                 fixture\n"
+                    "role_start_spacing_planner      45\n"
+                    "role_start_spacing_implementer  soon\n"))
+          (cl-letf (((symbol-function 'cerebro--report-error) (lambda (&rest _) nil)))
+            (let ((declared (cerebro--project-spacing
+                             tmp '("planner" "implementer" "verifier"))))
+              ;; The good key only: the malformed one and the absent one both
+              ;; leave the `defcustom' to answer.
+              (should (equal declared '(("planner" . 45))))
+              ;; The contract half - the reader's own output, through the pure
+              ;; function that decides with it.
+              (let ((cerebro-role-start-spacing '(("planner" . 30) ("implementer" . 30))))
+                (should (equal (cerebro--role-start-spacing "planner" declared) 45))
+                (should (equal (cerebro--role-start-spacing "implementer" declared) 30))
+                (should (null (cerebro--role-start-spacing "verifier" declared))))))
+          ;; And a root with no submodule checked out at all answers nil rather
+          ;; than signalling: `cerebro--start-due' passes whatever root it was
+          ;; given, and a render must not die on a consumer mid-clone.
+          (should (null (cerebro--project-spacing "/tmp/nowhere" '("planner")))))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/a-spacing-that-is-not-a-number-says-so-and-falls-back ()
+  "Fall back, and say so once.  A typo in one optional key must not cost the
+navigator their whole view the way a bad `roster.conf\=' row does - but a fleet
+running on a number nobody declared must not be silent either."
+  (skip-unless (executable-find "git"))
+  (let ((tmp (make-temp-file "cerebro-spacing-complaint" t))
+        (said nil))
+    (unwind-protect
+        (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
+          (make-directory scripts t)
+          (make-directory (expand-file-name ".cerebro" tmp) t)
+          (dolist (s '("project-conf" "consumer-root" "root-hints.sh"))
+            (make-symbolic-link (expand-file-name (concat "scripts/" s)
+                                                  cerebro-test--repo-root)
+                                (expand-file-name s scripts)))
+          (let ((default-directory (file-name-as-directory tmp)))
+            (should (eq 0 (call-process "git" nil nil nil "init" "-q"))))
+          (with-temp-file (expand-file-name ".cerebro/project.conf" tmp)
+            (insert "role_start_spacing_planner  soon\n"))
+          (let ((cerebro-role-start-spacing '(("planner" . 30) ("implementer" . 30))))
+            (cl-letf (((symbol-function 'cerebro--log-error) #'ignore)
+                      ((symbol-function 'message)
+                       (lambda (fmt &rest args) (push (apply #'format fmt args) said))))
+              (should (null (cerebro--project-spacing tmp '("planner" "implementer")))))
+            ;; Once for the one bad key, not once per role read.
+            (should (equal said
+                           (list (concat "cerebro: project.conf: role_start_spacing_planner"
+                                         " is not a whole number of seconds (\"soon\");"
+                                         " using 30"))))))
+      (delete-directory tmp t))))
+
 (ert-deftest cerebro-test/system-processes-are-pid-ppid-and-args-triples ()
   "The real process scan, on this very Emacs.  The `(emacs-pid)\=' line is the
 one that would catch a platform where `process-attributes\=' returns no
@@ -6949,6 +7024,39 @@ them at once."
   ;; true for every standby builder on the same tick.
   (should (equal (cerebro--role-start-spacing "implementer") 30)))
 
+(ert-deftest cerebro-test/a-declared-spacing-is-a-whole-number-of-seconds-or-nothing ()
+  "What a project may write against `role_start_spacing_<role>\=' in its own
+`project.conf\=', and what the three answers are: a number, nothing declared,
+and something that is not a number - which is not the same as nothing and
+gets said out loud rather than silently ignored."
+  (should (equal (cerebro--spacing-seconds "45") 45))
+  ;; Zero is a value: never space this role. It is the only way a project can
+  ;; opt a two-holder role out once the per-role key exists.
+  (should (equal (cerebro--spacing-seconds "0") 0))
+  (should (equal (cerebro--spacing-seconds " 45 ") 45))
+  ;; Nothing declared: `project-conf' prints an empty line for a key it has not
+  ;; got, and the `defcustom' answers for that role.
+  (should (null (cerebro--spacing-seconds "")))
+  (should (null (cerebro--spacing-seconds nil)))
+  (should (null (cerebro--spacing-seconds "  ")))
+  ;; Declared, and not a whole number of seconds.
+  (dolist (raw '("-5" "soon" "30s" "4.5"))
+    (should (eq (cerebro--spacing-seconds raw) 'bad))))
+
+(ert-deftest cerebro-test/a-project-declared-spacing-beats-the-defcustom ()
+  "The project wins.  `cerebro-role-start-spacing\=' is the fallback for a role
+the project says nothing about and nothing else: a number in one navigator\='s
+init must not decide whether every clone of a project races."
+  (let ((cerebro-role-start-spacing '(("planner" . 30) ("implementer" . 30))))
+    (should (equal (cerebro--role-start-spacing "planner" '(("planner" . 45))) 45))
+    ;; A role the project says nothing about falls back.
+    (should (equal (cerebro--role-start-spacing "implementer" '(("planner" . 45))) 30))
+    ;; `0' is truthy in elisp, and a precedence written on the wrong test would
+    ;; silently reassert 30 over a declared "never space this role".
+    (should (equal (cerebro--role-start-spacing "planner" '(("planner" . 0))) 0))
+    ;; Declared nowhere at all is still nil, which is never too soon.
+    (should (null (cerebro--role-start-spacing "verifier" nil)))))
+
 (ert-deftest cerebro-test/the-cadence-roles-are-not-held-by-the-guard ()
   "Moira and Cypher come back on the hour whatever the fleet looks like -
 what they watch moves outside it, so \"nothing changed here\" is not evidence
@@ -7310,6 +7418,78 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
                        (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
           (setq cerebro--started-at '(("Cyclops" . 1000000.0)))
           (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000010.0)))
+        (should (null launched))))))
+
+(ert-deftest cerebro-test/an-evaluation-records-the-spacing-in-force ()
+  "`spaced_out: true\=' beside no number is a line that says a start was held and
+leaves the reader to guess by how much - and with the value declared per
+project the guess gets worse, not better.  This is what makes \"it held for
+seven ticks\" answerable as \"it held because the number in force was 30\"."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-log-verbosity 'evaluations)
+        (cerebro--log-seen nil))
+    (unwind-protect
+        (let ((file (expand-file-name ".cerebro/state/decisions.jsonl" root)))
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (cerebro--log-evaluation
+           root (cerebro-test--interactive "Beast" "planner" 'standby)
+           "buffer 0 of 4"
+           '((spacing . 45) (spaced-out . t)))
+          (let ((line (with-temp-buffer (insert-file-contents file) (buffer-string))))
+            (should (string-match-p "\"spacing\":45" line))
+            (should (string-match-p "\"spaced_out\":true" line))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/a-project-that-declares-no-spacing-gap-starts-both-planners-at-once ()
+  "The whole path: a number in the consumer\='s own `project.conf\=' deciding which
+sessions `cerebro--start-due\=' launches.  A declared 0 is \"never space this
+role\" and both planners go on one tick; a declared 90 holds the second where
+the built-in 30 would have let it through."
+  (let ((launched nil)
+        (cerebro-role-start-spacing '(("planner" . 30) ("implementer" . 30))))
+    (cl-letf (((symbol-function 'cerebro--launch)
+               ;; The real one writes `cerebro--started-at', which is what the
+               ;; spacing reads - a stub that does not cannot make it fire.
+               (lambda (a)
+                 (push (cerebro-agent-name a) launched)
+                 (setf (alist-get (cerebro-agent-name a) cerebro--started-at
+                                  nil nil #'equal)
+                       (float-time (seconds-to-time 1000000.0)))))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'message) #'ignore)
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _)
+                 '((now . 1000000.0) (implementers . 2) (planned . 0)
+                   (planned-ids) (p0-unplanned) (actionable-ids "cb-x") (p4-unranked . 0)
+                   (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+      (with-temp-buffer
+        (setq cerebro--agents
+              (list (cerebro-test--interactive "Xavier" "planner" 'standby)
+                    (cerebro-test--interactive "Beast" "planner" 'standby))
+              cerebro--parked nil
+              cerebro--seen-up nil
+              cerebro--started-at nil
+              cerebro--start-fingerprints nil
+              cerebro--failed-starts nil
+              ;; Pre-set, so no fork happens and the test is about the wiring.
+              cerebro--project-spacing-cache '(("planner" . 0)))
+        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
+        (should (equal (sort (copy-sequence launched) #'string<) '("Beast" "Xavier")))
+        ;; Ninety seconds, and the second planner is held at +35s - which the
+        ;; `defcustom''s 30 would have let through.
+        (setq launched nil
+              cerebro--started-at '(("Xavier" . 1000000.0))
+              cerebro--start-fingerprints nil
+              cerebro--project-spacing-cache '(("planner" . 90))
+              cerebro--agents
+              (list (cerebro-test--interactive "Xavier" "planner" 'working)
+                    (cerebro-test--interactive "Beast" "planner" 'standby)))
+        (cl-letf (((symbol-function 'cerebro--trigger-context)
+                   (lambda (&rest _)
+                     '((now . 1000035.0) (implementers . 2) (planned . 0)
+                       (planned-ids) (p0-unplanned) (actionable-ids "cb-x") (p4-unranked . 0)
+                       (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+          (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000035.0)))
         (should (null launched))))))
 
 (ert-deftest cerebro-test/start-due-does-nothing-without-vterm ()

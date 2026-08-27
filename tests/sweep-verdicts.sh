@@ -165,4 +165,4 @@ pass "no candidates prints an empty array"
 if (cd "$consumer" && "$sweep" >/dev/null 2>&1); then fail "exited zero with no --json"; fi
 pass "the usage guard refuses anything but --json"
 
-echo "all sweep-verdicts assertions passed"
+suite_passed

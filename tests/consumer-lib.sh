@@ -31,6 +31,38 @@ set -e
 [[ "$(pass "y")" == "ok - y" ]] || fail "pass should print 'ok - y', got: $(pass "y")"
 pass "fail exits 1 and names the assertion; pass prints an ok line"
 
+# --- suite_passed, and the fabricator the death cases share -----------------------------------------
+
+# fabricate_suite <name> <body> -> the path of a runnable throwaway suite that sources the library.
+# The body is written verbatim to a file rather than interpolated into `bash -c', so it may contain
+# any quoting - which the death cases in the last section need.
+fabricate_suite() {
+  local path="$work_dir/$1.sh"
+  {
+    printf 'set -euo pipefail\n'
+    printf 'repo_root=%q\n' "$repo_root"
+    printf 'source "$repo_root/tests/lib/consumer.sh"\n'
+    printf '%s\n' "$2"
+  } > "$path"
+  echo "$path"
+}
+
+# run_suite <path> -> sets $out (stdout and stderr together) and $status.
+run_suite() {
+  set +e
+  out="$(bash "$1" 2>&1)"
+  status=$?
+  set -e
+}
+
+s="$(fabricate_suite passes 'suite_passed')"
+run_suite "$s"
+[[ $status -eq 0 ]] || fail "suite_passed: a suite that reaches its end should exit 0, got $status
+$out"
+[[ "$out" == "$s: all assertions passed" ]] \
+  || fail "suite_passed: expected '$s: all assertions passed', got: $out"
+pass "suite_passed prints the suite's summary line and exits 0"
+
 # --- reading text without a pipe ------------------------------------------------------------------
 
 text="$(printf 'ARG:--model\nARG:sonnet\nARG:--effort\nARG:high')"
@@ -190,7 +222,8 @@ sourced="$(bash -c '
   set -euo pipefail
   repo_root="'"$repo_root"'"
   source "$repo_root/tests/lib/consumer.sh"
-  echo "$work_dir"')"
+  echo "$work_dir"
+  suite_passed >/dev/null')"
 [[ -n "$sourced" ]] || fail "cleanup: the sourced shell printed no work_dir"
 [[ ! -e "$sourced" ]] || fail "cleanup: $sourced survived the sourcing shell"
 pass "the library's EXIT trap removes its work directory"
@@ -200,7 +233,8 @@ bash -c '
   set -euo pipefail
   repo_root="'"$repo_root"'"
   suite_cleanup() { touch "'"$marker"'"; }
-  source "$repo_root/tests/lib/consumer.sh"' >/dev/null
+  source "$repo_root/tests/lib/consumer.sh"
+  suite_passed >/dev/null' >/dev/null
 [[ -e "$marker" ]] || fail "cleanup: suite_cleanup was not called"
 pass "a suite's own suite_cleanup hook runs before the work directory goes"
 
@@ -210,7 +244,8 @@ bash -c '
   repo_root="'"$repo_root"'"
   source "$repo_root/tests/lib/consumer.sh"
   mkdir -p "'"$extra"'"
-  cleanup_add "'"$extra"'"' >/dev/null
+  cleanup_add "'"$extra"'"
+  suite_passed >/dev/null' >/dev/null
 [[ ! -e "$extra" ]] || fail "cleanup_add: $extra survived the sourcing shell"
 pass "cleanup_add registers a path outside the work directory with the same trap"
 
@@ -228,8 +263,57 @@ PATH="$narrow" bash -c '
   set -euo pipefail
   repo_root="'"$repo_root"'"
   source "$repo_root/tests/lib/consumer.sh"
-  [ -d "$work_dir" ]' \
+  [ -d "$work_dir" ]
+  suite_passed >/dev/null' \
   || fail "the library should source with nothing but bash and git on PATH"
 pass "the library sources under set -euo pipefail with no jq, bd or gh on PATH"
 
-echo "consumer-lib: all assertions passed"
+# --- a suite that dies is never green -------------------------------------------------------------
+#
+# The defect this section exists for: under `set -euo pipefail` a fatal shell error reaches the EXIT
+# trap with `$?` already 0, so a suite that asserted nothing used to print `ok' in the gate. The
+# markers, not the status, are what the trap reads - see the library's header for why.
+
+s="$(fabricate_suite dies-on-source 'source /nope/no-such-library.sh
+suite_passed')"
+run_suite "$s"
+[[ $status -ne 0 ]] || fail "a suite that dies on a bad source must not exit 0
+$out"
+grep -q "died before reaching suite_passed" <<<"$out" \
+  || fail "a bad source: the diagnostic should name suite_passed, got: $out"
+pass "a suite that dies on a bad source is reported failed, not green"
+
+s="$(fabricate_suite dies-on-unbound 'echo "$no_such_variable"
+suite_passed')"
+run_suite "$s"
+[[ $status -ne 0 ]] || fail "a suite that dies on an unbound variable must not exit 0
+$out"
+pass "a suite that dies on an unbound variable is reported failed, not green"
+
+s="$(fabricate_suite dies-midway 'pass "the first assertion"
+false
+suite_passed')"
+run_suite "$s"
+[[ $status -ne 0 ]] || fail "a suite that dies after its first assertion must not exit 0
+$out"
+pass "a suite that dies after some assertions have passed is reported failed"
+
+s="$(fabricate_suite fails-an-assertion 'fail "a real assertion"')"
+run_suite "$s"
+[[ $status -eq 1 ]] || fail "a failed assertion should still exit 1, got $status
+$out"
+grep -q "^FAIL: a real assertion$" <<<"$out" \
+  || fail "a failed assertion should print its own message, got: $out"
+grep -q "died before reaching suite_passed" <<<"$out" \
+  && fail "a failed assertion must not be reported as a death, got: $out"
+pass "a failed assertion is reported as itself, not as a death"
+
+marker="$work_dir/died-but-cleaned"
+s="$(fabricate_suite dies-but-cleans "cleanup_add $marker
+mkdir -p $marker
+source /nope/no-such-library.sh")"
+run_suite "$s"
+[[ ! -e "$marker" ]] || fail "a dying suite must still have its cleanup run: $marker survived"
+pass "the work directory and registered paths still go when the suite dies"
+
+suite_passed

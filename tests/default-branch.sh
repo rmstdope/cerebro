@@ -126,4 +126,4 @@ out="$(CEREBRO_CONSUMER_ROOT="$other" CEREBRO_CONSUMER_SHARED_ROOT="$other" \
 [[ "$out" == "main" ]] || fail "foreign hint: expected the assumed 'main', got '$out'"
 pass "a hint describing another checkout is rejected, and the assumption stands"
 
-echo "all default-branch tests passed"
+suite_passed

@@ -151,4 +151,4 @@ for f in agents/reviewer.md agents/verifier.md; do
 done
 pass "the two classification sites name scripts/app-paths"
 
-echo "all app-paths tests passed"
+suite_passed

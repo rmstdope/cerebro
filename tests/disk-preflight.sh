@@ -194,4 +194,4 @@ fi
 grep -q 'below the 50 GB floor' <<<"$out" || fail "env floor: expected the environment's number, got: $out"
 pass "FREE_SPACE_FLOOR_GB in the environment wins over the declaration"
 
-echo "all disk-preflight tests passed"
+suite_passed

@@ -363,4 +363,4 @@ set -e
 rm -rf "$tmp"
 pass "a flag swallowing the next flag is refused"
 
-echo "all fleet-history assertions passed"
+suite_passed

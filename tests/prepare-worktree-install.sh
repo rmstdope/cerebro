@@ -151,4 +151,4 @@ if grep -rn -- "--with-wasm\|@atlantis/browser-core" "$repo_root/skills" "$repo_
 fi
 pass "no --with-wasm or @atlantis/browser-core left in skills/ or agents/"
 
-echo "all prepare-worktree assertions passed"
+suite_passed

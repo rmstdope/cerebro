@@ -15,18 +15,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
+# fail, pass, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
-pass() {
-  echo "ok - $1"
-}
-
-stub_dir="$(mktemp -d)"
-consumer="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$consumer"' EXIT
+stub_dir="$work_dir/stub"
+consumer="$work_dir/consumer"
+mkdir -p "$stub_dir" "$consumer"
 
 # The script resolves its root through `work-beads`, which uses `consumer-root --shared` and so
 # answers only when this copy of cerebro is mounted at <consumer>/.claude/cerebro (ah-il8j).
@@ -111,4 +105,4 @@ pass "lists nothing else"
 grep -qxF "ARG:open" "$argv_file" || fail "bd was not asked for open beads"
 pass "asks for open beads"
 
-echo "all second-look-beads assertions passed"
+suite_passed

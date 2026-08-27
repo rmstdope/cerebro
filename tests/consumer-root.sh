@@ -241,4 +241,4 @@ set -e
 [[ $status -eq 1 ]] || fail "--hints standalone: expected exit 1, got $status"
 pass "--hints refuses a standalone clone, like every other form"
 
-echo "all consumer-root tests passed"
+suite_passed

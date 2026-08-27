@@ -343,4 +343,4 @@ out="$(CEREBRO_CONSUMER_SHARED_ROOT="$hint_consumer" \
 [[ "$out" == "fallback" ]] || fail "half-set hint: expected 'fallback', got '$out'"
 pass "a hint without its mount is rejected"
 
-echo "all project-conf tests passed"
+suite_passed

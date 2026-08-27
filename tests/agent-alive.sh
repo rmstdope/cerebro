@@ -187,4 +187,4 @@ run_alive "$tmp" Cyclops --json || status=$?
 [[ "$status" == 2 ]] || fail "usage-with-more-than-a-name: exit $status, expected 2"
 pass "usage-with-more-than-a-name"
 
-echo "all agent-alive tests passed"
+suite_passed

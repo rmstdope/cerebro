@@ -311,4 +311,4 @@ grep -q 'No finding has been sighted three times' <<<"$out" \
   || fail "absent corpus: expected the empty report, got: $out"
 pass "an absent corpus directory reports nothing and exits 0"
 
-echo "all retro-sightings tests passed"
+suite_passed

@@ -157,4 +157,4 @@ types="$(cd "$outside" && PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro
 rm -rf "$outside"
 pass "prints the excluded types without needing a repository"
 
-echo "all work-beads assertions passed"
+suite_passed

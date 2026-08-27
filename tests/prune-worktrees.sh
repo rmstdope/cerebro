@@ -330,4 +330,4 @@ out="$(cd "$selfmount" && PATH="$sub_stub_dir:$PATH" bash "$selfmount/scripts/pr
   || fail "a self-mounted cerebro enumerated its worktrees twice: $out"
 pass "a self-mounted cerebro is walked once, not twice"
 
-echo "all prune-worktrees assertions passed"
+suite_passed

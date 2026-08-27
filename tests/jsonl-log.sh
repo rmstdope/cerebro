@@ -81,4 +81,4 @@ cerebro_jsonl_append "" '{"a":1}' || status=$?
 [ "$(ls -A "$work_dir" | sort)" = "$before" ] || fail "an empty path wrote something into $work_dir"
 pass "refuses an empty path"
 
-echo "jsonl-log: all assertions passed"
+suite_passed

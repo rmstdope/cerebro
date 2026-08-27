@@ -159,4 +159,4 @@ $err"
 done
 pass "every path a suite or the gate can see runs the gate"
 
-echo "all ci-needed assertions passed"
+suite_passed

@@ -219,3 +219,4 @@ tmp="$(want_fixture Cyclops Storm Wolverine)"
 line="$(PATH="$stub_dir:$PATH" bash "$tmp/.claude/cerebro/scripts/planner-buffer" --count)"
 [ "$line" = "planned=1 want=3" ] || fail "--count printed '$line' with three implementers on the roster"
 pass "the count line reads the same wanted number as --want"
+suite_passed

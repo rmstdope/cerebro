@@ -375,4 +375,4 @@ pass "no declared floor disables the pressure path rather than inventing a numbe
 # cannot read cannot disable it. See reclaim_cold_target, which the psylocke exception above already
 # exercises.
 
-echo "all project-sweeps assertions passed"
+suite_passed

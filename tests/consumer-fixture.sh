@@ -322,4 +322,4 @@ pass "the consumer's own fleet is found from an alternative mount"
 #   run_at disk-preflight >/dev/null || fail "disk-preflight: refused the consumer"
 #   [[ "$(run_at retro-sightings "a symptom")" == *"doc/retro"* ]] || fail "retro-sightings: not the consumer's retro_dir"
 
-echo "all consumer-fixture assertions passed"
+suite_passed

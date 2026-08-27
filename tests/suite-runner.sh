@@ -291,3 +291,4 @@ $out"
 $out"
 
 pass "a suite that is killed is reported failed, not passed"
+suite_passed

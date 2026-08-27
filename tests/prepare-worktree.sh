@@ -152,4 +152,4 @@ if run_prepare "$c" --path .cerebro/worktrees/ah-7 --dry-run >/dev/null 2>&1; th
 fi
 pass "every refusal still fires under --dry-run"
 
-echo "all prepare-worktree tests passed"
+suite_passed

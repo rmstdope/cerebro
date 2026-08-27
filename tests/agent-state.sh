@@ -557,4 +557,4 @@ fi
 rm -rf "$tmp" "$stub_dir"
 pass "a-failing-log-jq-writes-no-line-and-does-not-fail-the-write"
 
-echo "All agent-state tests passed."
+suite_passed

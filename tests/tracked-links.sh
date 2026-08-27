@@ -141,4 +141,4 @@ grep -qF "usage: tracked-links" "$work_dir/err" \
   || fail "expected the usage line on stderr, got: $(cat "$work_dir/err")"
 pass "an argument is a usage error, and prints no findings"
 
-echo "tests/tracked-links.sh: all assertions passed"
+suite_passed

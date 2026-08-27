@@ -20,6 +20,9 @@
 #
 #   fail <msg>                    echoes "FAIL: <msg>" on stderr and exits 1
 #   pass <msg>                    echoes "ok - <msg>"
+#   suite_passed                  every suite's LAST line: prints "<suite>: all assertions passed"
+#                                 and records that the suite got there. A suite that never calls it
+#                                 exits non-zero, whatever bash reported.
 #   git_q ...                     git with a test identity, so a commit needs no global config
 #
 #   arg_follows <text> <flag re> <value re>
@@ -33,6 +36,16 @@
 #   cleanup_add <path>...         more paths for that trap (a suite's stub_dir, a second mktemp)
 #   suite_cleanup                 a suite may DEFINE this; the trap calls it FIRST, before removing
 #                                 anything (tests/agent-alive.sh kills background sleeps in it)
+#
+# WHY the marker exists, and why the obvious fix is not the fix. Under `set -euo pipefail`, a suite
+# that dies of a FATAL SHELL ERROR - a `source` of a file that is not there, an unbound variable, a
+# syntax error inside a sourced file - reaches this EXIT trap with `$?` ALREADY 0, and so exits 0:
+# `ok tests/<suite>.sh' for a suite that asserted nothing. Capturing `status=$?' here does not fix
+# it, because the zero is what there is to capture; measured on bash 3.2.57, the same three deaths
+# exit 1 with no EXIT trap installed at all. An ordinary errexit death (`false') is unaffected
+# either way - it arrives with its real status - so the "bash takes the last command in the trap"
+# explanation in docs/retrospectives/cb-ge0.md is not the mechanism. Only reaching the end of the
+# suite proves the suite ran, so that is what is recorded.
 #
 #   copy_cerebro_into <dest>      scripts, agents, skills, hooks - no emacs/, no .git
 #   link_scripts <consumer> <script>...
@@ -55,12 +68,21 @@
 # --- the error protocol ---------------------------------------------------------------------------
 
 fail() {
+  _suite_failed=1
   echo "FAIL: $1" >&2
   exit 1
 }
 
 pass() {
   echo "ok - $1"
+}
+
+# Every suite's LAST line. It prints the summary line the suites used to each spell for
+# themselves, and - the point of it - records that the suite reached its own end. Without that
+# record the EXIT trap below cannot tell a suite that passed from one that died silently.
+suite_passed() {
+  _suite_reached_end=1
+  echo "$0: all assertions passed"
 }
 
 # A test identity on the command line rather than in a config: the fixture must not depend on
@@ -119,17 +141,31 @@ work_dir="$(cd "$(mktemp -d)" && pwd -P)"
 
 _cleanup_paths=("$work_dir")
 
+# Set by `suite_passed', which is every suite's last line, and by `fail'. The EXIT trap below
+# refuses to let the suite exit 0 when neither was reached - see the header.
+_suite_reached_end=""
+_suite_failed=""
+
 cleanup_add() {
   _cleanup_paths+=("$@")
 }
 
 _consumer_lib_cleanup() {
+  local status=$?
   # The suite's own hook first: it may need the directories that are about to go, or have processes
   # to kill that would otherwise outlive the run.
   if declare -F suite_cleanup >/dev/null; then
     suite_cleanup || true
   fi
   rm -rf "${_cleanup_paths[@]}"
+  # Neither marker set: the suite neither reached its last line nor failed an assertion, so it died
+  # somewhere in between - and bash may well be reporting 0 for it (see the header). Never let that
+  # read as a pass.
+  if [ -z "$_suite_reached_end" ] && [ -z "$_suite_failed" ]; then
+    echo "FAIL: $0 died before reaching suite_passed (bash reported status $status)" >&2
+    exit 1
+  fi
+  exit "$status"
 }
 
 # Installed in the SUITE's shell, which is why a migrated suite must never write its own EXIT trap:

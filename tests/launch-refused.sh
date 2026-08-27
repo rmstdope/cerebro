@@ -104,3 +104,4 @@ set -e
 [[ $status -eq 2 ]] || fail "usage: expected exit 2, got $status"
 grep -q "usage: launch-refused" <<<"$out" || fail "usage: expected a usage line, got: $out"
 pass "a call with no message is a usage error"
+suite_passed

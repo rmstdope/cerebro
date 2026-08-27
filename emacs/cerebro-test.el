@@ -315,7 +315,8 @@ silently hides a real double-start."
     (should (equal (cerebro--session-pids "Xavier" procs) '(11 22)))
     (should (equal (cerebro--drop-wrappers nil) nil))))
 
-(ert-deftest cerebro-test/apply-session-counts-marks-a-name-with-two-sessions ()  (let* ((procs (cerebro--consumer-processes cerebro-test--duplicate-procs
+(ert-deftest cerebro-test/apply-session-counts-marks-a-name-with-two-sessions ()
+  (let* ((procs (cerebro--consumer-processes cerebro-test--duplicate-procs
                                              "/Users/x/repos/cerebro"))
          (agents (cerebro--derive nil cerebro-test--interactive nil
                                   #'cerebro-test--never-alive

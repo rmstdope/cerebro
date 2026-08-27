@@ -67,11 +67,59 @@ note_tracked_write() {             # $1: the destination directory, relative to 
   tracked_note="$top/ is tracked - commit these links so every clone has them without running this script."
 }
 
+# --- the link map: one `readlink' fork per destination directory ---------------------------------
+#
+# `readlink' is a process, and this script asked for one per link in a directory - twice over, since
+# the stale sweep below asks again. `launch-preflight' runs this script before every session and
+# every gate run runs it dozens of times, so those forks are paid by the whole fleet: 34 `readlink'
+# calls at ~2.3ms each was two thirds of this script's 299ms. One call per directory instead.
+#
+# Two parallel indexed arrays and a linear scan, not an associative array: macOS ships bash 3.2,
+# which has no `declare -A' (scripts/roster says the same about itself). A directory holds tens of
+# links, so the scan is free next to the fork it replaces.
+_lm_paths=()
+_lm_targets=()
+LINK_TARGET=""
+
+read_link_map() {                  # $1: the directory whose direct symlinks are read
+  local dir="$1" p line entries=()
+  _lm_paths=()
+  _lm_targets=()
+  for p in "$dir"/*; do
+    [[ -L "$p" ]] && entries+=("$p")
+  done
+  ((${#entries[@]})) || return 0
+  _lm_paths=("${entries[@]}")
+  # Process substitution and `read -r', not `$(...)' split on IFS: one fork either way, but this
+  # one cannot glob-expand or word-split a target. `readlink' prints one line per argument, in
+  # argument order, and every argument here is a symlink by construction - so line N is entry N.
+  while IFS= read -r line; do
+    _lm_targets+=("$line")
+  done < <(readlink "${entries[@]}")
+}
+
+# Sets LINK_TARGET from the map and returns 0; returns 1 when $1 is not in it. An out-variable
+# rather than an echo, because `x="$(link_target_of ...)"' would be the very fork this replaces.
+link_target_of() {                 # $1: the link path
+  local i
+  LINK_TARGET=""
+  for ((i = 0; i < ${#_lm_paths[@]}; i++)); do
+    if [[ "${_lm_paths[$i]}" == "$1" ]]; then
+      LINK_TARGET="${_lm_targets[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # True when writing $2 at $1 would create a link or change where one points. `ln -sfn' cannot tell
 # us afterwards, so it is asked before.
 link_would_change() {              # $1: the link path, $2: the target about to be written
   [[ -L "$1" ]] || return 0
-  [[ "$(readlink "$1")" == "$2" ]] && return 1
+  # Absent from the map means this same run created it moments ago, so it is already right - but
+  # say "would change" rather than assume it. The cost of being wrong is one redundant `ln'.
+  link_target_of "$1" || return 0
+  [[ "$LINK_TARGET" == "$2" ]] && return 1
   return 0
 }
 
@@ -101,6 +149,8 @@ sync_links() {
     echo "Source $label directory not found: $source_dir" >&2
     exit 1
   fi
+
+  read_link_map "$dest_dir"
 
   for item_path in "$source_dir"/*; do
     if [[ "$item_kind" == "dir" ]]; then
@@ -153,7 +203,8 @@ sync_links() {
   local link link_target
   for link in "$dest_dir"/*; do
     [[ -L "$link" ]] || continue
-    link_target="$(readlink "$link")"
+    link_target_of "$link" || continue
+    link_target="$LINK_TARGET"
     [[ "$link_target" == "$prefix"* ]] || continue
     [[ -e "$link" ]] && continue          # -e follows the link: the source is still there
     rm "$link"
@@ -207,6 +258,8 @@ mirror_links() {
   [[ "$source_dir" == "$dest_dir" ]] && return 0
   [[ -d "$source_dir" ]] || return 0
 
+  read_link_map "$dest_dir"
+
   local item_path item_name target link_to
   for item_path in "$source_dir"/*; do
     [[ -L "$item_path" ]] && continue          # this script's own mount link, or the project's
@@ -244,7 +297,8 @@ mirror_links() {
   local link link_target
   for link in "$dest_dir"/*; do
     [[ -L "$link" ]] || continue
-    link_target="$(readlink "$link")"
+    link_target_of "$link" || continue
+    link_target="$LINK_TARGET"
     [[ "$link_target" == "$prefix"* ]] || continue
     [[ -e "$link" ]] && continue
     rm "$link"

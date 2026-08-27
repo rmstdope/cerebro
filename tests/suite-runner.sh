@@ -31,9 +31,24 @@ script="$repo_root/scripts/suite-runner"
 # One call per case. `set +e' around it because a failing suite makes the script exit 1, which is an
 # answer here and not a failure of the test. GITHUB_ACTIONS is unset so the suite passes when it is
 # itself run from inside CI, where GitHub sets it to `true' for every job.
+#
+# Every ordinary call goes through `run', which prepends `--log-dir' under $work_dir. That is not
+# tidiness: this suite runs inside the gate, and the gate runs `suite-runner' too. With the
+# cwd-relative default both would use the same log root, and the inner run's prune-at-start would
+# delete the outer run's own directory while it is still being written to. `run_raw' is the same
+# call without the flag, for the two cases that must exercise the default and the fallback. The
+# handful of cases that call the script inline rather than through `run' - they need stdout and
+# stderr apart, or GITHUB_ACTIONS set - pass the same flag for the same reason.
 out=""
 status=0
 run() {
+  set +e
+  out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" "$@" 2>&1)"
+  status=$?
+  set -e
+}
+
+run_raw() {
   set +e
   out="$(env -u GITHUB_ACTIONS bash "$script" "$@" 2>&1)"
   status=$?
@@ -110,9 +125,9 @@ pass "every suite is named before it runs and a passing suite is quiet"
 printf '#!/usr/bin/env bash\necho "b stdout"\necho "b stderr" >&2\nexit 1\n' >"$work_dir/suites/b-fail.sh"
 
 set +e
-out="$(env -u GITHUB_ACTIONS bash "$script" "$work_dir/suites" 2>/dev/null)"
+out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" "$work_dir/suites" 2>/dev/null)"
 status=$?
-err="$(env -u GITHUB_ACTIONS bash "$script" "$work_dir/suites" 2>&1 >/dev/null)"
+err="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" "$work_dir/suites" 2>&1 >/dev/null)"
 set -e
 [[ $status -eq 1 ]] || fail "one failing suite: expected exit 1, got $status
 $out"
@@ -148,7 +163,7 @@ pass "a failing suite's output is replayed and the remaining suites still run"
 # --- 4. the GitHub annotations appear under GITHUB_ACTIONS and nowhere else ---
 
 set +e
-out="$(GITHUB_ACTIONS=true bash "$script" "$work_dir/suites" 2>/dev/null)"
+out="$(GITHUB_ACTIONS=true bash "$script" --log-dir "$work_dir/logdir" "$work_dir/suites" 2>/dev/null)"
 status=$?
 set -e
 [[ $status -eq 1 ]] || fail "under GITHUB_ACTIONS: expected exit 1, got $status
@@ -173,7 +188,7 @@ $out"
 $out"
 
 set +e
-out="$(env -u GITHUB_ACTIONS bash "$script" "$work_dir/suites" 2>/dev/null)"
+out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" "$work_dir/suites" 2>/dev/null)"
 set -e
 grep -q '^::' <<<"$out" && fail "an annotation was printed outside GitHub Actions
 $out"
@@ -206,7 +221,7 @@ run --jobs 2
 $out"
 
 set +e
-out="$(env -u GITHUB_ACTIONS bash "$script" --jobs 1 "$work_dir/suites" 2>/dev/null)"
+out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" --jobs 1 "$work_dir/suites" 2>/dev/null)"
 status=$?
 set -e
 [[ $status -eq 1 ]] || fail "--jobs 1: expected exit 1, got $status
@@ -291,4 +306,157 @@ $out"
 $out"
 
 pass "a suite that is killed is reported failed, not passed"
+
+# --- 8. --log-dir is parsed, in either order with --jobs ---
+#
+# cb-kf8: every run keeps each suite's full output on disk, because the only record of a red gate
+# used to be terminal scrollback and the next run is what destroyed it.
+
+mkdir -p "$work_dir/green"
+printf '#!/usr/bin/env bash\necho "ok - a"\nexit 0\n' >"$work_dir/green/a-pass.sh"
+printf '#!/usr/bin/env bash\necho "ok - c"\nexit 0\n' >"$work_dir/green/c-pass.sh"
+
+run_raw --log-dir "$work_dir/l1" "$work_dir/green"
+[[ $status -eq 0 ]] || fail "--log-dir before the directory: expected exit 0, got $status
+$out"
+
+run_raw --jobs 2 --log-dir "$work_dir/l2" "$work_dir/green"
+[[ $status -eq 0 ]] || fail "--jobs then --log-dir: expected exit 0, got $status
+$out"
+
+run_raw --log-dir "$work_dir/l3" --jobs 2 "$work_dir/green"
+[[ $status -eq 0 ]] || fail "--log-dir then --jobs: expected exit 0, got $status
+$out"
+
+run_raw --log-dir
+[[ $status -eq 2 ]] || fail "--log-dir with no value: expected exit 2, got $status
+$out"
+grep -q '^usage: ' <<<"$out" || fail "--log-dir with no value: no usage line
+$out"
+
+pass "--log-dir is accepted before and after --jobs, and a missing value is a usage error"
+
+# --- 9. every suite's output is kept, named after the suite ---
+#
+# Passing suites included: a flake that passed on this run is exactly the cb-qrm shape - failed
+# once inside the gate, passed on every re-run - and its passing output is what you need.
+
+run_raw --log-dir "$work_dir/logs" "$work_dir/suites"
+[[ $status -eq 1 ]] || fail "a run over a, b, c: expected exit 1, got $status
+$out"
+
+runs="$(ls "$work_dir/logs")"
+[[ "$(wc -l <<<"$runs" | tr -d ' ')" == 1 ]] || fail "expected exactly one run directory, got:
+$runs"
+[[ "$runs" =~ ^[0-9]{8}-[0-9]{6}-[0-9]+$ ]] || fail "the run directory is named '$runs', not <YYYYmmdd>-<HHMMSS>-<pid>"
+
+for f in a-pass.sh c-pass.sh b-fail.sh; do
+  [[ -f "$work_dir/logs/$runs/$f.log" ]] || fail "no durable log for $f at $work_dir/logs/$runs/$f.log
+$(ls "$work_dir/logs/$runs")"
+done
+grep -q '^ok - a$' "$work_dir/logs/$runs/a-pass.sh.log" || fail "a-pass.sh.log does not hold a-pass.sh's own output
+$(cat "$work_dir/logs/$runs/a-pass.sh.log")"
+grep -q '^ok - c$' "$work_dir/logs/$runs/c-pass.sh.log" || fail "c-pass.sh.log does not hold c-pass.sh's own output
+$(cat "$work_dir/logs/$runs/c-pass.sh.log")"
+grep -q '^b stdout$' "$work_dir/logs/$runs/b-fail.sh.log" || fail "b-fail.sh.log does not hold b-fail.sh's stdout
+$(cat "$work_dir/logs/$runs/b-fail.sh.log")"
+grep -q '^b stderr$' "$work_dir/logs/$runs/b-fail.sh.log" || fail "b-fail.sh.log does not hold b-fail.sh's stderr
+$(cat "$work_dir/logs/$runs/b-fail.sh.log")"
+
+pass "every suite's full output is kept under the log directory, passing and failing alike"
+
+# --- 10. a red run says where the logs are; a green one does not ---
+
+set +e
+err="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logs2" "$work_dir/suites" 2>&1 >/dev/null)"
+set -e
+grep -qF -- "logs kept (last 3 runs): $work_dir/logs2/" <<<"$err" \
+  || fail "a red run does not name the log directory on stderr
+$err"
+
+run_raw --log-dir "$work_dir/logs3" "$work_dir/green"
+[[ $status -eq 0 ]] || fail "a green run: expected exit 0, got $status
+$out"
+! grep -q 'logs kept' <<<"$out" || fail "a green run said something about logs
+$out"
+
+pass "a red run names the log directory on stderr and a green run says nothing about logs"
+
+# --- 11. the log root keeps three runs ---
+#
+# The run directory carries $$, so five sequential runs produce five distinct names even inside one
+# second: the case must not depend on the clock advancing.
+
+created=""
+i=0
+while [[ $i -lt 5 ]]; do
+  run_raw --log-dir "$work_dir/retain" "$work_dir/green"
+  [[ $status -eq 0 ]] || fail "retention run $i: expected exit 0, got $status
+$out"
+  newest="$(ls "$work_dir/retain" | tail -n 1)"
+  created="$created"$'\n'"$newest"
+  i=$((i+1))
+done
+
+left="$(ls "$work_dir/retain")"
+[[ "$(wc -l <<<"$left" | tr -d ' ')" == 3 ]] || fail "after five runs the log root holds:
+$left"
+want="$(grep -v '^$' <<<"$created" | sort | tail -n 3)"
+[[ "$left" == "$want" ]] || fail "the three kept runs are not the three newest.
+kept:
+$left
+wanted:
+$want"
+
+pass "the log root keeps the three newest runs and deletes the rest"
+
+# --- 12. a log root that cannot be created falls back and does not fail the run ---
+#
+# Logging is a convenience and must never be the reason a green gate is red.
+
+printf 'not a directory\n' >"$work_dir/blocked"
+
+set +e
+out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/blocked/logs" "$work_dir/green" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "an unwritable log root over passing suites: expected exit 0, got $status
+$out"
+grep -q 'cannot write logs to' <<<"$out" || fail "an unwritable log root did not warn on stderr
+$out"
+! grep -q 'logs kept' <<<"$out" || fail "the fallback named a durable log directory
+$out"
+
+set +e
+out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/blocked/logs" "$work_dir/suites" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "an unwritable log root over a failing suite: expected exit 1, got $status
+$out"
+grep -q '^b stdout$' <<<"$out" || fail "the fallback lost the failing suite's replay
+$out"
+! grep -q 'logs kept' <<<"$out" || fail "the fallback named a durable log directory on a red run
+$out"
+
+pass "a log directory that cannot be created warns on stderr and the run still answers"
+
+# --- 13. the default log root is .cerebro/state/suite-logs, relative to the caller's cwd ---
+#
+# A subshell `cd', so this suite's own directory is not moved.
+
+mkdir -p "$work_dir/cwd-probe"
+set +e
+out="$(cd "$work_dir/cwd-probe" && env -u GITHUB_ACTIONS bash "$script" "$work_dir/green" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "the default log root: expected exit 0, got $status
+$out"
+default_root="$work_dir/cwd-probe/.cerebro/state/suite-logs"
+[[ -d "$default_root" ]] || fail "no log root at $default_root
+$out"
+runs="$(ls "$default_root")"
+[[ -f "$default_root/$runs/a-pass.sh.log" ]] || fail "no a-pass.sh.log under $default_root/$runs
+$(ls "$default_root/$runs" 2>/dev/null)"
+
+pass "with no --log-dir, logs land under .cerebro/state/suite-logs in the caller's working directory"
 suite_passed

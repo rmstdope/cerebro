@@ -44,6 +44,10 @@ echo "== bash suites =="
 # hung" - replays a failing suite's output, and runs every suite even after one fails: a gate that
 # stopped at the first failure would hide the others and the implementer would fix them one round
 # trip at a time.
+#
+# It also keeps each suite's full output under .cerebro/state/suite-logs/<timestamp-pid>/<suite>.log,
+# the last three runs, so a red gate is still diagnosable after the re-run that used to destroy the
+# evidence (cb-kf8). A red run names the directory on stderr; the path is already gitignored.
 if ! bash scripts/suite-runner tests; then
   status=1
 fi

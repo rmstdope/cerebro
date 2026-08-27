@@ -136,6 +136,12 @@ therefore arrive in completion order, and each failing suite's output is replaye
 has ended rather than inline. What makes it safe is that every suite builds its fixtures under its
 own `$work_dir` — a new suite that reaches outside it breaks the whole gate, not just itself.
 
+Every run also keeps each suite's full output — passing and failing alike — under
+`.cerebro/state/suite-logs/<YYYYmmdd>-<HHMMSS>-<pid>/<suite>.log`, the last three runs, pruned at
+the start of a run; `--log-dir DIR` moves the root, and a red run names its directory on stderr
+(cb-kf8). The path is already gitignored, here and in every consumer. Before it, the only record of
+a red gate was terminal scrollback, and the re-run an implementer does first is what destroyed it.
+
 Every suite sources `tests/lib/consumer.sh` for `fail`/`pass`, `git_q`, its work directory and the
 two throwaway-consumer shapes (`consumer_new`, `consumer_with_submodule`); `tests/lib/` is a
 directory precisely so the gate's `tests/*.sh` glob never runs it as a suite (cb-dul). A suite keeps

@@ -38,6 +38,18 @@
 # A suite that is KILLED rather than exiting - the harness's output ceiling, a `kill' - leaves no
 # result behind, and a missing result is reported as a failure with an empty replay. Never a pass.
 #
+# Every suite's full output is ALSO kept on disk, passing and failing alike, under
+# <log dir>/<YYYYmmdd>-<HHMMSS>-<pid>/<suite>.log - `tests/launchers.sh' becomes `launchers.sh.log'.
+# The log dir is --log-dir, or `.cerebro/state/suite-logs' relative to the caller's cwd, which is
+# already gitignored here and in every consumer. The last 3 runs are kept and older ones are
+# deleted at the start of a run, so the root never grows; a red run names its directory on stderr
+# and a green run says nothing. cb-kf8: two implementers hit a red gate on the same day and neither
+# could say which assertion failed, because the replay lived only in terminal scrollback and the
+# re-run - the first thing you do - is what destroyed it. A passing suite's log matters too: a
+# flake that passed on this run is exactly the one whose output you need. If the log dir cannot be
+# created the run says so on stderr, keeps the logs in its temp directory for that run only, and
+# carries on - logging is a convenience and must never be the reason a green gate is red.
+#
 # <path> is the glob result as-is, so `suite-runner tests' prints `tests/agent-alive.sh'.
 #
 # Under GitHub Actions ($GITHUB_ACTIONS set, which GitHub sets on every job) each failing suite's
@@ -45,7 +57,8 @@
 # carry no annotation: they interleave, and a group cannot span interleaved output. So a green run
 # under CI has no groups at all - the per-suite timing lines are what the log keeps.
 #
-# Exit 0 every suite passed, 1 any suite failed, 2 a usage error (a bad --jobs, no directory, more
+# Exit 0 every suite passed, 1 any suite failed, 2 a usage error (a bad --jobs, a --log-dir with no
+# value, no directory, more
 # than one, or a path that is not a directory) - one line on stderr and nothing run.
 #
 # The caller's working directory is left alone: `tests/gate' cd's to the repository root first, and
@@ -57,19 +70,33 @@
 # tests/launchers.sh and tests/consumer-fixture.sh both guard (ah-qled.5.3), and a script that is
 # not a launcher has no business in it.
 #
-#     scripts/suite-runner [--jobs N] <dir>
+#     scripts/suite-runner [--jobs N] [--log-dir DIR] <dir>
 
 # NOT `set -e': a failing suite is an answer, and every suite must still run after one fails.
 set -uo pipefail
 
-usage="usage: suite-runner [--jobs N] <dir>"
+usage="usage: suite-runner [--jobs N] [--log-dir DIR] <dir>"
 
 jobs=""
-if [[ "${1:-}" == "--jobs" ]]; then
-  jobs="${2:-}"
-  [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "$usage" >&2; exit 2; }
-  shift 2
-fi
+log_dir=""
+keep_runs=3                          # how many runs of evidence survive under the log root
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+    --jobs)
+      jobs="${2:-}"
+      [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "$usage" >&2; exit 2; }
+      shift 2 ;;
+    --log-dir)
+      log_dir="${2:-}"
+      [[ -n "$log_dir" ]] || { echo "$usage" >&2; exit 2; }
+      shift 2 ;;
+    *) break ;;
+  esac
+done
+
+# Relative on purpose: `tests/gate' and CI both cd to the repository root first, and a consumer
+# running `.claude/cerebro/scripts/suite-runner tests' from its own root gets its own log root.
+[[ -n "$log_dir" ]] || log_dir=".cerebro/state/suite-logs"
 
 [[ $# -eq 1 ]] || { echo "$usage" >&2; exit 2; }
 dir="$1"
@@ -85,6 +112,41 @@ annotate=0
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+# The durable per-run log directory (cb-kf8). Deliberately NOT covered by the trap above: surviving
+# the run is the whole point. `set -e' is off here, so mkdir's status is tested rather than
+# assumed - a log root that cannot be created falls back to $tmp and never turns a green gate red.
+durable=1
+run_dir="$log_dir/$(date +%Y%m%d-%H%M%S)-$$"
+if ! mkdir -p "$run_dir" 2>/dev/null; then
+  echo "suite-runner: cannot write logs to $log_dir; keeping them in $tmp for this run only" >&2
+  durable=0
+  run_dir="$tmp"
+fi
+
+# Prune at the start, after this run's directory exists, so the root never holds more than
+# $keep_runs between runs. The glob is narrow on purpose: anything in there this script did not
+# create is left alone. A string rather than an array - "${arr[@]}" on an empty array is an
+# unbound-variable error under `set -u' in bash 3.2, and the list is empty on the first run.
+# `head -n -3' would have been shorter and is GNU-only: macOS rejects a negative count.
+if ((durable)); then
+  names=""
+  n_runs=0
+  for d in "$log_dir"/[0-9]*-[0-9]*-[0-9]*; do
+    [[ -d "$d" ]] || continue
+    names="$names"$'\n'"${d##*/}"
+    n_runs=$((n_runs+1))
+  done
+  if [[ $n_runs -gt $keep_runs ]]; then
+    drop=$((n_runs - keep_runs))
+    while IFS= read -r nm; do
+      [[ -n "$nm" ]] || continue
+      [[ $drop -gt 0 ]] || break
+      rm -rf "$log_dir/$nm"
+      drop=$((drop-1))
+    done <<<"$names"
+  fi
+fi
 
 # A token pipe as the semaphore. bash 3.2 - what macOS ships and what the gate runs on locally -
 # has no `wait -n', and running batches of N with a `wait' between them would idle every core but
@@ -104,7 +166,7 @@ run_one() {
   local t="$1" slot="$2" rc
   echo "-- $t"
   SECONDS=0
-  bash "$t" >"$tmp/$slot.log" 2>&1
+  bash "$t" >"$run_dir/${t##*/}.log" 2>&1
   rc=$?
   echo "$rc" >"$tmp/$slot.rc"
   if [[ $rc -eq 0 ]]; then echo "ok   $t (${SECONDS}s)"; else echo "FAIL $t (${SECONDS}s)"; fi
@@ -133,7 +195,7 @@ while IFS= read -r t; do
     failed="$failed $t"
     ((annotate)) && echo "::group::$t"
     echo "== output of $t =="
-    cat "$tmp/$i.log" 2>/dev/null
+    cat "$run_dir/${t##*/}.log" 2>/dev/null
     ((annotate)) && { echo "::endgroup::"; echo "::error file=$t::$t failed"; }
   fi
   i=$((i+1))
@@ -141,6 +203,7 @@ done <<<"$paths"
 
 if [[ -n "$failed" ]]; then
   echo "FAILED:$failed" >&2
+  ((durable)) && echo "logs kept (last $keep_runs runs): $run_dir" >&2
   exit 1
 fi
 echo "all suites passed"

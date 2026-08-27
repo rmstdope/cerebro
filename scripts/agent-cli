@@ -20,6 +20,11 @@
 #     agent-cli --check <Name>        exit 0 if this fleet can launch; otherwise refuse through
 #                                     launch-refused and exit 3
 #     agent-cli --known               the providers this cerebro can run, one per line
+#     agent-cli --hooks               where each provider whose hooks are discovered FROM THE
+#                                     REPOSITORY keeps them, one tab-separated row per provider:
+#                                     provider, the source directory relative to this checkout's
+#                                     root, the destination directory relative to the consumer
+#                                     root. `claude' has no row, so an empty answer is legal.
 #     agent-cli --layouts             where each provider discovers agents and skills, one
 #                                     tab-separated row per provider: provider, agents directory,
 #                                     skills directory (both relative to the consumer root), and
@@ -62,7 +67,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # The two tables, and nothing else provider-shaped anywhere in the repository. Adding an arm is:
 # move its word from PLANNED to KNOWN, and add its branch to --binary, --argv, --prompt-argv and
-# the PATH check. That is the seam.
+# the PATH check. That is the seam. A provider whose hooks come from the repository emits no
+# `--settings' token from --argv, and gets a `--hooks' row instead: `scripts/launch' passes
+# `--settings' unconditionally and keeps doing so; it is the provider arm that decides whether to
+# spell it.
 KNOWN="claude"
 PLANNED="copilot"
 
@@ -71,6 +79,12 @@ PLANNED="copilot"
 # PLANNED. `sync-symlinks.sh' writes every layout in every consumer whatever `agent_cli' says
 # (cb-d59.4), so that switching provider is one line in .cerebro/project.conf and nothing else.
 # The FIRST row is the canonical layout, and the sync's mirror pass reads it as such.
+# The fourth table: where a provider whose hooks are DISCOVERED FROM THE REPOSITORY keeps them, and
+# where they must be installed for it to find them. `claude' has no row - its hook settings file is
+# passed with `--settings' and is installed nowhere - so an empty output is a legal answer and a
+# caller looping over the rows must survive one.
+HOOKS="copilot	hooks/copilot	.github/hooks"
+
 LAYOUTS="claude	.claude/agents	.claude/skills	.md
 copilot	.github/agents	.github/skills	.agent.md"
 
@@ -139,7 +153,7 @@ resolve() {
 }
 
 usage() {
-  echo "usage: agent-cli [--binary | --known | --layouts | --check <Name> | --argv ... | --prompt-argv <text>]" >&2
+  echo "usage: agent-cli [--binary | --known | --layouts | --hooks | --check <Name> | --argv ... | --prompt-argv <text>]" >&2
   exit 2
 }
 
@@ -149,6 +163,15 @@ case "$verb" in
   --known)
     [[ $# -eq 1 ]] || usage
     for p in $KNOWN; do printf '%s\n' "$p"; done
+    exit 0
+    ;;
+  --hooks)
+    # Answered BEFORE resolve, for the same reasons --layouts is: the sync runs from
+    # launch-preflight before every single session, so one stderr line here is one line above
+    # every agent's first prompt for ever - and a consumer declaring a provider this cerebro
+    # cannot run yet is exactly the one needing the row.
+    [[ $# -eq 1 ]] || usage
+    printf '%b\n' "$HOOKS"
     exit 0
     ;;
   --layouts)

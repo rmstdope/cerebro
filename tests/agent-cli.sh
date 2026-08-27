@@ -220,3 +220,44 @@ set -e
 pass "--layouts takes no arguments"
 
 printf 'agent_cli claude\n' > "$conf"
+
+# --- --hooks: where each provider's repository-discovered hooks live -----------------------------
+#
+# The one place a provider's hook directories are written down (cb-d59.5). Like --layouts it
+# answers before `resolve', for every provider whatever this consumer declared: sync-symlinks.sh
+# runs from launch-preflight before every session, and one stderr line there is one line above
+# every agent's first prompt for ever. `claude' has no row - its hook settings file is passed on
+# the command line and is installed nowhere.
+printf 'agent_cli claude\n' > "$conf"
+out="$("$agent_cli" --hooks 2>"$work_dir/err")"
+err="$(cat "$work_dir/err")"
+rows=()
+while IFS= read -r row; do [[ -n "$row" ]] && rows+=("$row"); done <<<"$out"
+[[ "${#rows[@]}" -eq 1 ]] || fail "--hooks: expected one row, got ${#rows[@]}: $out"
+IFS=$'\t' read -r p src dest <<<"${rows[0]}"
+[[ "$p" == "copilot" && "$src" == "hooks/copilot" && "$dest" == ".github/hooks" ]] \
+  || fail "--hooks row 1: expected the copilot hook row, got '${rows[0]}'"
+echo "$out" | grep -q '^claude' \
+  && fail "--hooks must not list claude: its settings file is passed on the command line"
+pass "--hooks prints one tab-separated row per provider whose hooks live in the repository"
+
+: > "$conf"
+out="$("$agent_cli" --hooks 2>"$work_dir/err")"
+err="$(cat "$work_dir/err")"
+[[ -z "$err" ]] || fail "--hooks with no declaration: expected nothing on stderr, got: $err"
+printf 'agent_cli wat\n' > "$conf"
+set +e
+out="$("$agent_cli" --hooks 2>"$work_dir/err")"; status=$?
+set -e
+[[ $status -eq 0 ]] || fail "--hooks with an unrunnable declaration: expected exit 0, got $status"
+echo "$out" | grep -q '^copilot' \
+  || fail "--hooks must answer for copilot though it is not runnable, got: $out"
+pass "--hooks says nothing on stderr and answers for an unrunnable declaration"
+
+set +e
+"$agent_cli" --hooks x >/dev/null 2>&1; status=$?
+set -e
+[[ $status -eq 2 ]] || fail "--hooks with an argument: expected exit 2, got $status"
+pass "--hooks takes no arguments"
+
+printf 'agent_cli claude\n' > "$conf"

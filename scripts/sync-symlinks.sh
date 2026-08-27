@@ -21,6 +21,13 @@ shopt -s nullglob
 # root is still the project's alone. What is deliberately superseded is only the "nothing outside
 # .claude/" summary of it. The second layout lands in `.github/', which is tracked, so the sync
 # says so once whenever it writes there.
+#
+# This script is on the hot path of the whole fleet: `launch-preflight' runs it before every single
+# session, and every gate run runs it dozens of times through tests/launchers.sh and
+# tests/launch-preflight.sh. Its PROCESS COUNT is therefore load-bearing, not a detail - it once
+# spent two thirds of its 299ms forking `basename' and `readlink' once per link. So: parameter
+# expansion rather than `basename', no `ln' for a link that already points where it should, and one
+# `readlink' per destination directory rather than two per link. Keep it that way.
 
 # -P (physical) throughout: consumer-root resolves symlinks the same way (macOS mktemp lives
 # under /var -> /private/var), and SOURCE_ROOT is compared against paths it hands back.

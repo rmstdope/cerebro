@@ -20,6 +20,9 @@
 #     agent-cli --check <Name>        exit 0 if this fleet can launch; otherwise refuse through
 #                                     launch-refused and exit 3
 #     agent-cli --known               the providers this cerebro can run, one per line
+#     agent-cli --agent-file-models   `yes' if the `model:'/`effort:' words in agents/<role>.md are
+#                                     this fleet's provider's ids, `no' if they are another
+#                                     provider's and must be ignored
 #     agent-cli --hooks               where each provider whose hooks are discovered FROM THE
 #                                     REPOSITORY keeps them, one tab-separated row per provider:
 #                                     provider, the source directory relative to this checkout's
@@ -71,8 +74,13 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # `--settings' token from --argv, and gets a `--hooks' row instead: `scripts/launch' passes
 # `--settings' unconditionally and keeps doing so; it is the provider arm that decides whether to
 # spell it.
-KNOWN="claude"
-PLANNED="copilot"
+KNOWN="claude copilot"
+# PLANNED is empty, and stays declared. Do NOT delete it, nor `resolve''s planned branch, nor
+# `refusal_sentence''s planned arm: they are the only thing that tells a consumer sitting on an
+# older cerebro, which declares a provider a newer cerebro has, to BUMP THE SUBMODULE rather than
+# fix a declaration that is perfectly correct. The unknown-provider sentence gives the opposite
+# advice, and it is the wrong one.
+PLANNED=""
 
 # The third table: where a provider LOOKS for agents and skills, which is a different question from
 # whether this fleet can start a session on it - so `copilot' has a row here while it is still in
@@ -84,6 +92,12 @@ PLANNED="copilot"
 # passed with `--settings' and is installed nowhere - so an empty output is a legal answer and a
 # caller looping over the rows must survive one.
 HOOKS="copilot	hooks/copilot	.github/hooks"
+
+# The fifth table: the providers whose model and effort ids the agent files' frontmatter is written
+# in. Claude Code's, and nobody else's - cb-d59 rejected growing a `model_copilot:' key in every
+# agent file (decision 5), so on any other provider the frontmatter is ignored and
+# .cerebro/models.conf is the only place that provider's models are chosen.
+FRONTMATTER_MODELS="claude"
 
 LAYOUTS="claude	.claude/agents	.claude/skills	.md
 copilot	.github/agents	.github/skills	.agent.md"
@@ -153,7 +167,7 @@ resolve() {
 }
 
 usage() {
-  echo "usage: agent-cli [--binary | --known | --layouts | --hooks | --check <Name> | --argv ... | --prompt-argv <text>]" >&2
+  echo "usage: agent-cli [--binary | --known | --layouts | --hooks | --agent-file-models | --check <Name> | --argv ... | --prompt-argv <text>]" >&2
   exit 2
 }
 
@@ -183,7 +197,7 @@ case "$verb" in
     printf '%b\n' "$LAYOUTS"
     exit 0
     ;;
-  ""|--binary|--check|--argv|--prompt-argv) ;;
+  ""|--binary|--check|--argv|--prompt-argv|--agent-file-models) ;;
   *) usage ;;
 esac
 
@@ -199,10 +213,17 @@ case "$verb" in
   "")
     printf '%s\n' "$provider"
     ;;
+  --agent-file-models)
+    # AFTER `resolve', unlike --layouts and --hooks: this one answers about the provider THIS fleet
+    # runs on, not about every provider there is.
+    [[ $# -eq 1 ]] || usage
+    if in_list "$provider" "$FRONTMATTER_MODELS"; then printf '%s\n' "yes"; else printf '%s\n' "no"; fi
+    ;;
   --binary)
     [[ $# -eq 1 ]] || usage
     case "$provider" in
-      claude) printf '%s\n' "claude" ;;
+      claude)  printf '%s\n' "claude" ;;
+      copilot) printf '%s\n' "copilot" ;;
     esac
     ;;
   --check)
@@ -219,11 +240,23 @@ case "$verb" in
           exit 3
         fi
         ;;
+      copilot)
+        if ! command -v copilot >/dev/null 2>&1; then
+          "$here/launch-refused" "$name" "copilot is not on PATH - install GitHub Copilot CLI or fix PATH before starting $name"
+          exit 3
+        fi
+        ;;
     esac
     ;;
   --prompt-argv)
     [[ $# -eq 2 ]] || usage
-    printf '%s\0' "$2"
+    case "$provider" in
+      claude) printf '%s\0' "$2" ;;
+      # `-i' and not `-p': `-p' exits when the prompt is finished, `-i' stays up in a terminal,
+      # which is the shape the fleet view needs. And not a bare trailing argument either - copilot
+      # refuses one outright (docs/providers/copilot.md, M3/M11).
+      copilot) printf '%s\0' -i "$2" ;;
+    esac
     ;;
   --argv)
     shift
@@ -247,6 +280,17 @@ case "$verb" in
         [[ -n "$effort" ]] && printf '%s\0' --effort "$effort"
         [[ -n "$have_settings" ]] && printf '%s\0' --settings "$settings"
         printf '%s\0' --permission-mode auto
+        ;;
+      copilot)
+        # Three absences, each as load-bearing as the presences. No `--remote-control': copilot has
+        # none, and cb-d59 accepted the loss. No `--settings': copilot discovers its hooks from the
+        # consumer's .github/hooks/ (cb-d59.5), so the argument is accepted here and ignored. And
+        # `--allow-all-tools' rather than `--permission-mode auto', there being no such flag - it
+        # goes last, where the claude arm puts its own.
+        printf '%s\0' --agent "$role" --name "$name"
+        [[ -n "$model" ]] && printf '%s\0' --model "$model"
+        [[ -n "$effort" ]] && printf '%s\0' --effort "$effort"
+        printf '%s\0' --allow-all-tools
         ;;
     esac
     ;;

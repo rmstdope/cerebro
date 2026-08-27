@@ -51,7 +51,7 @@ log="$(errors_of "$c")"
 [[ "$(jq -r .event "$log")" == "error" ]] || fail "line: expected event=error, got: $(cat "$log")"
 [[ "$(jq -r .context "$log")" == "launch Storm" ]] || fail "line: expected context='launch Storm', got: $(cat "$log")"
 [[ "$(jq -r .message "$log")" == "$msg" ]] || fail "line: expected the bare message with no cerebro: prefix, got: $(cat "$log")"
-jq -r .ts "$log" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' <<<"$(jq -r .ts "$log")" \
   || fail "line: expected the view's own UTC ts format, got: $(jq -r .ts "$log")"
 pass "the refusal is appended to errors.jsonl as one error line"
 
@@ -102,5 +102,5 @@ out="$(bash "$repo_root/scripts/launch-refused" Storm 2>&1 >/dev/null)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "usage: expected exit 2, got $status"
-echo "$out" | grep -q "usage: launch-refused" || fail "usage: expected a usage line, got: $out"
+grep -q "usage: launch-refused" <<<"$out" || fail "usage: expected a usage line, got: $out"
 pass "a call with no message is a usage error"

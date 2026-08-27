@@ -61,9 +61,9 @@ args="$(printf 'ARG:--model\nARG:sonnet\nARG:--effort\nARG:high\nARG:--model\nAR
   || fail "arg_value: a flag on the last line gives nothing"
 pass "arg_value gives the value after the first occurrence, and nothing for an absent flag"
 
-# The defect itself: written as `echo "$big" | grep -n ... | head -1' this is the shape that loses
-# the race - the reader exits at the first line and the writer dies of SIGPIPE. As a here-string
-# there is no writer to kill, so an early match is an answer rather than a failure.
+# The defect itself: written as a variable piped into `grep -n' and then into `head -1', this is the
+# shape that loses the race - the reader exits at the first line and the writer dies of SIGPIPE. As
+# a here-string there is no writer to kill, so an early match is an answer rather than a failure.
 big="$(seq 1 200000)"
 [[ "$(line_of "$big" '^1$')" == "1" ]] \
   || fail "line_of: the first of 200000 lines is line 1, got: $(line_of "$big" '^1$')"
@@ -146,7 +146,7 @@ pass "consumer_new --origin clones a seeded origin; advance_origin puts the cons
 c="$(consumer_with_submodule alt vendor/cerebro)"
 [[ "$("$c/vendor/cerebro/scripts/consumer-root")" == "$c" ]] \
   || fail "consumer_with_submodule: consumer-root printed $("$c/vendor/cerebro/scripts/consumer-root"), wanted $c"
-git -C "$c" submodule status | grep -q "vendor/cerebro" \
+grep -q "vendor/cerebro" <<<"$(git -C "$c" submodule status)" \
   || fail "consumer_with_submodule: submodule status does not list vendor/cerebro"
 pass "consumer_with_submodule: a real submodule at the mount, whose consumer-root resolves the consumer"
 
@@ -159,7 +159,7 @@ out="$( ( consumer_new "bad/name" ) 2>&1 )"
 status=$?
 set -e
 [[ $status -eq 1 ]] || fail "consumer_new bad/name: expected exit 1, got $status"
-echo "$out" | grep -q "bad/name" || fail "consumer_new bad/name: the refusal should name it, got: $out"
+grep -q "bad/name" <<<"$out" || fail "consumer_new bad/name: the refusal should name it, got: $out"
 pass "consumer_new refuses a name containing a slash"
 
 # A name twice re-inits the first consumer's directory and the second case then runs against the
@@ -169,7 +169,7 @@ out="$( ( consumer_new plain ) 2>&1 )"
 status=$?
 set -e
 [[ $status -eq 1 ]] || fail "consumer_new twice: expected exit 1, got $status"
-echo "$out" | grep -q "already exists" || fail "consumer_new twice: got: $out"
+grep -q "already exists" <<<"$out" || fail "consumer_new twice: got: $out"
 pass "consumer_new refuses a name it has already built"
 
 # A fabricator wrapping consumer_new is called as `x="$(new_fixture)"`, so a counter incremented

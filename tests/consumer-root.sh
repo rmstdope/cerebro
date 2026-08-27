@@ -67,7 +67,7 @@ out="$("$standalone/consumer-root" 2>&1)"
 status=$?
 set -e
 [[ $status -ne 0 ]] || fail "standalone: expected a non-zero exit, got 0"
-echo "$out" | grep -q "is not <consumer>/.claude/cerebro/scripts" \
+grep -q "is not <consumer>/.claude/cerebro/scripts" <<<"$out" \
   || fail "standalone: expected the guard's message, got: $out"
 pass "refuses when there is no consumer above .claude/cerebro/scripts"
 
@@ -147,7 +147,7 @@ out="$("$plain_consumer/.claude/cerebro/scripts/consumer-root" --shared 2>&1)"
 status=$?
 set -e
 [[ $status -ne 0 ]] || fail "non-git --shared: expected a non-zero exit, got 0"
-echo "$out" | grep -q "is not inside a git working tree" \
+grep -q "is not inside a git working tree" <<<"$out" \
   || fail "non-git --shared: expected the guard's message, got: $out"
 pass "--shared refuses when the consumer is not inside a git working tree"
 

@@ -69,8 +69,8 @@ set -e
 pass "an unset app_paths refuses to classify: non-zero, and nothing on stdout"
 
 err="$("$app_paths" --classify packages/shared/src/x.ts 2>&1 >/dev/null || true)"
-echo "$err" | grep -q "app_paths" || fail "unset key: expected app_paths named on stderr, got: $err"
-echo "$err" | grep -qi "cannot classify" \
+grep -q "app_paths" <<<"$err" || fail "unset key: expected app_paths named on stderr, got: $err"
+grep -qi "cannot classify" <<<"$err" \
   || fail "unset key: expected it to say it cannot classify, got: $err"
 pass "an unset app_paths says on stderr that it cannot classify, and names the key"
 
@@ -89,7 +89,7 @@ out="$("$app_paths" --classify 2>&1)"
 status=$?
 set -e
 [[ $status -ne 0 ]] || fail "no paths: expected a non-zero exit, got 0"
-echo "$out" | grep -q "usage:" || fail "no paths: expected a usage message, got: $out"
+grep -q "usage:" <<<"$out" || fail "no paths: expected a usage message, got: $out"
 pass "--classify with no path is a usage error"
 
 # --- the explanation never reaches stdout, where it would poison a substitution ---
@@ -113,7 +113,7 @@ pass "no literal application-path regex remains in agents/, skills/ or CLAUDE.md
 # --- the never-edit rule reads identically in all five places ---
 rule="you are editing the project's application paths"
 for f in agents/architect.md agents/verifier.md agents/planner.md agents/user-feedback.md CLAUDE.md; do
-  tr '\n' ' ' < "$repo_root/$f" | tr -s ' ' | grep -qF "$rule" \
+  grep -qF "$rule" <<<"$(tr '\n' ' ' < "$repo_root/$f" | tr -s ' ')" \
     || fail "the never-edit rule: $f does not read as the one shared rule"
 done
 pass "the never-edit rule reads identically in all five places"

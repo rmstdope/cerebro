@@ -22,6 +22,12 @@
 #   pass <msg>                    echoes "ok - <msg>"
 #   git_q ...                     git with a test identity, so a commit needs no global config
 #
+#   arg_follows <text> <flag re> <value re>
+#                                 0 when the line after the first <flag re> line matches <value re>
+#   line_of <text> <regex>        the 1-based number of the first matching line, or nothing
+#   line_of_fixed <text> <substr> the same, matching <substr> literally
+#   arg_value <text> <flag>       the value after the first `ARG:<flag>' line, or nothing
+#
 #   $work_dir                     ONE physical temp directory per suite, made on source and removed
 #                                 by the EXIT trap this file installs
 #   cleanup_add <path>...         more paths for that trap (a suite's stub_dir, a second mktemp)
@@ -60,6 +66,49 @@ pass() {
 # A test identity on the command line rather than in a config: the fixture must not depend on
 # whatever `user.name` the machine running the suite happens to have, and must not write one.
 git_q() { git -c user.name=test -c user.email=test@example.com "$@"; }
+
+# --- reading text without a pipe --------------------------------------------------------------------
+#
+# Assertions read their text through a here-string, never `echo "$x" | grep -q'. That pipeline is a
+# SIGPIPE trap (cb-ue0, d799ebe): `grep -q' exits at the first match and closes the pipe under
+# `echo', which then fails with `write error: Broken pipe', and `set -o pipefail' turns that into a
+# failed assertion about an argument that was in fact present. It is a race, so it fires on a loaded
+# runner and not here, and it fired the moment cb-ue0 removed a fork that had been slowing the
+# writer down. `head' closes a pipe early for the same reason and is gone with it; `tail', `grep -c'
+# and `wc' read their input to the end and are not this defect.
+#
+# The four helpers below are that rule for the shapes the suites keep needing: one awk each, no pipe
+# at all. None of them is called at source time, so the library still sources with nothing but the
+# narrowed PATH `tests/consumer-lib.sh' pins - defining a function does not run its body.
+
+# <text> <flag line regex> <value line regex> -> 0 when the line after the first line matching
+# <flag line regex> matches <value line regex>.
+arg_follows() {
+  awk -v f="$2" -v v="$3" '$0 ~ f { if ((getline nxt) > 0 && nxt ~ v) { found = 1; exit } }
+                           END { exit !found }' <<<"$1"
+}
+
+# <text> <regex> -> the 1-based number of the first matching line, or nothing.
+line_of() {
+  awk -v r="$2" '$0 ~ r { print NR; exit }' <<<"$1"
+}
+
+# <text> <substring> -> the 1-based number of the first line containing <substring> literally, or
+# nothing. The fixed-string half of `line_of': the paths and result lines the suites look for carry
+# `.', `/' and `(', which a regex would read as syntax.
+line_of_fixed() {
+  awk -v s="$2" 'index($0, s) { print NR; exit }' <<<"$1"
+}
+
+# <text> <flag> -> the value on the line after the first `ARG:<flag>' line, with its `ARG:' prefix
+# stripped. Nothing when the flag is absent, or when the line after it is not a different `ARG:'
+# line - which is an answer, not a failure: a launcher that passes no --model is what several
+# assertions are about.
+arg_value() {
+  awk -v f="ARG:$2" '$0 == f { if ((getline nxt) > 0 && nxt ~ /^ARG:/ && nxt != f) {
+                                 sub(/^ARG:/, "", nxt); print nxt }
+                               exit }' <<<"$1"
+}
 
 # --- the work directory, and the one trap over it ----------------------------------------------------
 #

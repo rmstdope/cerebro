@@ -31,6 +31,45 @@ set -e
 [[ "$(pass "y")" == "ok - y" ]] || fail "pass should print 'ok - y', got: $(pass "y")"
 pass "fail exits 1 and names the assertion; pass prints an ok line"
 
+# --- reading text without a pipe ------------------------------------------------------------------
+
+text="$(printf 'ARG:--model\nARG:sonnet\nARG:--effort\nARG:high')"
+arg_follows "$text" '^ARG:--model$' '^ARG:sonnet$' || fail "arg_follows: --model is followed by sonnet"
+arg_follows "$text" '^ARG:--model$' '^ARG:high$' && fail "arg_follows: --model is not followed by high"
+arg_follows "$text" '^ARG:--absent$' '^ARG:.*$' && fail "arg_follows: an absent flag follows nothing"
+pass "arg_follows answers about the line after the flag, and refuses an absent flag"
+
+lines="$(printf 'alpha\nbeta\ngamma')"
+[[ "$(line_of "$lines" '^beta$')" == "2" ]] \
+  || fail "line_of: beta is line 2, got: $(line_of "$lines" '^beta$')"
+[[ -z "$(line_of "$lines" '^delta$')" ]] \
+  || fail "line_of: an absent pattern gives nothing, got: $(line_of "$lines" '^delta$')"
+pass "line_of gives the first matching line number, and nothing when there is no match"
+
+meta="$(printf 'running\nok   /tmp/x.sh (0.4s)\ndone')"
+[[ "$(line_of_fixed "$meta" 'ok   /tmp/x.sh (')" == "2" ]] \
+  || fail "line_of_fixed: the ok line is line 2, got: $(line_of_fixed "$meta" 'ok   /tmp/x.sh (')"
+[[ -z "$(line_of_fixed "$meta" 'ok   /tmp/y.sh (')" ]] \
+  || fail "line_of_fixed: an absent substring gives nothing"
+pass "line_of_fixed matches a substring with regex metacharacters in it"
+
+args="$(printf 'ARG:--model\nARG:sonnet\nARG:--effort\nARG:high\nARG:--model\nARG:opus')"
+[[ "$(arg_value "$args" '--model')" == "sonnet" ]] \
+  || fail "arg_value: the first --model is sonnet, got: $(arg_value "$args" '--model')"
+[[ -z "$(arg_value "$args" '--absent')" ]] || fail "arg_value: an absent flag gives nothing"
+[[ -z "$(arg_value "$(printf 'ARG:--effort\nARG:--model')" '--model')" ]] \
+  || fail "arg_value: a flag on the last line gives nothing"
+pass "arg_value gives the value after the first occurrence, and nothing for an absent flag"
+
+# The defect itself: written as `echo "$big" | grep -n ... | head -1' this is the shape that loses
+# the race - the reader exits at the first line and the writer dies of SIGPIPE. As a here-string
+# there is no writer to kill, so an early match is an answer rather than a failure.
+big="$(seq 1 200000)"
+[[ "$(line_of "$big" '^1$')" == "1" ]] \
+  || fail "line_of: the first of 200000 lines is line 1, got: $(line_of "$big" '^1$')"
+unset big
+pass "a helper reading 200000 lines answers about the first one without failing"
+
 # --- the work directory -------------------------------------------------------------------------
 #
 # Physical, because consumer-root, sync-symlinks.sh and the sweeps all resolve paths physically and

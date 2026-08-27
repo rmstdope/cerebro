@@ -22,21 +22,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
-# Assertions read their text through a here-string, never `echo "$x" | grep -q'. That pipeline is a
-# SIGPIPE trap (cb-ue0): `grep -q' exits at the first match and closes the pipe under `echo', which
-# then fails with `write error: Broken pipe', and `set -o pipefail' turns that into a failed
-# assertion about an argument that was in fact present. It is a race, so it fires on CI and not
-# here, and it fired the moment this bead removed a fork that had been slowing the writer down.
-# `arg_follows' is the same rule for the "this flag is followed by this value" shape: one awk, no
-# pipe at all. `head' and `tail' close a pipe early for the same reason and are gone with it.
-arg_follows() {  # <text> <flag line regex> <value line regex>
-  awk -v f="$2" -v v="$3" '$0 ~ f { if ((getline nxt) > 0 && nxt ~ v) { found = 1; exit } }
-                           END { exit !found }' <<<"$1"
-}
-
-line_of() {      # <text> <regex> -> the 1-based number of the first matching line, or nothing
-  awk -v r="$2" '$0 ~ r { print NR; exit }' <<<"$1"
-}
+# `arg_follows', `line_of', `line_of_fixed' and `arg_value' come from the library, along with the
+# rule they exist for: a suite reads text with `<<<', never `echo "$x" | grep -q'.
 
 # The fake sessions the duplicate-refusal cases start, killed by the EXIT trap the library
 # installs - it calls `suite_cleanup' first, before removing anything, so a failed assertion

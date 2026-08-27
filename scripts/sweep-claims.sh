@@ -133,7 +133,7 @@ while IFS= read -r bead; do
 
   if [[ -n "$non_mockup" ]]; then
     on_main=true
-    hash="$(printf '%s\n' "$non_mockup" | head -n1 | awk '{print $1}')"
+    hash="$(awk 'NR==1 { print $1; exit }' <<<"$non_mockup")"
     committed_at="$(git -C "$repo_root" log -1 --format='%ct' "$hash" 2>/dev/null || true)"
     if [[ -n "$committed_at" ]]; then
       commit_age_min=$(( ($(date +%s) - committed_at) / 60 ))

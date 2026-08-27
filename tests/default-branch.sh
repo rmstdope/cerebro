@@ -71,10 +71,7 @@ pass "an unset origin/HEAD falls through to main"
 
 # --- a standalone clone, with no consumer at all, still answers ---
 standalone="$work_dir/standalone"
-mkdir -p "$standalone/scripts"
-for s in consumer-root project-conf default-branch root-hints.sh; do
-  ln -s "$repo_root/scripts/$s" "$standalone/scripts/$s"
-done
+"$repo_root/tests/lib/place-scripts" "$standalone/scripts" consumer-root project-conf default-branch
 set +e
 out="$("$standalone/scripts/default-branch" 2>/dev/null)"
 status=$?

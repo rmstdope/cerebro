@@ -42,9 +42,7 @@ pass "--mount names .claude/cerebro at the standard mount"
 # --- a linked worktree of it: plain answers the worktree, --shared answers the main checkout ---
 worktree="$consumer/.cerebro/worktrees/wt"
 git -C "$consumer" worktree add -q "$worktree" -b wt-branch
-mkdir -p "$worktree/.claude/cerebro/scripts"
-ln -s "$repo_root/scripts/consumer-root" "$worktree/.claude/cerebro/scripts/consumer-root"
-ln -s "$repo_root/scripts/root-hints.sh" "$worktree/.claude/cerebro/scripts/root-hints.sh"
+"$repo_root/tests/lib/place-scripts" "$worktree/.claude/cerebro/scripts" consumer-root
 
 wt_plain="$("$worktree/.claude/cerebro/scripts/consumer-root")"
 [[ "$wt_plain" == "$(cd "$worktree" && pwd -P)" ]] \
@@ -58,9 +56,7 @@ pass "--shared, from a worktree's own submodule copy, prints the main checkout"
 
 # --- standalone: cerebro checked out on its own, no consumer above it ---
 standalone="$work_dir/x/cerebro/scripts"
-mkdir -p "$standalone"
-ln -s "$repo_root/scripts/consumer-root" "$standalone/consumer-root"
-ln -s "$repo_root/scripts/root-hints.sh" "$standalone/root-hints.sh"
+"$repo_root/tests/lib/place-scripts" "$standalone" consumer-root
 
 set +e
 out="$("$standalone/consumer-root" 2>&1)"
@@ -110,8 +106,7 @@ git init -q "$nested_src"
 git_q -C "$nested_src" commit -q --allow-empty -m init
 git_q -C "$grandparent" -c protocol.file.allow=always submodule add -q "$nested_src" child
 nested="$grandparent/child"
-mkdir -p "$nested/.claude/cerebro/scripts"
-cp "$repo_root/scripts/consumer-root" "$repo_root/scripts/root-hints.sh" "$nested/.claude/cerebro/scripts/"
+"$repo_root/tests/lib/place-scripts" --copy "$nested/.claude/cerebro/scripts" consumer-root
 nested_out="$("$nested/.claude/cerebro/scripts/consumer-root")"
 [[ "$nested_out" == "$(cd "$nested" && pwd -P)" ]] \
   || fail "a copied mount in a nested consumer: expected $nested, got $nested_out"
@@ -133,9 +128,7 @@ pass "the standard mount resolves with PATH narrowed to dirname and bash - git s
 
 # --- a consumer layout that is not a git tree: plain still works, --shared refuses ---
 plain_consumer="$work_dir/plain"
-mkdir -p "$plain_consumer/.claude/cerebro/scripts"
-ln -s "$repo_root/scripts/consumer-root" "$plain_consumer/.claude/cerebro/scripts/consumer-root"
-ln -s "$repo_root/scripts/root-hints.sh" "$plain_consumer/.claude/cerebro/scripts/root-hints.sh"
+"$repo_root/tests/lib/place-scripts" "$plain_consumer/.claude/cerebro/scripts" consumer-root
 
 plain_ng_out="$("$plain_consumer/.claude/cerebro/scripts/consumer-root")"
 [[ "$plain_ng_out" == "$(cd "$plain_consumer" && pwd -P)" ]] \
@@ -160,10 +153,9 @@ pass "--shared refuses when the consumer is not inside a git working tree"
 # submodule of the repository inside itself would have satisfied the arithmetic, but
 # `git submodule update --init --recursive` on a repository containing itself has no fixed point.
 self_consumer="$work_dir/self"
-mkdir -p "$self_consumer/scripts" "$self_consumer/.claude"
+mkdir -p "$self_consumer/.claude"
 git init -q "$self_consumer"
-cp "$repo_root/scripts/consumer-root" "$repo_root/scripts/root-hints.sh" "$self_consumer/scripts/"
-chmod +x "$self_consumer/scripts/consumer-root"
+"$repo_root/tests/lib/place-scripts" --copy "$self_consumer/scripts" consumer-root
 ln -s ".." "$self_consumer/.claude/cerebro"
 git_q -C "$self_consumer" add -A
 git_q -C "$self_consumer" commit -q -m "self-consumer"

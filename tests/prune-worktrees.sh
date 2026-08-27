@@ -216,11 +216,10 @@ git_q -C "$consumer2" push -q -u origin main
 sub_origin="$work_dir/cerebro-origin.git"
 git init -q --bare "$sub_origin"
 sub="$consumer2/.claude/cerebro"
-mkdir -p "$sub/scripts"
+mkdir -p "$sub"
 git init -q -b main "$sub"
-for s in consumer-root root-hints.sh project-conf default-branch roster prune-worktrees.sh; do
-  ln -s "$repo_root/scripts/$s" "$sub/scripts/$s"
-done
+"$repo_root/tests/lib/place-scripts" "$sub/scripts" \
+  consumer-root project-conf default-branch roster prune-worktrees.sh
 git_q -C "$sub" add -A
 git_q -C "$sub" commit -q -m "init"
 git_q -C "$sub" remote add origin "$sub_origin"
@@ -307,10 +306,8 @@ mkdir -p "$selfmount/.cerebro"
 cat > "$selfmount/.cerebro/project.conf" <<'CONF'
 disk_floor_gb 8
 CONF
-mkdir -p "$selfmount/scripts"
-for s in consumer-root root-hints.sh project-conf default-branch roster prune-worktrees.sh; do
-  ln -s "$repo_root/scripts/$s" "$selfmount/scripts/$s"
-done
+"$repo_root/tests/lib/place-scripts" "$selfmount/scripts" \
+  consumer-root project-conf default-branch roster prune-worktrees.sh
 ln -s ".." "$selfmount/.claude/cerebro"
 git_q -C "$selfmount" add -A
 git_q -C "$selfmount" commit -q -m "init"

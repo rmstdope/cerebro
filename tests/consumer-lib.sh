@@ -110,6 +110,12 @@ done
   || fail "--link: the linked consumer-root should print $c, got $("$c/.claude/cerebro/scripts/consumer-root")"
 pass "consumer_new --link: each script is a symlink into this checkout, and resolves the consumer"
 
+[[ -L "$c/.claude/cerebro/scripts/root-hints.sh" ]] \
+  || fail "--link: consumer-root and project-conf both source root-hints.sh"
+[[ ! -e "$c/.claude/cerebro/scripts/jsonl-log.sh" ]] \
+  || fail "--link: nothing here sources jsonl-log.sh"
+pass "consumer_new --link brings each script's own libraries and no others"
+
 # --- consumer_new --copy ---------------------------------------------------------------------------
 #
 # Narrowed to what a fixture consumer needs: `cp -R "$repo_root"` dragged in whatever happened to be
@@ -213,6 +219,66 @@ bash -c '
   cleanup_add "'"$extra"'"' >/dev/null
 [[ ! -e "$extra" ]] || fail "cleanup_add: $extra survived the sourcing shell"
 pass "cleanup_add registers a path outside the work directory with the same trap"
+
+# --- tests/lib/place-scripts ----------------------------------------------------------------------
+#
+# The one place that knows which libraries a script sources, so no fixture has to write a library
+# name down (cb-u70). `link_scripts` is a wrapper over it, and the elisp suite shells out to it.
+
+d="$work_dir/place-basic"
+"$repo_root/tests/lib/place-scripts" "$d" consumer-root
+[[ -L "$d/consumer-root" ]] || fail "place-scripts: consumer-root should be a symlink"
+[[ "$(readlink "$d/consumer-root")" == "$repo_root/scripts/consumer-root" ]] \
+  || fail "place-scripts: consumer-root points at $(readlink "$d/consumer-root")"
+pass "place-scripts symlinks a named script into a directory it creates"
+
+set +e
+out="$("$repo_root/tests/lib/place-scripts" "$work_dir/place-bogus" no-such-script 2>&1)"; status=$?
+set -e
+[[ $status -eq 2 ]] || fail "place-scripts: an unknown script should exit 2, got $status"
+grep -q "no-such-script" <<<"$out" || fail "place-scripts: the refusal should name it, got: $out"
+[[ ! -e "$work_dir/place-bogus/no-such-script" ]] || fail "place-scripts: it placed a bogus script"
+pass "place-scripts refuses a script that is not in scripts/, naming it"
+
+d="$work_dir/place-closure"
+"$repo_root/tests/lib/place-scripts" "$d" consumer-root
+[[ -L "$d/root-hints.sh" ]] || fail "place-scripts: consumer-root should bring root-hints.sh"
+pass "place-scripts places the library a script sources, unnamed"
+
+d="$work_dir/place-closure-2"
+"$repo_root/tests/lib/place-scripts" "$d" agent-state launch
+[[ -L "$d/jsonl-log.sh" ]] || fail "place-scripts: agent-state should bring jsonl-log.sh"
+[[ -L "$d/agent-hooks-env" ]] || fail "place-scripts: launch should bring agent-hooks-env"
+[[ ! -e "$d/root-hints.sh" ]] \
+  || fail "place-scripts: nothing here sources root-hints.sh, it should not be placed"
+pass "place-scripts derives each script's own libraries and places no others"
+
+d="$work_dir/place-copy"
+"$repo_root/tests/lib/place-scripts" --copy "$d" consumer-root
+[[ -f "$d/consumer-root" && ! -L "$d/consumer-root" ]] \
+  || fail "--copy: consumer-root should be a real file"
+[[ -x "$d/consumer-root" ]] || fail "--copy: consumer-root should be executable"
+[[ -f "$d/root-hints.sh" && ! -L "$d/root-hints.sh" ]] \
+  || fail "--copy: root-hints.sh should be a real file too"
+pass "place-scripts --copy copies the script and its libraries, executable"
+
+# Every `source "$x/lib"' line in scripts/ must be one place-scripts follows. Read here with an
+# independent expression, so a change to the tool's extractor that stops seeing a real line goes
+# red rather than agreeing with itself.
+for f in "$repo_root"/scripts/*; do
+  [[ -f "$f" ]] || continue
+  s="$(basename "$f")"
+  libs="$(awk 'match($0, /^[[:space:]]*(source|\.)[[:space:]]+"\$[A-Za-z_][A-Za-z_0-9]*\/[^"]+"/) {
+                 t = substr($0, RSTART, RLENGTH); sub(/^.*\//, "", t); sub(/"$/, "", t); print t }' "$f")"
+  [[ -n "$libs" ]] || continue
+  d="$work_dir/corpus-$s"
+  "$repo_root/tests/lib/place-scripts" "$d" "$s"
+  while read -r lib; do
+    [[ -n "$lib" ]] || continue
+    [[ -e "$d/$lib" ]] || fail "place-scripts $s: did not place $lib, which $s sources"
+  done <<<"$libs"
+done
+pass "every sourced library in scripts/ is placed with the script that sources it"
 
 # --- what the library is allowed to need ----------------------------------------------------------------
 #

@@ -282,11 +282,9 @@ pass "an-implementer-name-can-use-a-role-phase-word-too"
 tmp="$(new_fixture)"
 worktree="$tmp/.cerebro/worktrees/ah-f9c"
 git -C "$tmp" worktree add -q "$worktree" -b ah-f9c-branch
-mkdir -p "$worktree/.claude/cerebro/scripts"
-ln -s "$repo_root/scripts/agent-state" "$worktree/.claude/cerebro/scripts/agent-state"
-ln -s "$repo_root/scripts/roster" "$worktree/.claude/cerebro/scripts/roster"
-ln -s "$repo_root/scripts/consumer-root" "$worktree/.claude/cerebro/scripts/consumer-root"
-ln -s "$repo_root/scripts/root-hints.sh" "$worktree/.claude/cerebro/scripts/root-hints.sh"
+# link_scripts rather than four `ln -s` by hand, so the sourced libraries come with the scripts:
+# a fixture that places a script without them dies at its `source` line (cb-ue0, cb-ge0).
+link_scripts "$worktree" agent-state roster consumer-root
 
 "$worktree/.claude/cerebro/scripts/agent-state" Cyclops working --bead ah-f9c --pid 42
 
@@ -525,5 +523,38 @@ line="$(tail -1 "$tmp/.cerebro/state/transitions.jsonl")"
 [[ "$(jq -r '.changed' <<<"$line")" == "true" ]] || fail "waiting-is-logged-like-any-other-state: changed wrong"
 rm -rf "$tmp"
 pass "waiting-is-logged-like-any-other-state"
+
+# --- a-failing-log-jq-writes-no-line-and-does-not-fail-the-write ---
+#
+# The log block is `{ ... } 2>/dev/null || true', so errexit is suspended inside it: an unchecked
+# `line="$(jq ...)"' that failed would leave `line' empty and the append after it would write a
+# blank line. `--argjson' appears at the log invocation and nowhere else in the script, so a stub
+# that fails on it and execs the real jq otherwise fails exactly that one call (cb-ge0).
+real_jq="$(command -v jq)"
+tmp="$(new_fixture)"
+stub_dir="$work_dir/argjson-stub"
+mkdir -p "$stub_dir"
+cat > "$stub_dir/jq" <<STUB
+#!/usr/bin/env bash
+for a in "\$@"; do [[ "\$a" == --argjson ]] && exit 127; done
+exec "$real_jq" "\$@"
+STUB
+chmod +x "$stub_dir/jq"
+status=0
+PATH="$stub_dir:$PATH" run_state "$tmp" Rogue working --bead cb-ge0 --phase build --pid 42 || status=$?
+[[ $status -eq 0 ]] || fail "a-failing-log-jq: agent-state exited $status - an unwritable log must never bring an agent down"
+f="$(state_file "$tmp" Rogue)"
+[[ -f "$f" ]] || fail "a-failing-log-jq: no state file written"
+[[ "$(jq -r '.state' "$f")" == "working" ]] || fail "a-failing-log-jq: state=$(jq -r '.state' "$f")"
+[[ "$(jq -r '.bead' "$f")" == "cb-ge0" ]] || fail "a-failing-log-jq: bead=$(jq -r '.bead' "$f")"
+[[ "$(jq -r '.pid' "$f")" == "42" ]] || fail "a-failing-log-jq: pid=$(jq -r '.pid' "$f")"
+# Either outcome is correct - no log at all, or a log with no blank line in it. Asserting the file
+# is absent would pin an implementation detail rather than the behaviour.
+log="$tmp/.cerebro/state/transitions.jsonl"
+if [[ -f "$log" ]] && grep -q '^$' "$log"; then
+  fail "a-failing-log-jq: a blank line was appended to transitions.jsonl"
+fi
+rm -rf "$tmp" "$stub_dir"
+pass "a-failing-log-jq-writes-no-line-and-does-not-fail-the-write"
 
 echo "All agent-state tests passed."

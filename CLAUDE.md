@@ -518,6 +518,18 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   Since cb-ue0 it also answers all three at once: `consumer-root --hints` prints the enclosing root,
   the shared root (empty when git cannot say) and the mount, on three lines, so one fork can do what
   three used to.
+- **`scripts/jsonl-log.sh` is the one place bash appends a line to an append-only JSONL log**
+  (cb-ge0) — `cerebro_jsonl_append <path> <line>`, builtins only for the narrowed PATH, refusing a
+  line that is empty or does not begin with `{` rather than trusting its caller to have checked one.
+  Its two callers are `scripts/agent-state` (`transitions.jsonl`) and `scripts/launch-refused`
+  (`errors.jsonl`), and both append from inside a `{ ... } || true` group, which is the whole reason
+  the library exists: **`|| true` on a group turns errexit off inside the group**, so a
+  `line="$(jq ...)"` in a "cannot fail" block does not abort it when `jq` fails — it leaves `line`
+  empty and appends a blank line. That sentence had been learned twice from scratch, once per bead,
+  because it lived in a comment in one copy of the idiom; it lives in the library's header now.
+  `emacs/cerebro.el`'s own writer (`cerebro--log-line`) is a third implementation in a different
+  language rather than a copy that was missed — elisp cannot source a bash library, and shelling out
+  would be a fork per evaluation in a loop that runs every five seconds.
 - **`scripts/root-hints.sh` is the root-hint contract**, and the one place the mount round trip
   lives (cb-ue0). `scripts/launch` resolves `consumer-root --hints` once per session start and
   exports `CEREBRO_CONSUMER_ROOT`, `CEREBRO_CONSUMER_SHARED_ROOT` and `CEREBRO_CONSUMER_MOUNT`;

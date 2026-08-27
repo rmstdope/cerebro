@@ -44,6 +44,11 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The one place bash appends to an append-only JSONL log - see its header for why the append below
+# cannot be a bare `printf'. Sourced at the top level, never inside the `|| true' group at the foot
+# of this file: a missing or broken library must be a loud failure, not a swallowed one.
+source "$script_dir/jsonl-log.sh"
+
 usage() {
   echo "usage: agent-state <name> <idle|working|asking|waiting> [--bead <id>] [--phase <word>] [--wake-in <seconds>] --pid <pid>" >&2
   exit 2
@@ -222,6 +227,12 @@ mv -f "$tmp_file" "$out_file"
 # Deliberately last, and deliberately unable to fail: the state file above is what the fleet view
 # reads, and an agent must never be brought down by a full disk or an unwritable log. The `|| true`
 # under `set -e` is the point, not an oversight.
+#
+# It has a second effect, which is why the append is not a bare `printf`: `|| true` on a group makes
+# that group the left side of an AND-OR list, and errexit is SUSPENDED FOR EVERY COMMAND INSIDE IT.
+# So the `line="$(jq ...)"` below does not abort the block when `jq` fails - it would leave `line`
+# empty and append a blank line. Hence the explicit `|| line=""` and `cerebro_jsonl_append`, which
+# refuses a line that is not a JSON object; the rule itself lives in `scripts/jsonl-log.sh`.
 log_file="$out_dir/transitions.jsonl"
 log_max_bytes=5242880          # 5 MB, then one generation is kept as transitions.1.jsonl
 
@@ -254,7 +265,7 @@ log_max_bytes=5242880          # 5 MB, then one generation is kept as transition
       bead: (if $bead == "" then null else $bead end),
       pid: ($pid | tonumber),
       changed: $changed
-    }')"
+    }')" || line=""
 
-  printf '%s\n' "$line" >> "$log_file"
+  cerebro_jsonl_append "$log_file" "$line"
 } 2>/dev/null || true

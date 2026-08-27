@@ -984,7 +984,10 @@ shape."
         (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
           (make-directory scripts t)
           (make-directory (expand-file-name ".cerebro" tmp) t)
-          (dolist (s '("agent-state" "roster" "consumer-root" "root-hints.sh"))
+          ;; The sourced libraries come with the scripts: a fixture that places one
+          ;; without them dies at its `source\=' line (cb-ue0, cb-ge0).
+          (dolist (s '("agent-state" "roster" "consumer-root"
+                       "root-hints.sh" "jsonl-log.sh"))
             (make-symbolic-link (expand-file-name (concat "scripts/" s)
                                                   cerebro-test--repo-root)
                                 (expand-file-name s scripts)))

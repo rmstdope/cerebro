@@ -158,9 +158,10 @@ link_scripts() {
   local consumer="$1" s
   shift
   mkdir -p "$consumer/.claude/cerebro/scripts"
-  # The sourced libraries, always: they are not scripts a suite would think to name, and a consumer
-  # script that sources one is broken without it in a way that reads as a bug in the script.
-  for s in root-hints.sh "$@"; do
+  # The sourced libraries, always - root-hints.sh and jsonl-log.sh: they are not scripts a suite
+  # would think to name, and a consumer script that sources one is broken without it in a way that
+  # reads as a bug in the script.
+  for s in root-hints.sh jsonl-log.sh "$@"; do
     ln -sf "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
   done
 }

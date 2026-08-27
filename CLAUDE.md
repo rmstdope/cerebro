@@ -488,6 +488,17 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   stderr, never a guess. A default either way was the defect — "matches nothing" gave a consumer
   empty release notes and no verifications with nothing on stderr, and "matches everything" sends
   the navigator to verify docs changes. A caller that cannot classify says so.
+- `scripts/tracked-links` is the one place "are this repository's tracked links whole" is answered
+  (cb-8rz). This repository is a consumer of itself, so the links the sync writes are tracked files
+  here, and a broken one shipped through three merges with a green gate (cb-7v2, `d7a76fa`). It
+  answers both directions — a tracked link under `.claude/` or `.github/` that no longer resolves,
+  and a skill, agent or provider hook the mount ships that no layout has a tracked link for — with
+  findings on stdout, exit 1, and `tests/tracked-links.sh` as its suite. It scans **only** those two
+  directories, deliberately: a wider pathspec would make the suite read `docs/`, `README.md`,
+  `LICENSE` or `models.conf.example` and quietly break `scripts/ci-needed`'s skip list, which needs
+  no edit as it stands. It never checks **where** a link points — `.github/copilot-instructions.md`
+  and `.claude/cerebro` are tracked links the sync does not write. It is a gate predicate and must
+  never join `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start.
 - `scripts/consumer-root` is the one place "where is the consumer root" is answered (ah-e0w). Every
   other script that needs it asks this one rather than deriving it itself — `consumer-root` (no
   argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the

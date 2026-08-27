@@ -25,6 +25,19 @@
 Captured at load time - `load-file-name' is nil once loading is done, so a
 test body cannot compute this itself.")
 
+(defun cerebro-test--place-scripts (dir &rest args)
+  "Place scripts into DIR.  ARGS is script names, optionally led by \"--copy\".
+Shells out to `tests/lib/place-scripts\=', the one place that knows which
+libraries a script sources - so a `source\=' line added to a script under
+`scripts/\=' needs no edit here (cb-u70)."
+  (let* ((copy (equal (car args) "--copy"))
+         (names (if copy (cdr args) args)))
+    (should (eq 0 (apply #'call-process
+                         (expand-file-name "tests/lib/place-scripts"
+                                           cerebro-test--repo-root)
+                         nil nil nil
+                         (append (when copy (list "--copy")) (list dir) names))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Increment 1: the pure derivation
 
@@ -891,11 +904,7 @@ reported that refusal for the same render."
         (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
           (make-directory scripts t)
           (make-directory (expand-file-name ".cerebro" tmp) t)
-          (copy-file (expand-file-name "scripts/roster" cerebro-test--repo-root)
-                     (expand-file-name "roster" scripts))
-          (dolist (s '("consumer-root" "root-hints.sh"))
-            (copy-file (expand-file-name (concat "scripts/" s) cerebro-test--repo-root)
-                       (expand-file-name s scripts)))
+          (cerebro-test--place-scripts scripts "--copy" "roster" "consumer-root")
           (with-temp-file (expand-file-name ".cerebro/roster.conf" tmp)
             (insert "Ada  planner  autostart\nGrace  reviewer  standby\n"))
           (should (equal (cerebro--standby-names tmp) '("Grace")))
@@ -921,11 +930,7 @@ would find no consumer file and render the built-in fleet, refusing nothing."
         (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
           (make-directory scripts t)
           (make-directory (expand-file-name ".cerebro" tmp) t)
-          (copy-file (expand-file-name "scripts/roster" cerebro-test--repo-root)
-                     (expand-file-name "roster" scripts))
-          (dolist (s '("consumer-root" "root-hints.sh"))
-            (copy-file (expand-file-name (concat "scripts/" s) cerebro-test--repo-root)
-                       (expand-file-name s scripts)))
+          (cerebro-test--place-scripts scripts "--copy" "roster" "consumer-root")
           (with-temp-file (expand-file-name ".cerebro/roster.conf" tmp)
             (insert "Ada  planner  autostrat\n"))
           (with-temp-buffer
@@ -984,13 +989,9 @@ shape."
         (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
           (make-directory scripts t)
           (make-directory (expand-file-name ".cerebro" tmp) t)
-          ;; The sourced libraries come with the scripts: a fixture that places one
-          ;; without them dies at its `source\=' line (cb-ue0, cb-ge0).
-          (dolist (s '("agent-state" "roster" "consumer-root"
-                       "root-hints.sh" "jsonl-log.sh"))
-            (make-symbolic-link (expand-file-name (concat "scripts/" s)
-                                                  cerebro-test--repo-root)
-                                (expand-file-name s scripts)))
+          ;; The sourced libraries come with the scripts, derived by the tool
+          ;; rather than named here (cb-u70).
+          (cerebro-test--place-scripts scripts "agent-state" "roster" "consumer-root")
           ;; `agent-state\=' resolves its consumer with `consumer-root --shared\=',
           ;; which asks git for the main working tree - so the fixture is a repo,
           ;; the way `tests/lib/consumer.sh\=' builds one for the bash suites.
@@ -1051,10 +1052,7 @@ than pass `bad\=' into the alist, where it would reach the `<\=' in
         (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
           (make-directory scripts t)
           (make-directory (expand-file-name ".cerebro" tmp) t)
-          (dolist (s '("project-conf" "consumer-root" "root-hints.sh"))
-            (make-symbolic-link (expand-file-name (concat "scripts/" s)
-                                                  cerebro-test--repo-root)
-                                (expand-file-name s scripts)))
+          (cerebro-test--place-scripts scripts "project-conf" "consumer-root")
           ;; `project-conf' resolves its consumer with `consumer-root --shared',
           ;; which asks git for the main working tree.
           (let ((default-directory (file-name-as-directory tmp)))
@@ -1092,10 +1090,7 @@ running on a number nobody declared must not be silent either."
         (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
           (make-directory scripts t)
           (make-directory (expand-file-name ".cerebro" tmp) t)
-          (dolist (s '("project-conf" "consumer-root" "root-hints.sh"))
-            (make-symbolic-link (expand-file-name (concat "scripts/" s)
-                                                  cerebro-test--repo-root)
-                                (expand-file-name s scripts)))
+          (cerebro-test--place-scripts scripts "project-conf" "consumer-root")
           (let ((default-directory (file-name-as-directory tmp)))
             (should (eq 0 (call-process "git" nil nil nil "init" "-q"))))
           (with-temp-file (expand-file-name ".cerebro/project.conf" tmp)
@@ -1143,10 +1138,7 @@ without it the fixture\='s roster is cached wherever ERT happens to be."
         (let ((scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
           (make-directory scripts t)
           (make-directory (expand-file-name ".cerebro" tmp) t)
-          (dolist (s '("roster" "consumer-root" "root-hints.sh"))
-            (make-symbolic-link (expand-file-name (concat "scripts/" s)
-                                                  cerebro-test--repo-root)
-                                (expand-file-name s scripts)))
+          (cerebro-test--place-scripts scripts "roster" "consumer-root")
           (with-temp-buffer
             (let ((snap (cerebro--fleet-snapshot tmp)))
               (should (equal (plist-get snap :live-names) nil))

@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+#
+# tests/lib/place-scripts - put scripts into a fixture's scripts directory, with the libraries they
+# source. The one place that knows which libraries a script needs, for both halves of the gate
+# (cb-u70): `link_scripts` in tests/lib/consumer.sh wraps it, and `emacs/cerebro-test.el` shells out
+# to it. A `source` line added to any script under `scripts/` therefore needs no fixture edit.
+#
+#     tests/lib/place-scripts [--copy|--link] <scripts-dir> <script>...
+#
+#   <scripts-dir>  the directory the scripts go IN - created if absent. Not a consumer root: a
+#                  caller wanting the standard mount passes "<consumer>/.claude/cerebro/scripts".
+#   <script>...    names as they appear in `scripts/'. Every library each of them sources is placed
+#                  too, transitively, whether or not it was named.
+#   --link         symlink into this checkout (the default), so a fixture reads the script this
+#                  checkout has right now.
+#   --copy         real copies. Needed wherever `pwd -P' arithmetic must resolve to the fixture
+#                  rather than to this checkout.
+#
+#   exit 0  placed
+#   exit 2  usage error, or a named script that does not exist in `scripts/'
+#
+# Refusing an unknown name rather than placing nothing and exiting 0 is deliberate: the failure this
+# tool exists to kill is a fixture that places too little and dies later at a `source' line.
+#
+# It lives under `tests/lib/' and carries no `.sh' extension so the gate's `tests/*.sh' suite glob
+# never runs it as a suite (tests/lib/consumer.sh:3-6, scripts/suite-runner, cb-dul).
+#
+# bash 3.2: no `declare -A' (macOS ships 3.2 and the fleet runs there), and under `set -u' expanding
+# an empty array is an error - hence the space-delimited visited set and the integer cursor.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+usage() {
+  echo "usage: place-scripts [--copy|--link] <scripts-dir> <script>..." >&2
+  exit 2
+}
+
+mode=link
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --copy) mode=copy; shift ;;
+    --link) mode=link; shift ;;
+    -*) echo "place-scripts: unknown option: $1" >&2; usage ;;
+    *) break ;;
+  esac
+done
+
+[ $# -ge 2 ] || usage
+dest="$1"
+shift
+
+# The sibling libraries <file> sources, one per line - `source "$x/lib"' or `. "$x/lib"', which is
+# every spelling in scripts/ today. One awk and no pipe: `grep -q' closing a pipe early is the
+# SIGPIPE race tests/lib/consumer.sh:70-82 records, and awk exits 0 on no match, so no `|| true'.
+sourced_by() {
+  awk 'match($0, /^[[:space:]]*(source|\.)[[:space:]]+"\$[A-Za-z_][A-Za-z_0-9]*\/[^"]+"/) {
+         t = substr($0, RSTART, RLENGTH); sub(/^.*\//, "", t); sub(/"$/, "", t); print t }' "$1"
+}
+
+queue=("$@")
+seen=""
+i=0
+while [ "$i" -lt "${#queue[@]}" ]; do
+  s="${queue[$i]}"
+  i=$((i + 1))
+  case " $seen " in *" $s "*) continue ;; esac
+  if [ ! -f "$repo_root/scripts/$s" ]; then
+    echo "place-scripts: no such script: scripts/$s" >&2
+    exit 2
+  fi
+  seen="$seen $s"
+  while read -r lib; do
+    [ -n "$lib" ] && queue+=("$lib")
+  done < <(sourced_by "$repo_root/scripts/$s")
+done
+
+mkdir -p "$dest"
+for s in $seen; do
+  if [ "$mode" = copy ]; then
+    cp "$repo_root/scripts/$s" "$dest/$s"
+    chmod +x "$dest/$s"
+  else
+    ln -sf "$repo_root/scripts/$s" "$dest/$s"
+  fi
+done

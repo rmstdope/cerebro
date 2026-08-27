@@ -49,8 +49,8 @@
 #
 #   copy_cerebro_into <dest>      scripts, agents, skills, hooks - no emacs/, no .git
 #   link_scripts <consumer> <script>...
-#                                 symlinks <script> into <consumer>/.claude/cerebro/scripts/,
-#                                 always alongside the sourced libraries (root-hints.sh)
+#                                 symlinks <script> into <consumer>/.claude/cerebro/scripts/, with
+#                                 the libraries those scripts source (tests/lib/place-scripts)
 #   consumer_new <name> [--branch <b>] [--origin] [--copy | --link <script>...]
 #                                 echoes $work_dir/<name>; refuses a name it has already built
 #   fixture_name <prefix>         a name no earlier call has used, for a fabricator called in a
@@ -189,17 +189,13 @@ copy_cerebro_into() {
 }
 
 # Symlinks rather than copies, so a fixture reads the script this checkout has right now. A suite
-# that needs the shipped *file* to differ from this checkout copies it instead.
+# that needs the shipped *file* to differ from this checkout copies it instead. The sourced
+# libraries come with each script: `tests/lib/place-scripts' derives them from the scripts' own
+# `source' lines, so no fixture - here or anywhere - writes a library name down (cb-u70).
 link_scripts() {
-  local consumer="$1" s
+  local consumer="$1"
   shift
-  mkdir -p "$consumer/.claude/cerebro/scripts"
-  # The sourced libraries, always - root-hints.sh and jsonl-log.sh: they are not scripts a suite
-  # would think to name, and a consumer script that sources one is broken without it in a way that
-  # reads as a bug in the script.
-  for s in root-hints.sh jsonl-log.sh "$@"; do
-    ln -sf "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-  done
+  "$repo_root/tests/lib/place-scripts" "$consumer/.claude/cerebro/scripts" "$@"
 }
 
 # A name no earlier call has used. A fabricator wrapping consumer_new is almost always called as

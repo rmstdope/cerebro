@@ -26,14 +26,13 @@ git init -q --bare -b main "$origin"
 consumer="$work_dir/repo"
 git init -q -b main "$consumer"
 git -C "$consumer" remote add origin "$origin"
-mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/.cerebro/worktrees"
+mkdir -p "$consumer/.cerebro/worktrees"
 echo hello > "$consumer/README.md"
 git -C "$consumer" add README.md
 git_q -C "$consumer" commit -q -m init
 git -C "$consumer" push -q origin main
-for s in consumer-root root-hints.sh project-conf default-branch prepare-worktree; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+"$repo_root/tests/lib/place-scripts" "$consumer/.claude/cerebro/scripts" \
+  consumer-root project-conf default-branch prepare-worktree
 prepare="$consumer/.claude/cerebro/scripts/prepare-worktree"
 conf="$consumer/.cerebro/project.conf"
 

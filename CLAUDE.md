@@ -144,6 +144,11 @@ directory. The library installs the one EXIT trap, so a suite adds to it with
 `cleanup_add` rather than writing a `trap` that would silently replace it, and does its own killing
 in a `suite_cleanup` the trap calls first. `tests/consumer-lib.sh` is the library's own suite.
 
+Every suite's last line is `suite_passed`, and that is not decoration: a suite that dies partway
+through under `set -euo pipefail` can reach the EXIT trap with `$?` already 0 and be reported
+green, so the trap refuses to exit 0 unless the suite reached its end or failed an assertion. A
+new suite that forgets the line is red, which is the safe direction.
+
 A rule whose grep or awk fails is itself an advisory naming the rule and the step, never an `ok`
 line — `|| true` could not tell a no-match from a grep that never ran (cb-u5e).
 

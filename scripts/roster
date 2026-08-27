@@ -209,8 +209,14 @@ case "${1:-}" in
     done < <(each_row)
     ;;
   --implementers)
+    # `if' rather than `[[ ... ]] &&', for the reason spelt out under `--role' below: the latter
+    # leaves the loop - and so this script - exiting non-zero whenever the LAST roster row is not a
+    # match. That is every consumer whose roster.conf ends with an interactive row, and this mode
+    # got away with it only because the built-in table ends in implementers.
     while IFS=$'\t' read -r name role kind _; do
-      [[ "$kind" == "implementer" ]] && printf '%s\n' "$name"
+      if [[ "$kind" == "implementer" ]]; then
+        printf '%s\n' "$name"
+      fi
     done < <(each_row)
     ;;
   --autostart)
@@ -238,7 +244,8 @@ case "${1:-}" in
     fi
     # `if' rather than `[[ ... ]] &&': the latter leaves the loop - and so this script - exiting
     # non-zero whenever the *last* roster row is not a match, which for any interactive role is
-    # every time. `--implementers' gets away with it only because the roster ends in implementers.
+    # every time. `--implementers' had that bug until cb-c13, masked for as long as it lasted by
+    # the built-in table ending in implementers; every mode uses this form now.
     while IFS=$'\t' read -r name row_role _ _; do
       if [[ "$row_role" == "$role" ]]; then
         printf '%s\n' "$name"

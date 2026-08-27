@@ -51,11 +51,16 @@ if hints="$("$here/consumer-root" --hints 2>/dev/null)"; then
   export CEREBRO_CONSUMER_ROOT CEREBRO_CONSUMER_SHARED_ROOT CEREBRO_CONSUMER_MOUNT
 fi
 
+# The listing is a courtesy; the exit status is the contract. Under `set -euo pipefail' a failing
+# `roster' here would end the script AT the listing and the `exit 2' below would never run, leaving
+# a refusal with status 1 where it documents 2 - a difference no output shows, which is why it read
+# as flakiness for a whole gate run. Every ADVISORY use is therefore guarded; the misspelling scan
+# below reads it through a process substitution, which never tripped errexit.
 names() { "$here/roster" | while IFS=$'\t' read -r n _ _; do printf '%s\n' "$n"; done; }
 
 usage() {
   echo "usage: launch <Name> [agent CLI args...]" >&2
-  names >&2
+  names >&2 || echo "launch: (the roster listing may be incomplete - run scripts/roster to see why)" >&2
   exit 2
 }
 
@@ -77,7 +82,7 @@ if ! entry="$("$here/roster" --entry "$name" 2>/dev/null)"; then
     echo "launch: it is spelt $misspelt, not $name" >&2
   else
     echo "launch: $name is not on the roster" >&2
-    names >&2
+    names >&2 || echo "launch: (the roster listing may be incomplete - run scripts/roster to see why)" >&2
   fi
   exit 2
 fi

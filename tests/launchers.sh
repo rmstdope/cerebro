@@ -379,6 +379,25 @@ turing_row="$("$roster_at" | grep '^Turing')"
 pass "roster: standby on an implementer row arms it like any other"
 rm -f "$consumer_roster_file"
 
+# --- --implementers: the exit status is the contract, not a property of the last row ---------------
+#
+# The loop body was `[[ "$kind" == "implementer" ]] && printf ...', whose status is the whole
+# `while' loop's and so this script's - so a roster ending in an INTERACTIVE row printed exactly the
+# right names and exited 1. Every caller got away with it only because the built-in table ends in
+# implementers; `planner-buffer' reads it as a `for' word list, where a non-zero status is invisible,
+# and the assignment form two hundred lines above would have aborted this suite.
+printf 'Turing  implementer\nAda  planner\n' > "$consumer_roster_file"
+set +e
+implementers_tail="$("$roster_at" --implementers)"
+status=$?
+set -e
+[[ $status -eq 0 ]] \
+  || fail "roster --implementers with an interactive row last: expected exit 0, got $status"
+[[ "$implementers_tail" == "Turing" ]] \
+  || fail "roster --implementers with an interactive row last: expected Turing, got: $implementers_tail"
+pass "roster --implementers exits 0 when the last roster row is not an implementer"
+rm -f "$consumer_roster_file"
+
 # An empty file says nothing, so the built-in table answers - and so does a file of nothing but
 # comments, which has as much to say about the fleet as an absent one. Taking that at its word would
 # leave the fleet empty everywhere, with the file looking like a fleet to whoever wrote it.
@@ -591,7 +610,7 @@ set +e
 out="$(run_launcher launch storm 2>&1)"
 status=$?
 set -e
-[[ $status -eq 2 ]] || fail "launch storm: expected exit 2, got $status"
+[[ $status -eq 2 ]] || fail "launch storm: expected exit 2, got $status: $out"
 grep -q "Storm" <<<"$out" || fail "launch storm: expected the message to name Storm, got: $out"
 grep -q '^BEADS_ACTOR=' <<<"$out" && fail "launch storm: should never have reached the stub"
 pass "launch storm exits 2, names Storm, never reaches the stub"
@@ -600,7 +619,7 @@ set +e
 out="$(run_launcher launch Nobody 2>&1)"
 status=$?
 set -e
-[[ $status -eq 2 ]] || fail "launch Nobody: expected exit 2, got $status"
+[[ $status -eq 2 ]] || fail "launch Nobody: expected exit 2, got $status: $out"
 grep -q "not on the roster" <<<"$out" || fail "launch Nobody: wrong message, got: $out"
 # ...and the roster's own names, so the reader learns what they may type without opening a file.
 # This is also the whole answer for a name the fleet has *retired*: a renamed agent gets no courtesy
@@ -611,6 +630,54 @@ while IFS=$'\t' read -r roster_name _ _; do
 done <<<"$roster_out"
 grep -q '^BEADS_ACTOR=' <<<"$out" && fail "launch Nobody: should never have reached the stub"
 pass "launch Nobody exits 2, names it not on the roster, lists every roster name, never reaches the stub"
+
+# --- a refusal's exit status survives a failing roster ---------------------------------------------
+#
+# `roster' writes its rows and THEN fails, which is the shape that was seen once under the parallel
+# gate. The refusal looks perfect - right message, complete listing - and only the status is wrong,
+# so it read as flakiness and cost a full gate run before anyone looked at it. Under
+# `set -euo pipefail' the advisory `names >&2' ended `launch' at that line and its `exit 2' never
+# ran.
+broken_dir="$(consumer_new broken-roster --copy)"
+broken_scripts="$broken_dir/.claude/cerebro/scripts"
+cat > "$broken_scripts/roster" <<'BROKEN'
+#!/usr/bin/env bash
+printf 'Xavier\tplanner\tinteractive\n'
+printf 'Cyclops\timplementer\timplementer\n'
+exit 1
+BROKEN
+chmod +x "$broken_scripts/roster"
+
+set +e
+out="$(run_launcher_at "$broken_scripts" launch Nobody 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] \
+  || fail "launch Nobody with a failing roster: expected exit 2, got $status: $out"
+grep -q "not on the roster" <<<"$out" \
+  || fail "launch Nobody with a failing roster: the refusal itself should still be said, got: $out"
+grep -q "the roster listing may be incomplete" <<<"$out" \
+  || fail "launch Nobody with a failing roster: the listing failure should be said, got: $out"
+pass "launch Nobody keeps exit 2 when the roster listing fails, and says the listing may be short"
+
+set +e
+out="$(run_launcher_at "$broken_scripts" launch 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] \
+  || fail "launch (no argument) with a failing roster: expected exit 2, got $status: $out"
+grep -q "the roster listing may be incomplete" <<<"$out" \
+  || fail "launch (no argument) with a failing roster: the listing failure should be said, got: $out"
+pass "launch with no argument keeps exit 2 when the roster listing fails"
+
+# ...and the everyday refusal is byte-identical to what it always was: the line above appears ONLY
+# when the listing actually failed, so a healthy fleet sees nothing new.
+set +e
+out="$(run_launcher launch Nobody 2>&1)"
+set -e
+grep -q "the roster listing may be incomplete" <<<"$out" \
+  && fail "launch Nobody on a healthy roster: should say nothing about the listing, got: $out"
+pass "launch Nobody says nothing about the listing when the roster is healthy"
 
 set +e
 out="$(run_launcher launch 2>&1)"

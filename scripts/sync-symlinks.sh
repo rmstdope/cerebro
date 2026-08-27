@@ -5,10 +5,12 @@ set -euo pipefail
 # saying so rather than relying on them.
 shopt -s nullglob
 
-# Sync the mount's skills and agents into every agent CLI's discovery paths, and mirror the
-# project's own definitions between them. Run from anywhere inside the consumer repo.
+# Sync the mount's skills, agents and one provider's hook files into every agent CLI's discovery
+# paths, and mirror the project's own definitions between them. Run from anywhere inside the
+# consumer repo.
 #
-# `scripts/agent-cli --layouts' is the one place a provider's discovery paths are written down;
+# `scripts/agent-cli --layouts' and `--hooks' are the one place a provider's discovery paths are
+# written down;
 # this script spells none of them and knows no provider's name. EVERY layout is written in EVERY
 # consumer, whatever `agent_cli' declares (cb-d59.4), so that switching a fleet between agent CLIs
 # is one line in .cerebro/project.conf and nothing else - the navigator's choice, taken over
@@ -85,10 +87,15 @@ sync_links() {
   local label="$3"
   local item_kind="$4"
   local link_suffix="${5:-}"
+  local source_suffix="${6:-.md}"
   local updated=0
   local rel_dest="${dest_dir#"$consumer_root/"}"
   local rel_source
   rel_source="$(rel_source_for "$rel_dest")"
+  # The source's path UNDER THE MOUNT, not its basename: `hooks/copilot' is two deep, and a
+  # basename would link to a `copilot/' directory that does not exist at the mount root - and
+  # would give the stale sweep below a prefix that matches none of its own links (cb-d59.5).
+  local source_rel="${source_dir#"$SOURCE_ROOT"/}"
 
   if [[ ! -d "$source_dir" ]]; then
     echo "Source $label directory not found: $source_dir" >&2
@@ -101,7 +108,7 @@ sync_links() {
       [[ -f "$item_path/SKILL.md" ]] || continue
     elif [[ "$item_kind" == "file" ]]; then
       [[ -f "$item_path" ]] || continue
-      [[ "$item_path" == *.md ]] || continue
+      [[ "$item_path" == *"$source_suffix" ]] || continue
     else
       echo "Invalid sync item kind: $item_kind" >&2
       exit 1
@@ -111,7 +118,7 @@ sync_links() {
     # A provider may spell an agent file differently (`<role>.agent.md'); a skill keeps its own
     # directory name everywhere, so the suffix is a file-only affair.
     if [[ "$item_kind" == "file" ]]; then
-      target="$dest_dir/${item_name%.md}${link_suffix:-.md}"
+      target="$dest_dir/${item_name%"$source_suffix"}${link_suffix:-$source_suffix}"
     else
       target="$dest_dir/$item_name"
     fi
@@ -131,7 +138,7 @@ sync_links() {
       exit 1
     fi
 
-    link_to="$rel_source/$(basename "$source_dir")/$item_name"
+    link_to="$rel_source/$source_rel/$item_name"
     link_would_change "$target" "$link_to" && note_tracked_write "$rel_dest"
     ln -sfn "$link_to" "$target"
     updated=$((updated + 1))
@@ -140,7 +147,7 @@ sync_links() {
   # A link this script wrote for a skill or agent the mount no longer ships dangles after a
   # submodule bump. Remove it, and say so - but ONLY a link that points into the mount: a
   # consumer's own link to somewhere else is not this script's, dangling or not.
-  local prefix="$rel_source/$(basename "$source_dir")/"
+  local prefix="$rel_source/$source_rel/"
   local link link_target
   for link in "$dest_dir"/*; do
     [[ -L "$link" ]] || continue
@@ -263,6 +270,27 @@ for i in "${!providers[@]}"; do
   [[ $i -eq 0 ]] && continue
   mirror_links "$consumer_root/${skills_dirs[0]}" "$consumer_root/${skills_dirs[$i]}" "skill" "dir"  ""
   mirror_links "$consumer_root/${agents_dirs[0]}" "$consumer_root/${agents_dirs[$i]}" "agent" "file" "${suffixes[$i]}"
+done
+
+# The provider hooks, same shape: a source directory per provider under the mount, linked into the
+# directory that provider discovers hooks from. `claude' has no row - its settings file is passed
+# with `--settings' and installed nowhere - so this loop legally does nothing at all. A per-provider
+# source directory is what keeps Claude Code's settings file, a different schema, out of a directory
+# where Copilot loads every .json.
+hook_providers=() hook_sources=() hook_dests=()
+while IFS=$'\t' read -r p src dest; do
+  [[ -n "$p" ]] || continue
+  hook_providers+=("$p"); hook_sources+=("$src"); hook_dests+=("$dest")
+done < <("$SCRIPT_DIR/agent-cli" --hooks)
+
+for i in "${!hook_providers[@]}"; do
+  # A mount from before this change ships no hooks/<provider>/ at all, and every session's launch
+  # runs this script: a missing directory is an older submodule, not a fault, so it is skipped
+  # rather than refused. (The skills and agents passes above DO refuse, and rightly - a mount
+  # without them is broken.)
+  [[ -d "$SOURCE_ROOT/${hook_sources[$i]}" ]] || continue
+  mkdir -p "$consumer_root/${hook_dests[$i]}"
+  sync_links "$SOURCE_ROOT/${hook_sources[$i]}" "$consumer_root/${hook_dests[$i]}" "hook" "file" "" ".json"
 done
 
 remove_retired_dir_locals

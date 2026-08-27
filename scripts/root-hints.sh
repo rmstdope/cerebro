@@ -5,7 +5,7 @@
 # (`cd', `pwd', `printf'), because tests/launchers.sh runs the launch path with a PATH holding
 # `dirname' and `bash' and nothing else.
 #
-# WHY IT EXISTS (cb-ue0). One `scripts/launch' used to fork `consumer-root' eight times: launch
+# WHY IT EXISTS (cb-ue0). One `scripts/launch' used to fork `consumer-root' sixteen times: launch
 # resolved the root, then preflight resolved it again, then `default-branch', `project-conf',
 # `agent-cli' and `sync-symlinks.sh' each resolved it again from scratch - a quarter of a second of
 # pure re-derivation on every session start, and 84% of the gate's slowest suite. So `launch'

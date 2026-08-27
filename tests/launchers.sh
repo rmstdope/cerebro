@@ -703,6 +703,32 @@ models_conf "Xavier -"
   || fail "models.conf '-': expected no --model at all, got $(launched_flag Xavier --model)"
 pass "models.conf: '-' passes no --model, leaving the session on claude's own default"
 
+# --- models.conf keys carrying a provider (cb-d59.6) ---
+#
+# The key may name the agent CLI it is about, and within one key the provider-scoped row beats the
+# plain one. This consumer declares no agent_cli, so it runs on claude.
+models_conf "planner fable" "planner@claude sonnet"
+[[ "$(launched_flag Xavier --model)" == "sonnet" ]] \
+  || fail "models.conf @provider: expected sonnet, the claude-scoped row beating the plain one"
+pass "models.conf: a provider-scoped key beats the plain one for the running provider"
+
+models_conf "planner@copilot gpt-5.5"
+[[ "$(launched_flag Xavier --model)" == "$(model_of planner)" ]] \
+  || fail "models.conf @copilot: a key scoped to another provider must never match"
+pass "models.conf: a key scoped to another provider never matches"
+
+# One warning per offending row per launch, not one per key probed: six probes over a file read
+# once, rather than six reads.
+models_conf "planner@copilo gpt-5.5"
+warn_out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Xavier 2>&1 >/dev/null)"
+echo "$warn_out" | grep -q 'launch: models.conf: planner@copilo names no agent CLI cerebro knows' \
+  || fail "models.conf unknown provider: expected the warning, got: $warn_out"
+count="$(echo "$warn_out" | grep -c 'names no agent CLI cerebro knows')"
+[[ "$count" -eq 1 ]] || fail "models.conf unknown provider: expected one warning, got $count"
+[[ "$(launched_flag Xavier --model)" == "$(model_of planner)" ]] \
+  || fail "models.conf unknown provider: the row must be ignored, not applied"
+pass "models.conf: an unknown provider on a key warns once and is ignored"
+
 no_models_conf
 
 # --- a sync failure aborts the launch: the stub is never reached ---
@@ -944,5 +970,73 @@ done
 echo "$out" | tail -2 | grep -q "Xavier" \
   || fail "fake provider: the prompt should still be the last argument, got: $out"
 pass "launch passes exactly the argv agent-cli emits, and adds none of its own"
+
+# --- a whole launch on GitHub Copilot (cb-d59.6) ---
+#
+# Its own consumer, declaring `agent_cli copilot', with a stub `copilot' first on PATH - which is
+# also what satisfies `agent-cli --check''s `command -v copilot'. Nothing writes
+# .github/agents/planner.agent.md by hand: launch-preflight runs the sync before every launch and
+# it writes both layouts in every consumer (cb-d59.4).
+#
+# `launched_flag' is deliberately NOT reused here - it hard-codes $consumer_dir, and the claude
+# cases above depend on that. These assert on the raw output instead, as the fake-provider case
+# does.
+copilot_consumer="$(consumer_new copilot-consumer --copy)"
+printf 'gate_fast make check\nagent_cli copilot\n' > "$copilot_consumer/.cerebro/project.conf"
+copilot_dir="$(mktemp -d)"
+cleanup_add "$copilot_dir"
+cp "$stub_dir/claude" "$copilot_dir/copilot"
+
+copilot_launch() {
+  PATH="$copilot_dir:$PATH" run_launcher_at "$copilot_consumer/.claude/cerebro/scripts" launch "$@"
+}
+
+out="$(copilot_launch Xavier 2>/dev/null)"
+expected="ARG:--agent
+ARG:planner
+ARG:--name
+ARG:Xavier
+ARG:--allow-all-tools
+ARG:-i"
+[[ "$(echo "$out" | grep '^ARG:' | head -6)" == "$expected" ]] \
+  || fail "copilot launch: expected the copilot arm's tokens in order, got: $out"
+for flag in --remote-control --settings --permission-mode --append-system-prompt; do
+  echo "$out" | grep -q "^ARG:${flag}\$" \
+    && fail "copilot launch: $flag reached copilot, which spells none of them"
+done
+pass "launch on copilot reaches the copilot binary with the copilot arm's tokens"
+
+marker_line="$(echo "$out" | grep -n '^ARG:-i$' | head -1 | cut -d: -f1)"
+[[ -n "$marker_line" ]] || fail "copilot launch: no -i in the argv, got: $out"
+after_i="$(echo "$out" | sed -n "$((marker_line + 1))p")"
+case "$after_i" in
+  "ARG:This session is Xavier of the cerebro fleet rooted at $copilot_consumer/."*) ;;
+  *) fail "copilot launch: expected the marker sentence after -i, got: $after_i" ;;
+esac
+pass "the marker sentence reaches copilot inside the -i argument"
+
+err="$(copilot_launch Xavier 2>&1 >/dev/null)"
+out="$(copilot_launch Xavier 2>/dev/null)"
+echo "$out" | grep -q '^ARG:--model$' \
+  && fail "copilot launch with no models.conf: --model reached copilot, got: $out"
+echo "$out" | grep -q '^ARG:--effort$' \
+  && fail "copilot launch with no models.conf: --effort reached copilot, got: $out"
+echo "$err" | grep -q 'no models.conf entry for copilot' \
+  || fail "copilot launch with no models.conf: expected the fallback line, got: $err"
+echo "$err" | grep -q "which is Claude Code's name for it" \
+  || fail "copilot launch with no models.conf: expected the frontmatter clause, got: $err"
+pass "a copilot launch with no models.conf passes no --model and no --effort, and says so"
+
+mkdir -p "$copilot_consumer/.cerebro"
+printf 'planner@copilot gpt-5.5 high\n' > "$copilot_consumer/.cerebro/models.conf"
+err="$(copilot_launch Xavier 2>&1 >/dev/null)"
+out="$(copilot_launch Xavier 2>/dev/null)"
+echo "$out" | grep -A1 '^ARG:--model$' | grep -q '^ARG:gpt-5.5$' \
+  || fail "copilot launch with models.conf: expected --model gpt-5.5, got: $out"
+echo "$out" | grep -A1 '^ARG:--effort$' | grep -q '^ARG:high$' \
+  || fail "copilot launch with models.conf: expected --effort high, got: $out"
+echo "$err" | grep -q 'models.conf (planner@copilot) -> gpt-5.5 at high effort' \
+  || fail "copilot launch with models.conf: expected the decision line, got: $err"
+pass "a copilot launch takes its model and effort from a models.conf row"
 
 echo "all launcher tests passed"

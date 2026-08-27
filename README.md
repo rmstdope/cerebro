@@ -15,7 +15,11 @@ repository, and how to tell it worked.
 
 The fleet is bash and Emacs Lisp on top of programs it does not ship:
 
-- `claude` — every agent is a Claude Code session.
+- **One agent CLI** — every agent is a session of it. Either `claude`
+  ([Claude Code](https://claude.com/claude-code)) or `copilot`
+  ([GitHub Copilot CLI](https://github.com/github/copilot-cli)), declared once in step 4 as
+  `agent_cli`; absent means `claude`. What a fleet on Copilot gets and does not is
+  [docs/providers/copilot.md](docs/providers/copilot.md).
 - `bd` — the bead board every role reads and writes ([beads](https://github.com/steveyegge/beads)),
   with a Dolt remote so every machine and session sees one board.
 - `gh` — pull requests, reviews, and the issue inbox.
@@ -26,7 +30,9 @@ The fleet is bash and Emacs Lisp on top of programs it does not ship:
 Check:
 
 ```bash
-for t in claude bd gh git jq emacs; do command -v "$t" >/dev/null && echo "$t ok" || echo "$t MISSING"; done
+for t in bd gh git jq emacs; do command -v "$t" >/dev/null && echo "$t ok" || echo "$t MISSING"; done
+if command -v claude >/dev/null || command -v copilot >/dev/null
+then echo "agent CLI ok"; else echo "agent CLI MISSING"; fi
 ```
 
 ### 2. Add cerebro as a submodule at `.claude/cerebro`
@@ -42,8 +48,10 @@ Check: `.claude/cerebro/scripts/consumer-root` prints your repository's absolute
 
 ### 3. Link the skills and agents
 
-Claude Code discovers `.claude/skills/<name>/SKILL.md` and `.claude/agents/<name>.md`. The sync
-writes relative symlinks there, and nothing outside `.claude/`.
+Claude Code discovers `.claude/skills/<name>/SKILL.md` and `.claude/agents/<name>.md`; GitHub
+Copilot discovers `.github/skills/<name>/` and `.github/agents/<name>.agent.md`, and its hooks from
+`.github/hooks/`. The sync writes relative symlinks into **both** layouts in every project, whatever
+`agent_cli` you declare — so switching CLI stays one line in step 4 and nothing else.
 
 ```bash
 .claude/cerebro/scripts/sync-symlinks.sh
@@ -74,6 +82,7 @@ app_paths      ^src/         # a regex: which changed paths those people could s
 gate_fast      make test     # what an implementer runs before it opens a pull request
 gate_full      make test     # what a pull request is judged by
 install        npm ci        # omit it when there is nothing to install
+# agent_cli    copilot       # which CLI the sessions run on; absent means claude
 ```
 
 An absent key is a default, with one exception: without `app_paths` the fleet refuses to classify a
@@ -106,7 +115,10 @@ Check: `.claude/cerebro/scripts/roster` prints your fleet, one `name<TAB>role<TA
 - `.cerebro/traps.md` — the facts this project has already paid for, read by planners and
   implementers before they start. Absent is where every project starts.
 - `.cerebro/models.conf` — which model each agent runs on:
-  `cp .claude/cerebro/models.conf.example .cerebro/models.conf` and uncomment a line. Commit it to
+  `cp .claude/cerebro/models.conf.example .cerebro/models.conf` and uncomment a line. A key may name
+  the CLI it is about — `planner@copilot gpt-5.5` applies only on Copilot, and beats a plain
+  `planner` row there — which is how one file covers both; on a CLI other than Claude Code it is the
+  **only** place models come from, the agent definitions declaring Claude Code's words. Commit it to
   share the fleet's models with every clone, or ignore it (step 8) to keep it personal.
 
 Check: with a `models.conf` line uncommented, `launch` says `launch: models.conf (<key>) -> <model>`

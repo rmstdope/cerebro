@@ -53,8 +53,9 @@ out="$("$agent_cli" --binary 2>/dev/null)"
 pass "--binary is the executable the claude arm execs"
 
 out="$("$agent_cli" --known 2>/dev/null)"
-[[ "$out" == "claude" ]] || fail "--known: expected 'claude', got '$out'"
-pass "--known lists the providers this cerebro can run"
+[[ "$out" == "claude
+copilot" ]] || fail "--known: expected 'claude' then 'copilot', got '$out'"
+pass "--known lists both providers this cerebro can run"
 
 set +e
 out="$("$agent_cli" --wat 2>&1)"; status=$?
@@ -62,20 +63,24 @@ set -e
 [[ $status -eq 2 ]] || fail "--wat: expected exit 2, got $status"
 pass "an unknown verb exits 2"
 
-# --- the two refusals, from a plain verb ---------------------------------------------------------
+# --- a declared copilot runs, since cb-d59.6 moved it out of PLANNED --------------------------
+#
+# PLANNED is empty now, and its `resolve' branch and `refusal_sentence' arm survive untested
+# BECAUSE it is empty: they are the only thing that tells a consumer on an older cerebro,
+# declaring a provider a newer cerebro has, to bump the submodule rather than fix a declaration
+# that is perfectly correct. Deleting them would give that consumer the opposite advice.
 printf 'agent_cli copilot\n' > "$conf"
-set +e
-out="$("$agent_cli" 2>"$work_dir/err")"; status=$?
-set -e
+out="$("$agent_cli" 2>"$work_dir/err")"
 err="$(cat "$work_dir/err")"
-[[ $status -eq 3 ]] || fail "agent_cli copilot: expected exit 3, got $status"
-[[ -z "$out" ]] || fail "agent_cli copilot: expected nothing on stdout, got '$out'"
-echo "$err" | grep -q 'cannot run yet' \
-  || fail "agent_cli copilot: expected the planned-provider sentence, got: $err"
-echo "$err" | grep -q 'agent-cli: .cerebro/project.conf declares agent_cli copilot' \
-  || fail "agent_cli copilot: the sentence should name the declared value, got: $err"
-pass "agent_cli copilot exits 3 saying this cerebro cannot run it yet"
+[[ "$out" == "copilot" ]] || fail "agent_cli copilot: expected stdout 'copilot', got '$out'"
+[[ -z "$err" ]] || fail "agent_cli copilot: expected nothing on stderr, got: $err"
+pass "a declared agent_cli copilot resolves and says nothing"
 
+out="$("$agent_cli" --binary 2>/dev/null)"
+[[ "$out" == "copilot" ]] || fail "--binary (copilot): expected 'copilot', got '$out'"
+pass "--binary is the executable the copilot arm execs"
+
+# --- an unknown declaration is still a refusal ---------------------------------------------------
 printf 'agent_cli emacs-doctor\n' > "$conf"
 set +e
 out="$("$agent_cli" --binary 2>"$work_dir/err")"; status=$?
@@ -218,6 +223,86 @@ set +e
 set -e
 [[ $status -eq 2 ]] || fail "--layouts with an argument: expected exit 2, got $status"
 pass "--layouts takes no arguments"
+
+# --- --agent-file-models: whose words are the agent files' model: and effort: ---------------------
+#
+# Unlike --layouts, this one answers about THIS fleet, so it belongs after `resolve'.
+printf 'agent_cli claude\n' > "$conf"
+out="$("$agent_cli" --agent-file-models 2>/dev/null)"
+[[ "$out" == "yes" ]] || fail "--agent-file-models (claude): expected 'yes', got '$out'"
+printf 'agent_cli copilot\n' > "$conf"
+out="$("$agent_cli" --agent-file-models 2>/dev/null)"
+[[ "$out" == "no" ]] || fail "--agent-file-models (copilot): expected 'no', got '$out'"
+pass "--agent-file-models says the agent files' words are claude's"
+
+set +e
+"$agent_cli" --agent-file-models x >/dev/null 2>&1; status=$?
+set -e
+[[ $status -eq 2 ]] || fail "--agent-file-models with an argument: expected exit 2, got $status"
+pass "--agent-file-models takes no arguments"
+
+# --- the copilot arm's argv, token for token and in order ----------------------------------------
+printf 'agent_cli copilot\n' > "$conf"
+read_argv "$agent_cli" --argv --role implementer --name Storm \
+  --model gpt-5-mini --effort medium --settings /tmp/s.json
+expected=(--agent implementer --name Storm
+          --model gpt-5-mini --effort medium
+          --allow-all-tools)
+[[ "${#argv[@]}" -eq "${#expected[@]}" ]] \
+  || fail "--argv (copilot): expected ${#expected[@]} tokens, got ${#argv[@]}: ${argv[*]}"
+for ((i = 0; i < ${#expected[@]}; i++)); do
+  [[ "${argv[$i]}" == "${expected[$i]}" ]] \
+    || fail "--argv (copilot) token $i: expected '${expected[$i]}', got '${argv[$i]}'"
+done
+pass "--argv emits the copilot arm's flags in launch order"
+
+for flag in --remote-control --settings --permission-mode; do
+  printf '%s' "${argv[*]}" | grep -q -- "$flag" \
+    && fail "--argv (copilot) emits $flag, which is the claude arm's to spell: ${argv[*]}"
+done
+printf '%s' "${argv[*]}" | grep -q -- '/tmp/s.json' \
+  && fail "--argv (copilot): the settings path must not appear: ${argv[*]}"
+pass "the copilot arm emits no --remote-control, no --settings and no --permission-mode"
+
+read_argv "$agent_cli" --argv --role planner --name Xavier
+expected=(--agent planner --name Xavier --allow-all-tools)
+[[ "${argv[*]}" == "${expected[*]}" ]] \
+  || fail "--argv (copilot, nothing optional): expected '${expected[*]}', got '${argv[*]}'"
+pass "--argv omits --model and --effort for copilot when not given"
+
+read_argv "$agent_cli" --prompt-argv "$prompt"
+[[ "${#argv[@]}" -eq 2 ]] || fail "--prompt-argv (copilot): expected two tokens, got ${#argv[@]}"
+[[ "${argv[0]}" == "-i" ]] || fail "--prompt-argv (copilot): expected -i, got '${argv[0]}'"
+[[ "${argv[1]}" == "$prompt" ]] \
+  || fail "--prompt-argv (copilot): the prompt should arrive whole, got '${argv[1]}'"
+pass "--prompt-argv carries the prompt as -i and one token"
+
+# --- --check, with copilot declared --------------------------------------------------------------
+#
+# A PATH of its own rather than $bare_dir: this case needs project-conf to actually READ the
+# declaration (so it needs grep and tail), and needs `copilot' to be absent from it. $bare_dir is
+# too bare - project-conf fails there, the declaration reads as absent, and the case would assert
+# about the claude arm.
+nocopilot_dir="$(mktemp -d)"
+cleanup_add "$nocopilot_dir"
+for t in dirname bash grep tail mkdir date git; do
+  [[ -x "$nocopilot_dir/$t" ]] || ln -s "$(command -v "$t")" "$nocopilot_dir/$t"
+done
+set +e
+out="$(PATH="$nocopilot_dir" "$(command -v bash)" "$agent_cli" --check Storm 2>&1)"; status=$?
+set -e
+[[ $status -eq 3 ]] || fail "--check (copilot missing): expected exit 3, got $status"
+echo "$out" | grep -q 'copilot is not on PATH - install GitHub Copilot CLI' \
+  || fail "--check (copilot missing): expected the copilot arm's sentence, got: $out"
+echo "$out" | grep -q '^cerebro: ' \
+  || fail "--check (copilot missing): the refusal must come from launch-refused, got: $out"
+pass "--check refuses when copilot is not on PATH"
+
+printf '#!/usr/bin/env bash\nexit 0\n' > "$stub_dir/copilot"
+chmod +x "$stub_dir/copilot"
+out="$(PATH="$stub_dir:$PATH" "$agent_cli" --check Storm 2>&1)"
+[[ -z "$out" ]] || fail "--check (copilot present): expected silence, got: $out"
+pass "--check exits 0 and says nothing when copilot is declared and present"
 
 printf 'agent_cli claude\n' > "$conf"
 

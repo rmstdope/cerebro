@@ -90,7 +90,8 @@ Not prose — files, each tracked so that every clone has it.
 
 - `.cerebro/project.conf` — this project's name, default branch, audience, which paths are
   the application, which agent CLI its sessions run on (`agent_cli`, answered by
-  `scripts/agent-cli`), and the gate. Both gates name `tests/gate`, which runs exactly what
+  `scripts/agent-cli` — `claude` or, since cb-d59.6, `copilot`, both runnable rather than one
+  planned; absent means `claude`), and the gate. Both gates name `tests/gate`, which runs exactly what
   `.github/workflows/ci.yml` runs (cb-i3l.2).
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
   built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that
@@ -517,13 +518,22 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   and discovers its hooks from the consumer's `.github/hooks/`, so `scripts/sync-symlinks.sh` links
   it there — in every consumer, whatever `agent_cli` declares, the same rule the layouts follow —
   and `scripts/agent-cli --hooks` is the one place those two paths are written down.
-- **The model an agent runs on is the agent definition's `model:`, unless the consumer overrides it.**
-  `scripts/launch` reads `<consumer>/.cerebro/models.conf` if it exists — `<name|role|default>
+- **The model an agent runs on is the agent definition's `model:`, unless the consumer overrides it —
+  and on any CLI but Claude Code the definition does not answer at all.**
+  `scripts/launch` reads `<consumer>/.cerebro/models.conf` if it exists — `<name|role|default>[@provider]
   <model|-> [effort]`, most specific key wins, `-` meaning "pass no `--model`" — and says on stderr
   which key it matched, so an unexpected model is traceable to the file nobody remembers editing. A
   `--model` on the command line still wins, since it is appended after. `models.conf.example` is the
   documented copy; the live file is consumer-side and uncommitted, which is what makes switching the
   fleet between Opus and Fable a one-line edit rather than a submodule change every consumer shares.
+  Since cb-d59.6 a key may carry `@<provider>`, and the six probed keys are most-specific-first with
+  the provider-scoped key beating the plain one within each: `<Name>@<p>`, `<Name>`, `<role>@<p>`,
+  `<role>`, `default@<p>`, `default`. A key naming a CLI cerebro does not know is warned about
+  **once** and ignored — which is why the file is read in one pass into parallel arrays and then
+  probed, rather than re-read per key. The agent files' `model:` and `effort:` are **Claude Code's
+  words** (`scripts/agent-cli --agent-file-models`), so on any other provider they are dropped: a
+  Copilot fleet with no `models.conf` passes no `--model` and no `--effort` at all, runs on the
+  CLI's own defaults, and says so on stderr rather than looking deliberate.
 - `scripts/launch-preflight <role> <name>` runs before every launch. It refuses (exit 2, one line on
   stderr) if `claude` is not on `PATH`; the symlink sync it runs is consumer-only, same as
   `sync-symlinks.sh` — it does nothing beyond the `claude` check unless it is sitting inside a

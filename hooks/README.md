@@ -74,8 +74,10 @@ Two things to know before changing it:
   `bash`; Claude Code's names it in `command` and carries a `timeout`. Copying one file's shape onto
   the other produces a hook that is silently never run. A `matcher` matches the payload's internal
   `toolName`, never the name a transcript renders.
-- **Whether Copilot follows a *symlinked* hook file is unmeasured.** cb-d59.1 measured it following
-  a relative symlink for an agent file (M4) and a skill directory (M5); its hook probe (M6) wrote a
-  real file. `cb-d59.6` measures this one. Until then: if a Copilot fleet never shows `asking`, the
-  symlink is the first suspect, and replacing the link with a copy of the file at the same path is
-  the fix.
+- **A hook file is loaded only in a folder Copilot trusts.** `~/.copilot/config.json`'s
+  `trustedFolders` gates repo-level hooks entirely: in an untrusted directory the file is simply
+  never read, and nothing says so. That is the first suspect when a Copilot fleet never shows
+  `asking` — not the schema, and not the link. Measured in `docs/providers/copilot.md`, M6b.
+- **A relative symlink is fine.** The link `scripts/sync-symlinks.sh` writes into `.github/hooks/`
+  is followed and the hook fires (M6b), the same as for an agent file (M4) and a skill directory
+  (M5). It need not be a copy.

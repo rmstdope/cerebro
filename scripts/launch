@@ -110,29 +110,57 @@ agent_file="$here/../../agents/$role.md"
 model="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="model:"{print $2; exit}' "$agent_file")"
 effort="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="effort:"{print $2; exit}' "$agent_file")"
 
+# Which agent CLI this fleet runs on, and whether the frontmatter just read is written in ITS model
+# ids. 2>/dev/null on both is REQUIRED, not incidental: `resolve' prints
+# `agent-cli: no agent_cli declared; running on claude' on every call in an undeclared consumer,
+# and `--binary' below already triggers it once. Two identical lines above every session is the
+# defect this guard exists to avoid - the same guard `launch-preflight' takes for the same reason.
+provider="$("$here/agent-cli" 2>/dev/null)" || provider=""
+agent_file_models="$("$here/agent-cli" --agent-file-models 2>/dev/null)" || agent_file_models="yes"
+
+# Only the exact word `no' changes anything: an agent-cli too old to know the verb exits 2 and the
+# `||' above gives `yes', and a consumer's own fabricated agent-cli answering something else keeps
+# today's behaviour. The agent definitions declare Claude Code's words (`model: opus'), and cb-d59
+# rejected growing a per-provider key in every one of them - so on any other provider they are not
+# this provider's ids and are dropped, and .cerebro/models.conf is the only place its models are
+# chosen.
+frontmatter_model="$model"          # kept only for the fallback sentence below
+if [[ "$agent_file_models" == "no" ]]; then
+  model="" effort=""
+fi
+
 # The agent definition carries the model the role was *written* for; `.cerebro/models.conf` in the
 # consumer is where a navigator changes their mind about it without editing a submodule they share
 # with every other consumer, and without a commit. Absent - the ordinary case - nothing here
 # happens.
 #
-#     # <agent-name | role | default>   <model | ->   [effort]
+#     # <agent-name | role | default>[@provider]   <model | ->   [effort]
 #     default   opus
 #     planner   fable   high      # this role, model and effort
 #     Beast     sonnet            # this agent, keeping the declared effort
-#     Xavier    -                 # no --model at all: whatever claude defaults to
+#     Xavier    -                 # no --model at all: whatever the CLI defaults to
+#     default@copilot  gpt-5-mini # only when .cerebro/project.conf declares agent_cli copilot
 #
-# Most specific wins: the agent's own name, then its role, then `default`. A `--model` typed on the
-# command line still beats all of it, since it is appended after (see the exec below).
+# Most specific wins: the agent's own name, then its role, then `default`, and within each of those
+# the provider-scoped key beats the plain one. A `--model` typed on the command line still beats
+# all of it, since it is appended after (see the exec below).
 models_conf=""
 if [[ -n "$consumer_root" ]]; then
   models_conf="$consumer_root/.cerebro/models.conf"
 fi
 
-# Prints "MODEL<TAB>EFFORT" for the first line whose key matches $2, or nothing. Bash 3.2, so no
-# associative array: the file is a handful of lines read once per launch.
-config_lookup() {
-  local file="$1" key="$2" line k m e
-  [[ -f "$file" ]] || return 0
+# ONE pass over the file into three parallel arrays (bash 3.2, so no associative array), and then
+# six probes over what was parsed. Not a lookup function called once per key: the unknown-provider
+# warning below has to be said once per offending ROW per launch, and re-reading the file six times
+# would say it six times.
+conf_keys=() conf_models=() conf_efforts=()
+if [[ -n "$models_conf" && -f "$models_conf" ]]; then
+  known_providers=""
+  while IFS= read -r kp || [[ -n "$kp" ]]; do
+    [[ -n "$kp" ]] || continue
+    if [[ -z "$known_providers" ]]; then known_providers="$kp"; else known_providers="$known_providers $kp"; fi
+  done < <("$here/agent-cli" --known 2>/dev/null)
+
   while IFS= read -r line || [[ -n "$line" ]]; do
     # Everything from a `#' on is a comment, wherever it starts. Stripping it here rather than
     # only skipping whole comment lines is what keeps `planner fable high  # and this role lower'
@@ -141,34 +169,74 @@ config_lookup() {
     line="${line%%#*}"
     read -r k m e <<<"$line"
     [[ -n "$k" ]] || continue
-    if [[ "$k" == "$key" ]]; then
-      printf '%s\t%s\n' "$m" "$e"
-      return 0
+    # A key naming an agent CLI: split on the LAST `@', so a name containing one keeps it.
+    if [[ "$k" == *"@"* ]]; then
+      key_provider="${k##*@}"
+      known=""
+      for p in $known_providers; do [[ "$p" == "$key_provider" ]] && known=1; done
+      if [[ -z "$known" ]]; then
+        # Warned rather than refused: one typo here should not take the fleet down, and saying
+        # nothing would leave it invisible for as long as it survives.
+        pretty=""
+        for p in $known_providers; do
+          if [[ -z "$pretty" ]]; then pretty="$p"; else pretty="$pretty, $p"; fi
+        done
+        echo "launch: models.conf: $k names no agent CLI cerebro knows ($pretty) - ignored." >&2
+        continue
+      fi
     fi
-  done < "$file"
-}
+    conf_keys+=("$k") conf_models+=("$m") conf_efforts+=("$e")
+  done < "$models_conf"
+fi
 
-if [[ -n "$models_conf" ]]; then
-  for key in "$name" "$role" default; do
-    hit="$(config_lookup "$models_conf" "$key")"
-    [[ -n "$hit" ]] || continue
-    IFS=$'\t' read -r conf_model conf_effort <<<"$hit"
-    [[ -n "$conf_model" ]] || continue          # a key with no value says nothing; keep the default
-    # `-' means "pass no --model": the session runs on whatever claude itself defaults to, which is
-    # the one thing a model name cannot express.
-    if [[ "$conf_model" == "-" ]]; then
-      model=""
-    else
-      model="$conf_model"
+# Six keys, most specific first, first hit wins. The three `@' keys are asked only when we know
+# which provider this is.
+probe_keys=()
+[[ -n "$provider" ]] && probe_keys+=("$name@$provider")
+probe_keys+=("$name")
+[[ -n "$provider" ]] && probe_keys+=("$role@$provider")
+probe_keys+=("$role")
+[[ -n "$provider" ]] && probe_keys+=("default@$provider")
+probe_keys+=(default)
+
+matched=""
+for key in "${probe_keys[@]}"; do
+  conf_model="" conf_effort="" hit=""
+  for ((i = 0; i < ${#conf_keys[@]}; i++)); do
+    if [[ "${conf_keys[$i]}" == "$key" ]]; then
+      conf_model="${conf_models[$i]}" conf_effort="${conf_efforts[$i]}" hit=1
+      break
     fi
-    [[ -n "$conf_effort" ]] && effort="$conf_effort"
-    # Said out loud: a session on an unexpected model is otherwise a mystery three days later, and
-    # this is the file nobody remembers editing.
-    # The apostrophe in "claude's" is deliberately absent: bash 3.2 mis-parses a quote inside
-    # ${x:-word} within double quotes, which is a syntax error rather than a stray character.
-    echo "launch: models.conf ($key) -> ${model:-the claude default}${conf_effort:+ at $conf_effort effort}" >&2
-    break
   done
+  [[ -n "$hit" ]] || continue
+  [[ -n "$conf_model" ]] || continue          # a key with no value says nothing; keep the default
+  # `-' means "pass no --model": the session runs on whatever the CLI itself defaults to, which is
+  # the one thing a model name cannot express.
+  if [[ "$conf_model" == "-" ]]; then
+    model=""
+  else
+    model="$conf_model"
+  fi
+  [[ -n "$conf_effort" ]] && effort="$conf_effort"
+  matched=1
+  # Said out loud: a session on an unexpected model is otherwise a mystery three days later, and
+  # this is the file nobody remembers editing.
+  # The apostrophe in "claude's" is deliberately absent: bash 3.2 mis-parses a quote inside
+  # ${x:-word} within double quotes, which is a syntax error rather than a stray character.
+  echo "launch: models.conf ($key) -> ${model:-the CLI default}${conf_effort:+ at $conf_effort effort}" >&2
+  break
+done
+
+# Nothing matched, on a provider whose ids the agent files are not written in: no --model and no
+# --effort are passed at all and the session runs on the CLI's own defaults. Said out loud, or a
+# fleet nobody has configured looks exactly like one deliberately on defaults. Plain
+# double-quoted strings, so the apostrophe in "Claude Code's" is safe - it would not be inside a
+# ${x:-word} expansion, which is this file's own bash-3.2 trap.
+if [[ "$agent_file_models" == "no" && -z "$matched" ]]; then
+  echo "launch: no models.conf entry for $provider - $provider picks its own model and effort." >&2
+  if [[ -n "$frontmatter_model" ]]; then
+    echo "        The $role declares model $frontmatter_model, which is Claude Code's name for it." >&2
+  fi
 fi
 
 # Cerebro's own marker sentence: the WHOLE of the liveness rule since cb-d59.3, and the reason

@@ -120,6 +120,20 @@ grep -q "unknown argument" <<<"$out" \
 rm -rf "$tmp"
 pass "end-pass-refuses-an-unknown-argument"
 
+# --- end-pass-refuses-wake-in ---
+# cb-3tk removed `--wake-in' from agent-state; this is the case that stops the removed vocabulary
+# creeping back in through the new script.
+tmp="$(new_fixture)"
+set +e
+out="$(run_end_pass "$tmp" Moira --wake-in 600 --pid 42 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "end-pass-refuses-wake-in: expected exit 2, got $status"
+grep -q "unknown argument" <<<"$out" || fail "end-pass-refuses-wake-in: wrong message, got: $out"
+[[ -f "$(state_file "$tmp" Moira)" ]] && fail "end-pass-refuses-wake-in: file was written"
+rm -rf "$tmp"
+pass "end-pass-refuses-wake-in"
+
 # --- end-pass-appends-a-transition ---
 # What pins that end-pass goes THROUGH agent-state rather than writing the state file itself: a
 # reimplementation would pass every case above and fail this one.

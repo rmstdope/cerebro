@@ -17,10 +17,10 @@
 #   `done`    was an implementer's older spelling of it, retired by cb-1or.2 and now refused like
 #             any other unknown word.
 #
-# `waiting` takes --wake-in <seconds>, which is required with it and invalid without it, and is
-# recorded as `wake_at` - an absolute ISO-8601 timestamp, so a reader needs no clock arithmetic and
-# no assumption about when the file was written. It is what the agent ASKS for; the fleet view owns
-# the cadence and is free to wake it earlier.
+# `waiting` takes no wake and the state file records none (cb-3tk). Cadence belongs to the fleet
+# view alone - `cerebro-wake-interval' / `cerebro-wake-intervals' in emacs/cerebro.el, measured
+# from an agent's last start - and has never read this file. Ending a pass is
+# `scripts/end-pass <name> --pid <pid>', which calls this script.
 # <phase>, only meaningful with `working` or `asking`, is any lower-case word: letters, digits and
 # hyphens, starting with a letter. It is NOT a closed set - a consumer that adds a role of its own
 # invents a word for it and this script must record it, which is what the old eighteen-way case
@@ -50,7 +50,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/jsonl-log.sh"
 
 usage() {
-  echo "usage: agent-state <name> <idle|working|asking|waiting> [--bead <id>] [--phase <word>] [--wake-in <seconds>] --pid <pid>" >&2
+  echo "usage: agent-state <name> <idle|working|asking|waiting> [--bead <id>] [--phase <word>] --pid <pid>" >&2
   exit 2
 }
 
@@ -63,7 +63,6 @@ bead=""
 phase=""
 phase_given=0
 pid=""
-wake_in=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -73,8 +72,6 @@ while [[ $# -gt 0 ]]; do
       phase="${2:-}"; phase_given=1; shift 2 ;;
     --pid)
       pid="${2:-}"; shift 2 ;;
-    --wake-in)
-      wake_in="${2:-}"; shift 2 ;;
     *)
       echo "agent-state: unknown argument '$1'" >&2
       exit 2 ;;
@@ -113,23 +110,6 @@ if [[ $phase_given -eq 1 ]]; then
   esac
 fi
 
-# --wake-in and `waiting` imply one another: a wait with no wake is one nothing will ever end, and a
-# wake time on any other state describes a cadence the agent is not in.
-if [[ "$state" == waiting ]]; then
-  if [[ -z "$wake_in" ]]; then
-    echo "agent-state: --wake-in is required with waiting" >&2
-    exit 2
-  fi
-elif [[ -n "$wake_in" ]]; then
-  echo "agent-state: --wake-in is only valid with waiting, not '$state'" >&2
-  exit 2
-fi
-
-if [[ -n "$wake_in" ]] && ! [[ "$wake_in" =~ ^[1-9][0-9]*$ ]]; then
-  echo "agent-state: --wake-in takes a positive whole number of seconds, not '$wake_in'" >&2
-  exit 2
-fi
-
 if [[ -z "$pid" ]]; then
   echo "agent-state: --pid is required (pass \$PPID)" >&2
   exit 2
@@ -149,9 +129,8 @@ out_file="$out_dir/$name.state.json"
 tmp_file="$out_file.tmp"
 
 # One reading of the clock, from which both timestamps below are derived. Two `date` calls would
-# straddle a second boundary now and then, and `wake_at` is written as an absolute time that a
-# reader takes to be exactly `--wake-in` seconds after `since` - a skew there is a wake a second
-# early or late for ever, and a flaky test.
+# straddle a second boundary now and then, and `since` and `phase_since` are compared with one
+# another - a skew there is a phase that reads as older than the state it belongs to.
 now_epoch="$(date -u +%s)"
 
 # `date -r <epoch>` is BSD/macOS and `date -d @<epoch>` is GNU; each rejects the other's form, so
@@ -161,11 +140,6 @@ iso_at() {
 }
 
 now="$(iso_at "$now_epoch")"
-
-wake_at=""
-if [[ -n "$wake_in" ]]; then
-  wake_at="$(iso_at $((now_epoch + wake_in)))"
-fi
 
 prev="$(jq -c '.' "$out_file" 2>/dev/null || true)"
 
@@ -196,14 +170,12 @@ jq -n \
   --arg since "$since" \
   --arg phase_since "$phase_since" \
   --arg pid "$pid" \
-  --arg wake_at "$wake_at" \
   '{
     state: $state,
     phase: (if $phase == "" then null else $phase end),
     bead: (if $bead == "" then null else $bead end),
     since: $since,
     phase_since: (if $phase_since == "" then null else $phase_since end),
-    wake_at: (if $wake_at == "" then null else $wake_at end),
     pid: ($pid | tonumber)
   }' > "$tmp_file"
 

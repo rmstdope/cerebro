@@ -1109,7 +1109,8 @@ running on a number nobody declared must not be silent either."
                                          " using 30"))))))
       (delete-directory tmp t))))
 
-(ert-deftest cerebro-test/system-processes-are-pid-ppid-and-args-triples ()  "The real process scan, on this very Emacs.  The `(emacs-pid)\=' line is the
+(ert-deftest cerebro-test/system-processes-are-pid-ppid-and-args-triples ()
+  "The real process scan, on this very Emacs.  The `(emacs-pid)\=' line is the
 one that would catch a platform where `process-attributes\=' returns no
 `args\=': there the reader returns nothing, every interactive row falls to
 `dead\=', and nothing says so.  The ppid assertion is the same test for the

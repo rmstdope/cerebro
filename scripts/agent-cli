@@ -285,12 +285,16 @@ case "$verb" in
         # Three absences, each as load-bearing as the presences. No `--remote-control': copilot has
         # none, and cb-d59 accepted the loss. No `--settings': copilot discovers its hooks from the
         # consumer's .github/hooks/ (cb-d59.5), so the argument is accepted here and ignored. And
-        # `--allow-all-tools' rather than `--permission-mode auto', there being no such flag - it
-        # goes last, where the claude arm puts its own.
+        # `--allow-all' rather than `--permission-mode auto', there being no such flag: copilot
+        # splits that ground into --allow-all-tools, --allow-all-paths and --allow-all-urls, and
+        # `--allow-all' is the union, which is what `--permission-mode auto' covers on the other
+        # arm. The narrower `--allow-all-tools' was tried first and prompted on every path outside
+        # the repository, which stalls an unattended session with no `asking' state to show for it.
+        # It goes last, where the claude arm puts its own.
         printf '%s\0' --agent "$role" --name "$name"
         [[ -n "$model" ]] && printf '%s\0' --model "$model"
         [[ -n "$effort" ]] && printf '%s\0' --effort "$effort"
-        printf '%s\0' --allow-all-tools
+        printf '%s\0' --allow-all
         ;;
     esac
     ;;

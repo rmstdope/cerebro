@@ -247,7 +247,7 @@ read_argv "$agent_cli" --argv --role implementer --name Storm \
   --model gpt-5-mini --effort medium --settings /tmp/s.json
 expected=(--agent implementer --name Storm
           --model gpt-5-mini --effort medium
-          --allow-all-tools)
+          --allow-all)
 [[ "${#argv[@]}" -eq "${#expected[@]}" ]] \
   || fail "--argv (copilot): expected ${#expected[@]} tokens, got ${#argv[@]}: ${argv[*]}"
 for ((i = 0; i < ${#expected[@]}; i++)); do
@@ -265,10 +265,25 @@ printf '%s' "${argv[*]}" | grep -q -- '/tmp/s.json' \
 pass "the copilot arm emits no --remote-control, no --settings and no --permission-mode"
 
 read_argv "$agent_cli" --argv --role planner --name Xavier
-expected=(--agent planner --name Xavier --allow-all-tools)
+expected=(--agent planner --name Xavier --allow-all)
 [[ "${argv[*]}" == "${expected[*]}" ]] \
   || fail "--argv (copilot, nothing optional): expected '${expected[*]}', got '${argv[*]}'"
 pass "--argv omits --model and --effort for copilot when not given"
+
+# The permission flag covers paths and URLs, not tools alone (cb-s8b). `--allow-all-tools' left
+# beside it would be harmless to copilot and would hide a half-done change, so its absence is
+# asserted too - and by exact token, since `--allow-all' is a prefix of it and a substring test
+# cannot tell them apart.
+saw_allow_all="" saw_tools_only=""
+for tok in "${argv[@]}"; do
+  [[ "$tok" == "--allow-all" ]] && saw_allow_all=1
+  [[ "$tok" == "--allow-all-tools" ]] && saw_tools_only=1
+done
+[[ -n "$saw_allow_all" ]] \
+  || fail "--argv (copilot): expected --allow-all, which allows paths and URLs as well as tools: ${argv[*]}"
+[[ -z "$saw_tools_only" ]] \
+  || fail "--argv (copilot): --allow-all-tools is the narrower flag and must not be emitted: ${argv[*]}"
+pass "the copilot arm's permission flag allows paths and URLs, not tools alone"
 
 read_argv "$agent_cli" --prompt-argv "$prompt"
 [[ "${#argv[@]}" -eq 2 ]] || fail "--prompt-argv (copilot): expected two tokens, got ${#argv[@]}"

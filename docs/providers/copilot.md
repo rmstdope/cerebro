@@ -25,7 +25,7 @@ file. The `## Summary` table below is therefore built row-for-row from the flags
 | `--effort <level>` | `--effort, --reasoning-effort <level>` | yes (M7) | choices are `none,minimal,low,medium,high,xhigh,max` — but acceptance is **per model**, and the non-interactive default model rejects every level. **Decided (cb-d59.6):** passed only when a `.cerebro/models.conf` row names one, and then verbatim |
 | `--append-system-prompt <marker>` | **none** | yes (M12) | no equivalent flag. The marker rides inside `-i`, and is measured reaching argv verbatim through `scripts/launch` (M13) |
 | `--settings <path>` | `.github/hooks/*.json` (no flag) | yes (M6, M6b) | hooks are discovered from the repository, not passed on the command line. A relative symlink is followed; an untrusted folder is not read at all |
-| `--permission-mode auto` | `--allow-all-tools` | yes (M9) | documented as required for non-interactive mode. **Decided (cb-d59.6):** `--allow-all-tools`, last in the arm, not the wider `--allow-all` |
+| `--permission-mode auto` | `--allow-all` | yes (M9) | documented as required for non-interactive mode. **Decided (cb-d59.6), revised (cb-s8b):** `--allow-all`, last in the arm. `--allow-all-tools` covers tools alone, so every session prompted on paths outside the repository; `--allow-all` is the union of tools, paths and URLs, which is the ground `--permission-mode auto` covers |
 | trailing bare prompt | **refused** — use `-i <prompt>` | yes (M3) | `copilot --allow-all-tools 'reply ok'` → `error: too many arguments. Expected 0 arguments but got 1.` |
 | (root `CLAUDE.md` read as instructions) | same | yes (M10) | loaded as custom instructions, not read as a file |
 
@@ -476,6 +476,11 @@ run without it also proceeded unprompted. That may be a persisted per-directory 
 an earlier probe in the same `probe/` tree, or non-interactive mode auto-allowing. It was not
 chased, because cb-d59.6 will pass the flag regardless — the CLI's own help calls it "required
 for non-interactive mode".
+
+**Revised by cb-s8b.** The arm ships `--allow-all`, not `--allow-all-tools`: the narrow flag
+allows tools only, and running the fleet on it produced a path-permission prompt on every access
+outside the repository, which stalls an unattended session silently. `--allow-all` is the
+documented union of `--allow-all-tools`, `--allow-all-paths` and `--allow-all-urls`.
 
 ## M10 Instructions
 

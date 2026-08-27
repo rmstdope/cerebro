@@ -148,7 +148,7 @@ pass "refuses any argument with a usage line, before reaching emacs"
 loose="$work_dir/loose/scripts"
 mkdir -p "$loose"
 cp "$repo_root/scripts/cerebro" "$loose/cerebro"
-cp "$repo_root/scripts/consumer-root" "$loose/consumer-root"
+cp "$repo_root/scripts/consumer-root" "$repo_root/scripts/root-hints.sh" "$loose/"
 chmod +x "$loose/cerebro" "$loose/consumer-root"
 
 rm -f "$record"

@@ -30,6 +30,27 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The consumer roots, resolved ONCE and handed to everything below (cb-ue0).
+#
+# This is the top of the launch path, and everything under it - `roster', `launch-preflight', and
+# through that `default-branch', `project-conf', `agent-cli' and `sync-symlinks.sh' - used to fork
+# `consumer-root' again for itself: sixteen resolutions of one unchanging answer before a session
+# ever started, a third of a second on every launch and most of tests/launchers.sh's own runtime.
+# One `--hints' call answers all three, and the exports carry them down the whole process tree,
+# including into the session itself. Every reader validates them against its own checkout before
+# believing them - see scripts/root-hints.sh - so they can only ever save work.
+#
+# Guarded, and left unset when there is none: this launcher runs from outside a consumer in the
+# tests, and everything below that needs a root checks first.
+if hints="$("$here/consumer-root" --hints 2>/dev/null)"; then
+  # `read', not `sed -n 1p' three times: tests/launchers.sh runs a launcher with a PATH holding
+  # `dirname' and `bash' alone, so nothing on this path may reach for an external command.
+  { IFS= read -r CEREBRO_CONSUMER_ROOT
+    IFS= read -r CEREBRO_CONSUMER_SHARED_ROOT
+    IFS= read -r CEREBRO_CONSUMER_MOUNT; } <<<"$hints"
+  export CEREBRO_CONSUMER_ROOT CEREBRO_CONSUMER_SHARED_ROOT CEREBRO_CONSUMER_MOUNT
+fi
+
 names() { "$here/roster" | while IFS=$'\t' read -r n _ _; do printf '%s\n' "$n"; done; }
 
 usage() {
@@ -68,12 +89,10 @@ IFS=$'\t' read -r _ role kind <<<"$entry"
 # --actor default chain: $BEADS_ACTOR, git user.name, $USER).
 export BEADS_ACTOR="$name"
 
-# Where this fleet lives, asked once. Guarded, and left empty when there is none: this launcher
-# runs from outside a consumer in the tests, and everything below that needs a root checks first.
-consumer_root=""
-if ! consumer_root="$("$here/consumer-root" --shared 2>/dev/null)"; then
-  consumer_root=""
-fi
+# Where this fleet lives - the shared root resolved at the top of this file. Empty when there is
+# none, or when the consumer is not a git working tree (`--hints' leaves that line blank), which is
+# exactly what `consumer-root --shared' used to answer by failing.
+consumer_root="${CEREBRO_CONSUMER_SHARED_ROOT:-}"
 
 # A name whose session is already alive in this fleet is refused: two sessions of one name is the
 # one thing the fleet view cannot see - the newer overwrites the state file with its own pid and

@@ -48,7 +48,13 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # no root, `agent-cli` answers `claude`, and the PATH check behaves exactly as it did.
 "$script_dir/agent-cli" --check "$name" || exit 2
 
-consumer="$("$script_dir/consumer-root" 2>/dev/null)" || exit 0
+# The launch path's hint first (cb-ue0): `launch' has already resolved this and exported it, and
+# every fork of `consumer-root' below this line was a re-derivation of the same answer. It is
+# validated against this checkout before it is believed - see scripts/root-hints.sh - so a hint
+# left over from a shell that was last inside another worktree is ignored rather than followed.
+source "$script_dir/root-hints.sh"
+consumer="$(cerebro_hinted_root "$script_dir/.." plain)" \
+  || consumer="$("$script_dir/consumer-root" 2>/dev/null)" || exit 0
 parent="$consumer/.claude"                                    # .claude, in a consumer
 # consumer-root alone would accept a standalone clone sitting at e.g. ~/.claude/cerebro (the
 # layout it checks for is satisfied by construction) - require that $consumer is also a git

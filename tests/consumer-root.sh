@@ -44,6 +44,7 @@ worktree="$consumer/.cerebro/worktrees/wt"
 git -C "$consumer" worktree add -q "$worktree" -b wt-branch
 mkdir -p "$worktree/.claude/cerebro/scripts"
 ln -s "$repo_root/scripts/consumer-root" "$worktree/.claude/cerebro/scripts/consumer-root"
+ln -s "$repo_root/scripts/root-hints.sh" "$worktree/.claude/cerebro/scripts/root-hints.sh"
 
 wt_plain="$("$worktree/.claude/cerebro/scripts/consumer-root")"
 [[ "$wt_plain" == "$(cd "$worktree" && pwd -P)" ]] \
@@ -59,6 +60,7 @@ pass "--shared, from a worktree's own submodule copy, prints the main checkout"
 standalone="$work_dir/x/cerebro/scripts"
 mkdir -p "$standalone"
 ln -s "$repo_root/scripts/consumer-root" "$standalone/consumer-root"
+ln -s "$repo_root/scripts/root-hints.sh" "$standalone/root-hints.sh"
 
 set +e
 out="$("$standalone/consumer-root" 2>&1)"
@@ -109,7 +111,7 @@ git_q -C "$nested_src" commit -q --allow-empty -m init
 git_q -C "$grandparent" -c protocol.file.allow=always submodule add -q "$nested_src" child
 nested="$grandparent/child"
 mkdir -p "$nested/.claude/cerebro/scripts"
-cp "$repo_root/scripts/consumer-root" "$nested/.claude/cerebro/scripts/consumer-root"
+cp "$repo_root/scripts/consumer-root" "$repo_root/scripts/root-hints.sh" "$nested/.claude/cerebro/scripts/"
 nested_out="$("$nested/.claude/cerebro/scripts/consumer-root")"
 [[ "$nested_out" == "$(cd "$nested" && pwd -P)" ]] \
   || fail "a copied mount in a nested consumer: expected $nested, got $nested_out"
@@ -133,6 +135,7 @@ pass "the standard mount resolves with PATH narrowed to dirname and bash - git s
 plain_consumer="$work_dir/plain"
 mkdir -p "$plain_consumer/.claude/cerebro/scripts"
 ln -s "$repo_root/scripts/consumer-root" "$plain_consumer/.claude/cerebro/scripts/consumer-root"
+ln -s "$repo_root/scripts/root-hints.sh" "$plain_consumer/.claude/cerebro/scripts/root-hints.sh"
 
 plain_ng_out="$("$plain_consumer/.claude/cerebro/scripts/consumer-root")"
 [[ "$plain_ng_out" == "$(cd "$plain_consumer" && pwd -P)" ]] \
@@ -159,7 +162,7 @@ pass "--shared refuses when the consumer is not inside a git working tree"
 self_consumer="$work_dir/self"
 mkdir -p "$self_consumer/scripts" "$self_consumer/.claude"
 git init -q "$self_consumer"
-cp "$repo_root/scripts/consumer-root" "$self_consumer/scripts/consumer-root"
+cp "$repo_root/scripts/consumer-root" "$repo_root/scripts/root-hints.sh" "$self_consumer/scripts/"
 chmod +x "$self_consumer/scripts/consumer-root"
 ln -s ".." "$self_consumer/.claude/cerebro"
 git_q -C "$self_consumer" add -A
@@ -200,5 +203,42 @@ self_wt_shared="$("$self_wt/.claude/cerebro/scripts/consumer-root" --shared)"
 [[ "$self_wt_shared" == "$self_root" ]] \
   || fail "self-consumer worktree --shared: expected $self_root, got $self_wt_shared"
 pass "--shared, from a self-consumer's worktree, prints the main checkout"
+
+# --- --hints: all three answers in one fork, for launch to export (cb-ue0) ---
+#
+# The point of the mode is that it agrees with the three it replaces, so that is what is asserted:
+# a fourth spelling of the resolution would be a fourth thing to keep in step.
+assert_hints() {
+  # $1 = the consumer-root to run, $2 = expected plain, $3 = expected shared, $4 = expected mount
+  local script="$1" want_plain="$2" want_shared="$3" want_mount="$4" got
+  got="$("$script" --hints)"
+  [[ "$(sed -n 1p <<<"$got")" == "$want_plain" ]] \
+    || fail "--hints plain: expected $want_plain, got $(sed -n 1p <<<"$got")"
+  [[ "$(sed -n 2p <<<"$got")" == "$want_shared" ]] \
+    || fail "--hints shared: expected $want_shared, got $(sed -n 2p <<<"$got")"
+  [[ "$(sed -n 3p <<<"$got")" == "$want_mount" ]] \
+    || fail "--hints mount: expected $want_mount, got $(sed -n 3p <<<"$got")"
+}
+
+assert_hints "$consumer/.claude/cerebro/scripts/consumer-root" \
+  "$(cd "$consumer" && pwd -P)" "$(cd "$consumer" && pwd -P)" ".claude/cerebro"
+pass "--hints prints plain, shared and mount from the main checkout"
+
+# The worktree is the case the hints exist to keep honest: plain and shared differ, and a consumer
+# script handed the wrong one of the two would write its links into somebody else's tree.
+assert_hints "$worktree/.claude/cerebro/scripts/consumer-root" \
+  "$(cd "$worktree" && pwd -P)" "$(cd "$consumer" && pwd -P)" ".claude/cerebro"
+pass "--hints from a worktree names the worktree and the shared checkout separately"
+
+assert_hints "$alt/vendor/cerebro/scripts/consumer-root" "$alt_root" "$alt_root" "vendor/cerebro"
+pass "--hints names the physical mount for a submodule vendored elsewhere"
+
+# A checkout with no consumer above it fails, exactly as the plain form does - `launch' then
+# exports nothing and every consumer script falls back to the behaviour it already had.
+set +e
+"$standalone/consumer-root" --hints >/dev/null 2>&1; status=$?
+set -e
+[[ $status -eq 1 ]] || fail "--hints standalone: expected exit 1, got $status"
+pass "--hints refuses a standalone clone, like every other form"
 
 echo "all consumer-root tests passed"

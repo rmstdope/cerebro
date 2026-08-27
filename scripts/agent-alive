@@ -49,7 +49,14 @@ fi
 # The shared checkout every worktree of the repository has in common - never the enclosing tree,
 # which from a bead worktree's own submodule copy is the worktree itself, not the main checkout the
 # fleet writes state into (ah-e0w). See scripts/consumer-root for the two roots and why they differ.
-repo_root="$("$script_dir/consumer-root" --shared)"
+#
+# The launch path's hint first (cb-ue0): `launch' calls this once per session start to refuse a
+# duplicate name, and a planner calls it once per label it checks. Validated against this checkout
+# before it is believed - see scripts/root-hints.sh - and the fork below is what answers otherwise,
+# including its failure, which is still how a standalone clone is refused.
+source "$script_dir/root-hints.sh"
+repo_root="$(cerebro_hinted_root "$script_dir/.." shared)" \
+  || repo_root="$("$script_dir/consumer-root" --shared)"
 state_file="$repo_root/.cerebro/state/$name.state.json"
 
 [[ -f "$state_file" ]] || exit 1

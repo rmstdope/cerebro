@@ -124,7 +124,12 @@ consider_root() {
 # recognises cerebro serving itself - in that order, once, for every script. A standalone clone
 # has no consumer and consumer-root says so on stderr; that is the documented "run the built-in
 # fleet" case, so the message is dropped here and the table below answers.
-root="$("$here/consumer-root" 2>/dev/null)" || root=""
+# `launch' resolves it once and exports it, and this script is the first thing a launch runs and
+# is run again for the refusal paths (cb-ue0). The hint is validated against this checkout by
+# builtins alone, so the narrowed-PATH guarantee above survives it.
+source "$here/root-hints.sh"
+root="$(cerebro_hinted_root "$here/.." plain)" \
+  || root="$("$here/consumer-root" 2>/dev/null)" || root=""
 consider_root "$root"
 
 if [[ -z "$CONSUMER_ROSTER" && -n "$OLD_ROSTER" ]]; then

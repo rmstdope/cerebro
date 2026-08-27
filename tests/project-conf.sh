@@ -302,4 +302,45 @@ out="$("$old_consumer/.claude/cerebro/scripts/project-conf" default_branch main 
 [[ "$out" == "trunk" ]] || fail "after the mv: expected 'trunk', got '$out'"
 pass "after the mv, the declaration reads from .cerebro/project.conf"
 
+# --- the launch path's shared-root hint is used instead of forking consumer-root (cb-ue0) ---
+#
+# `launch' resolves the roots once and exports them; every consumer script prefers the hint. The
+# stub is how the suite proves the fork did not happen at all rather than merely happened to agree:
+# with `consumer-root' guaranteed to fail, a value can only have come from the hint.
+hint_consumer="$(consumer_new hinted --link consumer-root project-conf)"
+echo "project_name Hinted" > "$hint_consumer/.cerebro/project.conf"
+hint_conf="$hint_consumer/.claude/cerebro/scripts/project-conf"
+rm -f "$hint_consumer/.claude/cerebro/scripts/consumer-root"
+cat > "$hint_consumer/.claude/cerebro/scripts/consumer-root" <<'STUB'
+#!/usr/bin/env bash
+echo "consumer-root: the suite says this must not be forked" >&2
+exit 1
+STUB
+chmod +x "$hint_consumer/.claude/cerebro/scripts/consumer-root"
+
+out="$(CEREBRO_CONSUMER_ROOT="$hint_consumer" \
+       CEREBRO_CONSUMER_SHARED_ROOT="$hint_consumer" \
+       CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+       "$hint_conf" project_name 2>/dev/null)"
+[[ "$out" == "Hinted" ]] || fail "shared-root hint: expected 'Hinted', got '$out'"
+pass "a validated shared-root hint is read instead of forking consumer-root"
+
+# --- a hint from another tree is rejected, and the fallback stands ---
+#
+# THE reason the hints are validated rather than trusted: an exported variable outlives the shell
+# that set it, so a hint naming somebody else's checkout must read as no hint at all.
+other="$(consumer_new elsewhere --link consumer-root)"
+out="$(CEREBRO_CONSUMER_ROOT="$other" \
+       CEREBRO_CONSUMER_SHARED_ROOT="$other" \
+       CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+       "$hint_conf" project_name fallback 2>/dev/null)"
+[[ "$out" == "fallback" ]] || fail "foreign hint: expected 'fallback', got '$out'"
+pass "a hint describing another checkout is rejected"
+
+# --- and a half-set hint is no hint either ---
+out="$(CEREBRO_CONSUMER_SHARED_ROOT="$hint_consumer" \
+       "$hint_conf" project_name fallback 2>/dev/null)"
+[[ "$out" == "fallback" ]] || fail "half-set hint: expected 'fallback', got '$out'"
+pass "a hint without its mount is rejected"
+
 echo "all project-conf tests passed"

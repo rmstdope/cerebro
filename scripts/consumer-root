@@ -19,6 +19,11 @@
 #                                  a link from the consumer should spell it: `.claude/cerebro' at
 #                                  the standard mount and for the self-mount, the physical relative
 #                                  path (`vendor/cerebro') for a submodule vendored elsewhere.
+#   consumer-root --hints          all three of the above, one per line - enclosing, shared (which
+#                                  may be empty), mount - for `launch' to export down its process
+#                                  tree in ONE fork rather than three (cb-ue0). See
+#                                  scripts/root-hints.sh for what reads them and why they are
+#                                  validated rather than trusted.
 #
 # The mount may be <consumer>/.claude/cerebro or, for a consumer that vendors cerebro as a SUBMODULE
 # somewhere else entirely (vendor/cerebro, tools/cerebro, ...), wherever it put it - see the three
@@ -32,22 +37,12 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-# THE one answer to "does <root>/.claude/cerebro resolve to <checkout>" (cb-akc). Both round trips
-# below use it and `--self-mounted' and `--mount' expose it, so that roster (through the plain
-# form) and sync-symlinks.sh (through `--mount') ask rather than spelling the round trip again -
-# five copies by three mechanisms is how the janitor walked one list twice and roster fell back to
-# the built-in fleet in silence. prune-worktrees.sh is NOT one of the callers and is not a sixth
-# copy: it compares git dirs, which asks "one repository or two" rather than "does the mount
-# resolve back", and the two part company for a vendored plain copy at the standard mount - its own
-# header carries the reason. Builtins only (`cd', `pwd'), so the narrowed-PATH guarantee
-# tests/launchers.sh asserts survives it. Physical on both sides: macOS mktemp lives under /var -> /private/var.
-mount_resolves_to() {
-  # $1 = a candidate consumer root, $2 = a checkout of cerebro
-  local mount checkout
-  mount="$(cd "$1/.claude/cerebro" 2>/dev/null && pwd -P)" || return 1
-  checkout="$(cd "$2" 2>/dev/null && pwd -P)" || return 1
-  [[ "$mount" == "$checkout" ]]
-}
+# The mount round trip - `cerebro_mount_resolves_to' - lives in scripts/root-hints.sh, which is
+# also where the launch path's root hints are validated by it (cb-ue0). Stated once there rather
+# than twice here: five copies by three mechanisms is how the janitor walked one list twice and
+# roster fell back to the built-in fleet in silence. Sourcing costs no fork and no external
+# command, so the narrowed-PATH guarantee tests/launchers.sh asserts survives it.
+source "$script_dir/root-hints.sh"
 
 # Three ways of answering, tried in order (ah-ohc2, cb-i3l.1).
 #
@@ -85,7 +80,7 @@ mount_resolves_to() {
 #    A standalone clone still has no consumer, and is still refused: what is checked is the round
 #    trip through the mount, which only a checkout that has deliberately mounted itself can make.
 candidate="$(cd "$script_dir/../../.." 2>/dev/null && pwd -P)" || candidate=""
-if [[ -n "$candidate" ]] && mount_resolves_to "$candidate" "$script_dir/.."; then
+if [[ -n "$candidate" ]] && cerebro_mount_resolves_to "$candidate" "$script_dir/.."; then
   enclosing="$candidate"
 else
   enclosing="$(git -C "$script_dir" rev-parse --show-superproject-working-tree 2>/dev/null)" || enclosing=""
@@ -97,7 +92,7 @@ if [[ -z "$enclosing" ]]; then
   # 3. This checkout mounted as its own consumer - `.claude/cerebro' resolving back to the very
   #    tree this script lives in. No git, so the narrowed PATH in tests/launchers.sh still works.
   own_root="$(cd "$script_dir/.." && pwd -P)"
-  if mount_resolves_to "$own_root" "$own_root"; then
+  if cerebro_mount_resolves_to "$own_root" "$own_root"; then
     enclosing="$own_root"
   fi
 fi
@@ -119,7 +114,7 @@ case "${1:-}" in
     # it lives in (cb-i3l.1) - and 1 for every real consumer. Nothing printed: the exit status is
     # the whole answer. No caller in this repository needs it today - it is here because it is the
     # question `--mount' and both resolution steps above are already asking, stated once.
-    mount_resolves_to "$enclosing" "$enclosing" ;;
+    cerebro_mount_resolves_to "$enclosing" "$enclosing" ;;
   --mount)
     # The path of this checkout relative to the consumer root, the way a link from the consumer
     # should spell it: `.claude/cerebro' whenever the standard mount resolves to this checkout
@@ -127,7 +122,7 @@ case "${1:-}" in
     # submodule elsewhere), and the physical relative path otherwise (`vendor/cerebro').
     # sync-symlinks.sh builds every relative link from this.
     checkout="$(cd "$script_dir/.." && pwd -P)"
-    if mount_resolves_to "$enclosing" "$checkout"; then
+    if cerebro_mount_resolves_to "$enclosing" "$checkout"; then
       printf '.claude/cerebro\n'
     else
       rel="${checkout#"$enclosing/"}"
@@ -135,5 +130,27 @@ case "${1:-}" in
         || { echo "consumer-root: $checkout is not under $enclosing" >&2; exit 1; }
       printf '%s\n' "$rel"
     fi ;;
-  *) echo "usage: consumer-root [--shared|--self-mounted|--mount]" >&2; exit 2 ;;
+  --hints)
+    # All three answers in one call, for `launch' to export down its process tree (cb-ue0):
+    #
+    #     <enclosing root>
+    #     <shared root, or empty when this is not a git working tree>
+    #     <mount>
+    #
+    # One fork instead of three, which is the whole point of the exercise - the hints exist to stop
+    # the launch path re-deriving this, so paying three forks to publish them would be absurd. The
+    # shared line is allowed to be empty because `--shared' needs git and the other two do not; a
+    # consumer script given an empty shared hint falls back exactly as it does with no hint at all.
+    shared="$(git -C "$enclosing" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+      && shared="$(cd "$(dirname "$shared")" && pwd -P)" || shared=""
+    checkout="$(cd "$script_dir/.." && pwd -P)"
+    if cerebro_mount_resolves_to "$enclosing" "$checkout"; then
+      mount=".claude/cerebro"
+    else
+      mount="${checkout#"$enclosing/"}"
+      [[ "$mount" != "$checkout" ]] \
+        || { echo "consumer-root: $checkout is not under $enclosing" >&2; exit 1; }
+    fi
+    printf '%s\n%s\n%s\n' "$enclosing" "$shared" "$mount" ;;
+  *) echo "usage: consumer-root [--shared|--self-mounted|--mount|--hints]" >&2; exit 2 ;;
 esac

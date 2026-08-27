@@ -72,7 +72,7 @@ pass "an unset origin/HEAD falls through to main"
 # --- a standalone clone, with no consumer at all, still answers ---
 standalone="$work_dir/standalone"
 mkdir -p "$standalone/scripts"
-for s in consumer-root project-conf default-branch; do
+for s in consumer-root project-conf default-branch root-hints.sh; do
   ln -s "$repo_root/scripts/$s" "$standalone/scripts/$s"
 done
 set +e
@@ -98,5 +98,32 @@ set -e
 [[ $status -eq 0 ]] || fail "no git: expected exit 0, got $status"
 [[ "$out" == "main" ]] || fail "no git: expected 'main', got '$out'"
 pass "with git unavailable it prints main and exits 0"
+
+# --- the launch path's root hints are used instead of forking consumer-root (cb-ue0) ---
+#
+# Detection needs a root, and this script is on the launch path twice over - `launch-preflight'
+# calls it, and it forks `project-conf', which forks `consumer-root' again. With `consumer-root'
+# stubbed to fail, `trunk' can only have come from the hint.
+c="$(make_consumer hinted trunk)"
+rm -f "$c/.claude/cerebro/scripts/consumer-root"
+cat > "$c/.claude/cerebro/scripts/consumer-root" <<'STUB'
+#!/usr/bin/env bash
+echo "consumer-root: the suite says this must not be forked" >&2
+exit 1
+STUB
+chmod +x "$c/.claude/cerebro/scripts/consumer-root"
+out="$(CEREBRO_CONSUMER_ROOT="$c" CEREBRO_CONSUMER_SHARED_ROOT="$c" \
+       CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+       "$c/.claude/cerebro/scripts/default-branch" 2>/dev/null)"
+[[ "$out" == "trunk" ]] || fail "hinted: expected 'trunk', got '$out'"
+pass "a validated root hint is detected from instead of forking consumer-root"
+
+# --- and with a foreign hint it falls through to main, never to somebody else's branch ---
+other="$(make_consumer elsewhere main)"
+out="$(CEREBRO_CONSUMER_ROOT="$other" CEREBRO_CONSUMER_SHARED_ROOT="$other" \
+       CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+       "$c/.claude/cerebro/scripts/default-branch" 2>/dev/null)"
+[[ "$out" == "main" ]] || fail "foreign hint: expected the assumed 'main', got '$out'"
+pass "a hint describing another checkout is rejected, and the assumption stands"
 
 echo "all default-branch tests passed"

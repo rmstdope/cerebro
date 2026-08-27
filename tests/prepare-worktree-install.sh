@@ -31,7 +31,7 @@ echo hello > "$consumer/README.md"
 git -C "$consumer" add README.md
 git_q -C "$consumer" commit -q -m init
 git -C "$consumer" push -q origin main
-for s in consumer-root project-conf default-branch prepare-worktree; do
+for s in consumer-root root-hints.sh project-conf default-branch prepare-worktree; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
 done
 prepare="$consumer/.claude/cerebro/scripts/prepare-worktree"

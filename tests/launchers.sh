@@ -42,6 +42,9 @@ cleanup_add "$stub_dir"
 cat > "$stub_dir/claude" <<'STUB'
 #!/usr/bin/env bash
 printf 'BEADS_ACTOR=%s\n' "${BEADS_ACTOR:-<unset>}"
+printf 'CEREBRO_CONSUMER_ROOT=%s\n' "${CEREBRO_CONSUMER_ROOT:-<unset>}"
+printf 'CEREBRO_CONSUMER_SHARED_ROOT=%s\n' "${CEREBRO_CONSUMER_SHARED_ROOT:-<unset>}"
+printf 'CEREBRO_CONSUMER_MOUNT=%s\n' "${CEREBRO_CONSUMER_MOUNT:-<unset>}"
 for a in "$@"; do
   printf 'ARG:%s\n' "$a"
 done
@@ -105,7 +108,7 @@ effort_of() {
 # rather than about the harness it ships. The cases below compare a consumer against the shipped
 # table, so they have to hold the shipped table.
 builtin_dir="$(mktemp -d)"
-cp "$repo_root/scripts/roster" "$builtin_dir/roster"
+cp "$repo_root/scripts/roster" "$repo_root/scripts/root-hints.sh" "$builtin_dir/"
 roster_out="$("$builtin_dir/roster")"
 row_count="$(printf '%s\n' "$roster_out" | grep -c .)"
 [[ $row_count -ge 2 ]] || fail "roster: expected at least 2 rows, got $row_count"
@@ -550,15 +553,22 @@ pass "launch: every roster row reaches the stub with the right actor, agent, nam
 
 # The override model is deliberately not the declared one: the assertion is that the caller's
 # --model lands *after* the launcher's and so wins, which says nothing if both are the same word.
+#
+# The declared one comes from `.cerebro/models.conf', which is now the ONLY place a model is
+# declared - the agent files stopped carrying `model:'/`effort:' frontmatter when the fleet moved
+# to GitHub Copilot, where those words mean nothing (`agent-cli --agent-file-models'). The file is
+# written for this case and removed again, because every other case against this fixture asserts
+# what a consumer with no models.conf does.
+printf 'planner opus\n' > "$fixture_dir/.cerebro/models.conf"
 out="$(run_launcher launch Xavier --model sonnet)"
-before_sonnet="$(echo "$out" | grep -n '^ARG:sonnet$' | head -1 | cut -d: -f1)"
-before_declared="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1)"
+rm -f "$fixture_dir/.cerebro/models.conf"
+before_sonnet="$(echo "$out" | grep -n '^ARG:sonnet$' | head -1 | cut -d: -f1 || true)"
+before_declared="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1 || true)"
 [[ -n "$before_declared" && -n "$before_sonnet" && $before_declared -lt $before_sonnet ]] \
   || fail "launch Xavier --model sonnet: expected opus before sonnet in ARG list, got: $out"
-last_arg="$(echo "$out" | tail -1)"
-sonnet_line="$(echo "$out" | grep -n '^ARG:sonnet$' | head -1 | cut -d: -f1)"
 total_lines="$(echo "$out" | wc -l | tr -d ' ')"
-[[ $sonnet_line -lt $total_lines ]] || fail "launch Xavier --model sonnet: sonnet should come before the prompt"
+[[ $before_sonnet -lt $total_lines ]] \
+  || fail "launch Xavier --model sonnet: sonnet should come before the prompt"
 pass "launch Xavier --model sonnet: opus (declared) before sonnet (override) before the prompt"
 
 # --- launch overrides: a caller's own --remote-control comes after the launcher's ---
@@ -602,7 +612,7 @@ set +e
 out="$(run_launcher launch 2>&1)"
 status=$?
 set -e
-[[ $status -eq 2 ]] || fail "launch (no argument): expected exit 2, got $status"
+[[ $status -eq 2 ]] || fail "launch (no argument): expected exit 2, got $status: $out"
 pass "launch with no argument exits 2"
 
 # --- no launcher shim survives -------------------------------------------------------------------
@@ -663,15 +673,20 @@ launched_flag() {
     || true
 }
 
+# With no models.conf and no frontmatter left in the agent files, a launch passes no --model and
+# no --effort at all and runs on the CLI's own defaults. `model_of'/`effort_of' still read the
+# frontmatter, so they answer empty here and go on answering for a consumer that adds one back.
 no_models_conf
 [[ "$(launched_flag Xavier --model)" == "$(model_of planner)" ]] \
-  || fail "no models.conf: expected the declared model $(model_of planner)"
-pass "no models.conf leaves the agent definition's model alone"
+  || fail "no models.conf: expected the agent file's model '$(model_of planner)', got '$(launched_flag Xavier --model)'"
+[[ -z "$(launched_flag Xavier --model)" ]] \
+  || fail "no models.conf: the agent files declare no model, so none should be passed"
+pass "with nothing declared in either place, a launch passes no --model"
 
 models_conf "default fable"
 [[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf default: expected fable"
 [[ "$(launched_flag Xavier --effort)" == "$(effort_of planner)" ]] \
-  || fail "models.conf default: a model-only line must leave the declared effort alone"
+  || fail "models.conf default: a model-only line must leave the agent file's effort alone"
 [[ "$(launched_flag Cyclops --model)" == "fable" ]] \
   || fail "models.conf default: applies to an agent whose definition declares no model"
 pass "models.conf: a default line switches every agent's model, keeping declared efforts"
@@ -680,7 +695,7 @@ models_conf "# a comment" "" "planner fable low"
 [[ "$(launched_flag Xavier --model)" == "fable" ]] || fail "models.conf role: expected fable"
 [[ "$(launched_flag Xavier --effort)" == "low" ]] || fail "models.conf role: expected effort low"
 [[ "$(launched_flag Forge --model)" == "$(model_of architect)" ]] \
-  || fail "models.conf role: a role not named must keep its declared model"
+  || fail "models.conf role: a role not named must keep whatever its agent file declares"
 pass "models.conf: a role line switches that role only, model and effort, past comments and blanks"
 
 models_conf "default opus # everything, with a note about why" "planner fable high  # and this role lower"
@@ -690,7 +705,7 @@ models_conf "default opus # everything, with a note about why" "planner fable hi
 [[ "$(launched_flag Cerebro --model)" == "opus" ]] \
   || fail "models.conf inline comment: a model-only line must not read '#' as its effort"
 [[ "$(launched_flag Cerebro --effort)" == "$(effort_of orchestrator)" ]] \
-  || fail "models.conf inline comment: expected the declared effort, got the comment"
+  || fail "models.conf inline comment: expected the agent file's effort, got the comment"
 pass "models.conf: an inline # comment is not the effort column"
 
 models_conf "planner fable" "Beast sonnet"
@@ -798,14 +813,16 @@ IFS=$'\t' read -r entry_name entry_role entry_kind <<<"$entry_out"
 [[ "$entry_kind" == "interactive" ]] \
   || fail "roster --entry $reviewer_name: third field is $entry_kind, expected interactive"
 [[ -f "$repo_root/agents/reviewer.md" ]] || fail "agents/reviewer.md does not exist"
-[[ -n "$(model_of reviewer)" ]] || fail "agents/reviewer.md: declares no model:"
-pass "the roster's reviewer resolves to a reviewer/interactive row, with an agent file declaring a model"
+pass "the roster's reviewer resolves to a reviewer/interactive row, with an agent file"
 
-# --- agents/architect.md exists with the right frontmatter ---
+# --- agents/architect.md exists -------------------------------------------------------------------
+#
+# What it no longer has to carry is a `model:' - the frontmatter models went when the fleet moved to
+# GitHub Copilot, where they mean nothing, and `.cerebro/models.conf' is the one place a model is
+# declared now. A file's mere existence is still worth asserting: `launch-preflight' refuses a role
+# whose agent file the submodule never brought in.
 [[ -f "$repo_root/agents/architect.md" ]] || fail "agents/architect.md does not exist"
-[[ -n "$(model_of architect)" ]] || fail "agents/architect.md: declares no model:"
-[[ -n "$(effort_of architect)" ]] || fail "agents/architect.md: declares no effort:"
-pass "agents/architect.md exists and declares both a model and an effort"
+pass "agents/architect.md exists"
 
 # --- a consumer roster in cerebro's own checkout, mounted in itself (cb-i3l.3) ---------------------
 #
@@ -1023,8 +1040,12 @@ echo "$out" | grep -q '^ARG:--effort$' \
   && fail "copilot launch with no models.conf: --effort reached copilot, got: $out"
 echo "$err" | grep -q 'no models.conf entry for copilot' \
   || fail "copilot launch with no models.conf: expected the fallback line, got: $err"
+# The second line - `the planner declares model X, which is Claude Code's name for it' - is
+# conditional on the agent file carrying a `model:', and none of them do any more: the frontmatter
+# models went when the fleet moved to Copilot, where they mean nothing. So the launch says the one
+# thing that is true and nothing about a declaration that is not there.
 echo "$err" | grep -q "which is Claude Code's name for it" \
-  || fail "copilot launch with no models.conf: expected the frontmatter clause, got: $err"
+  && fail "copilot launch with no models.conf: the agent files declare no model, so the clause should not appear: $err"
 pass "a copilot launch with no models.conf passes no --model and no --effort, and says so"
 
 mkdir -p "$copilot_consumer/.cerebro"
@@ -1038,5 +1059,45 @@ echo "$out" | grep -A1 '^ARG:--effort$' | grep -q '^ARG:high$' \
 echo "$err" | grep -q 'models.conf (planner@copilot) -> gpt-5.5 at high effort' \
   || fail "copilot launch with models.conf: expected the decision line, got: $err"
 pass "a copilot launch takes its model and effort from a models.conf row"
+
+# --- one launch resolves the consumer root once, and hands the answer down (cb-ue0) --------------
+#
+# The bead this case exists for: `launch' used to fork `consumer-root' eight times before it ever
+# reached `exec', because preflight, `default-branch', `project-conf', `agent-cli' and
+# `sync-symlinks.sh' each resolved the same root again from scratch. That is a third of a second on
+# every session start and most of this suite's own runtime, since it runs 46 launchers.
+#
+# It is counted rather than inspected: a wrapper on the fixture's own `consumer-root' records every
+# call and then execs the real one beside it, so the assertion is about the number of resolutions a
+# launch actually performs and not about which script asked for them.
+hint_consumer="$(consumer_new hint-consumer --copy)"
+printf 'gate_fast make check\n' > "$hint_consumer/.cerebro/project.conf"
+hint_scripts="$hint_consumer/.claude/cerebro/scripts"
+mv "$hint_scripts/consumer-root" "$hint_scripts/consumer-root.real"
+cat > "$hint_scripts/consumer-root" <<'WRAP'
+#!/usr/bin/env bash
+printf '%s\n' "${*:-<plain>}" >> "$CEREBRO_ROOT_CALLS"
+exec "$(dirname "${BASH_SOURCE[0]}")/consumer-root.real" "$@"
+WRAP
+chmod +x "$hint_scripts/consumer-root"
+
+root_calls="$work_dir/root-calls"
+: > "$root_calls"
+out="$(CEREBRO_ROOT_CALLS="$root_calls" run_launcher_at "$hint_scripts" launch Forge)"
+echo "$out" | grep -q '^ARG:--agent$' || fail "hint launch: stub was not reached: $out"
+calls="$(wc -l < "$root_calls" | tr -d ' ')"
+[[ "$calls" -eq 1 ]] \
+  || fail "hint launch: expected exactly 1 consumer-root resolution, got $calls: $(sort "$root_calls" | uniq -c | tr '\n' ' ')"
+grep -qx -- '--hints' "$root_calls" \
+  || fail "hint launch: expected the one resolution to be --hints, got: $(cat "$root_calls")"
+pass "one launch resolves the consumer root exactly once, through --hints"
+
+# The hints reach the session itself, which is what makes every script it runs cheap too.
+out="$(CEREBRO_ROOT_CALLS="$root_calls" run_launcher_at "$hint_scripts" launch Forge)"
+echo "$out" | grep -qF "CEREBRO_CONSUMER_ROOT=$(cd "$hint_consumer" && pwd -P)" \
+  || fail "hint launch: the root hint did not reach the session: $out"
+echo "$out" | grep -qF "CEREBRO_CONSUMER_MOUNT=.claude/cerebro" \
+  || fail "hint launch: the mount hint did not reach the session: $out"
+pass "the root hints are exported down the launched session's process tree"
 
 echo "all launcher tests passed"

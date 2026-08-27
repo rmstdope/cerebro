@@ -38,7 +38,15 @@ SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 # when this copy is the worktree's own submodule). A worktree syncs its own links, which is what
 # lets a submodule-bump PR commit them (ah-cuc). See scripts/consumer-root's header for why this
 # is not --shared.
-consumer_root="$("$SCRIPT_DIR/consumer-root" 2>/dev/null)" || {
+#
+# The launch path's hint first (cb-ue0): `launch-preflight' runs this on every session start, and
+# between them the two `consumer-root' calls below are two more forks of the same resolution
+# `launch' has already done. The hint is validated against THIS checkout before it is believed -
+# see scripts/root-hints.sh - so a variable inherited from a shell that was last inside another
+# worktree can only ever be ignored, never followed into writing links there.
+source "$SCRIPT_DIR/root-hints.sh"
+consumer_root="$(cerebro_hinted_root "$SOURCE_ROOT" plain)" \
+  || consumer_root="$("$SCRIPT_DIR/consumer-root" 2>/dev/null)" || {
   echo "sync-symlinks.sh: must run from a consumer repo's .claude/cerebro (found $SOURCE_ROOT)" >&2
   exit 1
 }
@@ -50,7 +58,8 @@ CLAUDE_ROOT="$consumer_root/.claude"
 # is consumer-root's to say (cb-akc): `.claude/cerebro' for the standard mount and for cerebro
 # serving itself through the symlink `.claude/cerebro -> ..' (cb-i3l.1), the physical relative
 # path for a submodule vendored elsewhere.
-REL_FROM_ROOT="$("$SCRIPT_DIR/consumer-root" --mount)"
+REL_FROM_ROOT="$(cerebro_hinted_root "$SOURCE_ROOT" mount)" \
+  || REL_FROM_ROOT="$("$SCRIPT_DIR/consumer-root" --mount)"
 
 # Every layout's link directory is exactly two components deep (.claude/agents, .github/skills,
 # ...), so a link there reaches the consumer root through `../../'. When the mount lives under the

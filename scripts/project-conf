@@ -50,7 +50,15 @@ fi
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # --shared, matching how `launch' reads models.conf and how `agent-state' resolves its state
 # directory: the fleet's configuration is one answer for the checkout, not one per worktree.
-root="$("$here/consumer-root" --shared 2>/dev/null)" || root=""
+#
+# The hint first (cb-ue0): `launch' resolves the roots once and exports them down its process tree,
+# and `agent-cli' forks this script on every call, so the fork saved here is saved six times over on
+# one session start. It is validated against this very checkout before it is believed - see
+# scripts/root-hints.sh - so an inherited variable can only ever skip work, never answer wrongly.
+source "$here/root-hints.sh"
+root="$(cerebro_hinted_root "$here/.." shared)" \
+  || root="$("$here/consumer-root" --shared 2>/dev/null)" \
+  || root=""
 conf="${root:+$root/.cerebro/project.conf}"
 
 # The migration refusal (cb-epr), before any lookup. Loud rather than a silent fallback: a consumer

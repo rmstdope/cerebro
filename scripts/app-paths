@@ -66,7 +66,9 @@ fi
 # One application path is enough: a change that touches the application at all is one the audience may
 # see, whatever else it touches alongside.
 for path in "$@"; do
-  if printf '%s\n' "$path" | grep -Eq "$pattern"; then
+  # No pipe: `if' exempts a pipeline from `set -e' but not from `pipefail', so a SIGPIPE'd writer
+  # would make a path that does match classify as not-application (cb-nus).
+  if grep -Eq "$pattern" <<<"$path"; then
     echo "app-paths: $path matches $pattern" >&2
     printf 'application\n'
     exit 0

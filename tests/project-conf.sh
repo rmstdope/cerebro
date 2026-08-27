@@ -81,7 +81,7 @@ pass "a missing key with no default prints nothing and exits 0"
 # --- the explanation goes to stderr, never stdout ---
 err="$("$project_conf" project_name 2>&1 >/dev/null)"
 [[ -n "$err" ]] || fail "explanation: expected something on stderr"
-echo "$err" | grep -q "project_name" || fail "explanation: expected the key named, got: $err"
+grep -q "project_name" <<<"$err" || fail "explanation: expected the key named, got: $err"
 out="$("$project_conf" project_name 2>/dev/null)"
 [[ "$out" == "Atlantis HUD" ]] || fail "explanation: stdout must carry the value alone, got '$out'"
 pass "the explanation goes to stderr, and stdout carries the value alone"
@@ -138,7 +138,7 @@ out="$("$detect_conf" install 2>/dev/null)"
 pass "pnpm-lock.yaml is detected, and wins over the others"
 
 err="$("$detect_conf" install 2>&1 >/dev/null)"
-echo "$err" | grep -q "pnpm-lock.yaml" \
+grep -q "pnpm-lock.yaml" <<<"$err" \
   || fail "detection: expected the probe named on stderr, got: $err"
 pass "the branch taken by detection is said out loud, on stderr"
 
@@ -159,7 +159,7 @@ out="$("$project_conf" 2>&1)"
 status=$?
 set -e
 [[ $status -ne 0 ]] || fail "no arguments: expected a non-zero exit, got 0"
-echo "$out" | grep -q "usage:" || fail "no arguments: expected a usage message, got: $out"
+grep -q "usage:" <<<"$out" || fail "no arguments: expected a usage message, got: $out"
 pass "calling it with no key is a usage error"
 
 # --- CRLF line endings do not leak into the value: this file is TRACKED, so it will be edited on
@@ -226,7 +226,7 @@ touch "$gate_repo/package-lock.json"
 out="$("$gate_conf" gate_fast 2>/dev/null)"
 [[ "$out" == "npm run check:fast" ]] || fail "detected gate_fast: expected 'npm run check:fast', got '$out'"
 err="$("$gate_conf" gate_fast 2>&1 >/dev/null)"
-echo "$err" | grep -q "detected" || fail "detected gate_fast: expected stderr to say it was detected, got: $err"
+grep -q "detected" <<<"$err" || fail "detected gate_fast: expected stderr to say it was detected, got: $err"
 pass "a detected gate says it was detected"
 
 out="$("$gate_conf" gate_full 2>/dev/null)"
@@ -255,7 +255,7 @@ MAKE
 out="$("$gate_conf" gate_fast 2>/dev/null)"
 [[ "$out" == "make check" ]] || fail "Makefile gate: expected 'make check', got '$out'"
 err="$("$gate_conf" gate_fast 2>&1 >/dev/null)"
-echo "$err" | grep -q "detected" || fail "Makefile gate: expected stderr to say it was detected, got: $err"
+grep -q "detected" <<<"$err" || fail "Makefile gate: expected stderr to say it was detected, got: $err"
 pass "a Makefile target is detected, and announced"
 
 # --- a cargo project falls back to cargo test ---
@@ -264,7 +264,7 @@ echo '[package]' > "$gate_repo/Cargo.toml"
 out="$("$gate_conf" gate_fast 2>/dev/null)"
 [[ "$out" == "cargo test" ]] || fail "cargo gate: expected 'cargo test', got '$out'"
 err="$("$gate_conf" gate_fast 2>&1 >/dev/null)"
-echo "$err" | grep -q "detected" || fail "cargo gate: expected stderr to say it was detected, got: $err"
+grep -q "detected" <<<"$err" || fail "cargo gate: expected stderr to say it was detected, got: $err"
 rm "$gate_repo/Cargo.toml"
 pass "a cargo project falls back to cargo test"
 
@@ -292,7 +292,7 @@ set -e
 err="$(cat /tmp/oldpath.err)"; rm -f /tmp/oldpath.err
 [[ $status -eq 2 ]] || fail "old path: expected exit 2, got $status"
 [[ -z "$out" ]] || fail "old path: expected nothing on stdout, got '$out'"
-echo "$err" | grep -q "mv .claude/cerebro-project.conf .cerebro/project.conf" \
+grep -q "mv .claude/cerebro-project.conf .cerebro/project.conf" <<<"$err" \
   || fail "old path: expected the mv line on stderr, got: $err"
 pass "a conf left at the retired .claude/ path refuses with the mv line"
 

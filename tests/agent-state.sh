@@ -48,7 +48,7 @@ pid="$(jq -r '.pid' "$f")"; [[ "$pid" == "42" ]] || fail "writes-all-fields: pid
 since="$(jq -r '.since' "$f")"
 phase_since="$(jq -r '.phase_since' "$f")"
 [[ "$since" == "$phase_since" ]] || fail "writes-all-fields: since ($since) != phase_since ($phase_since) on first write"
-echo "$since" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' <<<"$since" \
   || fail "writes-all-fields: since is not ISO-8601 Z: $since"
 rm -rf "$tmp"
 pass "writes-all-fields"
@@ -315,7 +315,7 @@ jq -e . "$l" >/dev/null || fail "transition-log-appends: line does not parse as 
 [[ "$(jq -r '.phase' "$l")" == "build" ]] || fail "transition-log-appends: phase"
 [[ "$(jq -r '.bead' "$l")" == "ah-f9c" ]] || fail "transition-log-appends: bead"
 [[ "$(jq -r '.pid' "$l")" == "42" ]] || fail "transition-log-appends: pid"
-jq -r '.ts' "$l" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' <<<"$(jq -r '.ts' "$l")" \
   || fail "transition-log-appends: ts is not ISO-8601 Z"
 rm -rf "$tmp"
 pass "transition-log-appends"

@@ -93,9 +93,9 @@ $out"
 
 # The whole point of the bead: the name is on the terminal before the suite starts, so a stall is
 # read as "hung in a-pass.sh" rather than "the gate is hung".
-named="$(grep -nF -- "-- $work_dir/suites/a-pass.sh" <<<"$out" | head -n 1 | cut -d: -f1)"
-result="$(grep -nF -- "ok   $work_dir/suites/a-pass.sh (" <<<"$out" | head -n 1 | cut -d: -f1)"
-[[ $named -lt $result ]] || fail "a-pass.sh is named at line $named, after its result at line $result
+named="$(line_of_fixed "$out" "-- $work_dir/suites/a-pass.sh")"
+result="$(line_of_fixed "$out" "ok   $work_dir/suites/a-pass.sh (")"
+[[ -n "$named" && -n "$result" && $named -lt $result ]] || fail "a-pass.sh is named at line $named, after its result at line $result
 $out"
 
 grep -q '^ok - a$' <<<"$out" && fail "a passing suite's own output was printed
@@ -135,12 +135,12 @@ $out"
 grep -qF -- "== output of $work_dir/suites/b-fail.sh ==" <<<"$out" \
   || fail "no '== output of <path> ==' header for b-fail.sh
 $out"
-header="$(grep -nF -- "== output of $work_dir/suites/b-fail.sh ==" <<<"$out" | head -n 1 | cut -d: -f1)"
+header="$(line_of_fixed "$out" "== output of $work_dir/suites/b-fail.sh ==")"
 last_result="$(grep -nE '^(ok   |FAIL )' <<<"$out" | tail -n 1 | cut -d: -f1)"
-[[ $header -gt $last_result ]] || fail "b-fail.sh's replay is at line $header, before the last result line at $last_result
+[[ -n "$header" && -n "$last_result" && $header -gt $last_result ]] || fail "b-fail.sh's replay is at line $header, before the last result line at $last_result
 $out"
-replay="$(grep -n '^b stdout$' <<<"$out" | head -n 1 | cut -d: -f1)"
-[[ $replay -gt $header ]] || fail "b-fail.sh: 'b stdout' at line $replay does not follow its header at $header
+replay="$(line_of "$out" '^b stdout$')"
+[[ -n "$replay" && -n "$header" && $replay -gt $header ]] || fail "b-fail.sh: 'b stdout' at line $replay does not follow its header at $header
 $out"
 
 pass "a failing suite's output is replayed and the remaining suites still run"
@@ -163,13 +163,13 @@ $out"
 
 # The group wraps the replay, which is all a group can wrap now: the live -- / ok / FAIL lines of
 # several suites interleave, and a group cannot span them.
-group="$(grep -nF -- "::group::$work_dir/suites/b-fail.sh" <<<"$out" | head -n 1 | cut -d: -f1)"
-header="$(grep -nF -- "== output of $work_dir/suites/b-fail.sh ==" <<<"$out" | head -n 1 | cut -d: -f1)"
-endgroup="$(grep -n '^::endgroup::$' <<<"$out" | head -n 1 | cut -d: -f1)"
-error="$(grep -nF -- "::error file=$work_dir/suites/b-fail.sh::" <<<"$out" | head -n 1 | cut -d: -f1)"
-[[ $group -lt $header ]] || fail "::group:: for b-fail.sh is at line $group, after its replay header at $header
+group="$(line_of_fixed "$out" "::group::$work_dir/suites/b-fail.sh")"
+header="$(line_of_fixed "$out" "== output of $work_dir/suites/b-fail.sh ==")"
+endgroup="$(line_of "$out" '^::endgroup::$')"
+error="$(line_of_fixed "$out" "::error file=$work_dir/suites/b-fail.sh::")"
+[[ -n "$group" && -n "$header" && $group -lt $header ]] || fail "::group:: for b-fail.sh is at line $group, after its replay header at $header
 $out"
-[[ $error -gt $endgroup ]] || fail "::error for b-fail.sh is at line $error, before ::endgroup:: at $endgroup
+[[ -n "$error" && -n "$endgroup" && $error -gt $endgroup ]] || fail "::error for b-fail.sh is at line $error, before ::endgroup:: at $endgroup
 $out"
 
 set +e
@@ -252,9 +252,9 @@ $out"
 $out"
 
 # At --jobs 1 at most one name is ahead of its result, which is the property a stalled run relies on.
-named="$(grep -nF -- "-- $work_dir/slow/e-slow.sh" <<<"$out" | head -n 1 | cut -d: -f1)"
-first_result="$(grep -nF -- "ok   $work_dir/slow/d-slow.sh (" <<<"$out" | head -n 1 | cut -d: -f1)"
-[[ $named -gt $first_result ]] || fail "--jobs 1: e-slow.sh is named at line $named, before d-slow.sh's result at $first_result
+named="$(line_of_fixed "$out" "-- $work_dir/slow/e-slow.sh")"
+first_result="$(line_of_fixed "$out" "ok   $work_dir/slow/d-slow.sh (")"
+[[ -n "$named" && -n "$first_result" && $named -gt $first_result ]] || fail "--jobs 1: e-slow.sh is named at line $named, before d-slow.sh's result at $first_result
 $out"
 
 pass "suites run N at a time, and --jobs 1 is one at a time"

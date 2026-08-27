@@ -168,7 +168,8 @@ merged_check="$("$script_dir/project-conf" merged_check gh 2>/dev/null || echo g
 
 # The name of the tree kept unconditionally, taken from the roster rather than written here. Empty
 # when the fleet has no verifier, which grants the exception to nobody.
-verifier_name="$("$script_dir/roster" --role verifier 2>/dev/null | head -1 || true)"
+verifier_roster="$("$script_dir/roster" --role verifier 2>/dev/null || true)"
+verifier_name="${verifier_roster%%$'\n'*}"
 verifier_lc="$(printf '%s' "$verifier_name" | tr '[:upper:]' '[:lower:]')"
 
 is_verifier_tree() {

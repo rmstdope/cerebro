@@ -100,7 +100,7 @@ out="$(run_preflight "$c" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "dirty: expected exit 2, got $status"
-echo "$out" | grep -q "uncommitted changes" || fail "dirty: expected a message naming the changes, got: $out"
+grep -q "uncommitted changes" <<<"$out" || fail "dirty: expected a message naming the changes, got: $out"
 [[ "$(head_of "$c")" == "$before" ]] || fail "dirty: HEAD moved"
 grep -q "my edit" "$c/file.txt" || fail "dirty: the edit was lost"
 pass "a dirty checkout is refused, and the edit survives"
@@ -113,7 +113,7 @@ log="$c/.cerebro/state/errors.jsonl"
 [[ -f "$log" ]] || fail "dirty: expected the refusal at $log"
 [[ "$(tail -n1 "$log" | jq -r .context)" == "launch Xavier" ]] \
   || fail "dirty: expected context='launch Xavier', got: $(tail -n1 "$log")"
-tail -n1 "$log" | jq -r .message | grep -q "uncommitted changes" \
+grep -q "uncommitted changes" <<<"$(tail -n1 "$log" | jq -r .message)" \
   || fail "dirty: expected the logged message to name the changes, got: $(tail -n1 "$log")"
 pass "a refused launch is recorded in errors.jsonl"
 
@@ -129,7 +129,7 @@ out="$(run_preflight "$c" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "diverged: expected exit 2, got $status"
-echo "$out" | grep -q "origin/main does not" || fail "diverged: expected a message naming the commits, got: $out"
+grep -q "origin/main does not" <<<"$out" || fail "diverged: expected a message naming the commits, got: $out"
 [[ "$(head_of "$c")" == "$before" ]] || fail "diverged: HEAD moved"
 pass "a diverged checkout is refused, and the commit survives"
 
@@ -143,7 +143,7 @@ out="$(run_preflight "$c" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "branch: expected exit 2, got $status"
-echo "$out" | grep -q "wip" || fail "branch: expected a message naming the branch, got: $out"
+grep -q "wip" <<<"$out" || fail "branch: expected a message naming the branch, got: $out"
 [[ "$(head_of "$c")" == "$before" ]] || fail "branch: HEAD moved"
 pass "a checkout on another branch is refused"
 
@@ -163,7 +163,7 @@ out="$(run_preflight "$c" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "submodule: expected exit 2, got $status"
-echo "$out" | grep -q "uncommitted changes" || fail "submodule: expected a message naming the changes, got: $out"
+grep -q "uncommitted changes" <<<"$out" || fail "submodule: expected a message naming the changes, got: $out"
 [[ "$(head_of "$c")" == "$before" ]] || fail "submodule: HEAD moved"
 grep -q "work in progress" "$c/.claude/cerebro/scripts/launch-preflight" \
   || fail "submodule: the in-progress edit was lost"
@@ -203,8 +203,8 @@ out="$(run_preflight "$c" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "trunk branch: expected exit 2, got $status"
-echo "$out" | grep -q "trunk" || fail "trunk branch: expected the message to name trunk, got: $out"
-echo "$out" | grep -q "not main" && fail "trunk branch: the message still says main, got: $out"
+grep -q "trunk" <<<"$out" || fail "trunk branch: expected the message to name trunk, got: $out"
+grep -q "not main" <<<"$out" && fail "trunk branch: the message still says main, got: $out"
 pass "the wrong-branch refusal names the resolved branch"
 
 # --- fetch succeeded, but there is no such branch: SAY SO ------------------------------------------
@@ -219,7 +219,7 @@ out="$(run_preflight "$c" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 0 ]] || fail "missing branch: expected the launch to proceed, got $status"
-echo "$out" | grep -q "nosuchbranch" \
+grep -q "nosuchbranch" <<<"$out" \
   || fail "missing branch: expected a line on stderr naming the branch, got: $out"
 pass "a branch that does not exist on origin is reported rather than skipped in silence"
 
@@ -262,8 +262,8 @@ out="$(run_preflight "$c" implementer Cyclops 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "no gate: expected exit 2, got $status"
-echo "$out" | grep -q "gate_fast" || fail "no gate: expected the message to name gate_fast, got: $out"
-echo "$out" | grep -q "submodule is behind" && fail "no gate: the message blames the submodule, got: $out"
+grep -q "gate_fast" <<<"$out" || fail "no gate: expected the message to name gate_fast, got: $out"
+grep -q "submodule is behind" <<<"$out" && fail "no gate: the message blames the submodule, got: $out"
 pass "an implementer with no fast gate is refused, and the message names the gate"
 
 # --- a planner with no fast gate still launches ----------------------------------------------------
@@ -300,7 +300,7 @@ for pair in "cerebro-project.conf:project.conf" "cerebro-roster:roster.conf" "ce
   status=$?
   set -e
   [[ $status -eq 2 ]] || fail "old path $old_name: expected exit 2, got $status"
-  echo "$out" | grep -q "mv .claude/$old_name .cerebro/$new_name" \
+  grep -q "mv .claude/$old_name .cerebro/$new_name" <<<"$out" \
     || fail "old path $old_name: expected the mv line naming both paths, got: $out"
   pass "a $old_name left at the retired .claude/ path is refused at launch"
 done
@@ -354,7 +354,7 @@ out="$(run_preflight "$c" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "wrong-cli: expected exit 2, got $status"
-echo "$out" | grep -q "is not an agent CLI cerebro knows" \
+grep -q "is not an agent CLI cerebro knows" <<<"$out" \
   || fail "wrong-cli: expected agent-cli's own sentence, got: $out"
 pass "launch-preflight refuses when the consumer declares an agent CLI cerebro cannot run"
 

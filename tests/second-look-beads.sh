@@ -68,7 +68,7 @@ JSON
 ids="$(run)"
 
 listed() {
-  printf '%s\n' "$ids" | grep -qxF "$1"
+  grep -qxF "$1" <<<"$ids"
 }
 
 # --- the two states that must be listed ---------------------------------------------------------

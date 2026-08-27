@@ -169,7 +169,7 @@ pass "app-paths classifies by the consumer's own application paths"
 roster_out="$(run_at roster)"
 while IFS=$'\t' read -r name role kind; do
   [[ -n "$name" && -n "$role" && -n "$kind" ]] || fail "roster: row missing a field: $name/$role/$kind"
-  printf '%s\n' "$declared_names" | grep -qx "$name" \
+  grep -qx "$name" <<<"$declared_names" \
     || fail "roster: $name is not on the consumer's roster - cerebro's own table leaked in"
   if [[ "$role" == "implementer" ]]; then
     [[ "$kind" == "implementer" ]] || fail "roster: $name has role implementer but kind $kind"

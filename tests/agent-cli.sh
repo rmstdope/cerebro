@@ -33,9 +33,9 @@ agent_cli="$consumer/.claude/cerebro/scripts/agent-cli"
 out="$("$agent_cli" 2>"$work_dir/err")"
 err="$(cat "$work_dir/err")"
 [[ "$out" == "claude" ]] || fail "absent agent_cli: expected stdout 'claude', got '$out'"
-echo "$err" | grep -q 'agent-cli: no agent_cli declared; running on claude' \
+grep -q 'agent-cli: no agent_cli declared; running on claude' <<<"$err" \
   || fail "absent agent_cli: expected the fallback line on stderr, got: $err"
-echo "$err" | grep -q 'project-conf:' \
+grep -q 'project-conf:' <<<"$err" \
   && fail "absent agent_cli: project-conf's own stderr must be swallowed, got: $err"
 pass "an absent agent_cli answers claude, and says so once on stderr"
 
@@ -87,9 +87,9 @@ out="$("$agent_cli" --binary 2>"$work_dir/err")"; status=$?
 set -e
 err="$(cat "$work_dir/err")"
 [[ $status -eq 3 ]] || fail "an unknown agent_cli: expected exit 3, got $status"
-echo "$err" | grep -q 'is not an agent CLI cerebro knows' \
+grep -q 'is not an agent CLI cerebro knows' <<<"$err" \
   || fail "an unknown agent_cli: expected the unknown-provider sentence, got: $err"
-echo "$err" | grep -q 'emacs-doctor' \
+grep -q 'emacs-doctor' <<<"$err" \
   || fail "an unknown agent_cli: the sentence should name the declared value, got: $err"
 pass "an unknown agent_cli exits 3 saying it is not an agent CLI cerebro knows"
 
@@ -99,9 +99,9 @@ out="$("$agent_cli" --check Storm 2>"$work_dir/err")"; status=$?
 set -e
 err="$(cat "$work_dir/err")"
 [[ $status -eq 3 ]] || fail "--check on an unknown agent_cli: expected exit 3, got $status"
-echo "$err" | grep -q '^cerebro: ' \
+grep -q '^cerebro: ' <<<"$err" \
   || fail "--check: the refusal must come from launch-refused, got: $err"
-echo "$err" | grep -q 'before starting Storm$' \
+grep -q 'before starting Storm$' <<<"$err" \
   || fail "--check: the sentence should end by naming the agent, got: $err"
 pass "--check on an unknown agent_cli refuses and names the agent"
 
@@ -121,7 +121,7 @@ set +e
 out="$(PATH="$bare_dir" "$(command -v bash)" "$agent_cli" --check Storm 2>&1)"; status=$?
 set -e
 [[ $status -eq 3 ]] || fail "--check (claude missing): expected exit 3, got $status"
-echo "$out" | grep -q 'claude is not on PATH - install Claude Code' \
+grep -q 'claude is not on PATH - install Claude Code' <<<"$out" \
   || fail "--check (claude missing): expected launch-preflight's own sentence, got: $out"
 pass "--check refuses when the arm's binary is not on PATH"
 
@@ -158,7 +158,7 @@ pass "--argv emits the claude arm's flags in launch order"
 
 # cb-d59.3: the marker moved into the prompt, which is the one argv slot every agent CLI accepts,
 # so no arm of --argv emits it - and composing it is `launch`'s job, not this table's.
-printf '%s' "${argv[*]}" | grep -q -- '--append-system-prompt' \
+grep -q -- '--append-system-prompt' <<<"${argv[*]}" \
   && fail "--argv still emits --append-system-prompt: ${argv[*]}"
 pass "--argv emits no --append-system-prompt, the marker having moved into the prompt"
 
@@ -214,7 +214,7 @@ set +e
 out="$("$agent_cli" --layouts 2>"$work_dir/err")"; status=$?
 set -e
 [[ $status -eq 0 ]] || fail "--layouts with an unrunnable declaration: expected exit 0, got $status"
-echo "$out" | grep -q '^copilot' \
+grep -q '^copilot' <<<"$out" \
   || fail "--layouts must list copilot though it is not runnable, got: $out"
 pass "--layouts says nothing on stderr and lists copilot though it is not runnable"
 
@@ -257,10 +257,10 @@ done
 pass "--argv emits the copilot arm's flags in launch order"
 
 for flag in --remote-control --settings --permission-mode; do
-  printf '%s' "${argv[*]}" | grep -q -- "$flag" \
+  grep -q -- "$flag" <<<"${argv[*]}" \
     && fail "--argv (copilot) emits $flag, which is the claude arm's to spell: ${argv[*]}"
 done
-printf '%s' "${argv[*]}" | grep -q -- '/tmp/s.json' \
+grep -q -- '/tmp/s.json' <<<"${argv[*]}" \
   && fail "--argv (copilot): the settings path must not appear: ${argv[*]}"
 pass "the copilot arm emits no --remote-control, no --settings and no --permission-mode"
 
@@ -307,9 +307,9 @@ set +e
 out="$(PATH="$nocopilot_dir" "$(command -v bash)" "$agent_cli" --check Storm 2>&1)"; status=$?
 set -e
 [[ $status -eq 3 ]] || fail "--check (copilot missing): expected exit 3, got $status"
-echo "$out" | grep -q 'copilot is not on PATH - install GitHub Copilot CLI' \
+grep -q 'copilot is not on PATH - install GitHub Copilot CLI' <<<"$out" \
   || fail "--check (copilot missing): expected the copilot arm's sentence, got: $out"
-echo "$out" | grep -q '^cerebro: ' \
+grep -q '^cerebro: ' <<<"$out" \
   || fail "--check (copilot missing): the refusal must come from launch-refused, got: $out"
 pass "--check refuses when copilot is not on PATH"
 
@@ -337,7 +337,7 @@ while IFS= read -r row; do [[ -n "$row" ]] && rows+=("$row"); done <<<"$out"
 IFS=$'\t' read -r p src dest <<<"${rows[0]}"
 [[ "$p" == "copilot" && "$src" == "hooks/copilot" && "$dest" == ".github/hooks" ]] \
   || fail "--hooks row 1: expected the copilot hook row, got '${rows[0]}'"
-echo "$out" | grep -q '^claude' \
+grep -q '^claude' <<<"$out" \
   && fail "--hooks must not list claude: its settings file is passed on the command line"
 pass "--hooks prints one tab-separated row per provider whose hooks live in the repository"
 
@@ -350,7 +350,7 @@ set +e
 out="$("$agent_cli" --hooks 2>"$work_dir/err")"; status=$?
 set -e
 [[ $status -eq 0 ]] || fail "--hooks with an unrunnable declaration: expected exit 0, got $status"
-echo "$out" | grep -q '^copilot' \
+grep -q '^copilot' <<<"$out" \
   || fail "--hooks must answer for copilot though it is not runnable, got: $out"
 pass "--hooks says nothing on stderr and answers for an unrunnable declaration"
 

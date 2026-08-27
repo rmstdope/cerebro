@@ -100,7 +100,7 @@ hook_target="$(readlink "$hook_link")"
 [[ -e "$hook_link" ]] || fail "the hook link does not resolve"
 pass "the copilot question-state hook is linked into .github/hooks"
 
-echo "$first_out" | grep -qF "Synced 1 hook link(s) from $cerebro_dir/hooks/copilot to $consumer/.github/hooks" \
+grep -qF "Synced 1 hook link(s) from $cerebro_dir/hooks/copilot to $consumer/.github/hooks" <<<"$first_out" \
   || fail "expected the hook link to be named in the same Synced shape, got: $first_out"
 pass "the hook link is named in the same Synced shape as the others"
 
@@ -127,7 +127,7 @@ pass "a non-json file beside the hook is not linked"
 # launch-preflight syncs before every single session, so this line is printed only when a link
 # outside .claude/ was created or repointed in that run - otherwise it would scroll past above the
 # first prompt of every agent, for ever.
-echo "$first_out" | grep -qF ".github/ is tracked - commit these links so every clone has them without running this script." \
+grep -qF ".github/ is tracked - commit these links so every clone has them without running this script." <<<"$first_out" \
   || fail "expected the first sync to say .github/ is tracked, got: $first_out"
 pass "a sync that creates a link outside .claude/ says the directory is tracked"
 
@@ -143,7 +143,7 @@ pass "the sync writes nothing at the consumer root"
 
 # --- running again leaves the links unchanged and still exits 0 ---
 out="$("$cerebro_dir/scripts/sync-symlinks.sh")"
-echo "$out" | grep -q "is tracked" \
+grep -q "is tracked" <<<"$out" \
   && fail "a sync that changed nothing still talked about the tracked directory, got: $out"
 pass "a sync that changes nothing says nothing about the tracked directory"
 [[ "$(readlink "$skill_link")" == "../cerebro/skills/demo" ]] \
@@ -157,7 +157,7 @@ ln -sfn "../../elsewhere/demo.md" "$copilot_agent_link"
 out="$("$cerebro_dir/scripts/sync-symlinks.sh")"
 [[ "$(readlink "$copilot_agent_link")" == "../../.claude/cerebro/agents/demo.md" ]] \
   || fail "the repointed copilot agent link was not written back"
-echo "$out" | grep -qF ".github/ is tracked" \
+grep -qF ".github/ is tracked" <<<"$out" \
   || fail "expected a repointed link outside .claude/ to say it again, got: $out"
 pass "a repointed link outside .claude/ says it again"
 
@@ -176,18 +176,18 @@ out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
   || fail "a skill link into the mount with no source survived the sync"
 [[ ! -L "$consumer/.claude/agents/gone.md" ]] \
   || fail "an agent link into the mount with no source survived the sync"
-echo "$out" | grep -qF "Removed stale skill link: $consumer/.claude/skills/gone" \
+grep -qF "Removed stale skill link: $consumer/.claude/skills/gone" <<<"$out" \
   || fail "expected the sync to name the removed skill link, got: $out"
-echo "$out" | grep -qF "Removed stale agent link: $consumer/.claude/agents/gone.md" \
+grep -qF "Removed stale agent link: $consumer/.claude/agents/gone.md" <<<"$out" \
   || fail "expected the sync to name the removed agent link, got: $out"
 [[ -L "$consumer/.claude/skills/mine" ]] \
   || fail "a dangling link that does not point into the mount was removed; it is not this script's"
-echo "$out" | grep -q "mine" \
+grep -q "mine" <<<"$out" \
   && fail "the sync talked about a link that is not its own, got: $out"
 pass "a link into the mount whose source is gone is removed, out loud; a consumer's own is not"
 
 out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
-echo "$out" | grep -q "Removed stale" \
+grep -q "Removed stale" <<<"$out" \
   && fail "a second sync still removes stale links, got: $out"
 pass "a second sync says nothing about it"
 # --- a sync that changes nothing does not rewrite the links it finds ----------------------------
@@ -227,7 +227,7 @@ out="$("$outside/sync-symlinks.sh" 2>&1)"
 status=$?
 set -e
 [[ $status -ne 0 ]] || fail "expected the guard to reject a non-consumer layout, exited 0"
-echo "$out" | grep -q "must run from a consumer repo" \
+grep -q "must run from a consumer repo" <<<"$out" \
   || fail "expected the guard's message to name the requirement, got: $out"
 [[ ! -d "$work_dir/.claude/skills" ]] \
   || fail "the guard must exit before creating any target directory"
@@ -304,7 +304,7 @@ out="$("$own_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 [[ ! -L "$own/.dir-locals.el" ]] || fail "the consumer's own .dir-locals.el was replaced by a link"
 [[ "$(cat "$own/.dir-locals.el")" == "$before" ]] \
   || fail "the consumer's own .dir-locals.el was modified"
-echo "$out" | grep -q "\.dir-locals\.el" \
+grep -q "\.dir-locals\.el" <<<"$out" \
   && fail "the sync mentioned the consumer's own .dir-locals.el, got: $out"
 [[ -L "$own/.claude/skills/demo" ]] || fail "the skill links must still be written"
 pass "a consumer's own .dir-locals.el is left alone, silently, and the rest still syncs"
@@ -356,7 +356,7 @@ pass "a submodule with no templates/ syncs the rest and writes no .dir-locals.el
 [[ ! -d "$old_sub/.github/hooks" ]] || [[ -z "$(ls -A "$old_sub/.github/hooks")" ]] \
   || fail "a mount with no hooks/copilot still wrote something into .github/hooks"
 out="$("$old_cerebro/scripts/sync-symlinks.sh" 2>&1)"
-echo "$out" | grep -q "hook" \
+grep -q "hook" <<<"$out" \
   && fail "a mount with no hooks/copilot talked about hooks, got: $out"
 pass "a mount that ships no provider hooks syncs the rest, silently"
 
@@ -385,12 +385,12 @@ out="$("$mig_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 
 [[ ! -e "$migrating/.dir-locals.el" && ! -L "$migrating/.dir-locals.el" ]] \
   || fail "the retired .dir-locals.el link survived the sync"
-echo "$out" | grep -qF "Removed stale .dir-locals.el link (templates/consumer-dir-locals.el is gone)" \
+grep -qF "Removed stale .dir-locals.el link (templates/consumer-dir-locals.el is gone)" <<<"$out" \
   || fail "expected the sync to say it removed the stale link, got: $out"
 pass "a retired .dir-locals.el link is removed, out loud"
 
 out="$("$mig_cerebro/scripts/sync-symlinks.sh" 2>&1)"
-echo "$out" | grep -q "\.dir-locals\.el" \
+grep -q "\.dir-locals\.el" <<<"$out" \
   && fail "a second sync still talks about .dir-locals.el, got: $out"
 pass "a second sync says nothing about it"
 
@@ -434,9 +434,9 @@ own_skill_link="$mirror/.github/skills/own-skill"
 [[ -e "$own_skill_link/SKILL.md" ]] || fail "the mirrored skill link does not resolve to SKILL.md"
 pass "a project's own skill directory is mirrored into the copilot layout"
 
-echo "$out" | grep -qF "Mirrored 1 project agent link(s) from $mirror/.claude/agents to $mirror/.github/agents" \
+grep -qF "Mirrored 1 project agent link(s) from $mirror/.claude/agents to $mirror/.github/agents" <<<"$out" \
   || fail "expected the mirror to name what it linked (agents), got: $out"
-echo "$out" | grep -qF "Mirrored 1 project skill link(s) from $mirror/.claude/skills to $mirror/.github/skills" \
+grep -qF "Mirrored 1 project skill link(s) from $mirror/.claude/skills to $mirror/.github/skills" <<<"$out" \
   || fail "expected the mirror to name what it linked (skills), got: $out"
 pass "the mirror names what it linked"
 
@@ -456,13 +456,13 @@ pass "nothing is mirrored into the canonical layout itself"
 rm "$mirror/.claude/agents/own-role.md"
 out="$("$mir_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 [[ ! -L "$own_agent_link" ]] || fail "a mirrored link whose source the project deleted survived the sync"
-echo "$out" | grep -qF "Removed stale agent link: $own_agent_link (its source is gone)" \
+grep -qF "Removed stale agent link: $own_agent_link (its source is gone)" <<<"$out" \
   || fail "expected the sync to name the removed mirrored link, got: $out"
 pass "a mirrored link whose source the project deleted is removed, out loud"
 
 [[ -L "$mirror/.github/agents/mine.agent.md" ]] \
   || fail "a dangling link in the copilot layout that points elsewhere was removed; it is not this script's"
-echo "$out" | grep -q "mine" \
+grep -q "mine" <<<"$out" \
   && fail "the sync talked about a link that is not its own, got: $out"
 pass "a link in the copilot layout that points somewhere else is left alone"
 
@@ -471,13 +471,13 @@ rm "$cerebro_dir/hooks/copilot/cerebro-question-state.json"
 ln -s "../../elsewhere/mine.json" "$consumer/.github/hooks/mine.json"
 out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
 [[ ! -L "$hook_link" ]] || fail "a hook link whose source is gone from the mount survived the sync"
-echo "$out" | grep -qF "Removed stale hook link: $hook_link (its source is gone from the mount)" \
+grep -qF "Removed stale hook link: $hook_link (its source is gone from the mount)" <<<"$out" \
   || fail "expected the sync to name the removed hook link, got: $out"
 pass "a hook link whose source is gone from the mount is removed, out loud"
 
 [[ -L "$consumer/.github/hooks/mine.json" ]] \
   || fail "a dangling hook link pointing elsewhere was removed; it is not this script's"
-echo "$out" | grep -q "mine" \
+grep -q "mine" <<<"$out" \
   && fail "the sync talked about a hook link that is not its own, got: $out"
 pass "a hook link pointing somewhere else is left alone"
 
@@ -513,7 +513,7 @@ rm -rf "$many_cerebro/skills/beta"
 out="$("$many_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 
 [[ ! -L "$many/.claude/skills/beta" ]] || fail "many: the link for the removed skill beta survived"
-echo "$out" | grep -qF "Removed stale skill link: $many/.claude/skills/beta" \
+grep -qF "Removed stale skill link: $many/.claude/skills/beta" <<<"$out" \
   || fail "many: expected the sync to name the removed beta link, got: $out"
 for sk in alpha gamma; do
   [[ "$(readlink "$many/.claude/skills/$sk")" == "../cerebro/skills/$sk" ]] \
@@ -523,7 +523,7 @@ done
   || fail "many: the consumer's own resolving link was disturbed"
 [[ "$(readlink "$many/.claude/skills/theirs-gone")" == "../../elsewhere/gone" ]] \
   || fail "many: the consumer's own dangling link was removed; it is not this script's"
-echo "$out" | grep -q "theirs" \
+grep -q "theirs" <<<"$out" \
   && fail "many: the sync talked about a link that is not its own, got: $out"
 pass "a directory of several links sweeps only the stale cerebro one"
 
@@ -537,7 +537,7 @@ ln -s "../../a dir/x" "$many/.claude/agents/spaced.md"
 out="$("$many_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 [[ "$(readlink "$many/.claude/agents/spaced.md")" == "../../a dir/x" ]] \
   || fail "spaced: the link was disturbed: $(readlink "$many/.claude/agents/spaced.md")"
-echo "$out" | grep -qF "Synced 1 agent link(s)" \
+grep -qF "Synced 1 agent link(s)" <<<"$out" \
   || fail "spaced: expected the sync to still report its own agent link, got: $out"
 pass "a link target with a space in it survives the sync"
 
@@ -581,7 +581,7 @@ out="$(CEREBRO_CONSUMER_ROOT="$(cd "$consumer" && pwd -P)" \
 status=$?
 set -e
 [[ $status -eq 1 ]] || fail "foreign hint: expected the refusal (exit 1), got $status: $out"
-echo "$out" | grep -q "must run from a consumer repo" \
+grep -q "must run from a consumer repo" <<<"$out" \
   || fail "foreign hint: expected the refusal line, got: $out"
 pass "a hint describing another checkout is refused, not followed into that tree"
 

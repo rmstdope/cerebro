@@ -127,7 +127,7 @@ out="$( cd "$consumer" && PATH="$bare_dir" CEREBRO_TEST_RECORD="$record" \
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "no emacs on PATH: expected exit 2, got $status"
-echo "$out" | grep -q "emacs is not on PATH" \
+grep -q "emacs is not on PATH" <<<"$out" \
   || fail "no emacs on PATH: expected the message to say so, got: $out"
 [[ ! -f "$record" ]] || fail "no emacs on PATH: something was started anyway"
 pass "refuses with one line when emacs is not on PATH"
@@ -140,7 +140,7 @@ out="$(run_cerebro "$consumer" some-file 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "an argument: expected exit 2, got $status"
-echo "$out" | grep -q "^usage:" || fail "an argument: expected a usage line, got: $out"
+grep -q "^usage:" <<<"$out" || fail "an argument: expected a usage line, got: $out"
 [[ ! -f "$record" ]] || fail "an argument: emacs was reached anyway"
 pass "refuses any argument with a usage line, before reaching emacs"
 
@@ -158,7 +158,7 @@ out="$( cd "$work_dir/loose" && PATH="$stub_dir:$PATH" CEREBRO_TEST_RECORD="$rec
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "outside a consumer: expected exit 2, got $status"
-echo "$out" | grep -q "not inside a consumer" \
+grep -q "not inside a consumer" <<<"$out" \
   || fail "outside a consumer: expected the message to say so, got: $out"
 [[ ! -f "$record" ]] || fail "outside a consumer: emacs was reached anyway"
 pass "refuses outside a consumer, before reaching emacs"
@@ -175,7 +175,7 @@ out="$( cd "$partial" && PATH="$stub_dir:$PATH" CEREBRO_TEST_RECORD="$record" \
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "no elisp: expected exit 2, got $status"
-echo "$out" | grep -q "cerebro.el is missing" \
+grep -q "cerebro.el is missing" <<<"$out" \
   || fail "no elisp: expected the message to name cerebro.el, got: $out"
 [[ ! -f "$record" ]] || fail "no elisp: emacs was reached anyway"
 pass "refuses when this checkout of cerebro has no emacs/cerebro.el"

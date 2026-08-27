@@ -268,4 +268,52 @@ PATH="$narrow" bash -c '
   || fail "the library should source with nothing but bash and git on PATH"
 pass "the library sources under set -euo pipefail with no jq, bd or gh on PATH"
 
+# --- a suite that dies is never green -------------------------------------------------------------
+#
+# The defect this section exists for: under `set -euo pipefail` a fatal shell error reaches the EXIT
+# trap with `$?` already 0, so a suite that asserted nothing used to print `ok' in the gate. The
+# markers, not the status, are what the trap reads - see the library's header for why.
+
+s="$(fabricate_suite dies-on-source 'source /nope/no-such-library.sh
+suite_passed')"
+run_suite "$s"
+[[ $status -ne 0 ]] || fail "a suite that dies on a bad source must not exit 0
+$out"
+grep -q "died before reaching suite_passed" <<<"$out" \
+  || fail "a bad source: the diagnostic should name suite_passed, got: $out"
+pass "a suite that dies on a bad source is reported failed, not green"
+
+s="$(fabricate_suite dies-on-unbound 'echo "$no_such_variable"
+suite_passed')"
+run_suite "$s"
+[[ $status -ne 0 ]] || fail "a suite that dies on an unbound variable must not exit 0
+$out"
+pass "a suite that dies on an unbound variable is reported failed, not green"
+
+s="$(fabricate_suite dies-midway 'pass "the first assertion"
+false
+suite_passed')"
+run_suite "$s"
+[[ $status -ne 0 ]] || fail "a suite that dies after its first assertion must not exit 0
+$out"
+pass "a suite that dies after some assertions have passed is reported failed"
+
+s="$(fabricate_suite fails-an-assertion 'fail "a real assertion"')"
+run_suite "$s"
+[[ $status -eq 1 ]] || fail "a failed assertion should still exit 1, got $status
+$out"
+grep -q "^FAIL: a real assertion$" <<<"$out" \
+  || fail "a failed assertion should print its own message, got: $out"
+grep -q "died before reaching suite_passed" <<<"$out" \
+  && fail "a failed assertion must not be reported as a death, got: $out"
+pass "a failed assertion is reported as itself, not as a death"
+
+marker="$work_dir/died-but-cleaned"
+s="$(fabricate_suite dies-but-cleans "cleanup_add $marker
+mkdir -p $marker
+source /nope/no-such-library.sh")"
+run_suite "$s"
+[[ ! -e "$marker" ]] || fail "a dying suite must still have its cleanup run: $marker survived"
+pass "the work directory and registered paths still go when the suite dies"
+
 suite_passed

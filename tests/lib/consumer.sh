@@ -37,6 +37,16 @@
 #   suite_cleanup                 a suite may DEFINE this; the trap calls it FIRST, before removing
 #                                 anything (tests/agent-alive.sh kills background sleeps in it)
 #
+# WHY the marker exists, and why the obvious fix is not the fix. Under `set -euo pipefail`, a suite
+# that dies of a FATAL SHELL ERROR - a `source` of a file that is not there, an unbound variable, a
+# syntax error inside a sourced file - reaches this EXIT trap with `$?` ALREADY 0, and so exits 0:
+# `ok tests/<suite>.sh' for a suite that asserted nothing. Capturing `status=$?' here does not fix
+# it, because the zero is what there is to capture; measured on bash 3.2.57, the same three deaths
+# exit 1 with no EXIT trap installed at all. An ordinary errexit death (`false') is unaffected
+# either way - it arrives with its real status - so the "bash takes the last command in the trap"
+# explanation in docs/retrospectives/cb-ge0.md is not the mechanism. Only reaching the end of the
+# suite proves the suite ran, so that is what is recorded.
+#
 #   copy_cerebro_into <dest>      scripts, agents, skills, hooks - no emacs/, no .git
 #   link_scripts <consumer> <script>...
 #                                 symlinks <script> into <consumer>/.claude/cerebro/scripts/,
@@ -58,6 +68,7 @@
 # --- the error protocol ---------------------------------------------------------------------------
 
 fail() {
+  _suite_failed=1
   echo "FAIL: $1" >&2
   exit 1
 }
@@ -140,12 +151,21 @@ cleanup_add() {
 }
 
 _consumer_lib_cleanup() {
+  local status=$?
   # The suite's own hook first: it may need the directories that are about to go, or have processes
   # to kill that would otherwise outlive the run.
   if declare -F suite_cleanup >/dev/null; then
     suite_cleanup || true
   fi
   rm -rf "${_cleanup_paths[@]}"
+  # Neither marker set: the suite neither reached its last line nor failed an assertion, so it died
+  # somewhere in between - and bash may well be reporting 0 for it (see the header). Never let that
+  # read as a pass.
+  if [ -z "$_suite_reached_end" ] && [ -z "$_suite_failed" ]; then
+    echo "FAIL: $0 died before reaching suite_passed (bash reported status $status)" >&2
+    exit 1
+  fi
+  exit "$status"
 }
 
 # Installed in the SUITE's shell, which is why a migrated suite must never write its own EXIT trap:

@@ -275,8 +275,9 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   planned bead.
 - **A role more than one agent holds is started one at a time.** The planners answer the same buffer
   rule off the same panel, so a tick where it is true is true for both, and the view started Xavier and
-  Beast in one breath. They then race for one candidate, because `planning:<name>` is taken after
-  the research rather than before. The implementers are the same shape since cb-1or.1: a queue that
+  Beast in one breath. They then race for one candidate over the startup window the planner bullet
+  above describes — launch to that `planning:` label reaching the remote, about a minute on this
+  fleet — and not over research time. The implementers are the same shape since cb-1or.1: a queue that
   fills is a condition true for every standby builder on one tick.
   `cerebro-role-start-spacing` holds the second for 30s; it counts
   peers only, so a role is never held by its own restart.

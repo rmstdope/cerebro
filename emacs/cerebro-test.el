@@ -6904,10 +6904,10 @@ up on says so on the row and behind `RET'."
 
 Both planners answer the same buffer rule off the same panel, so a tick where
 it is true is a tick where it is true for both - and the fleet started Xavier
-and Beast in one breath more than once. They then race for the same candidate:
-the `planning:<name>\=' label is taken after the research, not before, so two
-sessions can be most of the way through planning one bead before either writes
-anything the other can see.
+and Beast in one breath more than once. They then race for the same candidate,
+over startup rather than research: the `planning:<name>\=' label is taken
+before the research, so the stretch neither can see is launch to that label
+reaching the remote - about a minute on this fleet.
 
 Spacing is per ROLE and counts PEERS only. A role\='s own restart is not the
 race - nothing to collide with - and holding it would undo the retry that

@@ -1852,10 +1852,13 @@ once, and the planners do: they answer the same buffer rule off the same
 panel, so a tick where it is true is a tick where it is true for Xavier and
 for Beast.  The view started them in one breath more than once.
 
-That is a race rather than an inefficiency.  A planner marks its candidate
-with `planning:<its own name>\=' *after* the research rather than before, so
-two sessions can be most of the way through planning one bead before either
-writes anything the other could have seen.
+That is a race rather than an inefficiency, and the window it covers is
+startup rather than research.  A planner takes its candidate with a
+`planning:<its own name>\=' label *before* it researches anything, so the
+only stretch the other session cannot see is launch to that label reaching
+the remote: process start, skill load, `bd dolt pull\=', the candidate query,
+the state-file write, the label, the push.  Measured on this fleet that is
+about a minute, and it is the quantity a value here has to exceed.
 
 Spacing counts PEERS only - see `cerebro--role-start-too-soon-p\=' - so a role
 is never held by its own last start.  A role absent from this list is never

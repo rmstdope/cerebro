@@ -9,12 +9,31 @@
 # Every launch reads it. Nothing needs restarting except the sessions themselves, and a session that
 # is already up keeps the model it started with — this decides what the *next* one gets.
 #
-#     <agent-name | role | default>   <model | ->   [effort]
+#     <agent-name | role | default>[@provider]   <model | ->   [effort]
 #
 # Most specific wins: an agent's own name, then its role, then `default`. A `--model` typed on the
 # command line still beats the file. `-` as the model passes no `--model` at all, leaving the
-# session on whatever `claude` itself defaults to. Omit the effort column to keep the one the agent
-# definition declares.
+# session on whatever the agent CLI itself defaults to. Omit the effort column to keep the one the
+# agent definition declares.
+#
+# A key may name the agent CLI it is about. `planner' applies whichever CLI this fleet runs on;
+# `planner@copilot' applies only when .cerebro/project.conf declares `agent_cli copilot'. The most
+# specific key wins, and for one key the provider-scoped row beats the plain one:
+#
+#     <Name>@<provider>, <Name>, <role>@<provider>, <role>, default@<provider>, default
+#
+# A key naming a CLI cerebro does not know is warned about once and ignored; the session starts.
+#
+# The agent definitions declare Claude Code's model words (`model: opus'). On any other CLI they
+# are ignored and no --model and no --effort are passed at all, so this file is where a Copilot
+# fleet's models are chosen - and Copilot's ids are Copilot's own:
+#
+#     default@copilot      claude-opus-4.8
+#     implementer@copilot  gpt-5-mini   medium
+#     architect@copilot    gpt-5.5      high
+#
+# Copilot accepts a reasoning effort only for SOME models and refuses the launch outright for the
+# rest, so an effort here is passed verbatim and a bad pairing fails loudly.
 #
 # Anything from a `#` to the end of a line is a comment, including after a setting:
 #

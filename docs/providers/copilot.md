@@ -21,11 +21,11 @@ file. The `## Summary` table below is therefore built row-for-row from the flags
 | `--agent <role>` | `--agent <role>` | yes (M4) | reads `.github/agents/<role>.agent.md`; relative symlink followed |
 | `--name <Name>` | `-n, --name <name>` | yes (M3) | same spelling; a real argv token; also sets the terminal title and is a `--resume` key |
 | `--remote-control <Name>` | **none** | yes (M12) | `--remote`/`--remote-export` is GitHub web/mobile control of a session, a different thing. Decision 7 already accepts this loss |
-| `--model <id>` | `--model <id>` | yes (M8) | ids are Copilot's; an unknown id is a hard error, not a fallback |
-| `--effort <level>` | `--effort, --reasoning-effort <level>` | yes (M7) | choices are `none,minimal,low,medium,high,xhigh,max` — but acceptance is **per model**, and the non-interactive default model rejects every level |
-| `--append-system-prompt <marker>` | **none** | yes (M12) | no equivalent flag. The marker has to ride inside `-i`/`-p` |
-| `--settings <path>` | `.github/hooks/*.json` (no flag) | yes (M6) | hooks are discovered from the repository, not passed on the command line |
-| `--permission-mode auto` | `--allow-all-tools` | yes (M9) | documented as required for non-interactive mode |
+| `--model <id>` | `--model <id>` | yes (M8) | ids are Copilot's; an unknown id is a hard error, not a fallback. **Decided (cb-d59.6):** passed only from `.cerebro/models.conf`; the agent files' `model:` is Claude Code's word and is dropped |
+| `--effort <level>` | `--effort, --reasoning-effort <level>` | yes (M7) | choices are `none,minimal,low,medium,high,xhigh,max` — but acceptance is **per model**, and the non-interactive default model rejects every level. **Decided (cb-d59.6):** passed only when a `.cerebro/models.conf` row names one, and then verbatim |
+| `--append-system-prompt <marker>` | **none** | yes (M12) | no equivalent flag. The marker rides inside `-i`, and is measured reaching argv verbatim through `scripts/launch` (M13) |
+| `--settings <path>` | `.github/hooks/*.json` (no flag) | yes (M6, M6b) | hooks are discovered from the repository, not passed on the command line. A relative symlink is followed; an untrusted folder is not read at all |
+| `--permission-mode auto` | `--allow-all-tools` | yes (M9) | documented as required for non-interactive mode. **Decided (cb-d59.6):** `--allow-all-tools`, last in the arm, not the wider `--allow-all` |
 | trailing bare prompt | **refused** — use `-i <prompt>` | yes (M3) | `copilot --allow-all-tools 'reply ok'` → `error: too many arguments. Expected 0 arguments but got 1.` |
 | (root `CLAUDE.md` read as instructions) | same | yes (M10) | loaded as custom instructions, not read as a file |
 
@@ -579,6 +579,160 @@ Worth noting for a later planner, not acted on here: `--session-id` sets the UUI
 session, and `--resume=<name>` matches the `--name` a session was started with — either could give
 the fleet view a session handle it does not have today.
 
+## M6b A hook file reached by a relative symlink
+
+`scripts/sync-symlinks.sh` writes the hook into a consumer's `.github/hooks/` as a relative
+**symlink**, and M6's probe wrote a real file — so whether the link is followed was unmeasured, and
+if it were not, the `asking` state would silently never fire.
+
+### Command
+
+Four probe repositories, each `git init`, each running the same one-line session, differing only in
+what is at `.github/hooks/probe.json` and whether the directory is trusted:
+
+```
+# the hook, no matcher, so every tool is caught
+{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":"echo fired >> /tmp/<log>"}]}}
+
+cd <probe> && copilot -p 'run the shell command: echo hi' --allow-all-tools
+```
+
+| # | file at `.github/hooks/probe.json` | matcher | directory in `trustedFolders` | log |
+|---|---|---|---|---|
+| 1 | relative symlink to `../../real/probe.json` | `bash` | no | empty |
+| 2 | real file | `bash` | no | empty |
+| 3 | relative symlink to `../../real/probe.json` | none | no | empty |
+| 4 | real file | none | no | empty |
+| 5 | real file | none | **yes** | `fired` |
+| 6 | relative symlink to `../../real/probe.json` | none | **yes** | `fired` |
+
+### Output
+
+Runs 1–4, in `/var/folders/…`:
+
+```
+=== hook log ===
+(empty)
+```
+
+`~/.copilot/config.json` at the time:
+
+```
+"trustedFolders": [
+  "/Users/henrikku/repos/cerebro"
+]
+```
+
+Runs 5 and 6, with the probe directories added to `trustedFolders`:
+
+```
+real log:
+fired-real
+
+sym log:
+fired-sym
+```
+
+Independently, `~/.copilot/logs/hooks/preToolUse_<session>.log` shows the *user-level*
+`~/.copilot/hooks/axis-hooks.json` firing in every one of runs 1–4, with `toolName: bash` — so the
+hook machinery itself was running throughout, and only the repository's own file was not loaded.
+
+### Conclusion
+
+- **A relative symlink is followed.** Run 6 fires with the file reached exactly as
+  `scripts/sync-symlinks.sh` writes it. **No change to the sync**: the link stays a link, and
+  `hooks/README.md`'s warning that this was unmeasured is removed.
+- **A repository's hooks are loaded only in a folder Copilot trusts.** `trustedFolders` in
+  `~/.copilot/config.json` gates them entirely, and an untrusted folder reads a *missing* hook
+  rather than a refused one — nothing is said on stdout or stderr. This is the first thing to check
+  when a Copilot fleet never shows `asking`, and it is not something cerebro can set on a
+  navigator's behalf: trust is granted per machine, by the person running the CLI.
+- **The `bash` matcher did not fire either** (runs 1 and 2, both untrusted, so this is not
+  isolated). M6 established that `"matcher":"shell"` never fires while the payload says
+  `"toolName":"bash"`; the matcher question is unchanged by this measurement and stays as M6 left
+  it, since every matcher run here was confounded by trust. What `hooks/copilot/` ships
+  (`"matcher":"ask_user"`) is untouched by this bead.
+
+## M13 A session started by the fleet's own launcher
+
+The proof the epic closes on: one real session of each **role kind** — interactive and implementer —
+started by `scripts/launch` itself, on a consumer declaring `agent_cli copilot`.
+
+### Command
+
+A throwaway consumer, never this checkout: a `mktemp -d`, `git init`, a **copy** of this checkout at
+`.claude/cerebro` (a symlink there makes `consumer-root` climb into the cerebro repository instead —
+the self-mount, and it syncs the wrong tree), `printf 'gate_fast true\nagent_cli copilot\n' >
+.cerebro/project.conf`, then `sync-symlinks.sh`. Each session started under a **real pty** with an
+explicit window size, since without one Copilot degrades to a single-shot run and exits (M11):
+
+```python
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("bash", ["bash", ".claude/cerebro/scripts/launch", name])
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+```
+
+and, twelve seconds in, `ps -o args= -p <pid>`, a state file written naming that pid, and
+`.claude/cerebro/scripts/agent-alive <Name>`.
+
+### Output
+
+`Cerebro` (interactive, role `orchestrator`) — `scripts/launch`'s own stderr, then the session's
+argv, then liveness:
+
+```
+launch: no models.conf entry for copilot - copilot picks its own model and effort.
+        The orchestrator declares model opus, which is Claude Code's name for it.
+
+node /opt/homebrew/bin/copilot --agent orchestrator --name Cerebro --allow-all-tools -i This session is Cerebro of the cerebro fleet rooted at /private/var/…/probe/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.
+
+agent-alive Cerebro exit=0
+agent-alive Rogue (same pid, wrong name) exit=1
+```
+
+`Cyclops` (implementer, role `implementer`):
+
+```
+launch: no models.conf entry for copilot - copilot picks its own model and effort.
+        The implementer declares model sonnet, which is Claude Code's name for it.
+
+node /opt/homebrew/bin/copilot --agent implementer --name Cyclops --allow-all-tools -i This session is Cyclops of the cerebro fleet rooted at /private/var/…/probe/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.
+
+agent-alive Cyclops exit=0
+agent-alive Rogue (same pid, wrong name) exit=1
+```
+
+The first screen of each, escape sequences stripped — the terminal title carries the name, which is
+what a vterm buffer shows:
+
+```
+]0;Cerebro - GitHub Copilot
+ ╭─╮╭─╮
+ ╰─╯╰─╯ Copilot v1.0.80 uses AI.
+ █ ▘▝ █ Check for mistakes.
+ ● No copilot-instructions.md found. Run /init to generate.
+ /private/var/…/probe [⎇ main%]
+```
+
+`Cerebro` went on to open an `ask_user` question of its own within twelve seconds, rendered as
+Copilot's own `Question` panel — the tool `hooks/copilot/cerebro-question-state.json` matches.
+
+### Conclusion
+
+- **Every token the arm decides reaches the binary, in order**: `--agent <role>`, `--name <Name>`,
+  `--allow-all-tools`, `-i`, and the prompt as one argument. Both the Node loader and the native
+  child it forks carry all of it, so a `ps` scan finds either.
+- **The marker sentence survives verbatim**, including the consumer root with its trailing slash —
+  so the liveness rule cb-d59.3 settled needs nothing from this bead. `agent-alive` answers 0 for
+  the session's own name and 1 for another roster name on the same pid, which is the name-plus-root
+  discrimination working on Copilot exactly as on Claude Code.
+- **`agent-alive` still needs the state file the agent writes.** Before a session writes one it
+  answers 1, whatever is in argv — correct, and unchanged by provider, but worth saying: a Copilot
+  session is not "alive" to the shell predicate until it has made its first `agent-state` call.
+- **Both role kinds behave identically.** The kind changes only which agent file is read, and that
+  is `--agent`'s business.
+
 ## What this changes
 
 1. **Decision 4 (the identity marker) holds, but not by the mechanism it names.** The marker does
@@ -617,3 +771,60 @@ the fleet view a session handle it does not have today.
 9. **Nothing in decisions 1, 2, 3, 7 or 8 was contradicted.** `--name`, `--agent` with symlinked
    `<role>.agent.md` files, symlinked skill directories, `CLAUDE.md` as instructions, unattended
    running, and a hard-failing `--model` all measured as the epic assumes.
+
+## Running a fleet on Copilot
+
+Declare it once, in `.cerebro/project.conf`:
+
+```
+agent_cli copilot
+```
+
+Absent, the key means `claude`. Nothing else has to change: the symlink sync writes both CLIs'
+discovery paths in every project whatever is declared, so the agents, the skills and the hook file
+are already where Copilot looks for them.
+
+**What you get.** Every role starts, from the fleet view or from
+`.claude/cerebro/scripts/launch <Name>`, on GitHub Copilot CLI. The agent definitions are read as
+agents, the skills as skills, and the root `CLAUDE.md` as instructions. A session's row shows
+`asking` while it waits on a question, the same as on Claude Code.
+
+**What you do not get.** There is no Remote Control: a Copilot session cannot be read or steered
+from claude.ai or from a phone. It runs where it was started, and the fleet view is the way to watch
+it.
+
+**Models are yours to declare.** Copilot's model ids are Copilot's own, and the agent definitions
+name Claude Code's — so on Copilot they are ignored and no `--model` and no `--effort` are passed at
+all. The fleet then runs on whatever Copilot picks, and every launch says so:
+
+```
+launch: no models.conf entry for copilot - copilot picks its own model and effort.
+        The orchestrator declares model opus, which is Claude Code's name for it.
+```
+
+To choose, write `.cerebro/models.conf`. A key may name the CLI it is about, and within one key the
+CLI-scoped row beats the plain one:
+
+```
+#  <agent-name | role | default>[@provider]   <model | ->   [effort]
+default@copilot      claude-opus-4.8
+implementer@copilot  gpt-5-mini   medium
+architect@copilot    gpt-5.5      high
+```
+
+The lookup is most-specific-first: `<Name>@copilot`, `<Name>`, `<role>@copilot`, `<role>`,
+`default@copilot`, `default`. A key naming a CLI that is not known is warned about once and ignored,
+and the session still starts.
+
+**A reasoning effort is optional, and only sometimes accepted.** Copilot takes `--effort` for some
+models and refuses the launch outright for the rest, so it is passed only when a matching row
+carries a third column — and then verbatim, so a bad pairing fails in the line that caused it.
+
+**A wrong id is a dead row, not a downgrade.** An unknown model, or an effort the model will not
+take, is a hard refusal with no session at all. In the fleet view that name shows as `dead` with
+Copilot's own `Error:` line beside it, and the fix is the `models.conf` line that caused it.
+
+**Hooks are read only in a folder you have trusted.** Copilot keeps a list of trusted folders in
+`~/.copilot/config.json`, and in a folder that is not on it the project's hook file is never loaded
+— silently, with nothing said. If sessions run but no row ever shows `asking`, that is the first
+thing to check, and it is granted per machine by the person running the CLI (M6b).

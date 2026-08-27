@@ -135,6 +135,14 @@ need in a specific shape, because they become declarations:
   the gate runs. This becomes `install`, and *"nothing"* is a real answer worth writing down as an
   absence with a reason.
 
+Then one more, asked plainly:
+
+> And which agent CLI should the fleet's sessions run on — Claude Code or GitHub Copilot?
+
+Both are supported, and the answer becomes `agent_cli`; an absent key means Claude Code. A
+project on GitHub Copilot also wants a `.cerebro/models.conf`, because Copilot's model ids are
+its own and the agent definitions declare Claude Code's.
+
 ### 4. What is using it like, and what does it look and feel like?
 
 > Walk me through the first minute for each kind of user. What do they see first, what is the one
@@ -167,6 +175,7 @@ which key rather than auditing a file:
 | `app_paths` | topic 3 — a regex over the paths the audience could see, proposed from the layout the stack implies |
 | `gate_fast`, `gate_full` | topic 3; the same command when the project has one |
 | `install` | topic 3; omitted with a comment when there is nothing to install |
+| `agent_cli` | topic 3 — Claude Code or GitHub Copilot; omitted with a comment when the answer is Claude Code |
 | `verification none` | when topic 1 said library, harness or build tool — nothing in it can be verified by looking |
 
 **Write every absent key as a comment saying why it is absent.** An accident and a decision read

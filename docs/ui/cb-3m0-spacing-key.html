@@ -1,0 +1,126 @@
+<!doctype html><meta charset="utf-8"><title>cb-3m0 — declaring the role start spacing in project.conf</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:13px;margin:14px 0 4px;color:#eee}
+.row{display:flex;gap:24px;flex-wrap:wrap}.panel{padding:14px 18px;border:1px solid #333;min-width:60ch;max-width:78ch}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.5;white-space:pre-wrap}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.s{color:#569cd6}.e{color:#f14c4c}.y{color:gold}.m{color:#c586c0}
+.note{color:#eee;max-width:110ch;background:#333;padding:8px 12px;margin-top:16px}
+.echo{background:#000;color:#ddd;padding:4px 8px;margin-top:6px}
+.cost{color:#eee;margin-top:10px}
+</style>
+<h1>cb-3m0 — the gap between two starts of one role, declared by the project instead of by whoever opened Emacs</h1>
+<p class="note">Today <code>cerebro-role-start-spacing</code> is a <code>defcustom</code> in <code>emacs/cerebro.el</code>, defaulting to
+<code>(("planner" . 30) ("implementer" . 30))</code>. It travels to no clone. Question 1 is the shape of the line a navigator
+writes in <code>.cerebro/project.conf</code>; question 2 is what the fleet view does with a line it cannot read.
+Everything below is the same file, the same fleet, only the declaration differing.</p>
+
+<div class="row">
+
+<div class="panel dark"><h2>Option A — one key, per-role pairs on the line</h2>
+<pre><span class="g"># Seconds between two starts of one role. A role two agents hold answers the
+# same condition for both at once; this is the gap that stops them racing.</span>
+<span class="s">role_start_spacing</span>  planner:45 implementer:30</pre>
+<div class="cost">Mirrors the <code>defcustom</code>'s own shape one-for-one, and a role left off the line is never spaced —
+the existing "one holder cannot collide with itself" opt-out survives verbatim. Costs a pair parser in elisp
+(<code>split-string</code> on space, then on <code>:</code>) and a second thing that can be malformed: the line, or one pair in it.</div>
+<h3>Declaring only the one that is wrong here, leaving implementers on the built-in 30:</h3>
+<pre><span class="s">role_start_spacing</span>  planner:45</pre>
+<div class="cost"><span class="y">Note the trap:</span> that line does <em>not</em> mean "implementer unchanged" unless the plan says so. Two readings —
+the line replaces the whole alist (implementers then never spaced), or it overlays it (implementers stay at 30).
+Whichever is chosen has to be written on the line above it in every consumer's file.</div></div>
+
+<div class="panel dark"><h2>Option B — one key per role</h2>
+<pre><span class="g"># Seconds between two starts of one role, one key per role. A role with no key
+# here keeps the built-in gap; a role only one agent holds is never spaced at all.</span>
+<span class="s">role_start_spacing_planner</span>      45
+<span class="s">role_start_spacing_implementer</span>  30</pre>
+<div class="cost">Nothing to parse — <code>project-conf role_start_spacing_planner</code> returns a number or nothing, exactly like
+every other key in the file. Overlay is the only possible reading, so the trap in Option A cannot arise.
+Costs one <code>project-conf</code> fork per role on the roster at buffer creation (three roles here, once per
+<code>M-x cerebro</code>), and a key namespace that grows with the roster.</div>
+<h3>Declaring only the planner:</h3>
+<pre><span class="s">role_start_spacing_planner</span>      45</pre>
+<div class="cost">Implementers keep 30, unambiguously.</div></div>
+
+<div class="panel dark"><h2>Option C — one number for the whole fleet</h2>
+<pre><span class="g"># Seconds between two starts of one role. Only roles two or more agents hold
+# are ever spaced, so this number is only ever felt by the planners here.</span>
+<span class="s">role_start_spacing</span>  45</pre>
+<div class="cost">The smallest thing that answers the bead: one key, one integer, no parser, no per-role table.
+It is nearly the same behaviour today, because <code>cerebro--role-peers</code> already returns nothing for a
+single-holder role, so <code>verifier</code>, <code>architect</code>, <code>reviewer</code> and
+<code>orchestrator</code> are unspaced whatever the number says.
+<span class="y">What it gives up:</span> a project can no longer set one role's gap without moving the other's, and can no longer
+say "space the planners, never space the implementers" — that opt-out becomes impossible for a multi-held role.</div></div>
+
+</div>
+
+<h1 style="margin-top:28px">Question 2 — <code>role_start_spacing  soon</code>: a value that is not a positive integer</h1>
+<div class="row">
+
+<div class="panel dark"><h2>Option R — refuse, the way a bad roster row refuses</h2>
+<pre>M-x cerebro</pre>
+<div class="echo"><span class="e">cerebro: project.conf: role_start_spacing must be a whole number of seconds, not "soon"</span></div>
+<div class="cost">No fleet is drawn at all, and the line is also written to <code>errors.jsonl</code>.
+Matches <code>cerebro--fleet</code>, whose docstring says an empty fleet drawn in silence is the one outcome
+that looks like it is working. Cost: a typo in one optional key stops the navigator seeing their fleet.</div></div>
+
+<div class="panel dark"><h2>Option F — fall back, and say so once</h2>
+<pre>M-x cerebro</pre>
+<div class="echo"><span class="y">cerebro: project.conf: role_start_spacing is not a number ("soon"); using the built-in 30s</span></div>
+<pre><span class="d">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="g">●</span> Xavier         planner       plan       cb-3m0     12s 12s
+<span class="s">◌</span> Beast          planner       standby               → buffer &lt; 4</pre>
+<div class="cost">The fleet comes up on the built-in number, and the complaint is in <code>errors.jsonl</code> where it
+outlives the echo area. Matches <code>project-conf</code>'s own rule, whose header says it never fails on a
+bad or absent key because its callers run under <code>set -euo pipefail</code>. Cost: a fleet running on a
+number nobody declared, which is exactly the state this bead exists to end — mitigated only by the line above.</div></div>
+
+</div>
+
+<p class="note">Not in this bead either way: <code>cerebro-wake-intervals</code>, the <em>other</em> number that decides when a
+role starts. It has the same "set in one navigator's Emacs" problem and is deliberately left alone here —
+one reader into <code>cerebro.el</code> is the increment; a second key riding on it is a second argument.
+Also not assumed either way: whether the fleet view's own autostart, which brought three implementers up in
+one second, should be spaced at all. Forge's bead says so explicitly and it stays a separate question.</p>
+
+<h1 style="margin-top:28px">Question 3 — <code>role_start_spacing_planner  0</code></h1>
+<div class="row">
+<div class="panel dark"><h2>Option Z — <code>0</code> is legal, and means "never space this role"</h2>
+<pre><span class="g"># This project's planners label their candidate before they research, so two
+# starting together costs nothing. Let them start on the same tick.</span>
+<span class="s">role_start_spacing_planner</span>  0</pre>
+<div class="cost">Falls out of the existing predicate for free: <code>now - started &lt; 0</code> is never true, so a zero
+declares "no gap" with no new code. It is the only way a project can opt a two-holder role out of spacing
+once the per-role key exists, and it is a real position — a fleet whose planners took their label before
+researching would want it. A negative number is still malformed.</div>
+<div class="echo">(no line — 0 is a declaration like any other)</div></div>
+
+<div class="panel dark"><h2>Option N — <code>0</code> is malformed, like <code>-5</code> or <code>soon</code></h2>
+<pre><span class="s">role_start_spacing_planner</span>  0</pre>
+<div class="echo"><span class="y">cerebro: project.conf: role_start_spacing_planner is not a positive number of seconds ("0"); using the built-in 30s</span></div>
+<div class="cost">Treats a zero as a slip of the finger rather than an intention. Cost: a project that genuinely wants
+two planners starting on one tick has no way to say so, and the fleet quietly ignores the line it wrote.</div></div>
+</div>
+
+<h1 style="margin-top:28px">Question 4 — a navigator who has set the <code>defcustom</code> in their own init</h1>
+<div class="row">
+<div class="panel dark"><h2>Option P — the project always wins</h2>
+<pre><span class="g">;; ~/.emacs.d/init.el</span>
+(setq cerebro-role-start-spacing '(("planner" . 90)))
+<span class="g"># .cerebro/project.conf</span>
+role_start_spacing_planner  45</pre>
+<div class="cost">The planners are spaced <span class="y">45s</span>. The <code>defcustom</code> is the fallback for a role the
+project says nothing about, and nothing else — which is what the bead asks for, and what makes every clone of the
+project run the same fleet. Cost: a navigator's own setting is silently overridden for a declared role.</div></div>
+
+<div class="panel dark"><h2>Option M — the navigator's own setting wins</h2>
+<pre><span class="g">;; ~/.emacs.d/init.el</span>
+(setq cerebro-role-start-spacing '(("planner" . 90)))
+<span class="g"># .cerebro/project.conf</span>
+role_start_spacing_planner  45</pre>
+<div class="cost">The planners are spaced <span class="y">90s</span>. Costs a way to tell "the navigator set this" from
+"this is the built-in default", which Emacs does not make cheap, and gives back the thing the bead complains
+about: the number that decides whether two planners race is again set in one navigator's Emacs.</div></div>
+</div>

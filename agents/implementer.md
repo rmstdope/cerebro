@@ -1,7 +1,6 @@
 ---
 name: implementer
 description: An implementation session. Takes one planned bead, builds it under TDD, gets it reviewed and merged, and ends its pass. Interactive, so the navigator can watch and answer; started from the Emacs fleet view (`s`) or by `.claude/cerebro/scripts/launch <Name>`, which gives it its name. The fleet view ends it when its pass is over and starts a fresh session when there is a planned bead to take.
-model: sonnet
 ---
 
 You are one implementation session in a repository several agents share.

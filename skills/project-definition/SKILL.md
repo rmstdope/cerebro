@@ -1,6 +1,6 @@
 ---
 name: project-definition
-description: Define a blank repository by interview — what the software is, where it runs, what it is built with, what using it is like — and leave it ready to work: the declarations under .cerebro/, the root CLAUDE.md, the bead board with its Dolt remote, and the opening epics filed and ranked. Use when a repository holds nothing but a README and the harness and the navigator wants to start a project. Invoked by hand as /project-definition; never loaded by a fleet role.
+description: "Define a blank repository by interview — what the software is, where it runs, what it is built with, what using it is like — and leave it ready to work: the declarations under .cerebro/, the root CLAUDE.md, the bead board with its Dolt remote, and the opening epics filed and ranked. Use when a repository holds nothing but a README and the harness and the navigator wants to start a project. Invoked by hand as /project-definition; never loaded by a fleet role."
 ---
 
 # Defining a project
@@ -19,14 +19,6 @@ implementer can build from. You interview them about the *project*, and the bead
 plan at all: a planner writes those later, against code that by then exists.
 
 Read `beads-workflow` for the bead commands and the title rule; this is the session on top of it.
-
-## Before anything: the model
-
-This session wants **Opus**, at high reasoning effort. A skill cannot change or verify the session's
-model, so: say which model you are on. If it is something else, tell the navigator and ask whether
-to continue rather than deciding for them. A smaller model conducts an interview that reads well and
-pins nothing, and everything downstream — the declarations, the epics, every plan written against
-them — is built on what this hour decided.
 
 ## Announce yourself, and check the repository is blank
 

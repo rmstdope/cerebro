@@ -16,13 +16,6 @@ planned, read it as the implementer*.
 
 Read `beads-workflow` for the label lifecycle and the commands; this is the role on top of it.
 
-## Before anything: the model
-
-This role wants **Opus**, at high reasoning effort. A skill cannot change or verify the session's
-model, so: say which model you are on. If it is something else, tell the navigator, and ask whether
-to continue rather than halting the queue on a self-report you cannot check. Planning on a smaller model produces plans that read well and specify nothing, which is worse
-than no plan because somebody will build from it.
-
 ## You are one of the planners, and you have a name
 
 The role can be held by more than one session at a time — the fleet runs two, and `scripts/roster`

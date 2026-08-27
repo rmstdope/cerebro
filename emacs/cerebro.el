@@ -269,31 +269,79 @@ fleet.  That is the deliberate half of the trade: the scan can no longer
 prove such a session is ours, and claiming it is, is the defect being fixed."
   (seq-filter (lambda (a) (cerebro--root-in-args-p root (list a))) args))
 
-(defun cerebro--consumer-processes (procs root)
-  "Those of PROCS - (PID . ARGS) pairs - that belong to ROOT\='s fleet.
+(defun cerebro--proc-pid (proc)
+  "PROC\='s pid.  PROC is a (PID PPID . ARGS) triple from `cerebro--system-processes\='."
+  (car proc))
 
-`cerebro--consumer-args\=' over pairs, applying the same
+(defun cerebro--proc-ppid (proc)
+  "PROC\='s parent pid, or nil where the platform reports none.
+
+Nil is treated as \"its own session\" by `cerebro--drop-wrappers\=', which is
+today\='s behaviour and the safe direction: an over-count is a visible `×N\='
+the navigator can act on, an under-count silently hides a real double-start."
+  (cadr proc))
+
+(defun cerebro--proc-args (proc)
+  "PROC\='s command line string."
+  (cddr proc))
+
+(defun cerebro--consumer-processes (procs root)
+  "Those of PROCS - (PID PPID . ARGS) triples - that belong to ROOT\='s fleet.
+
+`cerebro--consumer-args\=' over triples, applying the same
 `cerebro--root-in-args-p\=' test, so a count of one name\='s sessions is a
 count within one consumer and never across two (cb-lzi)."
-  (seq-filter (lambda (proc) (cerebro--root-in-args-p root (list (cdr proc)))) procs))
+  (seq-filter (lambda (proc)
+                (cerebro--root-in-args-p root (list (cerebro--proc-args proc))))
+              procs))
+
+(defun cerebro--drop-wrappers (procs)
+  "Pure.  Those of PROCS that are not the parent of another of PROCS.
+
+A session is a process tree rather than a process: a CLI whose launcher is a
+shim spawning the real binary as its own child passes the whole argv down, so
+both processes carry cerebro\='s marker sentence and a naive count reads `×2\='
+for one ordinary session (cb-3ks).  Claude Code is one process per session -
+a tree of one - and is unaffected.
+
+Parents are dropped rather than roots kept, because the navigator chose the
+pid the state file names and on a Copilot fleet that is the leaf: the agent
+calls `scripts/agent-state --pid $PPID\=' from inside itself, which resolves
+to the platform binary rather than the shim.
+
+The rule assumes one session\='s marker-carrying processes form a chain rather
+than a fan.  A CLI that forked two marker-carrying children of one parent
+would read `×2\=' again - visibly, which is the failure direction to prefer
+over a silent under-count.
+
+A second session started by hand survives this: a non-marker-carrying shell
+sits between it and any agent process, so its parent is not in the matched
+set."
+  (let ((parents (delq nil (mapcar #'cerebro--proc-ppid procs))))
+    (seq-remove (lambda (proc) (memq (cerebro--proc-pid proc) parents)) procs)))
 
 (defun cerebro--session-pids (name procs)
-  "The pids in PROCS - (PID . ARGS) pairs already narrowed to one consumer by
-`cerebro--consumer-processes\=' - whose ARGS name NAME.
+  "The pids in PROCS - (PID PPID . ARGS) triples already narrowed to one
+consumer by `cerebro--consumer-processes\=' - whose ARGS name NAME, one per
+session.
 
 Ascending, so the echo line that prints them is stable from one keypress to
 the next.  `cerebro--name-in-args-p\=' is the marker-sentence test, and a
 session carries exactly one marker: there is nothing here a plain substring
-search over the name could count twice."
-  (sort (delq nil
-              (mapcar (lambda (proc)
-                        (and (cerebro--name-in-args-p name (list (cdr proc)))
-                             (car proc)))
-                      procs))
+search over the name could count twice.  What it *can* count twice is one
+session\='s own process tree, which `cerebro--drop-wrappers\=' collapses - after
+the narrowing to one name, deliberately, so a session some other agent\='s
+session spawned is never swallowed."
+  (sort (mapcar #'cerebro--proc-pid
+                (cerebro--drop-wrappers
+                 (seq-filter (lambda (proc)
+                               (cerebro--name-in-args-p
+                                name (list (cerebro--proc-args proc))))
+                             procs)))
         #'<))
 
 (defun cerebro--apply-session-counts (agents procs)
-  "Pure.  AGENTS with `sessions\=' set from PROCS, this consumer\='s (PID . ARGS).
+  "Pure.  AGENTS with `sessions\=' set from PROCS, this consumer\='s triples.
 
 Applied after derivation rather than inside `cerebro--derive\=', the way
 `cerebro--apply-standby\=' is: `cerebro--derive\=' and its twenty tests take the
@@ -337,7 +385,7 @@ cannot be established honestly."
                        ordered ", "))))
 
 (defun cerebro--live-processes (procs live-p)
-  "Pure.  PROCS - (PID . ARGS) pairs - minus those whose pid LIVE-P denies.
+  "Pure.  PROCS - (PID PPID . ARGS) triples - minus those whose pid LIVE-P denies.
 
 The scan is cached for `cerebro-system-scan-seconds\=' (30), so a snapshot is
 evidence about the moment it was taken and no later: for up to half a minute
@@ -2980,18 +3028,21 @@ unchanged.  A caller that cares which of the two it got tests
     (_ nil)))
 
 (defun cerebro--system-processes ()
-  "Every system process as (PID . ARGS), ARGS its command line string.
+  "Every system process as (PID PPID . ARGS), ARGS its command line string.
 
 Every process on the machine, deliberately: which of them are this
 consumer\='s fleet is a pure question, answered by
 `cerebro--consumer-processes\=' at the call site rather than here.  The pid
 travels beside the args because a second session of one name is a count of
 processes, and the echo line that reports one names their pids
-\(`cerebro--session-pids\=', cb-63m)."
+\(`cerebro--session-pids\=', cb-63m).  The parent pid travels with them because
+a session is a process tree rather than a process (`cerebro--drop-wrappers\=',
+cb-3ks); it is nil where the platform reports none."
   (delq nil
         (mapcar (lambda (pid)
-                  (let ((args (alist-get 'args (process-attributes pid))))
-                    (and args (cons pid args))))
+                  (let* ((attrs (process-attributes pid))
+                         (args (alist-get 'args attrs)))
+                    (and args (cons pid (cons (alist-get 'ppid attrs) args)))))
                 (list-system-processes))))
 
 (defvar cerebro-system-scan-seconds 30
@@ -5361,7 +5412,7 @@ is where that is said."
          (procs (cerebro--live-processes
                  (cerebro--consumer-processes (cerebro--cached-system-processes) repo-root)
                  (lambda (pid) (process-attributes pid))))
-         (args (mapcar #'cdr procs))
+         (args (mapcar #'cerebro--proc-args procs))
          (owned (cerebro--owned))
          (now (current-time))
          (agents (cerebro--derive roster interactive states

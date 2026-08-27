@@ -23,8 +23,20 @@ of `orchestrator.md`, `planner.md`, `plan-bead`, `implementer.md`, `implement-be
 One pass over what has merged, then sleep, then another. Each pass:
 
 ```bash
-bd dolt pull
+bd dolt pull                                                     # the board: other machines' verdicts and merges
+git fetch origin "$(.claude/cerebro/scripts/default-branch)"     # the refs: bd dolt pull moves beads, not git
 ```
+
+> `origin/main` is a local ref, and `bd dolt pull` does not move it — it moves beads. The
+> candidate search below reads that ref, so a pass that does not fetch cannot see a bead merged
+> on another machine: it reports "not in `origin/main` yet", leaves the bead
+> `verification:pending`, and does the same on every pass after, until something unrelated
+> happens to fetch. The worktree already refetches before every build; this is the same rule for
+> the search. **If the fetch fails** — offline, remote gone, credentials expired — say so in one
+> line, `could not fetch origin <branch>: <git's last line>`, and go straight to *Ending a pass*
+> without searching for candidates. A search against a ref that may be stale is exactly the
+> wrong verdict this rule exists to prevent, and the worktree reset would refuse on the same
+> fetch a minute later anyway.
 
 ### Telling the fleet view what you are doing
 
@@ -78,15 +90,14 @@ session with nothing in flight, which is a session the navigator may `k`.
 
 | Moment | Call |
 |---|---|
-| A pass starts, before `bd dolt pull` | `.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID` |
+| A pass starts, before `bd dolt pull` and the fetch | `.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID` |
 | A candidate is selected to prepare | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase prepare --pid $PPID` |
 | Any question at all (rule 1) | `... asking --bead <id> --phase <prepare\|verify> --pid $PPID`, then the question, then `... working ...` on the answer |
 | The briefing is given and the app is running | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
 | Ending a pass (*Ending a pass*), and nowhere else | `.claude/cerebro/scripts/agent-state Psylocke waiting --wake-in 300 --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process — captured in the same call that writes the file.
-You never write `done`: unlike an implementer you are not replaced between passes. `waiting` is the
-state between one pass and the next.
+`waiting` is the state between one pass and the next.
 
 #### There is a hook behind rule 1, and it does not excuse you
 
@@ -121,37 +132,52 @@ Closed beads that either carry no `verification:*` label at all, or carry `verif
 carry `verification:pending`:
 
 ```bash
-.claude/cerebro/scripts/work-beads | jq -r '.[]
+.claude/cerebro/scripts/work-beads --status closed | jq -r '.[]
   | select(([.labels[]? | select(startswith("verification:"))] | length == 0)
            or ([.labels[]?] | index("verification:failed"))
            or ([.labels[]?] | index("verification:pending")))
   | .id'
 ```
 
-### And, before it, the stale-verdict list
+### And, before it, the second-look list
 
-**A separate query, because this one cannot answer it.** `work-beads` takes `--status closed` by
-default and every arm above describes a closed bead, but a `verdict:stale` bead is **`open`** — so
-adding an arm to the query above would be dead code, matching an input that can never contain it.
-That is the exact failure this project has already paid for once: a bead that reached no role at all
-because the list it was meant to arrive on was built from closed beads.
+**A separate query, because the one above cannot answer it.** The work list asks `work-beads` for
+**closed** beads and every arm in it describes a closed bead; every bead here is **open**. Adding an
+arm for one to the query above would be dead code, matching an input that can never contain it — the
+failure this project paid for twice in a row (see `docs/retrospectives/`), which is why `work-beads`
+now refuses a call that does not name its status: read the `--status` on the line before you add an
+arm to it.
 
 ```bash
-.claude/cerebro/scripts/work-beads --status open | jq -r '.[]
-  | select([.labels[]?] | index("verdict:stale"))
-  | .id'
+.claude/cerebro/scripts/second-look-beads
 ```
+
+It is a script rather than a `jq` block here because the bug that added its second arm **was** an
+untested query living only in prose — `tests/second-look-beads.sh` now fails if either state stops
+arriving. Two states reach you through it:
+
+- **`verdict:stale`** — a failed verdict formed against a commit main has since moved past.
+- **handed back** — `verification:failed`, with neither `planned` nor `plan:revise`: an implementer
+  read the failure, found nothing left to build, and handed the bead back. Nothing listed these at
+  all until recently, and one sat eleven hours reachable by no role in the fleet.
 
 **Run it first in the pass, and take what it returns before anything on the list above.** It is the
 cheapest kind of verification there is — re-read your own finding against current main and either
-confirm it or clear it — and every hour it waits is an hour a P0 sits doing nothing: the label takes
-the bead out of both the implementer and the planner queues, so while it carries one **nobody else
-can move it at all**.
+confirm it or clear it — and every hour it waits is an hour a P0 sits doing nothing: both states
+take the bead out of the implementer and planner queues, so while it is here **nobody else can move
+it at all**.
 
 `verdict:stale` is set by the fleet view's verdict sweep (`sweep-verdicts.sh`) when main has moved
 past the commit a failed verdict was formed against. It never fires on its own — the navigator
 confirms it — and it decides nothing about whether the finding still holds, which is precisely what
-it is handing back to you.
+it is handing back to you. A handed-back bead arrives with more than that: an implementer has
+already reported that there is nothing left to build, and its notes say why.
+
+**A handed-back bead needs no new outcome — it takes the three below.** Its state is the *absence*
+of `planned` and `plan:revise`, so acting on it in any of those ways removes it from this list with
+no cleanup step to remember: passing it clears the state, closing it clears the state, and a fresh
+`failed` verdict sends it back to a planner or an implementer, either of which adds a label. The one
+thing that leaves it here is doing nothing.
 
 What the second look decides, and how you record it:
 
@@ -186,8 +212,8 @@ bead database and outlives the session that wrote it, so a bead a previous sessi
 heard back about is an ordinary candidate again and must be picked up. Two beads sat
 unverifiable for a day because the query excluded pending outright.
 
-`work-beads` is the one place the harness asks "which closed beads are real work" — it always passes
-the status it means, and excludes epics and bd's own `event` beads twice over (see its header for
+`work-beads` is the one place the harness asks "which beads are real work" — it passes the status
+you name and refuses a call without one, and excludes epics and bd's own `event` beads twice over (see its header for
 why both). The `jq` here is your question alone: which of that work still wants a verdict.
 
 **Why the event exclusion exists at all**: `bd set-state
@@ -214,10 +240,10 @@ Detect it before running the query above: no bead anywhere carries a `verificati
 with no `--status` flag defaults to open beads only. A query without `--status closed` always reads
 zero here and reports "first pass" even after hundreds of beads have already been labelled — seen
 live on 2026-08-16, with 118 closed beads already carrying labels and this check still reading zero.
-`work-beads` always passes it, which is why this goes through the script too:
+`work-beads` will not run without it, which is why this goes through the script too:
 
 ```bash
-.claude/cerebro/scripts/work-beads | jq -r '[.[] | .labels[]? | select(startswith("verification:"))] | length'
+.claude/cerebro/scripts/work-beads --status closed | jq -r '[.[] | .labels[]? | select(startswith("verification:"))] | length'
 ```
 
 Zero means this is the first pass. There are closed beads from before this role existed, and
@@ -240,6 +266,35 @@ ids first, the label last. After this the steady-state query above is stateless 
 of what pass you are on — safe to restart from nothing at any time.
 
 ### Deciding what is worth a look
+
+**First, once per pass, ask whether this project can be verified by looking at all:**
+
+```bash
+.claude/cerebro/scripts/project-conf verification      # `none', or nothing
+```
+
+`none` is a project saying *there is nothing here a person can launch and judge* — a harness, a
+library, a build tool. It is a decision, written in the declaration, and it is not the same as an
+unset `launch_targets`, which is an omission and is still asked about below. When it says `none`:
+
+- Mark **every bead in the work list that carries no `verification:*` label** `not-needed`, in one
+  command per bead:
+
+  ```bash
+  bd set-state <id> verification=not-needed --reason "this project declares verification none: nothing to launch"
+  bd dolt push
+  ```
+
+- **Leave a bead carrying `verification:pending` or `verification:failed` alone**, and name it in
+  the report: a verdict was offered or rendered before the declaration existed, and a declaration
+  does not retract a person's finding. The navigator decides what to do with it.
+- Report it in **one line, every pass, with the ids**: `Marked N beads not-needed: this project
+  declares verification none — <id>, <id>, …`. Never silently. The line is what keeps a
+  declaration somebody forgot about visible until the day the project grows something launchable.
+- Then go to *Ending a pass*: nothing below applies, and there is nothing to prepare.
+
+Any value other than `none` is unrecognised: say so in one line (`verification is "<value>",
+which I do not understand; treating it as unset`) and carry on as if the key were absent.
 
 For each id in the work list, find what it touched:
 
@@ -341,9 +396,17 @@ you can ahead of the question:
   quietly report there was nothing to verify: a guessed command is the one failure this whole
   declaration exists to prevent, and a silent skip means nobody ever looks at the application.
   Offer to write what they tell you into the consumer's conf, so the next pass does not ask again.
+  If what they tell you is that there is nothing to run — no application at all — offer to write
+  `verification none` instead (see *Deciding what is worth a look*), so no pass ever asks again.
 - **A warm build.** `--prewarm` on `prepare-worktree` above already ran whatever the project
   declared as its `prewarm` build, after the reset — never build it again once the navigator has
   said yes. A project that declares none has nothing to warm, and that is an ordinary state.
+- **What this project's own verification asks of you.**
+  `project-conf verification_skill` names a skill carrying the project's verification
+  procedure — which shell to prefer, how its fixtures are chosen and proved, and the shape the
+  navigator expects a script in. **Load it before you prepare anything**, and follow it where it
+  is more specific than this file. **Unset means the step is skipped**: prepare from what is
+  below and nothing is missing.
 - **What to load.** `project-conf fixtures_doc` names the file describing the project's fixtures, if
   it has one; read it and pick the fixture that exercises what the bead changed. **Unset means the
   step is skipped** — do not go looking for fixtures the project never said it had.
@@ -424,7 +487,7 @@ bd update <id> --set-metadata verified_at=<full sha>
 bd dolt push
 ```
 
-P4, the ordinary rule for new work — it is unranked until a planner triages it with the navigator, same
+P4, the ordinary rule for new work — it is unranked until Cerebro triages it with the navigator, same
 as anything else that lands in the backlog. Do not rank it yourself.
 
 **3. Failed.** The reopen procedure, below — in this order, and every step:
@@ -493,7 +556,7 @@ green CI without a review, under the same docs-only exception the consumer's roo
 Four Eye Principle) already
 gives the mockup PR.
 
-## Ending a pass: you write `waiting`, and the fleet view wakes you
+## Ending a pass: you write `waiting`, and the fleet view ends the session
 
 You do not schedule yourself and you do not sleep inside your own session. A pass ends
 like this:
@@ -502,13 +565,16 @@ like this:
 .claude/cerebro/scripts/agent-state Psylocke waiting --wake-in 300 --pid $PPID
 ```
 
-**Then end your turn.** Say in one line what the pass found, and stop producing output — that is the
-whole of it. The fleet view wakes you with a `[cerebro]` line in your session when your wait is up,
-and the next pass begins there.
-
-`--wake-in` is what you *ask* for; the fleet view owns the cadence and may wake you sooner (it is a
-`defcustom` the navigator can change while the fleet runs, which is why the number is no longer
-yours to argue about). 300 seconds is what this role has historically waited.
+**Then end your turn.** Say in one line what the pass found, and stop producing output — that is
+the whole of it. The fleet view ends this session once `waiting` has stood for half a minute, keeps
+what you printed as the record of the pass, and starts a **fresh session** under your name when
+there is something for you to do — a trigger of its own for your role, not a clock you set.
+Nothing survives from this session into the next one: everything the next pass needs is in the
+bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
+`--wake-in` is what you *ask* for, and the view owns what you get: the floor between two starts of
+your role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
+measured from your last start and not from the number you wrote. That is why the number is not
+yours to argue about.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken
@@ -523,7 +589,7 @@ something to verify.
 `cat .cerebro/state/Psylocke.state.json` before you write it (see *Check it, twice a pass*): ending a
 pass is the moment a forgotten `asking` would sit unnoticed until somebody looks, and it is the
 cheapest place to catch one. The next pass opens with `working --phase prepare`, before
-`bd dolt pull`.
+`bd dolt pull` and the fetch beside it.
 
 ## What Psylocke never does
 
@@ -546,8 +612,7 @@ cheapest place to catch one. The next pass opens with `working --phase prepare`,
   answer — before the `bd` call, before the reply. "No" and "later" end the exchange as surely as
   "yes" does.
 - **Never works under `idle`.** `idle` belongs to the sleep loop alone.
-- **Never writes `done`.** That state is an implementer's alone — you have no bead of your own to
-  finish and are never replaced between passes. `idle` is what you write when a pass ends with
+- `idle` is what you write when a pass ends with
   nothing left to prepare.
 - **Never verifies outside `.cerebro/worktrees/psylocke`.** Not the navigator's shared checkout, not
   a one-off clone — the reset-before-every-use worktree is what makes the sha you say provable.

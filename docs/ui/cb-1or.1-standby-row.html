@@ -1,0 +1,54 @@
+<!doctype html><meta charset="utf-8"><title>cb-1or.1 — the chosen row: Q1 A, Q2 A, Q3 A, buffer kept</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:13px;margin:14px 0 4px;color:#eee}
+.row{display:flex;gap:24px;flex-wrap:wrap}.panel{padding:14px 18px;border:1px solid #333;min-width:64ch}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.5;white-space:pre}.hd{text-decoration:underline}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.s{color:#569cd6}.e{color:#f14c4c}.y{color:gold}
+.note{color:#eee;max-width:100ch;background:#333;padding:8px 12px;margin-top:16px}
+</style>
+<h1>cb-1or.1 — an implementer between beads: the same path a role takes</h1>
+<p class="note">Same fleet in every panel; only the Cyclops row differs. Today an implementer that finishes writes <b>done</b> (green ◍ for a tick) and is replaced at once, and one with nothing to claim sits <b>idle</b> polling for ever. After this bead it writes <b>waiting</b> (◐, as a planner does), is ended half a minute later, its buffer kept, and reads <b>standby</b> (◌) until a planned bead exists — then the view starts a fresh session, at most one implementer every 30s. What differs between the options is the words in the For column, the echo line and the RET text.</p>
+<div class="row">
+<div class="panel dark"><h2>1. The pass ends — no choice here, this is what roles already do</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 2
+<span class="y">◐</span> Cyclops        implementer   waiting               12s
+<span class="i">◆</span> Rogue          implementer   idle                  12m
+<span class="g">●</span> Storm          implementer   build      cb-9qm     5m 5m</pre>
+<h3>… half a minute later (cerebro-end-grace) the session is ended, its buffer kept:</h3><pre><span class="s">◌</span> Cyclops        implementer   standby               <i>(For column: question 1)</i></pre>
+<h3>Also this row when the implementer started and found nothing to claim: it writes waiting at once rather than polling.</h3></div>
+
+<div class="panel dark"><h2>Q1 Option A — the condition, like the planner's row</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 2
+<span class="s">◌</span> Cyclops        implementer   standby               → planned bead
+<span class="i">◆</span> Rogue          implementer   idle                  12m
+<span class="g">●</span> Storm          implementer   build      cb-9qm     5m 5m</pre>
+<h3>Only while a start is backing off (a launch that produced no session) does it show the clock, as today:</h3><pre><span class="s">◌</span> Cyclops        implementer   standby               ↻ retry in 2m, 3 failed</pre></div>
+
+<div class="panel dark"><h2>Q1 Option B — the state of the queue</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 2
+<span class="s">◌</span> Cyclops        implementer   standby               → queue empty
+<span class="i">◆</span> Rogue          implementer   idle                  12m
+<span class="g">●</span> Storm          implementer   build      cb-9qm     5m 5m</pre>
+<h3>Backing off, same as A:</h3><pre><span class="s">◌</span> Cyclops        implementer   standby               ↻ retry in 2m, 3 failed</pre>
+<h3>Cost: says what is true now rather than what it waits for; reads oddly beside Xavier's "→ buffer &lt; 2", which names the condition.</h3></div>
+</div>
+
+<div class="row" style="margin-top:24px">
+<div class="panel dark"><h2>Q2 — the echo line when the view starts one</h2>
+<h3>Option A — the count:</h3><pre>cerebro: started Cyclops — 2 planned, unclaimed</pre>
+<h3>Option B — the first bead, the way the P0 rule names its bead:</h3><pre>cerebro: started Cyclops — cb-9qm planned</pre>
+<h3>Either way the same string is the `reason` in decisions.jsonl.</h3></div>
+
+<div class="panel dark"><h2>Q3 — RET on the standby row once its kept buffer is gone</h2>
+<h3>Option A:</h3><pre>Cyclops is not running.
+Its last session finished its pass; the view starts it again when a planned bead is waiting.
+Press s to start it now, k to leave it down.</pre>
+<h3>Option B (shorter, no reason):</h3><pre>Cyclops is not running.
+The view starts it again when a planned bead is waiting.
+Press s to start it now, k to leave it down.</pre>
+<h3>While a start is backing off, both keep today's text:</h3><pre>Cyclops is not running.
+Its last session ended without finishing a bead; the view starts it again in 2m (3 failed starts).
+Press s to start it now, k to leave it down.</pre></div>
+</div>
+<p class="note">Q4 has no picture: should an implementer's buffer be kept after its pass (RET on the standby row shows the last bead's transcript, as it does for a planner), or killed as today? Keeping it is what "the same path as a role" means and costs one buffer per implementer name, replaced on the next start.</p>

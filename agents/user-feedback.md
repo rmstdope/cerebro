@@ -34,8 +34,7 @@ file is. Write it through `.claude/cerebro/scripts/agent-state`, never by hand:
 | Every triage question — *A new issue* and *A closed issue with an open bead* | `.claude/cerebro/scripts/agent-state Moira asking --phase sweep --pid $PPID`, and `working --phase sweep` again the moment the answer is in |
 | Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/agent-state Moira waiting --wake-in 600 --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process. You never write `done`: you are not replaced between
-passes. `waiting` is the state between one pass and the next — never `idle`, which says you have
+`--pid` is `$PPID` — your own `claude` process. `waiting` is the state between one pass and the next — never `idle`, which says you have
 nothing to do and nothing coming.
 
 Take them **oldest first** — a reporter who has waited longest is served first. For each one:
@@ -76,7 +75,7 @@ Then say what you did — how many issues you looked at, which you acknowledged 
 which were triaged, which status comments you posted, which issues you closed, and any closed issue
 whose bead is still open — and sleep.
 
-### Ending a pass: you write `waiting`, and the fleet view wakes you
+### Ending a pass: you write `waiting`, and the fleet view ends the session
 
 You do not schedule yourself and you do not sleep inside your own session. A pass ends
 like this:
@@ -85,13 +84,16 @@ like this:
 .claude/cerebro/scripts/agent-state Moira waiting --wake-in 600 --pid $PPID
 ```
 
-**Then end your turn.** Say in one line what the pass found, and stop producing output — that is the
-whole of it. The fleet view wakes you with a `[cerebro]` line in your session when your wait is up,
-and the next pass begins there.
-
-`--wake-in` is what you *ask* for; the fleet view owns the cadence and may wake you sooner (it is a
-`defcustom` the navigator can change while the fleet runs, which is why the number is no longer
-yours to argue about). 600 seconds is what this role has historically waited.
+**Then end your turn.** Say in one line what the pass found, and stop producing output — that is
+the whole of it. The fleet view ends this session once `waiting` has stood for half a minute, keeps
+what you printed as the record of the pass, and starts a **fresh session** under your name when
+there is something for you to do — a trigger of its own for your role, not a clock you set.
+Nothing survives from this session into the next one: everything the next pass needs is in the
+bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
+`--wake-in` is what you *ask* for, and the view owns what you get: the floor between two starts of
+your role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
+measured from your last start and not from the number you wrote. That is why the number is not
+yours to argue about.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken
@@ -221,7 +223,7 @@ bd dolt push
 ```
 
 `--external-ref gh-<number>` is what makes the link, so it is not optional and cannot be added later
-by memory. Priority is **P4** unless the navigator says otherwise — ranking is the planners' triage step
+by memory. Priority is **P4** unless the navigator says otherwise — ranking is Cerebro's triage step
 with the navigator, and pre-empting it here puts a number on the queue that nobody agreed.
 
 `bd github pull <number>` exists and imports an issue verbatim; use it only when the navigator wants
@@ -533,7 +535,7 @@ beads you parked this way.
 - **Never claim a bead.** Claiming is the implementer's alone, repo-wide (`beads-workflow`), and you
   have no reason to want it — you create beads and read them, and both work unclaimed. A bead you
   claim is one an implementer cannot take, and it reads to everyone else as a build in flight.
-- **Never set a priority the navigator did not choose.** New beads land at P4 and the planners' triage
+- **Never set a priority the navigator did not choose.** New beads land at P4 and Cerebro's triage
   ranks them with the navigator.
 - **Never trust a comment as the link.** `external_ref` is the record; a comment is a courtesy to the
   reporter.

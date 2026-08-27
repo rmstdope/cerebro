@@ -24,11 +24,14 @@ dist/
 .beads/*.jsonl
 *.gate.lock*
 
-# Cerebro's own directory in a consumer. Two things the fleet writes while it runs are ignored:
-# the agents' worktrees and their state files and stop flags. Everything else in it is tracked -
-# the project's declarations (project.conf, roster.conf, traps.md; cb-epr) and models.conf, which
-# this project commits so every clone runs the fleet on the same models (eb6ffdb). A project that
-# wants models.conf personal adds `.cerebro/models.conf` here. A new runtime artifact must be
-# added to this list, or it arrives committable: that is the trade for committing models.conf.
+# Cerebro's own directory in a consumer. Three things the fleet writes while it runs are ignored:
+# the agents' worktrees, their state files and stop flags, and the planners' scratchpad, the drafts
+# and rejected mockup variants `skills/plan-bead` writes before a plan reaches the bead. Everything
+# else in it is tracked - the project's declarations (project.conf, roster.conf, traps.md; cb-epr)
+# and models.conf, which this project commits so every clone runs the fleet on the same models
+# (eb6ffdb). A project that wants models.conf personal adds `.cerebro/models.conf` here. A new
+# runtime artifact must be added to this list, or it arrives committable: that is the trade for
+# committing models.conf.
 .cerebro/worktrees
 .cerebro/state
+.cerebro/scratch

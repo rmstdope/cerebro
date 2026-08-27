@@ -43,16 +43,23 @@ Check: `.claude/cerebro/scripts/consumer-root` prints your repository's absolute
 ### 3. Link the skills and agents
 
 Claude Code discovers `.claude/skills/<name>/SKILL.md` and `.claude/agents/<name>.md`. The sync
-writes relative symlinks there, and a `.dir-locals.el` at your root that gives every contributor
-`M-x cerebro` without editing their init.
+writes relative symlinks there, and nothing outside `.claude/`.
 
 ```bash
 .claude/cerebro/scripts/sync-symlinks.sh
 ```
 
-Check: it prints one `Synced N skill link(s) …` line, one `Synced N agent link(s) …` line, and
-`Synced .dir-locals.el -> .claude/cerebro/templates/consumer-dir-locals.el`. If you already had a
-`.dir-locals.el`, it says `Left … alone` instead and names the form to copy into yours.
+Check: it prints one `Synced N skill link(s) …` line and one `Synced N agent link(s) …` line. If a
+`.dir-locals.el` link from an earlier sync is at your root, it also prints
+`Removed stale .dir-locals.el link (templates/consumer-dir-locals.el is gone)`.
+
+#### Or: let a session do steps 4 to 9
+
+With the tools, the submodule and the links in place, run `claude` at the root of your repository
+and type `/project-definition`. It interviews you about the project — what the software is, where it
+runs, what it is built with, what using it is like — and then writes every declaration below,
+initialises the board and files the first epics. The steps that follow are what it does, written out
+for reading or for doing by hand.
 
 ### 4. Declare the project: `.cerebro/project.conf`
 
@@ -71,7 +78,15 @@ install        npm ci        # omit it when there is nothing to install
 
 An absent key is a default, with one exception: without `app_paths` the fleet refuses to classify a
 change rather than guess, since a wrong guess either empties the release notes or sends you to
-verify documentation. This repository's own `.cerebro/project.conf` is a commented example, and
+verify documentation.
+A project with nothing a person can launch — a library, a build tool, a harness like this one —
+adds `verification none`, and the verifier marks every merged bead as needing no look instead of
+asking how to start an application that does not exist.
+A project whose verification has a procedure of its own — which shell to prefer, how its fixtures
+are chosen and proved, what shape a script should take for the person reading it — declares
+`verification_skill <skill name>` instead, and the verifier loads that skill before it prepares
+anything, following it wherever it is more specific than the verifier's own file.
+This repository's own `.cerebro/project.conf` is a commented example, and
 the header of `scripts/project-conf` states the format.
 
 Check: `.claude/cerebro/scripts/project-conf project_name` prints the name, and
@@ -81,8 +96,8 @@ Check: `.claude/cerebro/scripts/project-conf project_name` prints the name, and
 
 Absent, you run the built-in fleet. To run your own names, or fewer of them, write `NAME  ROLE` per
 line — the roles are the files in `.claude/cerebro/agents/`: `planner`, `implementer`,
-`orchestrator`, `verifier`, `reviewer`, `user-feedback`, `architect`. Order is load-bearing: the
-first planner listed triages the backlog, and implementers are taken in file order.
+`orchestrator`, `verifier`, `reviewer`, `user-feedback`, `architect`. Order is load-bearing:
+implementers are taken in file order.
 
 Check: `.claude/cerebro/scripts/roster` prints your fleet, one `name<TAB>role<TAB>kind` per line.
 
@@ -118,12 +133,14 @@ declares. Ignore the first and commit the second:
 ```gitignore
 .cerebro/worktrees
 .cerebro/state
+.cerebro/scratch
 ```
 
 `worktrees/` is where every implementer builds; `state/` holds the agents' state files and stop
-flags. Everything else in `.cerebro/` is tracked — the declarations from steps 4 to 6, and
-`models.conf` if the fleet's models are the project's to share (add `.cerebro/models.conf` here to
-keep it personal instead). Then commit the submodule, the links, the declarations and `CLAUDE.md`.
+flags; `scratch/` holds the planners' drafts and rejected mockup variants. Everything else in
+`.cerebro/` is tracked — the declarations from steps 4 to 6, and `models.conf` if the fleet's
+models are the project's to share (add `.cerebro/models.conf` here to keep it personal instead).
+Then commit the submodule, the links, the declarations and `CLAUDE.md`.
 
 Check: `git check-ignore -v .cerebro/state/x` names the `.cerebro/state` line, and
 `git check-ignore .cerebro/project.conf` prints nothing.
@@ -134,8 +151,27 @@ The board is beads: `bd init` in your repository, then a Dolt remote
 (`bd dolt remote add origin <url>`) so every machine and session sees the same beads. Every bead is
 created unranked and ranked with you; a planner turns it into a plan; an implementer builds it.
 
-Then, from any file of the project, `M-x cerebro` — Emacs asks once whether the `.dir-locals.el`
-form may run; answer `!` — and press `s` on a planner's row. Or from a terminal:
+Then open the fleet view:
+
+```bash
+.claude/cerebro/scripts/cerebro
+```
+
+That opens it in a fresh Emacs — your own init is loaded, so the vterm the view needs for live
+sessions is whatever your Emacs has; set `EMACS` to a binary that is not on your `PATH`
+(`EMACS=/Applications/Emacs.app/Contents/MacOS/Emacs`). Press `s` on a planner's row.
+
+#### In your own Emacs
+
+To have `M-x cerebro` in the Emacs you already work in, add to your init, with the path of your
+checkout:
+
+```elisp
+(add-to-list 'load-path "/path/to/your/project/.claude/cerebro/emacs")
+(autoload 'cerebro "cerebro" "List the Cerebro agent fleet." t)
+```
+
+A session can also be started from a terminal without the fleet view:
 
 ```bash
 .claude/cerebro/scripts/launch Xavier
@@ -181,8 +217,7 @@ something — every launch re-syncs the links.
 ## Skills
 
 `plan-bead` and `implement-bead` are the two roles' procedures; `beads-workflow` is the substrate
-both read. `release-notes` turns the work between two release tags into a page the audience can read —
-it drops everything that never reached the application, and describes outcomes rather than changes.
+both read.
 
 ## Sync Script (Skills and Agents)
 
@@ -197,7 +232,7 @@ What it does:
 - Creates/updates symlinks in `.claude/skills/` (for example `.claude/skills/plan-bead -> ../cerebro/skills/plan-bead`), relative rather than absolute, so the same link is correct in the main checkout, in every worktree and on every machine.
 - Scans `.claude/cerebro/agents/*.md` and creates/updates symlinks in `.claude/agents/`.
 - Removes the old aggregate symlink `.claude/skills/cerebro` if present.
-- Links `.dir-locals.el` at the consumer root to `templates/consumer-dir-locals.el`, which is what gives every contributor `M-x cerebro`; a `.dir-locals.el` the project already has is left alone, with a line on stderr saying what to copy.
+- Removes a `.dir-locals.el` link at the consumer root left by a sync from before the fleet view had its own command; a `.dir-locals.el` the project wrote itself is never touched.
 
 Run it whenever:
 

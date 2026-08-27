@@ -17,11 +17,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() { echo "FAIL: $1" >&2; exit 1; }
-pass() { echo "ok - $1"; }
-
-work_dir="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$work_dir"' EXIT
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # --- a throwaway consumer with an origin, since prepare-worktree fetches origin/main ---
 origin="$work_dir/origin.git"
@@ -32,7 +29,7 @@ git -C "$consumer" remote add origin "$origin"
 mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/.cerebro/worktrees"
 echo hello > "$consumer/README.md"
 git -C "$consumer" add README.md
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q -m init
+git_q -C "$consumer" commit -q -m init
 git -C "$consumer" push -q origin main
 for s in consumer-root project-conf default-branch prepare-worktree; do
   ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"

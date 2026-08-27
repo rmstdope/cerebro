@@ -27,23 +27,14 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # -P throughout: consumer-root, sync-symlinks.sh and the sweeps all resolve paths physically, and on
 # macOS mktemp hands back /var/... which is a symlink to /private/var/... - so a fixture that keeps
 # the logical form compares two spellings of the same directory and fails for no reason.
-work_dir="$(cd "$(mktemp -d)" && pwd -P)"
 stub_dir="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$work_dir" "$stub_dir"' EXIT
-
-git_q() { git -c user.name=test -c user.email=test@example.com "$@"; }
+cleanup_add "$stub_dir"
 
 # --- the stubs on PATH ---------------------------------------------------------------------------
 #
@@ -75,25 +66,16 @@ chmod +x "$stub_dir/bd"
 #   cerebro does not ship
 branch="trunk"
 origin="$work_dir/origin.git"
-consumer="$work_dir/consumer"
+consumer="$(consumer_new consumer --branch "$branch" --copy)"
 
 git init -q --bare -b "$branch" "$origin"
-git init -q -b "$branch" "$consumer"
 git_q -C "$consumer" remote add origin "$origin"
 
 mkdir -p "$consumer/src" "$consumer/.claude/agents" "$consumer/doc/retro"
 echo 'print("a consumer with no JavaScript in it")' > "$consumer/src/main.py"
 
-# Only the directories the fixture needs, never `cp -R "$repo_root"`: that drags in whatever happens
-# to be present at the time - a local .cerebro/, the .git, byte-compiled elisp - so the fixture stops
-# being hermetic and starts being expensive (ah-qled.11, increment 4).
-mkdir -p "$consumer/.claude/cerebro"
-for d in scripts agents skills hooks; do
-  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$consumer/.claude/cerebro/"
-done
 scripts_at="$consumer/.claude/cerebro/scripts"
 
-mkdir -p "$consumer/.cerebro"
 cat > "$consumer/.cerebro/project.conf" <<'CONF'
 project_name   Ledger
 default_branch trunk
@@ -311,20 +293,8 @@ pass "prune-worktrees.sh sweeps a consumer whose worktrees hold nothing to recla
 # submodule, which answers for a submodule and nothing else. An arbitrarily-PLACED copy - vendored
 # by hand, outside the standard mount - is still unsupported, and scripts/consumer-root says so.
 # (The stub this replaced sketched a plain `mkdir -p vendor/cerebro'; that is the unsupported case.)
-cerebro_src="$work_dir/cerebro-src"
-mkdir -p "$cerebro_src"
-for d in scripts agents skills hooks; do
-  [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$cerebro_src/"
-done
-git init -q "$cerebro_src"
-git_q -C "$cerebro_src" add -A
-git_q -C "$cerebro_src" commit -q -m "cerebro"
-
-alt="$work_dir/alt"
-git init -q -b "$branch" "$alt"
-git_q -C "$alt" commit -q --allow-empty -m init
-git_q -C "$alt" -c protocol.file.allow=always submodule add -q "$cerebro_src" vendor/cerebro
-alt_root="$(cd "$alt" && pwd -P)"
+alt="$(consumer_with_submodule alt vendor/cerebro --branch "$branch")"
+alt_root="$alt"
 alt_scripts="$alt/vendor/cerebro/scripts"
 
 run_alt() { PATH="$stub_dir:$PATH" bash "$alt_scripts/$@"; }
@@ -335,8 +305,6 @@ run_alt() { PATH="$stub_dir:$PATH" bash "$alt_scripts/$@"; }
   || fail "an alternative mount point --shared: got $(run_alt consumer-root --shared)"
 pass "consumer-root resolves a consumer that vendors cerebro at vendor/cerebro"
 
-mkdir -p "$alt/.claude"
-mkdir -p "$alt/.cerebro"
 printf 'project_name Vendored\ngate_fast true\n' > "$alt/.cerebro/project.conf"
 [[ "$(run_alt project-conf project_name 2>/dev/null)" == "Vendored" ]] \
   || fail "project-conf from an alternative mount: got $(run_alt project-conf project_name 2>/dev/null)"
@@ -346,7 +314,6 @@ printf 'Ada  planner\nTuring  implementer\n' > "$alt/.cerebro/roster.conf"
 [[ "$(run_alt roster)" == "$(printf 'Ada\tplanner\tinteractive\nTuring\timplementer\timplementer')" ]] \
   || fail "roster from an alternative mount: got $(run_alt roster)"
 pass "the consumer's own fleet is found from an alternative mount"
-
 
 # --- not yet: each of these is a bead, and a red assertion here would block the repository ---------
 #

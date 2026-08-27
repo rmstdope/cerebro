@@ -17,19 +17,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
-
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
-
-git_c() { git -c user.name=test -c user.email=test@example.com "$@"; }
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # --- stubs -------------------------------------------------------------------------------------
 # `df` so the test decides what the disk looks like, and `gh` so `landed_on_main` never asks the
@@ -59,12 +48,8 @@ gb_free() { echo $(( $1 * 1024 * 1024 )) > "$free_kb_file"; }
 origin="$work_dir/origin.git"
 git init -q --bare "$origin"
 
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts" "$consumer/scripts"
-git init -q -b main "$consumer"
-for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf default-branch roster prune-worktrees.sh)"
+mkdir -p "$consumer/scripts"
 
 # What this consumer is willing to have reclaimed. Declared rather than assumed since ah-qled.4:
 # `reclaim_dirs` defaults to EMPTY, so an unconfigured consumer never has a directory deleted. Every
@@ -76,11 +61,10 @@ reclaim_dirs target
 disk_floor_gb 8
 CONF
 
-
-git_c -C "$consumer" add -A
-git_c -C "$consumer" commit -q -m "init"
-git_c -C "$consumer" remote add origin "$origin"
-git_c -C "$consumer" push -q -u origin main
+git_q -C "$consumer" add -A
+git_q -C "$consumer" commit -q -m "init"
+git_q -C "$consumer" remote add origin "$origin"
+git_q -C "$consumer" push -q -u origin main
 
 prune="$consumer/.claude/cerebro/scripts/prune-worktrees.sh"
 
@@ -89,7 +73,7 @@ prune="$consumer/.claude/cerebro/scripts/prune-worktrees.sh"
 make_tree() {
   local name="$1" minutes="$2"
   local tree="$consumer/.cerebro/worktrees/$name"
-  git_c -C "$consumer" worktree add -q "$tree" -b "$name-branch"
+  git_q -C "$consumer" worktree add -q "$tree" -b "$name-branch"
   echo scratch > "$tree/untracked.txt"
   mkdir -p "$tree/target/debug/deps"
   head -c 200000 /dev/zero > "$tree/target/debug/deps/blob.o"
@@ -222,10 +206,10 @@ mkdir -p "$consumer2/.cerebro"
 cat > "$consumer2/.cerebro/project.conf" <<'CONF'
 disk_floor_gb 8
 CONF
-git_c -C "$consumer2" add -A
-git_c -C "$consumer2" commit -q -m "init"
-git_c -C "$consumer2" remote add origin "$origin2"
-git_c -C "$consumer2" push -q -u origin main
+git_q -C "$consumer2" add -A
+git_q -C "$consumer2" commit -q -m "init"
+git_q -C "$consumer2" remote add origin "$origin2"
+git_q -C "$consumer2" push -q -u origin main
 
 # `.claude/cerebro` is a repository of its own, exactly as the submodule is in a real consumer, and
 # the scripts under test are reached through it.
@@ -237,10 +221,10 @@ git init -q -b main "$sub"
 for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
   ln -s "$repo_root/scripts/$s" "$sub/scripts/$s"
 done
-git_c -C "$sub" add -A
-git_c -C "$sub" commit -q -m "init"
-git_c -C "$sub" remote add origin "$sub_origin"
-git_c -C "$sub" push -q -u origin main
+git_q -C "$sub" add -A
+git_q -C "$sub" commit -q -m "init"
+git_q -C "$sub" remote add origin "$sub_origin"
+git_q -C "$sub" push -q -u origin main
 
 prune2="$sub/scripts/prune-worktrees.sh"
 
@@ -254,10 +238,10 @@ age() {
 # A consumer tree carrying one commit origin/main lacks: the rev-list test cannot clear it, so
 # `landed_on_main` has to ask `gh` — which is what pins where `gh` is asked from.
 consumer_tree="$consumer2/.cerebro/worktrees/ah-squashed"
-git_c -C "$consumer2" worktree add -q "$consumer_tree" -b ah-squashed-branch
+git_q -C "$consumer2" worktree add -q "$consumer_tree" -b ah-squashed-branch
 echo delivered > "$consumer_tree/delivered.txt"
-git_c -C "$consumer_tree" add -A
-git_c -C "$consumer_tree" commit -q -m "delivered by squash"
+git_q -C "$consumer_tree" add -A
+git_q -C "$consumer_tree" commit -q -m "delivered by squash"
 age "$consumer_tree"
 
 # --- 8. `gh` is asked from the tree, not from the sweep's working directory ---------------------
@@ -274,10 +258,10 @@ pass "a_merged_branch_in_another_repository_is_seen: gh is asked from the tree, 
 # commit cerebro's main lacks — i.e. squash-merged, which is how both trees stranded on the machine
 # that prompted this bead look.
 sub_tree="$consumer2/.cerebro/worktrees/ah-stranded-cerebro"
-git_c -C "$sub" worktree add -q "$sub_tree" -b ah-stranded-branch
+git_q -C "$sub" worktree add -q "$sub_tree" -b ah-stranded-branch
 echo shipped > "$sub_tree/shipped.txt"
-git_c -C "$sub_tree" add -A
-git_c -C "$sub_tree" commit -q -m "shipped by squash"
+git_q -C "$sub_tree" add -A
+git_q -C "$sub_tree" commit -q -m "shipped by squash"
 age "$sub_tree"
 echo "ah-stranded-branch" > "$gh_merged_branch"
 
@@ -305,7 +289,7 @@ git -C "$sub" branch --list ah-stranded-branch | grep -q . \
 pass "a_stranded_submodule_worktree_is_removed_for_real: removal and branch deletion use the owner"
 
 # --- 12. an unreachable submodule remote costs the submodule half only --------------------------
-git_c -C "$sub" remote set-url origin "$work_dir/no-such-remote.git"
+git_q -C "$sub" remote set-url origin "$work_dir/no-such-remote.git"
 out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" --dry-run 2>&1)"
 echo "$out" | grep -q "ah-squashed" \
   || fail "an unreachable submodule remote aborted the consumer's half of the sweep: $out"
@@ -328,17 +312,17 @@ for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
   ln -s "$repo_root/scripts/$s" "$selfmount/scripts/$s"
 done
 ln -s ".." "$selfmount/.claude/cerebro"
-git_c -C "$selfmount" add -A
-git_c -C "$selfmount" commit -q -m "init"
-git_c -C "$selfmount" remote add origin "$work_dir/selfmount-origin.git"
+git_q -C "$selfmount" add -A
+git_q -C "$selfmount" commit -q -m "init"
+git_q -C "$selfmount" remote add origin "$work_dir/selfmount-origin.git"
 git init -q --bare "$work_dir/selfmount-origin.git"
-git_c -C "$selfmount" push -q -u origin main
+git_q -C "$selfmount" push -q -u origin main
 
 self_tree="$selfmount/.cerebro/worktrees/ah-self"
-git_c -C "$selfmount" worktree add -q "$self_tree" -b ah-self-branch
+git_q -C "$selfmount" worktree add -q "$self_tree" -b ah-self-branch
 echo work > "$self_tree/work.txt"
-git_c -C "$self_tree" add -A
-git_c -C "$self_tree" commit -q -m "not merged"
+git_q -C "$self_tree" add -A
+git_q -C "$self_tree" commit -q -m "not merged"
 age "$self_tree"
 
 out="$(cd "$selfmount" && PATH="$sub_stub_dir:$PATH" bash "$selfmount/scripts/prune-worktrees.sh" --dry-run 2>&1)"

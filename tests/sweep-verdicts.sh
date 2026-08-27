@@ -17,17 +17,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
-
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # A stub `bd` on PATH ahead of the real one: the real one would read this machine's own backlog and
 # make the test pass or fail by accident. It records the arguments it was given, so the assertion
@@ -49,21 +40,15 @@ export PATH="$stub_dir:$PATH"
 # Unlike `sweep-assignees.sh` this one needs git as well as `bd`: the whole of its arithmetic is
 # `git log <sha>..origin/<branch>`. So the consumer gets an `origin` of its own - a bare repository
 # it can fetch from - rather than a bare `git init`.
-git_id=(-c user.name=test -c user.email=test@example.com)
 origin="$work_dir/origin.git"
 git init -q --bare -b main "$origin"
 
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q -b main "$consumer"
-for s in consumer-root project-conf default-branch sweep-verdicts.sh; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
-git "${git_id[@]}" -C "$consumer" commit -q --allow-empty -m "init"
+consumer="$(consumer_new repo --link consumer-root project-conf default-branch sweep-verdicts.sh)"
+git_q -C "$consumer" commit -q --allow-empty -m "init"
 verdict_sha="$(git -C "$consumer" rev-parse HEAD)"
 # Three commits after the verdict's own, so the distance is a number this suite can pin exactly.
 for n in 1 2 3; do
-  git "${git_id[@]}" -C "$consumer" commit -q --allow-empty -m "later $n"
+  git_q -C "$consumer" commit -q --allow-empty -m "later $n"
 done
 git -C "$consumer" remote add origin "$origin"
 git -C "$consumer" push -q origin main
@@ -71,7 +56,7 @@ git -C "$consumer" push -q origin main
 # A commit that exists in the clone but is NOT an ancestor of the branch - the force-push and
 # drifted-worktree case, which must read null rather than a count.
 git -C "$consumer" checkout -q -b sideline "$verdict_sha"
-git "${git_id[@]}" -C "$consumer" commit -q --allow-empty -m "off the branch"
+git_q -C "$consumer" commit -q --allow-empty -m "off the branch"
 off_branch_sha="$(git -C "$consumer" rev-parse HEAD)"
 git -C "$consumer" checkout -q main
 

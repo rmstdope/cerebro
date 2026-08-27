@@ -54,19 +54,24 @@ a bead is planned in one session and implemented in another.
 > ```gitignore
 > .cerebro/worktrees
 > .cerebro/state
+> .cerebro/scratch
 > ```
 >
 > *`worktrees/` is where implementers build; `state/` holds the agents' state files and stop
-> flags. `.cerebro/models.conf` is the project's choice — commit it to share the fleet's models,
-> or add it here to keep it personal. These declarations lived under `.claude/` with a `cerebro-`
-> prefix until cb-epr; a file left at the old path makes `project-conf`, `roster` and
-> `launch-preflight` refuse, naming the `mv`.*
+> flags; `scratch/` holds the planners' drafts and rejected mockup variants. `.cerebro/models.conf`
+> is the project's choice — commit it to share the fleet's models, or add it here to keep it
+> personal. These declarations lived under `.claude/` with a `cerebro-` prefix until cb-epr; a file
+> left at the old path makes `project-conf`, `roster` and `launch-preflight` refuse, naming the
+> `mv`.*
 
 - `.cerebro/project.conf` — how the project installs itself, what its fast and full gates are
-  called, which paths are the application, where retrospectives live.
+  called, which paths are the application, where retrospectives live, and — with
+  `verification none` — that nothing in it can be verified by looking.
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
-  built-in fleet. An optional third word, `autostart`, makes the fleet view start that agent as it
-  comes up (cb-0r6).
+  built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that
+  agent as it comes up (cb-0r6), `standby` **arms** it without starting it (cb-98u) — its row reads
+  `standby` and its role's own trigger is what starts it. `standby` is refused on an implementer row
+  until cb-1or.
 - `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
   implementers before they start. Absent means the project has paid for nothing yet, which is where
   every project starts.

@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# Checked, then synced, before every launch: `claude` is on PATH, the consumer's checkout
+# Checked, then synced, before every launch: the agent CLI this fleet runs on (scripts/agent-cli,
+# cb-d59.2) is one this cerebro knows and its binary is on PATH, the consumer's checkout
 # is current with the fleet's default branch on origin (scripts/default-branch) so the session
 # reads today's instructions rather than a
 # days-old copy of them (ah-puoj), this checkout is a
 # consumer's .claude/cerebro (sync and the submodule check are skipped otherwise - a
 # standalone clone has nothing to link into and no agent files of its own to check),
 # the submodule bump actually brought in this role's agent file, and the link it
-# produces resolves. Every launcher runs this immediately before `exec claude`
+# produces resolves. Every launcher runs this immediately before it execs the agent CLI
 # (ah-cuc), so a session that cannot start says why instead of exiting silently
 # (ah-bri) - a launcher used to go `up` for half a second and then `dead` with
 # nothing to read anywhere when `agents/architect.md` was missing.
 #
 # usage: launch-preflight <role> <name>
-#   <role>  the --agent value the launcher is about to pass claude (architect, planner, ...)
+#   <role>  the role the launcher is about to start (architect, planner, ...)
 #   <name>  the display name for messages (Bishop, Cyclops, ...)
 #
-# Every check this script owns - claude on PATH, the submodule carrying the role's agent
-# file - exits 2 with one line on stderr naming what is wrong and the command that fixes
-# it, the same exit code `launch` already uses for a usage error. The sync it runs
+# Every check this script owns - the agent CLI, asked of `agent-cli`, and the submodule carrying
+# the role's agent file - exits 2 with one line on stderr naming what is wrong and the command that fixes
+# it, the same exit code `launch` already uses for a usage error. Each of those lines is said by
+# `launch-refused`, which also appends it to the consumer's .cerebro/state/errors.jsonl (cb-ccl):
+# stderr alone goes to a vterm buffer that may die before it is drawn, and then a fleet that cannot
+# start says so nowhere the navigator is told to look. The usage refusal above has no name to
+# attribute and keeps its own line. The sync it runs
 # afterwards is not one of those checks: a sync failure is sync-symlinks.sh's own to
 # report, so its exit status and stderr come through unchanged, whatever they are.
 set -euo pipefail
@@ -29,12 +34,20 @@ if [[ -z "$role" || -z "$name" ]]; then
   exit 2
 fi
 
-if ! command -v claude >/dev/null 2>&1; then
-  echo "cerebro: claude is not on PATH - install Claude Code or fix PATH before starting $name" >&2
-  exit 2
-fi
-
+# Resolved before the first refusal rather than after the agent-cli check: every refusal this script
+# owns is said and recorded by `launch-refused` (cb-ccl), which lives beside it.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# Which agent CLI this fleet runs on, and whether it can be launched at all, is `agent-cli`'s
+# answer and no longer spelt here (cb-d59.2): it refuses an undeclarable provider and a missing
+# binary, saying and recording both through `launch-refused` itself, and exits 3. This turns that
+# into the 2 every other refusal in this file uses - `launch-refused` always exits 0, so the code
+# does not propagate on its own.
+#
+# It keeps its position, FIRST, before `consumer-root`: outside a consumer `project-conf` resolves
+# no root, `agent-cli` answers `claude`, and the PATH check behaves exactly as it did.
+"$script_dir/agent-cli" --check "$name" || exit 2
+
 consumer="$("$script_dir/consumer-root" 2>/dev/null)" || exit 0
 parent="$consumer/.claude"                                    # .claude, in a consumer
 # consumer-root alone would accept a standalone clone sitting at e.g. ~/.claude/cerebro (the
@@ -53,7 +66,7 @@ for pair in "cerebro-project.conf:project.conf" "cerebro-roster:roster.conf" "ce
   old_name="${pair%%:*}"
   new_name="${pair#*:}"
   if [[ -f "$parent/$old_name" ]]; then
-    echo "cerebro: the declarations moved to .cerebro/ - run: mv .claude/$old_name .cerebro/$new_name before starting $name" >&2
+    "$script_dir/launch-refused" "$name" "the declarations moved to .cerebro/ - run: mv .claude/$old_name .cerebro/$new_name before starting $name"
     exit 2
   fi
 done
@@ -83,7 +96,7 @@ if git -C "$consumer" fetch --quiet origin "$branch_name" 2>/dev/null; then
   target="$(git -C "$consumer" rev-parse --verify --quiet FETCH_HEAD 2>/dev/null || echo "")"
 fi
 if [[ -z "$target" ]] && git -C "$consumer" ls-remote --quiet origin >/dev/null 2>&1; then
-  echo "cerebro: origin has no branch $branch_name, so the checkout could not be checked for staleness - set default_branch in .cerebro/project.conf before starting $name" >&2
+  "$script_dir/launch-refused" "$name" "origin has no branch $branch_name, so the checkout could not be checked for staleness - set default_branch in .cerebro/project.conf before starting $name"
 fi
 # Both sides are expanded before the test is evaluated, so `rev-parse HEAD` runs even when $target
 # is empty - hence the separate guard rather than one && condition, for a consumer with no commits.
@@ -94,22 +107,22 @@ if [[ -n "$target" && -n "$head" && "$head" != "$target" ]]; then
   ahead="$(git -C "$consumer" rev-list --count "$target..HEAD" 2>/dev/null || echo 0)"
   behind="$(git -C "$consumer" rev-list --count "HEAD..$target" 2>/dev/null || echo 0)"
   if [[ "$branch" != "$branch_name" ]]; then
-    echo "cerebro: the checkout is on branch $branch, not $branch_name - the fleet's instructions are read from $branch_name; switch back before starting $name" >&2
+    "$script_dir/launch-refused" "$name" "the checkout is on branch $branch, not $branch_name - the fleet's instructions are read from $branch_name; switch back before starting $name"
     exit 2
   fi
   if [[ -n "$(git -C "$consumer" status --porcelain --untracked-files=no)" ]]; then
-    echo "cerebro: the checkout is $behind commits behind origin/$branch_name and has uncommitted changes - commit or stash them, then git merge --ff-only origin/$branch_name, before starting $name" >&2
+    "$script_dir/launch-refused" "$name" "the checkout is $behind commits behind origin/$branch_name and has uncommitted changes - commit or stash them, then git merge --ff-only origin/$branch_name, before starting $name"
     exit 2
   fi
   if [[ "$ahead" != "0" ]]; then
-    echo "cerebro: $branch_name has $ahead commits origin/$branch_name does not - push or reset them before starting $name" >&2
+    "$script_dir/launch-refused" "$name" "$branch_name has $ahead commits origin/$branch_name does not - push or reset them before starting $name"
     exit 2
   fi
   # The submodule is the file the skills are actually read through, so it moves with the branch - but
   # somebody editing cerebro in place (which is how this check was built) must never be clobbered.
   if [[ -d "$parent/cerebro/.git" || -f "$parent/cerebro/.git" ]] \
      && [[ -n "$(git -C "$parent/cerebro" status --porcelain --untracked-files=no)" ]]; then
-    echo "cerebro: .claude/cerebro has uncommitted changes - commit or stash them before starting $name" >&2
+    "$script_dir/launch-refused" "$name" ".claude/cerebro has uncommitted changes - commit or stash them before starting $name"
     exit 2
   fi
   git -C "$consumer" merge --ff-only "$target" --quiet
@@ -132,9 +145,9 @@ if [[ ! -f "$parent/cerebro/agents/$role.md" && ! -f "$parent/agents/$role.md" ]
     done < "$consumer/.cerebro/roster.conf"
   fi
   if [[ -n "$declared_by_consumer" ]]; then
-    echo "cerebro: .cerebro/roster.conf declares the role $role, but cerebro does not ship agents/$role.md and there is no .claude/agents/$role.md either - write that file before starting $name" >&2
+    "$script_dir/launch-refused" "$name" ".cerebro/roster.conf declares the role $role, but cerebro does not ship agents/$role.md and there is no .claude/agents/$role.md either - write that file before starting $name"
   else
-    echo "cerebro: .claude/cerebro/agents/$role.md is missing - the submodule is behind; run git submodule update --init --recursive and try again" >&2
+    "$script_dir/launch-refused" "$name" ".claude/cerebro/agents/$role.md is missing - the submodule is behind; run git submodule update --init --recursive and try again"
   fi
   exit 2
 fi
@@ -152,7 +165,7 @@ fi
 if [[ "$role" == "implementer" ]]; then
   gate_fast="$("$script_dir/project-conf" gate_fast 2>/dev/null)" || gate_fast=""
   if [[ -z "$gate_fast" ]]; then
-    echo "cerebro: this project declares no fast gate, and none could be detected - an implementer has nothing to run before it opens a PR. Add a line like 'gate_fast <command>' (and 'gate_full <command>') to .cerebro/project.conf before starting $name" >&2
+    "$script_dir/launch-refused" "$name" "this project declares no fast gate, and none could be detected - an implementer has nothing to run before it opens a PR. Add a line like 'gate_fast <command>' (and 'gate_full <command>') to .cerebro/project.conf before starting $name"
     exit 2
   fi
 fi
@@ -162,6 +175,6 @@ fi
 # Defensive only: after a successful sync above, the link this checks for cannot be
 # missing unless the sync itself is broken - there is no test for this branch.
 if [[ ! -f "$parent/agents/$role.md" ]]; then
-  echo "cerebro: no agent definition at .claude/agents/$role.md - run .claude/cerebro/scripts/sync-symlinks.sh and try again" >&2
+  "$script_dir/launch-refused" "$name" "no agent definition at .claude/agents/$role.md - run .claude/cerebro/scripts/sync-symlinks.sh and try again"
   exit 2
 fi

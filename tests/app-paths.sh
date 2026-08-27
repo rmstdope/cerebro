@@ -18,26 +18,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
-
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # --- a throwaway consumer repo, the way tests/project-conf.sh builds one ---
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q "$consumer"
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-for s in consumer-root project-conf app-paths; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf app-paths)"
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
 app_paths="$consumer/.claude/cerebro/scripts/app-paths"
@@ -159,11 +144,11 @@ if grep -rn 'core-persistence\|core-wasm\|apps/desktop' "$repo_root/agents" "$re
 fi
 pass "no consumer's workspace map remains in agents/ or skills/"
 
-# --- the three classification sites now say how to get the answer ---
-for f in agents/reviewer.md agents/verifier.md skills/release-notes/SKILL.md; do
+# --- the two classification sites now say how to get the answer ---
+for f in agents/reviewer.md agents/verifier.md; do
   grep -q 'app-paths' "$repo_root/$f" \
     || fail "classification: $f must name scripts/app-paths"
 done
-pass "the three classification sites name scripts/app-paths"
+pass "the two classification sites name scripts/app-paths"
 
 echo "all app-paths tests passed"

@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+#
+# `agent-cli` - the one place "which agent CLI does this fleet's sessions run on" is answered
+# (cb-d59.2), the shape `consumer-root`, `app-paths`, `roster`, `project-conf` and `planner-buffer`
+# already have: the answer on stdout, whichever branch it took on stderr, and a non-zero exit only
+# where the caller must stop.
+#
+# The defect it ends: the answer was spelt `claude` in argv, in two scripts - `exec claude` with
+# nine flag spellings after it in `scripts/launch`, and `command -v claude` in
+# `scripts/launch-preflight` - declared nowhere and askable of nothing. Adding a second provider
+# meant rewriting both launchers; now it is a second arm in this file.
+#
+#     agent-cli                       the provider this fleet runs on          -> claude
+#     agent-cli --binary              the executable to exec and to find       -> claude
+#     agent-cli --argv --role <role> --name <Name> [--model <m>] [--effort <e>]
+#                                     [--settings <path>]
+#                                     every argv token between the binary and the caller's own
+#                                     extra arguments, NUL-separated
+#     agent-cli --prompt-argv <text>  the tokens that carry a seed prompt, NUL-separated
+#     agent-cli --check <Name>        exit 0 if this fleet can launch; otherwise refuse through
+#                                     launch-refused and exit 3
+#     agent-cli --known               the providers this cerebro can run, one per line
+#
+# NUL and not one token per line, because `launch`'s trailing prompt contains a newline: a
+# line-delimited protocol would split it into two argv entries. Read it back with
+#
+#     while IFS= read -r -d '' tok; do argv+=("$tok"); done < <(agent-cli --argv ...)
+#
+# a process substitution rather than a pipe, or the array is built in a subshell and lost.
+#
+# The prompt carries cerebro's marker sentence (cb-d59.3), and `--prompt-argv` knows nothing about
+# it: composing the prompt is provider-neutral work and belongs in `launch`, while this file stays a
+# table of one provider's spellings. A second arm emits `-i <text>` for the same verb and inherits
+# the marker for free.
+#
+# `--argv` deliberately stops short of the prompt: `launch` puts the caller's own extra arguments
+# between the flags and the prompt, which is what makes a `--model` typed on the command line beat
+# models.conf. Two verbs preserve that ordering exactly:
+#
+#     exec "$binary" "${argv[@]}" "$@" "${prompt_argv[@]}"
+#
+# `--check` takes a name because a refusal has to REACH the fleet view, and the only way it does is
+# `launch-refused <Name> <message>` - one line on stderr and one line in
+# .cerebro/state/errors.jsonl. So `--check` is the launcher's front door: it owns both
+# launch-blocking conditions, says them once, and records them. The plain verbs still exit 3 on an
+# unrunnable declaration, with `agent-cli: ` in front of the same sentence, but that is a backstop.
+#
+# BASH ONLY, NO EXTERNAL COMMANDS on the launch path: `tests/launchers.sh` runs a launcher on a PATH
+# containing nothing but `dirname` and `bash`, and this script now runs inside that. So no `grep`,
+# `sed`, `tr`, `awk` or `cut` anywhere in it - parameter expansion and `[[` are the whole toolbox,
+# the same constraint `scripts/roster` records for the same reason. `project-conf` is safe to call
+# (its `grep` lives only in branches `agent_cli` never reaches) and `launch-refused` is on the
+# refusal path only.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# The two tables, and nothing else provider-shaped anywhere in the repository. Adding an arm is:
+# move its word from PLANNED to KNOWN, and add its branch to --binary, --argv, --prompt-argv and
+# the PATH check. That is the seam.
+KNOWN="claude"
+PLANNED="copilot"
+
+known_list() {
+  local out="" p
+  for p in $KNOWN; do
+    if [[ -z "$out" ]]; then out="$p"; else out="$out, $p"; fi
+  done
+  printf '%s' "$out"
+}
+
+in_list() {
+  local needle="$1" list="$2" p
+  for p in $list; do
+    [[ "$p" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# Resolve the provider, or set $refusal to the sentence saying why not. The sentence carries no
+# prefix: `--check` hands it to launch-refused (which says `cerebro: `), and the plain verbs put
+# `agent-cli: ` in front of it themselves.
+provider=""
+refusal_kind=""
+refusal_value=""
+
+# The sentence, with or without its ` before starting <Name>' clause: `--check' has a name to name
+# and the plain verbs do not.
+refusal_sentence() {
+  local name="${1:-}"
+  case "$refusal_kind" in
+    planned)
+      printf '%s' ".cerebro/project.conf declares agent_cli $refusal_value, which this version of cerebro cannot run yet - bump the submodule, or declare $(known_list)"
+      [[ -n "$name" ]] && printf '%s' ", before starting $name"
+      ;;
+    unknown)
+      printf '%s' ".cerebro/project.conf declares agent_cli $refusal_value, which is not an agent CLI cerebro knows - this cerebro runs $(known_list). Fix the declaration"
+      [[ -n "$name" ]] && printf '%s' " before starting $name"
+      ;;
+  esac
+  return 0
+}
+resolve() {
+  local value
+  # 2>/dev/null is REQUIRED, not incidental: project-conf prints a line to stderr on every call by
+  # its own rule, and two callers per launch would otherwise put four lines of
+  # `project-conf: agent_cli unset -> the default' in front of the navigator for a key nobody set.
+  value="$("$here/project-conf" agent_cli 2>/dev/null)" || value=""
+  if [[ -z "$value" ]]; then
+    provider="claude"
+    echo "agent-cli: no agent_cli declared; running on claude" >&2
+    return 0
+  fi
+  if in_list "$value" "$KNOWN"; then
+    provider="$value"
+    return 0
+  fi
+  if in_list "$value" "$PLANNED"; then
+    refusal_kind="planned"
+    refusal_value="$value"
+    return 0
+  fi
+  refusal_kind="unknown"
+  refusal_value="$value"
+  return 0
+}
+
+usage() {
+  echo "usage: agent-cli [--binary | --known | --check <Name> | --argv ... | --prompt-argv <text>]" >&2
+  exit 2
+}
+
+verb="${1:-}"
+
+case "$verb" in
+  --known)
+    [[ $# -eq 1 ]] || usage
+    for p in $KNOWN; do printf '%s\n' "$p"; done
+    exit 0
+    ;;
+  ""|--binary|--check|--argv|--prompt-argv) ;;
+  *) usage ;;
+esac
+
+resolve
+
+# The plain verbs' backstop: a declaration this cerebro cannot run, asked of anything but --check.
+if [[ -n "$refusal_kind" && "$verb" != "--check" ]]; then
+  echo "agent-cli: $(refusal_sentence)" >&2
+  exit 3
+fi
+
+case "$verb" in
+  "")
+    printf '%s\n' "$provider"
+    ;;
+  --binary)
+    [[ $# -eq 1 ]] || usage
+    case "$provider" in
+      claude) printf '%s\n' "claude" ;;
+    esac
+    ;;
+  --check)
+    name="${2:-}"
+    [[ -n "$name" && $# -eq 2 ]] || usage
+    if [[ -n "$refusal_kind" ]]; then
+      "$here/launch-refused" "$name" "$(refusal_sentence "$name")"
+      exit 3
+    fi
+    case "$provider" in
+      claude)
+        if ! command -v claude >/dev/null 2>&1; then
+          "$here/launch-refused" "$name" "claude is not on PATH - install Claude Code or fix PATH before starting $name"
+          exit 3
+        fi
+        ;;
+    esac
+    ;;
+  --prompt-argv)
+    [[ $# -eq 2 ]] || usage
+    printf '%s\0' "$2"
+    ;;
+  --argv)
+    shift
+    role="" name="" model="" effort="" settings=""
+    have_settings=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --role)     role="${2:-}"; shift 2 ;;
+        --name)     name="${2:-}"; shift 2 ;;
+        --model)    model="${2:-}"; shift 2 ;;
+        --effort)   effort="${2:-}"; shift 2 ;;
+        --settings) settings="${2:-}"; have_settings=1; shift 2 ;;
+        *) usage ;;
+      esac
+    done
+    [[ -n "$role" && -n "$name" ]] || usage
+    case "$provider" in
+      claude)
+        printf '%s\0' --agent "$role" --name "$name" --remote-control "$name"
+        [[ -n "$model" ]] && printf '%s\0' --model "$model"
+        [[ -n "$effort" ]] && printf '%s\0' --effort "$effort"
+        [[ -n "$have_settings" ]] && printf '%s\0' --settings "$settings"
+        printf '%s\0' --permission-mode auto
+        ;;
+    esac
+    ;;
+esac
+exit 0

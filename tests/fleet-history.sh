@@ -27,14 +27,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # A fixture tree with its own scripts/ directory symlinked to the real scripts, exactly as
 # tests/agent-state.sh builds one, so fleet-history's own root-derivation (via
@@ -42,12 +36,8 @@ pass() {
 # real log - which would make these assertions pass or fail by accident.
 new_fixture() {
   local tmp
-  tmp="$(mktemp -d)"
-  git init -q "$tmp"
-  git -C "$tmp" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-  mkdir -p "$tmp/.claude/cerebro/scripts" "$tmp/.cerebro/state"
-  ln -s "$repo_root/scripts/consumer-root" "$tmp/.claude/cerebro/scripts/consumer-root"
-  ln -s "$repo_root/scripts/fleet-history" "$tmp/.claude/cerebro/scripts/fleet-history"
+  tmp="$(consumer_new "$(fixture_name)" --link consumer-root fleet-history)"
+  mkdir -p "$tmp/.cerebro/state"
   printf '%s' "$tmp"
 }
 
@@ -123,11 +113,11 @@ tmp="$(new_fixture)"
   line "$(ago 120)" Cyclops working build ah-aaa
   line "$(ago 100)" Cyclops working build ah-aaa false
   line "$(ago 80)"  Cyclops working build ah-aaa false
-  line "$(ago 60)"  Cyclops done   ""    ah-aaa
+  line "$(ago 60)"  Cyclops waiting ""    ah-aaa
 } > "$tmp/.cerebro/state/transitions.jsonl"
 
 out="$(run "$tmp" --json)"
-# One interval, not three: the two heartbeats extend it, and the closing `done` is terminal.
+# One interval, not three: the two heartbeats extend it, and the closing `waiting` is terminal.
 [[ "$(jq -r 'length' <<<"$out")" == 1 ]] || fail "two heartbeats extend one interval; expected 1 interval, got $(jq -r 'length' <<<"$out")"
 [[ "$(jq -r '.[0].minutes' <<<"$out")" == "60" ]] || fail "the interval spans the heartbeats, got $(jq -r '.[0].minutes' <<<"$out")"
 rm -rf "$tmp"
@@ -202,7 +192,7 @@ tmp="$(new_fixture)"
   line "$(ago 460)" Cyclops working review ah-aaa   # asking: 20m
   line "$(ago 450)" Cyclops asking  review ah-aaa
   line "$(ago 150)" Cyclops working review ah-aaa   # asking: 300m
-  line "$(ago 140)" Cyclops done    ""     ah-aaa
+  line "$(ago 140)" Cyclops waiting ""     ah-aaa
 } > "$tmp/.cerebro/state/transitions.jsonl"
 
 row="$(run "$tmp" --summary --agent Cyclops | jq -c '.[] | select(.state == "asking")')"
@@ -309,12 +299,13 @@ rm -rf "$tmp"
 pass "a state seen only once has no median to judge it by"
 
 # --- an agent that finished is not still running ------------------------------------------------
-# `done` is the end of a session, not a state an agent sits in. Left open, a bead delivered last
-# September is reported as having been in progress ever since.
+# `waiting` is the end of a pass, not a state an agent sits in: the fleet view ends the session
+# half a minute after it is written. Left open, every agent between passes is reported as waiting
+# for up to a day, until the staleness bound drops it.
 tmp="$(new_fixture)"
 {
   line "$(ago 200)" Cyclops working merge ah-aaa
-  line "$(ago 190)" Cyclops done    ""    ah-aaa
+  line "$(ago 190)" Cyclops waiting ""    ah-aaa
 } > "$tmp/.cerebro/state/transitions.jsonl"
 
 out="$(run "$tmp" --json)"

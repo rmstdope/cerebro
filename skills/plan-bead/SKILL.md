@@ -1,6 +1,6 @@
 ---
 name: plan-bead
-description: The planning role — plan every P0 immediately, keep a buffer of planned, unclaimed beads ahead of the implementers, sized from how many are running, turning each into something an agent can build unattended, deciding architecture yourself and every user-facing question with the navigator. Use when running a planning session.
+description: The planning role — plan every P0 immediately, keep a buffer of planned, unclaimed beads ahead of the implementers, sized from the roster's implementers, turning each into something an agent can build unattended, deciding architecture yourself and every user-facing question with the navigator. Use when running a planning session.
 ---
 
 # Planning a bead
@@ -43,9 +43,9 @@ Two planners share the work through labels and nothing else: no lease, no claim,
 between sessions. This section is where that machinery is stated — the labels, how they are read,
 the order they are written in, who owns a family, the check before you write, and how a hold left
 by a dead session comes back. Everywhere else in this skill gives the command and points here for
-the reason. Two further rules belong to the same story but are stated where they apply, because
-neither is about the labels: **count only what an implementer could claim** (*You keep a buffer sized
-to the fleet*) and **only the first planner triages** (*Then: triage the P4 backlog*).
+the reason. One further rule belongs to the same story but is stated where it applies, because it is
+not about the labels: **count only what an implementer could claim** (*You keep a buffer sized to the
+fleet*).
 
 ### The two labels, and who may remove them
 
@@ -119,8 +119,8 @@ about `bd show`; `bd list` answers differently, which is the trap.**
 - **In `bd show`, the parent's id is `.id`** — the dependency entry *is* the parent bead, embedded
   whole. In `bd list` the entry is a plain edge and the parent is `depends_on_id`.
 
-**The triage queries in *Then: triage the P4 backlog* pipe `bd list` and select on `.type`**, which is the right
-shape for that command — not an oversight, and not a thing to "correct" to match the one above.
+**Cerebro's ranking queries (`agents/orchestrator.md`, *Ranking the backlog*) pipe `bd list` and
+select on `.type`**, which is the right shape for that command — not an oversight, and not a thing to "correct" to match the one above.
 
 Confirm it on a bead you know to be a child before trusting a run of empty answers.
 
@@ -291,156 +291,29 @@ by hand:
 
 | Moment | Call |
 |---|---|
-| The triage pass starts | `.claude/cerebro/scripts/agent-state <your-name> working --phase triage --pid $PPID` |
-| Every triage question | `.claude/cerebro/scripts/agent-state <your-name> asking --phase triage --pid $PPID`, and `working --phase triage` again once answered |
 | A bead gets your `planning:<your-name>` label | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID` |
 | Every interview question while planning it | `.claude/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase plan --pid $PPID`, and `working` again once answered |
 | The P0 check (*P0 pre-empts the buffer*) | stays `working --phase plan`, same as any other bead being planned |
 | Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process. You never write `done`: you are not replaced between
-beads. `waiting` is the state between one pass and the next — never `idle`, which says you have
+`--pid` is `$PPID` — your own `claude` process. `waiting` is the state between one pass and the next — never `idle`, which says you have
 nothing to do and nothing coming. Writing another planner's name here
 puts your work on their row and hides your own, so the navigator sees one busy planner and one that
 has apparently died.
 
-## Then: triage the P4 backlog — if the triage is yours
+## Ranking is Cerebro's
 
-**Only the first planner on the roster triages.** Check before you start, every session:
+Every bead is created at P4, and P4 means *unranked* — nobody has decided where it sits yet. Cerebro
+walks the unranked beads with the navigator and writes what they choose (`agents/orchestrator.md`,
+*Ranking the backlog*); no planner ranks anything.
 
-```bash
-[ "$(.claude/cerebro/scripts/roster --role planner | head -1)" = "<your-name>" ] \
-  && echo "triage is mine" || echo "skip triage, go straight to the buffer"
-```
+So **an unranked bead is not a planning candidate** (*Choosing what to plan*). A P4 carrying
+`triage:declined` is one Cerebro asked about and got no answer for, and it is parked exactly like a
+`human` bead — both are in `scripts/planner-buffer --print-excluded-labels`, and both stay out of
+every query in this skill.
 
-The other planner skips this whole section and starts at *P0 pre-empts the buffer*. Triage is the
-one part of this role that is not divisible: what a session remembers having asked lives in its own
-context and nowhere on the bead, so two planners triaging means the navigator is walked through the
-same P4 backlog twice, in two windows, and answers it twice. The buffer is what a second planner is
-for; ranking is not.
-
-If you are the one who skips it, say so in a line — "triage is <the first planner>'s; starting at
-the buffer" — rather than silently: a navigator who sees no triage pass anywhere should be able to
-tell which planner owes them one.
-
-**Before anything is planned, the priorities are agreed.** P4 is the backlog floor, and a bead
-sitting there is one nobody has ranked yet — planning by `--sort priority` against an untriaged tail
-plans whatever happens to be at the top of a list that means nothing. So the first thing the
-triaging session does, before it counts the buffer or picks a candidate, is walk the P4 beads with
-the navigator.
-
-```bash
-bd dolt pull
-# The beads to ask about: P4, unplanned, and not somebody's child.
-bd list --status open --exclude-label planned --json \
-  | jq -r '[.[] | . as $b | ($b.dependencies // [])[]
-            | select(.type=="parent-child") | $b.id] as $children
-           | .[] | select(.priority==4)
-           | select(.id as $id | $children | index($id) | not)
-           | "\(.id)\t\(.external_ref // "-")\t\(.title)"'
-```
-
-A bead's parent is a `parent-child` edge in its own `dependencies`, pointing at the parent — there is
-no `parent` field to read.
-
-The `external_ref` column is there because it changes the recommendation: a `gh-<n>` in it means the
-bead came from a real person filing a real GitHub issue. See "A bead from a GitHub issue" below.
-
-Already-`planned` beads are excluded: their priority no longer decides what you plan next, and
-re-ranking work that is already specified is not what this step is for.
-
-**A child is never asked about — it takes its parent's priority.** A split epic is one piece of work
-that happens to be built in several passes, so ranking its children separately invites an ordering
-the navigator never meant: a P1 epic with a P4 third child stalls halfway through, and asking about
-five children of one epic spends five questions on a decision that was one decision. Ask about the
-epic; the children follow it.
-
-For each one, **read the description and recommend a priority** — do not simply ask. `bd show <id>`,
-then say which of P0–P4 you think it is and why in a sentence: a navigator-reported defect in shipped
-behaviour is a P0 or P1; work that unblocks a queued epic outranks work that stands alone; a tidy-up
-with no user-visible effect stays low. The navigator is deciding, but they are deciding against your
-reading of the bead, not against a bare id.
-
-### A bead from a GitHub issue outranks one you thought of yourself
-
-**A bead with a `gh-<n>` external ref is user feedback, and you say so out loud.** GitHub issues are
-the inbox for external requests and bug reports, so that ref means somebody outside this fleet hit
-the thing, cared enough to write it up, and is now waiting to hear what happened. Every other P4 bead
-was filed by an agent or by the navigator from inside the project. That is a real difference in
-evidence — a reported defect is one that demonstrably reaches the audience, where an agent's tidy-up is a
-guess about what might matter — and it is a difference the ranking should reflect.
-
-So, for any candidate with an `external_ref`:
-
-- **Recommend it a step higher than you otherwise would**, and say in the reason that it is user
-  feedback. A reported defect in shipped behaviour is a P0 or P1; a reported enhancement is a P2
-  rather than the P3 the same idea would get from an agent. This is a lean, not a floor: a genuinely
-  cosmetic report is still cosmetic, and inflating everything with a ref destroys the signal.
-- **Name the issue in the question**, not just the bead: `<bead-id> (gh-31, user-reported)`. The
-  navigator may recognise the reporter or the thread, and that recognition is often the whole
-  decision.
-- **Read the issue before recommending**, not only the bead. `gh issue view <n> --comments` — the
-  thread carries how badly it bit and whether anyone else chimed in, and a triage bead written from
-  it may have flattened all of that into one line. Moira brought it to the navigator once already;
-  what she recorded is a summary, not the evidence.
-
-Say how many of the beads in the pass came from issues before you ask, in one line — a triage where
-four of six are user-reported is a different conversation from one where none are.
-
-Ask with the question tool, batching up to four beads per call, options `P0`–`P4` with your
-recommendation first and marked `(Recommended)`, and the reason in each option's description. Apply
-each answer as it comes (use numeric priorities `0`–`4` for `bd update`, i.e. `P0`→`0` … `P4`→`4`):
-
-```bash
-bd update <id> --priority=<n>
-```
-
-**If the bead has children, set them to the same priority in the same breath** — `bd update` takes
-several ids at once:
-
-```bash
-bd list --status open --json \
-  | jq -r --arg parent <id> '.[] | select((.dependencies // [])[]
-           | select(.type=="parent-child") | .depends_on_id == $parent) | .id'
-bd update <child> <child> ... --priority=<n>
-```
-
-Then reconcile the rest of the tree, so no epic ranked in an earlier session is left with children
-that disagree with it. Run this after the pass and **repeat it until it prints nothing** — one run
-moves a priority down one level, and a subtask under a task under an epic is two levels:
-
-```bash
-bd list --status open --json > /tmp/bd-open.json
-jq -r '(INDEX(.id)) as $by | .[] | . as $c | ($c.dependencies // [])[]
-       | select(.type=="parent-child") | $by[.depends_on_id]
-       | select(. != null and .priority != $c.priority)
-       | "\($c.id)\t\(.priority)"' /tmp/bd-open.json
-# then, per priority: bd update <child> <child> ... --priority=<n>
-```
-
-The parent wins every time, including when the child is ranked higher: the epic is where the
-navigator made the decision, and a child that outranks its own parent jumps the queue ahead of work
-the navigator put first.
-
-Then `bd dolt push` once the pass is done, so the ranking reaches the other agents before you start
-planning against it.
-
-**If the navigator is away, do not stall.** Say which beads you could not get a ranking for, leave
-them at P4, and go on to the buffer — an unanswered triage costs you ordering, not the queue. Do not
-apply your own recommendation unasked: priority is what the navigator uses to steer the fleet, and
-taking that silently is the one thing this step exists to prevent.
-
-Triage runs **on every wake-up**, starting with the first pass of the session — not once and then
-never again. It is the only way a bead is ever ranked, and an unranked bead is not a candidate for
-planning at all (see *Choosing what to plan*), so a pass you skip is a pass in which every bead
-filed since the last one stays unplannable for as long as this session lives.
-
-It is short after the first pass, and that is the point: the query above still returns every open
-P4 every time — nothing records a watermark — so what shortens is what you **ask about**. Ask only
-about the beads in it you have not already put to the navigator this session. A bead they already
-ranked has left the list; one they declined to rank has not, and is not asked about twice. So a
-wake-up whose query returns nothing you have not already raised is a wake-up with no triage to do,
-and you go straight on to the buffer.
+A pass whose every candidate is unranked has nothing to plan. Report the beads waiting on a ranking
+and end the pass: **do not rank one yourself, and do not plan one to keep busy.**
 
 ## P0 pre-empts the buffer
 
@@ -449,8 +322,8 @@ queue already is. A P0 is a bead the navigator has said is the most urgent thing
 is the only thing standing between it and an implementer picking it up; a P0 sitting unplanned behind
 a healthy buffer is the fleet working on the wrong thing while the right thing waits.
 
-Check at the top of every pass, after that pass's triage — and check it **before you count the buffer**, because the buffer's answer does not matter
-here:
+Check at the top of every pass, **before you count the buffer**, because the buffer's answer does not
+matter here:
 
 ```bash
 bd list --status open --exclude-label planned --exclude-label human \
@@ -484,8 +357,9 @@ the bead, and say in the same line whose family you took it out of, so the owner
 navigator both see it happened rather than discovering it in a design that disagrees with its
 siblings.
 
-Anything it returns, plan. All of it, one at a time, before you look at the buffer at all — and if
-that leaves the buffer over its `2m`, that is simply what it costs. The buffer is a floor under the
+Anything it returns, plan. All of it, one at a time, before you look at the buffer at all — a P0 is
+the exception to the one-bead pass, since every one of them is what the fleet is blocked behind — and
+if that leaves the buffer over its `m`, that is simply what it costs. The buffer is a floor under the
 fleet, not a ceiling on urgent work.
 
 Then go on to the buffer as usual. A P0 you just planned counts toward it like anything else, so the
@@ -542,104 +416,119 @@ Then go on to the buffer.
 
 ## You keep a buffer sized to the fleet
 
-You are not here to plan one bead and leave. You keep the implementers fed, and the measure of that
-is a **buffer of planned, open, unclaimed beads** — ready for anyone to pick up — whose size follows
-how many implementers are running.
+You keep the implementers fed, and the measure of that is a **buffer of planned, open, unclaimed
+beads** — ready for anyone to pick up — whose size follows the implementers on the roster: **one
+each, and never fewer than two**. A pass plans **one bead** and ends; the fleet view starts the next pass the moment the buffer
+is short again, which on a moving fleet is seconds later.
 
 ```bash
-# The buffer, and the only count that matters:
-bd list --label planned --status open --exclude-label human --exclude-type epic --json | jq length
+# The buffer, and the only count that matters - `planned=<p> want=<m>', short whenever p < m:
+.claude/cerebro/scripts/planner-buffer --count
 ```
 
+**That script is where the rule lives**, both halves of it: which beads count, and how many are
+wanted. It was written out here as a `bd list` and again in elisp in the fleet view's trigger, and
+the two drifted twice — once counting beads these queries excluded, so a planner was started to find
+nothing to do, and once counting an implementer this file had always skipped. Every paragraph below
+says *why* the rule is what it is; `scripts/planner-buffer` is *what* it is, and a change to it is
+one edit there rather than four.
+
 `human` is excluded because a bead waiting on the navigator is not available to an implementer, so
-counting it would starve the queue while the number looked healthy. `epic` is a split parent, which
-has children rather than a plan.
+counting it would starve the queue while the number looked healthy — as is `triage:declined`, a P4
+the navigator declined to rank, for the same reason. `epic` is a split parent, which has children
+rather than a plan. The script owns that list; `--print-excluded-labels` prints it.
 
 **Count `planned` only. A bead carrying `planning` is not in the buffer** — not yours, not the other
 planner's. The buffer measures what an idle implementer could claim *right now*, and a bead being
 planned cannot be claimed by anyone: it has no design yet. Counting `planning` too was tried and
 starved the queue within a day (ah-2p.1). Two planners, each holding one candidate, added two to the
-count; with a small fleet that reached `2m` on its own, so both sessions reported a full buffer and
-went to sleep over a queue with two pickable beads in it.
+count; with a small fleet that reached the number on its own, so both sessions reported a full buffer
+and went to sleep over a queue with two pickable beads in it.
 
 **Both planners filling at once is not a fault to design against.** It is the whole point of a second
-planner, and the cost is bounded: each of you can only be holding one candidate, so the buffer can
-overshoot `2m` by one bead per planner. That is a bead built slightly earlier than it needed to be —
-against a rule this file already states twice, that the buffer is a floor and never a ceiling. An
-under-full buffer costs an idle implementer, which is the expensive error of the two.
+planner, and the cost is bounded: each of you plans one bead and each can only be holding one
+candidate, so the buffer can overshoot by one bead per planner. That is a bead built slightly earlier
+than it needed to be — against a rule this file already states twice, that the buffer is a floor and
+never a ceiling. An under-full buffer costs an idle implementer, which is the expensive error of the
+two.
 
-**How many implementers are running** is `n`, measured from the same evidence the fleet view uses: a
-state file under `.cerebro/state/` whose `pid` is alive, minus any implementer whose stop flag
-is set (it finishes its bead and retires, so it will not take another). **The
-interactive agents — every non-implementer row of `scripts/roster`, the other planner included —
-write the same file you do**, so the
-loop below filters to the implementer roster explicitly; without that filter your own file inflates
-`n` by one, and the buffer target moves under you for no reason.
+**How many implementers the fleet has** is `n`: the implementer rows of `scripts/roster`, minus any
+whose stop flag is set under `.cerebro/state/` (it finishes its bead and retires, so it will take no
+other). `planner-buffer --want` reads exactly that.
 
-**Liveness is `scripts/agent-alive`'s to answer, never a bare `kill -0`.** Pids are recycled, so a
-bare `kill -0` makes a dead implementer look alive — `agent-alive` checks the pid's own `--name`, the
-rule `cerebro--session-alive-p` follows in elisp, and here a phantom implementer inflates the count
-the buffer is sized from and puts both planners to sleep over a short queue.
+**It is deliberately not a count of running sessions.** Since cb-1or.1 an implementer ends its pass
+with `waiting`, the fleet view ends the session, and a fresh one is started *by* a planned bead — so
+on a quiet board no builder is running at all, a count of sessions is the floor, and a fleet of four
+plans two beads and wakes two builders for ever.
+
+Two overshoots come with that and are accepted. A builder the navigator retired with `f` while it
+was waiting is disarmed and still counts — armed-ness lives only in the running Emacs and no file
+records it, and a rule the two readers answer differently is the drift `scripts/planner-buffer`
+exists to end. A `dead` builder counts too, being one `s` away from building. The cost either way is
+one bead built when the navigator next presses `s`; the buffer is a floor, not a ceiling.
 
 ```bash
-# The shared checkout, never the enclosing tree: from a worktree of your own `.cerebro/state` is
-# the worktree's, while `agent-alive` reads the checkout the fleet actually writes into,
-# and both halves of this loop must be looking at the same files.
-state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"
-n=0
-# Walk the implementer roster, not the state directory: roster names are single words, so nothing
-# here word-splits on a checkout path with a space in it - and `agent-alive` already answers "no
-# file, no pid, not that session" as one exit status, so no file test is needed either.
-for name in $(.claude/cerebro/scripts/roster --implementers); do
-  [ -e "$state/$name.stop" ] && continue
-  .claude/cerebro/scripts/agent-alive "$name" && n=$((n+1))
-done
-m=$(( n > 2 ? n : 2 )); echo "n=$n implementers, refill below $m, fill to $((2*m))"
+# `m' on its own, if the count line above is not what you want:
+.claude/cerebro/scripts/planner-buffer --want
 ```
 
-**The two numbers are `m = max(2, n)` and `2m`**: refill when the buffer drops **below `m`**, and
-fill **to `2m`**. Two or fewer implementers — including none — is a floor of two and a target of
-four; three is 3/6; four is 4/8. Measure `n` on every pass, since the fleet changes under you.
+**There is one number, `m = max(2, n)`** — `scripts/planner-buffer --want` computes it, and
+`--print-floor` is where the 2 is declared: the buffer is short whenever the planned, unclaimed count
+is **below `m`**, and a pass that finds it short plans **one bead**. Three implementers want three
+planned beads; four want four. **Two is the floor whatever the fleet looks like**, including a
+roster of one — the navigator starting a second builder by hand expects it to have something to
+claim, and a queue that begins filling only once it is up is a queue that is late. Measure `n` on
+every pass: the roster and the stop flags change under you.
+
+The old rule filled to `2m` and waited for the buffer to drain to `m`. It was a rule about latency:
+refilling one bead at a time cost a ten-minute wake interval per bead, so a planner planned in
+batches to get ahead of the clock. The planners have no wake interval now — the fleet view starts
+them on the next five-second tick after the count drops (`cerebro-wake-intervals`) — so the batch
+bought nothing and cost the two things a batch always costs: a plan written further ahead of the code
+it describes, and a session holding several candidates at once where one would do.
 
 The cycle:
 
 1. **Free every abandoned `planning` label.** See *Reclaiming a hold nobody is holding* — a bead
    stranded there is invisible to steps 1 and 2 alike, so it comes first.
 2. **Plan every unplanned P0**, whatever the buffer says. See *P0 pre-empts the buffer*.
-3. **Fill to `2m`.** Plan beads one at a time until the count reaches `2m` — from ranked candidates
-   only, since a P4 is not a candidate. If that leaves nothing to plan, report the beads waiting on
-   a ranking and go to step 4.
-4. **Sleep ten minutes.** Say that you are doing so, then wait.
-5. **Look again**, re-measuring `n`, triaging what arrived while you slept if the triage is yours
-   (*Then: triage the P4 backlog*), and freeing any abandoned label again — a session died while you
-   slept is exactly when one appears. A new P0 — plan it, always, and then continue. Otherwise:
-   `m` or more in the buffer, sleep another ten minutes and look again; **fewer than `m`, fill
-   back to `2m`** and start over.
+3. **Plan one bead**, if the buffer is below `m` — from ranked candidates only, since a P4 is not a
+   candidate. One, not as many as it takes to reach `m`: the next pass starts seconds after this one
+   ends, so a buffer two short is two passes rather than one long one. If there is nothing you may
+   plan, report the beads waiting on a ranking and go to step 4.
+4. **End the pass.** Write `waiting` and end your turn; the next pass is a fresh session, woken by
+   the buffer or a P0. See *Ending a pass*.
+5. **A fresh session begins at the top of this skill**, re-measuring `n` and freeing any
+   abandoned label again — a session died between passes is exactly when one appears. A new P0 —
+   plan it, always, and then continue. Otherwise: `m` or more in the buffer, end the pass again;
+   **fewer than `m`, plan one more**.
 
-The gap between `2m` and `m` is deliberate: topping up on every single claim would have you planning
-constantly against a queue that barely moved. Let it drain by half, then refill it in one go.
+**One bead per pass is the rule, and it is not a limit on how much you may do.** It is what keeps a
+session's context one bead deep, the way an implementer's is: everything the next pass needs is on
+the board, so a pass that plans one bead well beats one that plans three against a fleet that moved
+underneath it. Freeing an abandoned label is not a bead and does not count against it.
 
-**The P0 check has no such gap, and that is the point.** It runs on every wake-up and acts on every
-hit — a P0 filed while you slept is planned on the next wake-up even if the buffer is untouched at
-`2m` and step 5 would otherwise have sent you straight back to sleep. The abandoned-label check has
+**The P0 check is the exception, and that is the point.** It runs on every pass and acts on every
+hit — every unplanned P0, not one of them — and it fires with the buffer full at `m`, where step 5
+would otherwise have ended the pass at once. The abandoned-label check has
 no gap either, and for the same reason: what it frees may be the P0.
 
 **A buffer over its number is left alone.** When the fleet shrinks — six planned and one
 implementer — nothing is unplanned; the extra beads simply get built later. The buffer is a floor
 under the fleet, never a ceiling on planned work.
 
-**If you cannot reach `2m`, that is fine.** Plan every candidate there is, say how far you got and
-why, and sleep as usual — new beads arrive, and the next wake-up will find them. Never invent work
-to hit the number.
+**If there is nothing you may plan, that is fine.** Say why — every candidate unranked, or every one
+blocked behind a bead the navigator holds — and end the pass as usual; new beads arrive, and the next
+pass will find them. Never invent work to hit the number.
 
 **A backlog of nothing but unranked beads is an empty backlog.** Say so — name the beads waiting on
-a ranking, say whose triage it is, and sleep. Do not plan one to keep busy, and do not rank one
+a ranking, say that they are waiting on Cerebro's triage, and end the pass. Do not plan one to keep busy, and do not rank one
 yourself. An idle implementer costs an hour; a bead planned in an order the navigator never chose
 costs their hold on the queue, and they may never learn it happened. That holds when the navigator
 is away too, which is the case it was decided for: leave the beads unranked, report them, and go
 idle rather than picking one and announcing it afterwards.
 
-### Ending a pass: you write `waiting`, and the fleet view wakes you
+### Ending a pass: you write `waiting`, and the fleet view ends the session
 
 You do not schedule yourself and you do not sleep inside your own session. A pass ends
 like this:
@@ -648,13 +537,16 @@ like this:
 .claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID
 ```
 
-**Then end your turn.** Say in one line what the pass found, and stop producing output — that is the
-whole of it. The fleet view wakes you with a `[cerebro]` line in your session when your wait is up,
-and the next pass begins there.
-
-`--wake-in` is what you *ask* for; the fleet view owns the cadence and may wake you sooner (it is a
-`defcustom` the navigator can change while the fleet runs, which is why the number is no longer
-yours to argue about). 600 seconds is what this role has historically waited.
+**Then end your turn.** Say in one line what the pass found, and stop producing output — that is
+the whole of it. The fleet view ends this session once `waiting` has stood for half a minute, keeps
+what you printed as the record of the pass, and starts a **fresh session** under your name when
+there is something for you to do — a trigger of its own for your role, not a clock you set.
+Nothing survives from this session into the next one: everything the next pass needs is in the
+bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
+`--wake-in` is what you *ask* for, and the view owns what you get: the floor between two starts of
+your role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
+measured from your last start and not from the number you wrote. That is why the number is not
+yours to argue about.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken
@@ -688,7 +580,6 @@ bd list --exclude-label planned --exclude-label human \
 bd update <id> --add-label planning:<your-name>
 bd dolt push                                       # publish it at once
 # ... research, decide, discuss, write ...
-.claude/cerebro/scripts/lint --plan plan.md            # no bead id quoted into agent prose (see below)
 bd update <id> --design-file plan.md --add-label planned --remove-label planning:<your-name>
 bd dolt push                                       # or the release is invisible elsewhere
 ```
@@ -709,11 +600,10 @@ is planned whether or not the queue needs topping up. See *P0 pre-empts the buff
 **A P4 is not a candidate at all**, which is why the query filters it out rather than leaving it at
 the bottom of the sort. P4 here does not mean *low priority*; it means *nobody has ranked this yet* —
 every bead in this repository is created at P4, whoever files it. Planning one decides the
-navigator's ordering for them, silently, and that is the single thing the triage step exists to
+navigator's ordering for them, silently, and that is the single thing the ranking step exists to
 prevent: their chance to say "close this", "this is actually a P0", or "this goes behind the other
 thing" is gone the moment a plan exists and an implementer picks it up. Ranking it yourself is worse
-still — see *Then: triage the P4 backlog*, where a priority is recommended and never applied
-unasked. If every remaining candidate is a P4, there is nothing to plan; the
+still — see *Ranking is Cerebro's*. If every remaining candidate is a P4, there is nothing to plan; the
 buffer cycle above says what to do about that.
 
 Several at the same priority is not a decision — take any of them and move on rather than weighing
@@ -821,7 +711,8 @@ called, what happens on a click, which of two behaviours is right. Propose, do n
 
 For a user-facing question, build **self-contained HTML mockups** in the `docs/ui/` house style — no
 build step, no external assets, inline SVG, opens straight in a browser — iterate them in the
-scratchpad, and discuss until the navigator decides.
+scratchpad — `<consumer>/.cerebro/scratch/`, which the consumer's `.gitignore` keeps out of every
+commit — and discuss until the navigator decides.
 
 ### Interview, don't ask
 
@@ -968,7 +859,7 @@ Split it. `bd create --parent <id>` for the children, and `bd dep add` for the o
 **Create every child at the parent's priority**, not at P4 — the rule that a bead is created unranked
 is about work nobody has weighed yet, and a split epic has already been ranked by the navigator. So
 `bd create --parent <id> -p <the parent's priority>`, and if the parent is itself still P4 the
-children are P4 with it, and the whole family gets ranked in one question at the next triage.
+children are P4 with it, and the whole family gets ranked in one question at Cerebro's next triage.
 
 **Take your hold off every child as you create them, and put a `planner:` label on the new parent.** `bd create --parent` inherits the parent's
 labels, and you are holding the parent — so each child arrives carrying a `planning` label nobody
@@ -1126,6 +1017,14 @@ believed.
 So quote from the file in front of you. `file.ts:120` for anything an implementer has to find, and
 the real name of the real export — not a plausible one.
 
+**Existing is not the same as meaning what you think.** A symbol you cite as a *decision
+procedure* — a predicate, a filter, a query — needs its accepting set read, not just its name
+resolved. In one fleet a planner cited `parse_fleet_kind` three times as the test for whether a
+structure was a vessel: it existed, compiled, and was used by its neighbour; it also returned `Some`
+for a fort, which is the opposite of what the plan cited it for. One `grep -A 15` would have shown
+it. The same applies to any claim about what a mechanism *does*: if the plan asserts a bead reaches
+a queue, or a label routes somewhere, run the query before writing the sentence.
+
 **The one exception is a seam a blocker is about to create, and it is labelled as such.** When you
 are planning against work that has not landed, say so in the same breath: "`turnDiff.ts` does not
 exist yet — `<bead-id>` creates it with this surface (see its plan)". An implementer can build
@@ -1148,24 +1047,17 @@ is theirs. What must not survive this pass:
 - an increment whose failing test you could not sit down and write from the plan alone — the name,
   the file it goes in, and what it asserts;
 - a user-visible string that is described rather than quoted;
-- a named file, function or type you have not verified;
+- a named file, function or type you have not verified — or a predicate, filter or query you cite
+  for what it accepts without having read what it accepts;
 - an acceptance criterion that cannot be checked by running something or by looking at something
-  specific.
-
-**Then run the one check that is mechanical, and do not ship on a red one:**
-
-```bash
-.claude/cerebro/scripts/lint --plan plan.md
-```
-
-It fires when a fenced block or a blockquote destined for a file an agent reads — `agents/**`,
-`skills/**`, `docs/agent-workflow.md`, named by the last path before it — quotes a bead id. A
-consumer cannot resolve an id, so those files carry the rule and its cost and never the bead; the
-provenance belongs in cerebro's own record instead, and the check names the file when it fires.
-Three plans in a row told an implementer to write one in,
-and three implementers paid a cycle each to find out. Your *Context* may cite beads freely — the
-check reads blocks and quotes only — so a hit means: rewrite that block without the id, and say the
-cost instead of naming the bead.
+  specific;
+- **a block an agent will paste that quotes a bead id, a provenance file, one project's vocabulary
+  or one project's audience word.** Your *Context* may cite beads and paths freely — it is read by
+  the implementer, not shipped. A fenced block or a blockquote is different: it becomes prose an
+  agent in every consumer reads, and can check none of. Rewrite it so it ships as written, and say
+  the cost instead of naming the bead. Three plans in a row told an implementer to write an id into
+  agent prose, and three implementers paid a cycle each to find out; five retrospectives record the
+  wider family. This was a mechanical check until it was removed — it is now yours to make.
 
 **A plan that reads well and specifies nothing is the failure mode**, and it is a comfortable one to
 produce because it is much shorter. If this pass finds nothing at all, you have almost certainly
@@ -1195,8 +1087,12 @@ it looks like from here — and so is **a child of a bead the other planner is h
 mid-split work whatever the state files say, since a splitting planner names only one child at a
 time.
 
-Then count the buffer again and act on it: **below `2m`, plan the next one — immediately, without
-sleeping in between**; at `2m`, say so and sleep. Count `planned` alone (see *You keep a buffer sized
-to the fleet*): if you have just planned a bead and the pickable count is still short, there is
-nothing to wait for and the sleep is ten minutes an implementer spends idle. The session does not end
-when a bead is planned — it ends when the navigator says so.
+Then end the pass. **One bead is a pass** — say what you planned, write `waiting`, and stop; if the
+buffer is still short the fleet view starts your next session within seconds of this one ending, and
+that session re-reads a board that has moved rather than working from what you remember of it. This
+is the one thing that changed when the planners lost their wake interval: a pass used to have to keep
+planning, because the alternative was ten minutes of an idle implementer, and it no longer is.
+
+The exception is an unplanned P0, which is planned in the same pass however many there are (see *P0
+pre-empts the buffer*) — the fleet is blocked behind each of them, and a fresh session per P0 is
+latency for no gain.

@@ -5,15 +5,13 @@
 # .cerebro/project.conf both name this file) because the whole thing takes under a minute -
 # a separate fast gate would only be worth having if the full one were slow.
 #
-# It runs exactly what .github/workflows/ci.yml runs, and scripts/lint advises when the two stop
-# agreeing. A gate that has drifted from CI is worse than no gate: the fleet merges on green that
-# nobody else sees.
+# It runs exactly what .github/workflows/ci.yml runs - byte-compile, ERT, and every tests/*.sh
+# through scripts/suite-runner, which both this file and CI call. A gate that has drifted from CI
+# is worse than no gate: the fleet merges on green that nobody else sees. Nothing checks that the
+# two still agree - the lint that used to is gone, and keeping them in step is a matter of editing
+# both, which is why they are named next to each other here.
 #
-# It ends with scripts/lint, whose status it deliberately ignores: the lint guards decisions -
-# prose and configuration - and a decision changing on purpose must not read as a regression
-# (cb-194).
-#
-# NOT `tests/gate.sh'. The suite loop below is `tests/*.sh', which would pick this file up and run
+# NOT `tests/gate.sh'. scripts/suite-runner runs `tests/*.sh', which would pick this file up and run
 # the gate from inside the gate, once per suite, forever.
 #
 #     bash tests/gate
@@ -41,20 +39,14 @@ if ! emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit; the
 fi
 
 echo "== bash suites =="
-# Every suite runs even after one fails: a gate that stops at the first failure hides the other
-# four, and the implementer then fixes them one round trip at a time.
-failed=()
-for t in tests/*.sh; do
-  if ! bash "$t" >/dev/null; then
-    echo "FAILED: $t" >&2
-    failed+=("$t")
-    status=1
-  fi
-done
-((${#failed[@]})) || echo "all bash suites passed"
-
-echo "== lint (advisory) =="
-bash scripts/lint || echo "lint: advisories above are not failures - a deliberate change updates scripts/lint in the same PR" >&2
+# scripts/suite-runner is the one suite loop, and CI runs the same script (cb-8cn). It names each
+# suite before it starts it - so a stall is "hung in tests/launchers.sh" rather than "the gate is
+# hung" - replays a failing suite's output, and runs every suite even after one fails: a gate that
+# stopped at the first failure would hide the others and the implementer would fix them one round
+# trip at a time.
+if ! bash scripts/suite-runner tests; then
+  status=1
+fi
 
 if [[ $status -eq 0 ]]; then
   echo "gate: green"

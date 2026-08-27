@@ -22,17 +22,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
-
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # --- stubs -------------------------------------------------------------------------------------
 stub_dir="$work_dir/bin"
@@ -63,13 +54,7 @@ free_gb() { awk -v gb="$1" 'BEGIN { printf "%d\n", gb * 1024 * 1024 }' > "$free_
 tree_gb() { awk -v gb="$1" 'BEGIN { printf "%d\n", gb * 1024 * 1024 }' > "$du_kb_file"; }
 
 # --- a throwaway consumer, the way tests/project-conf.sh builds one -----------------------------
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q "$consumer"
-git -C "$consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-for s in consumer-root project-conf disk-preflight; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
+consumer="$(consumer_new repo --link consumer-root project-conf disk-preflight)"
 conf="$consumer/.cerebro/project.conf"
 mkdir -p "$consumer/.cerebro"
 preflight="$consumer/.claude/cerebro/scripts/disk-preflight"

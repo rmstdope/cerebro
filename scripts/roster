@@ -17,8 +17,9 @@
 #
 # Adding a *second agent to an existing role* (as `planner` has, Xavier and Beast): one line here,
 # and nothing else structural — every reader is name-driven. What it does need is a look at whatever
-# that role does exactly once per fleet rather than once per session: `plan-bead` gives the P4
-# triage pass to the first planner listed here, so file order is load-bearing for more than display.
+# that role does exactly once per fleet rather than once per session; file order is what decides
+# such a question, and Cerebro takes implementer names in it, so it is load-bearing for more than
+# display.
 #
 #     roster                    every row, NAME<TAB>ROLE<TAB>KIND, in file order
 #     roster --implementers     the implementer names only, one per line, in file order
@@ -27,14 +28,20 @@
 #                               (exit 0) if nobody holds it
 #     roster --autostart        the names whose row carries `autostart', one per line, in file
 #                               order; nothing (exit 0) when no row does
+#     roster --standby          the names whose row carries `standby', one per line, in file
+#                               order; nothing (exit 0) when no row does
 #
-# A row is NAME ROLE and, optionally, a third word: `autostart', which says the fleet view starts
-# that agent as it comes up (cb-0r6). Omitting it means no, so every roster written before that
-# bead - and the TABLE below - behaves exactly as it did. Any OTHER third word, or a fourth word,
-# is refused with exit 2 naming the file, the line and the word: a typo of `autostart' that read as
-# "no" would be a fleet that quietly does not start, which is the failure this refusal exists to
-# prevent. The word is exposed through `--autostart' ALONE - the default output stays three columns,
-# because `launch', `agent-state' and `cerebro--parse-fleet' all take the last field as the KIND.
+# A row is NAME ROLE and, optionally, a third word, one of two. `autostart' says the fleet view
+# starts that agent as it comes up (cb-0r6); `standby' says the opposite half of the same thing -
+# ARM it without starting it (cb-98u), so its row reads `standby' and its role's own trigger is what
+# starts it. Omitting both means neither, so every roster written before those beads - and the TABLE
+# below - behaves exactly as it did. They are mutually exclusive by arithmetic: both on one row is a
+# fourth word, which already refuses. Any OTHER third word, or a fourth word, is refused with exit 2
+# naming the file, the line and the word: a typo of `autostart' that read as "no" would be a fleet
+# that quietly does not start, which is the failure this refusal exists to prevent. `standby' on an
+# implementer row arms it the same way (cb-1or.2): its trigger is a planned, unclaimed bead. The words are exposed through `--autostart' and `--standby' ALONE - the default
+# output stays three columns, because `launch', `agent-state' and `cerebro--parse-fleet' all take
+# the last field as the KIND.
 #
 # Exact-match only, case-sensitive — the "it is spelt Storm" courtesy belongs to `launch`, where a
 # human types the name.
@@ -77,28 +84,19 @@ kind_of() {
   fi
 }
 
-# Where a consumer declares its own fleet, if it does: <consumer>/.cerebro/roster.conf. Found by
-# path arithmetic - this script lives at <consumer>/.claude/cerebro/scripts/roster - and
-# DELIBERATELY NOT by calling `consumer-root', which shells out to `git': `roster' needs no external
-# command beyond `dirname', and tests/launchers.sh runs a launcher with a PATH of `dirname' and
-# `bash' alone to keep it that way. Tidying this into that seam would break that guarantee with
-# nothing to say so.
+# Where a consumer declares its own fleet, if it does: <consumer>/.cerebro/roster.conf, at the root
+# `consumer-root' answers (cb-akc). This script still needs no external command of its own:
+# consumer-root's git step is optional and its failure swallowed, and tests/launchers.sh runs
+# roster with a PATH of `dirname' and `bash' alone to keep it that way - that TEST is the
+# guarantee, and it stays green because consumer-root answers the standard mount and the
+# self-mount with builtins (tests/consumer-root.sh proves the same under the same PATH).
 #
 # The file is TRACKED (beside .cerebro/project.conf, by a `.gitignore' negation inside the
 # otherwise-ignored .cerebro/ - cb-epr): which agents exist is a fact every clone needs, and an
 # ignored one would vanish on a fresh clone and silently revert the fleet to the names below.
 #
-# It REPLACES this table rather than merging with it. File order is load-bearing - `plan-bead' gives
-# the P4 triage pass to the first planner listed, and Cerebro takes the next unused implementer name
-# in file order - and a merged order is nobody's decision.
-#
-# Three candidate ROOTS, first hit wins (ah-ohc2). The arithmetic comes FIRST and needs no git, so
-# the standard mount keeps working under the narrowed PATH above. The last is for a consumer that
-# vendors cerebro as a submodule somewhere else - `vendor/cerebro', a sibling checkout - and is
-# tried only when `git' is actually there, skipped in silence when it is not. Under the narrowed
-# PATH that candidate simply does not resolve and roster falls back to the built-in table, which is
-# exactly what tests/launchers.sh asserts: DO NOT "simplify" this into a hard git dependency or a
-# call to `consumer-root', or that guarantee goes with it.
+# It REPLACES this table rather than merging with it. File order is load-bearing - Cerebro takes the
+# next unused implementer name in file order - and a merged order is nobody's decision.
 #
 # The file lived at <consumer>/.claude/cerebro-roster until cb-epr. At every candidate root, a file
 # still sitting there with none at the new path is a MIGRATION ERROR and exits 2: absence is the
@@ -121,28 +119,13 @@ consider_root() {
   fi
 }
 
-consider_root "$here/../../.."
-
-# Second candidate: cerebro serving ITSELF (cb-i3l.3). The mount is a symlink `.claude/cerebro -> ..',
-# so the arithmetic above walks THROUGH it - the kernel resolves `.claude/cerebro/scripts/../..' to
-# the directory above the repository - and roster went looking for a file beside somebody's clone.
-# The consumer file was then ignored in silence and the table below used instead, which looks exactly
-# like a working fleet until a name that is not on it fails to launch.
-#
-# The check is the same round trip `consumer-root' makes, and like everything else above it uses no
-# external command, so the narrowed-PATH guarantee survives. It runs BEFORE git for the same reason
-# the arithmetic does.
-if [[ -z "$CONSUMER_ROSTER" ]]; then
-  own_root="$(cd "$here/.." 2>/dev/null && pwd -P)" || own_root=""
-  if [[ -n "$own_root" && "$(cd "$own_root/.claude/cerebro" 2>/dev/null && pwd -P)" == "$own_root" ]]; then
-    consider_root "$own_root"
-  fi
-fi
-
-if [[ -z "$CONSUMER_ROSTER" ]] && command -v git >/dev/null 2>&1; then
-  superproject="$(git -C "$here" rev-parse --show-superproject-working-tree 2>/dev/null)" || superproject=""
-  consider_root "$superproject"
-fi
+# The consumer root is consumer-root's to answer and nobody else's (cb-akc): it validates the
+# standard mount, asks git for a superproject when git is there and swallows its absence, and
+# recognises cerebro serving itself - in that order, once, for every script. A standalone clone
+# has no consumer and consumer-root says so on stderr; that is the documented "run the built-in
+# fleet" case, so the message is dropped here and the table below answers.
+root="$("$here/consumer-root" 2>/dev/null)" || root=""
+consider_root "$root"
 
 if [[ -z "$CONSUMER_ROSTER" && -n "$OLD_ROSTER" ]]; then
   echo "roster: the fleet declaration has moved - run: mv .claude/cerebro-roster .cerebro/roster.conf" >&2
@@ -151,9 +134,9 @@ fi
 
 # $1 = what to call the source in a refusal: the consumer file's path, or `built-in table'.
 #
-# Emits FOUR tab-separated fields - NAME, ROLE, KIND, FLAG (`autostart' or empty). Only
-# `--autostart' looks at the fourth; every other mode drops it, so the public output is the three
-# columns every other reader assumes.
+# Emits FOUR tab-separated fields - NAME, ROLE, KIND, FLAG (`autostart', `standby' or empty). Only
+# `--autostart' and `--standby' look at the fourth; every other mode drops it, so the public output
+# is the three columns every other reader assumes.
 parse_rows() {
   local source="$1" lineno=0 name role third rest
   while IFS= read -r line; do
@@ -165,14 +148,14 @@ parse_rows() {
     read -r name role third rest <<<"$line"
     [[ -z "$name" ]] && continue
     case "$third" in
-      "" | autostart) ;;
+      "" | autostart | standby) ;;
       *)
-        echo "roster: $source line $lineno: '$third' is not a word roster knows - the third column is autostart or nothing" >&2
+        echo "roster: $source line $lineno: '$third' is not a word roster knows - the third column is autostart, standby or nothing" >&2
         exit 2
         ;;
     esac
     if [[ -n "$rest" ]]; then
-      echo "roster: $source line $lineno: '$rest' is one word too many - a row is NAME ROLE and optionally autostart" >&2
+      echo "roster: $source line $lineno: '$rest' is one word too many - a row is NAME ROLE and optionally autostart or standby" >&2
       exit 2
     fi
     printf '%s\t%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")" "$third"
@@ -232,13 +215,20 @@ case "${1:-}" in
       fi
     done < <(each_row)
     ;;
+  --standby)
+    while IFS=$'\t' read -r name role kind flag; do
+      if [[ "$flag" == "standby" ]]; then
+        printf '%s\n' "$name"
+      fi
+    done < <(each_row)
+    ;;
   --role)
     # A role can be held by more than one agent (two planners, ah-2p), so "who is the first of
-    # them" is a question with an answer rather than a tautology: file order is the answer, and
-    # `plan-bead' uses it to give the triage pass to exactly one planner.
+    # them" is a question with an answer rather than a tautology: file order is the answer.
+    # `plan-bead's reclaim loop and `agents/orchestrator.md's health check ask for the planners.
     role="${2:-}"
     if [[ -z "$role" ]]; then
-      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart]" >&2
+      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
       exit 2
     fi
     # `if' rather than `[[ ... ]] &&': the latter leaves the loop - and so this script - exiting
@@ -253,7 +243,7 @@ case "${1:-}" in
   --entry)
     name="${2:-}"
     if [[ -z "$name" ]]; then
-      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart]" >&2
+      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
       exit 2
     fi
     found=""
@@ -270,7 +260,7 @@ case "${1:-}" in
     fi
     ;;
   *)
-    echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart]" >&2
+    echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
     exit 2
     ;;
 esac

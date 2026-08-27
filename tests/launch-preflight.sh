@@ -18,30 +18,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
-pass() {
-  echo "ok - $1"
-}
-
-# The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
-# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
-# elisp, editor droppings - so the fixture was neither hermetic nor cheap (ah-qled.11). `emacs/` is
-# deliberately absent: no bash suite reads it, and it is the largest thing in the tree.
-copy_cerebro_into() {
-  local dest="$1" d
-  mkdir -p "$dest"
-  for d in scripts agents skills hooks; do
-    [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$dest/"
-  done
-}
-
-work_dir="$(mktemp -d)"
 stub_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir" "$stub_dir"' EXIT
+cleanup_add "$stub_dir"
 
 # launch-preflight refuses before anything else when `claude` is not on PATH, and these cases are
 # about the checkout rather than the install. The stub is never executed - the preflight only looks
@@ -51,8 +32,6 @@ cat > "$stub_dir/claude" <<'STUB'
 exit 0
 STUB
 chmod +x "$stub_dir/claude"
-
-git_q() { git -c user.name=test -c user.email=test@example.com "$@"; }
 
 # --- a throwaway consumer with an origin it can be behind -----------------------------------------
 #
@@ -67,35 +46,7 @@ git_q() { git -c user.name=test -c user.email=test@example.com "$@"; }
 # called anything else. Cases that do not care pass nothing and get `main`, so what they assert is
 # unchanged; the `trunk` case below is what the parameter exists for.
 make_consumer() {
-  local name="$1"
-  local branch="${2:-main}"
-  local origin="$work_dir/$name-origin.git"
-  local consumer="$work_dir/$name"
-  local seed="$work_dir/$name-seed"
-
-  git init -q --bare -b "$branch" "$origin"
-  git init -q -b "$branch" "$seed"
-  echo one > "$seed/file.txt"
-  git_q -C "$seed" add file.txt
-  git_q -C "$seed" commit -q -m init
-  git_q -C "$seed" push -q "$origin" "$branch"
-
-  git clone -q "$origin" "$consumer"
-  mkdir -p "$consumer/.claude" "$consumer/.cerebro"
-  copy_cerebro_into "$consumer/.claude/cerebro"
-  git clone -q "$origin" "$work_dir/$name-up"
-  echo "$consumer"
-}
-
-# Adds <n> commits to the consumer's origin, so the consumer is behind by that many. It pushes
-# whatever branch the clone is on, so it needs no branch argument of its own.
-advance_origin() {
-  local name="$1" n="$2" up="$work_dir/$1-up" i
-  for ((i = 0; i < n; i++)); do
-    echo "upstream $i" >> "$up/file.txt"
-    git_q -C "$up" commit -q -am "upstream $i"
-  done
-  git_q -C "$up" push -q origin HEAD
+  consumer_new "$1" --branch "${2:-main}" --origin --copy
 }
 
 # Runs the preflight the way a launcher does: from the consumer's own copy, so consumer-root resolves
@@ -153,6 +104,18 @@ echo "$out" | grep -q "uncommitted changes" || fail "dirty: expected a message n
 [[ "$(head_of "$c")" == "$before" ]] || fail "dirty: HEAD moved"
 grep -q "my edit" "$c/file.txt" || fail "dirty: the edit was lost"
 pass "a dirty checkout is refused, and the edit survives"
+
+# --- ...and the refusal reaches errors.jsonl, which is the file the navigator is sent to (cb-ccl) --
+#
+# The incident this comes from: this exact refusal, 274 times in a day, with stderr the only place it
+# was ever said and vterm never drawing it before the session died.
+log="$c/.cerebro/state/errors.jsonl"
+[[ -f "$log" ]] || fail "dirty: expected the refusal at $log"
+[[ "$(tail -n1 "$log" | jq -r .context)" == "launch Xavier" ]] \
+  || fail "dirty: expected context='launch Xavier', got: $(tail -n1 "$log")"
+tail -n1 "$log" | jq -r .message | grep -q "uncommitted changes" \
+  || fail "dirty: expected the logged message to name the changes, got: $(tail -n1 "$log")"
+pass "a refused launch is recorded in errors.jsonl"
 
 # --- a diverged checkout is refused ----------------------------------------------------------------
 c="$(make_consumer diverged)"
@@ -266,6 +229,10 @@ pass "a branch that does not exist on origin is reported rather than skipped in 
 # STALENESS, so this must stay as silent as it has always been.
 c="$(make_consumer unreachable main)"
 git -C "$c" remote set-url origin "$work_dir/no-such-origin.git"
+# The one case here that asserts on the WHOLE of stderr, so it is also the one that has to declare
+# an agent_cli: without a declaration `agent-cli` says so on every call (cb-d59.2, Q4), which is a
+# line about the CLI rather than about staleness and would make this case assert the wrong thing.
+printf 'agent_cli claude\n' > "$c/.cerebro/project.conf"
 before="$(head_of "$c")"
 set +e
 out="$(run_preflight "$c" 2>&1)"
@@ -374,5 +341,21 @@ run_preflight "$self_consumer" planner Xavier || fail "self-consumer: expected e
 [[ -f "$self_consumer/.claude/skills/plan-bead/SKILL.md" ]] \
   || fail "self-consumer: the skill link does not resolve to a SKILL.md"
 pass "cerebro mounted in its own checkout passes the preflight and gets working links"
+
+# --- an agent CLI this cerebro cannot run is refused, by agent-cli rather than by this script -----
+#
+# The provider is `scripts/agent-cli`'s answer since cb-d59.2, and the preflight asks rather than
+# spelling `claude` itself. A declaration it cannot run must therefore stop a launch here, where the
+# `claude`-missing refusal already does.
+c="$(make_consumer wrong-cli)"
+printf 'agent_cli emacs-doctor\n' > "$c/.cerebro/project.conf"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "wrong-cli: expected exit 2, got $status"
+echo "$out" | grep -q "is not an agent CLI cerebro knows" \
+  || fail "wrong-cli: expected agent-cli's own sentence, got: $out"
+pass "launch-preflight refuses when the consumer declares an agent CLI cerebro cannot run"
 
 echo "all launch-preflight tests passed"

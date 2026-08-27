@@ -13,14 +13,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # A fixture tree with its own scripts/ directory, symlinked to the real scripts, so
 # agent-state's own root-derivation (via scripts/consumer-root --shared) resolves inside
@@ -28,15 +22,7 @@ pass() {
 # consults it for the fleet.
 # A git repo, since consumer-root --shared asks git for the main .git directory.
 new_fixture() {
-  local tmp
-  tmp="$(mktemp -d)"
-  git init -q "$tmp"
-  git -C "$tmp" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-  mkdir -p "$tmp/.claude/cerebro/scripts"
-  ln -s "$repo_root/scripts/roster" "$tmp/.claude/cerebro/scripts/roster"
-  ln -s "$repo_root/scripts/agent-state" "$tmp/.claude/cerebro/scripts/agent-state"
-  ln -s "$repo_root/scripts/consumer-root" "$tmp/.claude/cerebro/scripts/consumer-root"
-  printf '%s' "$tmp"
+  consumer_new "$(fixture_name)" --link roster agent-state consumer-root
 }
 
 run_state() {
@@ -144,16 +130,6 @@ set -e
 rm -rf "$tmp"
 pass "rejects-phase-with-idle"
 
-# --- rejects-phase-with-done ---
-tmp="$(new_fixture)"
-set +e
-out="$(run_state "$tmp" Cyclops done --bead ah-f9c --phase merge --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "rejects-phase-with-done: expected exit 2, got $status"
-rm -rf "$tmp"
-pass "rejects-phase-with-done"
-
 # --- roster-check-is-not-a-regex ---
 tmp="$(new_fixture)"
 set +e
@@ -260,18 +236,22 @@ phase="$(jq -r '.phase' "$f")"; [[ "$phase" == "verify" ]] || fail "interactive-
 rm -rf "$tmp"
 pass "interactive-agent-asking-with-bead-and-role-phase"
 
-# --- interactive-agent-refuses-done ---
+# --- done-is-refused-from-every-name ---
+# cb-1or.2 retired `done': it is an unknown word now, from an interactive name and from an
+# implementer's alike, and neither writes a file.
 tmp="$(new_fixture)"
-set +e
-out="$(run_state "$tmp" Forge done --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "interactive-agent-refuses-done: expected exit 2, got $status"
-grep -q "done is an implementer's state" <<<"$out" \
-  || fail "interactive-agent-refuses-done: wrong message, got: $out"
-[[ -f "$(state_file "$tmp" Forge)" ]] && fail "interactive-agent-refuses-done: file was written"
+for who in Forge Cyclops; do
+  set +e
+  out="$(run_state "$tmp" "$who" done --bead ah-f9c --pid 1 2>&1)"
+  status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "done-is-refused-from-every-name: $who expected exit 2, got $status"
+  grep -q "unknown state 'done'" <<<"$out" \
+    || fail "done-is-refused-from-every-name: $who wrong message, got: $out"
+  [[ -f "$(state_file "$tmp" "$who")" ]] && fail "done-is-refused-from-every-name: $who file was written"
+done
 rm -rf "$tmp"
-pass "interactive-agent-refuses-done"
+pass "done-is-refused-from-every-name"
 
 # --- off-roster-non-interactive-name-still-refused ---
 tmp="$(new_fixture)"
@@ -468,18 +448,25 @@ run_state "$tmp" Moira working --phase sweep --pid 42
 rm -rf "$tmp"
 pass "a-state-that-is-not-waiting-has-a-null-wake-at"
 
-# --- waiting-is-refused-from-an-implementer ---
+# --- waiting-from-an-implementer-records-a-wake-at ---
+# Since cb-1or.1 `waiting` is every agent's end-of-pass state, an implementer's included: it
+# ends a pass with nothing in flight, so there is no bead on the file.
 tmp="$(new_fixture)"
-set +e
-out="$(run_state "$tmp" Cyclops waiting --wake-in 600 --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "waiting-is-refused-from-an-implementer: expected exit 2, got $status"
-grep -q "waiting is an interactive agent's state" <<<"$out" \
-  || fail "waiting-is-refused-from-an-implementer: wrong message, got: $out"
-[[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "waiting-is-refused-from-an-implementer: file was written"
+run_state "$tmp" Cyclops waiting --wake-in 600 --pid 42
+f="$(state_file "$tmp" Cyclops)"
+[[ -f "$f" ]] || fail "waiting-from-an-implementer-records-a-wake-at: no state file was written"
+[[ "$(jq -r '.state' "$f")" == "waiting" ]] \
+  || fail "waiting-from-an-implementer-records-a-wake-at: state was $(jq -r '.state' "$f")"
+[[ "$(jq -r '.bead' "$f")" == "null" ]] \
+  || fail "waiting-from-an-implementer-records-a-wake-at: bead was $(jq -r '.bead' "$f")"
+since="$(jq -r '.since' "$f")"
+wake_at="$(jq -r '.wake_at' "$f")"
+since_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$since")"
+wake_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$wake_at")"
+[[ $((wake_epoch - since_epoch)) -eq 600 ]] \
+  || fail "waiting-from-an-implementer-records-a-wake-at: wake_at is $((wake_epoch - since_epoch))s after since, wanted 600"
 rm -rf "$tmp"
-pass "waiting-is-refused-from-an-implementer"
+pass "waiting-from-an-implementer-records-a-wake-at"
 
 # --- waiting-without-wake-in-is-refused ---
 tmp="$(new_fixture)"
@@ -491,6 +478,15 @@ set -e
 grep -q -- "--wake-in is required with waiting" <<<"$out" \
   || fail "waiting-without-wake-in-is-refused: wrong message, got: $out"
 [[ -f "$(state_file "$tmp" Moira)" ]] && fail "waiting-without-wake-in-is-refused: file was written"
+# The same refusal holds for an implementer, which may write `waiting` since cb-1or.1.
+set +e
+out="$(run_state "$tmp" Cyclops waiting --pid 1 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "waiting-without-wake-in-is-refused: expected exit 2 for an implementer, got $status"
+grep -q -- "--wake-in is required with waiting" <<<"$out" \
+  || fail "waiting-without-wake-in-is-refused: wrong message for an implementer, got: $out"
+[[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "waiting-without-wake-in-is-refused: implementer file was written"
 rm -rf "$tmp"
 pass "waiting-without-wake-in-is-refused"
 

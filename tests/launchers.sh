@@ -19,32 +19,25 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
-pass() {
-  echo "ok - $1"
-}
+# The fake sessions the duplicate-refusal cases start, killed by the EXIT trap the library
+# installs - it calls `suite_cleanup' first, before removing anything, so a failed assertion
+# leaves none of them running (`fail' exits, so per-case cleanup would not run). Never a second
+# `trap ... EXIT': bash keeps one per signal, and a later one would silently replace the library's.
+strays=()
 
-# The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
-# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
-# elisp, editor droppings - so the fixture was neither hermetic nor cheap (ah-qled.11). `emacs/` is
-# deliberately absent: no bash suite reads it, and it is the largest thing in the tree.
-copy_cerebro_into() {
-  local dest="$1" d
-  mkdir -p "$dest"
-  for d in scripts agents skills hooks; do
-    [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$dest/"
-  done
+suite_cleanup() {
+  local p
+  for p in ${strays+"${strays[@]}"}; do kill "$p" 2>/dev/null || true; done
 }
 
 # A stub `claude` on PATH ahead of the real one, so a launcher's `exec claude ...` runs this instead
 # of starting a real session. It prints the environment and args it was handed, which is exactly what
 # these assertions need and nothing a real session would do.
 stub_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir"' EXIT
+cleanup_add "$stub_dir"
 
 cat > "$stub_dir/claude" <<'STUB'
 #!/usr/bin/env bash
@@ -67,11 +60,7 @@ chmod +x "$stub_dir/claude"
 # `git init` matters: launch-preflight compares `git rev-parse --show-toplevel` against the consumer
 # and skips its checks entirely when they differ, so a fixture that is not a working tree would make
 # these cases silently assert nothing.
-fixture_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir"' EXIT
-git init -q "$fixture_dir"
-mkdir -p "$fixture_dir/.claude" "$fixture_dir/.cerebro"
-copy_cerebro_into "$fixture_dir/.claude/cerebro"
+fixture_dir="$(consumer_new fixture --copy)"
 fixture_scripts="$fixture_dir/.claude/cerebro/scripts"
 # A consumer that runs implementers must declare a fast gate, or launch-preflight refuses them
 # (ah-qled.7.1). The fixture declares one for the same reason a real consumer does: nothing here
@@ -157,8 +146,8 @@ done <<<"$roster_out"
 pass "roster --implementers matches the implementer rows and excludes interactive names"
 
 # --role exists for the one question a role with more than one agent raises: which of them is it?
-# `plan-bead` asks it to decide which planner runs the triage pass, so that two planning sessions do
-# not walk the navigator through the same P4 backlog twice.
+# `plan-bead`'s reclaim loop and `agents/orchestrator.md`'s health check both ask it for the
+# planners.
 role_out="$("$builtin_dir/roster" --role planner)"
 expected_planners="$(printf '%s\n' "$roster_out" | awk -F'\t' '$2 == "planner" {print $1}')"
 [[ "$role_out" == "$expected_planners" ]] \
@@ -208,12 +197,7 @@ pass "roster --bogus exits 2"
 # Tracked, by a `.gitignore` negation inside the otherwise-ignored `.cerebro/` (cb-epr), beside
 # `.cerebro/project.conf`: which agents exist is a fact every clone needs, and an ignored file would
 # vanish on a fresh clone with the fleet silently reverting to the X-Men.
-# Cleaned up at the end of this block rather than by the EXIT trap: the cases below rewrite that
-# trap with their own directories, and a name added here would be dropped from it again.
-roster_consumer="$(mktemp -d)"
-git init -q "$roster_consumer"
-mkdir -p "$roster_consumer/.claude" "$roster_consumer/.cerebro"
-copy_cerebro_into "$roster_consumer/.claude/cerebro"
+roster_consumer="$(consumer_new roster-consumer --copy)"
 roster_at="$roster_consumer/.claude/cerebro/scripts/roster"
 consumer_roster_file="$roster_consumer/.cerebro/roster.conf"
 
@@ -239,8 +223,8 @@ expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\
 pass "consumer roster: replaces the built-in table, in file order, past comments and blanks"
 
 # It replaces rather than merges: a name from the built-in table must not survive alongside it, or
-# file order - which decides which planner triages and which implementer name Cerebro takes next -
-# would be nobody's decision.
+# file order - which decides which implementer name Cerebro takes next - would be nobody's
+# decision.
 "$roster_at" | grep -q "Xavier" && fail "consumer roster: the built-in table was merged in, not replaced"
 pass "consumer roster: the built-in table is replaced, not merged"
 
@@ -281,10 +265,11 @@ pass "consumer roster: all four modes read it, and KIND is still derived"
 # because `launch`, `agent-state` and `cerebro--parse-fleet` all assume exactly three fields.
 cat > "$consumer_roster_file" <<'ROSTER'
 Ada           planner        autostart
-Grace         planner
+Grace         planner        standby
+Hopper        reviewer       standby
 Turing        implementer    autostart
 ROSTER
-expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nTuring\timplementer\timplementer')"
+expected_rows="$(printf 'Ada\tplanner\tinteractive\nGrace\tplanner\tinteractive\nHopper\treviewer\tinteractive\nTuring\timplementer\timplementer')"
 [[ "$("$roster_at")" == "$expected_rows" ]] \
   || fail "roster autostart: default output should still be three columns, got: $("$roster_at")"
 pass "roster: the autostart column leaves the default three-column output alone"
@@ -292,6 +277,13 @@ pass "roster: the autostart column leaves the default three-column output alone"
 [[ "$("$roster_at" --autostart)" == "$(printf 'Ada\nTuring')" ]] \
   || fail "roster --autostart: expected Ada and Turing in file order, got: $("$roster_at" --autostart)"
 pass "roster --autostart lists the declared names, in file order"
+
+# `standby` is the second third-column word (cb-98u): arm this agent, do not start it. It reads
+# through its own mode for the same reason `autostart` does - the default output stays three
+# columns - and the two words are mutually exclusive by the fourth-word refusal alone.
+[[ "$("$roster_at" --standby)" == "$(printf 'Grace\nHopper')" ]] \
+  || fail "roster --standby: expected Grace and Hopper in file order, got: $("$roster_at" --standby)"
+pass "roster --standby lists the declared names, in file order"
 
 [[ "$("$roster_at" --implementers)" == "Turing" ]] \
   || fail "roster --implementers with the column: got $("$roster_at" --implementers)"
@@ -308,11 +300,17 @@ status=$?
 [[ -z "$out" ]] || fail "built-in roster --autostart: expected nothing, got: $out"
 pass "roster --autostart is silent, and exits 0, when no row declares it"
 
+out="$("$builtin_dir/roster" --standby)"
+status=$?
+[[ $status -eq 0 ]] || fail "built-in roster --standby: expected exit 0, got $status"
+[[ -z "$out" ]] || fail "built-in roster --standby: expected nothing, got: $out"
+pass "roster --standby is silent, and exits 0, when no row declares it"
+
 # A third word that is not `autostart` refuses - and the refusal is the parser's, so every mode
 # refuses, not only the one that reads the column. `exit` inside a `$( )` ends the subshell alone,
 # which is what this asserts is propagated.
 printf 'Ada  planner  autostrat\n' > "$consumer_roster_file"
-for mode in "" "--autostart" "--entry Ada" "--implementers"; do
+for mode in "" "--autostart" "--standby" "--entry Ada" "--implementers"; do
   set +e
   # shellcheck disable=SC2086
   out="$("$roster_at" $mode 2>/dev/null)"
@@ -328,8 +326,10 @@ for mode in "" "--autostart" "--entry Ada" "--implementers"; do
     || fail "roster ${mode:-(bare)}: the refusal should name the line, got: $err"
   echo "$err" | grep -q "roster.conf" \
     || fail "roster ${mode:-(bare)}: the refusal should name the file, got: $err"
+  echo "$err" | grep -q "standby" \
+    || fail "roster ${mode:-(bare)}: the refusal should name every accepted word, got: $err"
 done
-pass "roster: a third word that is not autostart refuses, naming the file, line and word"
+pass "roster: a third word that is neither autostart nor standby refuses, naming the file, line and word"
 
 printf 'Ada  planner  autostart  extra\n' > "$consumer_roster_file"
 set +e
@@ -342,6 +342,34 @@ set -e
 echo "$err" | grep -q "one word too many" \
   || fail "roster with a fourth word: expected the 'one word too many' line, got: $err"
 pass "roster: a fourth word refuses"
+
+# The two words are mutually exclusive, and need no rule of their own: `autostart standby` on one
+# row is a fourth word, which already refuses.
+printf 'Ada  planner  autostart  standby\n' > "$consumer_roster_file"
+set +e
+out="$("$roster_at" 2>/dev/null)"
+status=$?
+err="$("$roster_at" 2>&1 >/dev/null)"
+set -e
+[[ $status -eq 2 ]] || fail "roster with both words: expected exit 2, got $status"
+[[ -z "$out" ]] || fail "roster with both words: expected nothing on stdout, got: $out"
+echo "$err" | grep -q "one word too many" \
+  || fail "roster with both words: expected the 'one word too many' line, got: $err"
+pass "roster: autostart and standby on one row refuse as a fourth word"
+
+# `standby` on an implementer row arms it like any other (cb-1or.2): since cb-1or.1 the implementer
+# trigger is a real condition - a planned, unclaimed bead - so the refusal that stood here guarded
+# nothing. The word is accepted in every mode, and the default output stays three columns.
+printf 'Ada  planner\nTuring  implementer  standby\n' > "$consumer_roster_file"
+[[ "$("$roster_at" --standby)" == "Turing" ]] \
+  || fail "roster --standby: expected Turing, got: $("$roster_at" --standby)"
+"$roster_at" >/dev/null 2>&1 || fail "roster: a standby implementer row should be accepted"
+turing_row="$("$roster_at" | grep '^Turing')"
+[[ "$turing_row" == "$(printf 'Turing\timplementer\timplementer')" ]] \
+  || fail "roster: the standby word must not reach the KIND column, got: $turing_row"
+[[ "$("$roster_at" --implementers)" == "Turing" ]] \
+  || fail "roster --implementers: expected Turing, got: $("$roster_at" --implementers)"
+pass "roster: standby on an implementer row arms it like any other"
 rm -f "$consumer_roster_file"
 
 # An empty file says nothing, so the built-in table answers - and so does a file of nothing but
@@ -377,6 +405,12 @@ out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at" --autostart)"
 [[ "$out" == "Ada" ]] || fail "roster --autostart under a narrowed PATH: got: $out"
 rm -f "$consumer_roster_file"
 pass "roster --autostart needs nothing but bash"
+
+printf 'Ada  planner  standby\n' > "$consumer_roster_file"
+out="$(PATH="$bare_path_dir" "$(command -v bash)" "$roster_at" --standby)"
+[[ "$out" == "Ada" ]] || fail "roster --standby under a narrowed PATH: got: $out"
+rm -f "$consumer_roster_file"
+pass "roster --standby needs nothing but bash"
 
 # --- a roster left at the retired .claude/ path refuses, loudly (cb-epr) ------------------------
 #
@@ -419,18 +453,7 @@ pass "roster: the new path wins when both exist"
 # roster too, from a SECOND candidate: `<superproject>/.cerebro/roster.conf', tried only when git
 # is on PATH and skipped silently when it is not - which is what keeps the narrowed-PATH guarantee
 # above true. Candidate order matters: the arithmetic first, so the standard mount never needs git.
-alt_cerebro="$(mktemp -d)/cerebro-src"
-mkdir -p "$alt_cerebro/scripts"
-cp "$repo_root/scripts/roster" "$alt_cerebro/scripts/roster"
-git init -q "$alt_cerebro"
-git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com add -A
-git -C "$alt_cerebro" -c user.name=test -c user.email=test@example.com commit -q -m cerebro
-
-alt_consumer="$(mktemp -d)/alt"
-git init -q "$alt_consumer"
-git -C "$alt_consumer" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m init
-git -C "$alt_consumer" -c user.name=test -c user.email=test@example.com \
-  -c protocol.file.allow=always submodule add -q "$alt_cerebro" vendor/cerebro
+alt_consumer="$(consumer_with_submodule alt vendor/cerebro)"
 alt_roster_at="$alt_consumer/vendor/cerebro/scripts/roster"
 
 [[ "$("$alt_roster_at")" == "$roster_out" ]] \
@@ -476,7 +499,7 @@ echo "$out" | grep -q "roster.conf" \
 echo "$out" | grep -q "the submodule is behind" \
   && fail "launch Grace: a consumer-declared role is not a stale submodule, got: $out"
 pass "a consumer-declared role with no agent file anywhere is refused by its right cause"
-rm -rf "$roster_consumer" "$bare_path_dir"
+rm -rf "$bare_path_dir"
 
 # --- launch, generically over every roster row ---
 
@@ -502,9 +525,21 @@ while IFS=$'\t' read -r name role kind; do
   echo "$out" | grep -q '^ARG:--permission-mode$' || fail "launch $name: missing --permission-mode"
   echo "$out" | grep -A1 '^ARG:--permission-mode$' | grep -q '^ARG:auto$' || fail "launch $name: expected auto"
 
-  # The prompt is the last ARG, and it has one embedded newline, so it prints as the last two
-  # lines of output (`tac` is not on macOS by default, so this avoids it).
-  prompt="$(echo "$out" | tail -2)"
+  # The marker sentence, which since cb-d59.3 opens the PROMPT rather than riding on a flag:
+  # scripts/agent-alive and cerebro--session-args-p cut both their needles from it, so no
+  # provider's flag spelling is evidence any more - and the prompt is the one argv slot every
+  # agent CLI accepts.
+  marker_line="This session is $name of the cerebro fleet rooted at "
+  prompt="$(echo "$out" | sed -n "/^ARG:${marker_line}/,\$p")"
+  [[ -n "$prompt" ]] \
+    || fail "launch $name: the prompt does not carry the marker, so the fleet view cannot prove the session"
+  echo "$prompt" | grep -qF "${fixture_dir%/}/" \
+    || fail "launch $name: the marker names no path under the consumer, got: $out"
+  echo "$out" | grep -q '^ARG:--append-system-prompt$' \
+    && fail "launch $name: --append-system-prompt is still passed"
+
+  # The prompt is the last ARG: the marker, a blank line, then the instruction. It is read from
+  # the marker line onwards rather than by counting lines from the end.
   echo "$prompt" | grep -q "$name" || fail "launch $name: prompt does not name $name"
   echo "$prompt" | grep -q "$role" || fail "launch $name: prompt does not name $role"
   echo "$prompt" | grep -q "fill the buffer" && fail "launch $name: prompt still has the old per-role drift"
@@ -590,17 +625,12 @@ echo "$out" | grep -q "^BEADS_ACTOR=${first_implementer}\$" \
   || fail "launch $first_implementer: expected BEADS_ACTOR=$first_implementer, got: $out"
 pass "launch $first_implementer sets BEADS_ACTOR=$first_implementer"
 
-
 # --- a launcher syncs the consumer repo's links before starting a session (ah-cuc) ---
 #
 # A consumer of its own, deliberately: this case asserts a link that did *not* exist beforehand, and
 # the cases below it write `.cerebro/models.conf`, which the fixture above must never have. Two temp
 # directories is the test being honest, not duplication - what had to go is the *enclosing* checkout.
-consumer_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir"' EXIT
-git init -q "$consumer_dir"
-mkdir -p "$consumer_dir/.claude" "$consumer_dir/.cerebro"
-copy_cerebro_into "$consumer_dir/.claude/cerebro"
+consumer_dir="$(consumer_new own-consumer --copy)"
 # A gate, for the same reason the fixture above declares one: the implementer cases below would
 # otherwise be refused at launch (ah-qled.7.1).
 printf 'gate_fast make check\n' > "$consumer_dir/.cerebro/project.conf"
@@ -697,7 +727,7 @@ pass "a blocked sync aborts the launch before the stub is reached"
 # reaches launch-preflight's own `claude` check - so this cannot pass on a machine that
 # happens to have `claude` installed under /usr/bin or /bin.
 no_claude_dir="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir" "$consumer_dir" "$no_claude_dir"' EXIT
+cleanup_add "$no_claude_dir"
 ln -s "$(command -v dirname)" "$no_claude_dir/dirname"
 # launch-preflight is exec'd directly (its own `#!/usr/bin/env bash' shebang), so `env'
 # needs to find `bash' under this PATH too, not only the shell invoking launch below.
@@ -715,11 +745,7 @@ pass "launch Forge refuses with one line when claude is not on PATH"
 #
 # Its own consumer again: this one has an agent file removed from its copy of the submodule, so it
 # cannot share a consumer with anything that expects a complete one.
-consumer_dir2="$(mktemp -d)"
-trap 'rm -rf "$stub_dir" "$fixture_dir" "$no_claude_dir" "$consumer_dir" "$consumer_dir2"' EXIT
-git init -q "$consumer_dir2"
-mkdir -p "$consumer_dir2/.claude"
-copy_cerebro_into "$consumer_dir2/.claude/cerebro"
+consumer_dir2="$(consumer_new behind-consumer --copy)"
 rm -f "$consumer_dir2/.claude/cerebro/agents/architect.md"
 set +e
 out="$(run_launcher_at "$consumer_dir2/.claude/cerebro/scripts" launch Forge 2>&1)"
@@ -806,5 +832,117 @@ set -e
 echo "$err" | grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" \
   || fail "self-consumer roster at the old path: expected the mv line, got: $err"
 pass "self-consumer roster: the retired .claude/ path refuses too"
+
+# --- launch refuses a name whose session is already up in this fleet (cb-63m) ---
+#
+# Two sessions of one name is the one thing the fleet view cannot see: the newer one overwrites the
+# state file with its own pid and the older disappears from every reading. Only the view's `s'
+# refused a second session, and only for a name it could already see - the terminal was the way
+# round it. The refusal belongs where the name is known, which is here.
+#
+# The fake session is the recipe tests/agent-alive.sh uses: a script file (never `bash -c', whose
+# implicit exec would drop its arguments) carrying cerebro's marker sentence, which since cb-d59.3
+# is the whole proof of which name and which consumer's fleet the session belongs to.
+# `sed -n 1p' rather than `head -n 1': head closes the pipe on its first line, and under
+# `set -o pipefail' roster's EPIPE would kill this suite rather than name an implementer.
+dup_name="$("$fixture_scripts/roster" --implementers | sed -n 1p)"
+[[ -n "$dup_name" ]] || fail "duplicate-launch: the fixture roster names no implementer"
+
+printf '#!/usr/bin/env bash\nsleep 30\n' > "$fixture_dir/fake-session"
+chmod +x "$fixture_dir/fake-session"
+bash "$fixture_dir/fake-session" --name "$dup_name" \
+  "This session is $dup_name of the cerebro fleet rooted at ${fixture_dir%/}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it." &
+dup_pid=$!
+# The `sleep' is a child of that bash rather than the bash itself; both are registered, or the
+# child outlives a kill of the wrapper for the rest of its thirty seconds.
+strays+=("$dup_pid")
+for child in $(pgrep -P "$dup_pid" 2>/dev/null || true); do strays+=("$child"); done
+
+mkdir -p "$fixture_dir/.cerebro/state"
+printf '{"state":"working","pid":%s}\n' "$dup_pid" \
+  > "$fixture_dir/.cerebro/state/$dup_name.state.json"
+
+set +e
+dup_out="$(run_launcher launch "$dup_name" 2>&1)"
+dup_status=$?
+set -e
+[[ $dup_status -eq 2 ]] || fail "duplicate-launch: expected exit 2, got $dup_status: $dup_out"
+echo "$dup_out" | grep -q "is already running in this fleet (pid $dup_pid); end it first" \
+  || fail "duplicate-launch: expected the refusal naming the pid, got: $dup_out"
+echo "$dup_out" | grep -q '^ARG:' \
+  && fail "duplicate-launch: the stub claude ran anyway: $dup_out"
+pass "launch refuses a name whose session is already up in this fleet"
+
+# --- and the refusal is agent-alive's rule, not a bare pid check ---
+#
+# $$ is this suite: a live pid whose args carry no `--name'. A launcher that only asked whether the
+# pid existed would refuse here too, and every state file left behind by a killed session would
+# make its name unlaunchable.
+printf '{"state":"working","pid":%s}\n' "$$" \
+  > "$fixture_dir/.cerebro/state/$dup_name.state.json"
+live_out="$(run_launcher launch "$dup_name")"
+echo "$live_out" | grep -q '^ARG:--name$' \
+  || fail "recycled-pid launch: expected a normal launch, got: $live_out"
+pass "launch is not fooled by a live pid that is not that name's session"
+
+rm -f "$fixture_dir/.cerebro/state/$dup_name.state.json"
+
+# --- the seam: launch execs what agent-cli names, and spells no provider flag itself (cb-d59.2) ---
+#
+# Its own consumer, built with --copy so its `scripts/` are copies rather than symlinks: this case
+# OVERWRITES `agent-cli` inside the fixture, and overwriting a symlink would rewrite this
+# checkout's own script.
+#
+# The assertion is that `launch` carries no provider knowledge, not that one particular table row
+# is right - so the fixture's agent-cli answers with a provider that does not exist, and the case
+# passes only if every token the stub sees came from it.
+fake_consumer="$(consumer_new fake-provider --copy)"
+printf 'gate_fast make check\n' > "$fake_consumer/.cerebro/project.conf"
+cat > "$fake_consumer/.claude/cerebro/scripts/agent-cli" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  --binary) echo fake-cli ;;
+  --check)  exit 0 ;;
+  --argv)
+    shift
+    name=""
+    while [ $# -gt 0 ]; do
+      [ "$1" = "--name" ] && name="$2"
+      shift
+    done
+    printf '%s\0' --dialect fake --who "$name"
+    ;;
+  --prompt-argv) printf '%s\0' "$2" ;;
+  *) echo fake ;;
+esac
+FAKE
+chmod +x "$fake_consumer/.claude/cerebro/scripts/agent-cli"
+
+fake_dir="$(mktemp -d)"
+cleanup_add "$fake_dir"
+cp "$stub_dir/claude" "$fake_dir/fake-cli"
+cp "$stub_dir/claude" "$fake_dir/claude"
+
+out="$(PATH="$fake_dir:$PATH" bash "$fake_consumer/.claude/cerebro/scripts/launch" Xavier --model sonnet 2>/dev/null)"
+echo "$out" | grep -q '^ARG:--dialect$' \
+  || fail "fake provider: launch did not exec the binary agent-cli named, got: $out"
+pass "launch execs the binary agent-cli names, not claude"
+
+expected="ARG:--dialect
+ARG:fake
+ARG:--who
+ARG:Xavier
+ARG:--model
+ARG:sonnet"
+[[ "$(echo "$out" | grep '^ARG:' | head -6)" == "$expected" ]] \
+  || fail "fake provider: expected the fake arm's tokens then the caller's own, got: $out"
+for flag in --agent --remote-control --permission-mode --append-system-prompt --settings; do
+  echo "$out" | grep -q "^ARG:${flag}\$" \
+    && fail "fake provider: launch spelt $flag itself, which is the claude arm's to spell"
+done
+echo "$out" | tail -2 | grep -q "Xavier" \
+  || fail "fake provider: the prompt should still be the last argument, got: $out"
+pass "launch passes exactly the argv agent-cli emits, and adds none of its own"
 
 echo "all launcher tests passed"

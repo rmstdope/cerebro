@@ -5,24 +5,24 @@ buffer showing every agent on `scripts/roster` — with its
 state, and for one working a bead (an implementer, or one of the interactive agents
 mid-verification or mid-triage) the bead it is on and for how long.
 
-## Getting `M-x cerebro`
+## Getting the fleet view
 
-Nothing to install by hand: `scripts/sync-symlinks.sh` links
-`templates/consumer-dir-locals.el` in as the consumer's root `.dir-locals.el`, so the command
-exists for every contributor the moment any file of the project is open. Emacs asks each user
-once whether that file's `eval` form may run — answer `!`. The form only registers an autoload,
-so cerebro.el is read on the first `M-x cerebro` and not before.
+Nothing to install by hand — from anywhere inside the consumer:
 
-Two cases where you do it yourself:
+```bash
+.claude/cerebro/scripts/cerebro
+```
 
-- **The project already has a `.dir-locals.el`.** Emacs reads one per directory, so the sync
-  leaves it alone and says so. Copy the `eval` form out of the template into it.
-- **You want the command everywhere, not only inside the project.** In your init:
+That opens the fleet view in a fresh Emacs, loading your own init (which is where vterm, and so
+the view's live sessions, comes from). `EMACS` names the binary, for an Emacs.app that is not on
+`PATH`.
 
-  ```elisp
-  (add-to-list 'load-path "/path/to/consumer/.claude/cerebro/emacs")
-  (autoload 'cerebro "cerebro" "List the Cerebro agent fleet." t)
-  ```
+To have `M-x cerebro` in the Emacs you already work in, add to your init:
+
+```elisp
+(add-to-list 'load-path "/path/to/consumer/.claude/cerebro/emacs")
+(autoload 'cerebro "cerebro" "List the Cerebro agent fleet." t)
+```
 
 It supports a live detail window that follows the list selection, and starting/killing agents
 from the list:
@@ -62,10 +62,10 @@ The glyph carries the state and the weight carries the urgency:
 | Row                | Means                                                          |
 |--------------------|----------------------------------------------------------------|
 | green `●`          | working, or an interactive agent that is up                     |
-| yellow `●`         | idle — a session is up with no bead, which may want a nudge     |
-| yellow `◐`         | waiting — an interactive role between passes; the For column says when it wakes, and `waiting !` means it answered neither poke |
+| blue `◆`           | idle — a session is up with no bead, which may want a nudge     |
+| yellow `◐`         | waiting — an agent between passes, an implementer's included; it is ended within half a minute |
+| blue `◌`           | standby — the view ended this agent after its pass and starts a fresh one when the trigger in the For column fires; `RET` shows its last pass |
 | yellow `?`, **bold** | asking: it needs an answer from you, and the whole row says so |
-| green `◍`          | done, and about to be replaced by a fresh session               |
 | grey `○`           | dead — nobody is there                                          |
 
 Bold is only ever "this row wants you", so it stays worth noticing: idle and dead share the quiet
@@ -77,11 +77,13 @@ finished session used to come back green hours later once the operating system h
 something else. The fleet view now deletes an agent's state file whenever it ends that agent's
 session, so the file rarely outlives the pid in the first place.
 
-Idle and working are the same dot and differ only in colour, which is what the State column beside
-them spells out in words. The yellow is the `cerebro-idle` face — its own face rather than the stock
-`warning`, which Emacs defines as DarkOrange **and bold**: orange where yellow was wanted, and bold
-where bold is supposed to mean something else. Customize that one face if gold does not read against
-your theme.
+Idle is the one diamond in the list, so it shares neither shape nor colour with dead's grey ring or
+working's green dot — both of which it did share one of, in turn, and was mistaken for each time. The
+other blue is standby's `◌`, hollow where idle is filled. The gold that `waiting` and `unknown` carry
+is the `cerebro-waiting` face and the blue is `cerebro-idle`; both are their own faces rather than
+the stock `warning`, which Emacs defines as DarkOrange **and bold**: orange where it was not wanted,
+and bold where bold is supposed to mean something else. Customize `cerebro-idle` if blue does not
+read against your theme, and `cerebro-waiting` if gold does not.
 
 ## The bead panel
 
@@ -188,11 +190,14 @@ Implementers are interactive sessions that take one bead each, so they cannot en
 same five-second poll that refreshes the list acts on what each one reports in
 `.cerebro/state/<name>.state.json`:
 
-- **`done`** — the bead is merged, closed and cleaned up. The session is ended and a fresh one
-  started for the next bead, which is how a session's context stays one bead deep.
-- **`done` with `.cerebro/state/<name>.stop` present** — ended, and no replacement; the flag is
-  removed with it. `s` on a name with a flag removes it too, and says so. That is what "stop an
-  implementer" means: it finishes what it is on, and then does not come back until started again.
+- **`waiting`** — the pass is over: the bead is merged, closed and cleaned up, or it was handed
+  back, or there was nothing to claim (cb-1or.1). The session is ended half a minute later and its
+  buffer kept; a fresh one starts when a planned, unclaimed bead exists, which is how a session's
+  context stays one bead deep.
+- **`waiting` with `.cerebro/state/<name>.stop` present** — ended, and no replacement; the flag is
+  removed with it and the name disarmed. `s` on a name with a flag removes it too, and says so. That
+  is what "stop an implementer" means: it finishes what it is on, and then does not come back until
+  started again.
 - **`asking`** — blocked on a question only the navigator can answer. Answer it in the detail
   window. After `cerebro-answer-timeout` (900s) with no answer, the session is told to hand the
   bead to the `human` queue and finish, once, so a fleet left alone does not sit blocked.
@@ -202,8 +207,46 @@ same five-second poll that refreshes the list acts on what each one reports in
 Only implementers Emacs itself started are supervised: one running in somebody's own terminal is
 theirs to end, and a dead one stays dead rather than fighting your own `k`.
 
+## Supervising the interactive roles
+
+The same poll runs the interactive roles the same way, and for the same reason: a session that
+carries one pass is one whose context is that pass and nothing before it.
+
+- **`waiting`**, or **`idle`** for a role that ends its pass with that instead (Forge) — the session
+  is ended `cerebro-end-grace` (30s) later, long enough for the one line it prints after writing the
+  state to land. Its **buffer is kept** as the record of the pass, renamed `*fleet: <Name> (ended
+  HH:MM)*` and made read-only; the row goes to **standby** and `RET` shows it.
+- **standby** — nothing is running, and the For column says what would start one: `→ buffer < 4` for
+  a planner, `→ merged, unverified` for the verifier, a countdown (`→43m`, `→21h04`, `→due`) for a
+  role on a cadence. When the trigger comes true the view starts a fresh session and says which and
+  why: `cerebro: started Psylocke — 2 merged, unverified`.
+  ` gh?` on a standby row means `gh` did not answer the fleet view — Moira and Cypher then come
+  back hourly only, until it does.
+- **`waiting` or `idle` with `.cerebro/state/<name>.stop` present** — ended at once, whatever the
+  grace says: nothing is in flight for it to protect. The flag is removed with it and the name is
+  disarmed, so nothing starts in its place.
+
+**Arming lives in this Emacs and nowhere else.** `s` — and `autostart` in `roster.conf` — arms a
+role; `k` and `f` disarm it. Nothing is written to any file, so a new Emacs starts nothing until you
+start something: opening the fleet view does not resurrect a fleet you took down last night.
+
+`f` on a running role writes the flag and says *told <Name> to finish its pass - it stays down until
+you press s*; on a standby row there is no pass to finish, and it says *<Name> is on standby - press
+k to disarm it, or s to start it now*. `k` on a standby row asks *Disarm <Name>?* and forgets the
+kept buffer.
+
+`cerebro-wake-intervals` is no longer a sleep the role asks for: it is the **floor between two
+starts** of one role, which is what stops a trigger its pass cannot clear — a P0 nobody can plan, a
+verification you have not run — restarting it on every tick.
+
 Run the tests with:
 
 ```bash
 emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit
 ```
+
+The suite exercises the pure core on plain data, plus one **reader contract** per impure reader:
+the real reader run against a fixture, its output handed to the pure function that consumes it.
+When you add a reader, add its contract case in the same change — that is the only test that can
+tell "this pure function is right" from "this pure function is right about inputs nobody
+produces".

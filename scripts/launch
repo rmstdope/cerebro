@@ -17,14 +17,14 @@
 # **This starts one interactive session and nothing else.** It does not loop, it reads no flags, and
 # it writes no files — the one exception is the skill and agent symlinks under .claude/, which
 # `launch-preflight` re-syncs right before exec (ah-cuc), refusing with one line rather than exiting
-# silently if `claude` is not on PATH or the submodule never brought the role's agent file in
+# silently if the agent CLI is not on PATH or the submodule never brought the role's agent file in
 # (ah-bri).
 #
-# Every session starts with Remote Control on, named after its agent, so it can be read and steered
-# from claude.ai/code or the Claude app (ah-qym). `--remote-control` degrades rather than fails —
-# without an eligible login or network it shows a notification and the session runs on as a normal
-# one — so it is unconditional. The name is passed explicitly: the flag's value is optional, and a
-# bare `--remote-control` would take the next argument as the session name.
+# Since cb-d59.2 this file spells no provider flag at all: which CLI a session runs on, and every
+# argv token between the binary and the caller's own arguments, is `scripts/agent-cli`'s answer.
+# What each arm does with a name, a model, a marker sentence and a settings path - Remote Control
+# included (ah-qym) - lives there, in one place, so a second provider is an arm rather than a
+# rewrite of this file and `launch-preflight`.
 
 set -euo pipefail
 
@@ -33,7 +33,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 names() { "$here/roster" | while IFS=$'\t' read -r n _ _; do printf '%s\n' "$n"; done; }
 
 usage() {
-  echo "usage: launch <Name> [claude args...]" >&2
+  echo "usage: launch <Name> [agent CLI args...]" >&2
   names >&2
   exit 2
 }
@@ -68,6 +68,28 @@ IFS=$'\t' read -r _ role kind <<<"$entry"
 # --actor default chain: $BEADS_ACTOR, git user.name, $USER).
 export BEADS_ACTOR="$name"
 
+# Where this fleet lives, asked once. Guarded, and left empty when there is none: this launcher
+# runs from outside a consumer in the tests, and everything below that needs a root checks first.
+consumer_root=""
+if ! consumer_root="$("$here/consumer-root" --shared 2>/dev/null)"; then
+  consumer_root=""
+fi
+
+# A name whose session is already alive in this fleet is refused: two sessions of one name is the
+# one thing the fleet view cannot see - the newer overwrites the state file with its own pid and
+# the older disappears from every reading - and the terminal was the way it happened. `agent-alive`
+# applies the same rule `cerebro--session-alive-p` does, pid and name and this consumer's root, so
+# the view's own restart, which deletes the state file before it launches, is never refused here.
+if [[ -n "$consumer_root" ]] && "$here/agent-alive" "$name" 2>/dev/null; then
+  pid="$(jq -r '.pid // "?"' "$consumer_root/.cerebro/state/$name.state.json" 2>/dev/null || echo '?')"
+  # Said and recorded by `launch-refused` (cb-ccl): this is the one refusal of this script's the
+  # fleet view can hit, so it is the one whose line must survive a vterm buffer that died before it
+  # was drawn. The usage / not-on-the-roster / misspelt refusals above are terminal typos and keep
+  # their own `launch:` lines.
+  "$here/launch-refused" "$name" "$name is already running in this fleet (pid $pid); end it first"
+  exit 2
+fi
+
 # The question-state hooks: this session's state file says `asking' for exactly as long as a
 # question is in front of the navigator, and goes back to the state, bead and phase it had when the
 # answer lands. See hooks/README.md - the agents are told to write both themselves, three ways over,
@@ -75,7 +97,7 @@ export BEADS_ACTOR="$name"
 # whole fleet, here, for the same reason everything else in this file is here once.
 . "$here/agent-hooks-env" "$name"
 
-# ah-cuc: link whatever a submodule bump brought in, so `claude --agent <role>` finds it.
+# ah-cuc: link whatever a submodule bump brought in, so the agent CLI finds the role by name.
 # ah-bri: refuse with one line if it cannot, instead of exiting silently.
 "$here/launch-preflight" "$role" "$name"
 
@@ -102,7 +124,7 @@ effort="$(awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f && $1=="effo
 # Most specific wins: the agent's own name, then its role, then `default`. A `--model` typed on the
 # command line still beats all of it, since it is appended after (see the exec below).
 models_conf=""
-if consumer_root="$("$here/consumer-root" --shared 2>/dev/null)"; then
+if [[ -n "$consumer_root" ]]; then
   models_conf="$consumer_root/.cerebro/models.conf"
 fi
 
@@ -149,14 +171,62 @@ if [[ -n "$models_conf" ]]; then
   done
 fi
 
-exec claude \
-  --agent "$role" \
-  --name "$name" \
-  --remote-control "$name" \
-  ${model:+--model "$model"} \
-  ${effort:+--effort "$effort"} \
-  --settings "$CEREBRO_HOOK_SETTINGS" \
-  --permission-mode auto \
-  "$@" \
-  "You are $name. Your agent definition ($role) is the whole of your instructions: follow it from
+# Cerebro's own marker sentence: the WHOLE of the liveness rule since cb-d59.3, and the reason
+# neither `cerebro--session-args-p' nor `scripts/agent-alive' contains a provider's spelling any
+# more. It used to ride on `--settings' and then on `--append-system-prompt' (ah-ybsr, cmux having
+# rewritten `--settings' into inline JSON); it now opens the PROMPT, which is the one argument
+# every agent CLI accepts - Copilot has no `--append-system-prompt' and refuses a bare trailing
+# prompt (docs/providers/copilot.md, M3/M12). Nothing goes dead on merge day: the sentence is
+# byte-identical, so a session started by the previous launcher still carries it, and the rule
+# reads the whole command line rather than one named flag's value. Guarded rather than
+# unconditional because `consumer_root' is deliberately allowed to be empty - this launcher runs
+# from outside a consumer in the tests.
+#
+# The trailing slash on the root is required: `cerebro--root-in-args-p' builds its needle as the
+# root with one `/' appended, so that `/repos/atlantis-hud' does not match a sibling
+# `/repos/atlantis-hud-hud' - `${consumer_root%/}/' normalises whether or not `consumer_root' ever
+# grows a trailing slash of its own. The sentence carries no apostrophe, for the same bash-3.2
+# reason as the models.conf line above and this file's own convention.
+marker=""
+if [[ -n "$consumer_root" ]]; then
+  marker="This session is $name of the cerebro fleet rooted at ${consumer_root%/}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."
+fi
+
+# The marker leads the prompt, then exactly one blank line, then the instruction (cb-d59.3, Q1):
+# the identity sits as early in the command line as it can, which is what the liveness rule reads.
+# An `if' rather than `${marker:+...}' for this file's own bash-3.2 reason, and because the value
+# carries newlines and a full stop.
+instruction="You are $name. Your agent definition ($role) is the whole of your instructions: follow it from
 the top, and start now rather than waiting to be spoken to."
+
+prompt="$instruction"
+if [[ -n "$marker" ]]; then
+  prompt="$marker
+
+$instruction"
+fi
+
+# Which agent CLI this session runs on, and every argv token it takes, is `scripts/agent-cli`'s
+# answer and no longer spelt here (cb-d59.2). After this the only argv strings in this file are
+# agent-cli's own interface - `--role', `--name', `--model', `--effort', `--settings',
+# `--argv', `--prompt-argv', `--binary' - and not one of them is any provider's.
+#
+# NUL-separated and read through a PROCESS SUBSTITUTION, not a pipe: the prompt below carries an
+# embedded newline, so a line-delimited protocol would split it into two argv entries, and
+# `x | while read' would build the array in a subshell that is gone by the next line.
+binary="$("$here/agent-cli" --binary)"
+
+argv=()
+while IFS= read -r -d '' tok; do argv+=("$tok"); done < <(
+  "$here/agent-cli" --argv --role "$role" --name "$name" \
+    ${model:+--model "$model"} \
+    ${effort:+--effort "$effort"} \
+    --settings "$CEREBRO_HOOK_SETTINGS")
+
+prompt_argv=()
+while IFS= read -r -d '' tok; do prompt_argv+=("$tok"); done < <(
+  "$here/agent-cli" --prompt-argv "$prompt")
+
+# The caller's own arguments sit between the flags and the prompt, exactly where they used to: that
+# is what makes a `--model' typed on the command line beat the one resolved above.
+exec "$binary" "${argv[@]}" "$@" "${prompt_argv[@]}"

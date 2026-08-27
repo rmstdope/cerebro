@@ -10,8 +10,9 @@ You take a bead somebody else planned, build exactly what the plan says, see it 
 
 You do not loop, and you do not end yourself either. You are an interactive session, so your process
 outlives your turn — which is what lets the navigator talk to you, and what means you cannot simply
-stop. When the bead is closed you write `done` to your state file and say what you did; the fleet
-view sees that within about five seconds, ends you, and starts a fresh session for the next bead.
+stop. When the bead is closed you write `waiting` to your state file and say what you did; the fleet
+view ends you half a minute later and starts a fresh session under your name when there is another
+planned bead.
 Everything you learned building this one goes with you, which is the point: a new session starts
 with a clean context instead of five beads of residue.
 
@@ -74,7 +75,8 @@ it at every transition, in the same `Bash` call as the thing it describes — th
 ```
 
 `idle` before you claim, `working` the moment you do, `asking` if you put a question to the
-navigator, `done` when the bead is closed and the worktree gone. `working` and `asking` also take
+navigator, `waiting` when the bead is closed and the worktree gone — or when there was nothing to
+claim. `working` and `asking` also take
 `--phase <build|gate|review|ci|rebase|merge>`, naming what the wait or the work actually is — see the
 table below for where each is written. `--pid` is `$PPID` — your own `claude` process — and must be
 captured in the call that writes the file; a stale number shows you as dead while you are working,
@@ -84,7 +86,7 @@ hand.
 
 | Where in this skill | Call |
 |---|---|
-| *Picking up*, the empty-queue poll | `.claude/cerebro/scripts/agent-state <name> idle --pid $PPID` |
+| *Picking up*, nothing to claim | `.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID` |
 | *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
 | *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
 | *The review*, after `gh pr edit --add-reviewer @copilot` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
@@ -93,25 +95,27 @@ hand.
 | *Merging*, on `BEHIND`: catch up on GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
 | *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` — merge covers retro, merge, close, cleanup |
 | *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
-| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/agent-state <name> done --bead <id> --pid $PPID` |
+| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID` |
 
-`done` is a request to be ended, granted within about five seconds. Write it last.
+`waiting` is a request to be ended, granted within about half a minute. Write it last. `--wake-in`
+is required by the script and means nothing for you: the view starts an implementer on a planned
+bead, not on a clock.
 
 ## Finishing means finishing
 
 There is no next bead to take, and no flag for **you** to check. The `.stop` flag still means what
-`orchestrator.md` says it means — the fleet view reads it when you report `done`, and decides
+`orchestrator.md` says it means — the fleet view reads it when you report `waiting`, and decides
 whether a fresh session starts in your place. That is not your business, and you must not read it:
 an implementer that saw a stop flag mid-bead and wound up early would strand exactly what the
 between-beads rule exists to protect.
 
 So: **do the retrospective below before you merge**, and when the bead is merged, closed and cleaned
-up, write `done`, say what you did, and stop producing output. **Never write `done` before that point.** A
+up, write `waiting`, say what you did, and stop producing output. **Never write `waiting` before that point.** A
 bead abandoned in flight strands a claim, a worktree and an open PR for somebody to unpick by hand,
 which is exactly what one-bead-per-session is arranged to avoid.
 
 The one exception is a bead you hand back — a missing plan section, a question only the navigator
-can answer. That is a complete run too: hand it back with the block below, clean up, write `done`,
+can answer. That is a complete run too: hand it back with the block below, clean up, write `waiting`,
 and finish.
 
 ## The retrospective
@@ -121,7 +125,7 @@ and finish.
 ```
 
 Write it once, entering this section — `merge` covers the retrospective, the merge itself, closing
-the bead and cleaning up, so no more phase writes are needed until `done`.
+the bead and cleaning up, so no more phase writes are needed until `waiting`.
 
 **When the review is answered and CI is green, before you merge**, look back over the run and ask
 one question: *did anything happen that I did not expect?*
@@ -272,22 +276,14 @@ for the planner rather than the navigator. Asking is the faster path only when s
 **This is your first turn's work.** Nothing gates it: a running implementer is a working one, and
 there is no flag to wait for. (There was a `.go` flag once; it is gone.)
 
-If the queue is genuinely empty, **wait for one — do not report `done`.** `done` asks to be replaced,
-and a fresh session would find the same empty queue and ask again, spinning sessions for as long as
-the queue stays empty. Write `idle` and poll, blocking and printing as *Waiting, without ending your
-run* describes:
+If the queue is empty, **end the pass** — do not poll. Write `waiting`, say "queue empty, ending
+the pass" in one line, and stop producing output. The fleet view ends this session and starts a
+fresh one under your name the moment a planned bead exists; a session that sits polling is a session
+the view cannot tell from one that has hung.
 
 ```bash
-.claude/cerebro/scripts/agent-state <name> idle --pid $PPID
-until bd ready --label planned --exclude-label human --exclude-label verdict:stale \
-        --exclude-type epic --json \
-        | grep -q '"id"'; do
-  echo "queue empty, waiting"
-  sleep 60
-done
+.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID
 ```
-
-Then claim, as below. Say once that you are waiting, so the navigator knows why you look quiet.
 
 ```bash
 bd dolt pull
@@ -316,14 +312,8 @@ lease is short, about five minutes, and a cycle is an hour; the exact TTL is bd'
 configurable here, so heartbeat on every boundary rather than on a timer.
 
 Nothing planned means the planner has not got there yet, or another implementer took the last one
-first. **Wait for one, as *Picking up* describes** — a blocking, printing poll, and say once that
-you are waiting.
-
-That reverses what this said when a launcher looped: idling was its job then, and finishing
-immediately was free because it would start you again. It is not free now. Finishing means writing
-`done`, `done` asks to be replaced, and the replacement would find the same empty queue and ask
-again — a fresh session every few seconds for as long as the queue stayed empty. A blocking poll
-costs one line of output a minute.
+first — the view may have started you for a bead a peer claimed a moment ago. End the pass as
+*Picking up* describes; the view brings you back when there is one.
 
 **Read the plan with `bd show <id> --json`.** The pretty renderer mangles it.
 
@@ -349,15 +339,19 @@ bd unclaim <id>
 bd dolt push
 ```
 
-`verification:failed` is what builds Psylocke's list, and a failed verification with nothing left to
-build wants her second look, not the navigator's queue; adding `human` parks it in front of a person
-who has nothing to decide. It has happened, and the bead had to be moved back by hand.
+`verification:failed` on an **open** bead, with neither `planned` nor `plan:revise`, is what puts it
+on Psylocke's second-look list (`scripts/second-look-beads`) — her ordinary work list is built from
+closed beads and would never show it. So a failed verification with nothing left to build wants that
+second look, not the navigator's queue; adding `human` parks it in front of a person who has nothing
+to decide. It has happened, and the bead had to be moved back by hand. (That list once matched
+`verdict:stale` only, and a bead handed back this way reached no role at all for eleven hours —
+which is why the query now lives in a script with a test under it rather than in prose.)
 
 **Never add `plan:revise` in either case.** Whether the plan was wrong is the navigator's answer to
 Psylocke's question, asked at the verdict, and it is not an implementer's to assert — the label is
 hers alone to set, and it is what sends the bead to a planner. After it, remove the worktree
-if one exists (see *Finishing*) and write `.claude/cerebro/scripts/agent-state <name> done
---bead <id> --pid $PPID` last, exactly as a merged bead does — a hand-back is a complete run too.
+if one exists (see *Finishing*) and write `.claude/cerebro/scripts/agent-state <name> waiting
+--wake-in 600 --pid $PPID` last, exactly as a merged bead does — a hand-back is a complete run too.
 `bd update` sets no status, so
 without `bd unclaim` the bead stays `in_progress` under you after you have moved on — invisible to
 `bd ready` and stranded until its lease expires. Without the push, no other machine learns it was
@@ -523,6 +517,16 @@ locally.
 
 A detail the plan missed is yours to decide — do it, and record the deviation in the PR body.
 
+**A helper the plan cites for what it decides is read before it is built on.** A predicate, a
+filter, a query named as the test for something is a claim about what that symbol accepts, and a
+plan can be confidently wrong about it — a planner once cited one three times as the test for a
+thing it accepted the opposite of. Open it and read its body before the first increment that
+depends on it. If it does not accept what the plan says and the plan's intent is unambiguous, use
+what does and record the deviation in the PR body; if the intent is not, that is the plan being
+wrong about approach, and it goes back. The same care applies to your own PR body: a sentence there
+about what a helper or a label does is read by the reviewer and the navigator with the trust a
+plan gets, so run or read the thing before writing the sentence.
+
 Anything touching **approach, scope, or what the user sees** goes back, by the same hand-back block as a missing section, worktree included. You were given a plan precisely so those decisions were made elsewhere; making
 them here is the failure mode this split exists to prevent.
 
@@ -648,14 +652,24 @@ git push --force-with-lease
 force-push, a fix pushed onto a head that sat through a review — check that the head can merge at all:
 
 ```bash
-until state="$(gh pr view <n> --json mergeable,mergeStateStatus -q '"\(.mergeable) \(.mergeStateStatus)"')" \
-      && [ "${state%% *}" != "UNKNOWN" ] && [ "${state#* }" != "UNKNOWN" ]; do sleep 5; done
+want="$(git ls-remote --heads origin "$(git rev-parse --abbrev-ref HEAD)" | cut -f1)"
+until state="$(gh pr view <n> --json mergeable,mergeStateStatus,headRefOid \
+                 -q '"\(.mergeable) \(.mergeStateStatus) \(.headRefOid)"')" \
+      && [ "${state##* }" = "$want" ] \
+      && [ "${state%% *}" != "UNKNOWN" ] && [ "$(echo "$state" | cut -d' ' -f2)" != "UNKNOWN" ]; do
+  sleep 5
+done
+state="${state% *}"      # drop the sha again: the bullets below read the two words
 echo "$state"
 ```
 
 `mergeable` and `mergeStateStatus` both read `UNKNOWN` for a few seconds after every push while
-GitHub recomputes them, which is what the poll waits out — on either field, not just the first, so a
-`mergeStateStatus` that is still catching up cannot slip through as a false `MERGEABLE UNKNOWN`. Then:
+GitHub recomputes them — and while it does, GitHub can also serve the **previous head's** concrete
+verdict instead, so a `CONFLICTING DIRTY` read straight after a clean rebase and force-push may be
+about a head that no longer exists. That is why the poll compares `headRefOid` with the branch tip
+you just pushed and treats a mismatch exactly as `UNKNOWN`: a verdict about another head is not a
+verdict yet. It waits on both fields, not just the first, so a `mergeStateStatus` still catching up
+cannot slip through as a false `MERGEABLE UNKNOWN`. Then:
 
 - `CONFLICTING DIRTY` — the head cannot merge, and whatever `gh pr checks` would show you next
   describes an older head or a run GitHub will not meaningfully finish. **Do not enter the CI wait.**
@@ -667,7 +681,11 @@ GitHub recomputes them, which is what the poll waits out — on either field, no
 
 Observed here on 2026-08-15: after a rebase and force-push the PR already read
 `CONFLICTING`/`DIRTY`, and the implementer polled check state for a head that would never merge until
-the navigator interrupted. Twenty seconds of `gh pr view` is what that wait cost.
+the navigator interrupted. Twenty seconds of `gh pr view` is what that wait cost. And twice since, on
+consecutive days, the opposite: a `CONFLICTING DIRTY` served for the *old* head for twenty seconds to
+a minute after a clean force-push, which read literally would have sent a rebased branch into a
+second, no-op rebase and a second CI cycle. The `headRefOid` comparison is what tells those two cases
+apart.
 
 An update (or a resolved rebase) that brings in commits touching nothing the bead's own diff touches
 can still leave nothing new to test beyond what CI already ran — if the resulting diff against main
@@ -694,7 +712,7 @@ bd close <id> --reason "Delivered in PR #NN"
 git -C <repo> worktree remove --force .cerebro/worktrees/<id>
 git -C <repo> worktree prune
 bd dolt push
-.claude/cerebro/scripts/agent-state <name> done --bead <id> --pid $PPID
+.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID
 ```
 
 `--force`, because `worktree remove` refuses a tree holding untracked files and would otherwise abort
@@ -742,8 +760,8 @@ Two things this is not:
 Say what you merged and anything the navigator should know — a deviation, a trap the plan missed, a
 bead you handed back.
 
-**Then finish.** Do not look for another bead, and do not stay alive in case one appears. Your
-launcher re-reads its flags the moment you exit and starts a fresh session if there is more to do;
+**Then finish.** Do not look for another bead, and do not stay alive in case one appears. The fleet
+view ends this session and starts a fresh one under your name when there is a planned bead to take;
 that session begins with a clean context, which is worth more than anything you could have carried
 into it.
 
@@ -761,10 +779,14 @@ into it.
   serving — which looks exactly like a hang rather than a mistake.
 - **A stale lease is not an abandoned agent** unless it is genuinely stale — see `beads-workflow`
   before reclaiming anything.
-- **A CI wait against a conflicted head.** After a rebase, a force-push or an `update-branch`,
-  `gh pr view --json mergeable,mergeStateStatus` can already say `CONFLICTING`/`DIRTY` while the
-  check state you are about to poll still describes the previous head. Look at the merge state
-  before the checks — *Merging* has the loop. Cost a wasted check-state poll here once.
+- **A merge verdict about the wrong head.** After a rebase, a force-push or an `update-branch`,
+  `gh pr view --json mergeable,mergeStateStatus` describes whichever head GitHub last finished
+  computing — which may be the previous one. Read one way that is a `CONFLICTING`/`DIRTY` while the
+  check state you are about to poll still describes an older head; read the other it is a stale
+  `CONFLICTING` after a clean push that sends you into a needless second rebase. Look at the merge
+  state before the checks, and only believe it once `headRefOid` is the tip you pushed — *Merging*
+  has the loop. Cost a wasted check-state poll here once, and a near-miss on a wasted CI cycle
+  twice.
 - **An accessible name is a shared namespace.** A browser suite selects on the names controls
   expose, so a new control whose name contains — or is contained by — one an existing spec relies on
   makes that spec match two elements and fail, in a file with nothing to do with your change. Before

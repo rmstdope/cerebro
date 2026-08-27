@@ -1,0 +1,52 @@
+<!doctype html><meta charset="utf-8"><title>cb-ccl — a refused launch leaves a trace</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:13px;margin:14px 0 4px;color:#eee}
+.row{display:flex;gap:24px;flex-wrap:wrap}.panel{padding:14px 18px;border:1px solid #333;min-width:64ch}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.5;white-space:pre}.hd{text-decoration:underline}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.s{color:#569cd6}.e{color:#f14c4c}.y{color:gold}
+.note{color:#eee;max-width:110ch;background:#333;padding:8px 12px;margin-top:16px}
+.log{background:#000;color:#ddd;padding:6px 14px;border:1px solid #333}
+</style>
+<h1>cb-ccl — a refused launch leaves a trace</h1>
+<p class="note">What actually happened on 2026-08-26: every refusal <b>was</b> logged to decisions.jsonl as an <code>exit</code> with code 2 — but with <code>last_line: null</code>, because the launcher's line had not been drawn into the vterm buffer when the sentinel ran. With no line, the cb-eat rule (dead + the line, no retry until <b>s</b>) never fired, and every refusal was treated as a silent death and retried on cb-hzs's backoff, 30+ times per agent. After this bead the launcher writes its own refusal to <b>errors.jsonl</b> and the view reads it back when the buffer gave nothing, so the row below (panel 1) is what you would have seen. Panels 2–4 are the questions.</p>
+
+<div class="row">
+<div class="panel dark"><h2>1. A refused launch — the cb-eat row, now reliable (no choice here unless you want to revisit cb-eat)</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="d">○</span> Psylocke       verifier      dead                  <span class="e">✗ the checkout is 4 commits behind origin/main and has uncommitted…</span>
+<span class="d">○</span> Storm          implementer   dead                  <span class="e">✗ the checkout is 4 commits behind origin/main and has uncommitted…</span>
+<span class="s">◌</span> Xavier         planner       standby               → buffer &lt; 4</pre>
+<h3>Stays dead until s; nothing retries. errors.jsonl gets, from the launcher itself:</h3>
+<pre class="log">{"event":"error","ts":"2026-08-26T04:51:14Z","context":"launch Storm","message":"the checkout is 4 commits behind origin/main and has uncommitted changes - commit or stash them, then git merge --ff-only origin/main, before starting Storm"}</pre>
+<h3>RET on the row (today's text, unchanged):</h3><pre>Storm is not running.
+Its last session ended with:
+  the checkout is 4 commits behind origin/main and has uncommitted changes - commit or stash them, then git merge --ff-only origin/main, before starting Storm
+Press s to start it.</pre></div>
+</div>
+
+<div class="row" style="margin-top:24px">
+<div class="panel dark"><h2>Q2 — a session that dies with nothing printed at all (claude killed, a crash): today it retries for ever at the 10m ceiling</h2>
+<h3>Option A — give up after the backoff schedule runs out (5 failed starts): the row goes dead and says so</h3><pre><span class="s">◌</span> Storm          implementer   standby               ↻ retry in 10m, 4 failed
+<span class="d">○</span> Storm          implementer   dead                  <span class="e">✗ exited with code 137, 5 failed starts — press s</span></pre>
+<h3>RET:</h3><pre>Storm is not running.
+Its last 5 sessions ended without a pass (last exit code 137) and printed nothing; the view has stopped retrying.
+Press s to start it.</pre>
+<h3>errors.jsonl, one line when it gives up:</h3><pre class="log">{"event":"error","ts":"…","context":"start Storm","message":"gave up after 5 failed starts; the last session exited with code 137 and printed nothing"}</pre>
+<h3>Option B — keep retrying for ever (today), row unchanged</h3><pre><span class="s">◌</span> Storm          implementer   standby               ↻ retry in 10m, 34 failed</pre>
+<h3>Cost of A: after a transient fault (network gone for an hour during the preflight fetch) every builder needs one s each. Cost of B: a fleet that cannot start bangs on the door for ever, and only the count says so.</h3></div>
+
+<div class="panel dark"><h2>Q3 — a role row (planner, verifier…) backing off after a silent death: today it shows only its condition</h2>
+<h3>Option A — the same clock and count an implementer row shows</h3><pre><span class="s">◌</span> Psylocke       verifier      standby               ↻ retry in 10m, 4 failed
+<span class="s">◌</span> Beast          planner       standby               ↻ retry in 2m, 2 failed</pre>
+<h3>Option B — today: the condition, count only in the log</h3><pre><span class="s">◌</span> Psylocke       verifier      standby               → merged, unverified
+<span class="s">◌</span> Beast          planner       standby               → buffer &lt; 4</pre>
+<h3>Cost of A: one label rule for every kind of row. Cost of B: Psylocke at 32 failed starts read exactly like Psylocke waiting for a merge.</h3></div>
+</div>
+
+<div class="row" style="margin-top:24px">
+<div class="panel dark"><h2>Q4 — what errors.jsonl carries for an abnormal exit the launcher did not explain</h2>
+<h3>Option A — one line per abnormal exit, from the view</h3><pre class="log">{"event":"error","ts":"…","context":"session Storm","message":"exited with code 137 and printed nothing"}
+{"event":"error","ts":"…","context":"session Rogue","message":"exited with code 1: Error: ENOSPC: no space left on device"}</pre>
+<h3>Option B — only the give-up line from Q2 (a single silent death is in decisions.jsonl's exit event and nowhere else)</h3>
+<h3>Cost of A: a builder that dies once a day is a line a day. Cost of B: a crash that printed a reason is findable only by grepping decisions.jsonl for exit.</h3></div>
+</div>

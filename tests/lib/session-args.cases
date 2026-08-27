@@ -1,0 +1,46 @@
+# The liveness rule's cases, run by BOTH implementations of the rule:
+#
+#   cerebro--session-args-p   (emacs/cerebro.el)   via emacs/cerebro-test.el
+#   scripts/agent-alive       (bash)                via tests/agent-alive.sh
+#
+# The rule: a pid is <name>'s session of the fleet at <root> when its own command line carries
+# cerebro's own marker sentence, which `scripts/launch' puts at the head of every session's prompt:
+#
+#   This session is <Name> of the cerebro fleet rooted at <root>/. This sentence is how the fleet
+#   view proves the session belongs to this checkout; do not remove it.
+#
+# Two needles are cut from that one sentence - `This session is <name> of the cerebro fleet rooted
+# at ' for the name, and `cerebro fleet rooted at <root>/' for the root - so the rule keeps the
+# two-test shape `cerebro--session-liveness' builds its three answers on. No provider's flag
+# spelling is evidence any more (cb-d59.3): `--name' is still passed, and proves nothing.
+# Add a case here and BOTH suites run it; a case that only one side answers is a divergence, which
+# is what this file exists to make impossible. Before this table each side kept its own list and
+# the two drifted, twice.
+#
+# Format:  <alive|dead>  <name>  <{root}|{other}>  <command line after the program name>
+#   - fields are separated by runs of blanks; the command line is the rest of the line
+#   - <name> must be on the built-in roster (scripts/roster): the bash runner's fixture declares
+#     no roster of its own, and agent-alive refuses a name it does not know
+#   - {root}, {other} and {root}-hud are the three consumer roots the bash runner creates
+#
+# NOT here, because they are about how one side OBTAINS the args or the root, not about the rule:
+# elisp's tilde-spelled and trailing-slash roots (consumer-root is always physical and absolute),
+# and bash's no-state-file / no-pid / pid-not-an-integer / pid-exited / not-on-the-roster cases
+# (process-attributes takes an integer, and elisp reads no roster here). Those stay in their suite.
+
+# the launcher's own shape: alive in its consumer
+alive  Cyclops  {root}   --agent implementer --name Cyclops --remote-control Cyclops --permission-mode auto This session is Cyclops of the cerebro fleet rooted at {root}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.
+alive  Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {root}/.
+# the name: another agent's session, and a name that is only a prefix of the one in the args
+dead   Beast    {root}   This session is Cyclops of the cerebro fleet rooted at {root}/.
+dead   Cyclops  {root}   This session is Cyclopsly of the cerebro fleet rooted at {root}/.
+alive  Storm    {root}   --remote-control-session-name-prefix Cyclops --name Storm This session is Storm of the cerebro fleet rooted at {root}/.
+# a Claude Code flag is no longer evidence: --name alone proves nothing now
+dead   Cyclops  {root}   --name Cyclops
+dead   Cyclops  {root}   --agent implementer --name Cyclops --remote-control Cyclops --permission-mode auto --settings {root}/.claude/cerebro/hooks/question-state.settings.json
+# the root: another consumer, and a sibling checkout whose path merely starts with this one's
+dead   Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {other}/.
+alive  Cyclops  {other}  This session is Cyclops of the cerebro fleet rooted at {other}/.
+dead   Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {root}-hud/.
+# the previous launcher's carrier, which the new rule still recognises: no flag day on merge
+alive  Cyclops  {root}   --name Cyclops --append-system-prompt This session is Cyclops of the cerebro fleet rooted at {root}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.

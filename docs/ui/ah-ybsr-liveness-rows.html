@@ -1,0 +1,156 @@
+<!doctype html><meta charset="utf-8"><title>ah-ybsr — what a row shows when liveness cannot be proven</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff;margin-bottom:4px}
+h2{font-size:14px;margin:0 0 8px}
+.lede{color:#eee;background:#333;padding:10px 14px;max-width:110ch;margin:12px 0 20px;line-height:1.5}
+.row{display:flex;gap:24px;flex-wrap:wrap}
+.panel{padding:14px 18px;border:1px solid #333;min-width:64ch}
+.dark{background:#1e1e1e;color:#d4d4d4}.light{background:#fdfdfd;color:#222}
+pre{margin:0;line-height:1.5;white-space:pre}.hd{text-decoration:underline}
+.dark .g{color:#6a9955}.light .g{color:#1f7a1f}
+.dark .d{color:#777}.light .d{color:#999}
+.dark .w{color:#e5a13b;font-weight:bold}.light .w{color:#c66500;font-weight:bold}
+.dark .y{color:gold}.light .y{color:goldenrod}
+.dark .i{color:DodgerBlue}.light .i{color:RoyalBlue}
+.dark .s{color:#569cd6}.light .s{color:#3b6fd6}
+.dark .bad{color:#f04a4a;font-weight:bold}.light .bad{color:#c00;font-weight:bold}
+.note{color:#eee;max-width:110ch;background:#333;padding:9px 13px;margin:12px 0 26px;line-height:1.5}
+.opt{background:#f5f5f5;color:#111;padding:3px 9px;display:inline-block;margin:22px 0 8px;font-weight:bold}
+.key{margin-top:10px;font-size:12px;opacity:.85}
+b.hl{background:rgba(240,74,74,.22);padding:0 2px}
+</style>
+
+<h1>ah-ybsr — what a row shows when liveness cannot be proven</h1>
+<div class="lede">
+Every row below is <b>this fleet, as its state files actually read at 20:16 today</b> — so you can hold
+this page beside the Emacs window and see the difference directly.<br><br>
+The carrier fix (the root going back into argv) is not in question here; it restores every row on its
+own. This page asks a second, narrower question: <b>when the rule cannot prove a session is ours but
+its pid is running, what should the row say?</b> That is the case a future wrapper change lands you
+in — this bug is the discriminator breaking for the <i>second</i> time, by a new route.
+</div>
+
+<span class="opt">THE TRUTH — what the state files on disk say right now</span>
+<div class="row">
+<div class="panel dark"><h2>dark theme</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="i">◆</span> Cerebro        orchestrator  idle                  5m
+<span class="g">●</span> Xavier         planner       plan       ah-ybsr    2m 2m
+<span class="g">●</span> Beast          planner       plan       ah-jw85    5m 5m
+<span class="y">◐</span> Moira          user-feedback waiting               ↻ due
+<span class="d">○</span> Psylocke       verifier      dead
+<span class="d">○</span> Cypher         reviewer      dead
+<span class="d">○</span> Forge          architect     dead
+<span class="i">◆</span> Cyclops        implementer   idle                  10m
+<span class="i">◆</span> Storm          implementer   idle                  10m
+<span class="g">●</span> Wolverine      implementer   build      ah-agbm    5m 5m
+<span class="i">◆</span> Rogue          implementer   idle                  9m</pre></div>
+</div>
+<div class="note">Wolverine is building ah-agbm. Moira ended a pass and is waiting, due now. Three roles have
+never run and have no state file at all.</div>
+
+<span class="opt">TODAY — what the fleet view actually shows (the defect)</span>
+<div class="row">
+<div class="panel dark"><h2>dark theme</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="g">●</span> Cerebro        orchestrator  <b class="hl">up</b>
+<span class="g">●</span> Xavier         planner       <b class="hl">up</b>
+<span class="g">●</span> Beast          planner       <b class="hl">up</b>
+<span class="g">●</span> Moira          user-feedback <b class="hl">up</b>
+<span class="d">○</span> Psylocke       verifier      dead
+<span class="d">○</span> Cypher         reviewer      dead
+<span class="d">○</span> Forge          architect     dead
+<span class="i">◆</span> Cyclops        implementer   idle
+<span class="i">◆</span> Storm          implementer   idle
+<span class="i">◆</span> Wolverine      implementer   <b class="hl">idle</b>
+<span class="i">◆</span> Rogue          implementer   idle</pre></div>
+</div>
+<div class="note">
+Every state file is thrown away and a default substituted. The bead, the phase and every elapsed time
+go with it. <span class="bad">Wolverine reads <b>idle</b> while it is building ah-agbm</span> — and idle is
+the one state at which the supervisor acts on a stop flag within about five seconds, so that row is not
+merely wrong, it is wrong in the direction that can end a session holding a fresh claim. Moira's
+<b>waiting</b> and its countdown are gone, so a role that ended its pass can never become a standby row.
+</div>
+
+<span class="opt">OPTION A — trust the file whenever its pid is running, and say nothing extra</span>
+<div class="row">
+<div class="panel dark"><h2>dark theme</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="i">◆</span> Cerebro        orchestrator  idle                  5m
+<span class="g">●</span> Xavier         planner       plan       ah-ybsr    2m 2m
+<span class="g">●</span> Beast          planner       plan       ah-jw85    5m 5m
+<span class="y">◐</span> Moira          user-feedback waiting               ↻ due
+<span class="d">○</span> Psylocke       verifier      dead
+<span class="d">○</span> Cypher         reviewer      dead
+<span class="d">○</span> Forge          architect     dead
+<span class="i">◆</span> Cyclops        implementer   idle                  10m
+<span class="i">◆</span> Storm          implementer   idle                  10m
+<span class="g">●</span> Wolverine      implementer   build      ah-agbm    5m 5m
+<span class="i">◆</span> Rogue          implementer   idle                  9m</pre></div>
+<div class="panel light"><h2>light theme</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="i">◆</span> Cerebro        orchestrator  idle                  5m
+<span class="g">●</span> Xavier         planner       plan       ah-ybsr    2m 2m
+<span class="g">●</span> Beast          planner       plan       ah-jw85    5m 5m
+<span class="y">◐</span> Moira          user-feedback waiting               ↻ due
+<span class="d">○</span> Psylocke       verifier      dead
+<span class="d">○</span> Cypher         reviewer      dead
+<span class="d">○</span> Forge          architect     dead
+<span class="i">◆</span> Cyclops        implementer   idle                  10m
+<span class="i">◆</span> Storm          implementer   idle                  10m
+<span class="g">●</span> Wolverine      implementer   build      ah-agbm    5m 5m
+<span class="i">◆</span> Rogue          implementer   idle                  9m</pre></div>
+</div>
+<div class="note">
+Identical to the truth. <b>Benefit:</b> the view degrades to "the file, possibly stale" instead of to a
+confident lie, and today's defect could not have produced a visibly wrong row at all.
+<b>Cost:</b> nothing on screen distinguishes a proven row from an unproven one, so if a wrapper breaks
+the discriminator a third time you will not learn it from the view — the rows simply stay right, and the
+scan-path features (a hand-started session showing <i>up</i>) stay quietly dead.
+</div>
+
+<span class="opt">OPTION B — trust the file, and mark the row as unverified</span>
+<div class="row">
+<div class="panel dark"><h2>dark theme</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="i">◆</span> Cerebro        orchestrator  idle <span class="d">?</span>                5m
+<span class="g">●</span> Xavier         planner       plan <span class="d">?</span>     ah-ybsr    2m 2m
+<span class="g">●</span> Beast          planner       plan <span class="d">?</span>     ah-jw85    5m 5m
+<span class="y">◐</span> Moira          user-feedback waiting <span class="d">?</span>             ↻ due
+<span class="d">○</span> Psylocke       verifier      dead
+<span class="d">○</span> Cypher         reviewer      dead
+<span class="d">○</span> Forge          architect     dead
+<span class="i">◆</span> Cyclops        implementer   idle <span class="d">?</span>                10m
+<span class="i">◆</span> Storm          implementer   idle <span class="d">?</span>                10m
+<span class="g">●</span> Wolverine      implementer   build <span class="d">?</span>    ah-agbm    5m 5m
+<span class="i">◆</span> Rogue          implementer   idle <span class="d">?</span>                9m</pre>
+<div class="key">grey <span class="d">?</span> after the state: the file says this, but the session could not be proved to be this fleet's</div></div>
+<div class="panel light"><h2>light theme</h2><pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="i">◆</span> Cerebro        orchestrator  idle <span class="d">?</span>                5m
+<span class="g">●</span> Xavier         planner       plan <span class="d">?</span>     ah-ybsr    2m 2m
+<span class="g">●</span> Beast          planner       plan <span class="d">?</span>     ah-jw85    5m 5m
+<span class="y">◐</span> Moira          user-feedback waiting <span class="d">?</span>             ↻ due
+<span class="d">○</span> Psylocke       verifier      dead
+<span class="d">○</span> Cypher         reviewer      dead
+<span class="d">○</span> Forge          architect     dead
+<span class="i">◆</span> Cyclops        implementer   idle <span class="d">?</span>                10m
+<span class="i">◆</span> Storm          implementer   idle <span class="d">?</span>                10m
+<span class="g">●</span> Wolverine      implementer   build <span class="d">?</span>    ah-agbm    5m 5m
+<span class="i">◆</span> Rogue          implementer   idle <span class="d">?</span>                9m</pre>
+<div class="key">grey <span class="d">?</span> after the state: the file says this, but the session could not be proved to be this fleet's</div></div>
+</div>
+<div class="note">
+<b>Benefit:</b> the day a wrapper breaks the discriminator again, the whole column grows a <span class="d">?</span>
+and you can see it at a glance — the defect announces itself instead of hiding behind rows that happen
+to be right. <b>Cost:</b> a fourth suffix in the State column, beside <code>■</code> and <code>×2</code>;
+and <span class="bad">today, before the carrier is fixed, every row carries it</span> — which is honest,
+but is also eleven question marks that mean "this fleet's plumbing needs fixing" rather than anything
+about the agent on that row. Once the carrier is fixed the marks vanish and it becomes a rare sight.
+</div>
+
+<span class="opt">OPTION C — fix the carrier only, and leave this fallback exactly as it is</span>
+<div class="note" style="margin-top:8px">
+No mockup, because with the carrier fixed the view looks exactly like <b>THE TRUTH</b> panel above: every
+session is provable again, so the fallback is never reached and nothing about it is visible.
+<b>Benefit:</b> the smallest change, and the fallback keeps its one real job — a session started by hand
+outside the fleet shows <i>up</i> rather than being credited with a stale file it does not own.
+<b>Cost:</b> the failure mode stays exactly as sharp as it was. The next wrapper that rewrites an argument
+puts you back on the <b>TODAY</b> panel — Wolverine reading <i>idle</i> mid-build, with a stop flag able
+to land on it — and this is the second time that has happened by a different route.
+</div>

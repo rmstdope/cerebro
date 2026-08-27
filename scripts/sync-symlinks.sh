@@ -9,8 +9,7 @@ shopt -s nullglob
 # Run from anywhere inside the consumer repo.
 
 # -P (physical) throughout: consumer-root resolves symlinks the same way (macOS mktemp lives
-# under /var -> /private/var), and REL_SOURCE below strips CLAUDE_ROOT as a literal prefix of
-# SOURCE_ROOT, so the two must agree on which form of the path they use.
+# under /var -> /private/var), and SOURCE_ROOT is compared against paths it hands back.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
@@ -25,32 +24,20 @@ consumer_root="$("$SCRIPT_DIR/consumer-root" 2>/dev/null)" || {
 CLAUDE_ROOT="$consumer_root/.claude"
 
 # Every link this script writes is RELATIVE, so the same link is correct in the main checkout, in
-# every worktree and on every machine — an absolute link would point at one worktree's path and be
-# wrong (or dirty the tree) everywhere else (ah-cuc). REL_SOURCE is not relative to $CLAUDE_ROOT
-# itself: it is relative to where a link actually lives, one level below $CLAUDE_ROOT
-# ($CLAUDE_ROOT/skills/<name>, $CLAUDE_ROOT/agents/<name>) — hence the leading "../" and no more.
-REL_SOURCE="../${SOURCE_ROOT#"$CLAUDE_ROOT/"}"
+# every worktree and on every machine - an absolute link would point at one worktree's path and be
+# wrong (or dirty the tree) everywhere else (ah-cuc). Where this checkout sits under the consumer
+# is consumer-root's to say (cb-akc): `.claude/cerebro' for the standard mount and for cerebro
+# serving itself through the symlink `.claude/cerebro -> ..' (cb-i3l.1), the physical relative
+# path for a submodule vendored elsewhere.
+REL_FROM_ROOT="$("$SCRIPT_DIR/consumer-root" --mount)"
 
-# Unless the source root is not below $CLAUDE_ROOT at all, in which case the strip stripped nothing
-# and the line above just glued "../" to the front of an absolute path. That is cerebro serving
-# itself (cb-i3l.1): the mount is a symlink `.claude/cerebro -> ..`, so the source root IS the
-# consumer root. Link through the mount, which resolves there and reads exactly like every other
-# consumer's link - the whole point of mounting by symlink rather than teaching every path here
-# about a second layout.
-if [[ "$REL_SOURCE" == "../$SOURCE_ROOT" \
-      && "$(cd "$CLAUDE_ROOT/cerebro" 2>/dev/null && pwd -P)" == "$SOURCE_ROOT" ]]; then
-  REL_SOURCE="../cerebro"
-fi
-
-# `.dir-locals.el' lives at the consumer ROOT, one level above where the skill and agent links
-# sit, so it needs the source path relative to the root rather than to $CLAUDE_ROOT/<sub>/. Same
-# two cases as REL_SOURCE above, for the same reasons: the ordinary submodule (any mount, not just
-# .claude/cerebro), and cerebro serving itself, where the strip strips nothing and the mount is
-# the answer.
-REL_FROM_ROOT="${SOURCE_ROOT#"$consumer_root/"}"
-if [[ "$REL_FROM_ROOT" == "$SOURCE_ROOT" ]]; then
-  REL_FROM_ROOT=".claude/cerebro"
-fi
+# The skill and agent links live one level below $CLAUDE_ROOT ($CLAUDE_ROOT/skills/<name>,
+# $CLAUDE_ROOT/agents/<name>), so from there the mount is `../cerebro' - one `../' to reach
+# .claude/, then the rest of the mount path. A mount outside .claude/ is two levels up.
+case "$REL_FROM_ROOT" in
+  .claude/*) REL_SOURCE="../${REL_FROM_ROOT#.claude/}" ;;
+  *)         REL_SOURCE="../../$REL_FROM_ROOT" ;;
+esac
 
 # Ensure target subdirectories exist.
 mkdir -p "$CLAUDE_ROOT/skills" "$CLAUDE_ROOT/agents"
@@ -107,50 +94,45 @@ sync_links() {
     updated=$((updated + 1))
   done
 
+  # A link this script wrote for a skill or agent the mount no longer ships dangles after a
+  # submodule bump. Remove it, and say so - but ONLY a link that points into the mount: a
+  # consumer's own link to somewhere else is not this script's, dangling or not.
+  local prefix="$REL_SOURCE/$(basename "$source_dir")/"
+  local link link_target
+  for link in "$dest_dir"/*; do
+    [[ -L "$link" ]] || continue
+    link_target="$(readlink "$link")"
+    [[ "$link_target" == "$prefix"* ]] || continue
+    [[ -e "$link" ]] && continue          # -e follows the link: the source is still there
+    rm "$link"
+    echo "Removed stale $label link: $link (its source is gone from the mount)"
+  done
+
   echo "Synced $updated $label link(s) from $source_dir to $dest_dir"
 }
 
-# The one file this script writes outside .claude/, and the one it may not merge: Emacs reads
-# exactly one `.dir-locals.el' per directory, so a consumer that has its own already has spent
-# the slot. It gets a line on stderr and keeps its file - guessing which of the two sets of
-# settings matters is not this script's call, and silently replacing them is the failure that
-# would be found weeks later.
+# Until cb-pq4 this script linked the consumer's root `.dir-locals.el' to
+# templates/consumer-dir-locals.el, so that `M-x cerebro' existed for every contributor. That
+# template is gone - the fleet view has its own command, `scripts/cerebro' - and every consumer
+# that ever synced still carries the link, which now dangles and which Emacs complains about on
+# every file opened. So the link that names the retired template is removed here, and ONLY that
+# one: a `.dir-locals.el' the project wrote itself, or linked somewhere of its own, is the
+# project's and is not touched. Same shape as the retired-path refusals in roster and
+# launch-preflight, and the same class of defect if skipped: found weeks later, in somebody
+# else's checkout.
 #
-# Why a link rather than a copy: a change to the form is then carried by a submodule bump, like
-# every skill and agent here. Why at all: `M-x cerebro' otherwise costs each contributor an edit
-# to their own init, and the fleet view is how this harness is driven.
-sync_dir_locals() {
-  local template="$SOURCE_ROOT/templates/consumer-dir-locals.el"
+# With this, the script writes nothing outside .claude/ at all.
+remove_retired_dir_locals() {
   local target="$consumer_root/.dir-locals.el"
-  local link="$REL_FROM_ROOT/templates/consumer-dir-locals.el"
 
-  # A submodule from before this template existed. Nothing to link, and nothing wrong.
-  [[ -f "$template" ]] || return 0
+  # -L, and no -e: the link is expected to dangle by the time this runs.
+  [[ -L "$target" ]] || return 0
+  [[ "$(readlink "$target")" == */templates/consumer-dir-locals.el ]] || return 0
 
-  if [[ -L "$target" ]]; then
-    # Ours, or the consumer's own link to somewhere else? `-L' alone would repoint the latter.
-    # Only a link that already names this template is refreshed - which is what moves it when
-    # the mount moves.
-    if [[ "$(readlink "$target")" == */templates/consumer-dir-locals.el ]]; then
-      ln -sfn "$link" "$target"
-      echo "Synced .dir-locals.el -> $link"
-    else
-      echo "Left $target alone: it is a symlink of this project's own." >&2
-    fi
-    return 0
-  fi
-
-  if [[ -e "$target" ]]; then
-    echo "Left $target alone: this project has its own." >&2
-    echo "  Emacs reads one per directory, so M-x cerebro is not installed by it." >&2
-    echo "  To enable it, copy the eval form from $template into that file." >&2
-    return 0
-  fi
-
-  ln -s "$link" "$target"
-  echo "Synced .dir-locals.el -> $link"
+  rm "$target"
+  echo "Removed stale .dir-locals.el link (templates/consumer-dir-locals.el is gone)"
 }
 
 sync_links "$SOURCE_ROOT/skills" "$CLAUDE_ROOT/skills" "skill" "dir"
 sync_links "$SOURCE_ROOT/agents" "$CLAUDE_ROOT/agents" "agent" "file"
-sync_dir_locals
+remove_retired_dir_locals

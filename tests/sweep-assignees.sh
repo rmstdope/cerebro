@@ -12,17 +12,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-fail() {
-  echo "FAIL: $1" >&2
-  exit 1
-}
-
-pass() {
-  echo "ok - $1"
-}
-
-work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
+# fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
+source "$repo_root/tests/lib/consumer.sh"
 
 # A stub `bd` on PATH ahead of the real one: the real one would read this machine's own backlog and
 # make the test pass or fail by accident. It records the arguments it was given, so the assertion
@@ -50,14 +41,8 @@ minutes_ago() {
 #
 # The sweep needs no origin and no branch: it reads `bd` and nothing else. A git repository is all
 # it wants, so `consumer-root` has a root to answer with.
-consumer="$work_dir/repo"
-mkdir -p "$consumer/.claude/cerebro/scripts"
-git init -q -b main "$consumer"
-for s in consumer-root project-conf sweep-assignees.sh; do
-  ln -s "$repo_root/scripts/$s" "$consumer/.claude/cerebro/scripts/$s"
-done
-git -c user.name=test -c user.email=test@example.com -C "$consumer" \
-  commit -q --allow-empty -m "init"
+consumer="$(consumer_new repo --link consumer-root project-conf sweep-assignees.sh)"
+git_q -C "$consumer" commit -q --allow-empty -m "init"
 
 cat > "$beads_file" <<JSON
 [

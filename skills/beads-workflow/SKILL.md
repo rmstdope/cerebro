@@ -234,9 +234,9 @@ happened to file it. The one exception is a child of a split parent, which takes
 priority — see "Dependencies and breakdown" below.
 
 P4 is not "unimportant" here — it is **unranked**, the floor a bead waits on until it is prioritised
-deliberately. That prioritisation is a step of its own: the planner walks the P4 beads with the
+deliberately. That prioritisation is a step of its own: Cerebro walks the P4 beads with the
 navigator, recommends a priority for each from what the bead says, and applies what the navigator
-chooses (see `plan-bead`). Ranking is the navigator's call, and a bead filed at P1 by its author has
+chooses (see `agents/orchestrator.md`, *Ranking the backlog*). Ranking is the navigator's call, and a bead filed at P1 by its author has
 taken that call from them.
 
 So set the priority you think it deserves nowhere but in the bead's text — say in the description why
@@ -263,7 +263,7 @@ explicitly; if the parent is itself still P4 the children are P4 with it, and th
 ranked in one question at the next triage.
 
 The navigator is asked about the parent only. A child whose priority has drifted out of step with its
-parent — higher or lower — is put back to the parent's: `plan-bead` reconciles the tree on every
+parent — higher or lower — is put back to the parent's: Cerebro reconciles the tree on every
 triage pass, and a child that outranks its own parent jumps the queue ahead of work the navigator put
 first.
 

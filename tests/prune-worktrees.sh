@@ -102,7 +102,7 @@ gb_free 40
 out="$(cd "$consumer" && PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999 bash "$prune" 2>&1)"
 targets_present ah-warm ah-cold ah-cool psylocke \
   || fail "a target was reclaimed on a roomy disk"
-if echo "$out" | grep -qi "reclaim"; then fail "it spoke of reclaiming on a roomy disk: $out"; fi
+if grep -qi "reclaim" <<<"$out"; then fail "it spoke of reclaiming on a roomy disk: $out"; fi
 pass "nothing is reclaimed when free space is comfortable"
 
 # --- 2. under pressure, the coldest goes first --------------------------------------------------
@@ -116,12 +116,12 @@ targets_present ah-warm ah-cool psylocke \
 pass "under pressure the coldest kept tree's target/ is reclaimed, and only that one"
 
 # --- 3. it says what it did, and why ------------------------------------------------------------
-echo "$out" | grep -q "ah-cold/target" || fail "the log did not name the tree: $out"
-echo "$out" | grep -qE "\([0-9][0-9.]*[BKMGT]? freed," \
+grep -q "ah-cold/target" <<<"$out" || fail "the log did not name the tree: $out"
+grep -qE "\([0-9][0-9.]*[BKMGT]? freed," <<<"$out" \
   || fail "the log named no size for what it freed: $out"
-echo "$out" | grep -q "5 GB free" || fail "the log did not name the free space that triggered it: $out"
-echo "$out" | grep -q "8 GB floor" || fail "the log did not name the floor it was measured against: $out"
-echo "$out" | grep -qE "cold for over (30|60) minutes" || fail "the log did not say how cold it was: $out"
+grep -q "5 GB free" <<<"$out" || fail "the log did not name the free space that triggered it: $out"
+grep -q "8 GB floor" <<<"$out" || fail "the log did not name the floor it was measured against: $out"
+grep -qE "cold for over (30|60) minutes" <<<"$out" || fail "the log did not say how cold it was: $out"
 pass "the log names the tree, the size, the free space, the floor and the age"
 
 # --- 4. the worktrees themselves are untouched --------------------------------------------------
@@ -135,7 +135,7 @@ pass "the worktree itself is never removed by this path — only its target/"
 
 # --- 5. --dry-run under pressure reclaims nothing -----------------------------------------------
 out="$(cd "$consumer" && PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999 bash "$prune" --dry-run 2>&1)"
-echo "$out" | grep -q "would reclaim ah-cool/target" \
+grep -q "would reclaim ah-cool/target" <<<"$out" \
   || fail "--dry-run did not name what it would take: $out"
 targets_present ah-warm ah-cool psylocke || fail "--dry-run reclaimed something: $out"
 pass "--dry-run under pressure names what it would take and takes nothing"
@@ -267,12 +267,12 @@ echo "ah-stranded-branch" > "$gh_merged_branch"
 
 # --- 9. the submodule's worktrees are walked at all ---------------------------------------------
 out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" --dry-run 2>&1)"
-echo "$out" | grep -q "would remove ah-stranded-cerebro" \
+grep -q "would remove ah-stranded-cerebro" <<<"$out" \
   || fail "a stranded worktree of the submodule was never enumerated: $out"
 pass "a_stranded_submodule_worktree_is_removed: the submodule's worktree list is walked"
 
 # --- 10. the submodule's own git dir is not an agent worktree -----------------------------------
-if echo "$out" | grep -qE "(remove|keeping) cerebro( |$|—)"; then
+if grep -qE "(remove|keeping) cerebro( |$|—)" <<<"$out"; then
   fail "the submodule's own checkout was treated as an agent worktree: $out"
 fi
 [ -d "$sub/scripts" ] || fail "the submodule's own checkout was harmed"
@@ -280,18 +280,18 @@ pass "the_submodules_own_gitdir_is_not_a_worktree: the first entry is never repo
 
 # --- 11. the removal uses the owning repository -------------------------------------------------
 out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" 2>&1)"
-echo "$out" | grep -q "removed ah-stranded-cerebro" || fail "it did not remove the stranded tree: $out"
+grep -q "removed ah-stranded-cerebro" <<<"$out" || fail "it did not remove the stranded tree: $out"
 [ ! -d "$sub_tree" ] || fail "the stranded tree is still on disk: $out"
-git -C "$sub" worktree list --porcelain | grep -q "ah-stranded-cerebro" \
+grep -q "ah-stranded-cerebro" <<<"$(git -C "$sub" worktree list --porcelain)" \
   && fail "the worktree registration survived, so it was removed from the wrong repository: $out"
-git -C "$sub" branch --list ah-stranded-branch | grep -q . \
+grep -q . <<<"$(git -C "$sub" branch --list ah-stranded-branch)" \
   && fail "the branch survived in the submodule: $out"
 pass "a_stranded_submodule_worktree_is_removed_for_real: removal and branch deletion use the owner"
 
 # --- 12. an unreachable submodule remote costs the submodule half only --------------------------
 git_q -C "$sub" remote set-url origin "$work_dir/no-such-remote.git"
 out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" --dry-run 2>&1)"
-echo "$out" | grep -q "ah-squashed" \
+grep -q "ah-squashed" <<<"$out" \
   || fail "an unreachable submodule remote aborted the consumer's half of the sweep: $out"
 pass "a failed submodule fetch skips the submodule half and leaves the consumer's alone"
 

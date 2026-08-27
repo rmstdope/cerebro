@@ -239,12 +239,13 @@ to catch."
   "Another name's session of the fleet rooted at /Users/x/repos/cerebro.")
 
 (defconst cerebro-test--duplicate-procs
-  (list (cons 70687 cerebro-test--this-consumer-args)
-        (cons 32075 cerebro-test--this-consumer-args)
-        (cons 47482 cerebro-test--other-consumer-args)
-        (cons 70688 cerebro-test--beast-args))
-  "A machine's processes as (PID . ARGS): two Xaviers here, one Xavier in
-another consumer, one Beast here.")
+  (list (cons 70687 (cons 1 cerebro-test--this-consumer-args))
+        (cons 32075 (cons 1 cerebro-test--this-consumer-args))
+        (cons 47482 (cons 1 cerebro-test--other-consumer-args))
+        (cons 70688 (cons 1 cerebro-test--beast-args)))
+  "A machine's processes as (PID PPID . ARGS): two Xaviers here, one Xavier in
+another consumer, one Beast here.  Every parent is outside the set, so each
+is its own session.")
 
 (ert-deftest cerebro-test/session-pids-counts-this-consumers-sessions-of-one-name ()
   "Two sessions of one name is a count, not a yes/no - and another consumer's
@@ -261,12 +262,65 @@ same-named session is not one of them (cb-lzi)."
                                                  "/Users/x/repos/atlantis-hud"))
                    '(47482)))))
 
+(defconst cerebro-test--copilot-marker
+  " This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."
+  "The marker sentence every process of Xavier's session carries.")
+
+(defconst cerebro-test--copilot-shim-args
+  (concat "node /opt/homebrew/bin/copilot --agent planner --name Xavier"
+          cerebro-test--copilot-marker)
+  "The node shim on PATH, which spawns the platform binary as its own child.")
+
+(defconst cerebro-test--copilot-binary-args
+  (concat "/opt/homebrew/lib/node_modules/@github/copilot/node_modules/"
+          "@github/copilot-darwin-arm64/copilot --agent planner --name Xavier"
+          cerebro-test--copilot-marker)
+  "The platform binary the shim spawns - the pid the state file names.")
+
+(defconst cerebro-test--copilot-procs
+  (list (cons 59806 (cons 59548 cerebro-test--copilot-shim-args))
+        (cons 60514 (cons 59806 cerebro-test--copilot-binary-args)))
+  "One ordinary Copilot session of Xavier, as two processes (cb-3ks).")
+
+(ert-deftest cerebro-test/a-wrapper-and-the-binary-it-spawns-are-one-session ()
+  "The live shape observed on this fleet, 2026-08-27: the `copilot\=' on PATH is
+a node shim that passes the whole argv - marker included - to the platform
+binary it spawns, so both processes are the same session and a naive count
+reads `×2\=' on every row forever (cb-3ks)."
+  (let* ((stray (cons 36037 (cons 1 cerebro-test--this-consumer-args)))
+         (mine (cerebro--consumer-processes
+                (append cerebro-test--copilot-procs (list stray))
+                "/Users/x/repos/cerebro"))
+         (pair (cerebro--consumer-processes cerebro-test--copilot-procs
+                                            "/Users/x/repos/cerebro")))
+    ;; The stray is a second session; the shim is not.
+    (should (equal (cerebro--session-pids "Xavier" mine) '(36037 60514)))
+    ;; Alone, the pair is one session - and the pid kept is the leaf, which is
+    ;; the one the state file names.
+    (should (equal (cerebro--session-pids "Xavier" pair) '(60514)))
+    (let* ((agents (cerebro--derive nil cerebro-test--interactive nil
+                                    #'cerebro-test--never-alive
+                                    (mapcar #'cerebro--proc-args pair) nil))
+           (counted (cerebro--apply-session-counts agents pair))
+           (xavier (cl-find "Xavier" counted :key #'cerebro-agent-name :test #'equal)))
+      (should (= (cerebro-agent-sessions xavier) 1))
+      (should-not (cerebro--duplicated-p xavier)))))
+
+(ert-deftest cerebro-test/a-process-with-no-parent-pid-is-its-own-session ()
+  "Where the platform reports no `ppid\=', nil must read as \"its own session\" -
+an over-count is a visible `×N\=' the navigator can act on, an under-count
+silently hides a real double-start."
+  (let ((procs (list (cons 11 (cons nil cerebro-test--this-consumer-args))
+                     (cons 22 (cons nil cerebro-test--this-consumer-args)))))
+    (should (equal (cerebro--session-pids "Xavier" procs) '(11 22)))
+    (should (equal (cerebro--drop-wrappers nil) nil))))
+
 (ert-deftest cerebro-test/apply-session-counts-marks-a-name-with-two-sessions ()
   (let* ((procs (cerebro--consumer-processes cerebro-test--duplicate-procs
                                              "/Users/x/repos/cerebro"))
          (agents (cerebro--derive nil cerebro-test--interactive nil
                                   #'cerebro-test--never-alive
-                                  (mapcar #'cdr procs) nil))
+                                  (mapcar #'cerebro--proc-args procs) nil))
          (counted (cerebro--apply-session-counts agents procs))
          (by-name (lambda (name)
                     (cl-find name counted :key #'cerebro-agent-name :test #'equal))))
@@ -374,29 +428,29 @@ snapshot against; the pid simply stops being alive. Liveness is the fact that
 covers both, and it is the same question `cerebro--session-alive-p\=' already
 asks of the pid path - presence in a snapshot is not liveness, the way
 presence in an alist was not."
-  (let ((procs '((11 . "claude --agent planner --name Xavier")
-                 (22 . "claude --agent planner --name Beast")))
+  (let ((procs '((11 1 . "claude --agent planner --name Xavier")
+                 (22 1 . "claude --agent planner --name Beast")))
         (alive (lambda (pid) (memq pid '(22)))))
     (should (equal (cerebro--live-processes procs alive)
-                   '((22 . "claude --agent planner --name Beast"))))
+                   '((22 1 . "claude --agent planner --name Beast"))))
     (should (null (cerebro--live-processes procs #'ignore)))
     (should (equal (cerebro--live-processes procs (lambda (_) t)) procs))
     (should (null (cerebro--live-processes nil (lambda (_) t))))))
 
 (ert-deftest cerebro-test/a-role-whose-session-has-exited-reads-dead-not-up ()
   "The whole chain, for a role that ended its own turn and was never parked."
-  (let* ((procs '((11 . "claude --agent planner --name Xavier --remote-control Xavier This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
+  (let* ((procs '((11 1 . "claude --agent planner --name Xavier --remote-control Xavier This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
          (gone (cerebro--live-processes procs #'ignore))
          (still (cerebro--live-processes procs (lambda (_) t))))
     (should (eq (cerebro-agent-state
                  (car (cerebro--derive nil cerebro-test--interactive nil
                                        #'cerebro-test--never-alive
-                                       (mapcar #'cdr gone) nil)))
+                                       (mapcar #'cerebro--proc-args gone) nil)))
                 'dead))
     (should (eq (cerebro-agent-state
                  (car (cerebro--derive nil cerebro-test--interactive nil
                                        #'cerebro-test--never-alive
-                                       (mapcar #'cdr still) nil)))
+                                       (mapcar #'cerebro--proc-args still) nil)))
                 'up))))
 
 (ert-deftest cerebro-test/derive-interactive-up-when-owned ()
@@ -980,14 +1034,21 @@ shape."
               (should (eq (cerebro-agent-bead agent) nil)))))
       (delete-directory tmp t))))
 
-(ert-deftest cerebro-test/system-processes-are-pid-and-args-string-pairs ()
+(ert-deftest cerebro-test/system-processes-are-pid-ppid-and-args-triples ()
   "The real process scan, on this very Emacs.  The `(emacs-pid)\=' line is the
 one that would catch a platform where `process-attributes\=' returns no
 `args\=': there the reader returns nothing, every interactive row falls to
-`dead\=', and nothing says so.  Do not weaken it to `(should procs)\='."
+`dead\=', and nothing says so.  The ppid assertion is the same test for the
+key the tree collapse depends on.  Do not weaken either to `(should procs)\='."
   (let ((procs (cerebro--system-processes)))
-    (should (cl-every (lambda (p) (and (integerp (car p)) (stringp (cdr p)))) procs))
+    (should (cl-every (lambda (p) (and (integerp (cerebro--proc-pid p))
+                                       (stringp (cerebro--proc-args p))
+                                       (or (null (cerebro--proc-ppid p))
+                                           (integerp (cerebro--proc-ppid p)))))
+                      procs))
     (should (assq (emacs-pid) procs))
+    (should (equal (cerebro--proc-ppid (assq (emacs-pid) procs))
+                   (alist-get 'ppid (process-attributes (emacs-pid)))))
     ;; and the pure consumers take that shape without complaint
     (let ((mine (cerebro--consumer-processes procs "/no/such/root/")))
       (should (listp mine))
@@ -1126,6 +1187,39 @@ one the navigator can see - and it beats `disarm\=', which acts on the name."
   (should (eq (cerebro--finish-action
                (cerebro-test--duplicated-agent "Xavier" "planner" 'interactive 'up) nil)
               'duplicate)))
+
+(ert-deftest cerebro-test/copilot-wrapper-does-not-refuse-the-keys ()
+  "The bead's headline symptom, end to end: on a Copilot fleet `s\=', `k\=' and
+`f\=' asked the navigator to choose between a shim and its own child on every
+row, every keypress, for as long as the fleet was up (cb-3ks).  A genuine
+second session must still refuse them."
+  (let* ((stray (cons 36037 (cons 1 cerebro-test--this-consumer-args)))
+         (xavier-from
+          (lambda (procs)
+            (let* ((mine (cerebro--consumer-processes procs "/Users/x/repos/cerebro"))
+                   (agents (cerebro--derive nil cerebro-test--interactive nil
+                                            #'cerebro-test--never-alive
+                                            (mapcar #'cerebro--proc-args mine) nil)))
+              (cl-find "Xavier" (cerebro--apply-session-counts agents mine)
+                       :key #'cerebro-agent-name :test #'equal))))
+         (one (funcall xavier-from cerebro-test--copilot-procs))
+         (two (funcall xavier-from (append cerebro-test--copilot-procs (list stray)))))
+    (should-not (eq (cerebro--start-action one nil) 'duplicate))
+    (should-not (eq (cerebro--kill-action one '("Xavier")) 'duplicate))
+    (should-not (eq (cerebro--finish-action one nil) 'duplicate))
+    (should (eq (cerebro--start-action two nil) 'duplicate))
+    (should (eq (cerebro--kill-action two '("Xavier")) 'duplicate))
+    (should (eq (cerebro--finish-action two nil) 'duplicate))))
+
+(ert-deftest cerebro-test/the-duplicate-message-still-tags-the-state-file-pid ()
+  "The navigator's chosen line, verbatim.  It reads this way only because the
+collapse keeps the leaf: on a Copilot fleet the state file names the platform
+binary, never the shim, so dropping parents is what keeps the `(state file)\='
+tag meaningful (cb-3ks, decision A)."
+  (should (equal (cerebro--duplicate-message "Xavier" '(36037 60514) 60514)
+                 (concat "Xavier has 2 sessions in this fleet: "
+                         "pid 60514 (state file), pid 36037 "
+                         "— end the extra one from its own terminal"))))
 
 (ert-deftest cerebro-test/autostart-never-launches-a-duplicated-name ()
   (should (eq (cerebro--autostart-action

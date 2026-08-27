@@ -31,6 +31,38 @@ set -e
 [[ "$(pass "y")" == "ok - y" ]] || fail "pass should print 'ok - y', got: $(pass "y")"
 pass "fail exits 1 and names the assertion; pass prints an ok line"
 
+# --- suite_passed, and the fabricator the death cases share -----------------------------------------
+
+# fabricate_suite <name> <body> -> the path of a runnable throwaway suite that sources the library.
+# The body is written verbatim to a file rather than interpolated into `bash -c', so it may contain
+# any quoting - which the death cases in the last section need.
+fabricate_suite() {
+  local path="$work_dir/$1.sh"
+  {
+    printf 'set -euo pipefail\n'
+    printf 'repo_root=%q\n' "$repo_root"
+    printf 'source "$repo_root/tests/lib/consumer.sh"\n'
+    printf '%s\n' "$2"
+  } > "$path"
+  echo "$path"
+}
+
+# run_suite <path> -> sets $out (stdout and stderr together) and $status.
+run_suite() {
+  set +e
+  out="$(bash "$1" 2>&1)"
+  status=$?
+  set -e
+}
+
+s="$(fabricate_suite passes 'suite_passed')"
+run_suite "$s"
+[[ $status -eq 0 ]] || fail "suite_passed: a suite that reaches its end should exit 0, got $status
+$out"
+[[ "$out" == "$s: all assertions passed" ]] \
+  || fail "suite_passed: expected '$s: all assertions passed', got: $out"
+pass "suite_passed prints the suite's summary line and exits 0"
+
 # --- reading text without a pipe ------------------------------------------------------------------
 
 text="$(printf 'ARG:--model\nARG:sonnet\nARG:--effort\nARG:high')"

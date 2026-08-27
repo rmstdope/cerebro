@@ -20,6 +20,9 @@
 #
 #   fail <msg>                    echoes "FAIL: <msg>" on stderr and exits 1
 #   pass <msg>                    echoes "ok - <msg>"
+#   suite_passed                  every suite's LAST line: prints "<suite>: all assertions passed"
+#                                 and records that the suite got there. A suite that never calls it
+#                                 exits non-zero, whatever bash reported.
 #   git_q ...                     git with a test identity, so a commit needs no global config
 #
 #   arg_follows <text> <flag re> <value re>
@@ -61,6 +64,14 @@ fail() {
 
 pass() {
   echo "ok - $1"
+}
+
+# Every suite's LAST line. It prints the summary line the suites used to each spell for
+# themselves, and - the point of it - records that the suite reached its own end. Without that
+# record the EXIT trap below cannot tell a suite that passed from one that died silently.
+suite_passed() {
+  _suite_reached_end=1
+  echo "$0: all assertions passed"
 }
 
 # A test identity on the command line rather than in a config: the fixture must not depend on
@@ -118,6 +129,11 @@ arg_value() {
 work_dir="$(cd "$(mktemp -d)" && pwd -P)"
 
 _cleanup_paths=("$work_dir")
+
+# Set by `suite_passed', which is every suite's last line, and by `fail'. The EXIT trap below
+# refuses to let the suite exit 0 when neither was reached - see the header.
+_suite_reached_end=""
+_suite_failed=""
 
 cleanup_add() {
   _cleanup_paths+=("$@")

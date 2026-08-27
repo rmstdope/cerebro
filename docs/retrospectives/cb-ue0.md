@@ -76,3 +76,36 @@ live, because the failure appears in the *writer*, names a line number in an unr
 is invisible on macOS.
 
 **Seen before.** None found — no retrospective mentions `Broken pipe` or SIGPIPE.
+
+## The same SIGPIPE was in the suite itself, 58 times, and cost a second CI cycle
+
+**What happened.** After fixing `launch-preflight`, a commit that added **only this retrospective
+file** turned CI red again, on a different suite: `tests/launchers.sh` reported
+`FAIL: launch Cypher: missing --permission-mode`, with
+`tests/launchers.sh: line 528: echo: write error: Broken pipe` beside it. The argument was present.
+Six local runs before the fix and three after never reproduced it.
+
+**Why.** Established. The assertion was `echo "$out" | grep -q '^ARG:--permission-mode$' || fail …`.
+`grep -q` exits at the *first match* and closes the pipe, `echo` then fails with EPIPE, and
+`set -o pipefail` propagates that — so **the assertion fails precisely because the thing it looks
+for was found early enough**. It is a race between `grep` exiting and `echo` finishing its write,
+which is why it appears on a loaded CI runner and never on this machine, and why the failure names
+whichever roster row lost the race that day.
+
+The suite had 58 of these, plus four `grep -n … | head -1` and two `grep … | head -6` where `head`
+closes the pipe for the same reason. They had all been there for a long time, harmless only because
+something upstream was always slower. This bead removed a `consumer-root` fork from the launch
+path, and that was enough.
+
+**Cost.** Two CI cycles and about 45 minutes, on top of the first finding's.
+
+**Prevent by.** In a bash suite, never `echo "$x" | grep -q …`. Use a here-string —
+`grep -q … <<<"$x"` — which has no writer to kill, and one `awk` where two stages were piped.
+`tests/launchers.sh` now defines `arg_follows` and `line_of` for the two shapes it needed and
+carries a comment saying why; **the other suites have not been audited**, and a grep for
+`| grep -q`, `| head` and `| grep -m` across `tests/` would find the rest. That audit is not a
+planned bead, so it is the navigator's to file.
+
+The general rule worth writing down somewhere the fleet reads: **any early-exiting reader on the
+right of a pipe (`grep -q`, `grep -m`, `head`) turns `set -o pipefail` into a source of false
+failures**, and the message it produces names the wrong thing entirely.

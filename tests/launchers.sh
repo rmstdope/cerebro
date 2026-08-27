@@ -22,6 +22,22 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
+# Assertions read their text through a here-string, never `echo "$x" | grep -q'. That pipeline is a
+# SIGPIPE trap (cb-ue0): `grep -q' exits at the first match and closes the pipe under `echo', which
+# then fails with `write error: Broken pipe', and `set -o pipefail' turns that into a failed
+# assertion about an argument that was in fact present. It is a race, so it fires on CI and not
+# here, and it fired the moment this bead removed a fork that had been slowing the writer down.
+# `arg_follows' is the same rule for the "this flag is followed by this value" shape: one awk, no
+# pipe at all. `head' and `tail' close a pipe early for the same reason and are gone with it.
+arg_follows() {  # <text> <flag line regex> <value line regex>
+  awk -v f="$2" -v v="$3" '$0 ~ f { if ((getline nxt) > 0 && nxt ~ v) { found = 1; exit } }
+                           END { exit !found }' <<<"$1"
+}
+
+line_of() {      # <text> <regex> -> the 1-based number of the first matching line, or nothing
+  awk -v r="$2" '$0 ~ r { print NR; exit }' <<<"$1"
+}
+
 # The fake sessions the duplicate-refusal cases start, killed by the EXIT trap the library
 # installs - it calls `suite_cleanup' first, before removing anything, so a failed assertion
 # leaves none of them running (`fail' exits, so per-case cleanup would not run). Never a second
@@ -180,7 +196,7 @@ out="$("$builtin_dir/roster" --entry Nobody 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "roster --entry Nobody: expected exit 2, got $status"
-echo "$out" | grep -q "not on the roster" || fail "roster --entry Nobody: wrong message: $out"
+grep -q "not on the roster" <<<"$out" || fail "roster --entry Nobody: wrong message: $out"
 pass "roster --entry Nobody exits 2 naming it not on the roster"
 
 set +e
@@ -323,13 +339,13 @@ for mode in "" "--autostart" "--standby" "--entry Ada" "--implementers"; do
   set -e
   [[ $status -eq 2 ]] || fail "roster ${mode:-(bare)} with a bad third word: expected exit 2, got $status"
   [[ -z "$out" ]] || fail "roster ${mode:-(bare)} with a bad third word: expected nothing on stdout, got: $out"
-  echo "$err" | grep -q "autostrat" \
+  grep -q "autostrat" <<<"$err" \
     || fail "roster ${mode:-(bare)}: the refusal should name the word, got: $err"
-  echo "$err" | grep -q "line 1" \
+  grep -q "line 1" <<<"$err" \
     || fail "roster ${mode:-(bare)}: the refusal should name the line, got: $err"
-  echo "$err" | grep -q "roster.conf" \
+  grep -q "roster.conf" <<<"$err" \
     || fail "roster ${mode:-(bare)}: the refusal should name the file, got: $err"
-  echo "$err" | grep -q "standby" \
+  grep -q "standby" <<<"$err" \
     || fail "roster ${mode:-(bare)}: the refusal should name every accepted word, got: $err"
 done
 pass "roster: a third word that is neither autostart nor standby refuses, naming the file, line and word"
@@ -342,7 +358,7 @@ err="$("$roster_at" 2>&1 >/dev/null)"
 set -e
 [[ $status -eq 2 ]] || fail "roster with a fourth word: expected exit 2, got $status"
 [[ -z "$out" ]] || fail "roster with a fourth word: expected nothing on stdout, got: $out"
-echo "$err" | grep -q "one word too many" \
+grep -q "one word too many" <<<"$err" \
   || fail "roster with a fourth word: expected the 'one word too many' line, got: $err"
 pass "roster: a fourth word refuses"
 
@@ -356,7 +372,7 @@ err="$("$roster_at" 2>&1 >/dev/null)"
 set -e
 [[ $status -eq 2 ]] || fail "roster with both words: expected exit 2, got $status"
 [[ -z "$out" ]] || fail "roster with both words: expected nothing on stdout, got: $out"
-echo "$err" | grep -q "one word too many" \
+grep -q "one word too many" <<<"$err" \
   || fail "roster with both words: expected the 'one word too many' line, got: $err"
 pass "roster: autostart and standby on one row refuse as a fourth word"
 
@@ -429,7 +445,7 @@ err="$("$roster_at" 2>&1 >/dev/null)"
 set -e
 [[ $status -eq 2 ]] || fail "roster at the old path: expected exit 2, got $status"
 [[ -z "$out" ]] || fail "roster at the old path: expected nothing on stdout, got: $out"
-echo "$err" | grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" \
+grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" <<<"$err" \
   || fail "roster at the old path: expected the mv line on stderr, got: $err"
 pass "a roster left at the retired .claude/ path refuses instead of falling back"
 
@@ -480,9 +496,9 @@ Ada           archivist      autostart
 Turing        implementer
 ROSTER
 out="$(run_launcher_at "$roster_consumer/.claude/cerebro/scripts" launch Ada)"
-echo "$out" | grep -A1 '^ARG:--agent$' | grep -q '^ARG:archivist$' \
+arg_follows "$out" '^ARG:--agent$' '^ARG:archivist$' \
   || fail "launch Ada (consumer-only role): expected --agent archivist, got: $out"
-echo "$out" | grep -A1 '^ARG:--model$' | grep -q '^ARG:sonnet$' \
+arg_follows "$out" '^ARG:--model$' '^ARG:sonnet$' \
   || fail "launch Ada (consumer-only role): expected the consumer agent file's model, got: $out"
 pass "a consumer-only role resolves its agent file from the consumer and launches"
 
@@ -495,11 +511,11 @@ out="$(run_launcher_at "$roster_consumer/.claude/cerebro/scripts" launch Grace 2
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "launch Grace (no agent file anywhere): expected exit 2, got $status"
-echo "$out" | grep -q "librarian" \
+grep -q "librarian" <<<"$out" \
   || fail "launch Grace: the message should name the role, got: $out"
-echo "$out" | grep -q "roster.conf" \
+grep -q "roster.conf" <<<"$out" \
   || fail "launch Grace: the message should name the consumer roster as the cause, got: $out"
-echo "$out" | grep -q "the submodule is behind" \
+grep -q "the submodule is behind" <<<"$out" \
   && fail "launch Grace: a consumer-declared role is not a stale submodule, got: $out"
 pass "a consumer-declared role with no agent file anywhere is refused by its right cause"
 rm -rf "$bare_path_dir"
@@ -508,44 +524,44 @@ rm -rf "$bare_path_dir"
 
 while IFS=$'\t' read -r name role kind; do
   out="$(run_launcher launch "$name")"
-  echo "$out" | grep -q "^BEADS_ACTOR=${name}\$" || fail "launch $name: expected BEADS_ACTOR=$name, got: $out"
-  echo "$out" | grep -A1 '^ARG:--agent$' | grep -q "^ARG:${role}\$" || fail "launch $name: expected --agent $role, got: $out"
-  echo "$out" | grep -A1 '^ARG:--name$' | grep -q "^ARG:${name}\$" || fail "launch $name: expected --name $name, got: $out"
-  echo "$out" | grep -A1 '^ARG:--remote-control$' | grep -q "^ARG:${name}\$" || fail "launch $name: expected --remote-control $name, got: $out"
+  grep -q "^BEADS_ACTOR=${name}\$" <<<"$out" || fail "launch $name: expected BEADS_ACTOR=$name, got: $out"
+  arg_follows "$out" '^ARG:--agent$' "^ARG:${role}\$" || fail "launch $name: expected --agent $role, got: $out"
+  arg_follows "$out" '^ARG:--name$' "^ARG:${name}\$" || fail "launch $name: expected --name $name, got: $out"
+  arg_follows "$out" '^ARG:--remote-control$' "^ARG:${name}\$" || fail "launch $name: expected --remote-control $name, got: $out"
 
   expected_model="$(model_of "$role")"
   if [[ -n "$expected_model" ]]; then
-    echo "$out" | grep -A1 '^ARG:--model$' | grep -q "^ARG:${expected_model}\$" \
+    arg_follows "$out" '^ARG:--model$' "^ARG:${expected_model}\$" \
       || fail "launch $name: expected --model $expected_model, got: $out"
   fi
 
   expected_effort="$(effort_of "$role")"
   if [[ -n "$expected_effort" ]]; then
-    echo "$out" | grep -A1 '^ARG:--effort$' | grep -q "^ARG:${expected_effort}\$" \
+    arg_follows "$out" '^ARG:--effort$' "^ARG:${expected_effort}\$" \
       || fail "launch $name: expected --effort $expected_effort, got: $out"
   fi
 
-  echo "$out" | grep -q '^ARG:--permission-mode$' || fail "launch $name: missing --permission-mode"
-  echo "$out" | grep -A1 '^ARG:--permission-mode$' | grep -q '^ARG:auto$' || fail "launch $name: expected auto"
+  grep -q '^ARG:--permission-mode$' <<<"$out" || fail "launch $name: missing --permission-mode"
+  arg_follows "$out" '^ARG:--permission-mode$' '^ARG:auto$' || fail "launch $name: expected auto"
 
   # The marker sentence, which since cb-d59.3 opens the PROMPT rather than riding on a flag:
   # scripts/agent-alive and cerebro--session-args-p cut both their needles from it, so no
   # provider's flag spelling is evidence any more - and the prompt is the one argv slot every
   # agent CLI accepts.
   marker_line="This session is $name of the cerebro fleet rooted at "
-  prompt="$(echo "$out" | sed -n "/^ARG:${marker_line}/,\$p")"
+  prompt="$(sed -n "/^ARG:${marker_line}/,\$p" <<<"$out")"
   [[ -n "$prompt" ]] \
     || fail "launch $name: the prompt does not carry the marker, so the fleet view cannot prove the session"
-  echo "$prompt" | grep -qF "${fixture_dir%/}/" \
+  grep -qF "${fixture_dir%/}/" <<<"$prompt" \
     || fail "launch $name: the marker names no path under the consumer, got: $out"
-  echo "$out" | grep -q '^ARG:--append-system-prompt$' \
+  grep -q '^ARG:--append-system-prompt$' <<<"$out" \
     && fail "launch $name: --append-system-prompt is still passed"
 
   # The prompt is the last ARG: the marker, a blank line, then the instruction. It is read from
   # the marker line onwards rather than by counting lines from the end.
-  echo "$prompt" | grep -q "$name" || fail "launch $name: prompt does not name $name"
-  echo "$prompt" | grep -q "$role" || fail "launch $name: prompt does not name $role"
-  echo "$prompt" | grep -q "fill the buffer" && fail "launch $name: prompt still has the old per-role drift"
+  grep -q "$name" <<<"$prompt" || fail "launch $name: prompt does not name $name"
+  grep -q "$role" <<<"$prompt" || fail "launch $name: prompt does not name $role"
+  grep -q "fill the buffer" <<<"$prompt" && fail "launch $name: prompt still has the old per-role drift"
 done <<<"$roster_out"
 pass "launch: every roster row reaches the stub with the right actor, agent, name, remote-control name, model, effort"
 
@@ -562,8 +578,8 @@ pass "launch: every roster row reaches the stub with the right actor, agent, nam
 printf 'planner opus\n' > "$fixture_dir/.cerebro/models.conf"
 out="$(run_launcher launch Xavier --model sonnet)"
 rm -f "$fixture_dir/.cerebro/models.conf"
-before_sonnet="$(echo "$out" | grep -n '^ARG:sonnet$' | head -1 | cut -d: -f1 || true)"
-before_declared="$(echo "$out" | grep -n '^ARG:opus$' | head -1 | cut -d: -f1 || true)"
+before_sonnet="$(line_of "$out" '^ARG:sonnet$' || true)"
+before_declared="$(line_of "$out" '^ARG:opus$' || true)"
 [[ -n "$before_declared" && -n "$before_sonnet" && $before_declared -lt $before_sonnet ]] \
   || fail "launch Xavier --model sonnet: expected opus before sonnet in ARG list, got: $out"
 total_lines="$(echo "$out" | wc -l | tr -d ' ')"
@@ -573,11 +589,11 @@ pass "launch Xavier --model sonnet: opus (declared) before sonnet (override) bef
 
 # --- launch overrides: a caller's own --remote-control comes after the launcher's ---
 out="$(run_launcher launch Xavier --remote-control Elsewhere)"
-first="$(echo "$out" | grep -n '^ARG:--remote-control$' | head -1 | cut -d: -f1)"
+first="$(line_of "$out" '^ARG:--remote-control$')"
 second="$(echo "$out" | grep -n '^ARG:--remote-control$' | tail -1 | cut -d: -f1)"
 [[ -n "$first" && -n "$second" && $first -lt $second ]] \
   || fail "launch Xavier --remote-control Elsewhere: expected the launcher's flag before the caller's, got: $out"
-echo "$out" | sed -n "$((second+1))p" | grep -q '^ARG:Elsewhere$' \
+[[ "$(sed -n "$((second+1))p" <<<"$out")" == "ARG:Elsewhere" ]] \
   || fail "launch Xavier --remote-control Elsewhere: caller's name should follow its flag, got: $out"
 pass "launch Xavier --remote-control Elsewhere: launcher's Xavier before the caller's Elsewhere"
 
@@ -588,8 +604,8 @@ out="$(run_launcher launch storm 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "launch storm: expected exit 2, got $status"
-echo "$out" | grep -q "Storm" || fail "launch storm: expected the message to name Storm, got: $out"
-echo "$out" | grep -q '^BEADS_ACTOR=' && fail "launch storm: should never have reached the stub"
+grep -q "Storm" <<<"$out" || fail "launch storm: expected the message to name Storm, got: $out"
+grep -q '^BEADS_ACTOR=' <<<"$out" && fail "launch storm: should never have reached the stub"
 pass "launch storm exits 2, names Storm, never reaches the stub"
 
 set +e
@@ -597,15 +613,15 @@ out="$(run_launcher launch Nobody 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "launch Nobody: expected exit 2, got $status"
-echo "$out" | grep -q "not on the roster" || fail "launch Nobody: wrong message, got: $out"
+grep -q "not on the roster" <<<"$out" || fail "launch Nobody: wrong message, got: $out"
 # ...and the roster's own names, so the reader learns what they may type without opening a file.
 # This is also the whole answer for a name the fleet has *retired*: a renamed agent gets no courtesy
 # redirect, because the roster is the one answer to who exists (ah-qled.5.3).
 while IFS=$'\t' read -r roster_name _ _; do
-  echo "$out" | grep -qx "$roster_name" \
+  grep -qx "$roster_name" <<<"$out" \
     || fail "launch Nobody: the refusal should list the roster name $roster_name, got: $out"
 done <<<"$roster_out"
-echo "$out" | grep -q '^BEADS_ACTOR=' && fail "launch Nobody: should never have reached the stub"
+grep -q '^BEADS_ACTOR=' <<<"$out" && fail "launch Nobody: should never have reached the stub"
 pass "launch Nobody exits 2, names it not on the roster, lists every roster name, never reaches the stub"
 
 set +e
@@ -631,7 +647,7 @@ pass "no run-* launcher shim survives; launch <Name> is the only entry point"
 first_implementer="$("$builtin_dir/roster" --implementers | sed -n 1p)"
 [[ -n "$first_implementer" ]] || fail "roster --implementers: the roster names no implementer"
 out="$(run_launcher launch "$first_implementer")"
-echo "$out" | grep -q "^BEADS_ACTOR=${first_implementer}\$" \
+grep -q "^BEADS_ACTOR=${first_implementer}\$" <<<"$out" \
   || fail "launch $first_implementer: expected BEADS_ACTOR=$first_implementer, got: $out"
 pass "launch $first_implementer sets BEADS_ACTOR=$first_implementer"
 
@@ -646,7 +662,7 @@ consumer_dir="$(consumer_new own-consumer --copy)"
 printf 'gate_fast make check\n' > "$consumer_dir/.cerebro/project.conf"
 
 out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Forge)"
-echo "$out" | grep -q '^ARG:--agent$' || fail "launch Forge (consumer): stub was not reached: $out"
+grep -q '^ARG:--agent$' <<<"$out" || fail "launch Forge (consumer): stub was not reached: $out"
 [[ -L "$consumer_dir/.claude/agents/architect.md" ]] \
   || fail "launch Forge (consumer): expected .claude/agents/architect.md to be linked"
 [[ "$(readlink "$consumer_dir/.claude/agents/architect.md")" == "../cerebro/agents/architect.md" ]] \
@@ -736,9 +752,9 @@ pass "models.conf: a key scoped to another provider never matches"
 # once, rather than six reads.
 models_conf "planner@copilo gpt-5.5"
 warn_out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Xavier 2>&1 >/dev/null)"
-echo "$warn_out" | grep -q 'launch: models.conf: planner@copilo names no agent CLI cerebro knows' \
+grep -q 'launch: models.conf: planner@copilo names no agent CLI cerebro knows' <<<"$warn_out" \
   || fail "models.conf unknown provider: expected the warning, got: $warn_out"
-count="$(echo "$warn_out" | grep -c 'names no agent CLI cerebro knows')"
+count="$(grep -c 'names no agent CLI cerebro knows' <<<"$warn_out")"
 [[ "$count" -eq 1 ]] || fail "models.conf unknown provider: expected one warning, got $count"
 [[ "$(launched_flag Xavier --model)" == "$(model_of planner)" ]] \
   || fail "models.conf unknown provider: the row must be ignored, not applied"
@@ -757,9 +773,9 @@ out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Forge 2>&1
 status=$?
 set -e
 [[ $status -ne 0 ]] || fail "launch Forge (consumer, blocked sync): expected a non-zero exit"
-echo "$out" | grep -q "Refusing to link over the directory" \
+grep -q "Refusing to link over the directory" <<<"$out" \
   || fail "launch Forge (consumer, blocked sync): expected the sync's own refusal message, got: $out"
-echo "$out" | grep -q '^ARG:--agent$' \
+grep -q '^ARG:--agent$' <<<"$out" \
   && fail "launch Forge (consumer, blocked sync): should never have reached the stub"
 pass "a blocked sync aborts the launch before the stub is reached"
 
@@ -778,7 +794,7 @@ out="$(PATH="$no_claude_dir" "$(command -v bash)" "$fixture_scripts/launch" Forg
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "launch Forge (claude missing): expected exit 2, got $status"
-echo "$out" | grep -q "claude is not on PATH" \
+grep -q "claude is not on PATH" <<<"$out" \
   || fail "launch Forge (claude missing): expected the message to name claude is not on PATH, got: $out"
 pass "launch Forge refuses with one line when claude is not on PATH"
 
@@ -793,11 +809,11 @@ out="$(run_launcher_at "$consumer_dir2/.claude/cerebro/scripts" launch Forge 2>&
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "launch Forge (submodule behind): expected exit 2, got $status"
-echo "$out" | grep -q "the submodule is behind" \
+grep -q "the submodule is behind" <<<"$out" \
   || fail "launch Forge (submodule behind): expected the message to name the submodule as behind, got: $out"
 [[ ! -L "$consumer_dir2/.claude/agents/architect.md" ]] \
   || fail "launch Forge (submodule behind): the sync should not have run before this check"
-echo "$out" | grep -q '^ARG:--agent$' \
+grep -q '^ARG:--agent$' <<<"$out" \
   && fail "launch Forge (submodule behind): should never have reached the stub"
 pass "launch Forge refuses when the submodule never brought its agent file in"
 
@@ -872,7 +888,7 @@ status=$?
 err="$("$self_roster_at" 2>&1 >/dev/null)"
 set -e
 [[ $status -eq 2 ]] || fail "self-consumer roster at the old path: expected exit 2, got $status"
-echo "$err" | grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" \
+grep -q "mv .claude/cerebro-roster .cerebro/roster.conf" <<<"$err" \
   || fail "self-consumer roster at the old path: expected the mv line, got: $err"
 pass "self-consumer roster: the retired .claude/ path refuses too"
 
@@ -910,9 +926,9 @@ dup_out="$(run_launcher launch "$dup_name" 2>&1)"
 dup_status=$?
 set -e
 [[ $dup_status -eq 2 ]] || fail "duplicate-launch: expected exit 2, got $dup_status: $dup_out"
-echo "$dup_out" | grep -q "is already running in this fleet (pid $dup_pid); end it first" \
+grep -q "is already running in this fleet (pid $dup_pid); end it first" <<<"$dup_out" \
   || fail "duplicate-launch: expected the refusal naming the pid, got: $dup_out"
-echo "$dup_out" | grep -q '^ARG:' \
+grep -q '^ARG:' <<<"$dup_out" \
   && fail "duplicate-launch: the stub claude ran anyway: $dup_out"
 pass "launch refuses a name whose session is already up in this fleet"
 
@@ -924,7 +940,7 @@ pass "launch refuses a name whose session is already up in this fleet"
 printf '{"state":"working","pid":%s}\n' "$$" \
   > "$fixture_dir/.cerebro/state/$dup_name.state.json"
 live_out="$(run_launcher launch "$dup_name")"
-echo "$live_out" | grep -q '^ARG:--name$' \
+grep -q '^ARG:--name$' <<<"$live_out" \
   || fail "recycled-pid launch: expected a normal launch, got: $live_out"
 pass "launch is not fooled by a live pid that is not that name's session"
 
@@ -968,7 +984,7 @@ cp "$stub_dir/claude" "$fake_dir/fake-cli"
 cp "$stub_dir/claude" "$fake_dir/claude"
 
 out="$(PATH="$fake_dir:$PATH" bash "$fake_consumer/.claude/cerebro/scripts/launch" Xavier --model sonnet 2>/dev/null)"
-echo "$out" | grep -q '^ARG:--dialect$' \
+grep -q '^ARG:--dialect$' <<<"$out" \
   || fail "fake provider: launch did not exec the binary agent-cli named, got: $out"
 pass "launch execs the binary agent-cli names, not claude"
 
@@ -978,13 +994,13 @@ ARG:--who
 ARG:Xavier
 ARG:--model
 ARG:sonnet"
-[[ "$(echo "$out" | grep '^ARG:' | head -6)" == "$expected" ]] \
+[[ "$(awk '/^ARG:/ { print; if (++n == 6) exit }' <<<"$out")" == "$expected" ]] \
   || fail "fake provider: expected the fake arm's tokens then the caller's own, got: $out"
 for flag in --agent --remote-control --permission-mode --append-system-prompt --settings; do
-  echo "$out" | grep -q "^ARG:${flag}\$" \
+  grep -q "^ARG:${flag}\$" <<<"$out" \
     && fail "fake provider: launch spelt $flag itself, which is the claude arm's to spell"
 done
-echo "$out" | tail -2 | grep -q "Xavier" \
+grep -q "Xavier" <<<"$(tail -2 <<<"$out")" \
   || fail "fake provider: the prompt should still be the last argument, got: $out"
 pass "launch passes exactly the argv agent-cli emits, and adds none of its own"
 
@@ -1015,17 +1031,17 @@ ARG:--name
 ARG:Xavier
 ARG:--allow-all-tools
 ARG:-i"
-[[ "$(echo "$out" | grep '^ARG:' | head -6)" == "$expected" ]] \
+[[ "$(awk '/^ARG:/ { print; if (++n == 6) exit }' <<<"$out")" == "$expected" ]] \
   || fail "copilot launch: expected the copilot arm's tokens in order, got: $out"
 for flag in --remote-control --settings --permission-mode --append-system-prompt; do
-  echo "$out" | grep -q "^ARG:${flag}\$" \
+  grep -q "^ARG:${flag}\$" <<<"$out" \
     && fail "copilot launch: $flag reached copilot, which spells none of them"
 done
 pass "launch on copilot reaches the copilot binary with the copilot arm's tokens"
 
-marker_line="$(echo "$out" | grep -n '^ARG:-i$' | head -1 | cut -d: -f1)"
+marker_line="$(line_of "$out" '^ARG:-i$')"
 [[ -n "$marker_line" ]] || fail "copilot launch: no -i in the argv, got: $out"
-after_i="$(echo "$out" | sed -n "$((marker_line + 1))p")"
+after_i="$(sed -n "$((marker_line + 1))p" <<<"$out")"
 case "$after_i" in
   "ARG:This session is Xavier of the cerebro fleet rooted at $copilot_consumer/."*) ;;
   *) fail "copilot launch: expected the marker sentence after -i, got: $after_i" ;;
@@ -1034,17 +1050,17 @@ pass "the marker sentence reaches copilot inside the -i argument"
 
 err="$(copilot_launch Xavier 2>&1 >/dev/null)"
 out="$(copilot_launch Xavier 2>/dev/null)"
-echo "$out" | grep -q '^ARG:--model$' \
+grep -q '^ARG:--model$' <<<"$out" \
   && fail "copilot launch with no models.conf: --model reached copilot, got: $out"
-echo "$out" | grep -q '^ARG:--effort$' \
+grep -q '^ARG:--effort$' <<<"$out" \
   && fail "copilot launch with no models.conf: --effort reached copilot, got: $out"
-echo "$err" | grep -q 'no models.conf entry for copilot' \
+grep -q 'no models.conf entry for copilot' <<<"$err" \
   || fail "copilot launch with no models.conf: expected the fallback line, got: $err"
 # The second line - `the planner declares model X, which is Claude Code's name for it' - is
 # conditional on the agent file carrying a `model:', and none of them do any more: the frontmatter
 # models went when the fleet moved to Copilot, where they mean nothing. So the launch says the one
 # thing that is true and nothing about a declaration that is not there.
-echo "$err" | grep -q "which is Claude Code's name for it" \
+grep -q "which is Claude Code's name for it" <<<"$err" \
   && fail "copilot launch with no models.conf: the agent files declare no model, so the clause should not appear: $err"
 pass "a copilot launch with no models.conf passes no --model and no --effort, and says so"
 
@@ -1052,11 +1068,11 @@ mkdir -p "$copilot_consumer/.cerebro"
 printf 'planner@copilot gpt-5.5 high\n' > "$copilot_consumer/.cerebro/models.conf"
 err="$(copilot_launch Xavier 2>&1 >/dev/null)"
 out="$(copilot_launch Xavier 2>/dev/null)"
-echo "$out" | grep -A1 '^ARG:--model$' | grep -q '^ARG:gpt-5.5$' \
+arg_follows "$out" '^ARG:--model$' '^ARG:gpt-5.5$' \
   || fail "copilot launch with models.conf: expected --model gpt-5.5, got: $out"
-echo "$out" | grep -A1 '^ARG:--effort$' | grep -q '^ARG:high$' \
+arg_follows "$out" '^ARG:--effort$' '^ARG:high$' \
   || fail "copilot launch with models.conf: expected --effort high, got: $out"
-echo "$err" | grep -q 'models.conf (planner@copilot) -> gpt-5.5 at high effort' \
+grep -q 'models.conf (planner@copilot) -> gpt-5.5 at high effort' <<<"$err" \
   || fail "copilot launch with models.conf: expected the decision line, got: $err"
 pass "a copilot launch takes its model and effort from a models.conf row"
 
@@ -1084,7 +1100,7 @@ chmod +x "$hint_scripts/consumer-root"
 root_calls="$work_dir/root-calls"
 : > "$root_calls"
 out="$(CEREBRO_ROOT_CALLS="$root_calls" run_launcher_at "$hint_scripts" launch Forge)"
-echo "$out" | grep -q '^ARG:--agent$' || fail "hint launch: stub was not reached: $out"
+grep -q '^ARG:--agent$' <<<"$out" || fail "hint launch: stub was not reached: $out"
 calls="$(wc -l < "$root_calls" | tr -d ' ')"
 [[ "$calls" -eq 1 ]] \
   || fail "hint launch: expected exactly 1 consumer-root resolution, got $calls: $(sort "$root_calls" | uniq -c | tr '\n' ' ')"
@@ -1094,9 +1110,9 @@ pass "one launch resolves the consumer root exactly once, through --hints"
 
 # The hints reach the session itself, which is what makes every script it runs cheap too.
 out="$(CEREBRO_ROOT_CALLS="$root_calls" run_launcher_at "$hint_scripts" launch Forge)"
-echo "$out" | grep -qF "CEREBRO_CONSUMER_ROOT=$(cd "$hint_consumer" && pwd -P)" \
+grep -qF "CEREBRO_CONSUMER_ROOT=$(cd "$hint_consumer" && pwd -P)" <<<"$out" \
   || fail "hint launch: the root hint did not reach the session: $out"
-echo "$out" | grep -qF "CEREBRO_CONSUMER_MOUNT=.claude/cerebro" \
+grep -qF "CEREBRO_CONSUMER_MOUNT=.claude/cerebro" <<<"$out" \
   || fail "hint launch: the mount hint did not reach the session: $out"
 pass "the root hints are exported down the launched session's process tree"
 

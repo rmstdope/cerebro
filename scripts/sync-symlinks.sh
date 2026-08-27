@@ -114,7 +114,7 @@ sync_links() {
       exit 1
     fi
 
-    item_name="$(basename "$item_path")"
+    item_name="${item_path##*/}"
     # A provider may spell an agent file differently (`<role>.agent.md'); a skill keeps its own
     # directory name everywhere, so the suffix is a file-only affair.
     if [[ "$item_kind" == "file" ]]; then
@@ -139,8 +139,10 @@ sync_links() {
     fi
 
     link_to="$rel_source/$source_rel/$item_name"
-    link_would_change "$target" "$link_to" && note_tracked_write "$rel_dest"
-    ln -sfn "$link_to" "$target"
+    if link_would_change "$target" "$link_to"; then
+      note_tracked_write "$rel_dest"
+      ln -sfn "$link_to" "$target"
+    fi
     updated=$((updated + 1))
   done
 
@@ -215,7 +217,7 @@ mirror_links() {
       [[ "$item_path" == *.md ]] || continue
     fi
 
-    item_name="$(basename "$item_path")"
+    item_name="${item_path##*/}"
     if [[ "$item_kind" == "file" ]]; then
       target="$dest_dir/${item_name%.md}${link_suffix:-.md}"
     else
@@ -230,8 +232,10 @@ mirror_links() {
     fi
 
     link_to="$prefix$item_name"
-    link_would_change "$target" "$link_to" && note_tracked_write "$rel_dest"
-    ln -sfn "$link_to" "$target"
+    if link_would_change "$target" "$link_to"; then
+      note_tracked_write "$rel_dest"
+      ln -sfn "$link_to" "$target"
+    fi
     updated=$((updated + 1))
   done
 

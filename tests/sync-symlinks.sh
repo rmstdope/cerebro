@@ -189,6 +189,27 @@ out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
 echo "$out" | grep -q "Removed stale" \
   && fail "a second sync still removes stale links, got: $out"
 pass "a second sync says nothing about it"
+# --- a sync that changes nothing does not rewrite the links it finds ----------------------------
+#
+# `ln -sfn' removes and recreates, so an unconditional write gave every link in the consumer a new
+# inode on every launch - and launch-preflight syncs before every session. The script already asks
+# `link_would_change' before writing; this pins that the answer is acted on.
+#
+# `ls -i' reports the LINK's own inode: `ls' does not follow a symlink without -L.
+inode_of() { ls -i "$1" | awk '{print $1}'; }
+
+"$cerebro_dir/scripts/sync-symlinks.sh" >/dev/null
+before_skill="$(inode_of "$skill_link")"
+before_agent="$(inode_of "$agent_link")"
+before_hook="$(inode_of "$hook_link")"
+"$cerebro_dir/scripts/sync-symlinks.sh" >/dev/null
+[[ "$(inode_of "$skill_link")" == "$before_skill" ]] \
+  || fail "a second sync rewrote the skill link"
+[[ "$(inode_of "$agent_link")" == "$before_agent" ]] \
+  || fail "a second sync rewrote the agent link"
+[[ "$(inode_of "$hook_link")" == "$before_hook" ]] \
+  || fail "a second sync rewrote the hook link"
+pass "a sync that changes nothing does not rewrite the links"
 
 # --- the guard: run from somewhere that is not a consumer repo's .claude/cerebro ---
 outside="$work_dir/x/cerebro/scripts"

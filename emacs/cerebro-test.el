@@ -239,12 +239,13 @@ to catch."
   "Another name's session of the fleet rooted at /Users/x/repos/cerebro.")
 
 (defconst cerebro-test--duplicate-procs
-  (list (cons 70687 cerebro-test--this-consumer-args)
-        (cons 32075 cerebro-test--this-consumer-args)
-        (cons 47482 cerebro-test--other-consumer-args)
-        (cons 70688 cerebro-test--beast-args))
-  "A machine's processes as (PID . ARGS): two Xaviers here, one Xavier in
-another consumer, one Beast here.")
+  (list (cons 70687 (cons 1 cerebro-test--this-consumer-args))
+        (cons 32075 (cons 1 cerebro-test--this-consumer-args))
+        (cons 47482 (cons 1 cerebro-test--other-consumer-args))
+        (cons 70688 (cons 1 cerebro-test--beast-args)))
+  "A machine's processes as (PID PPID . ARGS): two Xaviers here, one Xavier in
+another consumer, one Beast here.  Every parent is outside the set, so each
+is its own session.")
 
 (ert-deftest cerebro-test/session-pids-counts-this-consumers-sessions-of-one-name ()
   "Two sessions of one name is a count, not a yes/no - and another consumer's
@@ -266,7 +267,7 @@ same-named session is not one of them (cb-lzi)."
                                              "/Users/x/repos/cerebro"))
          (agents (cerebro--derive nil cerebro-test--interactive nil
                                   #'cerebro-test--never-alive
-                                  (mapcar #'cdr procs) nil))
+                                  (mapcar #'cerebro--proc-args procs) nil))
          (counted (cerebro--apply-session-counts agents procs))
          (by-name (lambda (name)
                     (cl-find name counted :key #'cerebro-agent-name :test #'equal))))
@@ -374,29 +375,29 @@ snapshot against; the pid simply stops being alive. Liveness is the fact that
 covers both, and it is the same question `cerebro--session-alive-p\=' already
 asks of the pid path - presence in a snapshot is not liveness, the way
 presence in an alist was not."
-  (let ((procs '((11 . "claude --agent planner --name Xavier")
-                 (22 . "claude --agent planner --name Beast")))
+  (let ((procs '((11 1 . "claude --agent planner --name Xavier")
+                 (22 1 . "claude --agent planner --name Beast")))
         (alive (lambda (pid) (memq pid '(22)))))
     (should (equal (cerebro--live-processes procs alive)
-                   '((22 . "claude --agent planner --name Beast"))))
+                   '((22 1 . "claude --agent planner --name Beast"))))
     (should (null (cerebro--live-processes procs #'ignore)))
     (should (equal (cerebro--live-processes procs (lambda (_) t)) procs))
     (should (null (cerebro--live-processes nil (lambda (_) t))))))
 
 (ert-deftest cerebro-test/a-role-whose-session-has-exited-reads-dead-not-up ()
   "The whole chain, for a role that ended its own turn and was never parked."
-  (let* ((procs '((11 . "claude --agent planner --name Xavier --remote-control Xavier This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
+  (let* ((procs '((11 1 . "claude --agent planner --name Xavier --remote-control Xavier This session is Xavier of the cerebro fleet rooted at /Users/x/repos/cerebro/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.")))
          (gone (cerebro--live-processes procs #'ignore))
          (still (cerebro--live-processes procs (lambda (_) t))))
     (should (eq (cerebro-agent-state
                  (car (cerebro--derive nil cerebro-test--interactive nil
                                        #'cerebro-test--never-alive
-                                       (mapcar #'cdr gone) nil)))
+                                       (mapcar #'cerebro--proc-args gone) nil)))
                 'dead))
     (should (eq (cerebro-agent-state
                  (car (cerebro--derive nil cerebro-test--interactive nil
                                        #'cerebro-test--never-alive
-                                       (mapcar #'cdr still) nil)))
+                                       (mapcar #'cerebro--proc-args still) nil)))
                 'up))))
 
 (ert-deftest cerebro-test/derive-interactive-up-when-owned ()
@@ -980,14 +981,21 @@ shape."
               (should (eq (cerebro-agent-bead agent) nil)))))
       (delete-directory tmp t))))
 
-(ert-deftest cerebro-test/system-processes-are-pid-and-args-string-pairs ()
+(ert-deftest cerebro-test/system-processes-are-pid-ppid-and-args-triples ()
   "The real process scan, on this very Emacs.  The `(emacs-pid)\=' line is the
 one that would catch a platform where `process-attributes\=' returns no
 `args\=': there the reader returns nothing, every interactive row falls to
-`dead\=', and nothing says so.  Do not weaken it to `(should procs)\='."
+`dead\=', and nothing says so.  The ppid assertion is the same test for the
+key the tree collapse depends on.  Do not weaken either to `(should procs)\='."
   (let ((procs (cerebro--system-processes)))
-    (should (cl-every (lambda (p) (and (integerp (car p)) (stringp (cdr p)))) procs))
+    (should (cl-every (lambda (p) (and (integerp (cerebro--proc-pid p))
+                                       (stringp (cerebro--proc-args p))
+                                       (or (null (cerebro--proc-ppid p))
+                                           (integerp (cerebro--proc-ppid p)))))
+                      procs))
     (should (assq (emacs-pid) procs))
+    (should (equal (cerebro--proc-ppid (assq (emacs-pid) procs))
+                   (alist-get 'ppid (process-attributes (emacs-pid)))))
     ;; and the pure consumers take that shape without complaint
     (let ((mine (cerebro--consumer-processes procs "/no/such/root/")))
       (should (listp mine))

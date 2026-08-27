@@ -189,6 +189,27 @@ out="$("$cerebro_dir/scripts/sync-symlinks.sh" 2>&1)"
 echo "$out" | grep -q "Removed stale" \
   && fail "a second sync still removes stale links, got: $out"
 pass "a second sync says nothing about it"
+# --- a sync that changes nothing does not rewrite the links it finds ----------------------------
+#
+# `ln -sfn' removes and recreates, so an unconditional write gave every link in the consumer a new
+# inode on every launch - and launch-preflight syncs before every session. The script already asks
+# `link_would_change' before writing; this pins that the answer is acted on.
+#
+# `ls -i' reports the LINK's own inode: `ls' does not follow a symlink without -L.
+inode_of() { ls -i "$1" | awk '{print $1}'; }
+
+"$cerebro_dir/scripts/sync-symlinks.sh" >/dev/null
+before_skill="$(inode_of "$skill_link")"
+before_agent="$(inode_of "$agent_link")"
+before_hook="$(inode_of "$hook_link")"
+"$cerebro_dir/scripts/sync-symlinks.sh" >/dev/null
+[[ "$(inode_of "$skill_link")" == "$before_skill" ]] \
+  || fail "a second sync rewrote the skill link"
+[[ "$(inode_of "$agent_link")" == "$before_agent" ]] \
+  || fail "a second sync rewrote the agent link"
+[[ "$(inode_of "$hook_link")" == "$before_hook" ]] \
+  || fail "a second sync rewrote the hook link"
+pass "a sync that changes nothing does not rewrite the links"
 
 # --- the guard: run from somewhere that is not a consumer repo's .claude/cerebro ---
 outside="$work_dir/x/cerebro/scripts"
@@ -451,5 +472,64 @@ pass "a hook link whose source is gone from the mount is removed, out loud"
 echo "$out" | grep -q "mine" \
   && fail "the sync talked about a hook link that is not its own, got: $out"
 pass "a hook link pointing somewhere else is left alone"
+
+# --- many links in one destination directory: the sweep still picks the right one ----------------
+#
+# The stale sweep reads a whole directory's links at once, so a directory holding several is where
+# a path-to-target misalignment would show: one link's target read against another's path would
+# either spare a stale link or remove a live one, and a directory of two could hide both.
+many="$work_dir/many"
+mkdir -p "$many/.claude"
+git init -q "$many"
+many_cerebro="$many/.claude/cerebro"
+mkdir -p "$many_cerebro/scripts" "$many_cerebro/agents" \
+         "$many_cerebro/skills/alpha" "$many_cerebro/skills/beta" "$many_cerebro/skills/gamma"
+cp "$repo_root/scripts/sync-symlinks.sh" "$many_cerebro/scripts/sync-symlinks.sh"
+cp "$repo_root/scripts/consumer-root"    "$many_cerebro/scripts/consumer-root"
+cp "$repo_root/scripts/agent-cli"        "$many_cerebro/scripts/agent-cli"
+chmod +x "$many_cerebro/scripts/agent-cli" "$many_cerebro/scripts/sync-symlinks.sh" \
+         "$many_cerebro/scripts/consumer-root"
+for sk in alpha beta gamma; do echo "# $sk" > "$many_cerebro/skills/$sk/SKILL.md"; done
+echo "# Demo agent" > "$many_cerebro/agents/demo.md"
+
+"$many_cerebro/scripts/sync-symlinks.sh" >/dev/null
+
+# Two links of the consumer's own, interleaved with this script's: one that resolves and one that
+# does not. Neither points into the mount, so neither is this script's to touch.
+mkdir -p "$many/elsewhere/theirs"
+ln -s "../../elsewhere/theirs" "$many/.claude/skills/theirs"
+ln -s "../../elsewhere/gone"   "$many/.claude/skills/theirs-gone"
+
+rm -rf "$many_cerebro/skills/beta"
+out="$("$many_cerebro/scripts/sync-symlinks.sh" 2>&1)"
+
+[[ ! -L "$many/.claude/skills/beta" ]] || fail "many: the link for the removed skill beta survived"
+echo "$out" | grep -qF "Removed stale skill link: $many/.claude/skills/beta" \
+  || fail "many: expected the sync to name the removed beta link, got: $out"
+for sk in alpha gamma; do
+  [[ "$(readlink "$many/.claude/skills/$sk")" == "../cerebro/skills/$sk" ]] \
+    || fail "many: $sk's link was disturbed: $(readlink "$many/.claude/skills/$sk")"
+done
+[[ "$(readlink "$many/.claude/skills/theirs")" == "../../elsewhere/theirs" ]] \
+  || fail "many: the consumer's own resolving link was disturbed"
+[[ "$(readlink "$many/.claude/skills/theirs-gone")" == "../../elsewhere/gone" ]] \
+  || fail "many: the consumer's own dangling link was removed; it is not this script's"
+echo "$out" | grep -q "theirs" \
+  && fail "many: the sync talked about a link that is not its own, got: $out"
+pass "a directory of several links sweeps only the stale cerebro one"
+
+# --- a link target with a space in it survives the sync ------------------------------------------
+#
+# The directory's links are read in one go, with `read -r' and no IFS splitting, so a target that
+# is not a bare word comes back whole. Split on IFS it would arrive as two words, the link would
+# read as pointing somewhere it does not, and this script would take a decision about a link that
+# is not its own.
+ln -s "../../a dir/x" "$many/.claude/agents/spaced.md"
+out="$("$many_cerebro/scripts/sync-symlinks.sh" 2>&1)"
+[[ "$(readlink "$many/.claude/agents/spaced.md")" == "../../a dir/x" ]] \
+  || fail "spaced: the link was disturbed: $(readlink "$many/.claude/agents/spaced.md")"
+echo "$out" | grep -qF "Synced 1 agent link(s)" \
+  || fail "spaced: expected the sync to still report its own agent link, got: $out"
+pass "a link target with a space in it survives the sync"
 
 echo "all sync-symlinks tests passed"

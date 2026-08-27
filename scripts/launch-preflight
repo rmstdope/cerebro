@@ -187,10 +187,16 @@ fi
 # its discovery paths from --layouts - so no path is spelt here.
 declared_cli="$("$script_dir/agent-cli" 2>/dev/null)" || declared_cli=""
 agents_dir="" agent_suffix=""
+# The loop reads every row rather than breaking on the match, and that is not tidiness: breaking
+# closes the process substitution's pipe under a writer that has not finished, and `agent-cli' then
+# dies of SIGPIPE and prints `printf: write error: Broken pipe' on stderr. The race was always here
+# and cb-ue0 lost the fork that used to hide it, so preflight now reaches the match first. One
+# case in tests/launch-preflight.sh asserts on the WHOLE of stderr, so the line is a red suite
+# rather than noise. The rows number one per provider - draining them costs nothing.
 while IFS=$'\t' read -r layout_p layout_ad _ layout_sx; do
   [[ "$layout_p" == "$declared_cli" ]] || continue
+  [[ -z "$agents_dir" ]] || continue
   agents_dir="$layout_ad"; agent_suffix="$layout_sx"
-  break
 done < <("$script_dir/agent-cli" --layouts)
 
 if [[ -n "$agents_dir" && ! -f "$consumer/$agents_dir/$role$agent_suffix" ]]; then

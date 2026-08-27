@@ -152,7 +152,6 @@ whatever the frame has left (was a constant of 20 for eighteen agents)."
   bead since external
   phase                                ; "build"|"gate"|"review"|"ci"|"rebase"|"merge" or nil
   phase-since                          ; ISO-8601 string, or nil
-  wake-at                              ; ISO-8601 string when `waiting', else nil
   sessions                             ; processes of this name in this consumer, or nil
   raw                                  ; the state file's `state' string verbatim, or nil
   unverified-pid)                      ; the pid, when the session could not be proved this
@@ -454,7 +453,6 @@ tells the row to say so."
                                 :external (not owned-p)
                                 :phase (alist-get 'phase parsed)
                                 :phase-since (alist-get 'phase_since parsed)
-                                :wake-at (alist-get 'wake_at parsed)
                                 :raw raw-state
                                 :unverified-pid unverified-pid)))
 
@@ -770,9 +768,10 @@ A deadline already past reads \"→due\" rather than \"→0m\": between falling 
 and the next tick acting on it there is a real, visible moment, and counting
 downwards through zero would show a negative or a lie.
 
-Was `cerebro--wake-column\=', which rendered a `waiting\=' role\='s own `wake_at\='.
-Nothing waits for a wake any more (cb-5yr) - the countdown that is left is a
-standby role\='s cadence trigger, in `cerebro--standby-label\='."
+Was `cerebro--wake-column\=', which rendered a wake an agent wrote into its own
+state file.  Nothing waits for a wake any more (cb-5yr), and since cb-3tk no
+agent writes one - the countdown that is left is a standby role\='s cadence
+trigger, in `cerebro--standby-label\='."
   (cond
    ((null left) "")
    ((<= left 0) "→due")
@@ -1462,8 +1461,8 @@ than an abandoned one."
   "Seconds a `waiting' interactive role is left alone before it is woken.
 
 Cadence belongs to the fleet view, not to the role: a role writes `waiting'
-with the interval it would like (`scripts/agent-state --wake-in\='), ends its
-turn, and this poll decides when it actually comes back.  So changing a
+(`scripts/end-pass\='), ends its turn, and this poll decides when it actually
+comes back.  Since cb-3tk it asks for no interval at all.  So changing a
 role\='s cadence is this variable, changeable while the fleet runs, rather
 than an edit to an agent document and a restarted session.
 

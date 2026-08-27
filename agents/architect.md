@@ -63,7 +63,7 @@ by hand:
 | Moment | Call |
 |---|---|
 | Once the sweep is decided (step 2 below) | `.claude/cerebro/scripts/agent-state Forge working --phase daily --pid $PPID` (or `--phase weekly`) |
-| After the report, ending your turn | `.claude/cerebro/scripts/agent-state Forge waiting --pid $PPID` |
+| After the report, ending your turn | `.claude/cerebro/scripts/end-pass Forge --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process. Write `waiting`, never `idle`:
 `waiting` is the interactive roles' way of saying *this pass is over and my turn has ended*, and it is
@@ -200,7 +200,7 @@ keeps the buffer as the record of the sweep, and starts a fresh one on the hour.
      from docs/retrospectives/<id>.md §<section>, Prevent by
    ```
 
-   Write `.claude/cerebro/scripts/agent-state Forge waiting --pid $PPID` before the report — the
+   Write `.claude/cerebro/scripts/end-pass Forge --pid $PPID` before the report — the
    sweep's result is already durable by this point, so nothing is in flight for the fleet view to
    show. Then, in your own words: this sweep is finished, nothing waits on you, the fleet view ends
    this session once `waiting` has stood for half a minute, keeps the buffer as the record of the

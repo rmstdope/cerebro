@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# scripts/end-pass — the one place a pass is ended.
+#
+#     .claude/cerebro/scripts/end-pass <name> --pid <pid>
+#
+#   exit 0  the state file now reads `waiting'
+#   exit 2  usage error, a name not on `scripts/roster', or a missing/non-numeric pid
+#
+# It writes no state file itself: it calls `scripts/agent-state <name> waiting --pid <pid>' and
+# nothing else, so there is exactly one writer of the state file and this script cannot drift
+# from it. The `agent-state' call is this script's LAST command, so its exit status is this
+# script's — a refusal from the writer is never swallowed by the wrapper.
+#
+# It exists to name the ACT — "this pass is over" — in one spelling every role document can
+# share, rather than a different spelling of an `agent-state' invocation per role, which only a
+# live agent ever checks.
+#
+# There is no wake to ask for and no number to carry. Cadence is the fleet view's own
+# (`cerebro-wake-interval' / `cerebro-wake-intervals' in emacs/cerebro.el), measured from an
+# agent's last start, and has never read the state file.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "usage: end-pass <name> --pid <pid>" >&2
+  exit 2
+}
+
+name="${1:-}"
+[[ -n "$name" ]] || usage
+shift
+
+pid=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pid)
+      pid="${2:-}"; shift 2 ;;
+    *)
+      echo "end-pass: unknown argument '$1'" >&2
+      exit 2 ;;
+  esac
+done
+
+# The name must be on scripts/roster - the one list of the fleet. Checked here as well as by
+# agent-state so this script refuses in its own voice rather than another program's.
+if ! "$script_dir/roster" --entry "$name" >/dev/null 2>&1; then
+  echo "end-pass: $name is not on the roster" >&2
+  exit 2
+fi
+
+if [[ -z "$pid" ]]; then
+  echo "end-pass: --pid is required (pass \$PPID)" >&2
+  exit 2
+fi
+if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+  echo "end-pass: --pid is required (pass \$PPID)" >&2
+  exit 2
+fi
+
+# Last command, so its exit status is this script's.
+exec "$script_dir/agent-state" "$name" waiting --pid "$pid"

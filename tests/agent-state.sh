@@ -421,102 +421,68 @@ pass "transition-log-rotates"
 
 # --- ah-hiib.3: `waiting` - a role that has ended its turn and expects to be woken ---
 
-# --- waiting-records-a-wake-at ---
+# --- waiting-records-no-wake-at ---
+# cb-3tk removed `--wake-in'/`wake_at' outright: the field was written and read by nothing, and
+# cadence is the fleet view's own (`cerebro-wake-intervals'), which never looked at the state file.
 tmp="$(new_fixture)"
-run_state "$tmp" Moira waiting --wake-in 600 --pid 42
+run_state "$tmp" Moira waiting --pid 42
 f="$(state_file "$tmp" Moira)"
-[[ -f "$f" ]] || fail "waiting-records-a-wake-at: no state file written"
-state="$(jq -r '.state' "$f")"; [[ "$state" == "waiting" ]] || fail "waiting-records-a-wake-at: state=$state"
-wake_at="$(jq -r '.wake_at' "$f")"
-[[ "$wake_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
-  || fail "waiting-records-a-wake-at: wake_at=$wake_at"
-since="$(jq -r '.since' "$f")"
-# 600 seconds later than `since`, to the second: the script computes one from the other.
-since_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$since")"
-wake_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$wake_at")"
-[[ $((wake_epoch - since_epoch)) -eq 600 ]] \
-  || fail "waiting-records-a-wake-at: wake_at is $((wake_epoch - since_epoch))s after since, wanted 600"
+[[ -f "$f" ]] || fail "waiting-records-no-wake-at: no state file written"
+state="$(jq -r '.state' "$f")"; [[ "$state" == "waiting" ]] || fail "waiting-records-no-wake-at: state=$state"
+# Absent from the emitted object, not merely null: the field is gone from the JSON.
+[[ "$(jq -r 'has("wake_at")' "$f")" == "false" ]] \
+  || fail "waiting-records-no-wake-at: the object still carries a wake_at field"
 rm -rf "$tmp"
-pass "waiting-records-a-wake-at"
+pass "waiting-records-no-wake-at"
 
-# --- a-state-that-is-not-waiting-has-a-null-wake-at ---
-tmp="$(new_fixture)"
-run_state "$tmp" Moira working --phase sweep --pid 42
-[[ "$(jq -r '.wake_at' "$(state_file "$tmp" Moira)")" == "null" ]] \
-  || fail "a-state-that-is-not-waiting-has-a-null-wake-at: wake_at was set"
-rm -rf "$tmp"
-pass "a-state-that-is-not-waiting-has-a-null-wake-at"
-
-# --- waiting-from-an-implementer-records-a-wake-at ---
+# --- waiting-from-an-implementer-is-written ---
 # Since cb-1or.1 `waiting` is every agent's end-of-pass state, an implementer's included: it
 # ends a pass with nothing in flight, so there is no bead on the file.
 tmp="$(new_fixture)"
-run_state "$tmp" Cyclops waiting --wake-in 600 --pid 42
+run_state "$tmp" Cyclops waiting --pid 42
 f="$(state_file "$tmp" Cyclops)"
-[[ -f "$f" ]] || fail "waiting-from-an-implementer-records-a-wake-at: no state file was written"
+[[ -f "$f" ]] || fail "waiting-from-an-implementer-is-written: no state file was written"
 [[ "$(jq -r '.state' "$f")" == "waiting" ]] \
-  || fail "waiting-from-an-implementer-records-a-wake-at: state was $(jq -r '.state' "$f")"
+  || fail "waiting-from-an-implementer-is-written: state was $(jq -r '.state' "$f")"
 [[ "$(jq -r '.bead' "$f")" == "null" ]] \
-  || fail "waiting-from-an-implementer-records-a-wake-at: bead was $(jq -r '.bead' "$f")"
-since="$(jq -r '.since' "$f")"
-wake_at="$(jq -r '.wake_at' "$f")"
-since_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$since")"
-wake_epoch="$(python3 -c 'import sys,calendar,time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$wake_at")"
-[[ $((wake_epoch - since_epoch)) -eq 600 ]] \
-  || fail "waiting-from-an-implementer-records-a-wake-at: wake_at is $((wake_epoch - since_epoch))s after since, wanted 600"
+  || fail "waiting-from-an-implementer-is-written: bead was $(jq -r '.bead' "$f")"
 rm -rf "$tmp"
-pass "waiting-from-an-implementer-records-a-wake-at"
+pass "waiting-from-an-implementer-is-written"
 
-# --- waiting-without-wake-in-is-refused ---
+# --- waiting-without-wake-in-is-accepted ---
+# The inverse of what this script asked for until cb-3tk, and the case that would have caught the
+# agents/architect.md breakage had the contract been this way round: every Forge sweep for two days
+# failed to end its own pass because the file it reads spelled the call without a number.
 tmp="$(new_fixture)"
-set +e
-out="$(run_state "$tmp" Moira waiting --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "waiting-without-wake-in-is-refused: expected exit 2, got $status"
-grep -q -- "--wake-in is required with waiting" <<<"$out" \
-  || fail "waiting-without-wake-in-is-refused: wrong message, got: $out"
-[[ -f "$(state_file "$tmp" Moira)" ]] && fail "waiting-without-wake-in-is-refused: file was written"
-# The same refusal holds for an implementer, which may write `waiting` since cb-1or.1.
-set +e
-out="$(run_state "$tmp" Cyclops waiting --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "waiting-without-wake-in-is-refused: expected exit 2 for an implementer, got $status"
-grep -q -- "--wake-in is required with waiting" <<<"$out" \
-  || fail "waiting-without-wake-in-is-refused: wrong message for an implementer, got: $out"
-[[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "waiting-without-wake-in-is-refused: implementer file was written"
+run_state "$tmp" Moira waiting --pid 1
+[[ -f "$(state_file "$tmp" Moira)" ]] || fail "waiting-without-wake-in-is-accepted: no file for Moira"
+run_state "$tmp" Cyclops waiting --pid 1
+[[ -f "$(state_file "$tmp" Cyclops)" ]] || fail "waiting-without-wake-in-is-accepted: no file for Cyclops"
 rm -rf "$tmp"
-pass "waiting-without-wake-in-is-refused"
+pass "waiting-without-wake-in-is-accepted"
 
-# --- wake-in-is-refused-without-waiting ---
+# --- wake-in-is-refused-outright ---
+# The vocabulary is gone, so `--wake-in' is an unknown argument like any other - with `waiting' as
+# much as without it. Refusing rather than ignoring is what stops it creeping back.
 tmp="$(new_fixture)"
-set +e
-out="$(run_state "$tmp" Moira idle --wake-in 600 --pid 1 2>&1)"
-status=$?
-set -e
-[[ $status -eq 2 ]] || fail "wake-in-is-refused-without-waiting: expected exit 2, got $status"
-grep -q -- "--wake-in is only valid with waiting" <<<"$out" \
-  || fail "wake-in-is-refused-without-waiting: wrong message, got: $out"
-rm -rf "$tmp"
-pass "wake-in-is-refused-without-waiting"
-
-# --- wake-in-must-be-a-positive-integer ---
-tmp="$(new_fixture)"
-for bad in 0 -5 soon 6.5; do
+for state_word in idle waiting; do
   set +e
-  out="$(run_state "$tmp" Moira waiting --wake-in "$bad" --pid 1 2>&1)"
+  out="$(run_state "$tmp" Moira "$state_word" --wake-in 600 --pid 1 2>&1)"
   status=$?
   set -e
-  [[ $status -eq 2 ]] || fail "wake-in-must-be-a-positive-integer: '$bad' gave exit $status"
+  [[ $status -eq 2 ]] || fail "wake-in-is-refused-outright: '$state_word' gave exit $status"
+  grep -q "unknown argument" <<<"$out" \
+    || fail "wake-in-is-refused-outright: wrong message for '$state_word', got: $out"
+  [[ -f "$(state_file "$tmp" Moira)" ]] \
+    && fail "wake-in-is-refused-outright: a file was written for '$state_word'"
 done
 rm -rf "$tmp"
-pass "wake-in-must-be-a-positive-integer"
+pass "wake-in-is-refused-outright"
 
 # --- waiting-is-logged-like-any-other-state ---
 tmp="$(new_fixture)"
 run_state "$tmp" Moira working --phase sweep --pid 42
-run_state "$tmp" Moira waiting --wake-in 300 --pid 42
+run_state "$tmp" Moira waiting --pid 42
 line="$(tail -1 "$tmp/.cerebro/state/transitions.jsonl")"
 [[ "$(jq -r '.to' <<<"$line")" == "waiting" ]] || fail "waiting-is-logged-like-any-other-state: to=$(jq -r '.to' <<<"$line")"
 [[ "$(jq -r '.from' <<<"$line")" == "working" ]] || fail "waiting-is-logged-like-any-other-state: from wrong"

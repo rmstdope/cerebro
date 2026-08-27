@@ -86,7 +86,7 @@ so in one line and end the pass.
 your own session:
 
 ```bash
-.claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID
+.claude/cerebro/scripts/end-pass <your-name> --pid $PPID
 ```
 
 **Then end your turn.** Say in one line what the pass found, and stop producing output — that is
@@ -95,10 +95,10 @@ what you printed as the record of the pass, and starts a **fresh session** under
 there is something for you to do — a trigger of its own for your role, not a clock you set.
 Nothing survives from this session into the next one: everything the next pass needs is in the
 bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
-`--wake-in` is what you *ask* for, and the view owns what you get: the floor between two starts of
-your role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
-measured from your last start and not from the number you wrote. That is why the number is not
-yours to argue about.
+You do not ask for a wake and there is no number to write. The floor between two starts of your
+role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
+measured from your last start. Cadence was never yours, and there is no longer anything in this
+file that pretends otherwise.
 
 ## What you never do
 

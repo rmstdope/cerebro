@@ -379,7 +379,7 @@ more so, being the one path that runs when something has already gone wrong.
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
 
 - `<name>.state.json` — `{state: "idle"|"working"|"asking"|"waiting", phase, bead, since,
-  phase_since, wake_at, pid}`, written by **the agent itself** at each transition through
+  phase_since, pid}`, written by **the agent itself** at each transition through
   `scripts/agent-state` (never by hand — see that script's header). Every implementer writes one, and since ah-2n3.2 so does each of
   the interactive agents; `waiting` is written by every kind since cb-1or.1. The launcher used to write the file and no longer does: it
   `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/`review`/`ci`/
@@ -485,6 +485,15 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   predicate, not a writer, so it is its own script rather than a mode of `scripts/agent-state`: it
   prints nothing and the exit status is the whole answer, since it runs once per agent on every
   planner pass.
+- `scripts/end-pass <Name> --pid <pid>` is the one place a pass is ended (cb-3tk). It is a
+  **caller** of `scripts/agent-state`, not a second writer — it runs
+  `agent-state <name> waiting --pid <pid>` as its last command, so the two cannot drift and a
+  refusal from the writer is its own exit status. Its whole argument list is a name and a pid:
+  there is no state word and no number for prose to get wrong, which is what six different
+  spellings of the same call in six role documents had been, and what left every Forge sweep for
+  two days unable to end its pass. `--wake-in` and `wake_at` went with it — the field was written
+  and read by nothing, and cadence is `cerebro-wake-interval`/`cerebro-wake-intervals`, which have
+  never read the state file.
 - `scripts/planner-buffer` is the one place the planner buffer rule is answered for the shell —
   the excluded labels, the floor, the planned count and the wanted number. The elisp trigger keeps a
   pure copy of the predicate (`cerebro-parked-labels`, `cerebro-planner-buffer-floor`,

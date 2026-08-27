@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+#
+# tracked-links - are this repository's tracked links whole?
+#
+# This repository is a consumer of itself, so the links `sync-symlinks.sh' writes into a consumer
+# are TRACKED FILES here: symlinks under `.claude/' and `.github/', each pointing at a path under
+# `skills/', `agents/' or `hooks/'. Nothing checked the pairing, and a broken one shipped - cb-7v2
+# (d7a76fa, #151) removed `skills/release-notes/' without removing `.claude/skills/release-notes',
+# and the dangling link sat on main through three merges with a green gate on every PR. The inverse
+# costs too: a skill added without running the sync leaves the tracked links short, and the next
+# implementer's launch-preflight creates them - so the repair lands as an unrelated diff inside
+# somebody else's bead.
+#
+#   no arguments.
+#   stdout   one line per finding, or nothing at all when whole:
+#              dangling: <path> -> <target>
+#              missing: <path> (<source> is shipped and has no tracked link)
+#            both paths relative to the repository root.
+#   exit 0   whole.
+#   exit 1   at least one finding.
+#   exit 2   usage.
+#
+# THE PATHSPEC IS PART OF THE DESIGN. Only `.claude/' and `.github/' are scanned. Scanning the whole
+# repository would make this suite read `docs/', `README.md', `LICENSE' and `models.conf.example' -
+# the four entries on `scripts/ci-needed''s skip list - and a suite that starts reading one of them
+# makes a green pull request that should have been red. Both directories are on ci-needed's `*)'
+# arm, so a change under either always runs the whole matrix: ci-needed needs no edit for this.
+#
+# WHERE A LINK POINTS IS DELIBERATELY NOT CHECKED. `.github/copilot-instructions.md' is a tracked
+# symlink to `../CLAUDE.md' and `.claude/cerebro' points at `..'; neither is written by the sync, so
+# asserting targets would mean re-implementing `rel_source_for' and would fail on both. Resolution
+# and presence are the whole check.
+#
+# It is a GATE predicate and must never join `launch-preflight''s hot path: the sync runs before
+# every single session, and a check that refuses there is a fleet that cannot start.
+#
+# NOT under `tests/': the gate's suite loop is `tests/*.sh', and a script whose exit status is an
+# answer must not be picked up as a suite. Its suite is `tests/tracked-links.sh'.
+
+# Not -e: the answer IS the exit status, and a failing test inside a loop would exit before the
+# finding could be printed.
+set -uo pipefail
+shopt -s nullglob
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: tracked-links" >&2
+  exit 2
+fi
+
+# -P for the same reason sync-symlinks.sh gives: a logical spelling compares two names for one
+# directory. The subject is the checkout this script lives in - for a fixture, that is the fixture.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT" || exit 2
+
+findings=0
+
+# --- pass one: every tracked symlink under .claude/ and .github/ resolves -------------------------
+#
+# `git ls-files -s -z': records are `<mode> <sha> <stage>\t<path>', NUL-terminated, and the path is
+# never quoted. Splitting on spaces would give a truncated path; without -z, core.quotePath can
+# quote a non-ASCII one.
+
+tracked_links=()
+while IFS= read -r -d '' rec; do
+  mode="${rec%% *}"
+  [[ "$mode" == "120000" ]] || continue
+  path="${rec#*$'\t'}"
+  tracked_links+=("$path")
+  # -e follows the link, and the kernel resolves a relative target against the link's own
+  # directory - so running from $ROOT is enough.
+  if [[ ! -e "$path" ]]; then
+    echo "dangling: $path -> $(readlink "$path")"
+    findings=$((findings + 1))
+  fi
+done < <(git ls-files -s -z -- .claude .github)
+
+has_tracked_link() {
+  local want="$1" p
+  for p in "${tracked_links[@]}"; do
+    [[ "$p" == "$want" ]] && return 0
+  done
+  return 1
+}
+
+report_missing() {
+  local path="$1" source="$2"
+  has_tracked_link "$path" && return 0
+  echo "missing: $path ($source is shipped and has no tracked link)"
+  findings=$((findings + 1))
+}
+
+# --- pass two: everything the mount ships has a tracked link in every layout ----------------------
+#
+# The layouts and the hooks table are `agent-cli''s to know, and both are static - answered before
+# the provider is resolved, so neither depends on .cerebro/project.conf. Read through a process
+# substitution: a pipe would build the arrays in a subshell and lose them. Parallel indexed arrays
+# because macOS ships bash 3.2, which has no `declare -A'.
+
+layout_agents=()
+layout_skills=()
+layout_suffix=()
+while IFS=$'\t' read -r _provider agents_dir skills_dir suffix; do
+  [[ -n "$agents_dir" ]] || continue
+  layout_agents+=("$agents_dir")
+  layout_skills+=("$skills_dir")
+  layout_suffix+=("$suffix")
+done < <("$ROOT/scripts/agent-cli" --layouts)
+
+for i in "${!layout_agents[@]}"; do
+  for item in skills/*; do
+    [[ -f "$item/SKILL.md" ]] || continue
+    report_missing "${layout_skills[$i]}/${item##*/}" "$item"
+  done
+  for item in agents/*.md; do
+    [[ -f "$item" ]] || continue
+    name="${item##*/}"
+    report_missing "${layout_agents[$i]}/${name%.md}${layout_suffix[$i]}" "$item"
+  done
+done
+
+hook_sources=()
+hook_dests=()
+while IFS=$'\t' read -r _provider source_dir dest_dir; do
+  [[ -n "$source_dir" ]] || continue
+  hook_sources+=("$source_dir")
+  hook_dests+=("$dest_dir")
+done < <("$ROOT/scripts/agent-cli" --hooks)
+
+for i in "${!hook_sources[@]}"; do
+  [[ -d "${hook_sources[$i]}" ]] || continue
+  for item in "${hook_sources[$i]}"/*.json; do
+    [[ -f "$item" ]] || continue
+    report_missing "${hook_dests[$i]}/${item##*/}" "$item"
+  done
+done
+
+[[ $findings -eq 0 ]] || exit 1
+exit 0

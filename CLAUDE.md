@@ -454,9 +454,11 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   tree* rather than a pinned sha. A submodule of the repository inside itself would have satisfied
   `consumer-root` with no code at all, and was rejected for a different reason: `git submodule
   update --init --recursive`, which `launch-preflight` runs, has no fixed point on a repository that
-  contains itself. **One script knows about the mount**: `consumer-root`, whose
-  `mount_resolves_to` is the round trip through it, exposed as `--self-mounted` and `--mount`;
-  `roster` and `sync-symlinks.sh` ask it (cb-akc), and nothing else spells the round trip.
+  contains itself. **One function knows about the mount**: `cerebro_mount_resolves_to` in
+  `scripts/root-hints.sh`, which `consumer-root` sources and exposes as `--self-mounted` and
+  `--mount`; `roster` and `sync-symlinks.sh` ask it (cb-akc), and nothing else spells the round
+  trip. Since cb-ue0 the same round trip is what authenticates a root hint, which is why it moved
+  out of `consumer-root` into a library the hint readers can source without forking it.
   `prune-worktrees.sh` is the documented exception and keeps its git-dir
   comparison: it asks whether the mount and the consumer are **one repository**, so that one
   `git worktree list` covers both, and that parts company with the round trip for a vendored plain
@@ -496,6 +498,23 @@ twice before the table existed: `7bd5962`, `9420ff2`).
   a submodule may be mounted anywhere. To test a change, build a throwaway consumer repo rather than running
   the script here (it will refuse: there is no `.claude/` above this tree). Since cb-akc it is also
   the one place "how is this checkout mounted in it" is answered — `--self-mounted` and `--mount`.
+  Since cb-ue0 it also answers all three at once: `consumer-root --hints` prints the enclosing root,
+  the shared root (empty when git cannot say) and the mount, on three lines, so one fork can do what
+  three used to.
+- **`scripts/root-hints.sh` is the root-hint contract**, and the one place the mount round trip
+  lives (cb-ue0). `scripts/launch` resolves `consumer-root --hints` once per session start and
+  exports `CEREBRO_CONSUMER_ROOT`, `CEREBRO_CONSUMER_SHARED_ROOT` and `CEREBRO_CONSUMER_MOUNT`;
+  `project-conf`, `default-branch`, `sync-symlinks.sh`, `launch-preflight`, `roster` and
+  `agent-alive` source the library and prefer the hint, which took a launch from **16**
+  `consumer-root` forks to **one**. A hint is **never trusted, always validated**: an environment
+  variable is inherited, and `consumer-root` deliberately answers about the checkout its own
+  `${BASH_SOURCE[0]}` lives in, so a hint from a parent in the main checkout must not answer for a
+  copy inside a bead worktree. `cerebro_hinted_root` therefore checks `<hinted root>/<hinted mount>`
+  physically resolves to the caller's own checkout — which cannot be true of two checkouts at once —
+  and returns non-zero otherwise, so every caller keeps its original fork as the fallback and
+  behaves exactly as it did before when the hint is absent or foreign. **A fixture that hand-places
+  `scripts/consumer-root` must place `scripts/root-hints.sh` beside it**, or it dies at the source
+  line; `link_scripts` in `tests/lib/consumer.sh` does this for every consumer it builds.
 - `scripts/sync-symlinks.sh` and `githooks/` only ever run in a **consumer** repo. `sync-symlinks.sh`
   asks `consumer-root` for the enclosing tree — a worktree syncs its own links, which is what lets a
   submodule-bump PR commit them (ah-cuc). It writes into every discovery path

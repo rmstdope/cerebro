@@ -286,6 +286,7 @@ mkdir -p "$worktree/.claude/cerebro/scripts"
 ln -s "$repo_root/scripts/agent-state" "$worktree/.claude/cerebro/scripts/agent-state"
 ln -s "$repo_root/scripts/roster" "$worktree/.claude/cerebro/scripts/roster"
 ln -s "$repo_root/scripts/consumer-root" "$worktree/.claude/cerebro/scripts/consumer-root"
+ln -s "$repo_root/scripts/root-hints.sh" "$worktree/.claude/cerebro/scripts/root-hints.sh"
 
 "$worktree/.claude/cerebro/scripts/agent-state" Cyclops working --bead ah-f9c --pid 42
 

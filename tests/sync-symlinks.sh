@@ -34,6 +34,7 @@ echo '{}' > "$cerebro_dir/hooks/question-state.settings.json"
 cp "$repo_root/scripts/sync-symlinks.sh" "$cerebro_dir/scripts/sync-symlinks.sh"
 chmod +x "$cerebro_dir/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$cerebro_dir/scripts/consumer-root"
+cp "$repo_root/scripts/root-hints.sh" "$cerebro_dir/scripts/root-hints.sh"
 cp "$repo_root/scripts/agent-cli" "$cerebro_dir/scripts/agent-cli"
 chmod +x "$cerebro_dir/scripts/agent-cli" "$cerebro_dir/scripts/consumer-root"
 cat > "$cerebro_dir/skills/demo/SKILL.md" <<'EOF'
@@ -217,6 +218,7 @@ mkdir -p "$outside" "$work_dir/.claude"   # a sibling .claude that must NOT be m
 cp "$repo_root/scripts/sync-symlinks.sh" "$outside/sync-symlinks.sh"
 chmod +x "$outside/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$outside/consumer-root"
+cp "$repo_root/scripts/root-hints.sh" "$outside/root-hints.sh"
 cp "$repo_root/scripts/agent-cli" "$outside/agent-cli"
 chmod +x "$outside/agent-cli" "$outside/consumer-root"
 
@@ -243,6 +245,7 @@ mkdir -p "$self_consumer/scripts" "$self_consumer/skills/demo" "$self_consumer/a
 echo '{}' > "$self_consumer/hooks/copilot/cerebro-question-state.json"
 cp "$repo_root/scripts/sync-symlinks.sh" "$self_consumer/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$self_consumer/scripts/consumer-root"
+cp "$repo_root/scripts/root-hints.sh" "$self_consumer/scripts/root-hints.sh"
 cp "$repo_root/scripts/agent-cli" "$self_consumer/scripts/agent-cli"
 chmod +x "$self_consumer/scripts/agent-cli" "$self_consumer/scripts/sync-symlinks.sh" "$self_consumer/scripts/consumer-root"
 ln -s ".." "$self_consumer/.claude/cerebro"
@@ -288,6 +291,7 @@ own_cerebro="$own/.claude/cerebro"
 mkdir -p "$own_cerebro/scripts" "$own_cerebro/skills/demo" "$own_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$own_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$own_cerebro/scripts/consumer-root"
+cp "$repo_root/scripts/root-hints.sh" "$own_cerebro/scripts/root-hints.sh"
 cp "$repo_root/scripts/agent-cli" "$own_cerebro/scripts/agent-cli"
 chmod +x "$own_cerebro/scripts/agent-cli" "$own_cerebro/scripts/sync-symlinks.sh" "$own_cerebro/scripts/consumer-root"
 echo "# Demo skill" > "$own_cerebro/skills/demo/SKILL.md"
@@ -315,6 +319,7 @@ foreign_cerebro="$foreign/.claude/cerebro"
 mkdir -p "$foreign_cerebro/scripts" "$foreign_cerebro/skills" "$foreign_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$foreign_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$foreign_cerebro/scripts/consumer-root"
+cp "$repo_root/scripts/root-hints.sh" "$foreign_cerebro/scripts/root-hints.sh"
 cp "$repo_root/scripts/agent-cli" "$foreign_cerebro/scripts/agent-cli"
 chmod +x "$foreign_cerebro/scripts/agent-cli" "$foreign_cerebro/scripts/sync-symlinks.sh" "$foreign_cerebro/scripts/consumer-root"
 printf '((nil . ((indent-tabs-mode . nil))))\n' > "$foreign/elsewhere/dir-locals.el"
@@ -334,6 +339,7 @@ old_cerebro="$old_sub/.claude/cerebro"
 mkdir -p "$old_cerebro/scripts" "$old_cerebro/skills" "$old_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$old_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$old_cerebro/scripts/consumer-root"
+cp "$repo_root/scripts/root-hints.sh" "$old_cerebro/scripts/root-hints.sh"
 cp "$repo_root/scripts/agent-cli" "$old_cerebro/scripts/agent-cli"
 chmod +x "$old_cerebro/scripts/agent-cli" "$old_cerebro/scripts/sync-symlinks.sh" "$old_cerebro/scripts/consumer-root"
 
@@ -366,6 +372,7 @@ mig_cerebro="$migrating/.claude/cerebro"
 mkdir -p "$mig_cerebro/scripts" "$mig_cerebro/skills/demo" "$mig_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$mig_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$mig_cerebro/scripts/consumer-root"
+cp "$repo_root/scripts/root-hints.sh" "$mig_cerebro/scripts/root-hints.sh"
 cp "$repo_root/scripts/agent-cli" "$mig_cerebro/scripts/agent-cli"
 chmod +x "$mig_cerebro/scripts/agent-cli" "$mig_cerebro/scripts/sync-symlinks.sh" "$mig_cerebro/scripts/consumer-root"
 echo "# Demo skill" > "$mig_cerebro/skills/demo/SKILL.md"
@@ -400,6 +407,7 @@ mir_cerebro="$mirror/.claude/cerebro"
 mkdir -p "$mir_cerebro/scripts" "$mir_cerebro/skills/demo" "$mir_cerebro/agents"
 cp "$repo_root/scripts/sync-symlinks.sh" "$mir_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$mir_cerebro/scripts/consumer-root"
+cp "$repo_root/scripts/root-hints.sh" "$mir_cerebro/scripts/root-hints.sh"
 cp "$repo_root/scripts/agent-cli" "$mir_cerebro/scripts/agent-cli"
 chmod +x "$mir_cerebro/scripts/agent-cli" "$mir_cerebro/scripts/sync-symlinks.sh" "$mir_cerebro/scripts/consumer-root"
 echo "# Demo skill" > "$mir_cerebro/skills/demo/SKILL.md"
@@ -486,6 +494,7 @@ mkdir -p "$many_cerebro/scripts" "$many_cerebro/agents" \
          "$many_cerebro/skills/alpha" "$many_cerebro/skills/beta" "$many_cerebro/skills/gamma"
 cp "$repo_root/scripts/sync-symlinks.sh" "$many_cerebro/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root"    "$many_cerebro/scripts/consumer-root"
+cp "$repo_root/scripts/root-hints.sh" "$many_cerebro/scripts/root-hints.sh"
 cp "$repo_root/scripts/agent-cli"        "$many_cerebro/scripts/agent-cli"
 chmod +x "$many_cerebro/scripts/agent-cli" "$many_cerebro/scripts/sync-symlinks.sh" \
          "$many_cerebro/scripts/consumer-root"
@@ -531,5 +540,49 @@ out="$("$many_cerebro/scripts/sync-symlinks.sh" 2>&1)"
 echo "$out" | grep -qF "Synced 1 agent link(s)" \
   || fail "spaced: expected the sync to still report its own agent link, got: $out"
 pass "a link target with a space in it survives the sync"
+
+# --- the launch path's hints replace both consumer-root forks (cb-ue0) ---------------------------
+#
+# `launch-preflight' runs this script on every session start, and it forked `consumer-root' twice -
+# once for the root and once for the mount - after `launch' had already resolved both. With
+# `consumer-root' stubbed to fail, a link written here can only have come from the hints.
+hint_consumer="$work_dir/hinted"
+hint_cerebro="$hint_consumer/.claude/cerebro"
+mkdir -p "$hint_cerebro/scripts" "$hint_cerebro/skills/demo" "$hint_cerebro/agents" \
+         "$hint_cerebro/hooks/copilot"
+git init -q "$hint_consumer"
+echo '# Demo skill' > "$hint_cerebro/skills/demo/SKILL.md"
+echo '# Demo agent' > "$hint_cerebro/agents/demo.md"
+cp "$repo_root/scripts/sync-symlinks.sh" "$hint_cerebro/scripts/sync-symlinks.sh"
+cp "$repo_root/scripts/agent-cli" "$hint_cerebro/scripts/agent-cli"
+cp "$repo_root/scripts/root-hints.sh" "$hint_cerebro/scripts/root-hints.sh"
+cat > "$hint_cerebro/scripts/consumer-root" <<'STUB'
+#!/usr/bin/env bash
+echo "consumer-root: the suite says this must not be forked" >&2
+exit 1
+STUB
+chmod +x "$hint_cerebro/scripts/sync-symlinks.sh" "$hint_cerebro/scripts/agent-cli" \
+         "$hint_cerebro/scripts/consumer-root"
+
+CEREBRO_CONSUMER_ROOT="$(cd "$hint_consumer" && pwd -P)" \
+CEREBRO_CONSUMER_SHARED_ROOT="$(cd "$hint_consumer" && pwd -P)" \
+CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+  "$hint_cerebro/scripts/sync-symlinks.sh" >/dev/null
+[[ "$(readlink "$hint_consumer/.claude/skills/demo")" == "../cerebro/skills/demo" ]] \
+  || fail "hinted sync: expected ../cerebro/skills/demo, got $(readlink "$hint_consumer/.claude/skills/demo")"
+pass "validated hints replace both consumer-root forks, and the link is spelled from the hinted mount"
+
+# --- and a foreign hint is refused rather than followed into another tree ------------------------
+set +e
+out="$(CEREBRO_CONSUMER_ROOT="$(cd "$consumer" && pwd -P)" \
+       CEREBRO_CONSUMER_SHARED_ROOT="$(cd "$consumer" && pwd -P)" \
+       CEREBRO_CONSUMER_MOUNT=".claude/cerebro" \
+       "$hint_cerebro/scripts/sync-symlinks.sh" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "foreign hint: expected the refusal (exit 1), got $status: $out"
+echo "$out" | grep -q "must run from a consumer repo" \
+  || fail "foreign hint: expected the refusal line, got: $out"
+pass "a hint describing another checkout is refused, not followed into that tree"
 
 echo "all sync-symlinks tests passed"

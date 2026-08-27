@@ -28,6 +28,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$here/root-hints.sh"
 
 # 1. configured
 configured="$("$here/project-conf" default_branch 2>/dev/null)" || configured=""
@@ -39,8 +40,11 @@ fi
 
 # 2. detected. --shared, matching project-conf: the fleet's branch is one answer for the checkout,
 # not one per worktree. Either lookup may fail (a standalone clone has no consumer, and --shared
-# needs git), and neither is a problem worth a word.
-root="$("$here/consumer-root" --shared 2>/dev/null)" \
+# needs git), and neither is a problem worth a word. The launch path's hints come first (cb-ue0),
+# validated against this checkout before they are believed - see scripts/root-hints.sh.
+root="$(cerebro_hinted_root "$here/.." shared)" \
+  || root="$(cerebro_hinted_root "$here/.." plain)" \
+  || root="$("$here/consumer-root" --shared 2>/dev/null)" \
   || root="$("$here/consumer-root" 2>/dev/null)" \
   || root=""
 if [[ -n "$root" ]] && command -v git >/dev/null 2>&1; then

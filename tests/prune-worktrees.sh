@@ -218,7 +218,7 @@ git init -q --bare "$sub_origin"
 sub="$consumer2/.claude/cerebro"
 mkdir -p "$sub/scripts"
 git init -q -b main "$sub"
-for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
+for s in consumer-root root-hints.sh project-conf default-branch roster prune-worktrees.sh; do
   ln -s "$repo_root/scripts/$s" "$sub/scripts/$s"
 done
 git_q -C "$sub" add -A
@@ -308,7 +308,7 @@ cat > "$selfmount/.cerebro/project.conf" <<'CONF'
 disk_floor_gb 8
 CONF
 mkdir -p "$selfmount/scripts"
-for s in consumer-root project-conf default-branch roster prune-worktrees.sh; do
+for s in consumer-root root-hints.sh project-conf default-branch roster prune-worktrees.sh; do
   ln -s "$repo_root/scripts/$s" "$selfmount/scripts/$s"
 done
 ln -s ".." "$selfmount/.claude/cerebro"

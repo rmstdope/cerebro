@@ -287,7 +287,7 @@ by hand:
 | A bead gets your `planning:<your-name>` label | `.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID` |
 | Every interview question while planning it | `.claude/cerebro/scripts/agent-state <your-name> asking --bead <id> --phase plan --pid $PPID`, and `working` again once answered |
 | The P0 check (*P0 pre-empts the buffer*) | stays `working --phase plan`, same as any other bead being planned |
-| Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID` |
+| Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/end-pass <your-name> --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process. `waiting` is the state between one pass and the next — never `idle`, which says you have
 nothing to do and nothing coming. Writing another planner's name here
@@ -527,7 +527,7 @@ You do not schedule yourself and you do not sleep inside your own session. A pas
 like this:
 
 ```bash
-.claude/cerebro/scripts/agent-state <your-name> waiting --wake-in 600 --pid $PPID
+.claude/cerebro/scripts/end-pass <your-name> --pid $PPID
 ```
 
 **Then end your turn.** Say in one line what the pass found, and stop producing output — that is
@@ -536,10 +536,10 @@ what you printed as the record of the pass, and starts a **fresh session** under
 there is something for you to do — a trigger of its own for your role, not a clock you set.
 Nothing survives from this session into the next one: everything the next pass needs is in the
 bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
-`--wake-in` is what you *ask* for, and the view owns what you get: the floor between two starts of
-your role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
-measured from your last start and not from the number you wrote. That is why the number is not
-yours to argue about.
+You do not ask for a wake and there is no number to write. The floor between two starts of your
+role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
+measured from your last start. Cadence was never yours, and there is no longer anything in this
+file that pretends otherwise.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken

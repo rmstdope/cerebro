@@ -43,7 +43,7 @@ reply. An `asking` left behind tells the navigator you are still blocked on them
 | The user-experience walkthrough | `... working --bead pr-<n> --phase walk --pid $PPID` |
 | Writing and posting the review | `... working --bead pr-<n> --phase report --pid $PPID` |
 | Any question at all | `asking` with the phase you are in, then `working` again on the answer |
-| Ending a pass (*Ending a pass*), and nowhere else | `... waiting --wake-in 600 --pid $PPID` |
+| Ending a pass (*Ending a pass*), and nowhere else | `.claude/cerebro/scripts/end-pass Cypher --pid $PPID` |
 
 `--bead` is the bead the PR implements when it names one, and `pr-<number>` when it does not — the
 column exists to say what you are working on, and for you that is usually a PR. `--pid` is `$PPID`.
@@ -268,7 +268,7 @@ You do not schedule yourself and you do not sleep inside your own session. A pas
 like this:
 
 ```bash
-.claude/cerebro/scripts/agent-state Cypher waiting --wake-in 600 --pid $PPID
+.claude/cerebro/scripts/end-pass Cypher --pid $PPID
 ```
 
 **Then end your turn.** Say in one line what the pass found, and stop producing output — that is
@@ -277,10 +277,10 @@ what you printed as the record of the pass, and starts a **fresh session** under
 there is something for you to do — a trigger of its own for your role, not a clock you set.
 Nothing survives from this session into the next one: everything the next pass needs is in the
 bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
-`--wake-in` is what you *ask* for, and the view owns what you get: the floor between two starts of
-your role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
-measured from your last start and not from the number you wrote. That is why the number is not
-yours to argue about.
+You do not ask for a wake and there is no number to write. The floor between two starts of your
+role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
+measured from your last start. Cadence was never yours, and there is no longer anything in this
+file that pretends otherwise.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken

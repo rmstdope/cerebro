@@ -86,7 +86,7 @@ hand.
 
 | Where in this skill | Call |
 |---|---|
-| *Picking up*, nothing to claim | `.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID` |
+| *Picking up*, nothing to claim | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
 | *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
 | *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
 | *The review*, after `gh pr edit --add-reviewer @copilot` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
@@ -95,11 +95,10 @@ hand.
 | *Merging*, on `BEHIND`: catch up on GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
 | *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` — merge covers retro, merge, close, cleanup |
 | *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
-| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID` |
+| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
 
-`waiting` is a request to be ended, granted within about half a minute. Write it last. `--wake-in`
-is required by the script and means nothing for you: the view starts an implementer on a planned
-bead, not on a clock.
+`waiting` is a request to be ended, granted within about half a minute. Run `end-pass` last. There
+is no wake to ask for: the view starts an implementer on a planned bead, not on a clock.
 
 ## Finishing means finishing
 
@@ -282,7 +281,7 @@ fresh one under your name the moment a planned bead exists; a session that sits 
 the view cannot tell from one that has hung.
 
 ```bash
-.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID
+.claude/cerebro/scripts/end-pass <name> --pid $PPID
 ```
 
 ```bash
@@ -350,8 +349,8 @@ which is why the query now lives in a script with a test under it rather than in
 **Never add `plan:revise` in either case.** Whether the plan was wrong is the navigator's answer to
 Psylocke's question, asked at the verdict, and it is not an implementer's to assert — the label is
 hers alone to set, and it is what sends the bead to a planner. After it, remove the worktree
-if one exists (see *Finishing*) and write `.claude/cerebro/scripts/agent-state <name> waiting
---wake-in 600 --pid $PPID` last, exactly as a merged bead does — a hand-back is a complete run too.
+if one exists (see *Finishing*) and run `.claude/cerebro/scripts/end-pass <name> --pid $PPID`
+last, exactly as a merged bead does — a hand-back is a complete run too.
 `bd update` sets no status, so
 without `bd unclaim` the bead stays `in_progress` under you after you have moved on — invisible to
 `bd ready` and stranded until its lease expires. Without the push, no other machine learns it was
@@ -712,7 +711,7 @@ bd close <id> --reason "Delivered in PR #NN"
 git -C <repo> worktree remove --force .cerebro/worktrees/<id>
 git -C <repo> worktree prune
 bd dolt push
-.claude/cerebro/scripts/agent-state <name> waiting --wake-in 600 --pid $PPID
+.claude/cerebro/scripts/end-pass <name> --pid $PPID
 ```
 
 `--force`, because `worktree remove` refuses a tree holding untracked files and would otherwise abort

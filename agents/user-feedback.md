@@ -31,7 +31,7 @@ file is. Write it through `.claude/cerebro/scripts/agent-state`, never by hand:
 |---|---|
 | A pass starts | `.claude/cerebro/scripts/agent-state Moira working --phase sweep --pid $PPID` |
 | Every triage question — *A new issue* and *A closed issue with an open bead* | `.claude/cerebro/scripts/agent-state Moira asking --phase sweep --pid $PPID`, and `working --phase sweep` again the moment the answer is in |
-| Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/agent-state Moira waiting --wake-in 600 --pid $PPID` |
+| Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/end-pass Moira --pid $PPID` |
 
 `--pid` is `$PPID` — your own `claude` process. `waiting` is the state between one pass and the next — never `idle`, which says you have
 nothing to do and nothing coming.
@@ -80,7 +80,7 @@ You do not schedule yourself and you do not sleep inside your own session. A pas
 like this:
 
 ```bash
-.claude/cerebro/scripts/agent-state Moira waiting --wake-in 600 --pid $PPID
+.claude/cerebro/scripts/end-pass Moira --pid $PPID
 ```
 
 **Then end your turn.** Say in one line what the pass found, and stop producing output — that is
@@ -89,10 +89,10 @@ what you printed as the record of the pass, and starts a **fresh session** under
 there is something for you to do — a trigger of its own for your role, not a clock you set.
 Nothing survives from this session into the next one: everything the next pass needs is in the
 bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
-`--wake-in` is what you *ask* for, and the view owns what you get: the floor between two starts of
-your role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
-measured from your last start and not from the number you wrote. That is why the number is not
-yours to argue about.
+You do not ask for a wake and there is no number to write. The floor between two starts of your
+role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
+measured from your last start. Cadence was never yours, and there is no longer anything in this
+file that pretends otherwise.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken

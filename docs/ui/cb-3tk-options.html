@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-3tk — three seams for the end-of-pass command</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 62rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
+  .lbl { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim);
+         margin: .8rem 0 .1rem; }
+  .del { color: var(--bad); }
+  .ins { color: var(--good); }
+  .note { color: var(--dim); font-size: 13.5px; }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13.5px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .45rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  .badge { display:inline-block; font-size:11px; padding:.1rem .45rem; border-radius:10px;
+           background:#eef2f5; color:var(--dim); margin-left:.4rem; }
+  blockquote { margin: .6rem 0; padding: .5rem .9rem; border-left: 3px solid var(--line);
+               color: var(--dim); font-size: 13.5px; }
+</style>
+</head>
+<body>
+
+<h1>cb-3tk — three seams for the end-of-pass command</h1>
+<p class="lede">Every option below is shown as the real prose it would produce, against the real
+files. Nothing here is committed.</p>
+
+<h2>What is broken right now</h2>
+<p><code>agents/architect.md</code> lines 66 and 203 tell Forge to write:</p>
+<pre class="del">.claude/cerebro/scripts/agent-state Forge waiting --pid $PPID</pre>
+<p><code>scripts/agent-state</code> has required <code>--wake-in</code> with <code>waiting</code>
+since 2026-08-21 and exits 2 without it. So every Forge sweep since 2026-08-25 has failed to end its
+own pass; the state file is left at <code>{state: working, phase: daily}</code> and the role never
+reaches standby by itself.</p>
+
+<h2>The finding that shapes the choice</h2>
+<blockquote>
+<code>wake_at</code> is written and <strong>nothing reads it</strong>. The column that used to render
+it is gone — <code>cerebro--countdown</code>'s own docstring says so: <em>"Nothing waits for a wake
+any more (cb-5yr) — the countdown that is left is a standby role's cadence trigger."</em> The struct
+slot is parsed and asserted in tests, and no rendering and no decision consults it. Cadence is
+<code>cerebro-wake-intervals</code>, entirely.
+</blockquote>
+<p class="note">So the number in <code>--wake-in 600</code> is, today, a number an agent asks for that
+nothing honours — 26 occurrences of it across seven files.</p>
+
+<h2>Option A — one named command for ending a pass <span class="badge">new script</span></h2>
+<p>A new <code>scripts/end-pass</code>. Its whole argument list is the agent's own name and pid; it
+resolves the role from the roster and calls <code>agent-state</code> itself.</p>
+<div class="cols">
+<div>
+  <div class="lbl">agents/verifier.md:96, today</div>
+  <pre class="del">.claude/cerebro/scripts/agent-state Psylocke \
+  waiting --wake-in 300 --pid $PPID</pre>
+  <div class="lbl">skills/plan-bead/SKILL.md:290, today</div>
+  <pre class="del">.claude/cerebro/scripts/agent-state &lt;your-name&gt; \
+  waiting --wake-in 600 --pid $PPID</pre>
+  <div class="lbl">agents/architect.md:66, today (broken)</div>
+  <pre class="del">.claude/cerebro/scripts/agent-state Forge \
+  waiting --pid $PPID</pre>
+</div>
+<div>
+  <div class="lbl">under Option A — identical everywhere</div>
+  <pre class="ins">.claude/cerebro/scripts/end-pass Psylocke --pid $PPID</pre>
+  <div class="lbl">&nbsp;</div>
+  <pre class="ins">.claude/cerebro/scripts/end-pass &lt;your-name&gt; --pid $PPID</pre>
+  <div class="lbl">&nbsp;</div>
+  <pre class="ins">.claude/cerebro/scripts/end-pass Forge --pid $PPID</pre>
+</div>
+</div>
+<p class="note"><strong>Costs.</strong> One more script and one more name to know. <strong>Buys.</strong>
+Seven files carry one identical line; no number in prose; the act of ending a pass is a tested code
+path, covered by <code>tests/end-pass.sh</code>. This is the shape <code>scripts/planner-buffer</code>
+already has — a rule that was prose in two places, moved into code, held by a contract test.</p>
+
+<h2>Option B — make <code>--wake-in</code> optional <span class="badge">smallest</span></h2>
+<p>No new script. <code>agent-state &lt;name&gt; waiting --pid $PPID</code> becomes legal and records
+the fleet default; every existing line keeps working unchanged.</p>
+<div class="cols">
+<div>
+  <div class="lbl">agents/architect.md:66, today</div>
+  <pre class="del">.claude/cerebro/scripts/agent-state Forge \
+  waiting --pid $PPID
+# agent-state: --wake-in is required with waiting</pre>
+</div>
+<div>
+  <div class="lbl">under Option B — unchanged, and now correct</div>
+  <pre class="ins">.claude/cerebro/scripts/agent-state Forge \
+  waiting --pid $PPID</pre>
+</div>
+</div>
+<p class="note"><strong>Costs.</strong> The seam is narrow: it fixes this one drift and nothing else
+about the class. The other 40-odd restatements of an <code>agent-state</code> invocation — every
+<code>working --bead &lt;id&gt; --phase &lt;word&gt;</code> line — stay exactly as they are.
+<strong>Buys.</strong> One small change to one script; the broken file becomes correct without being
+edited.</p>
+
+<h2>Option C — remove <code>wake_at</code> and <code>--wake-in</code> altogether</h2>
+<p>On the evidence above, the field is dead. Delete it: <code>--wake-in</code> is refused like any
+unknown argument, <code>wake_at</code> leaves the state file, and 26 occurrences leave the prose.</p>
+<div class="cols">
+<div>
+  <div class="lbl">the state file, today</div>
+  <pre class="del">{ "state": "waiting", "phase": null, "bead": null,
+  "since": "…", "phase_since": null,
+  "wake_at": "2026-08-28T00:50:00Z",
+  "pid": 4211 }</pre>
+</div>
+<div>
+  <div class="lbl">under Option C</div>
+  <pre class="ins">{ "state": "waiting", "phase": null, "bead": null,
+  "since": "…", "phase_since": null,
+  "pid": 4211 }</pre>
+</div>
+</div>
+<p class="note"><strong>Costs.</strong> Largest single change — it touches the ERT struct, its
+contract cases and <code>tests/agent-state.sh</code>, and it removes an option that was made
+<em>required</em> nine days ago, so it reverses a recent decision rather than building on it.
+<strong>Buys.</strong> You cannot drift an option that does not exist.</p>
+
+<h2>A and C together</h2>
+<p>They combine: <code>end-pass</code> exists to name <em>the act</em> — "this pass is over" — rather
+than to carry a number, and passes no wake because after C there is none to pass. That reads
+better than an A on its own, whose script's only extra job would be supplying a figure nobody
+reads.</p>
+
+<h2>Side by side</h2>
+<table>
+<tr><th></th><th>Prose lines unified</th><th>Numbers left in prose</th><th>New surface</th><th>Reverses a recent decision</th></tr>
+<tr><td><strong>A</strong></td><td>7 files, end-of-pass only</td><td>none</td><td>one script</td><td>no</td></tr>
+<tr><td><strong>B</strong></td><td>none</td><td>26, all still optional</td><td>none</td><td>yes, softly</td></tr>
+<tr><td><strong>C</strong></td><td>none</td><td>none</td><td>none</td><td>yes, fully</td></tr>
+<tr><td><strong>A + C</strong></td><td>7 files, end-of-pass only</td><td>none</td><td>one script</td><td>yes, fully</td></tr>
+</table>
+
+</body>
+</html>

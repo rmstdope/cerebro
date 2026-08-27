@@ -23,7 +23,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/lib/consumer.sh"
 
 # `arg_follows', `line_of', `line_of_fixed' and `arg_value' come from the library, along with the
-# rule they exist for: a suite reads text with `<<<', never `echo "$x" | grep -q'.
+# rule they exist for: a suite reads its text through a here-string, never by piping a variable
+# into a reader that can exit before it has consumed all of it.
 
 # The fake sessions the duplicate-refusal cases start, killed by the EXIT trap the library
 # installs - it calls `suite_cleanup' first, before removing anything, so a failed assertion
@@ -133,7 +134,7 @@ names_only="$(printf '%s\n' "$roster_out" | awk -F'\t' '{print $1}')"
   || fail "roster: names are not unique"
 pass "roster: names are unique"
 
-first_kind="$(printf '%s\n' "$roster_out" | head -1 | awk -F'\t' '{print $3}')"
+first_kind="$(awk -F'\t' 'NR==1 { print $3; exit }' <<<"$roster_out")"
 last_kind="$(printf '%s\n' "$roster_out" | tail -1 | awk -F'\t' '{print $3}')"
 [[ "$first_kind" == "interactive" ]] || fail "roster: first row is not interactive"
 [[ "$last_kind" == "implementer" ]] || fail "roster: last row is not implementer"
@@ -145,7 +146,7 @@ expected_implementers="$(printf '%s\n' "$roster_out" | awk -F'\t' '$3 == "implem
   || fail "roster --implementers: does not match the implementer-kind rows"
 while IFS=$'\t' read -r name _ kind; do
   if [[ "$kind" != "implementer" ]]; then
-    printf '%s\n' "$implementers_out" | grep -qx "$name" \
+    grep -qx "$name" <<<"$implementers_out" \
       && fail "roster --implementers: contains $name, whose kind is $kind"
   fi
 done <<<"$roster_out"
@@ -172,9 +173,9 @@ set -e
 [[ $status -eq 2 ]] || fail "roster --role with no role: expected exit 2, got $status"
 pass "roster --role with no role exits 2"
 
-first_name="$(printf '%s\n' "$roster_out" | head -1 | awk -F'\t' '{print $1}')"
+first_name="$(awk -F'\t' 'NR==1 { print $1; exit }' <<<"$roster_out")"
 entry_out="$("$builtin_dir/roster" --entry "$first_name")"
-[[ "$entry_out" == "$(printf '%s\n' "$roster_out" | head -1)" ]] \
+[[ "$entry_out" == "${roster_out%%$'\n'*}" ]] \
   || fail "roster --entry $first_name: does not match its row"
 pass "roster --entry returns the matching row"
 
@@ -231,7 +232,7 @@ pass "consumer roster: replaces the built-in table, in file order, past comments
 # It replaces rather than merges: a name from the built-in table must not survive alongside it, or
 # file order - which decides which implementer name Cerebro takes next - would be nobody's
 # decision.
-"$roster_at" | grep -q "Xavier" && fail "consumer roster: the built-in table was merged in, not replaced"
+grep -q "Xavier" <<<"$("$roster_at")" && fail "consumer roster: the built-in table was merged in, not replaced"
 pass "consumer roster: the built-in table is replaced, not merged"
 
 [[ "$("$roster_at" --implementers)" == "$(printf 'Turing\nLovelace')" ]] \
@@ -242,7 +243,7 @@ pass "consumer roster: the built-in table is replaced, not merged"
 # about any consumer's fleet.
 while IFS=$'\t' read -r c_name _ c_kind; do
   if [[ "$c_kind" != "implementer" ]]; then
-    "$roster_at" --implementers | grep -qx "$c_name" \
+    grep -qx "$c_name" <<<"$("$roster_at" --implementers)" \
       && fail "consumer roster --implementers: contains $c_name, whose kind is $c_kind"
   fi
 done <<<"$("$roster_at")"
@@ -667,13 +668,12 @@ models_conf() {
 no_models_conf() { rm -f "$consumer_dir/.cerebro/models.conf"; }
 launched_flag() {
   # $1 = agent name, $2 = flag (--model/--effort). Prints the value, or nothing if the flag is
-  # absent - which is an answer here ("Xavier -" passes no --model), not a failure. `|| true`
-  # because the grep in the pipeline exits non-zero on no match and this suite runs under
-  # `set -euo pipefail`: without it, asking about an absent flag would kill the run rather than
-  # return the empty string the assertion is looking for.
-  run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$1" \
-    | grep -A1 "^ARG:$2\$" | grep '^ARG:' | grep -v -- "^ARG:$2\$" | head -1 | sed 's/^ARG://' \
-    || true
+  # absent - which is an answer here ("Xavier -" passes no --model), not a failure. `arg_value'
+  # answers with the empty string rather than a non-zero status, so the `|| true' the old pipeline
+  # needed under `set -euo pipefail' is gone with the pipeline.
+  local out
+  out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch "$1")"
+  arg_value "$out" "$2"
 }
 
 # With no models.conf and no frontmatter left in the agent files, a launch passes no --model and

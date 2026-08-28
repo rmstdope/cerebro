@@ -36,35 +36,81 @@ script="$repo_root/scripts/suite-runner"
 default_log_root="$repo_root/.cerebro/state/suite-logs"
 default_runs_before="$(ls "$default_log_root" 2>/dev/null || true)"
 
-# One call per case. `set +e' around it because a failing suite makes the script exit 1, which is an
-# answer here and not a failure of the test. GITHUB_ACTIONS is unset so the suite passes when it is
-# itself run from inside CI, where GitHub sets it to `true' for every job.
+# Every call to the script goes through `run', including the ones that need the two streams apart
+# or GITHUB_ACTIONS set - those two needs are what used to drive calls out of a helper, and both
+# are now things `run' can do.
 #
-# Every ordinary call goes through `run', which prepends `--log-dir' under $work_dir. That is not
-# tidiness: this suite runs inside the gate, and the gate runs `suite-runner' too. With the
-# cwd-relative default both would use the same log root, and the inner run's prune-at-start would
-# delete the outer run's own directory while it is still being written to. `run_raw' is the same
-# call without the flag, for the two cases that must exercise the default and the fallback. The
-# handful of cases that call the script inline rather than through `run' - they need stdout and
-# stderr apart, or GITHUB_ACTIONS set - pass the same flag for the same reason.
+# `run' prepends `--log-dir "$work_dir/logdir"' unless the call already carries a `--log-dir' of
+# its own. That is the invariant the whole gate depends on and the reason the helper exists: this
+# suite runs inside the gate, the gate runs `suite-runner' too (tests/gate:51, with no --log-dir),
+# and with the cwd-relative default both would use $repo_root/.cerebro/state/suite-logs - where the
+# inner run's prune-at-start (scripts/suite-runner:120-147, keep_runs=3) deletes the outer run's
+# directory while it is still being written to. cb-kf8 spent a gate run and its diagnosis on that,
+# reported as eight unrelated suites failing on a missing file. The guard at the end of this file
+# is what now catches it directly.
+#
+# After a call:
+#   $status  the exit status
+#   $out     stdout alone
+#   $err     stderr alone
+#   $both    the two concatenated, stdout first - what the old merged `2>&1' capture gave any
+#            assertion that only asks whether a line is present somewhere. Concatenation is not
+#            interleaving, and no assertion in this file needs interleaving; the ones that care
+#            which stream carried a line use $out or $err.
+#
+# A leading `--ci' runs the script with GITHUB_ACTIONS=true instead of unset. It is consumed by
+# `run' and never reaches the script, which knows only --jobs and --log-dir
+# (scripts/suite-runner:78). It must come first, and `run' refuses it anywhere else rather than
+# passing it through as a directory argument.
 out=""
+err=""
+both=""
 status=0
 run() {
-  set +e
-  out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" "$@" 2>&1)"
-  status=$?
-  set -e
-}
+  local ci=""
+  if [[ "${1:-}" == "--ci" ]]; then
+    ci=yes
+    shift
+  fi
 
-run_raw() {
+  local a has_log_dir=""
+  for a in "$@"; do
+    if [[ "$a" == "--ci" ]]; then
+      fail "run: --ci must be the first argument"
+    fi
+    if [[ "$a" == "--log-dir" ]]; then
+      has_log_dir=yes
+    fi
+  done
+
+  # Never expanded while empty: "${args[@]}" on an empty array is an unbound-variable error under
+  # `set -u' in bash 3.2, which is the bash macOS ships. It cannot be empty - either the caller
+  # brought a --log-dir or the two elements below were added.
+  local -a args=()
+  if [[ -z "$has_log_dir" ]]; then
+    args+=(--log-dir "$work_dir/logdir")
+  fi
+  args+=("$@")
+
+  local out_file="$work_dir/run.out" err_file="$work_dir/run.err"
   set +e
-  out="$(env -u GITHUB_ACTIONS bash "$script" "$@" 2>&1)"
+  if [[ -n "$ci" ]]; then
+    GITHUB_ACTIONS=true bash "$script" "${args[@]}" >"$out_file" 2>"$err_file"
+  else
+    env -u GITHUB_ACTIONS bash "$script" "${args[@]}" >"$out_file" 2>"$err_file"
+  fi
   status=$?
   set -e
+
+  out="$(cat "$out_file")"
+  err="$(cat "$err_file")"
+  both="$(cat "$out_file" "$err_file")"
 }
 
 # --- 1. usage, and a directory with no suites in it ---
 
+# Inline, not through `run': this case is the no-argument refusal, and `run' would give it a
+# --log-dir. It writes no logs, so the guard at the end of the file is unaffected.
 set +e
 out="$(env -u GITHUB_ACTIONS bash "$script" 2>&1)"
 status=$?
@@ -76,21 +122,21 @@ $out"
 
 run "$work_dir/suites" "$work_dir/suites"
 [[ $status -eq 2 ]] || fail "two arguments: expected exit 2, got $status
-$out"
+$both"
 
 mkdir -p "$work_dir/suites"
 printf 'not a directory\n' >"$work_dir/a-file"
 run "$work_dir/a-file"
 [[ $status -eq 2 ]] || fail "a non-directory: expected exit 2, got $status
-$out"
-grep -q "$work_dir/a-file" <<<"$out" || fail "a non-directory: the refusal does not name the path
-$out"
+$both"
+grep -q "$work_dir/a-file" <<<"$both" || fail "a non-directory: the refusal does not name the path
+$both"
 
 run "$work_dir/suites"
 [[ $status -eq 0 ]] || fail "an empty directory: expected exit 0, got $status
-$out"
+$both"
 [[ "$(tail -n 1 <<<"$out")" == "all suites passed" ]] || fail "an empty directory: last line is not 'all suites passed'
-$out"
+$both"
 
 pass "no argument, a non-directory and an empty directory answer as documented"
 
@@ -106,25 +152,25 @@ printf '#!/usr/bin/env bash\necho "ok - c"\nexit 0\n' >"$work_dir/suites/c-pass.
 
 run "$work_dir/suites"
 [[ $status -eq 0 ]] || fail "two passing suites: expected exit 0, got $status
-$out"
-grep -qF -- "-- $work_dir/suites/a-pass.sh" <<<"$out" || fail "no '-- <path>' line for a-pass.sh
-$out"
-grep -qF -- "ok   $work_dir/suites/a-pass.sh (" <<<"$out" || fail "no 'ok   <path> (' line for a-pass.sh
-$out"
-grep -qF -- "ok   $work_dir/suites/c-pass.sh (" <<<"$out" || fail "no 'ok   <path> (' line for c-pass.sh
-$out"
+$both"
+grep -qF -- "-- $work_dir/suites/a-pass.sh" <<<"$both" || fail "no '-- <path>' line for a-pass.sh
+$both"
+grep -qF -- "ok   $work_dir/suites/a-pass.sh (" <<<"$both" || fail "no 'ok   <path> (' line for a-pass.sh
+$both"
+grep -qF -- "ok   $work_dir/suites/c-pass.sh (" <<<"$both" || fail "no 'ok   <path> (' line for c-pass.sh
+$both"
 
 # The whole point of the bead: the name is on the terminal before the suite starts, so a stall is
 # read as "hung in a-pass.sh" rather than "the gate is hung".
-named="$(line_of_fixed "$out" "-- $work_dir/suites/a-pass.sh")"
-result="$(line_of_fixed "$out" "ok   $work_dir/suites/a-pass.sh (")"
+named="$(line_of_fixed "$both" "-- $work_dir/suites/a-pass.sh")"
+result="$(line_of_fixed "$both" "ok   $work_dir/suites/a-pass.sh (")"
 [[ -n "$named" && -n "$result" && $named -lt $result ]] || fail "a-pass.sh is named at line $named, after its result at line $result
-$out"
+$both"
 
-grep -q '^ok - a$' <<<"$out" && fail "a passing suite's own output was printed
-$out"
+grep -q '^ok - a$' <<<"$both" && fail "a passing suite's own output was printed
+$both"
 [[ "$(tail -n 1 <<<"$out")" == "all suites passed" ]] || fail "two passing suites: last line is not 'all suites passed'
-$out"
+$both"
 
 pass "every suite is named before it runs and a passing suite is quiet"
 
@@ -132,13 +178,9 @@ pass "every suite is named before it runs and a passing suite is quiet"
 
 printf '#!/usr/bin/env bash\necho "b stdout"\necho "b stderr" >&2\nexit 1\n' >"$work_dir/suites/b-fail.sh"
 
-set +e
-out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" "$work_dir/suites" 2>/dev/null)"
-status=$?
-err="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" "$work_dir/suites" 2>&1 >/dev/null)"
-set -e
+run "$work_dir/suites"
 [[ $status -eq 1 ]] || fail "one failing suite: expected exit 1, got $status
-$out"
+$both"
 grep -q '^b stdout$' <<<"$out" || fail "the failing suite's stdout was not replayed
 $out"
 grep -q '^b stderr$' <<<"$out" || fail "the failing suite's stderr was not replayed
@@ -170,10 +212,7 @@ pass "a failing suite's output is replayed and the remaining suites still run"
 
 # --- 4. the GitHub annotations appear under GITHUB_ACTIONS and nowhere else ---
 
-set +e
-out="$(GITHUB_ACTIONS=true bash "$script" --log-dir "$work_dir/logdir" "$work_dir/suites" 2>/dev/null)"
-status=$?
-set -e
+run --ci "$work_dir/suites"
 [[ $status -eq 1 ]] || fail "under GITHUB_ACTIONS: expected exit 1, got $status
 $out"
 grep -qF -- "::group::$work_dir/suites/b-fail.sh" <<<"$out" || fail "no ::group:: for b-fail.sh
@@ -195,9 +234,7 @@ $out"
 [[ -n "$error" && -n "$endgroup" && $error -gt $endgroup ]] || fail "::error for b-fail.sh is at line $error, before ::endgroup:: at $endgroup
 $out"
 
-set +e
-out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" "$work_dir/suites" 2>/dev/null)"
-set -e
+run "$work_dir/suites"
 grep -q '^::' <<<"$out" && fail "an annotation was printed outside GitHub Actions
 $out"
 
@@ -213,25 +250,22 @@ pass "GitHub annotations appear under GITHUB_ACTIONS and nowhere else"
 for bad in 0 x -1 1.5; do
   run --jobs "$bad" "$work_dir/suites"
   [[ $status -eq 2 ]] || fail "--jobs $bad: expected exit 2, got $status
-$out"
-  grep -q '^usage: ' <<<"$out" || fail "--jobs $bad: no usage line
-$out"
+$both"
+  grep -q '^usage: ' <<<"$both" || fail "--jobs $bad: no usage line
+$both"
 done
 
 run --jobs "$work_dir/suites"
 [[ $status -eq 2 ]] || fail "--jobs with no number: expected exit 2, got $status
-$out"
-grep -q '^usage: ' <<<"$out" || fail "--jobs with no number: no usage line
-$out"
+$both"
+grep -q '^usage: ' <<<"$both" || fail "--jobs with no number: no usage line
+$both"
 
 run --jobs 2
 [[ $status -eq 2 ]] || fail "--jobs 2 with no directory: expected exit 2, got $status
-$out"
+$both"
 
-set +e
-out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logdir" --jobs 1 "$work_dir/suites" 2>/dev/null)"
-status=$?
-set -e
+run --jobs 1 "$work_dir/suites"
 [[ $status -eq 1 ]] || fail "--jobs 1: expected exit 1, got $status
 $out"
 for f in a-pass c-pass; do
@@ -258,27 +292,27 @@ SECONDS=0
 run --jobs 2 "$work_dir/slow"
 parallel_secs=$SECONDS
 [[ $status -eq 0 ]] || fail "--jobs 2 on two sleeping suites: expected exit 0, got $status
-$out"
+$both"
 for f in d-slow e-slow; do
-  grep -qF -- "ok   $work_dir/slow/$f.sh (" <<<"$out" || fail "--jobs 2: no 'ok' line for $f.sh
-$out"
+  grep -qF -- "ok   $work_dir/slow/$f.sh (" <<<"$both" || fail "--jobs 2: no 'ok' line for $f.sh
+$both"
 done
 [[ $parallel_secs -lt 4 ]] || fail "--jobs 2 on two 2s suites took ${parallel_secs}s - they did not overlap
-$out"
+$both"
 
 SECONDS=0
 run --jobs 1 "$work_dir/slow"
 serial_secs=$SECONDS
 [[ $status -eq 0 ]] || fail "--jobs 1 on two sleeping suites: expected exit 0, got $status
-$out"
+$both"
 [[ $serial_secs -ge 4 ]] || fail "--jobs 1 on two 2s suites took ${serial_secs}s - it did not serialise
-$out"
+$both"
 
 # At --jobs 1 at most one name is ahead of its result, which is the property a stalled run relies on.
-named="$(line_of_fixed "$out" "-- $work_dir/slow/e-slow.sh")"
-first_result="$(line_of_fixed "$out" "ok   $work_dir/slow/d-slow.sh (")"
+named="$(line_of_fixed "$both" "-- $work_dir/slow/e-slow.sh")"
+first_result="$(line_of_fixed "$both" "ok   $work_dir/slow/d-slow.sh (")"
 [[ -n "$named" && -n "$first_result" && $named -gt $first_result ]] || fail "--jobs 1: e-slow.sh is named at line $named, before d-slow.sh's result at $first_result
-$out"
+$both"
 
 pass "suites run N at a time, and --jobs 1 is one at a time"
 
@@ -293,11 +327,11 @@ printf '#!/usr/bin/env bash\nkill -9 $$\n' >"$work_dir/killed/f-killed.sh"
 
 run "$work_dir/killed"
 [[ $status -eq 1 ]] || fail "a killed suite: expected exit 1, got $status
-$out"
-grep -qF -- "FAIL $work_dir/killed/f-killed.sh (" <<<"$out" || fail "a killed suite has no 'FAIL' line
-$out"
-grep -qF -- "== output of $work_dir/killed/f-killed.sh ==" <<<"$out" || fail "a killed suite has no replay header
-$out"
+$both"
+grep -qF -- "FAIL $work_dir/killed/f-killed.sh (" <<<"$both" || fail "a killed suite has no 'FAIL' line
+$both"
+grep -qF -- "== output of $work_dir/killed/f-killed.sh ==" <<<"$both" || fail "a killed suite has no replay header
+$both"
 
 # And the path the header actually names: the job that was running the suite is killed too, so no
 # result is ever written. `cat' of a missing .rc prints nothing, which is not 0.
@@ -306,12 +340,12 @@ printf '#!/usr/bin/env bash\nkill -9 $PPID\nsleep 5\n' >"$work_dir/vanished/g-va
 
 run "$work_dir/vanished"
 [[ $status -eq 1 ]] || fail "a suite whose job vanished: expected exit 1, got $status
-$out"
-grep -qF -- "== output of $work_dir/vanished/g-vanished.sh ==" <<<"$out" \
+$both"
+grep -qF -- "== output of $work_dir/vanished/g-vanished.sh ==" <<<"$both" \
   || fail "a suite whose job vanished has no replay header
-$out"
+$both"
 [[ "$(tail -n 1 <<<"$out")" != "all suites passed" ]] || fail "a suite whose job vanished was reported as a pass
-$out"
+$both"
 
 pass "a suite that is killed is reported failed, not passed"
 
@@ -324,23 +358,23 @@ mkdir -p "$work_dir/green"
 printf '#!/usr/bin/env bash\necho "ok - a"\nexit 0\n' >"$work_dir/green/a-pass.sh"
 printf '#!/usr/bin/env bash\necho "ok - c"\nexit 0\n' >"$work_dir/green/c-pass.sh"
 
-run_raw --log-dir "$work_dir/l1" "$work_dir/green"
+run --log-dir "$work_dir/l1" "$work_dir/green"
 [[ $status -eq 0 ]] || fail "--log-dir before the directory: expected exit 0, got $status
-$out"
+$both"
 
-run_raw --jobs 2 --log-dir "$work_dir/l2" "$work_dir/green"
+run --jobs 2 --log-dir "$work_dir/l2" "$work_dir/green"
 [[ $status -eq 0 ]] || fail "--jobs then --log-dir: expected exit 0, got $status
-$out"
+$both"
 
-run_raw --log-dir "$work_dir/l3" --jobs 2 "$work_dir/green"
+run --log-dir "$work_dir/l3" --jobs 2 "$work_dir/green"
 [[ $status -eq 0 ]] || fail "--log-dir then --jobs: expected exit 0, got $status
-$out"
+$both"
 
-run_raw --log-dir
+run --log-dir
 [[ $status -eq 2 ]] || fail "--log-dir with no value: expected exit 2, got $status
-$out"
-grep -q '^usage: ' <<<"$out" || fail "--log-dir with no value: no usage line
-$out"
+$both"
+grep -q '^usage: ' <<<"$both" || fail "--log-dir with no value: no usage line
+$both"
 
 pass "--log-dir is accepted before and after --jobs, and a missing value is a usage error"
 
@@ -349,9 +383,9 @@ pass "--log-dir is accepted before and after --jobs, and a missing value is a us
 # Passing suites included: a flake that passed on this run is exactly the cb-qrm shape - failed
 # once inside the gate, passed on every re-run - and its passing output is what you need.
 
-run_raw --log-dir "$work_dir/logs" "$work_dir/suites"
+run --log-dir "$work_dir/logs" "$work_dir/suites"
 [[ $status -eq 1 ]] || fail "a run over a, b, c: expected exit 1, got $status
-$out"
+$both"
 
 runs="$(ls "$work_dir/logs")"
 [[ "$(wc -l <<<"$runs" | tr -d ' ')" == 1 ]] || fail "expected exactly one run directory, got:
@@ -375,18 +409,16 @@ pass "every suite's full output is kept under the log directory, passing and fai
 
 # --- 10. a red run says where the logs are; a green one does not ---
 
-set +e
-err="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/logs2" "$work_dir/suites" 2>&1 >/dev/null)"
-set -e
+run --log-dir "$work_dir/logs2" "$work_dir/suites"
 grep -qF -- "logs kept (last 3 runs): $work_dir/logs2/" <<<"$err" \
   || fail "a red run does not name the log directory on stderr
 $err"
 
-run_raw --log-dir "$work_dir/logs3" "$work_dir/green"
+run --log-dir "$work_dir/logs3" "$work_dir/green"
 [[ $status -eq 0 ]] || fail "a green run: expected exit 0, got $status
-$out"
-! grep -q 'logs kept' <<<"$out" || fail "a green run said something about logs
-$out"
+$both"
+! grep -q 'logs kept' <<<"$both" || fail "a green run said something about logs
+$both"
 
 pass "a red run names the log directory on stderr and a green run says nothing about logs"
 
@@ -398,9 +430,9 @@ pass "a red run names the log directory on stderr and a green run says nothing a
 created=""
 i=0
 while [[ $i -lt 5 ]]; do
-  run_raw --log-dir "$work_dir/retain" "$work_dir/green"
+  run --log-dir "$work_dir/retain" "$work_dir/green"
   [[ $status -eq 0 ]] || fail "retention run $i: expected exit 0, got $status
-$out"
+$both"
   newest="$(ls "$work_dir/retain" | tail -n 1)"
   created="$created"$'\n'"$newest"
   i=$((i+1))
@@ -424,27 +456,21 @@ pass "the log root keeps the three newest runs and deletes the rest"
 
 printf 'not a directory\n' >"$work_dir/blocked"
 
-set +e
-out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/blocked/logs" "$work_dir/green" 2>&1)"
-status=$?
-set -e
+run --log-dir "$work_dir/blocked/logs" "$work_dir/green"
 [[ $status -eq 0 ]] || fail "an unwritable log root over passing suites: expected exit 0, got $status
-$out"
-grep -q 'cannot write logs to' <<<"$out" || fail "an unwritable log root did not warn on stderr
-$out"
-! grep -q 'logs kept' <<<"$out" || fail "the fallback named a durable log directory
-$out"
+$both"
+grep -q 'cannot write logs to' <<<"$both" || fail "an unwritable log root did not warn on stderr
+$both"
+! grep -q 'logs kept' <<<"$both" || fail "the fallback named a durable log directory
+$both"
 
-set +e
-out="$(env -u GITHUB_ACTIONS bash "$script" --log-dir "$work_dir/blocked/logs" "$work_dir/suites" 2>&1)"
-status=$?
-set -e
+run --log-dir "$work_dir/blocked/logs" "$work_dir/suites"
 [[ $status -eq 1 ]] || fail "an unwritable log root over a failing suite: expected exit 1, got $status
-$out"
-grep -q '^b stdout$' <<<"$out" || fail "the fallback lost the failing suite's replay
-$out"
-! grep -q 'logs kept' <<<"$out" || fail "the fallback named a durable log directory on a red run
-$out"
+$both"
+grep -q '^b stdout$' <<<"$both" || fail "the fallback lost the failing suite's replay
+$both"
+! grep -q 'logs kept' <<<"$both" || fail "the fallback named a durable log directory on a red run
+$both"
 
 pass "a log directory that cannot be created warns on stderr and the run still answers"
 
@@ -453,6 +479,9 @@ pass "a log directory that cannot be created warns on stderr and the run still a
 # A subshell `cd', so this suite's own directory is not moved.
 
 mkdir -p "$work_dir/cwd-probe"
+# Inline, not through `run': this case exercises the cwd-relative default, which is precisely the
+# flag `run' exists to supply. The subshell `cd' puts that default under $work_dir/cwd-probe rather
+# than the repository root, so the guard at the end of the file is unaffected.
 set +e
 out="$(cd "$work_dir/cwd-probe" && env -u GITHUB_ACTIONS bash "$script" "$work_dir/green" 2>&1)"
 status=$?

@@ -230,6 +230,56 @@ you like (`--dry-run` first).
 To take a newer cerebro: `git submodule update --remote --merge .claude/cerebro`, then start
 something — every launch re-syncs the links.
 
+## What the fleet cost
+
+A Copilot session prints its AI-credit cost as it ends — `Session: 264.44 AIC used` — and is then
+gone, and the number with it. `scripts/fleet-cost` asks afterwards, and answers per **bead** rather
+than only per session:
+
+```bash
+.claude/cerebro/scripts/fleet-cost --by-bead --since 7d      # what each bead cost to build
+.claude/cerebro/scripts/fleet-cost --by-agent --since 30d    # what each agent spent
+.claude/cerebro/scripts/fleet-cost --bead cb-d89             # one bead, split by agent and phase
+```
+
+```
+AGENT      SESSIONS  BEADS   ON BEAD   NO BEAD       AIC  UNPRICED
+Cyclops           8      7    4892.7     432.3    5325.1         1
+Xavier           10      7    2019.4     557.7    2577.2        18
+Cerebro           6      0       0.0    1686.5    1686.5        14
+
+40 sessions, 11730.6 AIC in all.
+```
+
+`--since` takes a span (`90m`, `24h`, `7d`; the default is `7d`) or an ISO-8601 UTC timestamp.
+`--agent <Name>` narrows `--by-bead`, and `--json` gives the same answer for a script. A window with
+nothing in it is exit 0 and a sentence — nothing ran is an answer.
+
+**Nothing is captured while a session runs**, and no writer is added to any path: both halves of the
+join are already on disk. `~/.copilot/session-store.db` has the per-request cost; turn 0 of every
+session carries the marker sentence naming the agent and the root; and `.cerebro/state/transitions.jsonl`
+says which bead that agent held at the time. Each request is attributed to whichever bead was
+current when it was made, so a session that worked on none, one or several is reported honestly.
+
+Two columns are worth understanding before you trust a total:
+
+- **`no bead`** is about a third of the fleet's spend, and is not a rounding error. An orchestrator
+  holds no bead by design, and every pass spends before it claims anything. It gets a row of its own
+  rather than being tidied away, which is what makes the rows add up to the true total.
+- **`UNPRICED`** counts requests the store records no cost for — a couple of per cent, and every
+  request on some models. They are excluded from the sums, so a row showing `0.0` beside a number
+  there did real work whose price nobody wrote down.
+
+It needs `sqlite3` and `jq` on `PATH`, and a project running on Copilot — cost is recorded per
+machine, and a project declaring `agent_cli claude` is told so and gets nothing rather than a
+misleading zero. It refuses out loud, on stderr with nothing on stdout, whenever it cannot answer:
+a number that means "the query broke" is worse than no number. If the window reaches further back
+than either record goes, it says on stderr what it could actually see, and stdout stays parseable.
+
+The companion is `scripts/fleet-history`, which turns the same transition log into durations — how
+long a bead was held, how long anyone waited at `asking`. Both are covered at greater depth in
+[docs/agent-workflow.md](docs/agent-workflow.md).
+
 ## Skills
 
 `plan-bead` and `implement-bead` are the two roles' procedures; `beads-workflow` is the substrate

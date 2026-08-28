@@ -301,14 +301,18 @@ pass "roster --standby lists the declared names, in file order"
 pass "roster: the other modes read a row that carries the word"
 
 # The built-in table declares no autostart: a consumer that has not adopted the column sees nothing.
+set +e
 out="$("$builtin_dir/roster" --autostart)"
 status=$?
+set -e
 [[ $status -eq 0 ]] || fail "built-in roster --autostart: expected exit 0, got $status"
 [[ -z "$out" ]] || fail "built-in roster --autostart: expected nothing, got: $out"
 pass "roster --autostart is silent, and exits 0, when no row declares it"
 
+set +e
 out="$("$builtin_dir/roster" --standby)"
 status=$?
+set -e
 [[ $status -eq 0 ]] || fail "built-in roster --standby: expected exit 0, got $status"
 [[ -z "$out" ]] || fail "built-in roster --standby: expected nothing, got: $out"
 pass "roster --standby is silent, and exits 0, when no row declares it"
@@ -379,23 +383,58 @@ turing_row="$("$roster_at" | grep '^Turing')"
 pass "roster: standby on an implementer row arms it like any other"
 rm -f "$consumer_roster_file"
 
-# --- --implementers: the exit status is the contract, not a property of the last row ---------------
+# --- the name filters: the exit status is the contract, not a property of the last row ------------
 #
 # The loop body was `[[ "$kind" == "implementer" ]] && printf ...', whose status is the whole
 # `while' loop's and so this script's - so a roster ending in an INTERACTIVE row printed exactly the
 # right names and exited 1. Every caller got away with it only because the built-in table ends in
 # implementers; `planner-buffer' reads it as a `for' word list, where a non-zero status is invisible,
 # and the assignment form two hundred lines above would have aborted this suite.
-printf 'Turing  implementer\nAda  planner\n' > "$consumer_roster_file"
+#
+# `--role', `--autostart' and `--standby' ask the same question of a different field and can grow
+# the same defect independently - two of them did, separately, and were fixed separately. So all
+# four are held to the one rule here, against one roster whose LAST row matches none of them while
+# every mode still has something to print: a regression to "prints nothing, exits 0" fails too.
+printf 'Turing  implementer  autostart\nAda  planner  standby\nHopper  orchestrator\n' \
+  > "$consumer_roster_file"
+
 set +e
 implementers_tail="$("$roster_at" --implementers)"
 status=$?
 set -e
 [[ $status -eq 0 ]] \
-  || fail "roster --implementers with an interactive row last: expected exit 0, got $status"
+  || fail "roster --implementers with a non-implementer row last: expected exit 0, got $status"
 [[ "$implementers_tail" == "Turing" ]] \
-  || fail "roster --implementers with an interactive row last: expected Turing, got: $implementers_tail"
-pass "roster --implementers exits 0 when the last roster row is not an implementer"
+  || fail "roster --implementers with a non-implementer row last: expected Turing, got: $implementers_tail"
+
+set +e
+role_tail="$("$roster_at" --role planner)"
+status=$?
+set -e
+[[ $status -eq 0 ]] \
+  || fail "roster --role with a non-planner row last: expected exit 0, got $status"
+[[ "$role_tail" == "Ada" ]] \
+  || fail "roster --role with a non-planner row last: expected Ada, got: $role_tail"
+
+set +e
+autostart_tail="$("$roster_at" --autostart)"
+status=$?
+set -e
+[[ $status -eq 0 ]] \
+  || fail "roster --autostart with a row carrying no third word last: expected exit 0, got $status"
+[[ "$autostart_tail" == "Turing" ]] \
+  || fail "roster --autostart with a row carrying no third word last: expected Turing, got: $autostart_tail"
+
+set +e
+standby_tail="$("$roster_at" --standby)"
+status=$?
+set -e
+[[ $status -eq 0 ]] \
+  || fail "roster --standby with a row carrying no third word last: expected exit 0, got $status"
+[[ "$standby_tail" == "Ada" ]] \
+  || fail "roster --standby with a row carrying no third word last: expected Ada, got: $standby_tail"
+
+pass "roster: every name filter exits 0 when the last roster row does not match"
 rm -f "$consumer_roster_file"
 
 # An empty file says nothing, so the built-in table answers - and so does a file of nothing but

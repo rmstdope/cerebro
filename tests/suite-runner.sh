@@ -28,6 +28,14 @@ script="$repo_root/scripts/suite-runner"
 [[ -f "$script" ]] || fail "scripts/suite-runner does not exist"
 [[ -x "$script" ]] || fail "scripts/suite-runner is not executable"
 
+# The default log root, which no call in this suite may write to. Recorded before any case runs and
+# checked again at the end: the outer run creates its directory and prunes once, both before it
+# launches any suite (scripts/suite-runner:120-147), so this set does not change while this suite
+# runs - unless this suite changes it. That is the whole failure cb-kf8 was diagnosed from, and it
+# is cheaper to detect here, by name, than in eight unrelated suites.
+default_log_root="$repo_root/.cerebro/state/suite-logs"
+default_runs_before="$(ls "$default_log_root" 2>/dev/null || true)"
+
 # One call per case. `set +e' around it because a failing suite makes the script exit 1, which is an
 # answer here and not a failure of the test. GITHUB_ACTIONS is unset so the suite passes when it is
 # itself run from inside CI, where GitHub sets it to `true' for every job.
@@ -459,4 +467,12 @@ runs="$(ls "$default_root")"
 $(ls "$default_root/$runs" 2>/dev/null)"
 
 pass "with no --log-dir, logs land under .cerebro/state/suite-logs in the caller's working directory"
+
+default_runs_after="$(ls "$default_log_root" 2>/dev/null || true)"
+[[ "$default_runs_after" == "$default_runs_before" ]] || fail "a call in this suite wrote to the default log root at $default_log_root.
+Every call must carry --log-dir under \$work_dir; go through \`run', which supplies one.
+before:
+$default_runs_before
+after:
+$default_runs_after"
 suite_passed

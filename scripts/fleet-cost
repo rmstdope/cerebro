@@ -1,0 +1,454 @@
+#!/usr/bin/env bash
+#
+# `fleet-cost` - what the fleet's AI credits were spent on, joined to the beads its agents held
+# while spending them (cb-d89). Every Copilot session prints its cost as it ends and is then gone;
+# this asks the question afterwards, from two records that both outlive the session.
+#
+#     scripts/fleet-cost --by-bead   [--since <when>] [--agent <name>] [--json]
+#     scripts/fleet-cost --by-agent  [--since <when>] [--json]
+#     scripts/fleet-cost --bead <id> [--since <when>] [--json]
+#
+# NOTHING IS CAPTURED WHILE A SESSION RUNS, and that is the point: no writer is added to any path,
+# because both halves of the join are already on disk.
+#
+#   1. THE COST. `~/.copilot/session-store.db` (SQLite), table `assistant_usage_events`: one row
+#      per request, with `total_nano_aiu` and an ISO-8601 `created_at`. AIC is nano/1e9.
+#   2. WHOSE SESSION IT WAS. Turn 0 of every session cerebro started carries the marker sentence
+#      `scripts/launch` puts at the head of the prompt - `This session is <Name> of the cerebro
+#      fleet rooted at <root>/.` - which is the same needle `cerebro--session-args-p` and
+#      `scripts/agent-alive` cut their answers from. It names the agent AND the root.
+#   3. WHICH BEAD. `scripts/fleet-history --json`, never the raw transition log: fleet-history is
+#      the one place transitions become intervals, and it already carries the heartbeat rule, the
+#      terminal-`waiting` rule and both log generations. A second copy of the subtlest pairing in
+#      this repository is not worth a column.
+#
+# THE ATTRIBUTION RULE. For each usage event, take its session's agent, and find that agent's
+# interval where `from_ts <= created_at < to_ts` (an open interval runs to now); LAST match, so
+# overlapping intervals resolve to the most recent. The event's bead is that interval's bead.
+# Three outcomes, and the second and third are why the totals can be trusted:
+#
+#   - an interval with a bead   -> that bead.
+#   - an interval with no bead  -> the `no bead` bucket. A THIRD of this fleet's spend, measured:
+#     all of an orchestrator's, every pass's startup, every planner pass before it takes a label.
+#     It is real work and must never be dropped to tidy the table.
+#   - no interval at all        -> the `no bead` bucket too. Measured at 0.07%, a tail rather than
+#     a hole, so it gets no machinery of its own.
+#
+# `add` over the rows is therefore the true total BY CONSTRUCTION, and that is the property to
+# preserve when changing anything here.
+#
+# THE TRAPS, each measured on a real store rather than reasoned about:
+#
+#   - `immutable=1` SILENTLY UNDER-REPORTS. The store is in WAL mode and live sessions write it;
+#     opening it immutable ignores the WAL and returned 2273 events where read-only returned 2382
+#     - 4.6% missing, with no error. So: `sqlite3 -readonly`, never immutable, and never
+#     read-write, which would take a lock on a database the fleet is using.
+#   - NOT ALL SPEND IS PRICED. 2.2% of events carry a null `total_nano_aiu` - every
+#     `gpt-5.3-codex` request, `gpt-5-mini`, a local model. Summed as zero they make a real
+#     request free; on one bead that was the whole of the planner's contribution, so the bead read
+#     as though planning cost nothing. They are counted in UNPRICED, excluded from the sums, and
+#     stated in the footer.
+#   - THE TWO HORIZONS DIFFER. The store is pruned by Copilot on its own schedule; the transition
+#     log rotates on size keeping one generation. Either can be the shorter, so a window reaching
+#     past the later of them says so ON STDERR - stdout stays parseable.
+#   - TWO SESSIONS UNDER ONE NAME. The join is by agent name and time, so the documented `×N` case
+#     (cb-63m) merges their spend and it cannot be separated. It is detected and said on the row,
+#     rather than attributed silently to whichever of them held a bead.
+#
+# It is the first script here that FORMATS FOR A HUMAN: an aligned table by default, the same
+# answer as JSON under `--json`. `work-beads` and `fleet-history` print JSON and nothing else; the
+# navigator asked for a table, because "what did this week cost" should not need a jq incantation.
+#
+# It fails LOUDLY - non-zero, a line on stderr, NOTHING on stdout - when the store is missing,
+# `sqlite3` is missing, there is no transition log, or the project declares a provider other than
+# copilot. A caller reading spend must never get an empty answer that means "the query broke".
+# A WINDOW WITH NOTHING IN IT is exit 0 with a sentence: nothing ran is an answer.
+#
+# FLEET_COST_STORE overrides the store path and FLEET_COST_COLUMNS the terminal width, for
+# tests/fleet-cost.sh alone. FLEET_HISTORY_NOW is inherited straight through to fleet-history, so
+# an assertion about an open interval is exact rather than racing the clock.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/root-hints.sh"
+
+usage() {
+  echo "usage: fleet-cost --by-bead|--by-agent|--bead <id> [--since <when>] [--agent <name>] [--json]" >&2
+  exit 2
+}
+
+mode=""
+bead=""
+since_arg="7d"
+agent=""
+as_json="no"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --by-bead)  mode="by-bead"; shift ;;
+    --by-agent) mode="by-agent"; shift ;;
+    --json)     as_json="yes"; shift ;;
+    # `[[ $2 != --* ]]` so `--bead --json` is the typo it is rather than a bead called `--json`,
+    # which would silently answer about nothing.
+    --bead)
+      bead="${2:-}"; [[ -n "$bead" && "$bead" != --* ]] || usage; mode="bead"; shift 2 ;;
+    --since)
+      since_arg="${2:-}"; [[ -n "$since_arg" && "$since_arg" != --* ]] || usage; shift 2 ;;
+    --agent)
+      agent="${2:-}"; [[ -n "$agent" && "$agent" != --* ]] || usage; shift 2 ;;
+    *)
+      echo "fleet-cost: unknown argument '$1'" >&2
+      usage ;;
+  esac
+done
+
+[[ -n "$mode" ]] || usage
+
+# --- the window ------------------------------------------------------------------------------------
+#
+# Parsed here as well as by fleet-history, which is handed the caller's spelling untouched so the
+# two can never disagree about what a window means. The epoch is needed here for one thing
+# fleet-history does not answer: whether the window reaches past what either record can see.
+
+now="${FLEET_HISTORY_NOW:-$(date -u +%s)}"
+
+if [[ "$since_arg" =~ ^([0-9]+)([smhd])$ ]]; then
+  count="${BASH_REMATCH[1]}"
+  case "${BASH_REMATCH[2]}" in
+    s) seconds=$((count)) ;;
+    m) seconds=$((count * 60)) ;;
+    h) seconds=$((count * 3600)) ;;
+    d) seconds=$((count * 86400)) ;;
+  esac
+  since=$((now - seconds))
+  window_words="in the last $since_arg"
+elif ! since="$(jq -r --arg t "$since_arg" '$t | fromdateiso8601' <<<'null' 2>/dev/null)"; then
+  echo "fleet-cost: --since wants an ISO-8601 UTC timestamp (2026-08-20T00:00:00Z) or a span (90m, 24h, 7d), not '$since_arg'" >&2
+  exit 2
+else
+  window_words="since $since_arg"
+fi
+
+# --- the four refusals -------------------------------------------------------------------------------
+
+provider="$("$script_dir/agent-cli" 2>/dev/null || echo claude)"
+if [[ "$provider" != "copilot" ]]; then
+  echo "fleet-cost: this project declares \`agent_cli $provider', and only copilot sessions record their cost where this can read it. Nothing was reported." >&2
+  exit 1
+fi
+
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  echo "fleet-cost: sqlite3 is not on PATH - it is what reads the session store. Nothing was reported." >&2
+  exit 1
+fi
+
+store="${FLEET_COST_STORE:-$HOME/.copilot/session-store.db}"
+if [[ ! -f "$store" ]]; then
+  echo "fleet-cost: no session store at $store - cost is recorded per machine, and nothing has run a copilot session on this one." >&2
+  exit 1
+fi
+
+repo_root="$(cerebro_hinted_root "$script_dir/.." shared)" \
+  || repo_root="$("$script_dir/consumer-root" --shared)"
+state_dir="$repo_root/.cerebro/state"
+
+logs=()
+if [[ -f "$state_dir/transitions.1.jsonl" ]]; then logs+=("$state_dir/transitions.1.jsonl"); fi
+if [[ -f "$state_dir/transitions.jsonl" ]]; then logs+=("$state_dir/transitions.jsonl"); fi
+if [[ ${#logs[@]} -eq 0 ]]; then
+  echo "fleet-cost: no transition log under $state_dir - cost can be totalled but not attributed to any bead. Nothing was reported." >&2
+  exit 1
+fi
+
+# --- the two sources ----------------------------------------------------------------------------------
+
+if ! intervals="$("$script_dir/fleet-history" --json --since "$since_arg" 2>/dev/null)"; then
+  echo "fleet-cost: fleet-history could not read the transition log under $state_dir. Nothing was reported." >&2
+  exit 1
+fi
+
+# -readonly, never immutable - see the header. One JSON blob rather than a delimited stream: a
+# marker sentence and a null cost both survive it untouched.
+if ! events="$(sqlite3 -readonly "$store" "
+      SELECT json_group_array(json_object(
+               'session', t.session_id,
+               'marker',  t.user_message,
+               'ts',      e.created_at,
+               'nano',    e.total_nano_aiu))
+      FROM turns t
+      JOIN assistant_usage_events e ON e.session_id = t.session_id
+      WHERE t.turn_index = 0
+        AND t.user_message LIKE 'This session is % of the cerebro fleet rooted at %';
+    " 2>/dev/null)"; then
+  echo "fleet-cost: could not read the session store at $store. Nothing was reported." >&2
+  exit 1
+fi
+[[ -n "$events" ]] || events="[]"
+
+# The bead horizon: the oldest line of the oldest generation. Reading one line for a horizon is
+# not a second pairing implementation - the intervals themselves still come from fleet-history.
+bead_horizon="$(head -n 1 "${logs[0]}" | jq -r '.ts // empty' 2>/dev/null || true)"
+
+# --- bead titles ---------------------------------------------------------------------------------------
+#
+# Decoration, never a dependency: a board that cannot answer - no `bd`, a closed bead that has left
+# it - prints the id alone rather than refusing an answer about cost.
+
+titles="{}"
+if [[ "$mode" == "by-bead" ]] && command -v bd >/dev/null 2>&1; then
+  ids="$(jq -r '[.[] | .bead | select(. != null)] | unique | .[]' <<<"$intervals" 2>/dev/null || true)"
+  if [[ -n "$ids" ]]; then
+    # shellcheck disable=SC2086
+    titles="$(bd show $ids --json 2>/dev/null \
+                | jq 'map({key: .id, value: .title}) | from_entries' 2>/dev/null || echo '{}')"
+  fi
+fi
+
+# --- the join, and everything printed ----------------------------------------------------------------
+
+cols="${FLEET_COST_COLUMNS:-}"
+if [[ -z "$cols" ]]; then
+  if [[ -t 1 ]] && cols="$(tput cols 2>/dev/null)"; then :; else cols=100; fi
+fi
+
+if ! out="$(jq -n \
+      --argjson events "$events" \
+      --argjson intervals "$intervals" \
+      --argjson titles "$titles" \
+      --argjson now "$now" \
+      --argjson since "$since" \
+      --argjson cols "$cols" \
+      --arg root "$repo_root" \
+      --arg agent "$agent" \
+      --arg bead "$bead" \
+      --arg mode "$mode" \
+      --arg json "$as_json" \
+      --arg window "$window_words" \
+      --arg since_arg "$since_arg" \
+      --arg bead_horizon "$bead_horizon" '
+
+  def round1: . * 10 | round / 10;
+  def aic: (. * 10 | round) / 10;
+  # One decimal, always: 1 and 1.0 in the same column read as different precisions, and the
+  # whole point of the table is that the numbers line up.
+  def fmt1: tostring | if test("\\.") then . else . + ".0" end;
+  # A timestamp as the tables print it: minutes are enough, and the store'"'"'s milliseconds are not.
+  def stamp: if . == null then null else (.[0:16] + "Z") end;
+  def pad($n): tostring | . + (" " * ($n - length) | if . == null then "" else . end);
+  def lpad($n): tostring | ((" " * ($n - length) | if . == null then "" else . end) + .);
+  def clip($n): if ($n < 1) then "" elif (length <= $n) then . else (.[0:($n - 1)] + "\u2026") end;
+
+  # The marker sentence, cut into the two halves that identify a session: the name, and the root.
+  # The root as written carries a trailing slash the consumer root does not - normalise here,
+  # never in the comparison, which is the cb-os4 rule about display spellings.
+  def marker_agent: capture("This session is (?<n>[^ ]+) of the cerebro fleet rooted at ") | .n;
+  # NON-GREEDY, AND NOT ANCHORED AT THE END OF THE MESSAGE. The marker is the FIRST sentence of
+  # turn 0, and everything the launcher and the role add follows it in the same field - so an
+  # end-anchored capture swallows the whole prompt and matches no root at all, which reads as a
+  # fleet that has never run. It ends at the first full stop followed by whitespace or end.
+  def marker_root:
+    capture("of the cerebro fleet rooted at (?<r>.*?)\\.(\\s|$)") | .r
+    | sub("/+$"; "");
+
+  ($root | sub("/+$"; "")) as $canon_root
+
+  | ($events
+     | map(. + {_agent: (.marker | marker_agent), _root: (.marker | marker_root)})
+     | map(select(._root == $canon_root))
+     | map(select($agent == "" or ._agent == $agent))
+     | map(. + {_e: (.ts | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)})) as $ev
+
+  | ($ev | map(select(._e >= $since))) as $ev
+
+  # The intervals, grouped by agent so the attribution is a lookup rather than a scan of the lot.
+  | ($intervals
+     | map(. + {_from: (.from_ts | fromdateiso8601),
+                _to:   (if .to_ts == null then $now else (.to_ts | fromdateiso8601) end)})
+     | group_by(.agent)
+     | map({key: .[0].agent, value: (. | sort_by(._from))})
+     | from_entries) as $by_agent
+
+  # LAST match, so overlapping intervals resolve to the most recent.
+  | def attribute($e):
+      ($by_agent[$e._agent] // [])
+      | map(select(($e._e >= ._from) and ($e._e < ._to)))
+      | if length == 0 then {bead: null, phase: null} else (.[-1] | {bead, phase}) end;
+
+  ($ev | map(. + (attribute(.)))) as $rows
+
+  # The horizons. The cost one is this fleet'"'"'s own oldest event in this root - a probe session in
+  # another root says nothing about what this consumer can see.
+  | ($events
+     | map(select((.marker | marker_root) == $canon_root))
+     | map(.ts | sub("\\.[0-9]+Z$"; "Z"))
+     | sort | first) as $cost_horizon
+  | (if $bead_horizon == "" then null else $bead_horizon end) as $bead_h
+  | ([$cost_horizon, $bead_h] | map(select(. != null)) | sort | last) as $record_from
+
+  | (($rows | map(select(.nano != null) | .nano) | add // 0) / 1000000000) as $total
+  | ($rows | map(select(.nano == null)) | length) as $unpriced_total
+  | ($rows | length) as $request_total
+
+  # Whether any two sessions of one name overlap in time. The join is by name, so their spend
+  # cannot be separated; the row says so rather than attributing it silently.
+  | ($ev
+     | group_by(.session)
+     | map({agent: .[0]._agent, from: (map(._e) | min), to: (map(._e) | max)})
+     | group_by(.agent)
+     | map({key: .[0].agent,
+            value: (sort_by(.from)
+                    | . as $s
+                    | [range(0; length - 1) | select($s[.].to > $s[. + 1].from)] | length > 0)})
+     | from_entries) as $merged
+
+  | ($ev | group_by(._agent) | map({key: .[0]._agent, value: (map(.session) | unique | length)})
+        | from_entries) as $sessions
+
+  | def share: if $total == 0 then 0 else (. / $total * 1000 | round / 10) end;
+
+  if $mode == "by-bead" then
+      ($rows | group_by(.bead)
+        | map({
+            bead: .[0].bead,
+            title: (if .[0].bead == null then null else ($titles[.[0].bead] // null) end),
+            aic: ((map(select(.nano != null) | .nano) | add // 0) / 1000000000 | aic),
+            share: 0,
+            unpriced: (map(select(.nano == null)) | length),
+            requests: length,
+            agents: (map(._agent) | unique)
+          })
+        | map(. + {share: (.aic | share)})) as $all
+      | ($all | map(select(.bead != null)) | sort_by(-.aic)) as $beads
+      | ($all | map(select(.bead == null))) as $none
+      | if $json == "yes" then ($beads + $none | tojson)
+        else
+          if ($all | length) == 0 then
+            "No cerebro sessions \($window)." +
+            (if $record_from == null then "" else " (Cost is recorded from \($record_from | stamp).)" end)
+          else
+            # Column widths from the data, so a long agent list wraps past 80 rather than losing a
+            # name - the navigator chose every name over a tidy line.
+            (([$beads[].bead, "no bead", "BEAD"] | map(length) | max)) as $wb
+            | (([$beads[], $none[]] | map(.aic | fmt1 | length)) + [3] | max) as $wa
+            | (([$beads[], $none[]] | map(.unpriced | tostring | length)) + [8] | max) as $wu
+            | ($cols - $wb - $wa - $wu - 30) as $wt
+            | (if ($beads | map(.title) | map(select(. != null)) | length) == 0 then 0 else $wt end) as $wt
+            | def row($r):
+                ("\($r.bead // "no bead" | pad($wb))  " +
+                 (if $wt > 0 then "\(($r.title // "") | clip($wt) | pad($wt))  " else "" end) +
+                 "\($r.aic | fmt1 | lpad($wa))  " +
+                 "\("\($r.share | fmt1)%" | lpad(7))  " +
+                 "\((if $r.unpriced == 0 then "-" else $r.unpriced end) | lpad($wu))  " +
+                 "\($r.agents | join(", "))");
+              ([("BEAD" | pad($wb)) + "  " +
+                (if $wt > 0 then ("TITLE" | pad($wt)) + "  " else "" end) +
+                ("AIC" | lpad($wa)) + "  " + ("SHARE" | lpad(7)) + "  " +
+                ("UNPRICED" | lpad($wu)) + "  AGENTS"]
+               + ($beads | map(row(.)))
+               + (if ($none | length) > 0 then ["--"] + ($none | map(row(.))) else [] end)
+               + [""]
+               + ["\($beads | length) bead\(if ($beads | length) == 1 then "" else "s" end), " +
+                  "\($beads | map(.aic) | add // 0 | aic | fmt1) AIC on beads; " +
+                  "\($none | map(.aic) | add // 0 | aic | fmt1) AIC on no bead; " +
+                  "\($total | aic | fmt1) AIC in all."]
+               + (if $unpriced_total > 0 then
+                    ["\($unpriced_total) of \($request_total) requests record no cost and are not in these totals."]
+                  else [] end)
+               | join("\n"))
+          end
+        end
+
+    elif $mode == "by-agent" then
+      ($rows | group_by(._agent)
+        | map({
+            agent: .[0]._agent,
+            sessions: ($sessions[.[0]._agent] // 0),
+            beads: (map(.bead) | map(select(. != null)) | unique | length),
+            on_bead: ((map(select(.bead != null and .nano != null) | .nano) | add // 0) / 1000000000 | aic),
+            no_bead: ((map(select(.bead == null and .nano != null) | .nano) | add // 0) / 1000000000 | aic),
+            aic: ((map(select(.nano != null) | .nano) | add // 0) / 1000000000 | aic),
+            unpriced: (map(select(.nano == null)) | length),
+            merged_sessions: ($merged[.[0]._agent] // false)
+          })
+        | sort_by(-.aic)) as $agents
+      | if $json == "yes" then ($agents | tojson)
+        else
+          if ($agents | length) == 0 then
+            "No cerebro sessions \($window)." +
+            (if $record_from == null then "" else " (Cost is recorded from \($record_from | stamp).)" end)
+          else
+            (([$agents[].agent, "AGENT"] | map(length) | max)) as $wn
+            | ([("AGENT" | pad($wn)) + "  SESSIONS  BEADS   ON BEAD   NO BEAD       AIC  UNPRICED"]
+               + ($agents | map(
+                   ("\(.agent | pad($wn))  " +
+                    "\(.sessions | lpad(8))  " +
+                    "\(.beads | lpad(5))  " +
+                    "\(.on_bead | fmt1 | lpad(8))  " +
+                    "\(.no_bead | fmt1 | lpad(8))  " +
+                    "\(.aic | fmt1 | lpad(8))  " +
+                    "\((if .unpriced == 0 then "-" else .unpriced end) | lpad(8))" +
+                    (if .merged_sessions then "  (\($sessions[.agent]) sessions overlapped; their cost is merged)" else "" end))))
+               + [""]
+               + ["\($agents | map(.sessions) | add // 0) sessions, \($total | aic | fmt1) AIC in all."]
+               | join("\n"))
+          end
+        end
+
+    else
+      ($rows | map(select(.bead == $bead))) as $mine
+      | if $json == "yes" then
+          ($mine | group_by([._agent, .phase])
+            | map({agent: .[0]._agent, phase: .[0].phase,
+                   aic: ((map(select(.nano != null) | .nano) | add // 0) / 1000000000 | aic),
+                   unpriced: (map(select(.nano == null)) | length),
+                   requests: length})
+            | sort_by(-.aic) | tojson)
+        elif ($mine | length) == 0 then
+          "\($bead) — no cost recorded \($window). Either nothing worked on it in that window, or it was built before \($record_from | stamp)."
+        else
+          (($mine | map(select(.nano != null) | .nano) | add // 0) / 1000000000) as $mt
+          | ($mine | group_by([._agent, .phase])
+             | map({agent: .[0]._agent, phase: (.[0].phase // "-"),
+                    aic: ((map(select(.nano != null) | .nano) | add // 0) / 1000000000 | aic),
+                    unpriced: (map(select(.nano == null)) | length)})
+             | sort_by(-.aic)) as $breakdown
+          | (([$breakdown[].agent, "AGENT"] | map(length) | max)) as $wn
+          | (([$breakdown[].phase, "PHASE"] | map(length) | max)) as $wp
+          | (([$breakdown[] | .aic | fmt1 | length] + [3] | max)) as $wa
+          | (([$breakdown[] | .unpriced | tostring | length] + [8] | max)) as $wu
+          | (["\($bead) — \($mt | aic | fmt1) AIC over \($mine | length) request\(if ($mine | length) == 1 then "" else "s" end), \($mine | map(.ts) | min | stamp) to \($mine | map(.ts) | max | stamp)",
+              ""]
+             + [("AGENT" | pad($wn)) + "  " + ("PHASE" | pad($wp)) + "  " + ("AIC" | lpad($wa)) + "  " + ("UNPRICED" | lpad($wu))]
+             + ($breakdown | map("\(.agent | pad($wn))  \(.phase | pad($wp))  \(.aic | fmt1 | lpad($wa))  \((if .unpriced == 0 then "-" else .unpriced end) | lpad($wu))"))
+             + (if ($mine | map(select(.nano == null)) | length) > 0 then
+                  ["", "\($mine | map(select(.nano == null)) | length) of \($mine | length) requests record no cost and are not in these totals."]
+                else [] end)
+             | join("\n"))
+        end
+    end
+
+  # The horizon, on stderr and only when the window reaches past what either record can see. It
+  # travels back beside the answer rather than through a second jq run, so an answer and the line
+  # that qualifies it can never come from two different reads of the store.
+  | {answer: ., horizon:
+    (if ($record_from != null) and (($record_from | fromdateiso8601) > $since) then
+       "fleet-cost: --since \($since_arg) asked for \($since | todate | stamp); cost is recorded from \($cost_horizon | stamp)" +
+       (if $bead_h == null then "" else " and beads from \($bead_h | stamp)" end) +
+       ", so this answers for \($record_from | stamp) onward."
+     else "" end)}
+')"; then
+  # jq has already said what it choked on. Nothing has reached stdout: the answer is built into
+  # $out first, exactly as fleet-history does.
+  echo "fleet-cost: could not join the session store to the transition log." >&2
+  exit 1
+fi
+
+answer="$(jq -r '.answer' <<<"$out")"
+horizon="$(jq -r '.horizon' <<<"$out")"
+
+# Settle stdout first, then be polite - an advisory may not decide the exit status (.cerebro/traps.md).
+printf '%s\n' "$answer"
+if [[ -n "$horizon" ]]; then
+  echo "$horizon" >&2 || true
+fi

@@ -202,6 +202,30 @@ each_row() {
   [[ -n "$ROWS" ]] && printf '%s\n' "$ROWS"
 }
 
+# The one row filter behind `--implementers', `--autostart', `--standby' and `--role'. Each of them
+# is the same question: print the NAME of every row whose ONE field equals ONE literal, in file
+# order. $1 names the field - `role', `kind' or `flag' - and $2 is the literal.
+#
+# `if' rather than `[[ ... ]] && printf': the latter, as the last statement of a loop body, makes
+# the loop's status - and so this script's - a property of the LAST ROW READ, so a roster whose
+# final row does not match prints exactly the right names and exits 1. That defect was written into
+# `--role' and `--implementers' separately and fixed separately (82208cb, then cb-c13); collapsing
+# the four copies into this one is what stops a fifth mode repeating it. See .cerebro/traps.md,
+# "An advisory step can eat the exit status that follows it", third bullet.
+names_where() {
+  local field="$1" want="$2" name role kind flag value=""
+  while IFS=$'\t' read -r name role kind flag; do
+    case "$field" in
+      role) value="$role" ;;
+      kind) value="$kind" ;;
+      flag) value="$flag" ;;
+    esac
+    if [[ "$value" == "$want" ]]; then
+      printf '%s\n' "$name"
+    fi
+  done < <(each_row)
+}
+
 case "${1:-}" in
   "")
     while IFS=$'\t' read -r name role kind _; do
@@ -209,29 +233,13 @@ case "${1:-}" in
     done < <(each_row)
     ;;
   --implementers)
-    # `if' rather than `[[ ... ]] &&', for the reason spelt out under `--role' below: the latter
-    # leaves the loop - and so this script - exiting non-zero whenever the LAST roster row is not a
-    # match. That is every consumer whose roster.conf ends with an interactive row, and this mode
-    # got away with it only because the built-in table ends in implementers.
-    while IFS=$'\t' read -r name role kind _; do
-      if [[ "$kind" == "implementer" ]]; then
-        printf '%s\n' "$name"
-      fi
-    done < <(each_row)
+    names_where kind implementer
     ;;
   --autostart)
-    while IFS=$'\t' read -r name role kind flag; do
-      if [[ "$flag" == "autostart" ]]; then
-        printf '%s\n' "$name"
-      fi
-    done < <(each_row)
+    names_where flag autostart
     ;;
   --standby)
-    while IFS=$'\t' read -r name role kind flag; do
-      if [[ "$flag" == "standby" ]]; then
-        printf '%s\n' "$name"
-      fi
-    done < <(each_row)
+    names_where flag standby
     ;;
   --role)
     # A role can be held by more than one agent (two planners, ah-2p), so "who is the first of
@@ -242,15 +250,7 @@ case "${1:-}" in
       echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
       exit 2
     fi
-    # `if' rather than `[[ ... ]] &&': the latter leaves the loop - and so this script - exiting
-    # non-zero whenever the *last* roster row is not a match, which for any interactive role is
-    # every time. `--implementers' had that bug until cb-c13, masked for as long as it lasted by
-    # the built-in table ending in implementers; every mode uses this form now.
-    while IFS=$'\t' read -r name row_role _ _; do
-      if [[ "$row_role" == "$role" ]]; then
-        printf '%s\n' "$name"
-      fi
-    done < <(each_row)
+    names_where role "$role"
     ;;
   --entry)
     name="${2:-}"

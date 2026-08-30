@@ -80,9 +80,12 @@ cat > "$beads_file" <<'JSON'
 ]
 JSON
 
-cat > "$show_dir/cb-aaa.json" <<'JSON'
+closed_at="$(date -u -v-2H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+cat > "$show_dir/cb-aaa.json" <<JSON
 [{"id": "cb-aaa", "dependencies": [
-  {"id": "cb-zzz", "status": "closed", "dependency_type": "blocks"}]}]
+  {"id": "cb-zzz", "status": "closed", "closed_at": "$closed_at",
+   "dependency_type": "blocks"}]}]
 JSON
 cat > "$show_dir/cb-bbb.json" <<'JSON'
 [{"id": "cb-bbb", "dependencies": []}]
@@ -93,7 +96,7 @@ JSON
 cat > "$show_dir/cb-ddd.json" <<'JSON'
 [{"id": "cb-ddd", "dependencies": [
   {"id": "cb-epic", "status": "open", "dependency_type": "parent-child"},
-  {"id": "cb-yyy", "status": "open", "dependency_type": "blocks"}]}]
+  {"id": "cb-yyy", "status": "open", "closed_at": null, "dependency_type": "blocks"}]}]
 JSON
 
 out="$(cd "$consumer" && "$sweep" --json)" || fail "sweep-paused.sh --json exited non-zero"
@@ -115,7 +118,11 @@ field() { jq -r --arg id "$1" '.[] | select(.id == $id) | .'"$2" <<<"$out"; }
   || fail "cb-aaa: blocker status was $(field cb-aaa 'blockers[0].status')"
 [[ "$(jq -r '.[] | select(.id == "cb-aaa") | .priority | type' <<<"$out")" == "number" ]] \
   || fail "priority is not a JSON number"
-pass "a human bead with a closed blocker is emitted with its six fields"
+# The Sweeps line says how long ago the blocker closed, so the age is the script's to measure -
+# `cerebro--sweep-label' is a pure two-argument formatter and has no clock of its own.
+age="$(field cb-aaa 'blockers[0].closed_age_min')"
+[[ "$age" == "120" ]] || fail "cb-aaa: blocker closed_age_min was $age, expected 120"
+pass "a human bead with a closed blocker is emitted with its six fields, and the close age"
 
 # --- a user-facing question says so ---------------------------------------------------------------
 [[ "$(field cb-bbb ui_decision)" == "true" ]] \
@@ -140,7 +147,10 @@ pass "a bead with no metadata reads paused_at null, and no dependencies reads bl
   || fail "cb-ddd: blockers was $(field cb-ddd blockers), expected the blocks edge alone"
 [[ "$(field cb-ddd 'blockers[0].id')" == "cb-yyy" ]] \
   || fail "cb-ddd: blocker id was $(field cb-ddd 'blockers[0].id')"
-pass "a parent-child dependency is not a blocker"
+# An open blocker has no close time, and a null there must never read as "closed just now".
+[[ "$(field cb-ddd 'blockers[0].closed_age_min')" == "null" ]] \
+  || fail "cb-ddd: an open blocker's closed_age_min was $(field cb-ddd 'blockers[0].closed_age_min')"
+pass "a parent-child dependency is not a blocker, and an open blocker has no close age"
 
 # --- a bead nobody parked is not a candidate --------------------------------------------------------
 [[ -z "$(field cb-eee id)" ]] || fail "cb-eee was emitted despite carrying no human label"

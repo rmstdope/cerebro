@@ -1125,7 +1125,11 @@ it from."
       (`(recheck ,id ,_priority)
        (format "recheck %s — verdict at %s, %d merge%s since"
                id (substring .verified_at 0 8) .merges_since
-               (if (= .merges_since 1) "" "s"))))))
+               (if (= .merges_since 1) "" "s")))
+      ;; Its evidence is a list rather than a number, so the formatting lives
+      ;; in `cerebro--paused-label\=' - one blocker reads as the navigator chose
+      ;; it, several name the count and the most recent close.
+      (`(unpause ,id ,_priority) (cerebro--paused-label id .blockers)))))
 
 (defun cerebro--sweep-line (label finding)
   "One propertized Sweeps line: LABEL, carrying FINDING the way a bead row
@@ -2821,6 +2825,74 @@ for a P0."
      ((< .merges_since cerebro-stale-verdict-merges) nil)
      (t (list 'recheck .id .priority)))))
 
+;;; cb-wfb: a pause whose reason has gone
+
+(defun cerebro--paused-finding (candidate)
+  "Pure. What the paused sweep should offer for CANDIDATE, or nil.
+
+CANDIDATE is one parsed object from `sweep-paused.sh --json\='. Returns nil
+or (unpause ID PRIORITY) - the one case the board can judge by itself: the
+bead was parked behind blockers, and every one of them has closed.
+
+Nil for everything else, and each nil is a pause a person still owns. A
+bead carrying `needs-ui-decision\=' is waiting on an answer, not on a
+dependency. A bead with no blockers at all was parked for a reason written
+in its notes, which nothing here reads (and guessing at prose is how a bead
+gets pushed back at the implementer that refused it). A blocker that is not
+closed is the pause still being true.
+
+It takes ONE argument, like `cerebro--verdict-finding\=': there is no
+liveness to consult and no roster to check. PRIORITY rides in the finding
+because `cerebro--sweep-line\=' is given nothing else."
+  (let-alist candidate
+    (let ((blockers (append .blockers nil)))
+      (cond
+       ((eq .ui_decision t) nil)
+       ((null blockers) nil)
+       ((seq-some (lambda (b) (not (equal (alist-get 'status b) "closed"))) blockers) nil)
+       (t (list 'unpause .id .priority))))))
+
+(defun cerebro--age-in-words (minutes)
+  "MINUTES as \"12m\", \"2h\" or \"3d\"; \"recently\" when it is nil.
+
+The coarse spelling `cerebro--sweep-label\=' lines use: a sweep line is read
+once and acted on, so the hour is the fact and the minute inside it is not.
+Nil is the bead whose `closed_at\=' the script could not parse, which is
+unknown rather than instant."
+  (cond
+   ((null minutes) "recently")
+   ((< minutes 60) (format "%dm" minutes))
+   ((< minutes 1440) (format "%dh" (/ minutes 60)))
+   (t (format "%dd" (/ minutes 1440)))))
+
+(defun cerebro--paused-label (id blockers)
+  "The Sweeps line for an unpause of ID, whose BLOCKERS have all closed.
+
+One blocker is the ordinary case and gets the line the navigator chose. More
+than one names the count and the most recent close, rather than a list that
+would not fit the column."
+  (let* ((blockers (append blockers nil))
+         (ages (delq nil (mapcar (lambda (b) (alist-get 'closed_age_min b)) blockers)))
+         (last-close (and ages (apply #'min ages))))
+    (if (= (length blockers) 1)
+        (format "unpause %s — waiting on %s, closed %s ago" id
+                (alist-get 'id (car blockers)) (cerebro--age-in-words last-close))
+      (format "unpause %s — waiting on %d beads, all closed, last %s ago" id
+              (length blockers) (cerebro--age-in-words last-close)))))
+
+(defun cerebro--finding-explanation (finding)
+  "Pure. One line of what FINDING means, or nil for the findings that need none.
+
+Nil for all six findings that came before this one, and that is the point:
+`bd close\=', `bd unclaim\=' and `bd reclaim\=' each say their own consequence,
+so their confirmation prompts stay exactly as they were. Removing a label
+does not say where the bead then goes, which is the whole of what the
+navigator is being asked to agree to."
+  (pcase finding
+    (`(unpause ,id ,_priority)
+     (format "%s goes back to the planners for a re-read." id))
+    (_ nil)))
+
 ;;; cb-4s8: one row per sweep, and the pure walker that reads it
 
 (defconst cerebro--sweeps
@@ -2829,7 +2901,8 @@ for a P0."
     (sweep-stalled   "sweep-stalled.sh"   ,#'cerebro--stalled-finding  (:live-states :now))
     (sweep-assignees "sweep-assignees.sh" ,#'cerebro--assignee-finding (:live-beads :roster :now)
                      ,#'cerebro--assignee-enrich)
-    (sweep-verdicts  "sweep-verdicts.sh"  ,#'cerebro--verdict-finding  ()))
+    (sweep-verdicts  "sweep-verdicts.sh"  ,#'cerebro--verdict-finding  ())
+    (sweep-paused    "sweep-paused.sh"    ,#'cerebro--paused-finding   ()))
   "One row per sweep: (KEY SCRIPT FINDER NEEDS [ENRICH]).
 KEY is the `cerebro--run-async\=' key and the key of the outputs alist
 `cerebro--findings-from\=' takes; SCRIPT the file under scripts/; FINDER a
@@ -2929,6 +3002,13 @@ sweep pipeline; the command itself carries no path, since it is run with
     (`(recheck ,id ,_priority)
      (list cerebro-bd-program "set-state" id "verdict=stale"
            "--reason" "verdict formed against a commit main has moved past"))
+    ;; One label removed, and nothing else. Deliberately not
+    ;; `--add-label planned' with it: that puts the bead straight in front of
+    ;; an implementer, which loops when the pause was not really about the
+    ;; blocker - the same wall, the same hand-back, and nobody watching. A
+    ;; planner pass is the price of making that loop impossible.
+    (`(unpause ,id ,_priority)
+     (list cerebro-bd-program "update" id "--remove-label" cerebro-paused-label))
     (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure

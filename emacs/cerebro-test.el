@@ -4095,9 +4095,9 @@ from one building something else."
                    '(("Cyclops" . working) ("Storm" . idle))))
     (should (equal (cerebro--live-implementer-names "/repo") '("Cyclops" "Storm")))))
 
-(ert-deftest cerebro-test/findings-from-returns-all-five-sweeps ()
-  "The verdict sweep is wired in beside the other four, and the assignee
-label has been enriched with what its assignee is actually on."
+(ert-deftest cerebro-test/findings-from-returns-every-sweep ()
+  "Every sweep in the table is wired in, and the assignee label has been
+enriched with what its assignee is actually on."
   ;; `cerebro--live-sessions' is stubbed, not the three helpers that derive
   ;; from it: `cerebro--findings-from' must reach the state files exactly
   ;; once, so all five sweeps judge one snapshot of a fleet that moves.
@@ -4107,11 +4107,13 @@ label has been enriched with what its assignee is actually on."
     (let ((findings (cerebro--findings-from "/repo" (cerebro-test--sweep-outputs))))
       (should (equal (mapcar #'cdr findings)
                      '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")
-                       (unassign "ah-a1" 0) (recheck "ah-v1" 0))))
+                       (unassign "ah-a1" 0) (recheck "ah-v1" 0) (unpause "ah-h1" 2))))
       (should (equal (nth 3 (mapcar #'car findings))
                      "unassign ah-a1 — Cyclops is on ah-gjq4"))
+      (should (equal (nth 4 (mapcar #'car findings))
+                     "recheck ah-v1 — verdict at 0b444332, 2 merges since"))
       (should (equal (car (last (mapcar #'car findings)))
-                     "recheck ah-v1 — verdict at 0b444332, 2 merges since")))))
+                     "unpause ah-h1 — waiting on ah-b1, closed 2h ago")))))
 
 (ert-deftest cerebro-test/findings-from-reads-the-state-files-once ()
   "Five sweeps, one snapshot. Deriving through the three helpers instead
@@ -4134,13 +4136,13 @@ no longer sees."
   (should (equal (alist-get 'sweep-assignees (cerebro--sweep-scripts))
                  "sweep-assignees.sh")))
 
-(ert-deftest cerebro-test/the-verdict-sweep-is-registered-last ()
-  "Appended last, so its parsed output reaches `cerebro--findings-from' in
-the argument position the docstring promises."
+(ert-deftest cerebro-test/the-newest-sweep-is-registered-last ()
+  "Each sweep is appended, so its parsed output reaches
+`cerebro--findings-from' in the argument position the docstring promises."
   (should (equal (alist-get 'sweep-verdicts (cerebro--sweep-scripts))
                  "sweep-verdicts.sh"))
   (should (equal (car (last (cerebro--sweep-scripts)))
-                 '(sweep-verdicts . "sweep-verdicts.sh"))))
+                 '(sweep-paused . "sweep-paused.sh"))))
 
 ;; cb-4s8: a sweep is one row of `cerebro--sweeps', not six edits in lockstep.
 
@@ -4161,7 +4163,10 @@ working on ah-gjq4, Storm on the roster and not running."
         (cons 'sweep-stalled (list (cerebro-test--stalled-candidate "ah-s1" "Cyclops" 300)))
         (cons 'sweep-assignees (list (cerebro-test--assignee-candidate "ah-a1" "Cyclops" 32)))
         (cons 'sweep-verdicts
-              (list (cerebro-test--verdict-candidate "ah-v1" "0b444332cd" 2)))))
+              (list (cerebro-test--verdict-candidate "ah-v1" "0b444332cd" 2)))
+        (cons 'sweep-paused
+              (list (cerebro-test--paused-candidate
+                     "ah-h1" (list (cerebro-test--blocker "ah-b1" "closed" 120)))))))
 
 (ert-deftest cerebro-test/findings-from-snapshot-is-pure-and-table-driven ()
   "The judging half of the sweep pipeline takes its outputs as one alist and
@@ -4171,7 +4176,7 @@ and a sixth sweep changes no signature."
                                                    (cerebro-test--snapshot))))
     (should (equal (mapcar #'cdr findings)
                    '((reclaim "ah-c1") (epic-close "ah-e1") (unclaim "ah-s1")
-                     (unassign "ah-a1" 0) (recheck "ah-v1" 0))))
+                     (unassign "ah-a1" 0) (recheck "ah-v1" 0) (unpause "ah-h1" 2))))
     ;; The enrichment went through the row, not through the walker.
     (should (equal (nth 3 (mapcar #'car findings))
                    "unassign ah-a1 — Cyclops is on ah-gjq4")))
@@ -4181,7 +4186,7 @@ and a sixth sweep changes no signature."
                           (assq-delete-all 'sweep-epics (cerebro-test--sweep-outputs))
                           (cerebro-test--snapshot)))
                  '((reclaim "ah-c1") (unclaim "ah-s1")
-                   (unassign "ah-a1" 0) (recheck "ah-v1" 0)))))
+                   (unassign "ah-a1" 0) (recheck "ah-v1" 0) (unpause "ah-h1" 2)))))
 
 (ert-deftest cerebro-test/a-sweep-row-declares-everything-the-runner-needs ()
   "Every row carries its key, its script, its finder, the fleet slices it
@@ -4222,7 +4227,7 @@ list, and no other function edited to let it through."
       (should (equal (car (last (mapcar #'cdr findings))) '(epic-close "ah-d1")))
       (should (equal (car (last (mapcar #'car findings)))
                      "close ah-d1 — all children closed 30m ago"))
-      (should (equal (length findings) 6)))))
+      (should (equal (length findings) 7)))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 4: showing sweep findings and acting on them, confirmed
@@ -8243,3 +8248,69 @@ will start it; the plain line is what a role the view started and ended keeps."
             (should-not (string-match-p "roster.conf arms it"
                                         (with-current-buffer buffer (buffer-string))))))
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+;; ---------------------------------------------------------------------------
+;; cb-wfb: the pause whose reason has gone
+
+(defun cerebro-test--paused-candidate (id &optional blockers ui-decision priority)
+  `((id . ,id) (title . "a bead parked for the navigator")
+    (priority . ,(or priority 2))
+    (paused_at . "2026-08-30T20:00:00Z")
+    (ui_decision . ,(if ui-decision t :json-false))
+    (blockers . ,(or blockers []))))
+
+(defun cerebro-test--blocker (id status &optional age)
+  `((id . ,id) (status . ,status) (closed_age_min . ,age)))
+
+(ert-deftest cerebro-test/paused-finding-needs-closed-blockers ()
+  "The one case the board can judge alone: every blocker closed. Everything
+else is a pause only a person can end, and offering to unpause it would put
+the bead back in front of the wall that stopped it."
+  (should (equal (cerebro--paused-finding
+                  (cerebro-test--paused-candidate
+                   "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "closed" 120))))
+                 '(unpause "cb-aaa" 2)))
+  ;; A question is not a blocker, however closed the board looks.
+  (should (null (cerebro--paused-finding
+                 (cerebro-test--paused-candidate
+                  "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "closed" 120)) t))))
+  ;; No blockers at all: the pause is prose in the notes, which nothing here reads.
+  (should (null (cerebro--paused-finding (cerebro-test--paused-candidate "cb-aaa"))))
+  (should (null (cerebro--paused-finding
+                 (cerebro-test--paused-candidate
+                  "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "open"))))))
+  (should (null (cerebro--paused-finding
+                 (cerebro-test--paused-candidate
+                  "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "closed" 120)
+                                 (cerebro-test--blocker "cb-ccc" "in_progress")))))))
+
+(ert-deftest cerebro-test/paused-finding-carries-the-priority-it-was-given ()
+  (should (equal (cerebro--paused-finding
+                  (cerebro-test--paused-candidate
+                   "cb-zzz" (list (cerebro-test--blocker "cb-bbb" "closed" 30)) nil 0))
+                 '(unpause "cb-zzz" 0))))
+
+(ert-deftest cerebro-test/paused-sweep-labels-and-commands ()
+  "The line the navigator chose, verbatim, and the one write behind it -
+`--remove-label human' and nothing else, so the bead goes back to the
+planners for a re-read rather than in front of an implementer."
+  (should (equal (cerebro--sweep-label
+                  '(unpause "cb-aaa" 2)
+                  (cerebro-test--paused-candidate
+                   "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "closed" 120))))
+                 "unpause cb-aaa — waiting on cb-bbb, closed 2h ago"))
+  (should (equal (cerebro--finding-command '(unpause "cb-aaa" 2) "/repo")
+                 (list cerebro-bd-program "update" "cb-aaa" "--remove-label" "human"))))
+
+(ert-deftest cerebro-test/finding-explanation-is-nil-for-the-existing-six ()
+  "Today's six prompts stay byte-identical: an explanation line is what this
+bead adds, for the one command that does not say its own consequence."
+  (dolist (finding '((close "cb-a" "r") (reclaim "cb-a") (epic-close "cb-a")
+                     (unclaim "cb-a") (unassign "cb-a" 0) (recheck "cb-a" 0)))
+    (should (null (cerebro--finding-explanation finding)))))
+
+(ert-deftest cerebro-test/unpause-explains-where-the-bead-goes ()
+  "`bd close', `bd unclaim' and `bd reclaim' all say what they do; removing a
+label does not, and where the bead lands is the whole of what was decided."
+  (should (equal (cerebro--finding-explanation '(unpause "cb-aaa" 2))
+                 "cb-aaa goes back to the planners for a re-read.")))

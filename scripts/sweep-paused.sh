@@ -29,7 +29,10 @@
 #   priority      the integer, or null when the listing carries no numeric priority
 #   paused_at     `.metadata.paused_at', or null when the bead has none
 #   ui_decision   true when the bead carries `needs-ui-decision', false otherwise
-#   blockers      [ {id, status}, ... ] - one per `blocks` dependency, possibly empty
+#   blockers      [ {id, status, closed_age_min}, ... ] - one per `blocks` dependency, possibly
+#                 empty. `closed_age_min` is minutes since that blocker's `closed_at`, or null when
+#                 it is not closed or the timestamp could not be read - the Sweeps line says
+#                 "recently" for a null rather than inventing a number.
 #
 # `blockers` comes from `bd show <id> --json' per candidate rather than from the listing: the two
 # commands return different dependency shapes, and the wrong one silently finds nothing rather than
@@ -53,6 +56,15 @@ if [[ "${1:-}" != "--json" ]]; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ISO-8601 UTC ("2026-08-14T09:00:17Z") to a Unix timestamp. GNU date takes `-d`; BSD/macOS date
+# has no such flag and wants `-j -f` with an explicit format instead - so try GNU first and fall
+# back rather than branching on `uname`, which would miss a GNU coreutils install on macOS.
+iso_to_epoch() {
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
+}
+
+now_epoch="$(date -u +%s)"
 
 repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || {
   echo '{"error": "not in a git repository"}'
@@ -85,10 +97,22 @@ while IFS= read -r bead; do
     paused_at_json=null
   fi
 
-  blockers="$(bd -C "$repo_root" show "$id" --json 2>/dev/null \
-    | jq -c '(if type=="array" then .[0] else . end) | [ (.dependencies // [])[]
-             | select(.dependency_type=="blocks") | {id: .id, status: .status} ]' 2>/dev/null)"
-  [[ -n "$blockers" ]] || blockers="[]"
+  blockers="[]"
+  while IFS=$'\t' read -r dep_id dep_status dep_closed_at; do
+    [[ -z "$dep_id" ]] && continue
+    closed_age=null
+    if [[ -n "$dep_closed_at" && "$dep_closed_at" != "null" ]] \
+       && closed_epoch="$(iso_to_epoch "$dep_closed_at")" && [[ -n "$closed_epoch" ]]; then
+      closed_age=$(( (now_epoch - closed_epoch) / 60 ))
+      (( closed_age < 0 )) && closed_age=0
+    fi
+    blockers="$(jq -c --argjson acc "$blockers" --arg id "$dep_id" --arg status "$dep_status" \
+      --argjson age "$closed_age" \
+      -n '$acc + [{id: $id, status: $status, closed_age_min: $age}]')"
+  done < <(bd -C "$repo_root" show "$id" --json 2>/dev/null \
+    | jq -r '(if type=="array" then .[0] else . end) | (.dependencies // [])[]
+             | select(.dependency_type=="blocks")
+             | [.id, .status, (.closed_at // "")] | @tsv' 2>/dev/null)
 
   entry="$(jq -n \
     --arg id "$id" --arg title "$title" \

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-d89 — Option B: a table a person reads, JSON when asked</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 62rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.4rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; }
+  .note { color: var(--dim); font-size: 13.5px; }
+  .lbl { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim);
+         margin: .8rem 0 .1rem; }
+  blockquote { margin: .6rem 0; padding: .5rem .9rem; border-left: 3px solid var(--line);
+               color: var(--dim); font-size: 13.5px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>cb-d89 — Option B: a table a person reads, JSON when asked</h1>
+<p class="lede">Same join, same numbers — all of them real, produced against this machine while
+planning this bead. The difference is only what lands on stdout by default.</p>
+
+<h2>The idea</h2>
+<p><code>scripts/fleet-cost</code> prints an aligned plain-text table by default, and the same
+answer as JSON under <code>--json</code>. The table is the whole point: <em>what did this week
+cost</em> is one command, with no <code>jq</code> to remember.</p>
+
+<h3>Per bead</h3>
+<pre>$ scripts/fleet-cost --by-bead --since 7d</pre>
+<pre>BEAD        AIC     SHARE  AGENTS
+cb-ue0     1719.5   17.3%  Cyclops, Xavier
+cb-3m0     1312.5   13.2%  Cyclops, Xavier
+cb-nus      754.2    7.6%  Cyclops, Xavier
+cb-3ks      700.9    7.1%  Cyclops, Xavier
+cb-ge0      571.7    5.8%  Beast, Wolverine
+cb-8rz      481.9    4.9%  Beast, Storm
+cb-s8b      406.7    4.1%  Cyclops, Xavier
+cb-98s      384.3    3.9%  Beast, Cyclops
+cb-ej2      309.4    3.1%  Xavier
+(no bead)  3286.2   33.1%  Cerebro, Xavier, Beast, Cyclops, Storm, Wolverine, Rogue
+
+9 beads, 6641.0 AIC on beads, 3286.2 AIC on no bead, 9927.2 AIC in all.
+Cost read from 2026-08-26T20:35Z; beads from 2026-08-25T10:09Z. Earlier passes are not costed.</pre>
+
+<h3>Per agent</h3>
+<pre>$ scripts/fleet-cost --by-agent --since 7d</pre>
+<pre>AGENT       SESSIONS  BEADS   ON BEAD  NO BEAD      AIC
+Cyclops            7      6    3816.6    364.0   4180.6
+Xavier             9      6    1521.9    489.8   2011.7
+Cerebro            6      0       0.0   1593.4   1593.4
+Beast              7      3     670.7    432.3   1103.0
+Wolverine          3      1     341.4    137.0    478.4
+Storm              4      1     290.4    181.4    471.8
+Rogue              2      0       0.0     88.6     88.6
+
+38 sessions, 9927.2 AIC in all.</pre>
+
+<h3>One bead, and where its cost went</h3>
+<pre>$ scripts/fleet-cost --by-bead --since 30d --bead cb-ue0</pre>
+<pre>cb-ue0 — 1719.5 AIC over 164 requests, 2026-08-27T06:11Z to 2026-08-27T19:44Z
+
+AGENT       PHASE      AIC
+Xavier      plan      412.0
+Cyclops     build     903.1
+Cyclops     gate      188.2
+Cyclops     review    155.9
+Cyclops     ci         60.3</pre>
+<p class="note">The phase breakdown is free: <code>fleet-history</code>'s intervals already carry
+<code>phase</code> beside <code>bead</code>, so the same join yields it with no extra source.</p>
+
+<h2>What it costs you</h2>
+<blockquote>
+The question the bead was filed for is answerable in one command by somebody who has not read the
+script. And a percentage column makes the zero-bead third impossible to overlook, which a JSON
+array does not.
+<br><br>
+Against that: it is a second house style. <code>work-beads</code> and <code>fleet-history</code>
+both print JSON and nothing else, and this is the first script here that formats for a human. It is
+also more code — column widths, a total line, and a test for each.
+</blockquote>
+
+<h2>The refusals — identical either way</h2>
+<pre>$ scripts/fleet-cost --by-bead
+fleet-cost: --since is required - say which window you mean, e.g. --since 7d
+usage: fleet-cost --by-bead|--by-agent|--by-session [--since &lt;when&gt;] [--agent &lt;name&gt;] [--json]</pre>
+<pre>$ scripts/fleet-cost --by-bead --since 7d
+fleet-cost: this project declares `agent_cli claude', and only copilot sessions record their
+cost where this can read it. Nothing was reported.</pre>
+
+</body>
+</html>

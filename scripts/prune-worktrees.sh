@@ -401,15 +401,28 @@ reclaim_under_pressure() {
 sweep() {
   git -C "$repo_root" worktree prune
 
+  local removed=0 kept=0
+  # Trees that are staying and could give up their build directory if the disk is tight. The
+  # verifier's is not among them: see the pressure note in the header. The shared checkout is
+  # declared here, ahead of the fetch, because it is the one candidate the fetch has no bearing on.
+  local pressure_candidates=("main:$repo_root")
+
   # One fetch per sweep: rule 3 compares against the default branch, and a stale ref would call an already
   # merged branch unmerged and keep every worktree for ever.
+  #
+  # It gates the worktrees and nothing else. Whether the shared checkout's own build directory is
+  # cold is a question of mtime and free space, with no branch and no remote in it — so an
+  # unreachable origin costs this sweep its worktree judgements only, and the pressure reclaim
+  # still runs on the one candidate that needs no remote. It used to return here instead, which
+  # withheld that reclaim precisely when the disk was tightest.
   git -C "$repo_root" fetch --quiet origin "$default_branch" 2>/dev/null || {
-    echo "prune-worktrees: could not reach origin; skipping this sweep rather than guessing"
+    echo "prune-worktrees: could not reach origin; judging no worktree this sweep rather than guessing"
+    reclaim_under_pressure "${pressure_candidates[@]}"
     return 0
   }
 
   # The same two steps for the submodule, and a failure here costs the submodule half ONLY. The
-  # consumer's fetch above returns from the whole sweep because without it nothing can be judged;
+  # consumer's fetch above ends the sweep's worktree half because without it no tree can be judged;
   # a cerebro remote that cannot be reached is no reason to leave the consumer's trees unswept.
   local sweep_submodule=false
   if git -C "$submodule_root" rev-parse --git-dir >/dev/null 2>&1 && ! submodule_is_the_consumer; then
@@ -420,11 +433,6 @@ sweep() {
       echo "prune-worktrees: could not reach the submodule's origin; sweeping the consumer's worktrees only"
     fi
   fi
-
-  local removed=0 kept=0
-  # Trees that are staying and could give up their build directory if the disk is tight. The
-  # verifier's is not among them: see the pressure note in the header.
-  local pressure_candidates=("main:$repo_root")
 
   # Each line is `<owning repository>|<worktree>`. Every other git call in this loop already
   # passes `$tree` and needs no owner; the four that address the repository do (ah-apw4).

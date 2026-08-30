@@ -136,7 +136,7 @@ grep -q "8 GB floor" <<<"$out" || fail "the log did not name the floor it was me
 grep -qE "cold for over (30|60) minutes" <<<"$out" || fail "the log did not say how cold it was: $out"
 pass "the log names the tree, the size, the free space, the floor and the age"
 
-# --- 4. the shared checkout is an ordinary pressure candidate -------------------------------
+# --- 4. the shared checkout is an ordinary pressure candidate -----------------------------------
 make_main_target 120
 out="$(cd "$consumer" && PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999 bash "$prune" 2>&1)"
 [ -d "$consumer/target" ] && fail "the main checkout target survived as the coldest candidate: $out"
@@ -145,7 +145,7 @@ out="$(cd "$consumer" && PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999 bash
 grep -q "main/target" <<<"$out" || fail "the log did not name the main checkout target: $out"
 pass "the coldest declared main-checkout directory is reclaimed without removing the checkout"
 
-# --- 4. the worktrees themselves are untouched --------------------------------------------------
+# --- 5. the worktrees themselves are untouched --------------------------------------------------
 for name in ah-warm ah-cold ah-cool psylocke; do
   [ -d "$consumer/.cerebro/worktrees/$name" ] \
     || fail "$name's worktree was removed by the pressure path"
@@ -154,14 +154,14 @@ done
   || fail "ah-cold lost uncommitted work"
 pass "the worktree itself is never removed by this path — only its target/"
 
-# --- 5. --dry-run under pressure reclaims nothing -----------------------------------------------
+# --- 6. --dry-run under pressure reclaims nothing -----------------------------------------------
 out="$(cd "$consumer" && PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999 bash "$prune" --dry-run 2>&1)"
 grep -q "would reclaim ah-cool/target" <<<"$out" \
   || fail "--dry-run did not name what it would take: $out"
 targets_present ah-warm ah-cool psylocke || fail "--dry-run reclaimed something: $out"
 pass "--dry-run under pressure names what it would take and takes nothing"
 
-# --- 6. psylocke is never reclaimed by the pressure path ----------------------------------------
+# --- 7. psylocke is never reclaimed by the pressure path ----------------------------------------
 # It is the coldest tree on disk by far, and it is 128 MB: reclaiming it costs a verification and
 # buys nothing. The day-long outer bound below is the only thing that ever touches it.
 gb_free 5
@@ -174,7 +174,7 @@ if [ -d "$consumer/.cerebro/worktrees/ah-cool/target" ]; then
 fi
 pass "psylocke is exempt from the pressure path by name, while another tree on the same sweep goes"
 
-# --- 7. the 1440-minute outer bound still applies with no pressure ------------------------------
+# --- 8. the 1440-minute outer bound still applies with no pressure ------------------------------
 gb_free 40
 out="$(cd "$consumer" && PRESSURE_COLD_MINUTES=30 bash "$prune" 2>&1)"
 if [ -d "$consumer/.cerebro/worktrees/psylocke/target" ]; then
@@ -182,6 +182,31 @@ if [ -d "$consumer/.cerebro/worktrees/psylocke/target" ]; then
 fi
 targets_present ah-warm || fail "the outer bound took a live agent's warm tree: $out"
 pass "the existing COLD_TARGET_MINUTES behaviour is unchanged"
+
+# --- 9. an unreachable origin still reclaims the shared checkout --------------------------------
+# The fetch decides whether a *worktree* can be judged — rule 3 asks whether its commits are on the
+# default branch at origin — and it decides nothing at all about the shared checkout's own build
+# directory, which is judged by free space and mtime alone. So a sweep that returned early on an
+# unreachable origin skipped the one candidate needing no remote, exactly when the disk was
+# tightest and a fetch is most likely to be the thing that is broken.
+make_main_target 120
+gb_free 5
+git_q -C "$consumer" remote set-url origin "$work_dir/no-such-origin.git"
+out="$(cd "$consumer" && PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999 bash "$prune" 2>&1)"
+git_q -C "$consumer" remote set-url origin "$origin"
+
+grep -q "could not reach origin" <<<"$out" \
+  || fail "the sweep did not say the remote was unreachable: $out"
+[ -d "$consumer/target" ] \
+  && fail "the main checkout's cold target survived an unreachable origin: $out"
+grep -q "main/target" <<<"$out" || fail "the log did not name what it reclaimed: $out"
+[ -f "$consumer/source.rs" ] || fail "source outside the declared directory was removed: $out"
+# And no worktree was judged on a stale ref while the remote was unreachable.
+for name in ah-warm ah-cold ah-cool psylocke; do
+  [ -d "$consumer/.cerebro/worktrees/$name" ] \
+    || fail "$name's worktree was removed while origin was unreachable: $out"
+done
+pass "an unreachable origin still reclaims the shared checkout's own cold build directory"
 
 # ================================================================================================
 # The janitor and a worktree whose repository is not the consumer (ah-apw4).
@@ -264,7 +289,7 @@ git_q -C "$consumer_tree" add -A
 git_q -C "$consumer_tree" commit -q -m "delivered by squash"
 age "$consumer_tree"
 
-# --- 8. `gh` is asked from the tree, not from the sweep's working directory ---------------------
+# --- 10. `gh` is asked from the tree, not from the sweep's working directory ---------------------
 : > "$gh_cwd_log"
 out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" --dry-run 2>&1)"
 # `pwd` in the stub reports the physical path, so compare against the physical path too — on macOS
@@ -285,20 +310,20 @@ git_q -C "$sub_tree" commit -q -m "shipped by squash"
 age "$sub_tree"
 echo "ah-stranded-branch" > "$gh_merged_branch"
 
-# --- 9. the submodule's worktrees are walked at all ---------------------------------------------
+# --- 11. the submodule's worktrees are walked at all ---------------------------------------------
 out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" --dry-run 2>&1)"
 grep -q "would remove ah-stranded-cerebro" <<<"$out" \
   || fail "a stranded worktree of the submodule was never enumerated: $out"
 pass "a_stranded_submodule_worktree_is_removed: the submodule's worktree list is walked"
 
-# --- 10. the submodule's own git dir is not an agent worktree -----------------------------------
+# --- 12. the submodule's own git dir is not an agent worktree -----------------------------------
 if grep -qE "(remove|keeping) cerebro( |$|—)" <<<"$out"; then
   fail "the submodule's own checkout was treated as an agent worktree: $out"
 fi
 [ -d "$sub/scripts" ] || fail "the submodule's own checkout was harmed"
 pass "the_submodules_own_gitdir_is_not_a_worktree: the first entry is never reported or touched"
 
-# --- 11. the removal uses the owning repository -------------------------------------------------
+# --- 13. the removal uses the owning repository -------------------------------------------------
 out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" 2>&1)"
 grep -q "removed ah-stranded-cerebro" <<<"$out" || fail "it did not remove the stranded tree: $out"
 [ ! -d "$sub_tree" ] || fail "the stranded tree is still on disk: $out"
@@ -308,14 +333,14 @@ grep -q . <<<"$(git -C "$sub" branch --list ah-stranded-branch)" \
   && fail "the branch survived in the submodule: $out"
 pass "a_stranded_submodule_worktree_is_removed_for_real: removal and branch deletion use the owner"
 
-# --- 12. an unreachable submodule remote costs the submodule half only --------------------------
+# --- 14. an unreachable submodule remote costs the submodule half only --------------------------
 git_q -C "$sub" remote set-url origin "$work_dir/no-such-remote.git"
 out="$(cd "$consumer2" && PATH="$sub_stub_dir:$PATH" bash "$prune2" --dry-run 2>&1)"
 grep -q "ah-squashed" <<<"$out" \
   || fail "an unreachable submodule remote aborted the consumer's half of the sweep: $out"
 pass "a failed submodule fetch skips the submodule half and leaves the consumer's alone"
 
-# --- 13. a self-mounted cerebro is not swept twice ----------------------------------------------
+# --- 15. a self-mounted cerebro is not swept twice ----------------------------------------------
 # When cerebro serves its own fleet, `.claude/cerebro` is a symlink back to the checkout root, so
 # the two roots are the SAME repository and its worktree list would otherwise be walked twice —
 # every tree enumerated once per owner, tallies inflated, and an already-removed tree reported as

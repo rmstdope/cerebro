@@ -7611,6 +7611,7 @@ it, and the roster - all of which this tick has already read."
                            (labels . ["triage:declined"]))
                           ((id . "f") (priority . 2)
                            (labels . ["verdict:stale"])))          ; unplanned
+                        nil                                        ; parked
                         '(((id . "g")) ((id . "h")) ((id . "i"))))) ; merged
             (setq cerebro--beads-read-at 3.5))
           (with-temp-buffer
@@ -8343,3 +8344,28 @@ Emacs's to add."
     (should (equal (cadr (split-string prompt "\n"))
                    (concat (cerebro--finding-explanation '(unpause "cb-aaa" 2)) " ")))
     (should-not (string-match-p "(y or n)" prompt))))
+
+(ert-deftest cerebro-test/trigger-context-reads-the-buckets-partition-beads-writes ()
+  "`cerebro--trigger-context' indexes `cerebro--beads' by position, and
+`cerebro--partition-beads' is what fills it - so this builds the buffer through
+the real partition rather than by hand. A sixth bucket inserted ahead of
+`merged' made the verifier's trigger count parked beads as merged ones, and
+every hand-written five-element fixture went on passing (cb-wfb)."
+  (let ((panel (generate-new-buffer " *beads*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--fleet)
+                   (lambda (_) '(("Rogue" "implementer" implementer))))
+                  ((symbol-function 'cerebro--beads-panel-buffer) (lambda () panel)))
+          (with-current-buffer panel
+            (setq cerebro--beads
+                  (cerebro--partition-beads
+                   (list (cerebro-test--paused "cb-parked")
+                         '((id . "cb-merged") (status . "closed") (priority . 2)
+                           (title . "cb-merged") (labels . []) (issue_type . "task")
+                           (updated_at . "2026-08-14T09:00:00Z"))))
+                  cerebro--beads-read-at 3.5))
+          (let ((context (with-temp-buffer
+                           (setq cerebro--agents nil)
+                           (cerebro--trigger-context default-directory (seconds-to-time 1000000.0)))))
+            (should (equal (alist-get 'merged-unverified context) 1))))
+      (kill-buffer panel))))

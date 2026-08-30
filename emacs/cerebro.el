@@ -5433,8 +5433,12 @@ was a failure, are both plain values: neither depends on whose pass it is."
          ;; session to find nothing to do.
          (planned (cerebro--actionable-beads (nth 1 beads)))
          (unplanned (cerebro--actionable-beads (nth 3 beads)))
-         (merged (nth 4 beads))
-         (open-beads (append (nth 0 beads) (nth 1 beads) (nth 2 beads) (nth 3 beads))))
+         (merged (nth 5 beads))
+         ;; Every open bucket, parked included: a bead can carry `verdict:stale'
+         ;; and `human' at once, and a stale verdict does not stop being one
+         ;; because the navigator was asked something about the bead.
+         (open-beads (append (nth 0 beads) (nth 1 beads) (nth 2 beads) (nth 3 beads)
+                             (nth 4 beads))))
     (list (cons 'now (float-time now))
           (cons 'planned (if beads (length planned) most-positive-fixnum))
           (cons 'p0-unplanned

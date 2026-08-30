@@ -829,9 +829,15 @@ park the bead and move on:
 
 ```bash
 bd update <id> --add-label needs-ui-decision --add-label human --remove-label planning:<your-name> \
-  --append-notes "<the question>"
+  --append-notes "<the question>" \
+  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 bd dolt push
 ```
+
+
+`--set-metadata paused_at=…` is what makes the pause visible as a *duration*: the fleet view's
+*Waiting on you* section reads it and says how long the bead has been sitting there, and a bead
+parked without it reads as parked just now, for ever (cb-wfb).
 
 Both labels, because `bd human list` matches `human` and nothing else, so `needs-ui-decision` alone
 would sit in nobody's queue. `--remove-label planning:<your-name>`, because you are no longer planning it and a

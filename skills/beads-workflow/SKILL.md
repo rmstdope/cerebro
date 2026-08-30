@@ -93,10 +93,16 @@ The plan lives in the bead's `design` field (`bd update <id> --design-file plan.
 **Escalating takes three commands, and all of them matter:**
 
 ```bash
-bd update <id> --remove-label planned --add-label human --append-notes "<what stopped it>"
+bd update <id> --remove-label planned --add-label human --append-notes "<what stopped it>" \
+  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 bd unclaim <id>          # clears the assignee and returns the status to open
 bd dolt push             # or no other machine learns it was released
 ```
+
+
+`--set-metadata paused_at=…` is what makes the pause visible as a *duration*: the fleet view's
+*Waiting on you* section reads it and says how long the bead has been sitting there, and a bead
+parked without it reads as parked just now, for ever (cb-wfb).
 
 Removing `planned` stops `bd ready --label planned` handing the bead straight back to the next
 implementer, which would hit the same wall and escalate again. `bd unclaim` is the half that is easy

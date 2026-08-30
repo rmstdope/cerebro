@@ -506,9 +506,15 @@ minutes is noise that trains somebody to ignore you:
 
 ```bash
 bd update <id> --add-label human \
-  --append-notes "GitHub issue #<n> was closed on <date> while this bead is still open. Reopen the issue, close the bead, or unlink it?"
+  --append-notes "GitHub issue #<n> was closed on <date> while this bead is still open. Reopen the issue, close the bead, or unlink it?" \
+  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 bd dolt push
 ```
+
+
+`--set-metadata paused_at=…` is what makes the pause visible as a *duration*: the fleet view's
+*Waiting on you* section reads it and says how long the bead has been sitting there, and a bead
+parked without it reads as parked just now, for ever (cb-wfb).
 
 `human` is the repository's one queue for exactly this, `bd human list` is where the navigator finds
 it, and the label keeps the bead out of the implementers' pickup until it is answered — which is

@@ -22,12 +22,28 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+usage() { echo "usage: disk-preflight [--workload rust|non-rust]" >&2; exit 2; }
+workload=rust
+fallback=""
+if [ "$#" -eq 0 ]; then
+  fallback="disk: no workload supplied; using FULL GB full-build floor."
+elif [ "$#" -eq 2 ] && [ "$1" = "--workload" ]; then
+  case "$2" in rust|non-rust) workload="$2" ;; *) echo "disk-preflight: unknown workload \"$2\"; expected rust or non-rust." >&2; usage ;; esac
+else
+  [ "$#" -eq 2 ] && [ "$1" = "--workload" ] && echo "disk-preflight: unknown workload \"$2\"; expected rust or non-rust." >&2
+  usage
+fi
 root="$("$here/consumer-root" --shared 2>/dev/null)" || root=""
 root="${root:-$PWD}"
 
 floor="${FREE_SPACE_FLOOR_GB:-}"
 if [ -z "$floor" ]; then
-  floor="$("$here/project-conf" disk_floor_gb 2>/dev/null)"
+  if [ "$workload" = non-rust ]; then
+    floor="$("$here/project-conf" disk_floor_non_rust_gb 2>/dev/null)"
+    if [ -z "$floor" ]; then floor="$("$here/project-conf" disk_floor_gb 2>/dev/null)"; [ -n "$floor" ] && fallback="disk: no non-Rust floor declared; using $floor GB full-build floor."; fi
+  else
+    floor="$("$here/project-conf" disk_floor_gb 2>/dev/null)"
+  fi
 fi
 # Nothing declared, so nothing to enforce - and nothing said about it either. A preflight that
 # printed "no floor declared" on every bead would be noise in front of every run.
@@ -101,15 +117,26 @@ free_shown="$(truncate_gb "$free_gb")"
 if awk -v f="$free_gb" -v floor="$floor" 'BEGIN { exit !(f > floor) }'; then
   # Strictly greater, the same test prune-worktrees.sh makes, so the two can never disagree about
   # whether there is room to build.
-  echo "disk: $free_shown GB free, above the $floor GB floor."
+  label="Rust"; [ "$workload" = non-rust ] && [ -z "$fallback" ] && label="non-Rust"
+  [ -n "$fallback" ] && echo "${fallback/FULL/$floor}"
+  echo "disk: $free_shown GB free, above the $floor GB floor for $label work."
 else
-  echo "disk: $free_shown GB free, below the $floor GB floor needed to build."
-  echo "A build that runs out of space fails inside the linker and reads like a code error."
+  label="Rust"; [ "$workload" = non-rust ] && [ -z "$fallback" ] && label="non-Rust"
+  [ -n "$fallback" ] && echo "${fallback/FULL/$floor}"
+  echo "disk: $free_shown GB free, below the $floor GB floor for $label work."
+  if [ "$workload" != non-rust ] || [ -n "$fallback" ]; then
+    echo "A build that runs out of space fails inside the linker and reads like a code error."
+  fi
   floor_kb="$(awk -v gb="$floor" 'BEGIN { printf "%d\n", gb * 1024 * 1024 }')"
   free_kb="$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { print $4 }')"
   gap_kb=$((floor_kb - free_kb))
   gap="$(truncate_gb "$(awk -v kb="$gap_kb" 'BEGIN { printf "%.4f", kb / 1024 / 1024 }')")"
-  reclaim_packages="$("$here/project-conf" cargo_reclaim_packages 2>/dev/null)"
+  if [ "$workload" = non-rust ] && [ -z "$fallback" ]; then
+    echo "A check that runs out of space can fail in a tool and read like a code error."
+    echo "No declared reclaim can recover the missing $gap GB."
+  fi
+  reclaim_packages=""
+  [ "$workload" = rust ] && reclaim_packages="$("$here/project-conf" cargo_reclaim_packages 2>/dev/null)"
   if [ -n "$reclaim_packages" ]; then
     valid=1
     package_args=()

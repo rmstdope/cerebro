@@ -657,9 +657,13 @@ blocks.
 **The disk fills.** The Rust build tree is shared by every worktree and still grows:
 
 ```bash
-.claude/cerebro/scripts/disk-preflight     # what is free, and whether it is enough
+.claude/cerebro/scripts/disk-preflight --workload rust       # conservative full floor
+.claude/cerebro/scripts/disk-preflight --workload non-rust   # declared lighter floor
 rm -rf target/debug/incremental            # the cheap few gigabytes back
 ```
+
+A bare preflight remains conservative and uses the full floor. Non-Rust mode retains every
+fast-gate leg by pointing Cargo at the declared shared target; it does not skip Rust checks.
 
 **A bead keeps coming back to you.** That usually means the plan is wrong rather than the builder is:
 send it to a planner (`--remove-label human`, leave `planned` off) rather than to another builder.

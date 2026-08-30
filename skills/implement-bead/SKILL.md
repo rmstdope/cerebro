@@ -387,7 +387,8 @@ Check there is room before starting — a build that runs out of disk fails insi
 message that reads like a code fault:
 
 ```bash
-.claude/cerebro/scripts/disk-preflight    # prints what it found; non-zero means do not start
+.claude/cerebro/scripts/disk-preflight --workload <workload from the plan>
+                                      # prints what it found; non-zero means do not start
 ```
 
 Never check out `main` — another agent usually holds it. `scripts/prepare-worktree` is the one
@@ -485,6 +486,17 @@ this step even though there is no machine-wide lock behind it any more.
 Follow the plan's increments in order, each opening with its named failing test. **Run the fast gate
 before opening the PR.** The command is the project's, not this skill's — ask for it, and run exactly
 what it names:
+
+Immediately before that gate, classify the actual changed paths:
+
+```bash
+git diff --name-only -z origin/main...HEAD |
+  xargs -0 .claude/cerebro/scripts/build-workload --classify
+```
+
+If a planned `non-rust` workload classifies as `rust` or classification fails, rerun the preflight
+with `--workload rust` and use the normal private-target gate. Otherwise use the plan's shared-target
+fast gate; keep every existing gate leg.
 
 ```bash
 .claude/cerebro/scripts/project-conf gate_fast     # the fast gate, and what to run

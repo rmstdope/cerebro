@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Classify changed repository-relative paths using the consumer's declared `rust_paths` regex.
+# Missing configuration fails closed (exit 3) rather than guessing; diagnostics go to stderr.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 usage() { echo "usage: build-workload --classify <path>..." >&2; exit 2; }

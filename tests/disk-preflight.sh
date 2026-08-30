@@ -96,6 +96,29 @@ pass "a consumer that declares no floor gets no preflight, silently and successf
 
 printf 'disk_floor_gb  8\nreclaim_dirs   target\n' > "$conf"
 
+# --- explicit non-Rust workload uses its declared floor -----------------------------------------
+printf 'disk_floor_gb  8\ndisk_floor_non_rust_gb  2\nreclaim_dirs target\n' > "$conf"
+: > "$cargo_args_file"
+free_gb 4.4
+out="$(cd "$consumer" && "$preflight" --workload non-rust)" || fail "non-Rust floor should pass"
+grep -q 'above the 2 GB floor for non-Rust work' <<<"$out" || fail "non-Rust label missing: $out"
+if out="$(cd "$consumer" && "$preflight" --workload rust 2>&1)"; then fail "Rust floor should refuse"; fi
+grep -q 'below the 8 GB floor for Rust work' <<<"$out" || fail "Rust floor missing: $out"
+free_gb 1.7
+if out="$(cd "$consumer" && "$preflight" --workload non-rust 2>&1)"; then fail "non-Rust below floor should refuse"; fi
+grep -q 'A check that runs out of space can fail in a tool' <<<"$out" || fail "non-Rust explanation missing"
+grep -q 'No declared reclaim can recover' <<<"$out" || fail "non-Rust reclaim message missing"
+[ ! -s "$cargo_args_file" ] || fail "non-Rust preflight invoked Cargo"
+pass "explicit non-Rust workload uses its floor without Cargo"
+
+# --- non-Rust falls back to the full floor when undeclared --------------------------------------
+printf 'disk_floor_gb  8\nreclaim_dirs target\n' > "$conf"
+free_gb 4.4
+if out="$(cd "$consumer" && "$preflight" --workload non-rust 2>&1)"; then fail "undeclared non-Rust floor should refuse"; fi
+grep -q 'using 8 GB full-build floor' <<<"$out" || fail "fallback unit missing: $out"
+grep -q 'below the 8 GB floor for Rust work' <<<"$out" || fail "fallback label missing: $out"
+pass "undeclared non-Rust workload uses the full floor"
+
 # --- room to build --------------------------------------------------------------------------
 free_gb 20
 out="$(run)" || fail "20 GB free: expected exit 0"

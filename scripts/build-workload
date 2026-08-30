@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+usage() { echo "usage: build-workload --classify <path>..." >&2; exit 2; }
+[ "$#" -ge 2 ] && [ "$1" = --classify ] || usage
+shift
+pattern="$("$here/project-conf" rust_paths 2>/dev/null)" || pattern=""
+[ -n "$pattern" ] || { echo "build-workload: no rust_paths in .cerebro/project.conf - cannot classify safely." >&2; exit 3; }
+for path in "$@"; do
+  if grep -Eq "$pattern" <<<"$path"; then
+    echo "build-workload: $path matches $pattern" >&2
+    echo rust
+    exit 0
+  fi
+done
+echo "build-workload: no paths match $pattern" >&2
+echo non-rust

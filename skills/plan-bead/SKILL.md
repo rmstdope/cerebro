@@ -984,6 +984,13 @@ round trip through the navigator's queue.
    "None." for a bead with no user-facing surface, which is most of them.
 6. **Out of scope** — what a reader might reasonably assume is included and is not.
 7. **Validation** — the exact commands, and any check that only a human can make.
+
+For a consumer declaring `rust_paths`, a `non-rust` workload is permitted only when every planned
+file classifies non-Rust and validation invokes neither Cargo nor a Rust/Wasm/native build, full
+gate, nor another documented Rust rebuild. Such a plan must name both
+`disk-preflight --workload non-rust` and the exact fast-gate command using the consumer's shared
+Cargo target. Missing declarations, uncertain paths, or Rust-building validation require
+`disk-preflight --workload rust`.
 8. **Known traps** — the repo-specific hazards this bead will meet. Not boilerplate: the ones that
    apply here, or "None." if none do.
 

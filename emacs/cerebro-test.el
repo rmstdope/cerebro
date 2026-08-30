@@ -8314,3 +8314,32 @@ bead adds, for the one command that does not say its own consequence."
 label does not, and where the bead lands is the whole of what was decided."
   (should (equal (cerebro--finding-explanation '(unpause "cb-aaa" 2))
                  "cb-aaa goes back to the planners for a re-read.")))
+
+(defun cerebro-test--sweep-act-prompt (finding)
+  "Return the string `cerebro-sweep-act' would put to the navigator for FINDING."
+  (let ((prompt nil))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (p) (setq prompt p) nil))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+              ((symbol-function 'cerebro--finding-at-point) (lambda () finding)))
+      (cerebro-sweep-act))
+    prompt))
+
+(ert-deftest cerebro-test/sweep-act-asks-with-the-command-alone-when-there-is-no-explanation ()
+  "The five older findings read as they always did: one line, the command."
+  (should (equal (cerebro-test--sweep-act-prompt '(close "ah-x1" "delivered"))
+                 (format "run: %s ? "
+                         (mapconcat #'identity
+                                    (cerebro--finding-command '(close "ah-x1" "delivered")
+                                                              default-directory)
+                                    " ")))))
+
+(ert-deftest cerebro-test/sweep-act-puts-the-explanation-on-its-own-line ()
+  "An unpause takes a bead off the navigator's own queue and back into the
+fleet's, which is not obvious from `bd update --remove-label human' - so the
+consequence is spelled out under the command, and the `(y or n)' is still
+Emacs's to add."
+  (let ((prompt (cerebro-test--sweep-act-prompt '(unpause "cb-aaa" 2))))
+    (should (string-match-p "\n" prompt))
+    (should (equal (cadr (split-string prompt "\n"))
+                   (concat (cerebro--finding-explanation '(unpause "cb-aaa" 2)) " ")))
+    (should-not (string-match-p "(y or n)" prompt))))

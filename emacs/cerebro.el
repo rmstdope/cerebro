@@ -1477,8 +1477,14 @@ keypress's worth of intent would be its own kind of noise."
       (user-error "cerebro: no sweep finding on this line"))
     (let* ((repo-root (cerebro--repo-root))
            (argv (cerebro--finding-command finding repo-root))
-           (command-string (mapconcat #'identity argv " ")))
-      (when (y-or-n-p (format "run: %s ? " command-string))
+           (command-string (mapconcat #'identity argv " "))
+           (explanation (cerebro--finding-explanation finding)))
+      (when (y-or-n-p (if explanation
+                          ;; The consequence, not the command again: `bd update
+                          ;; --remove-label human' does not say on its face that the
+                          ;; bead leaves the navigator's queue for the fleet's.
+                          (format "run: %s\n%s " command-string explanation)
+                        (format "run: %s ? " command-string)))
         (cerebro--log repo-root 'sweep (list (cons 'command command-string)))
         (if (cerebro--run-sweep-command repo-root argv)
             (let ((pushed (cerebro--run-sweep-command repo-root (cerebro--bd-push-argv))))

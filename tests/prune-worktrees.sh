@@ -90,6 +90,18 @@ make_tree ah-cold 90         # waiting on CI: cold, and the coldest of the two e
 make_tree ah-cool 45         # also cold, but warmer than ah-cold
 make_tree psylocke 5000      # kept by name; never reclaimed under pressure
 
+make_main_target() {
+  local minutes="$1" stamp
+  mkdir -p "$consumer/target/debug/deps"
+  head -c 200000 /dev/zero > "$consumer/target/debug/deps/blob.o"
+  stamp="$(date -d "@$(( $(date +%s) - minutes * 60 ))" +%Y%m%d%H%M.%S 2>/dev/null \
+    || date -r $(( $(date +%s) - minutes * 60 )) +%Y%m%d%H%M.%S)"
+  find "$consumer/target" -exec touch -t "$stamp" {} +
+}
+
+echo source > "$consumer/source.rs"
+make_main_target 5
+
 targets_present() {
   local name
   for name in "$@"; do
@@ -123,6 +135,15 @@ grep -q "5 GB free" <<<"$out" || fail "the log did not name the free space that 
 grep -q "8 GB floor" <<<"$out" || fail "the log did not name the floor it was measured against: $out"
 grep -qE "cold for over (30|60) minutes" <<<"$out" || fail "the log did not say how cold it was: $out"
 pass "the log names the tree, the size, the free space, the floor and the age"
+
+# --- 4. the shared checkout is an ordinary pressure candidate -------------------------------
+make_main_target 120
+out="$(cd "$consumer" && PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=99999 bash "$prune" 2>&1)"
+[ -d "$consumer/target" ] && fail "the main checkout target survived as the coldest candidate: $out"
+[ -d "$consumer/.git" ] || fail "the main checkout's .git entry was removed: $out"
+[ -f "$consumer/source.rs" ] || fail "source outside the declared directory was removed: $out"
+grep -q "main/target" <<<"$out" || fail "the log did not name the main checkout target: $out"
+pass "the coldest declared main-checkout directory is reclaimed without removing the checkout"
 
 # --- 4. the worktrees themselves are untouched --------------------------------------------------
 for name in ah-warm ah-cold ah-cool psylocke; do

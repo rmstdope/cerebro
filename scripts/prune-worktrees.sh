@@ -424,7 +424,7 @@ sweep() {
   local removed=0 kept=0
   # Trees that are staying and could give up their build directory if the disk is tight. The
   # verifier's is not among them: see the pressure note in the header.
-  local pressure_candidates=()
+  local pressure_candidates=("main:$repo_root")
 
   # Each line is `<owning repository>|<worktree>`. Every other git call in this loop already
   # passes `$tree` and needs no owner; the four that address the repository do (ah-apw4).

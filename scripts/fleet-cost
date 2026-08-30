@@ -169,8 +169,17 @@ if ! intervals="$("$script_dir/fleet-history" --json --since "$since_arg" 2>/dev
 fi
 
 # -readonly, never immutable - see the header. One JSON blob rather than a delimited stream: a
-# marker sentence and a null cost both survive it untouched.
-if ! events="$(sqlite3 -readonly "$store" "
+# marker sentence and a null cost both survive it untouched. It goes to a FILE rather than a
+# variable: handed to jq as an argv value it crossed this machine's ARG_MAX and every mode
+# refused, whatever the window, since the window is applied inside jq rather than in the SELECT
+# (cb-3up). A file has no such limit, so the size of the store stops being one.
+events_file="$(mktemp)" || {
+  echo "fleet-cost: could not create a temporary file for the store's rows. Nothing was reported." >&2
+  exit 1
+}
+trap 'rm -f "$events_file"' EXIT
+
+if ! sqlite3 -readonly "$store" "
       SELECT json_group_array(json_object(
                'session', t.session_id,
                'marker',  t.user_message,
@@ -180,11 +189,12 @@ if ! events="$(sqlite3 -readonly "$store" "
       JOIN assistant_usage_events e ON e.session_id = t.session_id
       WHERE t.turn_index = 0
         AND t.user_message LIKE 'This session is % of the cerebro fleet rooted at %';
-    " 2>/dev/null)"; then
+    " > "$events_file" 2>/dev/null; then
   echo "fleet-cost: could not read the session store at $store. Nothing was reported." >&2
   exit 1
 fi
-[[ -n "$events" ]] || events="[]"
+# -s, not -n: the test is on a file now, and an empty one is the "no cerebro sessions" case.
+[[ -s "$events_file" ]] || printf '[]' > "$events_file"
 
 # The bead horizon: the oldest line of the oldest generation. Reading one line for a horizon is
 # not a second pairing implementation - the intervals themselves still come from fleet-history.
@@ -213,7 +223,7 @@ if [[ -z "$cols" ]]; then
 fi
 
 if ! out="$(jq -n \
-      --argjson events "$events" \
+      --slurpfile events_in "$events_file" \
       --argjson intervals "$intervals" \
       --argjson titles "$titles" \
       --argjson now "$now" \
@@ -251,7 +261,12 @@ if ! out="$(jq -n \
     capture("of the cerebro fleet rooted at (?<r>.*?)\\.(\\s|$)") | .r
     | sub("/+$"; "");
 
-  ($root | sub("/+$"; "")) as $canon_root
+  # --slurpfile reads the file as an array OF the JSON values in it, and the file holds one
+  # array, so the events are $events_in[0]. Forgetting the [0] gives an empty answer rather
+  # than an error - every count zero, reading as a fleet that has never run.
+  ($events_in[0]) as $events
+
+  | ($root | sub("/+$"; "")) as $canon_root
 
   | ($events
      | map(. + {_agent: (.marker | marker_agent), _root: (.marker | marker_root)})

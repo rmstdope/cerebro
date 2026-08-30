@@ -195,6 +195,55 @@ event "$real/store.db" s1 "$(ago_ms 110)" 3000000000
   || fail "a marker followed by the rest of the prompt must still yield its agent and its root"
 pass "the marker is read as the first sentence of a prompt, not as the whole message"
 
+# --- a store bigger than one argument -------------------------------------------------------------
+#
+# The store's rows once reached jq as an argv value, and on this fleet they crossed ARG_MAX: every
+# mode refused with `jq: Argument list too long`, and no window helped, because the window is
+# applied inside jq rather than in the SELECT. The suite could not see it - everything it
+# fabricates is three orders of magnitude below the limit - so the fixture here deliberately
+# exceeds the real limit of whichever machine is running it.
+#
+# The padding is built inside SQLite: a shell-built pad big enough to matter would make the
+# fixture's own `sqlite3 "$db" "<statement>"` hit the very limit under test.
+
+big="$(new_fixture)"
+big_root="$(root_of "$big")"
+make_store "$big/store.db"
+
+big_events=12
+big_arg_max="$(getconf ARG_MAX)"
+big_pad=$(( big_arg_max / big_events ))   # hex(zeroblob(n)) is 2n chars, so 12 rows ~ 2x ARG_MAX
+sqlite3 "$big/store.db" "
+  INSERT INTO sessions(id) VALUES('s1');
+  INSERT INTO turns(session_id, turn_index, user_message)
+    VALUES('s1', 0, 'This session is Cyclops of the cerebro fleet rooted at $big_root/. '
+                    || replace(hex(zeroblob($big_pad)), '0', 'x'));
+"
+for _ in $(seq "$big_events"); do
+  event "$big/store.db" s1 "$(ago_ms 110)" 1000000000
+done
+{
+  line "$(ago 120)" Cyclops working build cb-aaa
+  line "$(ago 60)"  Cyclops waiting "" ""
+} > "$big/.cerebro/state/transitions.jsonl"
+
+big_out="$(run "$big" --by-bead --json)" \
+  || fail "a session store larger than one argument must be answered, not refused"
+[[ "$(aic_of cb-aaa <<<"$big_out")" == "12" ]] \
+  || fail "a store larger than one argument must report its 12.0 AIC, got $(aic_of cb-aaa <<<"$big_out")"
+pass "a session store larger than one argument is answered rather than refused"
+
+# The temporary file the rows are read into must not outlive the run. TMPDIR is the suite's own
+# empty directory, so this is exact rather than a scan of the machine's /tmp. Asserted on the
+# answer path only - the four documented refusals all return before the file is created - but the
+# trap covers every exit either way.
+big_tmp="$work_dir/fleet-cost-tmp"
+mkdir -p "$big_tmp"
+TMPDIR="$big_tmp" run "$big" --by-bead --json >/dev/null
+[[ -z "$(ls -A "$big_tmp")" ]] \
+  || fail "the temporary file holding the store's rows must not outlive the run; TMPDIR still holds $(ls -A "$big_tmp")"
+pass "the temporary file holding the store's rows does not outlive the run"
+
 # --- unpriced requests ---------------------------------------------------------------------------
 
 unp="$(new_fixture)"

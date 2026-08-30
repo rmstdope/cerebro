@@ -2816,7 +2816,8 @@ test."
          (unplanned (list (cerebro-test--bead "ah-7s7" 1 "loose")))
          (merged (list (cerebro-test--bead "ah-m1" 2 "just landed")))
          (text (string-join
-                (cerebro--bead-panel claimed nil nil unplanned merged 62 8) "\n"))
+                (cerebro--bead-panel claimed nil nil unplanned nil merged 62 8 (current-time))
+                "\n"))
          (at (lambda (s) (string-match (regexp-quote s) text))))
     ;; Each bead under the heading it belongs to, not merely present somewhere.
     (should (< (funcall at "Claimed") (funcall at "ah-13o")))
@@ -2964,9 +2965,9 @@ trading a permanent freeze for two concurrent `bd\='s."
     (should (equal (cadr argv) "list"))
     (should (member "--brief" argv))
     (should (member "--json" argv))
-    ;; "[]" is a successful, empty answer - a five-list partition of nothing,
+    ;; "[]" is a successful, empty answer - a six-list partition of nothing,
     ;; not "bd did not answer".
-    (should (equal got (list nil nil nil nil nil)))
+    (should (equal got (list nil nil nil nil nil nil)))
     (should (null linked)))
   ;; The same call answers the linked beads: the panel partition deliberately
   ;; leaves out what is settled (`cerebro--settled-p'), and a VERIFIED is
@@ -3027,12 +3028,12 @@ flight, and says so in the header."
                    (lambda (_root cb) (setq stashed-callback cb) 'started)))
           (with-current-buffer buffer
             (cerebro-beads-mode)
-            (setq cerebro--beads (list (list (cerebro-test--bead "ah-c1" 1 "claimed one")) nil nil nil nil))
+            (setq cerebro--beads (list (list (cerebro-test--bead "ah-c1" 1 "claimed one")) nil nil nil nil nil))
             (cerebro--beads-render buffer)
             (should (string-match-p "ah-c1" (buffer-string)))
             (should (string-match-p "refreshing…" header-line-format))
             (funcall stashed-callback
-                     (list (list (cerebro-test--bead "ah-c2" 1 "different bead")) nil nil nil nil))
+                     (list (list (cerebro-test--bead "ah-c2" 1 "different bead")) nil nil nil nil nil))
             (should (string-match-p "ah-c2" (buffer-string)))
             (should-not (string-match-p "ah-c1" (buffer-string)))
             (should (string-match-p "as of" header-line-format))
@@ -3049,7 +3050,7 @@ flight, and says so in the header."
                    (lambda (_root cb) (setq stashed-callback cb) 'started)))
           (with-current-buffer buffer
             (cerebro-beads-mode)
-            (setq cerebro--beads (list (list (cerebro-test--bead "ah-c1" 1 "claimed one")) nil nil nil nil))
+            (setq cerebro--beads (list (list (cerebro-test--bead "ah-c1" 1 "claimed one")) nil nil nil nil nil))
             (cerebro--beads-render buffer)
             (funcall stashed-callback nil)
             (should (string-match-p "ah-c1" (buffer-string)))
@@ -3080,7 +3081,7 @@ flight, and says so in the header."
     (unwind-protect
         (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
                   ((symbol-function 'cerebro--request-beads)
-                   (lambda (_root cb) (funcall cb (list nil nil nil nil nil)) 'started))
+                   (lambda (_root cb) (funcall cb (list nil nil nil nil nil nil)) 'started))
                   ((symbol-function 'cerebro--request-sweeps)
                    (lambda (_root cb) (funcall cb (list nil)) 'started)))
           (save-window-excursion
@@ -3146,7 +3147,7 @@ that survived a fleet buffer kill-and-reopen must still be redrawn by
   "The order the navigator reads in, and back to the top rather than stopping."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
             ((symbol-function 'cerebro--request-beads)
-             (lambda (_root cb) (funcall cb (list nil nil nil nil nil)) 'started))
+             (lambda (_root cb) (funcall cb (list nil nil nil nil nil nil)) 'started))
             ((symbol-function 'cerebro--request-sweeps)
              (lambda (_root cb) (funcall cb (list nil)) 'started)))
     (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
@@ -3248,6 +3249,7 @@ session, which is the case the navigator actually hits, was not."
                                      nil
                                      (list (cerebro-test--bead "ah-u1" 1 "unplanned one")
                                            (cerebro-test--bead "ah-u2" 2 "unplanned two"))
+                                     nil
                                      nil))
                       'started)))
            (with-current-buffer ,buffer
@@ -3316,7 +3318,7 @@ land on that line when the queue changed underneath."
                           (list (list (cerebro-test--bead "ah-c0" 0 "new claim")
                                       (cerebro-test--bead "ah-c1" 1 "claimed one"))
                                 (list (cerebro-test--bead "ah-p1" 0 "planned one"))
-                                nil nil nil))
+                                nil nil nil nil))
                  'started)))
       (cerebro--beads-render buffer)
       (should (equal (cerebro--bead-at-point) "ah-p1")))))
@@ -3327,7 +3329,7 @@ land on that line when the queue changed underneath."
     (should (equal (cerebro--bead-at-point) "ah-c1"))
     (cl-letf (((symbol-function 'cerebro--request-beads)
                (lambda (_root cb)
-                 (funcall cb (list nil nil nil (list (cerebro-test--bead "ah-u1" 1 "left")) nil))
+                 (funcall cb (list nil nil nil (list (cerebro-test--bead "ah-u1" 1 "left")) nil nil))
                  'started)))
       (cerebro--beads-render buffer)
       (should (equal (cerebro--bead-at-point) "ah-u1")))))
@@ -3358,7 +3360,7 @@ timer render from another window, so this is the normal path, not an edge."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
             ((symbol-function 'cerebro--request-beads)
              (lambda (_root cb)
-               (funcall cb (list nil nil nil (list (cerebro-test--bead "ah-u1" 1 "first real bead")) nil))
+               (funcall cb (list nil nil nil (list (cerebro-test--bead "ah-u1" 1 "first real bead")) nil nil))
                'started)))
     (let ((buffer (get-buffer-create "*cerebro-test-window-point*")))
       (unwind-protect
@@ -3525,12 +3527,14 @@ noticed."
 (ert-deftest cerebro-test/panel-sections-follow-the-lifecycle ()
   "Claimed, planned, being planned, unplanned, merged - as far as the panel
 follows work, and in the order it moves in read backwards."
-  (let* ((text (string-join (cerebro--bead-panel nil nil nil nil nil 62 8) "\n"))
+  (let* ((text (string-join
+                (cerebro--bead-panel nil nil nil nil nil nil 62 8 (current-time)) "\n"))
          (at (lambda (s) (string-match (regexp-quote s) text))))
     (should (< (funcall at "Claimed") (funcall at "Planned, unclaimed")))
     (should (< (funcall at "Planned, unclaimed") (funcall at "Being planned")))
     (should (< (funcall at "Being planned") (funcall at "Unplanned")))
-    (should (< (funcall at "Unplanned") (funcall at "Merged, unverified")))))
+    (should (< (funcall at "Unplanned") (funcall at "Waiting on you")))
+    (should (< (funcall at "Waiting on you") (funcall at "Merged, unverified")))))
 
 (ert-deftest cerebro-test/the-panel-stops-at-merged ()
   "The panel shows work the fleet can act on, and drops the rest.
@@ -3542,7 +3546,7 @@ than filed somewhere nobody reads."
   (let ((text (string-join
                (apply #'cerebro--bead-panel
                       (append (cerebro--partition-beads cerebro-test--every-shape)
-                              (list 62 8)))
+                              (list 62 8 (current-time))))
                "\n")))
     ;; Case-sensitively: "Merged, unverified" contains "verified", and
     ;; `string-match-p' folds case by default.
@@ -3613,13 +3617,14 @@ work that came back."
   "Five buckets, and everything else deliberately in none of them."
   (let* ((buckets (cerebro--partition-beads cerebro-test--every-shape))
          (ids (lambda (n) (mapcar (lambda (b) (alist-get 'id b)) (nth n buckets)))))
-    (should (= 5 (length buckets)))
+    (should (= 6 (length buckets)))
     (should (equal (funcall ids 0) '("in-progress")))
     (should (equal (funcall ids 1) '("open-planned")))
     (should (equal (funcall ids 2) '("open-planning")))
     (should (equal (funcall ids 3) '("open-loose")))
     ;; Merged is what still wants verifying: bare, or failed and rebuilt.
-    (should (equal (sort (funcall ids 4) #'string<) '("closed-bare" "closed-failed")))
+    (should-not (funcall ids 4))
+    (should (equal (sort (funcall ids 5) #'string<) '("closed-bare" "closed-failed")))
     ;; And nothing else got in anywhere: verified work, epics, bd's own event
     ;; records, blocked, deferred, and a status from a future bd.
     (should (= 6 (length (apply #'append buckets))))))
@@ -3701,10 +3706,69 @@ label by its prefix rather than matching a string."
                    '("b" "old" "x")))
     (should-not (nth 3 buckets))))
 
+;; ---------------------------------------------------------------------------
+;; Parked for the navigator (cb-wfb): the sixth bucket and the section it draws
+
+(defun cerebro-test--paused (id &optional labels paused-at)
+  "An open bead carrying `human', and whatever else LABELS names.
+PAUSED-AT, when given, is the ISO-8601 string the pause site wrote."
+  `((id . ,id) (status . "open") (priority . 2) (title . ,id)
+    (labels . ,(cons "human" labels)) (issue_type . "task")
+    (updated_at . "2026-08-14T09:00:00Z")
+    ,@(when paused-at `((metadata . ((paused_at . ,paused-at)))))))
+
+(ert-deftest cerebro-test/paused-beads-leave-unplanned ()
+  "A bead parked for the navigator is not work nobody has started. Under
+Unplanned it is indistinguishable from the backlog, which is exactly how a
+pause outlives its reason with nobody counting it."
+  (let* ((beads (list (cerebro-test--paused "cb-aaa")))
+         (buckets (cerebro--partition-beads beads)))
+    (should (= 6 (length buckets)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 4 buckets))
+                   '("cb-aaa")))
+    (should-not (nth 3 buckets))))
+
+(ert-deftest cerebro-test/paused-beads-win-over-planned ()
+  "A planner parking a question adds `human' without removing `planned', and
+the implementers' own pickup is `bd ready --label planned --exclude-label
+human' - so such a bead is NOT claimable. Under Planned, unclaimed it would
+report queue depth that does not exist."
+  (let* ((beads (list (cerebro-test--paused "cb-bbb" '("planned"))))
+         (buckets (cerebro--partition-beads beads)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 4 buckets))
+                   '("cb-bbb")))
+    (should-not (nth 1 buckets))))
+
+(ert-deftest cerebro-test/paused-section-renders-with-age ()
+  "The section says how long each bead has been waiting, in the one elapsed
+spelling the rest of the view uses - and an unknown pause time reads as an em
+dash rather than as a small number."
+  (let* ((now (encode-time (iso8601-parse "2026-08-31T00:00:00Z")))
+         (paused (list (cerebro-test--paused "cb-aaa" nil "2026-08-30T20:00:00Z")
+                       (cerebro-test--paused "cb-ccc")))
+         (text (string-join (cerebro--bead-panel nil nil nil nil paused nil 62 8 now)
+                            "\n")))
+    (should (string-match-p "Waiting on you 2" text))
+    (should (string-match-p "cb-aaa" text))
+    (should (string-match-p "4h00" text))
+    (should (string-match-p "—" text))))
+
+(ert-deftest cerebro-test/paused-section-empty-prints-none ()
+  "Empty on nearly every render, and it still says so: a standing `Waiting on
+you 0' is the reassurance the navigator asked for, unlike Sweeps, which
+disappears."
+  (let ((text (string-join
+               (cerebro--bead-panel nil nil nil nil nil nil 62 8 (current-time))
+               "\n")))
+    (should (string-match-p "Waiting on you 0" text))
+    (should (string-match-p "(none)" text))))
+
 (ert-deftest cerebro-test/being-planned-renders-its-beads-and-its-count ()
   (let* ((being (list (cerebro-test--any "ah-1" "open" '("planning"))
                       (cerebro-test--any "ah-2" "open" '("planning"))))
-         (text (string-join (cerebro--bead-panel nil nil being nil nil 62 8) "\n")))
+         (text (string-join
+                (cerebro--bead-panel nil nil being nil nil nil 62 8 (current-time))
+                "\n")))
     (should (string-match-p "Being planned 2" text))
     (should (string-match-p "ah-1" text))
     (should (string-match-p "ah-2" text))))
@@ -4780,7 +4844,7 @@ list must still refresh and supervise without error."
 navigator who redraws by hand every twenty seconds would never see one."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
             ((symbol-function 'cerebro--request-beads)
-             (lambda (_root cb) (funcall cb (list nil nil nil nil nil)) 'started))
+             (lambda (_root cb) (funcall cb (list nil nil nil nil nil nil)) 'started))
             ((symbol-function 'cerebro--sweep) #'ignore)
             ((symbol-function 'cerebro--list-render) #'ignore)
             ((symbol-function 'cerebro--supervise) #'ignore))
@@ -5180,7 +5244,7 @@ and the script run sixty times a minute."
 (ert-deftest cerebro-test/history-rows-reach-the-panel ()
   "The wiring, end to end: rows kept on the buffer are what the panel draws."
   (let ((lines (cerebro--bead-panel
-                nil nil nil nil nil 100 3 nil
+                nil nil nil nil nil nil 100 3 (current-time) nil
                 '(((agent . "Cyclops") (state . "working") (count . 2) (total_min . 10)
                    (median_min . 5) (max_min . 6) (open_min . 40))))))
     (should (cl-some (lambda (l) (string-match-p "History" (substring-no-properties l))) lines))
@@ -7583,7 +7647,7 @@ deciding whether the figures postdate a transition needs the earlier clock."
                   ((symbol-function 'cerebro--request-beads)
                    (lambda (_root answer)
                      (with-current-buffer panel (setq cerebro--beads-requested-at 41.0))
-                     (funcall answer (list nil nil nil nil nil) nil)
+                     (funcall answer (list nil nil nil nil nil nil) nil)
                      'answered)))
           (cerebro--beads-render panel)
           (with-current-buffer panel
@@ -7601,7 +7665,7 @@ a planner whose pass found a full buffer and ended."
     (unwind-protect
         (cl-letf (((symbol-function 'cerebro--fleet) (lambda (_) nil))
                   ((symbol-function 'cerebro--beads-panel-buffer) (lambda () panel)))
-          (with-current-buffer panel (setq cerebro--beads (list nil nil nil nil nil)))
+          (with-current-buffer panel (setq cerebro--beads (list nil nil nil nil nil nil)))
           (with-temp-buffer
             (setq cerebro--agents
                   (list (cerebro-test--agent "Rogue" "implementer" 'implementer 'working)

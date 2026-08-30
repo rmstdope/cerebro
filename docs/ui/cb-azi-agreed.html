@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-azi — what each agent cost on each bead (agreed)</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; --warn:#b08800; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 70rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.5rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; }
+  .note { color: var(--dim); font-size: 13.5px; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .rej { opacity: .72; }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13.5px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .45rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  blockquote { margin: .6rem 0; padding: .5rem .9rem; border-left: 3px solid var(--line);
+               color: var(--dim); font-size: 13.5px; }
+</style>
+</head>
+<body>
+
+<h1>cb-azi — what each agent cost on each bead</h1>
+<p class="lede">The agreed design, chosen by the navigator over two rounds. Every number below was
+measured on this checkout with <code>scripts/fleet-cost</code>, not invented.</p>
+
+<h2>The decision, in one line</h2>
+<p><strong>One row per bead-and-agent, replacing <code>--by-bead</code></strong> — not a cross-tab
+with agents as columns, and not a fourth mode alongside the existing three.</p>
+
+<h2>What it prints</h2>
+<pre>$ fleet-cost --by-bead --since 7d
+
+BEAD     TITLE                                          AGENT       AIC   SHARE  UNPRICED
+cb-ue0   Launch startup avoids repeated consumer-ro…  Cyclops    1719.5  100.0%         -
+cb-ue0   Launch startup avoids repeated consumer-ro…  Xavier        <span class="warn">0.0    0.0%        10</span>
+cb-d89   Ask what any bead or agent cost in AI cred…  Cyclops    1075.8   68.4%         -
+cb-d89   Ask what any bead or agent cost in AI cred…  Xavier      497.5   31.6%         -
+cb-ge0   Refactoring: One guarded writer for the fl…  Wolverine   341.0   59.6%         -
+cb-ge0   Refactoring: One guarded writer for the fl…  Beast       230.6   40.3%         -
+--
+no bead                                               Cerebro    1686.5   39.4%        14
+no bead                                               Xavier      557.7   13.0%         4
+no bead                                               Cyclops     432.3   10.1%         -
+
+10 beads, 8214.3 AIC on beads; 4275.0 AIC on no bead; 12489.3 AIC in all.
+34 of 1309 requests record no cost and are not in these totals.</pre>
+
+<h2>The four choices, and what was rejected</h2>
+<table>
+<tr><th>Decision</th><th>Chosen</th><th>Rejected, and why</th></tr>
+<tr><td>Orientation</td><td>One row per bead-and-agent</td>
+    <td class="rej">Agents as columns — the cross-tab originally asked for. It grows ~9 columns per
+    agent, and this roster is 8 names, so it stops fitting a terminal on this fleet's own data.</td></tr>
+<tr><td>Repetition</td><td><code>TITLE</code> on every row</td>
+    <td class="rej">Title on the first row of each bead only — a blank meaning "same as above" is
+    something none of the existing tables ask a reader to hold, and it breaks a grep for an agent.
+    Bead-as-heading — stops being a table and pipes badly.</td></tr>
+<tr><td><code>SHARE</code></td><td>Share of <em>that bead</em>: each bead's rows sum to 100%</td>
+    <td class="rej">Share of the fleet's whole spend (what it means today), and dropping the column
+    altogether.</td></tr>
+<tr><td>Phase</td><td>Dropped by default, behind <code>--phase</code></td>
+    <td class="rej">Always splitting by phase — it makes every agent who worked twice on a bead into
+    two rows.</td></tr>
+</table>
+
+<h2>Why the long form, in one picture</h2>
+<p>The same week, as the rejected cross-tab, once the roster is what it actually is:</p>
+<pre class="rej">BEAD     TITLE               Cyclops  Xavier   Beast  Cerebro  Psylocke  Cypher   Moira   Forge      TOTAL
+cb-ue0   Launch startup a…    1719.5    0.0!       -        -         -       -       -       -     1719.5</pre>
+<p class="note">107 columns before the title has any room. The long form is a fixed ~60 columns
+whatever the roster does, and pipes into <code>grep</code>, <code>sort</code> and <code>awk</code>.</p>
+
+<h2>The unpriced trap, which this shape answers for free</h2>
+<blockquote>Measured on cb-ue0: Cyclops <code>build</code> 1719.5, Xavier <code>plan</code>
+<strong>0.0</strong> — ten requests, none of them priced, so the planning reads as though it cost
+nothing.</blockquote>
+<p><code>UNPRICED</code> is a real column here rather than a mark to invent, so the
+<code>0.0 / 10</code> pair sits on one row and cannot be misread as free. In the rejected cross-tab
+the same fact needed a suffix, a bracketed count or a footnote — all three were mocked, and all
+three were annotations on a number rather than a column of the table.</p>
+
+<h2><code>--phase</code>, when it is asked for</h2>
+<pre>$ fleet-cost --by-bead --phase --since 7d
+
+BEAD     TITLE                                          AGENT    PHASE       AIC  UNPRICED
+cb-d89   Ask what any bead or agent cost in AI cred…  Cyclops  build     936.9         -
+cb-d89   Ask what any bead or agent cost in AI cred…  Xavier   plan      497.5         -
+cb-d89   Ask what any bead or agent cost in AI cred…  Cyclops  review    138.9         -</pre>
+<p class="note">Phase is what shows cb-d89's Cyclops cost was a build <em>and</em> a review round
+rather than one long build.</p>
+
+<h2><code>--bead &lt;id&gt;</code> stays exactly as it is</h2>
+<pre>$ fleet-cost --bead cb-ue0
+
+cb-ue0 — 1719.5 AIC over 164 requests, 2026-08-27T09:30Z to 2026-08-27T11:52Z
+
+AGENT    PHASE     AIC  UNPRICED
+Cyclops  build  1719.5         -
+Xavier   plan      <span class="warn">0.0        10</span>
+
+10 of 164 requests record no cost and are not in these totals.</pre>
+<p class="note">Its header line — total, request count, first and last timestamp — is the thing the
+general table does not carry, so it survives the replacement.</p>
+
+</body>
+</html>

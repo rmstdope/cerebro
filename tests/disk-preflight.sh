@@ -30,7 +30,13 @@ stub_dir="$work_dir/bin"
 mkdir -p "$stub_dir"
 free_kb_file="$work_dir/free_kb"
 du_kb_file="$work_dir/du_kb"
+cargo_mode_file="$work_dir/cargo_mode"
+cargo_summary_file="$work_dir/cargo_summary"
+cargo_args_file="$work_dir/cargo_args"
+cargo_pwd_file="$work_dir/cargo_pwd"
 echo 0 > "$du_kb_file"
+echo success > "$cargo_mode_file"
+echo 'Summary 1 files, 5.7GiB total' > "$cargo_summary_file"
 
 cat > "$stub_dir/df" <<STUB
 #!/usr/bin/env bash
@@ -46,6 +52,14 @@ cat > "$stub_dir/du" <<STUB
 echo "\$(cat "$du_kb_file")	\${*: -1}"
 STUB
 chmod +x "$stub_dir/du"
+cat > "$stub_dir/cargo" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$PWD" > "$cargo_pwd_file"
+printf '%s\n' "\$*" > "$cargo_args_file"
+[ "\$(cat "$cargo_mode_file")" = success ] || { echo "cargo fixture failed" >&2; exit 1; }
+cat "$cargo_summary_file"
+STUB
+chmod +x "$stub_dir/cargo"
 
 export PATH="$stub_dir:$PATH"
 
@@ -143,8 +157,44 @@ grep -q 'target (1.9 GB)' <<<"$out" || fail "reclaimable: each tree names its ow
 grep -q '.cerebro/worktrees/ah-x/target' <<<"$out" \
   || fail "reclaimable: a worktree's tree is reclaimable too, got: $out"
 grep -q 'cargo/registry/src' <<<"$out" \
-  || fail "reclaimable: name the offline reclaims outright, got: $out"
-pass "a refusal names each build tree, the total, and the offline reclaims"
+  && fail "reclaimable: old fixed cache advice must be gone, got: $out"
+pass "a refusal names each build tree and the total without fixed cache advice"
+
+# --- a sufficient package reclaim is measured and recommended -------------------------------
+printf 'disk_floor_gb  8\nreclaim_dirs   target\ncargo_reclaim_packages atlantis-hud-core\n' > "$conf"
+free_gb 5.7
+if out="$(run)"; then
+  fail "sufficient package reclaim: expected refusal with advice"
+fi
+grep -q "To recover the missing 2.3 GB, run from $consumer:" <<<"$out" \
+  || fail "sufficient package reclaim: expected absolute command root, got: $out"
+grep -q '^  cargo clean -p atlantis-hud-core$' <<<"$out" \
+  || fail "sufficient package reclaim: expected command, got: $out"
+grep -q -- '--dry-run --offline --package atlantis-hud-core' "$cargo_args_file" \
+  || fail "sufficient package reclaim: expected safe Cargo arguments"
+[ "$(cat "$cargo_pwd_file")" = "$consumer" ] \
+  || fail "sufficient package reclaim: Cargo should run from shared root"
+pass "a sufficient package reclaim is measured and recommended"
+
+# --- insufficient and failed package reclaims are explicit -----------------------------------
+echo 'Summary 1 files, 0.5GiB total' > "$cargo_summary_file"
+free_gb 7
+if out="$(run)"; then
+  fail "insufficient package reclaim: expected refusal"
+fi
+grep -q 'No declared reclaim can recover the missing 1 GB.' <<<"$out" \
+  || fail "insufficient package reclaim: expected unavailable advice, got: $out"
+echo failure > "$cargo_mode_file"
+free_gb 2
+if out="$(run)"; then
+  fail "failed package reclaim: expected refusal"
+fi
+grep -q 'Reclaim measurement failed; cargo clean was not recommended.' <<<"$out" \
+  || fail "failed package reclaim: expected measurement error, got: $out"
+grep -q 'cargo fixture failed' <<<"$out" \
+  && fail "failed package reclaim: leaked Cargo output, got: $out"
+pass "insufficient and failed package reclaims are not recommended"
+echo success > "$cargo_mode_file"
 
 # --- a build tree at the retired worktree path is not a build tree ----------------------------
 #

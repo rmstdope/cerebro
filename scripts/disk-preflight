@@ -44,6 +44,24 @@ truncate_gb() {
   awk -v v="$1" 'BEGIN { printf "%g\n", int(v * 10) / 10 }'
 }
 
+measure_cargo_reclaim_kb() {
+  local package output summary size unit
+  local -a args=(clean --dry-run --offline)
+  for package in "$@"; do
+    args+=(--package "$package")
+  done
+  output="$(cd "$root" && cargo "${args[@]}" 2>&1)" || return 1
+  summary="$(printf '%s\n' "$output" | awk '/Summary [0-9]+ files, [0-9]+([.][0-9]+)?(B|KiB|MiB|GiB) total$/ { line=$0 } END { print line }')"
+  [ -n "$summary" ] || return 1
+  read -r size unit <<< "$(printf '%s\n' "$summary" | sed -E 's/^Summary [0-9]+ files, ([0-9]+([.][0-9]+)?)(B|KiB|MiB|GiB) total$/\1 \3/')"
+  awk -v value="$size" -v unit="$unit" '
+    BEGIN {
+      factor = (unit == "B" ? 1 / 1024 : unit == "KiB" ? 1 : unit == "MiB" ? 1024 : unit == "GiB" ? 1024 * 1024 : 0)
+      if (!factor) exit 1
+      printf "%d\n", value * factor
+    }'
+}
+
 # What could be reclaimed, and where. Every worktree builds its own tree (ah-gdp), so what fills a
 # nearly-full disk is several of those rather than one a single clean would empty - and the
 # directories worth reclaiming are the consumer's own declaration (`reclaim_dirs', empty by
@@ -87,17 +105,43 @@ if awk -v f="$free_gb" -v floor="$floor" 'BEGIN { exit !(f > floor) }'; then
 else
   echo "disk: $free_shown GB free, below the $floor GB floor needed to build."
   echo "A build that runs out of space fails inside the linker and reads like a code error."
+  floor_kb="$(awk -v gb="$floor" 'BEGIN { printf "%d\n", gb * 1024 * 1024 }')"
+  free_kb="$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  gap_kb=$((floor_kb - free_kb))
+  gap="$(truncate_gb "$(awk -v kb="$gap_kb" 'BEGIN { printf "%.4f", kb / 1024 / 1024 }')")"
+  reclaim_packages="$("$here/project-conf" cargo_reclaim_packages 2>/dev/null)"
+  if [ -n "$reclaim_packages" ]; then
+    valid=1
+    package_args=()
+    for package in $reclaim_packages; do
+      if [[ ! "$package" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+        valid=0
+        break
+      fi
+      package_args+=("$package")
+    done
+    if [ "$valid" -eq 1 ] && reclaim_kb="$(measure_cargo_reclaim_kb "${package_args[@]}")"; then
+      if [ $((free_kb + reclaim_kb)) -gt "$floor_kb" ]; then
+        command="cargo clean"
+        for package in "${package_args[@]}"; do command+=" -p $package"; done
+        echo "To recover the missing $gap GB, run from $root:"
+        echo "  $command"
+      else
+        echo "No declared reclaim can recover the missing $gap GB."
+      fi
+    else
+      echo "Reclaim measurement failed; cargo clean was not recommended."
+    fi
+  else
+    echo "No declared reclaim can recover the missing $gap GB."
+  fi
 fi
 
 if [ "$tree_count" -gt 0 ]; then
   total="$(truncate_gb "$(awk -v kb="$total_kb" 'BEGIN { printf "%.4f", kb / 1024 / 1024 }')")"
   noun="build trees"
   [ "$tree_count" -eq 1 ] && noun="build tree"
-  # Named outright rather than pointed at a sweep: eleven retrospectives say the old advice sent
-  # the reader to prune-worktrees.sh, which under a full fleet reclaims nothing because every tree
-  # belongs to a live agent.
   echo "$total GB sits in $tree_count $noun: $trees."
-  echo "Offline reclaims that are always safe: ~/.cargo/registry/src, target/debug/incremental, ~/Library/Caches/Mozilla.sccache."
 fi
 
 awk -v f="$free_gb" -v floor="$floor" 'BEGIN { exit !(f > floor) }'

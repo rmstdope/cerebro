@@ -158,7 +158,7 @@ grep -q '.cerebro/worktrees/ah-x/target' <<<"$out" \
   || fail "reclaimable: a worktree's tree is reclaimable too, got: $out"
 grep -q 'cargo/registry/src' <<<"$out" \
   && fail "reclaimable: old fixed cache advice must be gone, got: $out"
-pass "a refusal names each build tree, the total, and the offline reclaims"
+pass "a refusal names each build tree and the total without fixed cache advice"
 
 # --- a sufficient package reclaim is measured and recommended -------------------------------
 printf 'disk_floor_gb  8\nreclaim_dirs   target\ncargo_reclaim_packages atlantis-hud-core\n' > "$conf"

@@ -45,7 +45,7 @@ truncate_gb() {
 }
 
 measure_cargo_reclaim_kb() {
-  local package output summary count size unit
+  local package output summary size unit
   local -a args=(clean --dry-run --offline)
   for package in "$@"; do
     args+=(--package "$package")

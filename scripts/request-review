@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+#
+# The one place "did GitHub refuse the automatic review request outright?" is answered (cb-6uc).
+#
+#     request-review <pr-number>      # requests the automatic review, and classifies the outcome
+#     request-review --print-refusals # the refusal patterns, one per line, for the suite and reader
+#
+#   exit 0   the review was requested. Wait for it, exactly as before.
+#   exit 3   GitHub refused the request OUTRIGHT. The fallback review is permitted.
+#   exit 1   anything else - no `gh', no network, not authenticated, an unrecognised error. NOT a
+#            refusal: escalate to the navigator. `gh''s own output is on stderr, so the escalation
+#            can quote what GitHub actually said.
+#   exit 2   usage: no argument, more than one, or a flag this does not know.
+#
+# Exit 1 is the safe direction and it is the whole design. A failure this script does not recognise
+# must never read as "GitHub refused", because that is the reading that authorises a merge without a
+# person - the same shape scripts/agent-alive uses for a name that is not on the roster, and the
+# same shape scripts/app-paths uses in failing rather than guessing.
+#
+# It resolves no root and reads no declaration: `gh pr edit' finds the repository from the working
+# directory, and the implementer runs this from its own worktree. Anything diagnostic goes to
+# stderr; --print-refusals is the only thing that ever writes to stdout.
+#
+# `set -uo pipefail' DELIBERATELY without `-e': a non-zero `gh' and a non-zero `grep' are both
+# ordinary answers here rather than failures (scripts/ci-needed makes the same choice for the same
+# reason). .cerebro/traps.md still applies - settle the status, then be polite.
+#
+# Its suite is tests/request-review.sh.
+
+set -uo pipefail
+
+# Every entry is a message GitHub has actually returned when the automatic review cannot be
+# requested at all. Adding one is a decision: it widens what may merge without a person. Matched
+# case-insensitively as fixed substrings, never as regexes.
+refusals=(
+  'Reviews may only be requested from collaborators'   # PR #201, POST .../requested_reviewers
+  "Could not resolve user with login"                  # PR #201, gh pr edit --add-reviewer
+)
+# The second is truncated before the login name on purpose: `gh' quotes the login it was given, and
+# that has been seen as both 'copilot' and 'Copilot'.
+
+if [[ $# -eq 1 && "$1" == "--print-refusals" ]]; then
+  printf '%s\n' "${refusals[@]}"
+  exit 0
+fi
+
+if [[ $# -ne 1 || "$1" == -* ]]; then
+  echo "usage: request-review <pr-number> | request-review --print-refusals" >&2
+  exit 2
+fi
+
+pr="$1"
+
+out="$(gh pr edit "$pr" --add-reviewer @copilot 2>&1)"
+status=$?
+
+if [[ $status -eq 0 ]]; then
+  exit 0
+fi
+
+for pattern in "${refusals[@]}"; do
+  if printf '%s' "$out" | grep -F -i -q -- "$pattern"; then
+    # Settle the status, then be polite: the advisory may not decide the refusal's status.
+    { echo "request-review: GitHub refused the review request: $out" >&2; } || true
+    exit 3
+  fi
+done
+
+{ echo "request-review: could not request the review, and this is not a refusal: $out" >&2; } || true
+exit 1

@@ -124,6 +124,10 @@ run_prune() { (cd "$consumer" && env "$@" bash "$prune" 2>&1); }
 # =================================================================================================
 make_tree ah-cold 5000 .cerebro target node_modules
 make_tree psylocke 5000 .cerebro target node_modules
+mkdir -p "$consumer/target"
+echo source > "$consumer/source.rs"
+echo build > "$consumer/target/artifact"
+find "$consumer/target" -exec touch -h -t "$(stamp_for 5000)" {} +
 
 gb_free 5   # hard against the 8 GB floor: maximum pressure
 out="$(run_prune PRESSURE_COLD_MINUTES=30 COLD_TARGET_MINUTES=1)"
@@ -131,6 +135,7 @@ present "$consumer/.cerebro/worktrees/ah-cold/target" \
         "$consumer/.cerebro/worktrees/ah-cold/node_modules" \
         "$consumer/.cerebro/worktrees/psylocke/target" \
         "$consumer/.cerebro/worktrees/psylocke/node_modules" \
+        "$consumer/target" "$consumer/source.rs" \
   || fail "an unconfigured consumer had a directory reclaimed: $out"
 grep -qi "reclaim" <<<"$out" && fail "it spoke of reclaiming with no reclaim_dirs declared: $out"
 pass "with no reclaim_dirs declared, nothing is reclaimed at any age or under any pressure"

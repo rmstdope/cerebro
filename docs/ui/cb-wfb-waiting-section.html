@@ -1,0 +1,78 @@
+<!doctype html><meta charset="utf-8"><title>cb-wfb — Option B: a Paused section as well as the sweep</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:13px;margin:14px 0 4px;color:#eee}
+.row{display:flex;gap:24px;flex-wrap:wrap}.panel{padding:14px 18px;border:1px solid #333;min-width:66ch}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.5;white-space:pre}.hd{text-decoration:underline}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.s{color:#569cd6}.e{color:#f14c4c}.y{color:gold}.m{color:#c586c0}
+.note{color:#eee;max-width:110ch;background:#333;padding:8px 12px;margin-top:16px}
+.echo{background:#000;color:#ddd;padding:4px 8px;margin-top:6px}
+</style>
+<h1>cb-wfb — Option B: every pause is visible in its own section; the resolvable ones also get a sweep line</h1>
+<p class="note">Same three paused beads as Option A.
+<b>cb-aaa</b> paused on <code>cb-bbb</code>, now closed — resolvable, so it is also a Sweeps finding.
+<b>cb-ccc</b> parked by a planner with <code>needs-ui-decision</code> — yours to answer.
+<b>cb-ddd</b> handed back for a plan missing <i>Known traps</i> — a planner's to fix.
+All three leave the Unplanned section, where they do not belong, and appear under Paused with the reason the pause recorded.</p>
+
+<div class="row">
+<div class="panel dark"><h2>Option B — the panel</h2><pre><span class="hd">Beads</span>
+<span class="hd">Claimed 1</span>
+  P2 cb-eee  Fleet view keeps each suite's output for the last three runs
+<span class="hd">Planned, unclaimed 0</span>
+  <span class="d">(none)</span>
+<span class="hd">Being planned 1</span>
+  P2 cb-wfb  Cerebro resolves beads paused with human labels
+<span class="hd">Unplanned 1</span>
+  P3 cb-fff  Suite names its log directory on a red run
+<span class="hd">Paused 3</span>
+  P2 cb-aaa  Row limit settable from the list pane
+  P2 cb-ccc  Zoom level survives a reload
+  P3 cb-ddd  Export keeps the long format
+<span class="hd">Merged, unverified 0</span>
+  <span class="d">(none)</span>
+
+<span class="hd">Sweeps 1</span>
+  resume cb-aaa — paused 4h, cb-bbb closed 2h ago</pre>
+<h3>Unplanned now means what it says. The count on the Paused header is the number this bead is really about: how much executable work is sitting behind a person.</h3></div>
+
+<div class="panel dark"><h2>Question 3 — what a Paused row says</h2>
+<h3>(i) title only, like every other section:</h3><pre><span class="hd">Paused 3</span>
+  P2 cb-aaa  Row limit settable from the list pane
+  P2 cb-ccc  Zoom level survives a reload
+  P3 cb-ddd  Export keeps the long format</pre>
+<h3>(ii) title, with how long it has been parked:</h3><pre><span class="hd">Paused 3</span>
+  P2 cb-aaa  Row limit settable from the list pane            4h
+  P2 cb-ccc  Zoom level survives a reload                     2d
+  P3 cb-ddd  Export keeps the long format                     6d</pre>
+<h3>(iii) title, with the kind of pause where it is knowable:</h3><pre><span class="hd">Paused 3</span>
+  P2 cb-aaa  Row limit settable from the list pane      on cb-bbb
+  P2 cb-ccc  Zoom level survives a reload               ui decision
+  P3 cb-ddd  Export keeps the long format               —</pre>
+<p class="note" style="margin-top:6px">(iii) costs a column that is empty for most rows, since only <code>needs-ui-decision</code> and a blocker edge are machine-readable; the rest of a pause is prose in the notes.</p></div>
+
+<div class="panel dark"><h2>The heading word (question 4)</h2>
+<h3>(a) <code>Paused</code></h3><pre><span class="hd">Paused 3</span></pre>
+<h3>(b) <code>Waiting on you</code></h3><pre><span class="hd">Waiting on you 3</span></pre>
+<h3>(c) <code>Parked</code></h3><pre><span class="hd">Parked 3</span></pre>
+<p class="note" style="margin-top:6px">(b) is the truest — every one of these is in <code>bd human list</code> — but it is the only section header written in the second person, and it is a lie for cb-ddd, which is a planner's to fix rather than yours.</p></div>
+
+<div class="panel dark"><h2>Empty and error states</h2>
+<h3>No paused beads at all — the ordinary case:</h3><pre><span class="hd">Unplanned 1</span>
+  P3 cb-fff  Suite names its log directory on a red run
+<span class="hd">Paused 0</span>
+  <span class="d">(none)</span>
+<span class="hd">Merged, unverified 0</span>
+  <span class="d">(none)</span></pre>
+<h3>Or hidden entirely when empty, the way Sweeps is:</h3><pre><span class="hd">Unplanned 1</span>
+  P3 cb-fff  Suite names its log directory on a red run
+<span class="hd">Merged, unverified 0</span>
+  <span class="d">(none)</span></pre>
+<h3>More paused than fit — the existing cap, unchanged:</h3><pre><span class="hd">Paused 9</span>
+  P2 cb-aaa  Row limit settable from the list pane
+  P2 cb-ccc  Zoom level survives a reload
+  P3 cb-ddd  Export keeps the long format
+  <span class="d">+6 more</span></pre></div>
+</div>
+
+<p class="note"><b>Common to both options:</b> the sweep only ever fires on evidence it can check — the bead does not carry <code>needs-ui-decision</code>, and every <code>blocks</code> dependency it has is closed. A pause with no dependency edge produces no finding, ever, whatever its notes say; guessing from prose is how a bead handed back for a missing plan section gets pushed straight back at the implementer that refused it.</p>

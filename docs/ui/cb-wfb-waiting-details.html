@@ -1,0 +1,75 @@
+<!doctype html><meta charset="utf-8"><title>cb-wfb — round 2: the chosen shape, and the age it can honestly show</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:13px;margin:14px 0 4px;color:#eee}
+.row{display:flex;gap:24px;flex-wrap:wrap}.panel{padding:14px 18px;border:1px solid #333;min-width:66ch}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.5;white-space:pre}.hd{text-decoration:underline}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.s{color:#569cd6}.e{color:#f14c4c}.y{color:gold}.m{color:#c586c0}
+.note{color:#eee;max-width:110ch;background:#333;padding:8px 12px;margin-top:16px}
+.echo{background:#000;color:#ddd;padding:4px 8px;margin-top:6px}
+</style>
+<h1>cb-wfb round 2 — you chose: a <b>Waiting on you</b> section with an age column, and <code>x</code> returning a bead to the <b>planner</b> queue</h1>
+<p class="note">Same three paused beads. <b>cb-aaa</b> paused on <code>cb-bbb</code>, now closed — the one resolvable case.
+<b>cb-ccc</b> parked by a planner with <code>needs-ui-decision</code>. <b>cb-ddd</b> handed back for a plan missing <i>Known traps</i>.
+Everything below is the shape you picked; what is still open is where the age comes from and how the two lines read.</p>
+
+<div class="row">
+<div class="panel dark"><h2>Question 1 — where the age comes from</h2>
+<h3>(a) <code>paused_at</code>, written into the bead's metadata at the moment it is paused (as Psylocke writes <code>verified_at</code>). True, but unknown for anything paused before this ships:</h3><pre><span class="hd">Waiting on you 3</span>
+  P2 cb-aaa  Row limit settable from the list pane            4h
+  P2 cb-ccc  Zoom level survives a reload                     2d
+  P3 cb-ddd  Export keeps the long format                      <span class="d">—</span></pre>
+<p class="note" style="margin-top:6px">cb-ddd was paused before the change; it shows <code>—</code> for ever rather than a made-up number. Costs one line in each of the three places that pause a bead. Matches this repo's own rule from <code>sweep-verdicts.sh</code>: <i>a distance that is not known is not a small distance.</i></p>
+<h3>(b) <code>updated_at</code>, the only timestamp bd already keeps. Always a number — but it moves on <i>any</i> edit, so a comment or a priority change resets it:</h3><pre><span class="hd">Waiting on you 3</span>
+  P2 cb-aaa  Row limit settable from the list pane            4h
+  P2 cb-ccc  Zoom level survives a reload                     2d
+  P3 cb-ddd  Export keeps the long format                     8m</pre>
+<p class="note" style="margin-top:6px">cb-ddd has been parked six days; it reads <code>8m</code> because you changed its priority a moment ago. The column is then "last touched", not "how long you have been sitting on this" — which is the question the section exists to answer.</p></div>
+
+<div class="panel dark"><h2>Question 2 — the Sweeps line</h2>
+<h3>(i)</h3><pre><span class="hd">Sweeps 1</span>
+  resume cb-aaa — paused 4h, cb-bbb closed 2h ago</pre>
+<h3>(ii) says where it goes, since it goes to the planners and not to a builder:</h3><pre><span class="hd">Sweeps 1</span>
+  unpause cb-aaa — cb-bbb closed 2h ago, back to planning</pre>
+<h3>(iii) matches the other five, which are all <code>&lt;verb&gt; &lt;id&gt; — &lt;evidence&gt;</code>:</h3><pre><span class="hd">Sweeps 1</span>
+  unpause cb-aaa — waiting on cb-bbb, closed 2h ago</pre>
+<h3>The existing five, for comparison:</h3><pre>  close cb-xyz — delivered by Cyclops, on main 12m
+  reclaim cb-xyz — Cyclops gone, not on main
+  unclaim cb-xyz — Cyclops stalled, no commit for 45m
+  unassign cb-xyz — Cyclops is not running
+  recheck cb-xyz — verdict at a1b2c3d4, 3 merges since</pre></div>
+
+<div class="panel dark"><h2>Question 3 — the confirmation on <code>x</code></h2>
+<h3>(i) command only, exactly as the other five prompt:</h3><pre>Run: bd update cb-aaa --remove-label human ? (y or n)</pre>
+<h3>(ii) command, then what it means in one line:</h3><pre>Run: bd update cb-aaa --remove-label human
+cb-aaa goes back to the planners for a re-read. (y or n)</pre></div>
+
+<div class="panel dark"><h2>Question 4 — the section when nothing is parked (the ordinary case)</h2>
+<h3>(i) <code>(none)</code>, like Claimed, Planned and Unplanned:</h3><pre><span class="hd">Unplanned 1</span>
+  P3 cb-fff  Suite names its log directory on a red run
+<span class="hd">Waiting on you 0</span>
+  <span class="d">(none)</span>
+<span class="hd">Merged, unverified 0</span>
+  <span class="d">(none)</span></pre>
+<h3>(ii) hidden entirely, like Sweeps:</h3><pre><span class="hd">Unplanned 1</span>
+  P3 cb-fff  Suite names its log directory on a red run
+<span class="hd">Merged, unverified 0</span>
+  <span class="d">(none)</span></pre>
+<p class="note" style="margin-top:6px">A header reading <b>Waiting on you 0</b> is a small standing reassurance; hidden is one less line on every render of a healthy board.</p></div>
+
+<div class="panel dark"><h2>Not in question — the rest of the surface, for you to object to</h2>
+<h3>More parked than fit: the existing per-section cap, unchanged.</h3><pre><span class="hd">Waiting on you 9</span>
+  P2 cb-aaa  Row limit settable from the list pane            4h
+  P2 cb-ccc  Zoom level survives a reload                     2d
+  P3 cb-ddd  Export keeps the long format                     6d
+  <span class="d">+6 more</span></pre>
+<h3>A narrow window: the title truncates and the age stays, as the other sections truncate today.</h3><pre><span class="hd">Waiting on you 3</span>
+  P2 cb-aaa  Row limit settable fro…      4h
+  P2 cb-ccc  Zoom level survives a …      2d
+  P3 cb-ddd  Export keeps the long …       <span class="d">—</span></pre>
+<h3>A parked P0 — it renders like any other row here. The Sweeps section shouts for a P0 in the <span class="y">warning</span> face; this section does not, because every row in it is already something you are being asked to look at.</h3><pre><span class="hd">Waiting on you 1</span>
+  P0 cb-ggg  Export writes an empty file on the desktop      20m</pre>
+<h3>No keyboard change: <code>n</code>/<code>p</code>, the digits and <code>+</code>/<code>-</code>/<code>u</code> work on these rows exactly as on every other bead row, so you can re-rank a parked bead where you find it.</h3></div>
+</div>
+
+<p class="note"><b>Unchanged from round 1:</b> the sweep fires only on evidence it can check — the bead does not carry <code>needs-ui-decision</code>, and it has at least one <code>blocks</code> dependency, all of them closed. A pause with no dependency edge is never a finding, whatever its notes say. cb-ccc and cb-ddd therefore appear in the section and never in Sweeps.</p>

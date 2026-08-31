@@ -30,3 +30,9 @@ cb-wxr predicted — "unattended, this bead would have been handed back complete
 
 **Seen before.** `docs/retrospectives/cb-wxr.md` (PR #213, same day) and
 `docs/retrospectives/cb-3up.md` (PR #204) — same succeeded-request-then-silence.
+
+**Outcome.** The navigator resolved it by directing the review to a sub-agent instead, and cb-4z6.2
+(PR #217, merged the same day) has since made exactly that the standing rule: an implementer's
+second pair of eyes is now a `reviewer` sub-agent it spawns for itself, and no review is requested
+from GitHub or waited for. So this class of escalation is closed by a change already on main, and
+the count stops at three.

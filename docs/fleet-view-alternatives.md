@@ -24,12 +24,12 @@ instrument, not a deliverable, and every command below states what it was.
 | what the fleet view needs | ratatui (measured) | Textual (sourced, not measured) | Emacs today |
 |---|---|---|---|
 | Host a live agent CLI in a real pty, full-screen, in colour | **yes** (S1) — `portable-pty` + `vt100` + `tui-term::PseudoTerminal`; `copilot`'s own TUI drew correctly, 24-bit colour preserved | claimed by `textual-terminal`, whose last release predates the current `textual` by 3½ years | yes — vterm, `cerebro--make-session-buffer` (`cerebro.el:3492`) |
-| Focus a session and type into it (`RET` then typing) | **yes** (S2) — but every key is a hand-written `KeyEvent`→bytes mapping, and its gaps are the migration cost | claimed; the same mapping problem exists in `pyte`-based widgets | yes — vterm is the terminal; no mapping is written by hand |
+| Focus a session and type into it (`RET` then typing) | **yes** (S2) — but every key is a hand-written `KeyEvent`→bytes mapping, and its gaps are the migration cost | not established; nothing in the sourced material speaks to key translation | yes — vterm is the terminal; no mapping is written by hand |
 | Send a line into an **unfocused** session (the triage nudge) | **yes** (S3) — both of `cerebro--type-into-session`'s spellings landed as a real Copilot message | not established; nothing in the sourced material speaks to it | yes — `cerebro--type-into-session` (`cerebro.el:3977`) |
-| Kill the session and keep the screen as the record of the pass | **yes** (S4) — the app owns the `vt100::Parser`, so the pane kept drawing with `child_alive=false` | not established | yes — `vterm-kill-buffer-on-exit` bound to nil (`cerebro.el:3521`) |
+| Kill the session and keep the screen as the record of the pass | **yes, the last screen** (S4) — the app owns the `vt100::Parser`, so the pane kept drawing with `child_alive=false`; scrollback was not measured | not established | yes — `vterm-kill-buffer-on-exit` bound to nil (`cerebro.el:3521`) |
 | Startup for a navigator with no Emacs | one binary, no runtime | Python ≥3.9 plus a dependency tree | needs Emacs 28+ **and** libvterm |
 | The five-second poll, sweeps, bead panel, two JSONL logs | ordinary Rust; nothing measured stands in the way | ordinary Python | exists, 6 267 lines, 497 ERT cases |
-| Cost to move | ~381 pure tests port; 116 tests and all rendering do not — see *Cost of a migration* | same, plus a Python runtime to ship | zero |
+| Cost to move | ~342 pure tests port; 155 tests and all rendering do not — see *Cost of a migration* | same, plus a Python runtime to ship | zero |
 
 Every row marked **yes** is an `S`-section below with the command and the output. Every Textual row
 says "claimed" or "not established" and is sourced in *Textual, from its documentation*.
@@ -170,7 +170,8 @@ The frame after typing, showing what `vim` received:
 │Psylocke  idle      ││~                                                                           │
 ```
 
-`F1` then opened `vim`'s help in a later frame — an independent confirmation that the escape
+`F1` then opened `vim`'s help in a later frame — an independent confirmation, seen in the running
+prototype and not pasted here, that the escape
 sequence arrived intact.
 
 The confirming run, the same keystrokes into a live `copilot` composer:
@@ -211,6 +212,10 @@ report about it.**
 The fleet view's triage nudge is `cerebro--type-into-session` (`cerebro.el:3977`), which sends the
 string and then the return **on a timer** (`cerebro-return-delay`). Both spellings were measured:
 one write of `text + CR`, and text, a 400 ms pause, then CR. Focus was never given to the pane.
+
+S3 is therefore the one demo that cost **two** confirming `copilot` runs rather than the one the
+header describes: the two spellings are two different things to send, and one run cannot measure
+both.
 
 ```
 python3 drive.py s3  /tmp/s3-vim.log  vim         # one write
@@ -369,24 +374,33 @@ these nine places, each verified to open at that line in this checkout:
 
 **But vterm is not the size of the job, and reading only that table would badly under-estimate it.**
 The root `CLAUDE.md` describes the file as a pure core plus a small set of impure readers, with the
-tests exercising the pure half. Splitting the suite mechanically — a test counts as impure if it
-names one of the documented readers (`cerebro--fleet`, `cerebro--roster`, `cerebro--read-state-file`,
-`cerebro--system-processes`, `cerebro--owned`, `cerebro--gather-sweeps`, `cerebro--fleet-snapshot`),
-or `cerebro--repo-root`, or an Emacs runtime primitive:
+tests exercising the pure half. Splitting the suite mechanically — a test counts as impure if its body names one of the documented
+readers, or `cerebro--repo-root`, or one of a named list of Emacs runtime primitives. The rule is
+the regexp below and nothing else, so the split is reproducible rather than judged:
 
 ```
+$ awk '
+  /^\(ert-deftest/ { if (n) { total++; if (body ~ RE) impure++ } n=1; body="" }
+  n { body = body $0 "\n" }
+  END { if (n) { total++; if (body ~ RE) impure++ }
+        printf "total ert tests: %d\ntests touching an impure reader / emacs runtime: %d\ntests over pure functions only: %d\n", total, impure, total-impure }
+' RE='cerebro--(fleet|roster|read-state-file|system-processes|owned|gather-sweeps|fleet-snapshot|repo-root)|with-temp-buffer|with-current-buffer|make-temp-|process-attributes|call-process|shell-command|find-file|insert-file|write-region|get-buffer|tabulated-list|window' emacs/cerebro-test.el
 total ert tests: 497
-tests touching an impure reader / emacs runtime: 116
-tests over pure functions only: 381
+tests touching an impure reader / emacs runtime: 155
+tests over pure functions only: 342
 ```
 
-So **381 of the 497 cases are about plain data**: state derivation, the trigger predicates, the log
+The primitive list is a choice, and a different one moves the number: naming only the documented
+readers gives 72 impure, and the split is worth reading as *most of the suite is plain data*, not as
+a figure accurate to the case.
+
+So **342 of the 497 cases are about plain data**: state derivation, the trigger predicates, the log
 policy, the sweep findings, the launch command, the marker needle. Those are the functions a Rust
 port would carry over as ordinary `#[test]`s over the same inputs, and the port would be a
 transliteration with the shared case tables (`tests/lib/session-args.cases`) unchanged — which is
 the strongest single argument that a migration is *possible*.
 
-The other 116, and all the rendering, have no equivalent. Concretely, what has to be rebuilt rather
+The other 155, and all the rendering, have no equivalent. Concretely, what has to be rebuilt rather
 than ported: 94 references to Emacs windows, a `tabulated-list-mode` derivation used 25 times, 23
 `propertize` calls, three `define-derived-mode`s, `with-current-buffer` 37 times, and the timer
 machinery. And the test story changes shape: ERT runs *inside the editor that hosts the view*, so a
@@ -432,7 +446,8 @@ cannot resolve two incompatible copies, and it tracks `ratatui` releases.
 ≥3.9 and a dependency tree, familiar to most navigators, plus an unmaintained widget.
 
 **Distribution.** ratatui: `cargo build --release` produced a 1.2 MB binary here, from a clean
-`target/` in **7.1 s wall** (85 crates, warm `~/.cargo`); the first ever build, including downloads,
+`target/` in **7.1 s wall** (85 crates, warm `~/.cargo`) — timed in the prototype, which has since
+been deleted, so the figure is a recollection rather than a paste; the first ever build, including downloads,
 was minutes and was not timed. Textual: a `pip install` into a virtualenv the consumer has to
 manage. Emacs: nothing to distribute — the view is a file in the repository the navigator loads,
 which is the single biggest reason it is cheap today.
@@ -457,24 +472,25 @@ JSON writer in elisp precisely because elisp could not source `scripts/jsonl-log
 `serde_json` and Python `json`.
 
 **CI.** Emacs is currently the cheapest: two `emacs --batch` jobs on ubuntu-latest, no toolchain
-install. A Rust port adds a `cargo` toolchain and a build to every CI run — bounded, but this
-repository's CI today installs nothing at all for the ERT half. Textual adds a Python setup step and
+install. A Rust port adds a `cargo` toolchain and a build to every CI run — bounded, but the ERT half's install
+today is one `purcell/setup-emacs` step per job (`.github/workflows/ci.yml:61`, `:80`) and no
+build at all. Textual adds a Python setup step and
 a `pip install` whose resolution includes an unmaintained package.
 
 ## Cost of a migration
 
 **Rough size.** The port divides into three unequal parts:
 
-1. **The pure core — 381 tests' worth of logic.** A transliteration. Large but low-risk, and the
+1. **The pure core — 342 tests' worth of logic.** A transliteration. Large but low-risk, and the
    existing tests tell you when you are done. Call it the bulk of the line count and the smallest
    share of the risk.
-2. **The impure readers and the rendering — 116 tests, 94 window references, the tabulated list, the
+2. **The impure readers and the rendering — 155 tests, 94 window references, the tabulated list, the
    detail window, the key map.** A rewrite, not a port. This is where the schedule goes.
 3. **The terminal layer — S1 to S4, plus everything not chosen.** Measured at roughly 60 lines for
    the pty and the widget, plus a ~25-line key mapping that is *permanently incomplete* (S2), plus
    the three demos deliberately not measured: resize reaching the child, scrollback through a
    finished session, and several sessions at once with only one visible. All three are plausible —
-   `MasterPty::resize` and `vt100::Parser::set_size` exist and the prototype calls both on
+   `MasterPty::resize` and `vt100::Parser`'s `screen_mut().set_size` exist and the prototype calls both on
    `Event::Resize` — but none of them is measured here.
 
 **Incremental or a cutover: incremental for reading, a cutover for deciding.** This is the question
@@ -503,7 +519,7 @@ That is a good shape — the risky half can be exercised for weeks before the ir
 
 1. **Stay on Emacs.** The ratatui route is buildable — S1, S2, S3 and S4 all came back yes, and the
    pty layer is 60 lines — but nothing measured here is something the current view does *badly*. The
-   migration is 6 267 lines of elisp and 497 ERT cases, of which the 116 hardest are a rewrite rather
+   migration is 6 267 lines of elisp and 497 ERT cases, of which the 155 hardest are a rewrite rather
    than a port, and it ends with a hand-written key table (S2) and a chosen scrollback size (S4)
    where today there is a terminal emulator that already works. The one real cost it removes is
    "the navigator must have Emacs and libvterm", which has cost this project nothing so far.

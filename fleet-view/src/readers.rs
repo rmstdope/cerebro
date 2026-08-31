@@ -140,8 +140,8 @@ fn run_with_timeout(
             // refresh it makes.
             let _ = child.kill();
             let _ = child.wait();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
+            // A descendant may still hold either pipe open. Dropping the join handles lets the
+            // worker return at the timeout boundary instead of waiting for that unrelated process.
             return Err(ReadError::Timeout {
                 source: program_name,
                 seconds: timeout.as_secs(),

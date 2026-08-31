@@ -236,21 +236,26 @@ struct Columns {
 /// in front of the navigator, not a setting they should have to find.
 fn columns(rows: &[FleetRow], width: u16) -> Columns {
     let longest = |values: Vec<usize>| values.into_iter().max().unwrap_or(0);
-    let agent = AGENT_FLOOR.max(2 + longest(rows.iter().map(|r| r.name.chars().count()).collect()));
-    let role = ROLE_FLOOR.max(1 + longest(rows.iter().map(|r| r.role.chars().count()).collect()));
-    let bead = BEAD_FLOOR.max(
+    let natural_agent = AGENT_FLOOR.max(2 + longest(rows.iter().map(|r| r.name.chars().count()).collect()));
+    let natural_role = ROLE_FLOOR.max(1 + longest(rows.iter().map(|r| r.role.chars().count()).collect()));
+    let natural_bead = BEAD_FLOOR.max(
         1 + longest(
             rows.iter()
                 .map(|r| r.bead.as_deref().unwrap_or("").chars().count())
                 .collect(),
         ),
     );
+    let wide = width >= WIDE_COLUMNS;
+    let fixed = if wide { STATE_FLOOR + natural_role + 4 } else { STATE_FLOOR + 1 };
+    let agent = natural_agent.min((width as usize).saturating_sub(fixed + natural_bead).max(AGENT_FLOOR));
+    let bead = natural_bead.min((width as usize).saturating_sub(fixed + agent).max(BEAD_FLOOR));
+    let role = natural_role.min((width as usize).saturating_sub(STATE_FLOOR + agent + bead + 4).max(ROLE_FLOOR));
     Columns {
         agent,
         role,
         state: STATE_FLOOR,
         bead,
-        wide: width >= WIDE_COLUMNS,
+        wide,
     }
 }
 

@@ -236,12 +236,16 @@ struct TerminalGuard<M: TerminalModes> {
 }
 
 impl<M: TerminalModes> TerminalGuard<M> {
-    fn enter(mut modes: M) -> io::Result<Self> {
-        modes.enter()?;
-        Ok(Self {
+    fn enter(modes: M) -> io::Result<Self> {
+        let mut guard = Self {
             modes,
             entered: true,
-        })
+        };
+        if let Err(error) = guard.modes.enter() {
+            let _ = guard.leave();
+            return Err(error);
+        }
+        Ok(guard)
     }
 
     /// Leave now, and report a failure to do so. `Drop` still runs and does nothing, because

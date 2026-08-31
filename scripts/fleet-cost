@@ -416,8 +416,12 @@ if ! out="$(jq -n \
                + (if ($none | length) > 0 then ["--"] + ($none | map(row(.))) else [] end)
                + [""]
                + ["\($beads | map(.bead) | unique | length) bead\(if ($beads | map(.bead) | unique | length) == 1 then "" else "s" end), " +
-                  "\($beads | map(.aic) | add // 0 | aic | fmt1) AIC on beads; " +
-                  "\($none | map(.aic) | add // 0 | aic | fmt1) AIC on no bead; " +
+                  # Rounded ONCE from the nanos, never by adding the rows'"'"' own rounded
+                  # figures: there is a cell per bead-and-agent now rather than one per bead, so
+                  # summing display values drifts past the tenth this line prints and the footer
+                  # stops reconciling with "AIC in all".
+                  "\($bead_rows | group_aic | fmt1) AIC on beads; " +
+                  "\($none_rows | group_aic | fmt1) AIC on no bead; " +
                   "\($total | aic | fmt1) AIC in all."]
                + (if $unpriced_total > 0 then
                     ["\($unpriced_total) of \($request_total) requests record no cost and are not in these totals."]

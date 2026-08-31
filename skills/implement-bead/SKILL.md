@@ -513,6 +513,21 @@ may detect one and will say on stderr that it did — read that line, because a 
 is not one the project vouched for. If neither answers, you should never have been started: the
 launch preflight refuses an implementer with no fast gate.
 
+### A changed shared-root declaration is gated in a clone
+
+`project-conf` and `model-for` deliberately read `.cerebro/project.conf` and
+`.cerebro/models.conf` from the shared checkout. When the diff changes either file, a read from
+this worktree still sees main; a failure or old value there is not evidence that the branch is
+wrong. Finish and commit the increments first, then follow the plan's exact clone, submodule,
+install or prewarm, and fast-gate commands. Run the gate in that throwaway clone of the
+committed branch, where the enclosing and shared roots are one tree. Do not dirty main to make
+a worktree check pass, and do not report a worktree shared-root read as validation of the
+branch. Run any direct reader check the plan labels post-merge only after the merge.
+
+`.cerebro/roster.conf` does not require this escape hatch: `roster` reads the enclosing
+worktree. Use the clone path only when the changed declaration is actually read through
+`consumer-root --shared`.
+
 **The distinction between the two is the project's to make, and it is worth respecting.** The fast
 gate is deliberately *not* everything: it is what the project judged worth paying for on every
 change, and CI is what actually gates the merge. The full gate is the rest, and it is yours to run by

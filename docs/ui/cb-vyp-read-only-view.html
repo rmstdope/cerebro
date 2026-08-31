@@ -28,7 +28,9 @@
 <body>
 <h1>Agreed read-only Ratatui view</h1>
 <p>The standalone <code>cerebro-tui</code> is a live, read-only companion to the Emacs supervisor.
-It writes no state and exposes only refresh and quit keys.</p>
+It writes no state and exposes only refresh and quit keys. Emacs-only armed/standby state is not a
+shared contract, so an agent with no live session reads as dead here even when Emacs intends to
+start it later.</p>
 
 <h2>Populated view</h2>
 <div class="term">
@@ -39,7 +41,7 @@ It writes no state and exposes only refresh and quit keys.</p>
 <span class="gold">? Cerebro</span>       orchestrator   asking                4m
 <span class="blue">◆ Moira</span>         user-feedback idle
 <span class="dim">○ Psylocke</span>      verifier       dead
-<span class="blue">◌ Cypher</span>        reviewer       standby              → outside PR
+<span class="dim">○ Cypher</span>        reviewer       dead
 <span class="green">● Cyclops</span>       implementer    build       cb-123    31m 12m
 <span class="gold">◐ Storm</span>         implementer    waiting               0m</pre></div>
   <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong>

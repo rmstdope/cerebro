@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-kcs chosen split supervisor</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
+          --dim:#8b949e; --blue:#58a6ff; --green:#3fb950; --gold:#d29922; --red:#f85149; }
+  body { margin:0; padding:32px; color:#24292f; background:#f6f8fa;
+         font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  h2 { margin:34px 0 8px; font-size:17px; }
+  p { max-width:980px; color:#57606a; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .term { max-width:1120px; color:var(--text); background:var(--bg); border-radius:9px;
+          padding:10px; box-shadow:0 8px 28px #1f232833;
+          font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .bar { color:var(--dim); padding:2px 4px 8px; }
+  .grid { display:grid; grid-template-columns:360px 1fr; gap:8px; }
+  .pane { border:1px solid var(--line); background:var(--panel); }
+  .pane + .pane { margin-top:8px; }
+  .grid .pane + .pane { margin-top:0; }
+  .title { color:var(--blue); border-bottom:1px solid var(--line); padding:5px 8px; }
+  pre { margin:0; padding:8px; min-height:18em; white-space:pre-wrap; }
+  .short pre { min-height:0; }
+  .green { color:var(--green); } .blue { color:var(--blue); }
+  .gold { color:var(--gold); } .red { color:var(--red); } .dim { color:var(--dim); }
+  .selected { background:#1f2937; }
+  .error { border-color:var(--red); } .error .title { color:var(--red); }
+  .warn { border-color:var(--gold); } .warn .title { color:var(--gold); }
+  .narrow { width:510px; }
+</style>
+</head>
+<body>
+<h1>Chosen direction: persistent split console and repository-declared owner</h1>
+<p>The fleet and selected live session remain visible together. The repository declares
+<code>fleet_supervisor tui</code> before cutover; Emacs then refuses to supervise. This is the
+strongest explicit handoff, but changing back requires editing the declaration. A completed pass
+keeps scrollable output until that agent starts again. The supervisor refuses to quit while any
+agent is live.</p>
+
+<h2>Supervising with Cyclops selected</h2>
+<div class="term">
+  <div class="bar"><span class="green">Cerebro — supervising</span>
+    <span class="dim">| ↑/↓ select | s start | f finish | k kill | Tab focus session | q quit</span></div>
+  <div class="grid">
+    <div>
+      <div class="pane short"><div class="title">Fleet 7</div><pre>  AGENT       STATE       BEAD
+<span class="green">● Xavier</span>      plan        cb-210
+<span class="green">● Beast</span>       plan        cb-211
+<span class="blue">◆ Cerebro</span>     idle
+<span class="dim">○ Psylocke</span>    standby
+<span class="selected"><span class="green">● Cyclops</span>     build       cb-123</span>
+<span class="gold">◐ Storm</span>       waiting
+<span class="dim">○ Rogue</span>       standby</pre></div>
+      <div class="pane short"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-123  Preserve session output
+
+<strong>Planned, unclaimed 2</strong>
+  cb-124  Retry refused launches
+  cb-125  Keep the final screen</pre></div>
+    </div>
+    <div class="pane"><div class="title">Cyclops — build cb-123 <span class="dim">[Tab to focus · Shift-Tab to fleet]</span></div><pre>
+● I added the failing process-tree case first.
+
+● The Rust model now collapses wrapper and child into one session.
+
+❯ Running cargo test model::tests::wrapper_processes_count_once
+
+  Compiling cerebro-tui v0.1.0
+  test model::tests::wrapper_processes_count_once ... ok
+
+● Moving to the reader contract.
+
+  <span class="dim">The fleet keeps refreshing while this session is visible.</span></pre></div>
+  </div>
+</div>
+
+<h2>No live session</h2>
+<div class="term">
+  <div class="bar"><span class="green">Cerebro — supervising</span>
+    <span class="dim">| ↑/↓ select | s start | f finish | k kill | q quit</span></div>
+  <div class="grid">
+    <div class="pane short"><div class="title">Fleet 2</div><pre><span class="selected"><span class="dim">○ Psylocke</span>    standby</span>
+<span class="dim">○ Rogue</span>       standby</pre></div>
+    <div class="pane"><div class="title">Psylocke</div><pre><span class="dim">No live session.
+
+Press s to start Psylocke.
+The last completed pass is not available.</span></pre></div>
+  </div>
+</div>
+
+<h2>Cutover refusal</h2>
+<div class="term">
+  <div class="bar"><span class="gold">Cerebro — read-only</span>
+    <span class="dim">| g retry | q/Esc/Ctrl-C quit</span></div>
+  <div class="pane error"><div class="title">Emacs owns supervision</div><pre><span class="red">project.conf declares fleet_supervisor emacs.</span>
+
+This Ratatui process remains read-only.
+Set <strong>fleet_supervisor tui</strong>, close the Emacs supervisor,
+then press g to retry.
+
+No session was started, ended, nudged, or deleted.</pre></div>
+</div>
+
+<h2>Owner changed while sessions are live</h2>
+<div class="term">
+  <div class="bar"><span class="gold">Cerebro — handoff pending</span>
+    <span class="dim">| 3 live agents | ↑/↓ select | f finish | k kill</span></div>
+  <div class="pane warn"><div class="title">project.conf now names Emacs</div><pre><span class="gold">Ratatui still hosts Xavier, Beast, and Cyclops.</span>
+
+No new session will start and no new nudge will be sent.
+Existing sessions remain available until they finish or are killed.
+Supervision ownership is released when the last session ends.</pre></div>
+</div>
+
+<h2>Quit refused while agents are live</h2>
+<div class="term">
+  <div class="bar"><span class="green">Cerebro — supervising</span>
+    <span class="red">| quit refused</span></div>
+  <div class="pane error"><div class="title">3 live agents prevent exit</div><pre><span class="red">Cerebro is supervising Xavier, Beast, and Cyclops.</span>
+
+Finish or kill every live agent before quitting.
+  f  finish the selected agent after its pass
+  k  kill the selected agent now
+
+No agent was stopped.</pre></div>
+</div>
+
+<h2>Completed pass with retained scrollback</h2>
+<div class="term">
+  <div class="bar"><span class="green">Cerebro — supervising</span>
+    <span class="dim">| ↑/↓ select | s start | Tab focus scrollback | q quit</span></div>
+  <div class="grid">
+    <div class="pane short"><div class="title">Fleet 2</div><pre><span class="selected"><span class="dim">○ Cyclops</span>     standby</span>
+<span class="dim">○ Rogue</span>       standby</pre></div>
+    <div class="pane"><div class="title">Cyclops — ended 15:42 <span class="dim">[retained until next start]</span></div><pre>● Gate passed and PR #241 merged.
+
+● Closed cb-123 and pushed the board.
+
+Cyclops finished with status 0.
+
+
+<span class="dim">End of retained scrollback. Up/Down scroll while focused.</span></pre></div>
+  </div>
+</div>
+
+<h2>Narrow terminal</h2>
+<div class="term narrow">
+  <div class="bar"><span class="green">Cerebro — supervising</span></div>
+  <div class="pane short"><div class="title">Fleet 7</div><pre><span class="selected"><span class="green">● Cyclops</span>     build       cb-123</span>
+<span class="gold">◐ Storm</span>       waiting
+<span class="dim">○ Rogue</span>       standby</pre></div>
+  <div class="pane"><div class="title">Cyclops — build cb-123 <span class="dim">[Tab to focus · Shift-Tab to fleet]</span></div><pre>● Running the reader contract.
+
+<span class="dim">At narrow widths the session moves below
+the fleet; both remain in one document.</span></pre></div>
+</div>
+</body>
+</html>

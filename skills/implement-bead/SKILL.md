@@ -89,7 +89,7 @@ hand.
 | *Picking up*, nothing to claim | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
 | *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
 | *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
-| *The review*, after `gh pr edit --add-reviewer @copilot` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
+| *The review*, after `request-review` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
 | *The review*, once every comment is answered and resolved | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
 | *Red CI* | stays `ci` |
 | *Merging*, on `BEHIND`: catch up on GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
@@ -546,9 +546,20 @@ them here is the failure mode this split exists to prevent.
 **One Copilot review per bead. Request it the moment the PR opens, and never again.**
 
 ```bash
-gh pr edit <n> --add-reviewer @copilot
+.claude/cerebro/scripts/request-review <n>
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
 ```
+
+`request-review` runs `gh pr edit <n> --add-reviewer @copilot` and classifies what came back. Branch
+on its exit status:
+
+- **0** — the review was requested. Wait for it, exactly as below.
+- **3** — GitHub refused the request outright. Go to *When the automatic review cannot be requested*
+  below; nothing else in this section changes.
+- **1** — anything else: no `gh`, no network, not authenticated, an error the script does not
+  recognise. This is **not** a refusal and does not authorise a fallback. Leave the PR open,
+  escalate by the hand-back block, worktree included, and end the pass — quoting what it put on
+  stderr, which is `gh`'s own output.
 
 That command runs once in the life of a PR. Not after you address the comments, not after a rebase,
 not after a fix that changed more than the comment asked for. If you catch yourself weighing whether
@@ -579,7 +590,8 @@ approval.
 **Do not require that review to match your head.** It describes the PR as it stood when it opened,
 and it will keep describing that after your fixes and rebases move the head — which is correct and
 expected, not a reason to ask again. What you owe the review is an answer to every comment, not a
-fresh review of your answers.
+fresh review of your answers. The Four Eye Principle agrees: its standing approval asks that exactly
+one review is requested as the PR opens, and says nothing about which commit it covers.
 
 **Every comment gets a change or a posted reply saying why not**, and the thread resolved:
 
@@ -612,7 +624,88 @@ stays in this same `ci` phase — a fix-and-push does not change what you are wa
 
 **No review within about twenty minutes**: leave the PR open, escalate the bead (the hand-back block above, worktree included), say so plainly, and take the next bead. Some PRs never get one. Merging anyway is not the
 answer, and neither is waiting forever. Do not re-request in the hope of shaking one loose — your one
-request has been spent, and a second would not arrive faster.
+request has been spent, and a second would not arrive faster. **A review that was requested and
+never arrived is not the fallback case below**: the fallback fires only when the request itself was
+refused, and a silence still escalates.
+
+## When the automatic review cannot be requested
+
+This fires on **`request-review` exit 3 and on nothing else**. Exit 1 escalates, and so does the
+twenty-minute silence above; both of those are a review that could have been requested, and neither
+authorises anything.
+
+**The standing approval to merge on a review you obtained yourself comes from the consumer's root
+`CLAUDE.md`, and from nowhere else.** Read its *Four Eye Principle* before you use this section: if
+it does not say that a review the implementer obtains for itself stands in the automatic review's
+place, you have no such approval. Then you still get the review — it is worth having — post it,
+say plainly that GitHub refused the request, escalate by the hand-back block, and end the pass.
+
+**One fallback review per bead**, mirroring the rule above. It is not re-run after a fix, a rebase
+or a force-push.
+
+### Getting the review
+
+Spawn a sub-agent of type **`general-purpose`** — the agent *type*, on whichever CLI this consumer
+declares. Never the `reviewer` type: that loads Cypher's whole role, including its rule against
+reviewing the fleet's own PRs and its demand that the navigator look at the running application,
+neither of which is what this is.
+
+Give it three things, and only these three:
+
+- the diff — `gh pr diff <n>`,
+- the bead's plan — `bd show <id> --json`,
+- `.claude/cerebro/agents/reviewer.md`, to read as its checklist.
+
+**Do not give it your reasoning.** Summarising your own approach into the prompt is the one thing
+that would make this a second reading of the same mind rather than a second pair of eyes.
+
+Which of `agents/reviewer.md` applies:
+
+- **Applies** — *What you are actually looking for*, and all five questions under it. That is the
+  review.
+- **Does not apply** — *Telling the fleet view what you are doing* (the sub-agent writes no state
+  file); *The work list: which PRs are yours*; *Before you run anything: the code is not trusted
+  yet* (that rule is about a contributor's code, and this is the fleet's own, written in its own
+  worktree); *The user experience is the navigator's, always* (the plan's *User-facing decisions* is
+  where those answers already are, and the sub-agent holds the change to them rather than asking for
+  a demo); *Writing the review*'s posting commands and its *The user experience* and
+  *Recommendation* lines; *Ending a pass*; and *What Cypher never does* in its entirety, which binds
+  Cypher's session and not this agent.
+
+### Posting it
+
+**In full, as a PR comment, before the merge.** `<refusal>` is the message `request-review` put on
+stderr, quoted as GitHub gave it; the numbered list is the sub-agent's findings, most important
+first, each naming the file and the case; when it found none, the list is replaced by the italic
+line and nothing else:
+
+```markdown
+**Fallback review** — GitHub's automatic review could not be requested on this pull request
+(`<refusal>`), so this review was obtained under the Four Eye Principle's fallback. It was produced
+by an agent given the diff and the bead's plan, and not the implementer's reasoning.
+
+1. <finding, naming the file and the case>
+
+*No findings.*
+```
+
+### Answering it, and finishing
+
+Findings are answered exactly as Copilot's are — a change, or a posted reply saying why not. A
+finding about **approach or scope** is a hand-back, by the hand-back block above, unchanged.
+
+Before `bd close`:
+
+```bash
+bd update <id> --add-label review:self
+bd dolt push
+```
+
+so every bead that merged this way is one `bd list --label review:self` away. Say in one line, in
+your closing report, that you merged on a review you obtained yourself.
+
+**If the sub-agent cannot be spawned, or returns nothing usable, that is exit-1 territory**: leave
+the PR open, escalate by the hand-back block, worktree included, and end the pass.
 
 ## Red CI
 

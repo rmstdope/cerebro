@@ -1042,22 +1042,28 @@ An em dash for a bead with no `paused_at' - the one place the empty string
       (if (string-empty-p age) "—" age))))
 
 (defun cerebro--bead-panel (buckets width max now &optional sweep-findings history-rows)
-  "The whole panel as a list of lines, from BUCKETS - the plist
-`cerebro--partition-beads' returns, read by name through `cerebro--bucket'.
+  "The whole panel as a list of lines.
+
+BUCKETS is the named association list `cerebro--partition-beads' returns -
+read here with `alist-get' by key \(`claimed', `planned', `being-planned',
+`unplanned', `paused', `merged'\), never by position, so that a bucket added
+or reordered there cannot change what a section reads (ah-vcof).  The
+explicit sequence of `cerebro--bead-section' calls below is what fixes the
+panel's own visible order, independently of BUCKETS' own order.
 
 The order work moves in, read backwards, and it stops where the fleet's part
 in it does: being built, ready to pick up, being planned, not planned yet,
 parked for the navigator, and merged but not yet verified - which is
 Psylocke's queue.
 
-`:being-planned' is the planners' own row of the pipeline. It is worth its own
+Being planned is the planners' own row of the pipeline. It is worth its own
 section rather than being folded into Unplanned because the two answer
 opposite questions: Unplanned is work nobody has started, and this is work
 that is under way and simply cannot be claimed yet. Read together with
 Planned, unclaimed, it is also what says whether a short queue means the
 planners are behind or merely mid-bead.
 
-`:paused' is the `human' queue - work parked for the navigator by an
+Paused is the `human' queue - work parked for the navigator by an
 implementer, a planner or Moira, which nobody in the fleet may pick up
 again until a person acts. It is a section rather than a line in Unplanned
 because it is the one count that says how much executable work is sitting
@@ -1075,18 +1081,16 @@ one a candidate for `x' rather than something already decided.
 HISTORY-ROWS, when given, adds a History section below that (see
 `cerebro--history-section') - what each agent is doing right now, how long
 it has been doing it, and whether that is long by its own standards."
-  (append (cerebro--bead-section "Claimed" (cerebro--bucket buckets :claimed) width max) (list "")
-          (cerebro--bead-section "Planned, unclaimed" (cerebro--bucket buckets :planned) width max)
-          (list "")
-          (cerebro--bead-section "Being planned" (cerebro--bucket buckets :being-planned) width max)
-          (list "")
-          (cerebro--bead-section "Unplanned" (cerebro--bucket buckets :unplanned) width max) (list "")
-          (cerebro--bead-section "Waiting on you" (cerebro--bucket buckets :paused) width max
+  (append (cerebro--bead-section "Claimed" (alist-get 'claimed buckets) width max) (list "")
+          (cerebro--bead-section "Planned, unclaimed" (alist-get 'planned buckets) width max) (list "")
+          (cerebro--bead-section "Being planned" (alist-get 'being-planned buckets) width max) (list "")
+          (cerebro--bead-section "Unplanned" (alist-get 'unplanned buckets) width max) (list "")
+          (cerebro--bead-section "Waiting on you" (alist-get 'paused buckets) width max
                                  nil (cerebro--paused-age-suffix now))
           (list "")
           ;; Newest first: priority says nothing about finished work, so what
           ;; this answers is what just landed and still wants checking.
-          (cerebro--bead-section "Merged, unverified" (cerebro--bucket buckets :merged) width max
+          (cerebro--bead-section "Merged, unverified" (alist-get 'merged buckets) width max
                                  #'cerebro--sort-recent)
           (let ((sweep-lines (cerebro--sweep-section sweep-findings)))
             (when sweep-lines (cons "" sweep-lines)))
@@ -4566,8 +4570,8 @@ if the list it partitions is."
         "open,in_progress,blocked,deferred,closed" "--json" "--brief"))
 
 (defun cerebro--request-beads (repo-root callback)
-  "Ask `bd' for the panel's beads without blocking; CALLBACK gets the
-partition lists (see `cerebro--partition-beads') and the linked beads
+  "Ask `bd' for the panel's beads without blocking; CALLBACK gets the named
+buckets (see `cerebro--partition-beads') and the linked beads
 (`cerebro--linked-beads') when the answer lands, or nil and nil when `bd' did
 not answer - including `bd' exiting zero but printing something that is not
 JSON, which is not a valid empty answer either.
@@ -4701,33 +4705,19 @@ excluded by that and by diverging from the word anyway."
                     (string-prefix-p held label)))
               labels)))
 
-(defconst cerebro--bead-buckets
-  '(:claimed :planned :being-planned :unplanned :paused :merged)
-  "The buckets `cerebro--partition-beads' fills, in the order the panel shows
-them.  The order is the panel's alone: no reader may depend on it, and
-`cerebro--bucket' is how a reader asks for one by name.")
-
-(defun cerebro--bucket (buckets key)
-  "Pure.  The list under KEY in BUCKETS, a plist from `cerebro--partition-beads'.
-
-Signals when KEY is not one of `cerebro--bead-buckets'.  `plist-get' would
-answer nil, which is indistinguishable from an empty bucket - and a reader
-silently told that the bucket it asked for is empty is the exact failure this
-whole change exists to remove.  A misspelled key is a bug in cerebro, not in
-the data, so it is loud."
-  (unless (memq key cerebro--bead-buckets)
-    (error "Unknown bead bucket %S; expected one of %S" key cerebro--bead-buckets))
-  (plist-get buckets key))
-
 (defun cerebro--partition-beads (beads)
-  "Split BEADS into the buckets the panel shows.
+  "Split BEADS into a named association list, one entry per section.
 
-A plist keyed by `cerebro--bead-buckets', read through `cerebro--bucket',
-where merged means merged and not yet verified, `:being-planned' is what a
-planner is holding right
-now - open, labelled `planning', and not claimable by anybody until the plan
-lands (ah-2p.2) - and PAUSED is what somebody parked for the navigator with
-`human'.  Not every bead lands in one, deliberately: verified work is
+\(\(claimed . BEADS\) \(planned . BEADS\) \(being-planned . BEADS\)
+ \(unplanned . BEADS\) \(paused . BEADS\) \(merged . BEADS\)\), where merged
+means merged and not yet verified, being-planned is what a planner is
+holding right now - open, labelled `planning', and not claimable by anybody
+until the plan lands (ah-2p.2) - and paused is what somebody parked for the
+navigator with `human'.  Every key is always present, with a nil value when
+its bucket is empty.  The association order is descriptive only - a
+consumer reads a value by its key with `alist-get', never by position, so
+adding or reordering a bucket cannot retarget what another one reads
+\(ah-vcof\).  Not every bead lands in one, deliberately: verified work is
 finished, epics are parents rather than work, bd's own `event' records are
 bookkeeping, and blocked or deferred beads cannot be picked up.  A panel is
 a list of what to do about something, so what there is nothing to do about
@@ -4774,12 +4764,12 @@ work."
          ;; Blocked, deferred, or a status from a future bd: real beads, but
          ;; nothing the fleet can pick up today.
          (t nil))))
-    ;; All six keys, always, even when every bucket is empty: nil is a
-    ;; well-formed empty plist, and `cerebro--trigger-context' tells "the panel
-    ;; has not answered yet" from "the buffer is empty" by whether this is nil.
-    (list :claimed (nreverse claimed) :planned (nreverse planned)
-          :being-planned (nreverse being-planned) :unplanned (nreverse unplanned)
-          :paused (nreverse paused) :merged (nreverse merged))))
+    (list (cons 'claimed (nreverse claimed))
+          (cons 'planned (nreverse planned))
+          (cons 'being-planned (nreverse being-planned))
+          (cons 'unplanned (nreverse unplanned))
+          (cons 'paused (nreverse paused))
+          (cons 'merged (nreverse merged)))))
 
 (defcustom cerebro-priority-floor 4
   "The least urgent priority `bd\=' takes; 0 is the most urgent.
@@ -5059,10 +5049,10 @@ does."
    buffer
    (lambda ()
      (let* ((width (cerebro--panel-width buffer))
-            ;; No empty-plist literal: nil is a well-formed empty plist, so
-            ;; every bucket reads nil and the empty sections draw as they do
-            ;; with an answer in hand.
-            (lines (cerebro--bead-panel cerebro--beads width cerebro-beads-per-section
+            (buckets (or cerebro--beads
+                         '((claimed . nil) (planned . nil) (being-planned . nil)
+                           (unplanned . nil) (paused . nil) (merged . nil))))
+            (lines (cerebro--bead-panel buckets width cerebro-beads-per-section
                                         (current-time) cerebro--sweep-findings
                                         cerebro--history-rows))
             ;; By id, not by position: the panel redraws every thirty seconds
@@ -5451,23 +5441,22 @@ is a *resolver* - a function of ENDED-AT returning what
 Nil before the first answer, and `failed\=' when the last thing to happen
 was a failure, are both plain values: neither depends on whose pass it is."
   (let* ((panel (cerebro--beads-panel-buffer))
-         (beads (and panel (buffer-local-value 'cerebro--beads panel)))
+         (buckets (and panel (buffer-local-value 'cerebro--beads panel)))
          ;; What a planner may actually take, both sides of the buffer rule:
          ;; a bead parked in the navigator's queue is not work anybody in the
          ;; fleet can move (`cerebro-parked-labels'), and counting it starts a
          ;; session to find nothing to do.
-         (planned (cerebro--actionable-beads (cerebro--bucket beads :planned)))
-         (unplanned (cerebro--actionable-beads (cerebro--bucket beads :unplanned)))
-         (merged (cerebro--bucket beads :merged))
+         (planned (cerebro--actionable-beads (alist-get 'planned buckets)))
+         (unplanned (cerebro--actionable-beads (alist-get 'unplanned buckets)))
+         (merged (alist-get 'merged buckets))
          ;; Every open bucket, parked included: a bead can carry `verdict:stale'
          ;; and `human' at once, and a stale verdict does not stop being one
          ;; because the navigator was asked something about the bead.
-         (open-beads (append (cerebro--bucket beads :claimed) (cerebro--bucket beads :planned)
-                             (cerebro--bucket beads :being-planned)
-                             (cerebro--bucket beads :unplanned)
-                             (cerebro--bucket beads :paused))))
+         (open-beads (append (alist-get 'claimed buckets) (alist-get 'planned buckets)
+                             (alist-get 'being-planned buckets) (alist-get 'unplanned buckets)
+                             (alist-get 'paused buckets))))
     (list (cons 'now (float-time now))
-          (cons 'planned (if beads (length planned) most-positive-fixnum))
+          (cons 'planned (if buckets (length planned) most-positive-fixnum))
           (cons 'p0-unplanned
                 (mapcar (lambda (bead) (alist-get 'id bead))
                         (seq-filter (lambda (bead) (equal (alist-get 'priority bead) 0))

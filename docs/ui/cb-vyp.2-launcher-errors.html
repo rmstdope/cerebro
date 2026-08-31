@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-vyp.2 - agreed launcher errors</title>
+<style>
+body { margin: 0; padding: 32px; background: #f6f8fa; color: #24292f;
+       font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+h1 { font-size: 22px; margin: 0 0 8px; }
+p { color: #57606a; max-width: 840px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.term { margin: 18px 0; max-width: 900px; padding: 14px 16px; border-radius: 8px;
+        background: #0d1117; color: #e6edf3;
+        font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.error { color: #f85149; }
+.dim { color: #8b949e; }
+</style>
+</head>
+<body>
+<h1>Agreed guided launcher failures</h1>
+<p>Each refusal names the problem and the action that resolves it, following the existing
+<code>scripts/cerebro</code> style.</p>
+
+<div class="term"><span class="dim">$ .claude/cerebro/scripts/cerebro-tui unexpected</span><br>
+<span class="error">usage: cerebro-tui (no arguments; run it from anywhere inside the consumer)</span></div>
+
+<div class="term"><span class="dim">$ .claude/cerebro/scripts/cerebro-tui</span><br>
+<span class="error">cerebro-tui: not inside a consumer - run this from a repository that mounts cerebro</span></div>
+
+<div class="term"><span class="dim">$ .claude/cerebro/scripts/cerebro-tui</span><br>
+<span class="error">cerebro-tui: cargo is not on PATH - install Rust and Cargo</span></div>
+
+<div class="term"><span class="dim">$ .claude/cerebro/scripts/cerebro-tui</span><br>
+<span class="error">cerebro-tui: /path/to/cerebro/Cargo.toml is missing - this checkout of cerebro has no Ratatui fleet view</span></div>
+
+<div class="term"><span class="dim">$ cargo run ...</span><br>
+<span class="error">cerebro-tui: CEREBRO_CONSUMER_SHARED_ROOT is missing - start it with .claude/cerebro/scripts/cerebro-tui</span></div>
+</body>
+</html>

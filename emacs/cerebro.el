@@ -4699,6 +4699,24 @@ excluded by that and by diverging from the word anyway."
                     (string-prefix-p held label)))
               labels)))
 
+(defconst cerebro--bead-buckets
+  '(:claimed :planned :being-planned :unplanned :paused :merged)
+  "The buckets `cerebro--partition-beads' fills, in the order the panel shows
+them.  The order is the panel's alone: no reader may depend on it, and
+`cerebro--bucket' is how a reader asks for one by name.")
+
+(defun cerebro--bucket (buckets key)
+  "Pure.  The list under KEY in BUCKETS, a plist from `cerebro--partition-beads'.
+
+Signals when KEY is not one of `cerebro--bead-buckets'.  `plist-get' would
+answer nil, which is indistinguishable from an empty bucket - and a reader
+silently told that the bucket it asked for is empty is the exact failure this
+whole change exists to remove.  A misspelled key is a bug in cerebro, not in
+the data, so it is loud."
+  (unless (memq key cerebro--bead-buckets)
+    (error "Unknown bead bucket %S; expected one of %S" key cerebro--bead-buckets))
+  (plist-get buckets key))
+
 (defun cerebro--partition-beads (beads)
   "Split BEADS into the six lists the panel shows.
 

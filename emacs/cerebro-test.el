@@ -3613,6 +3613,23 @@ work that came back."
         (cerebro-test--any "from-the-future" "sideways"))
   "One bead of every shape bd can produce, plus a status it cannot.")
 
+(ert-deftest cerebro-test/bucket-returns-the-list-under-its-key ()
+  "A reader asks for the bucket it means, by name."
+  (let ((buckets (list :claimed '(a) :planned '(b c) :being-planned nil
+                       :unplanned '(d) :paused nil :merged '(e))))
+    (should (equal (cerebro--bucket buckets :planned) '(b c)))
+    (should (equal (cerebro--bucket buckets :claimed) '(a)))
+    (should (equal (cerebro--bucket buckets :merged) '(e)))
+    ;; A legal key the plist does not carry is an empty bucket, which is what
+    ;; nil already means everywhere else here.
+    (should-not (cerebro--bucket '(:claimed (a)) :paused))
+    (should-not (cerebro--bucket nil :planned))))
+
+(ert-deftest cerebro-test/an-unknown-bucket-key-is-an-error ()
+  "A misspelled key is loud. `plist-get' would answer nil, and a reader silently
+told the bucket it asked for is empty is the failure this accessor removes."
+  (should-error (cerebro--bucket '(:claimed nil) :megred)))
+
 (ert-deftest cerebro-test/each-shape-lands-where-it-belongs ()
   "Five buckets, and everything else deliberately in none of them."
   (let* ((buckets (cerebro--partition-beads cerebro-test--every-shape))

@@ -488,9 +488,12 @@ const SETTLED_LABELS: [&str; 2] = ["verification:passed", "verification:not-need
 
 fn is_holding_label(labels: &[String]) -> bool {
     let held_prefix = format!("{PLANNING_LABEL}:");
-    labels
-        .iter()
-        .any(|label| label == PLANNING_LABEL || label.starts_with(&held_prefix))
+    labels.iter().any(|label| {
+        label == PLANNING_LABEL
+            || label
+                .strip_prefix(&held_prefix)
+                .is_some_and(|name| !name.is_empty() && !name.contains(':'))
+    })
 }
 
 /// Split BEADS into the fleet panel's six buckets.
@@ -890,6 +893,8 @@ mod tests {
             bead("planned-1", "open", "feature", &["planned"]),
             bead("planning-bare", "open", "feature", &["planning"]),
             bead("planning-named", "open", "feature", &["planning:Xavier"]),
+            bead("planning-empty", "open", "feature", &["planning:"]),
+            bead("planning-double", "open", "feature", &["planning::Xavier"]),
             bead("near-miss-planner", "open", "feature", &["planner:Xavier"]),
             bead("unplanned-1", "open", "feature", &[]),
             bead("paused-over-planned", "open", "feature", &["human", "planned"]),
@@ -920,7 +925,12 @@ mod tests {
         );
         assert_eq!(
             buckets.unplanned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
-            vec!["near-miss-planner", "unplanned-1"]
+            vec![
+                "planning-empty",
+                "planning-double",
+                "near-miss-planner",
+                "unplanned-1",
+            ]
         );
         assert_eq!(
             buckets.paused.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),

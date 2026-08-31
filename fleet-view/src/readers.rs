@@ -45,19 +45,30 @@ impl Default for Programs {
 
 /// One impure read gone wrong. Each variant keeps enough to diagnose it: which program or path,
 /// and what it said.
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ReadError {
-    #[error("could not run {program}: {message}")]
-    Spawn { program: String, message: String },
-    #[error("{program} exited with status {status:?}: {stderr}")]
+    Spawn { source: String, message: String },
     Exit {
-        program: String,
+        source: String,
         status: Option<i32>,
         stderr: String,
     },
-    #[error("{program} produced invalid output: {message}")]
-    Invalid { program: String, message: String },
+    Invalid { source: String, message: String },
 }
+
+impl std::fmt::Display for ReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Spawn { source, message } => write!(f, "could not run {source}: {message}"),
+            Self::Exit { source, status, stderr } =>
+                write!(f, "{source} exited with status {status:?}: {stderr}"),
+            Self::Invalid { source, message } =>
+                write!(f, "{source} produced invalid output: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {}
 
 fn run(program: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Vec<u8>, ReadError> {
     let program_name = program.display().to_string();
@@ -67,12 +78,12 @@ fn run(program: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Vec<u8>, Rea
         command.current_dir(dir);
     }
     let output = command.output().map_err(|e| ReadError::Spawn {
-        program: program_name.clone(),
+        source: program_name.clone(),
         message: e.to_string(),
     })?;
     if !output.status.success() {
         return Err(ReadError::Exit {
-            program: program_name,
+            source: program_name,
             status: output.status.code(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
@@ -85,9 +96,12 @@ fn run(program: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Vec<u8>, Rea
 pub fn read_roster(paths: &ReaderPaths) -> Result<Vec<RosterEntry>, ReadError> {
     let program = paths.scripts_dir.join("roster");
     let stdout = run(&program, &[], Some(&paths.consumer_root))?;
-    let text = String::from_utf8_lossy(&stdout);
+    let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
+        source: program.display().to_string(),
+        message: e.to_string(),
+    })?;
     model::parse_roster(&text).map_err(|e| ReadError::Invalid {
-        program: program.display().to_string(),
+        source: program.display().to_string(),
         message: e.to_string(),
     })
 }
@@ -122,9 +136,12 @@ pub fn read_states(paths: &ReaderPaths, roster: &[RosterEntry]) -> StateInputs {
 /// contract (`emacs/cerebro.el:3255-3271`), fed to the pure `model::parse_processes`.
 pub fn read_processes(programs: &Programs) -> Result<Vec<ProcessRow>, ReadError> {
     let stdout = run(&programs.ps, &["-axo", "pid=,ppid=,args="], None)?;
-    let text = String::from_utf8_lossy(&stdout);
+    let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
+        source: programs.ps.display().to_string(),
+        message: e.to_string(),
+    })?;
     model::parse_processes(&text).map_err(|e| ReadError::Invalid {
-        program: programs.ps.display().to_string(),
+        source: programs.ps.display().to_string(),
         message: e.to_string(),
     })
 }
@@ -151,7 +168,7 @@ pub fn read_beads(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<Bead>,
         None,
     )?;
     serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
-        program: programs.bd.display().to_string(),
+        source: programs.bd.display().to_string(),
         message: e.to_string(),
     })
 }
@@ -159,6 +176,7 @@ pub fn read_beads(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<Bead>,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::partition_beads;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
@@ -285,6 +303,16 @@ mod tests {
     }
 
     #[test]
+    fn readers_report_spawn_and_decode_failures() {
+        let programs = Programs { ps: PathBuf::from("/does/not/exist/ps"), bd: PathBuf::from("bd") };
+        assert!(matches!(read_processes(&programs), Err(ReadError::Spawn { .. })));
+        let dir = tempfile::tempdir().unwrap();
+        let bad_ps = write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf '\\377'\n");
+        let programs = Programs { ps: bad_ps, bd: PathBuf::from("bd") };
+        assert!(matches!(read_processes(&programs), Err(ReadError::Invalid { .. })));
+    }
+
+    #[test]
     fn bd_reader_uses_shared_root_all_statuses_and_readonly() {
         let dir = tempfile::tempdir().unwrap();
         let capture = dir.path().join("argv.txt");
@@ -312,11 +340,25 @@ mod tests {
         let beads = read_beads(&paths, &programs).unwrap();
         assert_eq!(beads.len(), 1);
         assert_eq!(beads[0].id, "cb-1");
+        assert_eq!(partition_beads(beads).unplanned.len(), 1);
 
         let recorded = std::fs::read_to_string(&capture).unwrap();
         assert!(recorded.contains("--readonly"));
         assert!(recorded.contains("--brief"));
         assert!(recorded.contains("open,in_progress,blocked,deferred,closed"));
+    }
+
+    #[test]
+    fn bd_reader_reports_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake_bd = write_executable(dir.path(), "bd", "#!/usr/bin/env bash\nprintf 'not json'\n");
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().join("shared"),
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+        assert!(matches!(read_beads(&paths, &programs), Err(ReadError::Invalid { .. })));
     }
 
     #[test]

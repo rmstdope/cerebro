@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-qke — the states a spike document hides</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 62rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; }
+  .note { color: var(--dim); font-size: 13.5px; }
+  .doc { border:1px solid var(--line); border-radius:8px; padding:1rem 1.3rem; background:#fff;
+         box-shadow:0 1px 3px rgba(0,0,0,.05); margin:.6rem 0 1.2rem; }
+  .doc h3 { margin:0 0 .4rem; font-size:.95rem; }
+  .yes { color:var(--good); font-weight:600; }
+  .no { color:var(--bad); font-weight:600; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+  @media (max-width: 820px) { .cols { grid-template-columns:1fr; } }
+  .lbl { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin:.8rem 0 .1rem; }
+</style>
+</head>
+<body>
+
+<h1>cb-qke — the states a spike document hides</h1>
+<p class="lede">A summary table where everything says <span class="yes">yes</span> is the case nobody
+argues about. These are the three that actually decide whether the document is worth reading, shown
+as the prose they would produce.</p>
+
+<h2>State 1 — a measurement that comes back negative</h2>
+<p class="note">Say ratatui hosts the session fine, but killing it loses the scrollback that is the
+record of a pass. Two ways the document can carry that:</p>
+<div class="cols">
+<div>
+<div class="lbl">Record it and carry on</div>
+<div class="doc">
+<h3>S4 Killing a session, and what is left</h3>
+<p class="note"><strong>Result: <span class="no">no</span>.</strong> When the child exits, the
+prototype's screen model is dropped with the pty and the pane goes blank. Emacs keeps the buffer
+because <code>vterm-kill-buffer-on-exit</code> is bound to <code>nil</code>
+(<code>cerebro.el:3521</code>) and a buffer is not a process.</p>
+<p class="note">Keeping the parsed screen after the child exits is possible — it is a
+<code>Vec</code> of rows the prototype currently drops — but it was not built here, and the cost of
+that is <strong>estimated, not measured</strong>: roughly one screen-buffer type plus a lifecycle
+distinct from the pty's, which today does not exist.</p>
+</div>
+</div>
+<div>
+<div class="lbl">Stop and hand the bead back</div>
+<div class="doc">
+<h3>(no S4 section)</h3>
+<p class="note">The bead comes back to you with a note saying the ratatui prototype could not keep a
+buffer past process exit, and asking whether to continue. Nothing is written to
+<code>docs/</code>. The other three measurements are in a scratch directory nobody reads.</p>
+</div>
+</div>
+</div>
+<p class="note"><strong>My recommendation is the left one.</strong> A negative measurement is the
+most valuable thing this bead can produce — it is exactly the evidence a desk study cannot get — and
+a spike that stops at the first "no" delivers nothing at all.</p>
+
+<h2>State 2 — the evidence does not support a recommendation</h2>
+<div class="doc">
+<h3>Recommendation</h3>
+<p class="note"><strong>Stay on Emacs, and revisit if libvterm becomes a problem.</strong> The
+ratatui route is buildable — S1, S2 and S3 all came back yes — but the migration is 6&nbsp;267 lines
+of elisp and 497 ERT cases, and nothing measured here is something the current view does badly. The
+one real cost it removes is "the navigator must have Emacs and libvterm", which has cost this
+project nothing so far.</p>
+</div>
+<p class="note">A recommendation to <em>change nothing</em> is a permitted, and quite likely, outcome
+— the document ranks all three, and staying is one of the three.</p>
+
+<h2>State 3 — the document cannot decide, and says so</h2>
+<div class="doc">
+<h3>What could not be measured, and why</h3>
+<p class="note">Textual was not measured. <code>textual-terminal</code> has no release compatible
+with the Python 3.14 on this machine, and installing an older interpreter was outside this bead. Its
+column in the summary table is sourced to its README and marked <em>claimed</em> throughout, and no
+part of the recommendation rests on it.</p>
+</div>
+<p class="note">This section is mandatory in the plan — the <code>copilot.md</code> precedent
+requires it, and a spike with no such section is one that quietly inferred something.</p>
+
+</body>
+</html>

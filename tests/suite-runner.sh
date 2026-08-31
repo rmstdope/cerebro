@@ -281,31 +281,70 @@ pass "--jobs refuses a bad count and --jobs 1 keeps the contract"
 
 # --- 6. suites actually run at the same time ---
 #
-# The point of the bead. Two suites that sleep 2s each finish in under 4s at --jobs 2 and take at
-# least 4s at --jobs 1. Their own directory, so cases 1-5 are untouched by the sleeping.
+# The point of the bead that made the runner parallel (cb-x05), and the property is that the two
+# suites' lifetimes OVERLAP - not that their total elapsed time falls under a threshold. Elapsed
+# time is a proxy, and this is the one case in the gate whose subject is the gate's own scheduler
+# while being run by it, alongside one suite per processor. cb-1h8: each fixture records the second
+# it started and the second it ended, and the assertion is on those four numbers. Load can only
+# LENGTHEN both windows, which makes an overlap more certain rather than less; the old
+# `parallel_secs -lt 4' bound broke in exactly the direction a busy machine pushes it.
+#
+# Their own directory, so cases 1-5 are untouched by the sleeping.
 
 mkdir -p "$work_dir/slow"
-printf '#!/usr/bin/env bash\nsleep 2\nexit 0\n' >"$work_dir/slow/d-slow.sh"
-printf '#!/usr/bin/env bash\nsleep 2\nexit 0\n' >"$work_dir/slow/e-slow.sh"
+marks="$work_dir/marks"
+for f in d-slow e-slow; do
+  printf '#!/usr/bin/env bash\nmkdir -p "%s"\ndate +%%s >"%s/%s.start"\nsleep 2\ndate +%%s >"%s/%s.end"\nexit 0\n' \
+    "$marks" "$marks" "$f" "$marks" "$f" >"$work_dir/slow/$f.sh"
+done
 
-SECONDS=0
+# The four recorded seconds, as $ds $de $es $ee, and a one-line summary for a failure message.
+# `date +%s' is what bash 3.2 and the coreutils macOS ships can both give; sub-second resolution
+# is not available and is not needed against a 2-second sleep.
+windows=""
+read_windows() {
+  local f
+  for f in d-slow e-slow; do
+    [[ -f "$marks/$f.start" && -f "$marks/$f.end" ]] \
+      || fail "$1: $f.sh recorded no window under $marks
+$(ls "$marks" 2>/dev/null)
+$both"
+  done
+  ds="$(cat "$marks/d-slow.start")"; de="$(cat "$marks/d-slow.end")"
+  es="$(cat "$marks/e-slow.start")"; ee="$(cat "$marks/e-slow.end")"
+  windows="d-slow $ds..$de, e-slow $es..$ee"
+}
+
+# Two windows overlap when the later start is strictly before the earlier end. Sequential suites
+# can only touch at a boundary - e-slow starts when d-slow has already ended - so the strict
+# comparison reads a serial run as no overlap however the seconds truncate.
+overlapping() {
+  local later_start="$ds" earlier_end="$de"
+  # `if', not `[[ ... ]] && ...': a `&&' pair that does not match returns 1, and .cerebro/traps.md
+  # is about exactly that status reaching somewhere it was not meant to.
+  if [[ $es -gt $later_start ]]; then later_start="$es"; fi
+  if [[ $ee -lt $earlier_end ]]; then earlier_end="$ee"; fi
+  [[ $later_start -lt $earlier_end ]]
+}
+
+rm -rf "$marks"
 run --jobs 2 "$work_dir/slow"
-parallel_secs=$SECONDS
 [[ $status -eq 0 ]] || fail "--jobs 2 on two sleeping suites: expected exit 0, got $status
 $both"
 for f in d-slow e-slow; do
   grep -qF -- "ok   $work_dir/slow/$f.sh (" <<<"$both" || fail "--jobs 2: no 'ok' line for $f.sh
 $both"
 done
-[[ $parallel_secs -lt 4 ]] || fail "--jobs 2 on two 2s suites took ${parallel_secs}s - they did not overlap
+read_windows "--jobs 2"
+overlapping || fail "--jobs 2: the two suites did not overlap ($windows)
 $both"
 
-SECONDS=0
+rm -rf "$marks"
 run --jobs 1 "$work_dir/slow"
-serial_secs=$SECONDS
 [[ $status -eq 0 ]] || fail "--jobs 1 on two sleeping suites: expected exit 0, got $status
 $both"
-[[ $serial_secs -ge 4 ]] || fail "--jobs 1 on two 2s suites took ${serial_secs}s - it did not serialise
+read_windows "--jobs 1"
+! overlapping || fail "--jobs 1: the two suites overlapped ($windows) - it did not serialise
 $both"
 
 # At --jobs 1 at most one name is ahead of its result, which is the property a stalled run relies on.

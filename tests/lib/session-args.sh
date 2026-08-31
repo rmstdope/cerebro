@@ -30,10 +30,16 @@
 #     newlines - the store's rows hold the marker as the first sentence of a whole prompt - so a
 #     line-delimited protocol would split one row into several. `scripts/launch' reads
 #     `agent-cli --argv' the same way and for the same reason.
-#   - IT WRITES A FILE AND RUNS IN THE CALLER'S OWN SHELL. A generator piped through a process
-#     substitution runs in a subshell, where `fail' exits that subshell and the caller reads a
-#     short file and passes - the `.cerebro/traps.md` family about a status nobody checks. Writing
-#     a file keeps `fail' fatal where it is called.
+#   - IT WRITES A FILE RATHER THAN A STREAM. A generator piped through a process substitution runs
+#     in a subshell whose exit status nobody reads, so `fail' there kills the subshell and the
+#     caller goes on to read a short file and pass - the `.cerebro/traps.md` family about a status
+#     nobody checks. Writing the rows to a file keeps them whole however the function is called.
+#
+#     Both callers do read its row count through a command substitution, which is a subshell too,
+#     so `fail' does not by itself end the suite there. What ends it is that the assignment takes
+#     the failed status under `set -e', and that a suite dying before its last line is red rather
+#     than green - `suite_passed'. So the row count must always be read into a variable under
+#     errexit, never into a `[[ ... ]]' or the left of a `&&', either of which would swallow it.
 
 session_args_render() {
   local cases="$1" root="$2" other="$3" out="$4"

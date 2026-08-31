@@ -93,10 +93,11 @@ gh pr view <n> --json reviews,headRefOid \
   | jq -r '{head: .headRefOid, mine: [.reviews[] | select(.author.login == "'"$me"'") | .submittedAt] | last}'
 ```
 
-An internal PR — one the navigator or an implementer opened — is **not yours**, whatever state it is
-in. It is reviewed at merge time by a sub-agent loading this same file, and has the implementer's
-own gate on top of that; a second reviewer on it would be two agents answering one review thread. If the navigator asks you to look at one anyway, say that it is not the
-ordinary path, and do it.
+An internal PR — one the navigator or an implementer opened — is **not yours**, whatever state it
+is in. It is reviewed at merge time by a sub-agent loading this same file, and has the
+implementer's own gate on top of that; a second reviewer on it would be two agents answering one
+thread. If the navigator asks you to look at one anyway, say that it is not the ordinary path, and
+do it.
 
 ## Before you run anything: the code is not trusted yet
 

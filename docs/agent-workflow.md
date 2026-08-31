@@ -120,9 +120,9 @@ The State column names the
 **phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `plan` for
 a planner; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
 Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
-timers — time on the bead, time in this phase — so one in `ci` for an hour says something is stuck.
-`review` is short and synchronous now, the implementer waiting on a sub-agent it spawned itself, so
-an implementer sitting in it says that sub-agent is expensive or has hung.
+timers — time on the bead, time in this phase — so one in `ci` for an hour says something is
+stuck. `review` is short and synchronous now, the implementer waiting on a sub-agent it spawned
+itself, so an implementer sitting in it says that sub-agent is expensive or has hung.
 
 A yellow ` ×2` after the state means two sessions of that name are running in this fleet — one of
 them was started outside the view — and `s`, `k` and `f` on that row name both pids instead of
@@ -219,10 +219,11 @@ builder, start another session.
 Implementers are named after X-Men — Cyclops, Storm, Wolverine, Rogue, and on down the roster — so
 that a fleet of them can be talked about without anyone counting session hashes.
 
-Each takes a planned bead, creates its own git worktree, works through the plan test-first, opens a
-PR, spawns a reviewer sub-agent and answers what it finds, waits for CI, merges and cleans up. Then it reports itself `waiting`
-and **that session ends**: the fleet view keeps its buffer and starts a fresh one under the same name
-when there is another planned bead. They run on Sonnet, each with its own context.
+Each takes a planned bead, creates its own git worktree, works through the plan test-first, opens
+a PR, spawns a reviewer sub-agent and answers what it finds, waits for CI, merges and cleans up.
+Then it reports itself `waiting` and **that session ends**: the fleet view keeps its buffer and
+starts a fresh one under the same name when there is another planned bead. They run on Sonnet,
+each with its own context.
 
 The replacement is the point. One bead fills a session with a plan, a diff, a review and three CI
 runs, and nothing can clear that from the inside — so instead of clearing it, the session is thrown
@@ -360,8 +361,8 @@ project, which is why the wording of what she posts is hers to get right and you
 ## Reviewing what comes from outside
 
 Anyone can open a pull request. The fleet's own work is planned, built, reviewed before merge by a
-sub-agent the implementer spawns, and merged by the implementer that built it — none of which applies to a contributor who holds no bead
-and has read none of that. **Cypher** is the path for those:
+sub-agent the implementer spawns, and merged by the implementer that built it — none of which
+applies to a contributor who holds no bead and has read none of that. **Cypher** is the path for those:
 
 ```bash
 .claude/cerebro/scripts/launch Cypher
@@ -443,9 +444,9 @@ build, she writes a retrospective of her own, the same way an implementer does.
 ## Starting the architect
 
 Nobody else in the fleet reads the *shape* of the code. A planner plans one bead, an implementer
-builds one bead, a review sub-agent reads that one diff, Psylocke checks that one merged bead does what it
-claimed — and across fifty merges nobody asks whether the codebase got harder to change along the
-way. **Forge** is that reader:
+builds one bead, a review sub-agent reads that one diff, Psylocke checks that one merged bead does
+what it claimed — and across fifty merges nobody asks whether the codebase got harder to change
+along the way. **Forge** is that reader:
 
 ```bash
 .claude/cerebro/scripts/launch Forge

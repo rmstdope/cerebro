@@ -770,8 +770,10 @@ mockup approved unseen becomes a plan, then an implementation, then a bead's wor
 
 The chosen mockup is then committed to `docs/ui/` through a small `docs(<bead>): mockup` PR, and the
 plan names its path. Its content is already reviewed — the navigator chose it, iteration by
-iteration, in the discussion that produced it, and the PR commits exactly that. It needs no Copilot
-review and no second look from the navigator: once CI is green, merge it yourself.
+iteration, in the discussion that produced it, and the PR commits exactly that. It needs no review
+sub-agent and no second look from the navigator: once CI is green, merge it yourself. The carve-out
+is unchanged by the review sub-agent implementers now spawn — it was never about who supplies the
+review, but about a diff the navigator has already read line by line.
 
 ```bash
 gh pr merge <n> --squash --delete-branch

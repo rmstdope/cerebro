@@ -25,12 +25,10 @@ rules; this is the role on top of them.
 The `test-driven-development` skill stops at every phase for the navigator, and says a merge is
 never covered by a blanket approval. This role is the documented exception, and the authority is
 **the consumer's root `CLAUDE.md` and its Four Eye Principle**, which the navigator wrote for
-exactly this: for a planned bead,
-a review sub-agent you spawn for yourself is the second pair of eyes, and an implementation session
-merges on the
-conditions stated there. Where the two disagree, the consumer's root `CLAUDE.md` governs — it is
-the project's own document, not cerebro's, and `templates/consumer-CLAUDE.md` is where a project
-without one starts.
+exactly this: for a planned bead, a review sub-agent you spawn for yourself is the second pair of
+eyes, and an implementation session merges on the conditions stated there. Where the two disagree,
+the consumer's root `CLAUDE.md` governs — it is the project's own document, not cerebro's, and
+`templates/consumer-CLAUDE.md` is where a project without one starts.
 
 So: RED → GREEN → REFACTOR → COMMIT without stopping, announcing each transition, and still stopping
 on a genuine design question — see *When the plan is wrong*. Everything outside a planned bead
@@ -38,10 +36,10 @@ follows the TDD skill's gates as written.
 
 ## Waiting, without ending your run
 
-A bead has one long wait in it — CI — and how you wait is the difference
-between finishing a bead and abandoning one. An implementer once armed a `Monitor` against a
-review, said "I'll wait now for the monitor's event", and ended its turn. The review landed two
-minutes later: two comments unanswered, the bead claimed, the PR open, and nothing to wake it.
+A bead has one long wait in it — CI — and how you wait is the difference between finishing a bead
+and abandoning one. An implementer once armed a `Monitor` against a review, said "I'll wait now
+for the monitor's event", and ended its turn. The review landed two minutes later: two comments
+unanswered, the bead claimed, the PR open, and nothing to wake it.
 
 **Wait by blocking inside a tool call. Never by ending your turn.**
 
@@ -61,7 +59,7 @@ Three things about that line, each of which has cost something here:
 
 `Monitor` and `Bash` with `run_in_background` both promise to re-invoke you later. Do not rely on
 either here. Your process survives the end of a turn now, so this is no longer the guaranteed
-disaster it was when it ran under `--print` — but nothing wakes you. A turn ended against a review
+disaster it was when it ran under `--print` — but nothing wakes you. A turn ended against a CI run
 sits until the navigator happens to look and type something, with the bead claimed, the PR open and
 the lease going stale the whole time. Block, and stay in the run.
 
@@ -558,14 +556,22 @@ else.
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
-.claude/cerebro/scripts/model-for --role reviewer
+provider="$(.claude/cerebro/scripts/agent-cli)" || provider=""
+.claude/cerebro/scripts/model-for ${provider:+--provider "$provider"} --role reviewer
 ```
 
+**Pass the provider**, exactly as `scripts/launch` does: a consumer declaring `agent_cli copilot`
+may carry a `reviewer@copilot` row, and asking without it silently matches the plain key instead —
+one file with two answers, which is the defect `model-for` exists to prevent.
+
 `model-for` prints one tab-separated line — `<matched-key>\t<model>\t<effort>` — or **nothing at
-all** when `.cerebro/models.conf` says nothing about the `reviewer` role, in which case the
-sub-agent runs on the CLI's own default. Say out loud in the session which key matched and which
-model you are about to review on, the way `scripts/launch` does, so a review on an unexpected model
-is traceable to the file nobody remembers editing.
+all** when no key matched, in which case the sub-agent runs on the CLI's own default. Two things its
+header is explicit about and this text will not repeat wrongly: a `default` or `default@<provider>`
+row matches too, so a miss means *no key matched* rather than *nothing about `reviewer`*; and
+`<model>` may be the literal `-`, which is a real answer meaning **pass no model at all** — spawn on
+the CLI's default, never on a model named `-`. Say out loud in the session which key matched and
+which model you are about to review on, the way `scripts/launch` does, so a review on an unexpected
+model is traceable to the file nobody remembers editing.
 
 This is one round. Not after you address the findings, not after a rebase, not after a fix that
 changed more than the finding asked for. If you catch yourself weighing whether a push is
@@ -611,15 +617,28 @@ given the diff and the bead's plan, and not the implementer's reasoning.
 *No findings.*
 ```
 
+Write what the sub-agent returned to a file first — `/tmp/review-<id>.md`, say — so the same bytes
+go to both places and neither is a paraphrase:
+
 ```bash
-gh pr comment <n> --body-file <the review>
-bd update <id> --append-notes "$(cat <the review>)"
+gh pr comment <n> --body-file /tmp/review-<id>.md
+bd update <id> --append-notes "$(cat /tmp/review-<id>.md)"
 bd dolt push
 ```
 
 ### Answering it, and going on
 
-**Every finding gets a change or a posted reply saying why not.** Judge each one: the reviews on
+**Every finding gets a change or a posted reply saying why not.** The findings arrive in your
+session rather than as review threads, so there is nothing to reply *to* and nothing to resolve: a
+reply is a second PR comment under the review, naming the finding by its number and saying why it is
+not being changed.
+
+```bash
+gh pr comment <n> --body 'Finding 3 — not changing this, because ...'
+```
+
+One comment answering several findings is fine; what the standing approval asks is that no finding
+is left with neither a change nor an answer. Judge each one: the reviews on
 this repository have caught a lock that could be stolen a millisecond after being taken, a refusal
 message that rounded itself into a contradiction, and a release step that could strand a version
 bump — and they also raise things that are wrong or do not apply. A reasoned reply is a complete
@@ -739,9 +758,9 @@ gh pr merge <n> --squash --delete-branch
 ```
 
 **Never `--auto`.** On this repository the ruleset requires checks but no review, so auto-merge fires
-on green checks alone: it does not wait for the reviewer and it races any fix you push afterwards.
-PR #142 merged that way four minutes before its review arrived, and the fixes that review prompted
-had to ship as a second PR.
+on green checks alone: it races any fix you push afterwards, and it would merge a PR whose review
+you had not yet obtained. PR #142 merged that way four minutes before its review arrived, back when
+the review came from GitHub — the supplier has changed, the race has not.
 
 `--delete-branch` often aborts with `'main' is already used by worktree` — the merge has already
 happened by then. Check `git ls-remote --heads origin <branch>` and delete it explicitly if it
@@ -762,7 +781,8 @@ at the very end of a session — leaving the worktree, its branch and its build 
 two commands are separate rather than chained for the same reason: a failure in the first should not
 skip the second.
 
-**Do this on every exit, not only this one.** A bead handed back, a review that never came, a CI
+**Do this on every exit, not only this one.** A bead handed back, a review sub-agent that returned
+nothing usable, a CI
 budget spent — each of those leaves a worktree too, and nothing else cleans them up.
 
 ### Close the parent too, when you were the last child

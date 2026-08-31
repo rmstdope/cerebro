@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-vyp - agreed read-only Ratatui view</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
+          --dim:#8b949e; --blue:#58a6ff; --green:#3fb950; --gold:#d29922; --red:#f85149; }
+  body { margin:0; padding:32px; color:#24292f; background:#f6f8fa;
+         font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  h2 { margin:34px 0 8px; font-size:17px; }
+  p { max-width:900px; color:#57606a; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .term { max-width:850px; color:var(--text); background:var(--bg); border-radius:9px;
+          padding:10px; box-shadow:0 8px 28px #1f232833;
+          font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .bar { color:var(--dim); padding:2px 4px 8px; }
+  .pane { border:1px solid var(--line); background:var(--panel); margin-bottom:8px; }
+  .title { color:var(--blue); border-bottom:1px solid var(--line); padding:5px 8px; }
+  pre { margin:0; padding:8px; white-space:pre-wrap; }
+  .green { color:var(--green); } .blue { color:var(--blue); }
+  .gold { color:var(--gold); } .red { color:var(--red); } .dim { color:var(--dim); }
+  .stale { border-color:var(--gold); } .stale .title { color:var(--gold); }
+  .narrow { width:420px; } .tiny { width:330px; }
+</style>
+</head>
+<body>
+<h1>Agreed read-only Ratatui view</h1>
+<p>The standalone <code>cerebro-tui</code> is a live, read-only companion to the Emacs supervisor.
+It writes no state and exposes only refresh and quit keys.</p>
+
+<h2>Populated view</h2>
+<div class="term">
+  <div class="bar">Cerebro — read-only <span class="dim">| refreshed 12:14:05 | g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="pane"><div class="title">Fleet 19</div><pre>  AGENT         ROLE           STATE       BEAD      FOR
+<span class="green">● Xavier</span>        planner        plan        cb-kcs    18m 18m
+<span class="green">● Beast</span>         planner        plan        cb-vyp     7m  7m
+<span class="gold">? Cerebro</span>       orchestrator   asking                4m
+<span class="blue">◆ Moira</span>         user-feedback idle
+<span class="dim">○ Psylocke</span>      verifier       dead
+<span class="blue">◌ Cypher</span>        reviewer       standby              → outside PR
+<span class="green">● Cyclops</span>       implementer    build       cb-123    31m 12m
+<span class="gold">◐ Storm</span>         implementer    waiting               0m</pre></div>
+  <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-123  P1 Preserve session output
+
+<strong>Planned, unclaimed 0</strong>
+  <span class="dim">(none)</span>
+
+<strong>Being planned 2</strong>
+  cb-kcs  P1 Ratatui supervises the fleet
+  cb-vyp  P1 Standalone Ratatui fleet view
+
+<strong>Unplanned 0</strong>
+  <span class="dim">(none)</span>
+
+<strong>Waiting on you 1</strong>
+  cb-9xy  P2 Choose compact rows     2h03
+
+<strong>Merged, unverified 0</strong>
+  <span class="dim">(none)</span></pre></div>
+</div>
+
+<h2>Initial loading and stale refresh</h2>
+<div class="term">
+  <div class="bar">Cerebro — read-only <span class="dim">| g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="pane"><div class="title">Fleet</div><pre><span class="dim">Loading fleet...</span></pre></div>
+  <div class="pane"><div class="title">Work</div><pre><span class="dim">Loading work...</span></pre></div>
+</div>
+<br>
+<div class="term">
+  <div class="bar">Cerebro — read-only <span class="gold">| stale — refresh failed at 12:14:05</span>
+    <span class="dim">| g retry | q/Esc/Ctrl-C quit</span></div>
+  <div class="pane"><div class="title">Fleet — refreshed 12:14:04</div><pre><span class="green">● Xavier</span>        planner        plan        cb-kcs    18m 18m
+<span class="green">● Beast</span>         planner        plan        cb-vyp     7m  7m</pre></div>
+  <div class="pane stale"><div class="title">Work — stale since 12:14:05</div><pre><span class="gold">bd list failed: database is locked</span>
+
+<strong>Claimed 1</strong>
+  cb-123  P1 Preserve session output
+
+<span class="dim">The last successful work snapshot remains visible.</span></pre></div>
+</div>
+
+<h2>Malformed agent state</h2>
+<div class="term">
+  <div class="bar">Cerebro — read-only <span class="dim">| refreshed 12:14:05 | g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="pane"><div class="title">Fleet 4</div><pre>  AGENT         ROLE           STATE       BEAD      FOR
+<span class="green">● Xavier</span>        planner        plan        cb-kcs    18m 18m
+<span class="red">! Beast</span>         planner        invalid
+  <span class="red">Beast.state.json: expected `,` at line 1 column 19</span>
+<span class="blue">◆ Moira</span>         user-feedback idle
+<span class="dim">○ Psylocke</span>      verifier       dead</pre></div>
+</div>
+
+<h2>Narrow and too small</h2>
+<div class="term narrow">
+  <div class="bar">Cerebro — read-only</div>
+  <div class="pane"><div class="title">Fleet 19</div><pre>  AGENT          STATE       BEAD
+<span class="green">● Xavier</span>         plan        cb-kcs
+<span class="green">● Beast</span>          plan        cb-vyp
+<span class="gold">? Cerebro</span>        asking
+<span class="blue">◆ Moira</span>          idle
+<span class="dim">○ Psylocke</span>       dead
+
+<span class="dim">Below 64 columns, Role and For are hidden.
+The screen scrolls vertically.</span></pre></div>
+  <div class="pane"><div class="title">Work</div><pre><strong>Unplanned 31</strong>
+  cb-001  P1 This title is cut at...
+  cb-002  P1 A second item
+  cb-003  P2 A third item
+  cb-004  P2 A fourth item
+  cb-005  P2 A fifth item
+  cb-006  P3 A sixth item
+  cb-007  P3 A seventh item
+  cb-008  P3 An eighth item
+  <span class="dim">+23 more</span></pre></div>
+</div>
+<br>
+<div class="term tiny">
+  <div class="bar">Cerebro — read-only</div>
+  <div class="pane"><div class="title">Terminal too small</div><pre><span class="gold">Cerebro needs at least
+40 columns x 12 rows.
+
+Current size: 34 x 9.
+
+Resize the terminal,
+or press q/Esc/Ctrl-C to quit.</span></pre></div>
+</div>
+</body>
+</html>

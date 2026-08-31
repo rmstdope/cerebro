@@ -966,8 +966,12 @@ timer, and a list that reorders under the navigator's eyes is unreadable."
                 (string< (or (alist-get 'id a) "") (or (alist-get 'id b) ""))
               (< pa pb))))))
 
-(defun cerebro--bead-line (bead width)
+(defun cerebro--bead-line (bead width &optional suffix)
   "One line for BEAD, fitted to WIDTH.
+
+SUFFIX, when given, is right-aligned at the far end of the row and the title
+gets the room that is left - which is what lets one section carry a column
+the other five have no use for.
 
 Truncated rather than wrapped: a wrapped title would put a second line under
 a row and break the column the eye follows down the panel."
@@ -984,16 +988,24 @@ a row and break the column the eye follows down the panel."
          ;; whoever *filed* the bead and is set on every one of them, so it
          ;; says nothing about who is working on it - and the agent list
          ;; directly above already answers that for every implementer.
-         (room (max 8 (- width (length prefix)))))
+         (room (max 8 (- width (length prefix) (if suffix (+ (length suffix) 2) 0))))
+         (title (cerebro--truncate (or (alist-get 'title bead) "") room)))
     ;; The row carries its own id, so navigation and the mark are about beads
     ;; rather than about line numbers - which the next refresh would move.
-    (propertize (concat prefix (cerebro--truncate (or (alist-get 'title bead) "") room))
+    (propertize (concat prefix
+                        (if suffix
+                            (concat title
+                                    (make-string (max 0 (- room (length title))) ?\s)
+                                    "  " suffix)
+                          title))
                 'cerebro-bead id 'cerebro-priority priority)))
 
-(defun cerebro--bead-section (title beads width max &optional sort)
+(defun cerebro--bead-section (title beads width max &optional sort suffix-fn)
   "Lines for one section: TITLE with its count, then up to MAX of BEADS.
 
 SORT is the ordering function, `cerebro--sort-beads' by default.
+SUFFIX-FN, when given, is a pure (BEAD) -> string-or-nil whose answer is
+right-aligned on each row (see `cerebro--bead-line').
 
 The count is on the header rather than implied by the rows, because the rows
 are the part that gets capped - and a section whose remainder is hidden
@@ -1005,17 +1017,38 @@ still has to say how much work is really in it."
      (list (propertize (format "%s %d" title (length sorted)) 'face 'bold))
      (if (null sorted)
          (list (propertize "  (none)" 'face 'shadow))
-       (mapcar (lambda (bead) (cerebro--bead-line bead width)) shown))
+       (mapcar (lambda (bead)
+                 (cerebro--bead-line bead width
+                                     (and suffix-fn (funcall suffix-fn bead))))
+               shown))
      (when (> hidden 0)
        (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
 
-(defun cerebro--bead-panel (claimed planned being-planned unplanned merged width max
+(defun cerebro--paused-at (bead)
+  "BEAD's `metadata.paused_at', or nil.
+
+Nil-safe both ways: the key is absent rather than null on a bead parked
+before the pause sites started writing it, and `cerebro--elapsed' renders
+an unknown time as the empty string rather than as a small number."
+  (alist-get 'paused_at (alist-get 'metadata bead)))
+
+(defun cerebro--paused-age-suffix (now)
+  "A suffix function for the paused section: how long ago each bead was parked.
+
+An em dash for a bead with no `paused_at' - the one place the empty string
+`cerebro--elapsed' returns becomes something the eye can find."
+  (lambda (bead)
+    (let ((age (cerebro--elapsed (cerebro--paused-at bead) now)))
+      (if (string-empty-p age) "—" age))))
+
+(defun cerebro--bead-panel (claimed planned being-planned unplanned paused merged width max now
                                     &optional sweep-findings history-rows)
   "The whole panel as a list of lines.
 
 The order work moves in, read backwards, and it stops where the fleet's part
 in it does: being built, ready to pick up, being planned, not planned yet,
-and merged but not yet verified - which is Psylocke's queue.
+parked for the navigator, and merged but not yet verified - which is
+Psylocke's queue.
 
 BEING-PLANNED is the planners' own row of the pipeline. It is worth its own
 section rather than being folded into Unplanned because the two answer
@@ -1023,6 +1056,14 @@ opposite questions: Unplanned is work nobody has started, and this is work
 that is under way and simply cannot be claimed yet. Read together with
 Planned, unclaimed, it is also what says whether a short queue means the
 planners are behind or merely mid-bead.
+
+PAUSED is the `human' queue - work parked for the navigator by an
+implementer, a planner or Moira, which nobody in the fleet may pick up
+again until a person acts. It is a section rather than a line in Unplanned
+because it is the one count that says how much executable work is sitting
+behind a person, and NOW is what its age column is measured against - data
+passed in, so this stays pure like every other function here that takes a
+time.
 
 Verified work is not here. Neither is anything nobody can pick up. See
 `cerebro--partition-beads' for what that leaves out and why.
@@ -1038,6 +1079,9 @@ it has been doing it, and whether that is long by its own standards."
           (cerebro--bead-section "Planned, unclaimed" planned width max) (list "")
           (cerebro--bead-section "Being planned" being-planned width max) (list "")
           (cerebro--bead-section "Unplanned" unplanned width max) (list "")
+          (cerebro--bead-section "Waiting on you" paused width max
+                                 nil (cerebro--paused-age-suffix now))
+          (list "")
           ;; Newest first: priority says nothing about finished work, so what
           ;; this answers is what just landed and still wants checking.
           (cerebro--bead-section "Merged, unverified" merged width max
@@ -1081,7 +1125,11 @@ it from."
       (`(recheck ,id ,_priority)
        (format "recheck %s — verdict at %s, %d merge%s since"
                id (substring .verified_at 0 8) .merges_since
-               (if (= .merges_since 1) "" "s"))))))
+               (if (= .merges_since 1) "" "s")))
+      ;; Its evidence is a list rather than a number, so the formatting lives
+      ;; in `cerebro--paused-label\=' - one blocker reads as the navigator chose
+      ;; it, several name the count and the most recent close.
+      (`(unpause ,id ,_priority) (cerebro--paused-label id .blockers)))))
 
 (defun cerebro--sweep-line (label finding)
   "One propertized Sweeps line: LABEL, carrying FINDING the way a bead row
@@ -1429,8 +1477,14 @@ keypress's worth of intent would be its own kind of noise."
       (user-error "cerebro: no sweep finding on this line"))
     (let* ((repo-root (cerebro--repo-root))
            (argv (cerebro--finding-command finding repo-root))
-           (command-string (mapconcat #'identity argv " ")))
-      (when (y-or-n-p (format "run: %s ? " command-string))
+           (command-string (mapconcat #'identity argv " "))
+           (explanation (cerebro--finding-explanation finding)))
+      (when (y-or-n-p (if explanation
+                          ;; The consequence, not the command again: `bd update
+                          ;; --remove-label human' does not say on its face that the
+                          ;; bead leaves the navigator's queue for the fleet's.
+                          (format "run: %s\n%s " command-string explanation)
+                        (format "run: %s ? " command-string)))
         (cerebro--log repo-root 'sweep (list (cons 'command command-string)))
         (if (cerebro--run-sweep-command repo-root argv)
             (let ((pushed (cerebro--run-sweep-command repo-root (cerebro--bd-push-argv))))
@@ -2777,6 +2831,74 @@ for a P0."
      ((< .merges_since cerebro-stale-verdict-merges) nil)
      (t (list 'recheck .id .priority)))))
 
+;;; cb-wfb: a pause whose reason has gone
+
+(defun cerebro--paused-finding (candidate)
+  "Pure. What the paused sweep should offer for CANDIDATE, or nil.
+
+CANDIDATE is one parsed object from `sweep-paused.sh --json\='. Returns nil
+or (unpause ID PRIORITY) - the one case the board can judge by itself: the
+bead was parked behind blockers, and every one of them has closed.
+
+Nil for everything else, and each nil is a pause a person still owns. A
+bead carrying `needs-ui-decision\=' is waiting on an answer, not on a
+dependency. A bead with no blockers at all was parked for a reason written
+in its notes, which nothing here reads (and guessing at prose is how a bead
+gets pushed back at the implementer that refused it). A blocker that is not
+closed is the pause still being true.
+
+It takes ONE argument, like `cerebro--verdict-finding\=': there is no
+liveness to consult and no roster to check. PRIORITY rides in the finding
+because `cerebro--sweep-line\=' is given nothing else."
+  (let-alist candidate
+    (let ((blockers (append .blockers nil)))
+      (cond
+       ((eq .ui_decision t) nil)
+       ((null blockers) nil)
+       ((seq-some (lambda (b) (not (equal (alist-get 'status b) "closed"))) blockers) nil)
+       (t (list 'unpause .id .priority))))))
+
+(defun cerebro--age-in-words (minutes)
+  "MINUTES as \"12m\", \"2h\" or \"3d\"; \"recently\" when it is nil.
+
+The coarse spelling `cerebro--sweep-label\=' lines use: a sweep line is read
+once and acted on, so the hour is the fact and the minute inside it is not.
+Nil is the bead whose `closed_at\=' the script could not parse, which is
+unknown rather than instant."
+  (cond
+   ((null minutes) "recently")
+   ((< minutes 60) (format "%dm" minutes))
+   ((< minutes 1440) (format "%dh" (/ minutes 60)))
+   (t (format "%dd" (/ minutes 1440)))))
+
+(defun cerebro--paused-label (id blockers)
+  "The Sweeps line for an unpause of ID, whose BLOCKERS have all closed.
+
+One blocker is the ordinary case and gets the line the navigator chose. More
+than one names the count and the most recent close, rather than a list that
+would not fit the column."
+  (let* ((blockers (append blockers nil))
+         (ages (delq nil (mapcar (lambda (b) (alist-get 'closed_age_min b)) blockers)))
+         (last-close (and ages (apply #'min ages))))
+    (if (= (length blockers) 1)
+        (format "unpause %s — waiting on %s, closed %s ago" id
+                (alist-get 'id (car blockers)) (cerebro--age-in-words last-close))
+      (format "unpause %s — waiting on %d beads, all closed, last %s ago" id
+              (length blockers) (cerebro--age-in-words last-close)))))
+
+(defun cerebro--finding-explanation (finding)
+  "Pure. One line of what FINDING means, or nil for the findings that need none.
+
+Nil for all six findings that came before this one, and that is the point:
+`bd close\=', `bd unclaim\=' and `bd reclaim\=' each say their own consequence,
+so their confirmation prompts stay exactly as they were. Removing a label
+does not say where the bead then goes, which is the whole of what the
+navigator is being asked to agree to."
+  (pcase finding
+    (`(unpause ,id ,_priority)
+     (format "%s goes back to the planners for a re-read." id))
+    (_ nil)))
+
 ;;; cb-4s8: one row per sweep, and the pure walker that reads it
 
 (defconst cerebro--sweeps
@@ -2785,7 +2907,8 @@ for a P0."
     (sweep-stalled   "sweep-stalled.sh"   ,#'cerebro--stalled-finding  (:live-states :now))
     (sweep-assignees "sweep-assignees.sh" ,#'cerebro--assignee-finding (:live-beads :roster :now)
                      ,#'cerebro--assignee-enrich)
-    (sweep-verdicts  "sweep-verdicts.sh"  ,#'cerebro--verdict-finding  ()))
+    (sweep-verdicts  "sweep-verdicts.sh"  ,#'cerebro--verdict-finding  ())
+    (sweep-paused    "sweep-paused.sh"    ,#'cerebro--paused-finding   ()))
   "One row per sweep: (KEY SCRIPT FINDER NEEDS [ENRICH]).
 KEY is the `cerebro--run-async\=' key and the key of the outputs alist
 `cerebro--findings-from\=' takes; SCRIPT the file under scripts/; FINDER a
@@ -2885,6 +3008,13 @@ sweep pipeline; the command itself carries no path, since it is run with
     (`(recheck ,id ,_priority)
      (list cerebro-bd-program "set-state" id "verdict=stale"
            "--reason" "verdict formed against a commit main has moved past"))
+    ;; One label removed, and nothing else. Deliberately not
+    ;; `--add-label planned' with it: that puts the bead straight in front of
+    ;; an implementer, which loops when the pause was not really about the
+    ;; blocker - the same wall, the same hand-back, and nobody watching. A
+    ;; planner pass is the price of making that loop impossible.
+    (`(unpause ,id ,_priority)
+     (list cerebro-bd-program "update" id "--remove-label" cerebro-paused-label))
     (_ (error "cerebro: no command for finding %S" finding))))
 
 ;;; Impure readers - each trivially small so everything above stays pure
@@ -4523,6 +4653,23 @@ consumer calls the same thing."
   :type 'string
   :group 'cerebro)
 
+(defcustom cerebro-paused-label "human"
+  "The label meaning a bead is parked for the navigator, and nobody else\='s
+to pick up.
+
+Four places in this harness write it - an implementer handing back a plan
+missing a mandatory section, a planner parking a user-facing question,
+Moira when an issue and its bead disagree, and the generic block in
+`skills/beads-workflow\=' - and every pickup query in the fleet excludes it.
+It is the first label the partition tests, since a bead may carry it
+alongside `planned\=' and still not be claimable.
+
+The same word `cerebro-parked-labels\=' names for the planner trigger; kept
+separate because that list is about work a *planner* should not count and
+this is about a section the navigator reads."
+  :type 'string
+  :group 'cerebro)
+
 (defcustom cerebro-planning-label "planning"
   "The PREFIX of the label a planner holds a bead under while it writes the plan.
 
@@ -4553,12 +4700,13 @@ excluded by that and by diverging from the word anyway."
               labels)))
 
 (defun cerebro--partition-beads (beads)
-  "Split BEADS into the five lists the panel shows.
+  "Split BEADS into the six lists the panel shows.
 
-\(CLAIMED PLANNED BEING-PLANNED UNPLANNED MERGED), where merged means merged
-and not yet verified, and BEING-PLANNED is what a planner is holding right
+\(CLAIMED PLANNED BEING-PLANNED UNPLANNED PAUSED MERGED), where merged means
+merged and not yet verified, BEING-PLANNED is what a planner is holding right
 now - open, labelled `planning', and not claimable by anybody until the plan
-lands (ah-2p.2).  Not every bead lands in one, deliberately: verified work is
+lands (ah-2p.2) - and PAUSED is what somebody parked for the navigator with
+`human'.  Not every bead lands in one, deliberately: verified work is
 finished, epics are parents rather than work, bd's own `event' records are
 bookkeeping, and blocked or deferred beads cannot be picked up.  A panel is
 a list of what to do about something, so what there is nothing to do about
@@ -4569,7 +4717,7 @@ is what keeps those exclusions in one readable place instead of spread
 across five `bd' invocations - an `event' in particular carries the very
 labels these rules key on, and would otherwise arrive looking like merged
 work."
-  (let (claimed planned being-planned unplanned merged)
+  (let (claimed planned being-planned unplanned paused merged)
     (dolist (bead beads)
       (let ((status (alist-get 'status bead)))
         (cond
@@ -4584,7 +4732,13 @@ work."
          ((equal status "open")
           (let ((labels (cerebro--bead-labels bead)))
             (cond
-             ;; `planned' first, and deliberately: `bd update --add-label
+             ;; `human' before everything, including `planned': a planner
+             ;; parking a question adds it without removing `planned', and the
+             ;; implementers' pickup excludes `human' - so such a bead is not
+             ;; claimable, and under Planned, unclaimed it would report queue
+             ;; depth that does not exist.
+             ((member cerebro-paused-label labels) (push bead paused))
+             ;; `planned' next, and deliberately: `bd update --add-label
              ;; planned --remove-label planning' is one call, but a bead read
              ;; mid-write - or left behind by a planner that forgot the
              ;; removal - carries both. Pickable wins, because an implementer
@@ -4600,7 +4754,7 @@ work."
          ;; nothing the fleet can pick up today.
          (t nil))))
     (list (nreverse claimed) (nreverse planned) (nreverse being-planned)
-          (nreverse unplanned) (nreverse merged))))
+          (nreverse unplanned) (nreverse paused) (nreverse merged))))
 
 (defcustom cerebro-priority-floor 4
   "The least urgent priority `bd\=' takes; 0 is the most urgent.
@@ -4880,9 +5034,10 @@ does."
    buffer
    (lambda ()
      (let* ((width (cerebro--panel-width buffer))
-            (beads (or cerebro--beads (list nil nil nil nil nil)))
+            (beads (or cerebro--beads (list nil nil nil nil nil nil)))
             (lines (apply #'cerebro--bead-panel
-                          (append beads (list width cerebro-beads-per-section)
+                          (append beads (list width cerebro-beads-per-section
+                                              (current-time))
                                   (list cerebro--sweep-findings)
                                   (list cerebro--history-rows))))
             ;; By id, not by position: the panel redraws every thirty seconds
@@ -5278,8 +5433,12 @@ was a failure, are both plain values: neither depends on whose pass it is."
          ;; session to find nothing to do.
          (planned (cerebro--actionable-beads (nth 1 beads)))
          (unplanned (cerebro--actionable-beads (nth 3 beads)))
-         (merged (nth 4 beads))
-         (open-beads (append (nth 0 beads) (nth 1 beads) (nth 2 beads) (nth 3 beads))))
+         (merged (nth 5 beads))
+         ;; Every open bucket, parked included: a bead can carry `verdict:stale'
+         ;; and `human' at once, and a stale verdict does not stop being one
+         ;; because the navigator was asked something about the bead.
+         (open-beads (append (nth 0 beads) (nth 1 beads) (nth 2 beads) (nth 3 beads)
+                             (nth 4 beads))))
     (list (cons 'now (float-time now))
           (cons 'planned (if beads (length planned) most-positive-fixnum))
           (cons 'p0-unplanned

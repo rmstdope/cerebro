@@ -320,10 +320,16 @@ first — the view may have started you for a bead a peer claimed a moment ago. 
 tests, test plan, user-facing decisions, out of scope, validation, traps:
 
 ```bash
-bd update <id> --remove-label planned --add-label human --append-notes "<the section that is missing>"
+bd update <id> --remove-label planned --add-label human --append-notes "<the section that is missing>" \
+  --set-metadata paused_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 bd unclaim <id>
 bd dolt push
 ```
+
+
+`--set-metadata paused_at=…` is what makes the pause visible as a *duration*: the fleet view's
+*Waiting on you* section reads it and says how long the bead has been sitting there, and a bead
+parked without it reads as parked just now, for ever (cb-wfb).
 
 All three, and this is the **hand-back block** referred to throughout.
 

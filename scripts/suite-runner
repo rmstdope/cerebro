@@ -144,21 +144,32 @@ if ! mkdir -p "$run_dir" 2>/dev/null; then
   run_dir="$tmp"
 fi
 
-# Prune at the start, after this run's directory exists, so the root never holds more than
-# $keep_runs between runs. The glob is narrow on purpose: anything in there this script did not
-# create is left alone. A string rather than an array - "${arr[@]}" on an empty array is an
-# unbound-variable error under `set -u' in bash 3.2, and the list is empty on the first run.
+# Prune at the start, over the OTHER runs only, so the root never holds more than $keep_runs
+# between runs. The glob is narrow on purpose: anything in there this script did not create is left
+# alone. A string rather than an array - "${arr[@]}" on an empty array is an unbound-variable error
+# under `set -u' in bash 3.2, and the list is empty on the first run.
 # `head -n -3' would have been shorter and is GNU-only: macOS rejects a negative count.
+#
+# NEVER this run's own directory (cb-1h8). The glob orders by name, and the name is
+# <YYYYmmdd>-<HHMMSS>-<pid>: two runs inside one second are ordered by pid as a STRING, where
+# 10000 sorts before 9999. A run that sorted ahead of $keep_runs siblings used to delete the
+# directory it was about to write every suite's log into, and then fail all of them with
+# "No such file or directory" - read once as a timing flake, at a gate cycle and a baseline run
+# (docs/retrospectives/cb-4z6.1.md). Keeping $keep_runs-1 OTHERS leaves the same three runs in
+# the root as before.
 if ((durable)); then
+  this_run="${run_dir##*/}"
+  keep_others=$((keep_runs - 1))
   names=""
   n_runs=0
   for d in "$log_dir"/[0-9]*-[0-9]*-[0-9]*; do
     [[ -d "$d" ]] || continue
+    [[ "${d##*/}" != "$this_run" ]] || continue
     names="$names"$'\n'"${d##*/}"
     n_runs=$((n_runs+1))
   done
-  if [[ $n_runs -gt $keep_runs ]]; then
-    drop=$((n_runs - keep_runs))
+  if [[ $n_runs -gt $keep_others ]]; then
+    drop=$((n_runs - keep_others))
     while IFS= read -r nm; do
       [[ -n "$nm" ]] || continue
       [[ $drop -gt 0 ]] || break

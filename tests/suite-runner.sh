@@ -450,7 +450,48 @@ $want"
 
 pass "the log root keeps the three newest runs and deletes the rest"
 
-# --- 12. a log root that cannot be created falls back and does not fail the run ---
+# --- 12. a run never deletes its own directory, whatever else is in the log root ---
+#
+# cb-1h8. The prune globs the root and drops the lexically first entries, and the run's own
+# directory is in that glob. The name is <YYYYmmdd>-<HHMMSS>-<pid>, so two runs inside one second
+# are ordered by pid as a STRING, where 10000 sorts before 9999 - and a gate running one suite per
+# processor forks hard enough to cross that boundary. A run that sorted ahead of three siblings
+# deleted the directory it was about to write every log into, then failed every suite with
+# "No such file or directory" and exited 1. That was read once as a timing flake and cost a gate
+# cycle plus a baseline run against origin/main (docs/retrospectives/cb-4z6.1.md).
+#
+# Four siblings named 2999... sort after any real run, so the run under test is lexically first and
+# is what the old prune removed. Nothing here depends on a pid: the ordering is forced by name.
+
+mkdir -p "$work_dir/selfprune"
+i=0
+while [[ $i -lt 4 ]]; do
+  mkdir -p "$work_dir/selfprune/29991231-235959-$i"
+  i=$((i+1))
+done
+
+run --log-dir "$work_dir/selfprune" "$work_dir/green"
+[[ $status -eq 0 ]] || fail "a run whose directory sorts first: expected exit 0, got $status
+$both"
+
+# `|| true': grep exits 1 on no match, and a non-zero command substitution in an assignment is
+# fatal under `set -e'. See .cerebro/traps.md.
+mine="$(ls "$work_dir/selfprune" | grep -v '^2999' || true)"
+[[ -n "$mine" ]] || fail "the run deleted its own log directory
+$(ls "$work_dir/selfprune")
+$both"
+[[ -f "$work_dir/selfprune/$mine/a-pass.sh.log" ]] \
+  || fail "the run's own directory survived but holds no log for a-pass.sh
+$(ls "$work_dir/selfprune/$mine" 2>/dev/null)"
+
+left="$(ls "$work_dir/selfprune")"
+[[ "$(wc -l <<<"$left" | tr -d ' ')" == 3 ]] \
+  || fail "the log root should still hold three runs, and holds:
+$left"
+
+pass "a run keeps its own log directory and prunes only older ones"
+
+# --- 13. a log root that cannot be created falls back and does not fail the run ---
 #
 # Logging is a convenience and must never be the reason a green gate is red.
 
@@ -474,7 +515,7 @@ $both"
 
 pass "a log directory that cannot be created warns on stderr and the run still answers"
 
-# --- 13. the default log root is .cerebro/state/suite-logs, relative to the caller's cwd ---
+# --- 14. the default log root is .cerebro/state/suite-logs, relative to the caller's cwd ---
 #
 # A subshell `cd', so this suite's own directory is not moved.
 
@@ -497,7 +538,7 @@ $(ls "$default_root/$runs" 2>/dev/null)"
 
 pass "with no --log-dir, logs land under .cerebro/state/suite-logs in the caller's working directory"
 
-# --- 14. the reported path is absolute, whatever cwd the run was started from ---
+# --- 15. the reported path is absolute, whatever cwd the run was started from ---
 #
 # The bead (cb-wxr): the log directory is WRITTEN relative to the caller's cwd, which is what gives
 # each consumer its own log root, but the line a red run leaves behind is READ from somewhere else
@@ -529,7 +570,7 @@ $(ls "$printed" 2>/dev/null)"
 
 pass "a relative log root is reported as an absolute path that resolves from any working directory"
 
-# --- 15. the fallback names an absolute path too ---
+# --- 16. the fallback names an absolute path too ---
 #
 # A log root that cannot be created names a directory that does not exist, so it cannot be resolved
 # by anything - which is exactly why it has to be printed in full: the reader's only question is

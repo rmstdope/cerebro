@@ -115,10 +115,35 @@ run() {
     "$tmp/.claude/cerebro/scripts/fleet-cost" "$@"
 }
 
-# AIC for one bead, out of a --json answer. `no bead` is the row whose bead is null.
+# AIC for one bead, out of a --json answer, summed over that bead's rows - a bead is one row per
+# agent now. `no bead` is the row whose bead is null.
 aic_of() {
   jq -r --arg b "$1" 'map(select((.bead // "null") == $b))
-                      | if length == 0 then "missing" else .[0].aic end'
+                      | if length == 0 then "missing" else (map(.aic) | add) end'
+}
+
+# `bd` as the script uses it: `bd show <ids> --json` for the titles map, which is decoration and
+# never a dependency. A fixture has no board, and a real bd on PATH knows nothing of cb-aaa, so
+# without this the TITLE column never appears and the repetition cannot be asserted.
+stub_bd() {
+  # $1 = directory to create it in, rest = id:title pairs
+  local dir="$1"; shift
+  mkdir -p "$dir"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'jq -c -n '"'"'$ARGS.positional | map(split(":") | {id: .[0], title: .[1]})'"'"' --args'
+    printf ' %q' "$@"
+    printf '\n'
+  } > "$dir/bd"
+  chmod +x "$dir/bd"
+}
+
+run_titled() {
+  # $1 = stub dir, $2 = fixture root, rest = args
+  local dir="$1" tmp="$2"; shift 2
+  FLEET_HISTORY_NOW="$now_epoch" FLEET_COST_STORE="$tmp/store.db" \
+    FLEET_COST_COLUMNS=100 PATH="$dir:$PATH" \
+    "$tmp/.claude/cerebro/scripts/fleet-cost" "$@"
 }
 
 # --- the base fixture ---------------------------------------------------------------------------
@@ -312,9 +337,9 @@ pass "the horizon line appears on stderr only when the window predates the recor
 # --- the table and the JSON are the same answer ----------------------------------------------------
 
 table="$(run "$base" --by-bead)"
-grep -qE '^cb-aaa 1\.0 ' <<<"$(sed 's/  */ /g' <<<"$table")" \
-  || fail "the table must print the same 1.0 the JSON does; got: $table"
-grep -qE '^no bead 6\.0 ' <<<"$(sed 's/  */ /g' <<<"$table")" \
+grep -qE '^cb-aaa Cyclops 1\.0 ' <<<"$(sed 's/  */ /g' <<<"$table")" \
+  || fail "the table must print the same 1.0 the JSON does, on the bead's Cyclops row; got: $table"
+grep -qE '^no bead Cyclops 6\.0 ' <<<"$(sed 's/  */ /g' <<<"$table")" \
   || fail "the table must print the same 6.0 for \`no bead'; got: $table"
 pass "--json and the table report the same numbers"
 
@@ -376,6 +401,160 @@ pass "a bead nobody spent anything on is exit 0 with a sentence"
 [[ "$(run "$ord" --by-bead --json --agent Nobody | jq -r 'length')" == "0" ]] \
   || fail "--agent naming nobody answers about nobody"
 pass "--agent narrows the answer to one agent"
+
+# --- one row per bead and agent -------------------------------------------------------------------
+#
+# The cross-tab the navigator asked for, in its long form: a bead worked on by two agents is two
+# rows, each with its own AIC and its own UNPRICED, and SHARE is share OF THAT BEAD.
+
+pair="$(new_fixture)"
+pair_root="$(root_of "$pair")"
+make_store "$pair/store.db"
+session "$pair/store.db" s1 Cyclops "$pair_root/"
+session "$pair/store.db" s2 Xavier  "$pair_root/"
+session "$pair/store.db" s3 Cerebro "$pair_root/"
+event "$pair/store.db" s1 "$(ago_ms 110)" 6000000000
+event "$pair/store.db" s2 "$(ago_ms 108)" 2000000000
+event "$pair/store.db" s3 "$(ago_ms 106)" 1000000000
+{
+  line "$(ago 120)" Cyclops working build cb-aaa
+  line "$(ago 60)"  Cyclops waiting "" ""
+  line "$(ago 120)" Xavier  working plan  cb-aaa
+  line "$(ago 60)"  Xavier  waiting "" ""
+  line "$(ago 120)" Cerebro working sweep ""
+  line "$(ago 60)"  Cerebro waiting "" ""
+} > "$pair/.cerebro/state/transitions.jsonl"
+
+out="$(run "$pair" --by-bead --json)"
+[[ "$(jq -r 'map(select(.bead == "cb-aaa")) | length' <<<"$out")" == "2" ]] \
+  || fail "a bead two agents worked on is two rows, got: $out"
+[[ "$(jq -r 'map(select(.bead == "cb-aaa") | {(.agent): .aic}) | add | tojson' <<<"$out")" \
+     == '{"Cyclops":6,"Xavier":2}' ]] \
+  || fail "each row carries that agent's own AIC on the bead, got: $out"
+pass "a bead two agents worked on is one row per agent, each with its own AIC"
+
+[[ "$(jq -r 'map(select(.bead == "cb-aaa") | .share) | add' <<<"$out")" == "100" ]] \
+  || fail "a bead's rows must sum to 100% of that bead, got: $out"
+[[ "$(jq -r 'map(select(.bead == "cb-aaa" and .agent == "Cyclops") | .share) | .[0]' <<<"$out")" == "75" ]] \
+  || fail "SHARE is share of that bead: 6 of 8 is 75%, got: $out"
+pass "SHARE is share of that bead - a bead's rows sum to 100%"
+
+[[ "$(aic_of cb-aaa <<<"$out")" == "8" ]] \
+  || fail "splitting cb-aaa by agent must not change its total, got: $(aic_of cb-aaa <<<"$out")"
+[[ "$(jq -r '[.[].aic] | add' <<<"$out")" == "9" ]] \
+  || fail "the rows must still add to everything that was spent, got: $out"
+pass "splitting a bead by agent changes no total: the rows still add to what was spent"
+
+table="$(sed 's/  */ /g' <<<"$(run "$pair" --by-bead)")"
+grep -qE '^cb-aaa Cyclops 6\.0 75\.0%' <<<"$table" \
+  || fail "the table carries the agent, its AIC and its share of the bead; got: $table"
+grep -qE '^cb-aaa Xavier 2\.0 25\.0%' <<<"$table" \
+  || fail "the second agent's row carries its own share; got: $table"
+[[ "$(grep -n '^cb-aaa Cyclops' <<<"$table" | cut -d: -f1)" \
+     -lt "$(grep -n '^cb-aaa Xavier' <<<"$table" | cut -d: -f1)" ]] \
+  || fail "within a bead the dearest agent comes first; got: $table"
+pass "the table prints one row per agent, dearest first, with each agent's share of the bead"
+
+grep -q '^1 bead,' <<<"$table" \
+  || fail "the footer counts beads, not rows - one bead with two agents is \`1 bead'; got: $table"
+pass "the footer counts beads, not rows"
+
+# --by-agent must be untouched by any of this: it groups the same rows by agent, as it always did.
+out="$(run "$pair" --by-agent --json)"
+[[ "$(jq -r 'map({(.agent): .aic}) | add | tojson' <<<"$out")" \
+     == '{"Cyclops":6,"Xavier":2,"Cerebro":1}' ]] \
+  || fail "--by-agent is unchanged by the by-bead split, got: $out"
+[[ "$(jq -r 'map(select(.agent == "Cerebro") | .no_bead) | .[0]' <<<"$out")" == "1" ]] \
+  || fail "--by-agent still carries an agent's no-bead spend, got: $out"
+pass "--by-agent is untouched: same agents, same totals, same no-bead column"
+
+# --- UNPRICED is per cell, and TITLE repeats -------------------------------------------------------
+#
+# The measured cb-ue0 case: Cyclops priced, Xavier's whole contribution unpriced. In a single-bead
+# view that 0.0 is a number the reader looks straight at; here it must sit on its own row with its
+# own count, or a whole column of planners reads as free.
+
+cell="$(new_fixture)"
+cell_root="$(root_of "$cell")"
+make_store "$cell/store.db"
+session "$cell/store.db" s1 Cyclops "$cell_root/"
+session "$cell/store.db" s2 Xavier  "$cell_root/"
+event "$cell/store.db" s1 "$(ago_ms 110)" 4000000000
+event "$cell/store.db" s2 "$(ago_ms 108)" NULL gpt-5.3-codex
+event "$cell/store.db" s2 "$(ago_ms 107)" NULL gpt-5.3-codex
+{
+  line "$(ago 120)" Cyclops working build cb-aaa
+  line "$(ago 60)"  Cyclops waiting "" ""
+  line "$(ago 120)" Xavier  working plan  cb-aaa
+  line "$(ago 60)"  Xavier  waiting "" ""
+} > "$cell/.cerebro/state/transitions.jsonl"
+
+out="$(run "$cell" --by-bead --json)"
+[[ "$(jq -r 'map(select(.agent == "Xavier") | "\(.aic) \(.unpriced) \(.share)") | .[0]' <<<"$out")" \
+     == "0 2 0" ]] \
+  || fail "an agent whose whole contribution is unpriced is 0.0 with its own count, got: $out"
+[[ "$(jq -r 'map(select(.agent == "Cyclops") | .unpriced) | .[0]' <<<"$out")" == "0" ]] \
+  || fail "the priced agent's row must not carry the other's unpriced count, got: $out"
+grep -qE '^cb-aaa Xavier 0\.0 0\.0% 2' <<<"$(sed 's/  */ /g' <<<"$(run "$cell" --by-bead)")" \
+  || fail "the table shows the 0.0 and the 2 on one line; got: $(run "$cell" --by-bead)"
+pass "an agent whose whole contribution is unpriced shows 0.0 with its own UNPRICED count, not a bead-wide one"
+
+titles_dir="$work_dir/stub-bd"
+stub_bd "$titles_dir" 'cb-aaa:A title that repeats on every row'
+table="$(run_titled "$titles_dir" "$cell" --by-bead)"
+grep -q 'TITLE' <<<"$table" \
+  || fail "with a board on PATH the table carries a TITLE column; got: $table"
+[[ "$(grep -c 'A title that repeats on every row' <<<"$table")" == "2" ]] \
+  || fail "TITLE repeats on every row of a bead, so a grep returns whole lines; got: $table"
+pass "TITLE repeats on every row of a bead, so a grep for a bead returns whole lines"
+
+# --- --phase splits further, and is refused where it means nothing ----------------------------------
+
+ph="$(new_fixture)"
+ph_root="$(root_of "$ph")"
+make_store "$ph/store.db"
+session "$ph/store.db" s1 Cyclops "$ph_root/"
+event "$ph/store.db" s1 "$(ago_ms 110)" 6000000000     # build
+event "$ph/store.db" s1 "$(ago_ms 70)"  2000000000     # review
+{
+  line "$(ago 120)" Cyclops working build  cb-aaa
+  line "$(ago 90)"  Cyclops working review cb-aaa
+  line "$(ago 60)"  Cyclops waiting "" ""
+} > "$ph/.cerebro/state/transitions.jsonl"
+
+out="$(run "$ph" --by-bead --json)"
+[[ "$(jq -r 'length' <<<"$out")" == "1" && "$(jq -r '.[0].aic' <<<"$out")" == "8" \
+   && "$(jq -r '.[0].phase' <<<"$out")" == "null" ]] \
+  || fail "without --phase an agent's two phases on a bead are one row, got: $out"
+out="$(run "$ph" --by-bead --phase --json)"
+[[ "$(jq -r 'map("\(.agent) \(.phase) \(.aic)") | join("; ")' <<<"$out")" \
+     == "Cyclops build 6; Cyclops review 2" ]] \
+  || fail "--phase splits that row into one per phase, dearest first, got: $out"
+pass "--phase splits a bead's agent row into one row per phase"
+
+table="$(run "$ph" --by-bead --phase)"
+grep -q 'PHASE' <<<"$table" || fail "the --phase table has a PHASE column; got: $table"
+! grep -q 'SHARE' <<<"$table" || fail "the --phase table drops SHARE; got: $table"
+table="$(run "$ph" --by-bead)"
+grep -q 'SHARE' <<<"$table" || fail "without --phase the table keeps SHARE; got: $table"
+! grep -q 'PHASE' <<<"$table" || fail "without --phase the table has no PHASE column; got: $table"
+pass "--phase drops SHARE and adds PHASE; without it the columns are the other way round"
+
+# Asserted on the MESSAGE, not the status: `--phase` is an unknown argument today, so exit 2 is
+# what it already does and a status-only assertion would be green before the work was started.
+phase_refused() {
+  local out status
+  set +e
+  out="$(run "$ph" "$@" 2>"$work_dir/err-phase")"; status=$?
+  set -e
+  [[ $status -eq 2 ]] || fail "--phase on $* must be a usage error (exit 2), got $status"
+  [[ -z "$out" ]] || fail "--phase on $* must put nothing on stdout, got: $out"
+  grep -q 'fleet-cost: --phase applies to --by-bead only' "$work_dir/err-phase" \
+    || fail "--phase on $* must name the flag on stderr, got: $(cat "$work_dir/err-phase")"
+}
+phase_refused --by-agent --phase
+phase_refused --bead cb-aaa --phase
+pass "--phase on --by-agent or --bead <id> is a usage error naming the flag"
 
 # --- an empty window is an answer -------------------------------------------------------------------
 

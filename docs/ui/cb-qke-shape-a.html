@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-qke — Shape A: the desk study</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 62rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.4rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; }
+  .note { color: var(--dim); font-size: 13.5px; }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13.5px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .45rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  .badge { display:inline-block; font-size:11px; padding:.1rem .45rem; border-radius:10px;
+           background:#eef2f5; color:var(--dim); margin-left:.4rem; }
+  .warn { background:#fff8e1; border:1px solid #f0d58c; border-radius:6px; padding:.6rem .9rem;
+          font-size:13.5px; margin:.8rem 0; }
+  .doc { border:1px solid var(--line); border-radius:8px; padding:1.2rem 1.4rem; background:#fff;
+         box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  .doc h2 { margin-top:1.6rem; }
+  .doc h2:first-child { margin-top:0; border-top:none; padding-top:0; }
+  .src { color:var(--bad); font-size:12.5px; }
+</style>
+</head>
+<body>
+
+<h1>cb-qke — Shape A: the desk study <span class="badge">no code is run</span></h1>
+<p class="lede">What the delivered <code>docs/fleet-view-alternatives.md</code> looks like if the
+investigation is reading rather than measuring. Every claim is sourced to a fetched URL. Nothing is
+built, nothing is installed, no prototype exists.</p>
+
+<div class="warn"><strong>The honest weakness, stated up front.</strong> Question 1 of the bead —
+<em>can a ratatui app host a live interactive <code>copilot</code> session the way vterm does</em> —
+is answered here from crate documentation and other people's README claims. That is the question the
+whole decision turns on, and it is the one this shape cannot actually test.</div>
+
+<h2>The document it produces</h2>
+<div class="doc">
+
+<h2>Fleet view alternatives: ratatui, Textual, and staying on Emacs</h2>
+<p class="note">Desk study, 2026-08-31. No prototype was built. Every claim below cites the page it
+came from and the date it was fetched; nothing was run.</p>
+
+<h2>Summary</h2>
+<table>
+<tr><th>question</th><th>Emacs + vterm (today)</th><th>Rust + ratatui</th><th>Python + Textual</th></tr>
+<tr><td>hosts a live full-screen child</td><td>yes, in production</td>
+    <td><span class="src">claimed</span> by <code>tui-term</code> README</td>
+    <td><span class="src">claimed</span> by <code>textual-terminal</code> README</td></tr>
+<tr><td>resize propagated to the child</td><td>yes</td><td><span class="src">documented</span></td><td><span class="src">unclear</span></td></tr>
+<tr><td>scrollback</td><td>yes</td><td><span class="src">not documented</span></td><td><span class="src">not documented</span></td></tr>
+<tr><td>type a line into a running session</td><td><code>vterm-send-string</code></td><td><span class="src">inferred from the pty API</span></td><td><span class="src">inferred</span></td></tr>
+<tr><td>distribution</td><td>"you already have Emacs" + libvterm</td><td>one binary</td><td>Python + a dependency tree</td></tr>
+</table>
+
+<h2>1. Terminal sessions</h2>
+<p>The Rust route is <code>portable-pty</code> (from wezterm) for the pty, <code>vt100</code> or
+<code>tui-term</code> for the screen model, drawn into a ratatui widget. Versions and download
+counts as reported by the crates.io API on 2026-08-31: …</p>
+<p>The Python route is <code>pyte</code> for the screen model; Textual has no first-party terminal
+widget, so this is <code>textual-terminal</code>, a third-party package. Its last release was … </p>
+
+<h2>2. What would have to be rewritten</h2>
+<p><code>emacs/cerebro.el</code> is 6&nbsp;267 lines and 252 functions, with 497 ERT cases over the
+pure half. Counted by function-name prefix, the split is …</p>
+
+<h2>3. Pros and cons</h2>
+<h2>4. Cost</h2>
+<h2>Recommendation</h2>
+<h2>What this study could not establish</h2>
+<p>Whether any of the three terminal-widget claims above actually hold under a real
+<code>copilot</code> session. …</p>
+
+</div>
+
+<h2>What it costs</h2>
+<table>
+<tr><th></th><th></th></tr>
+<tr><td>implementer time</td><td>short — one pass, mostly fetching and reading</td></tr>
+<tr><td>installs on your machine</td><td>none</td></tr>
+<tr><td>strength of the answer to question 1</td><td>weak; it is other people's claims</td></tr>
+<tr><td>risk</td><td>a recommendation to migrate that turns out to be unbuildable</td></tr>
+</table>
+
+</body>
+</html>

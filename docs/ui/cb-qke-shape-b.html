@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-qke — Shape B: the measured spike</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 62rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.4rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; }
+  .note { color: var(--dim); font-size: 13.5px; }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13.5px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .45rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  .badge { display:inline-block; font-size:11px; padding:.1rem .45rem; border-radius:10px;
+           background:#eef2f5; color:var(--dim); margin-left:.4rem; }
+  .ok { background:#e8f5e9; border:1px solid #a5d6a7; border-radius:6px; padding:.6rem .9rem;
+        font-size:13.5px; margin:.8rem 0; }
+  .doc { border:1px solid var(--line); border-radius:8px; padding:1.2rem 1.4rem; background:#fff;
+         box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  .doc h2 { margin-top:1.6rem; }
+  .doc h2:first-child { margin-top:0; border-top:none; padding-top:0; }
+  .yes { color:var(--good); font-weight:600; }
+  .no { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+
+<h1>cb-qke — Shape B: the measured spike <span class="badge">two throwaway prototypes</span></h1>
+<p class="lede">The same document, but every row of the summary table is something that was actually
+run. This is the shape <code>docs/providers/copilot.md</code> already uses in this repository:
+<em>"Anything that could not be measured says so and says why; nothing here is inferred from
+documentation."</em></p>
+
+<div class="ok"><strong>It is cheaper than it sounds.</strong> <code>cargo 1.98.0</code>,
+<code>rustc 1.98.0</code>, <code>python3 3.14.7</code> and <code>pip 26.2.1</code> are already on
+this machine. The spike installs no toolchain — it downloads crates into <code>~/.cargo</code> and
+Python packages into a throwaway virtualenv, and both prototypes live in
+<code>.cerebro/scratch/cb-qke/</code>, which is gitignored. <strong>No prototype code is
+committed.</strong></p></div>
+
+<h2>The document it produces</h2>
+<div class="doc">
+
+<h2>Fleet view alternatives: ratatui, Textual, and staying on Emacs</h2>
+<p class="note">Measured on 2026-08-31 against <code>copilot</code> 1.0.82 on macOS, with two
+throwaway prototypes. Every row below is a command that was run and the output it produced.
+Anything that could not be measured says so and says why.</p>
+
+<h2>Summary</h2>
+<table>
+<tr><th>what the fleet view does today</th><th>ratatui</th><th>Textual</th><th>measured?</th></tr>
+<tr><td>host a live <code>copilot</code> session in a pty</td><td class="yes">yes</td><td class="yes">yes</td><td>S1, S6</td></tr>
+<tr><td><code>RET</code> — focus it, type into it, see it redraw</td><td class="yes">yes</td><td class="no">redraw corrupt on wide glyphs</td><td>S2, S7</td></tr>
+<tr><td>window resize reaches the child (<code>SIGWINCH</code>)</td><td class="yes">yes</td><td>?</td><td>S3, S8</td></tr>
+<tr><td>scrollback after the child exits</td><td class="yes">yes</td><td class="no">no</td><td>S4, S9</td></tr>
+<tr><td>send a line without focusing (the triage nudge)</td><td class="yes">yes</td><td class="yes">yes</td><td>S5, S10</td></tr>
+<tr><td>buffer survives the process, as the record of a pass</td><td>…</td><td>…</td><td>S4, S9</td></tr>
+</table>
+
+<h2>S1 A ratatui window hosting <code>copilot</code></h2>
+<h3>Command</h3>
+<pre>cd .cerebro/scratch/cb-qke/rat && cargo run --release</pre>
+<h3>Output</h3>
+<pre>[a transcript, or a described screen, verbatim]</pre>
+<h3>Conclusion</h3>
+<p>…</p>
+
+<h2>S2 … through S10 …</h2>
+
+<h2>What would have to be rewritten</h2>
+<p><code>emacs/cerebro.el</code> is 6&nbsp;267 lines, 252 functions, 497 ERT cases; 65 lines mention
+vterm and they are confined to …</p>
+
+<h2>Pros and cons · Cost · Recommendation</h2>
+<h2>What could not be measured, and why</h2>
+
+</div>
+
+<h2>What it costs</h2>
+<table>
+<tr><th></th><th></th></tr>
+<tr><td>implementer time</td><td>long — likely several passes, and it may need splitting into children</td></tr>
+<tr><td>installs on your machine</td><td>crates into <code>~/.cargo</code>, a throwaway venv; no toolchain</td></tr>
+<tr><td>strength of the answer to question 1</td><td>strong; it either ran or it did not</td></tr>
+<tr><td>risk</td><td>a Sonnet session gets stuck building a pty prototype and hands the bead back</td></tr>
+</table>
+
+<h2>Shape B-minus, if B is too much</h2>
+<p class="note">Measure <strong>ratatui only</strong>, and desk-study Textual. The Rust route is the
+one a migration would plausibly take (a single binary, no runtime), Textual is the fallback, and
+half the spike buys most of the answer.</p>
+
+</body>
+</html>

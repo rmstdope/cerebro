@@ -244,6 +244,31 @@ bash -c '
 [[ -e "$marker" ]] || fail "cleanup: suite_cleanup was not called"
 pass "a suite's own suite_cleanup hook runs before the work directory goes"
 
+# `suite_died' is how a hook tells the two cases apart, so it can name expensive context - the last
+# launcher run, a fixture path - exactly when it is worth saying and stay silent on every pass.
+died_marker="$work_dir/suite-died-verdict"
+set +e
+bash -c '
+  set -euo pipefail
+  repo_root="'"$repo_root"'"
+  suite_cleanup() { if suite_died; then echo died > "'"$died_marker"'"; else echo alive > "'"$died_marker"'"; fi; }
+  source "$repo_root/tests/lib/consumer.sh"
+  false' >/dev/null 2>&1
+set -e
+[[ "$(cat "$died_marker")" == died ]] \
+  || fail "suite_died: a suite that died before suite_passed should read died, got: $(cat "$died_marker")"
+pass "suite_died is true when the suite is being cleaned up after dying"
+
+bash -c '
+  set -euo pipefail
+  repo_root="'"$repo_root"'"
+  suite_cleanup() { if suite_died; then echo died > "'"$died_marker"'"; else echo alive > "'"$died_marker"'"; fi; }
+  source "$repo_root/tests/lib/consumer.sh"
+  suite_passed >/dev/null' >/dev/null
+[[ "$(cat "$died_marker")" == alive ]] \
+  || fail "suite_died: a suite that reached suite_passed should read alive, got: $(cat "$died_marker")"
+pass "suite_died is false when the suite reached its last line"
+
 extra="$work_dir/extra-registered"
 bash -c '
   set -euo pipefail

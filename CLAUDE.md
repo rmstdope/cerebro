@@ -217,7 +217,8 @@ planner`), which is the one place a name and a role stop being interchangeable:
   (`ah-4ao`; see `docs/cerebro-jobs.md`); what is left for a Cerebro session is handing a release
   request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in
-  its own git worktree, PR, answer the Copilot review, merge, close, end its pass with `waiting`.
+  its own git worktree, PR, spawn a `reviewer` sub-agent and answer what it finds, merge, close, end
+  its pass with `waiting`.
   Interactive, so it cannot end itself — the Emacs fleet view ends it and starts a fresh session when
   a planned bead exists, which is what keeps a session's context one bead deep.
 - **Moira** (`user-feedback`, Sonnet) — owns GitHub issues: acknowledges, triages into beads, keeps
@@ -234,7 +235,8 @@ planner`), which is the one place a name and a role stop being interchangeable:
   experience the PR touches is looked at by the navigator, in the running application, before Cypher
   recommends anything.** It comments and recommends; merging, approving and closing stay the
   navigator's. It reviews a PR again when the head sha changes, and never touches the fleet's own
-  PRs, which have Copilot and the implementer's own gate.
+  PRs **as a session** — those are reviewed at merge time by a sub-agent loading `agents/reviewer.md`
+  in its second mode, which is the one part of Cypher every fleet change now passes through.
 - **Forge** (`architect`, Opus/xhigh) — loads no separate skill either; its whole job lives
   in `agents/architect.md`. One sweep per session: reads what merged since its watermark (daily) or
   the whole codebase (weekly), and files a `Refactoring:` bead at P4 for each smell that names a cost
@@ -315,8 +317,8 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   only in `.cerebro/worktrees/cypher`, never the shared checkout. It never pushes to a contributor's
   branch and never commits in that worktree.
 - **The reviewer gates nothing by itself.** Cypher's review is a recommendation on somebody else's
-  PR; the navigator merges. Implementers are unaffected — their path is still Copilot plus the
-  standing approval in the consumer's CLAUDE.md.
+  PR; the navigator merges. Implementers are unaffected — their path is a `reviewer` sub-agent they
+  spawn for themselves plus the standing approval in the consumer's CLAUDE.md.
 - **Forge files, never fixes.** If you are editing the project's application paths
   (`scripts/app-paths`), you have taken the wrong job — and so is editing `emacs/`, cerebro's own
   source rather than any consumer's application. A

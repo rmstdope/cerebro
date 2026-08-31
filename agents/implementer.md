@@ -12,7 +12,8 @@ particular is a report they cannot act on.
 ## What you do
 
 Load the `implement-bead` skill and follow it exactly. It is the whole of your job: claim one planned
-bead, build what its plan says test-first, open a PR, answer the review, merge, clean up, and report
+bead, build what its plan says test-first, open a PR, get it reviewed by a sub-agent you spawn
+yourself, answer that review, merge, clean up, and report
 yourself done. Everything about how a bead is built lives there and nothing about it is repeated
 here.
 
@@ -68,8 +69,10 @@ The four states, and what each one makes happen:
 | `waiting` | merged, closed, cleaned up, nothing left — or nothing to claim | ends you after half a minute; starts a fresh session when a planned bead exists |
 
 `working` and `asking` also carry a **phase** — `--phase <build|gate|review|ci|rebase|merge>` —
-naming what you are actually doing or waiting on, so three implementers all sitting in `review` tells
-the navigator Copilot is slow, and three in `ci` tells them the runners are. The implement-bead skill
+naming what you are actually doing or waiting on, so three implementers all sitting in `ci` tells
+the navigator the runners are slow. `review` is short and synchronous now — you spawn the reviewer
+yourself and wait for it inside the call — so a long one means an expensive sub-agent or one that
+has hung, not a slow supplier. The implement-bead skill
 says exactly where each phase is written; when in doubt, write the phase for the wait or the step you
 are about to start. `idle` and `waiting` carry no phase.
 
@@ -119,13 +122,13 @@ If you would rather not risk the wait — a question the navigator plainly canno
 morning — hand the bead back instead of asking. Handing back is always available and always correct;
 asking is the faster path when somebody is there.
 
-## Waiting for CI and reviews
+## Waiting for CI
 
 Unchanged, and still the thing most likely to strand a bead: **wait by blocking inside a tool call.**
 The skill's *Waiting, without ending your run* section is how, and it is not optional.
 
 Your process now survives the end of a turn, so an ended turn is no longer fatal the way it was. It
-is still wrong: nothing wakes you. A turn ended against a review sits there until the navigator
+is still wrong: nothing wakes you. A turn ended against a CI run sits there until the navigator
 notices and types something, which may be hours, with the bead claimed and the PR open the whole
 time. `Monitor` and `Bash` with `run_in_background` promise a re-invocation — do not rely on either
 here.

@@ -30,12 +30,13 @@
 <p>The standalone <code>cerebro-tui</code> is a live, read-only companion to the Emacs supervisor.
 It writes no state and exposes only scrolling, refresh, and quit keys. Up/Down scroll one line;
 PageUp/PageDown scroll one viewport. A refresh preserves the current line and clamps it only when
-the new content is shorter. Emacs-only armed/standby state is not a shared contract, so an agent
+the new content is shorter; while one is running the header says <code>refreshing...</code> and
+another <code>g</code> is ignored. Emacs-only armed/standby state is not a shared contract, so an agent
 with no live session reads as dead here even when Emacs intends to start it later.</p>
 
 <h2>Populated view</h2>
 <div class="term">
-  <div class="bar">Cerebro — read-only <span class="dim">| ↑/↓/PgUp/PgDn scroll | g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="bar">Cerebro — read-only <span class="dim">| refreshing... | ↑/↓/PgUp/PgDn scroll | g refresh | q/Esc/Ctrl-C quit</span></div>
   <div class="pane"><div class="title">Fleet 19</div><pre>  AGENT         ROLE           STATE       BEAD      FOR
 <span class="green">● Xavier</span>        planner        plan        cb-kcs    18m 18m
 <span class="green">● Beast</span>         planner        plan        cb-vyp     7m  7m

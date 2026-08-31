@@ -194,6 +194,51 @@ set -e
 [[ $status -eq 2 ]] || fail "roster --bogus: expected exit 2, got $status"
 pass "roster --bogus exits 2"
 
+# A failure roster did NOT plan for. Every refusal it anticipates prints a line and exits 2; anything
+# else used to exit silently, and a caller could not tell "the fleet is short a name" from "I could
+# not read the roster". `tests/launchers.sh` went red twice under the parallel gate on exactly that
+# shape (docs/retrospectives/cb-u70.md, cb-azi.md), and both times the whole record of it was a
+# parenthesis. This asserts the status carries a diagnosis with it.
+if [ "$(id -u)" = 0 ]; then
+  pass "roster on an unreadable declaration: skipped, running as root reads a chmod 000 file"
+else
+  unreadable_dir="$(consumer_new unreadable-roster --copy)"
+  printf 'Ada\tplanner\n' > "$unreadable_dir/.cerebro/roster.conf"
+  chmod 000 "$unreadable_dir/.cerebro/roster.conf"
+  set +e
+  out="$("$unreadable_dir/.claude/cerebro/scripts/roster" 2>&1)"
+  status=$?
+  set -e
+  chmod 644 "$unreadable_dir/.cerebro/roster.conf"
+  [[ $status -ne 0 ]] \
+    || fail "roster on an unreadable declaration: expected a non-zero status, got 0: $out"
+  [[ $status -ne 2 ]] \
+    || fail "roster on an unreadable declaration: 2 is a refusal roster planned for, and this is not one: $out"
+  grep -q "failed with status" <<<"$out" \
+    || fail "roster on an unreadable declaration: no diagnosis, got: $out"
+  grep -q "reading" <<<"$out" \
+    || fail "roster on an unreadable declaration: the stage word says nothing, got: $out"
+  grep -qF "$unreadable_dir/.cerebro/roster.conf" <<<"$out" \
+    || fail "roster on an unreadable declaration: the stage should name the file, got: $out"
+  pass "roster names its status and its stage when it fails for a reason it did not plan for"
+fi
+
+# The invariant `scripts/launch` is built on: when roster succeeds it says NOTHING on stderr, so
+# `launch` can read its stderr into its own refusal without ever printing a row as if it were a
+# diagnosis. It is true today by accident - every `echo ... >&2` is followed by an exit - and this is
+# what stops it becoming untrue.
+for mode_args in "" "--entry Xavier" "--implementers" "--role planner"; do
+  set +e
+  err="$("$builtin_dir/roster" $mode_args 2>&1 >/dev/null)"
+  status=$?
+  set -e
+  [[ $status -eq 0 ]] \
+    || fail "roster $mode_args: expected exit 0, got $status"
+  [[ -z "$err" ]] \
+    || fail "roster $mode_args: expected nothing on stderr, got: $err"
+done
+pass "roster prints nothing on stderr when it exits 0"
+
 # --- a consumer declares its own fleet (ah-qled.5.1) --------------------------------------------
 #
 # `scripts/roster` is the one declaration of the fleet, but the X-Men in its `TABLE=` heredoc are

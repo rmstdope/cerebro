@@ -22,11 +22,19 @@ section and every implementer stops merging.*
 
 Nothing merges unreviewed and nothing merges red.
 
-For a change built by an agent, an automated reviewer counts as the second pair of eyes when all of
-these hold: exactly one review is requested as the pull request opens; every comment it leaves is
-answered, by a change or by a posted reply saying why not; and every check is green.
+For a change built by an agent, the second pair of eyes is a **review sub-agent the implementer
+spawns for itself** — given the diff and the bead, never the implementer's own reasoning — and it
+counts when all of these hold: exactly one such review is obtained before the merge; it is posted in
+full on the pull request; every finding is answered, by a change or by a posted reply saying why
+not; and every check is green.
 
-Everything else needs a person.
+No review is asked of the code-hosting platform, and none is waited for. A review a person or a bot
+leaves on the pull request anyway is read and answered like any other comment; it is not what the
+approval rests on.
+
+Everything else needs a person — a change nobody planned, a red or missing check, a finding about
+approach, scope or what the audience sees, a finding answered by neither a change nor a reply, and a
+review sub-agent that could not be spawned or returned nothing usable.
 
 ## Work tracking
 
@@ -70,8 +78,8 @@ a bead is planned in one session and implemented in another.
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
   built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that
   agent as it comes up (cb-0r6), `standby` **arms** it without starting it (cb-98u) — its row reads
-  `standby` and its role's own trigger is what starts it. `standby` is refused on an implementer row
-  until cb-1or.
+  `standby` and its role's own trigger is what starts it. `standby` on an implementer row arms it
+  the same way (cb-1or.2); its trigger is a planned, unclaimed bead.
 - `.cerebro/traps.md` — the traps this project has already paid for, read by planners and
   implementers before they start. Absent means the project has paid for nothing yet, which is where
   every project starts.

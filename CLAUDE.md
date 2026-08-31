@@ -37,18 +37,22 @@ stops.*
 
 Nothing merges unreviewed and nothing merges red.
 
-For a change built by an agent, GitHub Copilot's automatic review counts as the second pair of eyes
-when all of these hold: exactly one review is requested as the pull request opens; every comment it
-left is answered, by a change or by a posted reply saying why not; and every check is green. That is
-the whole standing approval, and it covers a planned bead only.
+For a change built by an agent, the second pair of eyes is a **review sub-agent the implementer
+spawns for itself** — given the diff and the bead, never the implementer's own reasoning — and it
+counts when all of these hold: exactly one such review is obtained before the merge; it is posted
+in full on the pull request; every finding is answered, by a change or by a posted reply saying
+why not; and every check is green. That is the whole standing approval, and it covers a planned
+bead only.
 
-When that review cannot be requested at all — GitHub refuses the request itself — a review the
-implementer obtains for itself stands in its place, on the same terms. A review that was requested
-and never arrived is not that case, and still needs the navigator.
+No review is asked of GitHub, and none is waited for. A review a person or a bot leaves on the
+pull request anyway is read and answered like any other comment; it is not what the approval
+rests on.
 
-Everything else needs the navigator — a change nobody planned, a red or missing check, a review
-comment answered by neither a change nor a reply, and any pull request that came from outside the
-fleet, which is Cypher's to review and the navigator's to merge.
+Everything else needs the navigator — a change nobody planned, a red or missing check, a finding
+about approach, scope or what the audience sees, a finding answered by neither a change nor a
+reply, a review sub-agent that could not be spawned or returned nothing usable, and any pull
+request that came from outside the fleet, which is Cypher's to review and the navigator's to
+merge.
 
 ## Work tracking
 

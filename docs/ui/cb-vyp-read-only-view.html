@@ -22,6 +22,7 @@
   .green { color:var(--green); } .blue { color:var(--blue); }
   .gold { color:var(--gold); } .red { color:var(--red); } .dim { color:var(--dim); }
   .stale { border-color:var(--gold); } .stale .title { color:var(--gold); }
+  .error { border-color:var(--red); } .error .title { color:var(--red); }
   .narrow { width:420px; } .tiny { width:330px; }
 </style>
 </head>
@@ -84,6 +85,18 @@ with no live session reads as dead here even when Emacs intends to start it late
   cb-123  P1 Preserve session output
 
 <span class="dim">The last successful work snapshot remains visible.</span></pre></div>
+</div>
+
+<h2>First refresh failure</h2>
+<div class="term">
+  <div class="bar">Cerebro — read-only <span class="red">| refresh failed at 12:14:05</span>
+    <span class="dim">| ↑/↓/PgUp/PgDn scroll | g retry | q/Esc/Ctrl-C quit</span></div>
+  <div class="pane"><div class="title">Fleet — refreshed 12:14:04</div><pre><span class="green">● Xavier</span>        planner        plan        cb-vyp    18m 18m
+<span class="blue">◆ Beast</span>         planner        idle</pre></div>
+  <div class="pane error"><div class="title">Work unavailable</div><pre><span class="red">bd list failed: database is locked</span>
+
+No work snapshot is available.
+Press g to retry.</pre></div>
 </div>
 
 <h2>Malformed agent state</h2>

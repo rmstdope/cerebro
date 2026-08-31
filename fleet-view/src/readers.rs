@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn bd_reader_reports_invalid_json() {
         let dir = tempfile::tempdir().unwrap();
-        let fake_bd = write_executable(dir.path(), "bd", "#!/usr/bin/env bash\nprintf 'not json'\n");
+        let fake_bd = write_executable(dir.path(), "bd", "#!/usr/bin/env bash\nexit 0\n");
         let paths = ReaderPaths {
             consumer_root: dir.path().to_path_buf(),
             shared_root: dir.path().join("shared"),

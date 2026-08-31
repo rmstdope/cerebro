@@ -27,6 +27,18 @@ script="$repo_root/scripts/request-review"
 
 # --- the stub -------------------------------------------------------------------------------------
 #
+# link_utils <dir>  ->  symlinks the external utilities the script needs into <dir>, so a case can
+# run with <dir> as its WHOLE PATH. That is what makes the "gh missing from PATH" case honest: with
+# /usr/bin on PATH it would find the runner's own `gh` (ubuntu-latest ships one at /usr/bin/gh) and
+# test nothing - or worse, edit a real pull request 42. `bash` is here because the stub's own
+# `#!/usr/bin/env bash` resolves `bash` through PATH, and `grep` because the script matches with it.
+link_utils() {
+  local dir="$1" util
+  for util in grep bash; do
+    ln -sf "$(command -v "$util")" "$dir/$util"
+  done
+}
+
 # stub_gh <exit status> [message on stderr]  ->  echoes a directory to put at the head of PATH.
 #
 # Each case gets its own, under $work_dir: suites run in parallel and a shared stub would let one
@@ -42,17 +54,18 @@ echo "\$*" >> "$dir/argv"
 exit $status
 STUB
   chmod +x "$dir/gh"
+  link_utils "$dir"
   echo "$dir"
 }
 
 # run_with <stub dir> <args...>  ->  the script's exit status in \$run_status, its stderr in
-# \$run_stderr and its stdout in \$run_stdout. PATH is narrowed to the stub plus the system paths so
-# a `gh` installed on the machine running the suite can never be reached.
+# \$run_stderr and its stdout in \$run_stdout. PATH is the stub directory and NOTHING else, so no
+# `gh` on the machine running the suite can ever be reached.
 run_with() {
   local dir="$1"; shift
   run_stdout=""; run_stderr=""; run_status=0
   local err_file="$work_dir/stderr.$$"
-  run_stdout="$(PATH="$dir:/usr/bin:/bin" "$script" "$@" 2>"$err_file")" || run_status=$?
+  run_stdout="$(PATH="$dir" "$script" "$@" 2>"$err_file")" || run_status=$?
   run_stderr="$(cat "$err_file")"
   rm -f "$err_file"
 }
@@ -97,6 +110,7 @@ run_with "$dir" 42
 pass "an unrecognised gh failure exits 1, not 3"
 
 empty_dir="$(mktemp -d "$work_dir/nogh.XXXXXX")"
+link_utils "$empty_dir"    # everything the script needs EXCEPT gh, and PATH is this directory alone
 run_with "$empty_dir" 42
 [[ "$run_status" -ne 3 ]] || fail "gh missing from PATH must never exit 3"
 [[ "$run_status" -eq 1 ]] || fail "gh missing from PATH should exit 1, got $run_status"

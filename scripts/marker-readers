@@ -84,6 +84,7 @@ infix="$(cerebro_marker_infix)"
 # ships bash 3.2 and there is no `declare -A'. The reason for each row is the comment above it.
 
 READERS="
+fleet-view/src/model.rs          fleet-view/src/model.rs
 # The elisp copy: cerebro--session-args-p, cerebro--name-in-args-p, cerebro--root-in-args-p and
 # cerebro--marker-needle. Elisp cannot source a bash library - the same qualification
 # cerebro--log-line carries against scripts/jsonl-log.sh - so it subscribes instead.

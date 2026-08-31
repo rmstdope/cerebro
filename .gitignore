@@ -36,3 +36,4 @@ dist/
 .cerebro/worktrees
 .cerebro/state
 .cerebro/scratch
+/target

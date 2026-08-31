@@ -52,6 +52,7 @@ echo "== bash suites =="
 if ! bash scripts/suite-runner tests; then
   status=1
 fi
+cargo test --workspace --all-targets --locked
 
 if [[ $status -eq 0 ]]; then
   echo "gate: green"

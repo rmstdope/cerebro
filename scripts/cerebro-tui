@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if ! command -v cargo >/dev/null 2>&1; then echo "cerebro-tui: cargo is unavailable" >&2; exit 2; fi
+mount_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! hints="$(bash "$mount_root/scripts/consumer-root" --hints 2>/dev/null)"; then
+  echo "cerebro-tui: consumer unavailable" >&2; exit 2
+fi
+consumer="$(printf '%s\n' "$hints" | sed -n '1p')"
+shared="$(printf '%s\n' "$hints" | sed -n '2p')"
+mount="$(printf '%s\n' "$hints" | sed -n '3p')"
+[[ -n "$shared" ]] || shared="$consumer"
+workspace="$mount_root"
+[[ -f "$workspace/Cargo.toml" ]] || { echo "cerebro-tui: workspace is unavailable" >&2; exit 2; }
+export CEREBRO_CONSUMER_ROOT="$consumer" CEREBRO_CONSUMER_SHARED_ROOT="$shared"
+export CEREBRO_CONSUMER_MOUNT="$mount" CEREBRO_SCRIPTS="$mount_root/scripts"
+cd "$consumer"
+exec cargo run --release --locked --manifest-path "$workspace/Cargo.toml" --package cerebro-tui --bin cerebro-tui

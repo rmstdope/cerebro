@@ -993,6 +993,17 @@ round trip through the navigator's queue.
 6. **Out of scope** — what a reader might reasonably assume is included and is not.
 7. **Validation** — the exact commands, and any check that only a human can make.
 
+> **A worktree cannot validate a change through a reader that deliberately answers from the
+> shared root.** `project-conf` and `model-for` read `.cerebro/project.conf` and
+> `.cerebro/models.conf` through `consumer-root --shared`; inside an implementer's worktree that
+> is the main checkout, not the branch being planned. A plan that changes either declaration
+> must identify every validation command that reads main and cannot prove the branch before
+> merge. Its *Validation* section must instead give the exact commands to commit the branch,
+> clone that committed branch into a throwaway directory with its submodules, perform the
+> project's declared install or prewarm steps when required, and run the exact fast gate inside
+> that clone. A direct shared-root read may be listed only as a post-merge check, labelled that
+> way. `roster` is not in this class: it reads `.cerebro/roster.conf` from the enclosing tree.
+
 For a consumer declaring `rust_paths`, a `non-rust` workload is permitted only when every planned
 file classifies non-Rust and validation invokes neither Cargo nor a Rust/Wasm/native build, full
 gate, nor another documented Rust rebuild. Such a plan must name both

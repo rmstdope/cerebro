@@ -220,6 +220,31 @@ event "$real/store.db" s1 "$(ago_ms 110)" 3000000000
   || fail "a marker followed by the rest of the prompt must still yield its agent and its root"
 pass "the marker is read as the first sentence of a prompt, not as the whole message"
 
+# --- a marker with launcher flags before it in the field ------------------------------------------
+#
+# The two predicate readers ask whether the sentence APPEARS IN the field. The SQL prefilter asked
+# whether the field BEGINS WITH it - a fourth semantics for one sentence, which silently dropped
+# every row carrying anything before the marker before jq ever saw it, and silence is the failure
+# mode this whole family of bugs is about (cb-akt).
+
+flagged="$(new_fixture)"
+flagged_root="$(root_of "$flagged")"
+make_store "$flagged/store.db"
+sqlite3 "$flagged/store.db" "
+  INSERT INTO sessions(id) VALUES('s1');
+  INSERT INTO turns(session_id, turn_index, user_message)
+    VALUES('s1', 0, '--agent implementer --name Cyclops This session is Cyclops of the cerebro fleet rooted at $flagged_root/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.');
+"
+event "$flagged/store.db" s1 "$(ago_ms 110)" 5000000000
+{
+  line "$(ago 120)" Cyclops working build cb-aaa
+  line "$(ago 60)"  Cyclops waiting "" ""
+} > "$flagged/.cerebro/state/transitions.jsonl"
+
+[[ "$(run "$flagged" --by-bead --json | aic_of cb-aaa)" == "5" ]] \
+  || fail "a marker with launcher flags before it in the field is still this fleet's session"
+pass "a marker with launcher flags before it in the field is still this fleet's session"
+
 # --- a store bigger than one argument -------------------------------------------------------------
 #
 # The store's rows once reached jq as an argv value, and on this fleet they crossed ARG_MAX: every

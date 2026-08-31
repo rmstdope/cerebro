@@ -8359,7 +8359,10 @@ every hand-written five-element fixture went on passing (cb-wfb)."
           (with-current-buffer panel
             (setq cerebro--beads
                   (cerebro--partition-beads
+                   ;; Two parked, one merged: same-sized buckets would give the
+                   ;; wrong index the right answer, which is how the bug hid.
                    (list (cerebro-test--paused "cb-parked")
+                         (cerebro-test--paused "cb-parked-stale" '("verdict:stale"))
                          '((id . "cb-merged") (status . "closed") (priority . 2)
                            (title . "cb-merged") (labels . []) (issue_type . "task")
                            (updated_at . "2026-08-14T09:00:00Z"))))
@@ -8367,5 +8370,8 @@ every hand-written five-element fixture went on passing (cb-wfb)."
           (let ((context (with-temp-buffer
                            (setq cerebro--agents nil)
                            (cerebro--trigger-context default-directory (seconds-to-time 1000000.0)))))
-            (should (equal (alist-get 'merged-unverified context) 1))))
+            (should (equal (alist-get 'merged-unverified context) 1))
+            ;; And a parked bead is still an open one: being asked about does not
+            ;; make a stale verdict stop being stale.
+            (should (equal (alist-get 'stale-verdicts context) 1))))
       (kill-buffer panel))))

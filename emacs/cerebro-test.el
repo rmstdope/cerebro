@@ -2750,6 +2750,17 @@ the role and the state makes the row itself the signal."
 ;; ---------------------------------------------------------------------------
 ;; The bead panel
 
+(defun cerebro-test--buckets (&rest kvs)
+  "A bucket plist carrying every key `cerebro--bead-buckets' names, with the
+lists KVS gives under theirs and nil under the rest.
+
+For the fixtures whose subject is a reader's own behaviour rather than the
+partition - where feeding `cerebro--partition-beads' real beads would say more
+about the partition than about the reader.  Everywhere else, build the
+structure through its real producer."
+  (apply #'append (mapcar (lambda (key) (list key (plist-get kvs key)))
+                          cerebro--bead-buckets)))
+
 (defun cerebro-test--bead (id priority title &optional owner)
   `((id . ,id) (priority . ,priority) (title . ,title) (owner . ,owner)))
 
@@ -2816,7 +2827,9 @@ test."
          (unplanned (list (cerebro-test--bead "ah-7s7" 1 "loose")))
          (merged (list (cerebro-test--bead "ah-m1" 2 "just landed")))
          (text (string-join
-                (cerebro--bead-panel claimed nil nil unplanned nil merged 62 8 (current-time))
+                (cerebro--bead-panel (cerebro-test--buckets :claimed claimed :unplanned unplanned
+                                                             :merged merged)
+                                     62 8 (current-time))
                 "\n"))
          (at (lambda (s) (string-match (regexp-quote s) text))))
     ;; Each bead under the heading it belongs to, not merely present somewhere.
@@ -2967,7 +2980,8 @@ trading a permanent freeze for two concurrent `bd\='s."
     (should (member "--json" argv))
     ;; "[]" is a successful, empty answer - a six-list partition of nothing,
     ;; not "bd did not answer".
-    (should (equal got (list nil nil nil nil nil nil)))
+    (should (equal got (list :claimed nil :planned nil :being-planned nil
+                             :unplanned nil :paused nil :merged nil)))
     (should (null linked)))
   ;; The same call answers the linked beads: the panel partition deliberately
   ;; leaves out what is settled (`cerebro--settled-p'), and a VERIFIED is
@@ -3061,12 +3075,14 @@ flight, and says so in the header."
                    (lambda (_root cb) (setq stashed-callback cb) 'started)))
           (with-current-buffer buffer
             (cerebro-beads-mode)
-            (setq cerebro--beads (list (list (cerebro-test--bead "ah-c1" 1 "claimed one")) nil nil nil nil nil))
+            (setq cerebro--beads
+                  (cerebro-test--buckets :claimed (list (cerebro-test--bead "ah-c1" 1 "claimed one"))))
             (cerebro--beads-render buffer)
             (should (string-match-p "ah-c1" (buffer-string)))
             (should (string-match-p "refreshing…" header-line-format))
             (funcall stashed-callback
-                     (list (list (cerebro-test--bead "ah-c2" 1 "different bead")) nil nil nil nil nil))
+                     (cerebro-test--buckets
+                      :claimed (list (cerebro-test--bead "ah-c2" 1 "different bead"))))
             (should (string-match-p "ah-c2" (buffer-string)))
             (should-not (string-match-p "ah-c1" (buffer-string)))
             (should (string-match-p "as of" header-line-format))
@@ -3083,7 +3099,8 @@ flight, and says so in the header."
                    (lambda (_root cb) (setq stashed-callback cb) 'started)))
           (with-current-buffer buffer
             (cerebro-beads-mode)
-            (setq cerebro--beads (list (list (cerebro-test--bead "ah-c1" 1 "claimed one")) nil nil nil nil nil))
+            (setq cerebro--beads
+                  (cerebro-test--buckets :claimed (list (cerebro-test--bead "ah-c1" 1 "claimed one"))))
             (cerebro--beads-render buffer)
             (funcall stashed-callback nil)
             (should (string-match-p "ah-c1" (buffer-string)))
@@ -3114,7 +3131,7 @@ flight, and says so in the header."
     (unwind-protect
         (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
                   ((symbol-function 'cerebro--request-beads)
-                   (lambda (_root cb) (funcall cb (list nil nil nil nil nil nil)) 'started))
+                   (lambda (_root cb) (funcall cb (cerebro--partition-beads nil)) 'started))
                   ((symbol-function 'cerebro--request-sweeps)
                    (lambda (_root cb) (funcall cb (list nil)) 'started)))
           (save-window-excursion
@@ -3180,7 +3197,7 @@ that survived a fleet buffer kill-and-reopen must still be redrawn by
   "The order the navigator reads in, and back to the top rather than stopping."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
             ((symbol-function 'cerebro--request-beads)
-             (lambda (_root cb) (funcall cb (list nil nil nil nil nil nil)) 'started))
+             (lambda (_root cb) (funcall cb (cerebro--partition-beads nil)) 'started))
             ((symbol-function 'cerebro--request-sweeps)
              (lambda (_root cb) (funcall cb (list nil)) 'started)))
     (let ((fleet (generate-new-buffer " *cerebro-test-fleet*")))
@@ -3277,13 +3294,11 @@ session, which is the case the navigator actually hits, was not."
                    ((symbol-function 'cerebro--request-beads)
                     (lambda (_root cb)
                       (funcall cb
-                               (list (list (cerebro-test--bead "ah-c1" 1 "claimed one"))
-                                     (list (cerebro-test--bead "ah-p1" 0 "planned one"))
-                                     nil
-                                     (list (cerebro-test--bead "ah-u1" 1 "unplanned one")
-                                           (cerebro-test--bead "ah-u2" 2 "unplanned two"))
-                                     nil
-                                     nil))
+                               (cerebro-test--buckets
+                                :claimed (list (cerebro-test--bead "ah-c1" 1 "claimed one"))
+                                :planned (list (cerebro-test--bead "ah-p1" 0 "planned one"))
+                                :unplanned (list (cerebro-test--bead "ah-u1" 1 "unplanned one")
+                                                 (cerebro-test--bead "ah-u2" 2 "unplanned two"))))
                       'started)))
            (with-current-buffer ,buffer
              (cerebro-beads-mode)
@@ -3348,10 +3363,10 @@ land on that line when the queue changed underneath."
     (cl-letf (((symbol-function 'cerebro--request-beads)
                (lambda (_root cb)
                  (funcall cb
-                          (list (list (cerebro-test--bead "ah-c0" 0 "new claim")
-                                      (cerebro-test--bead "ah-c1" 1 "claimed one"))
-                                (list (cerebro-test--bead "ah-p1" 0 "planned one"))
-                                nil nil nil nil))
+                          (cerebro-test--buckets
+                           :claimed (list (cerebro-test--bead "ah-c0" 0 "new claim")
+                                          (cerebro-test--bead "ah-c1" 1 "claimed one"))
+                           :planned (list (cerebro-test--bead "ah-p1" 0 "planned one"))))
                  'started)))
       (cerebro--beads-render buffer)
       (should (equal (cerebro--bead-at-point) "ah-p1")))))
@@ -3362,7 +3377,8 @@ land on that line when the queue changed underneath."
     (should (equal (cerebro--bead-at-point) "ah-c1"))
     (cl-letf (((symbol-function 'cerebro--request-beads)
                (lambda (_root cb)
-                 (funcall cb (list nil nil nil (list (cerebro-test--bead "ah-u1" 1 "left")) nil nil))
+                 (funcall cb (cerebro-test--buckets
+                              :unplanned (list (cerebro-test--bead "ah-u1" 1 "left"))))
                  'started)))
       (cerebro--beads-render buffer)
       (should (equal (cerebro--bead-at-point) "ah-u1")))))
@@ -3393,7 +3409,8 @@ timer render from another window, so this is the normal path, not an edge."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
             ((symbol-function 'cerebro--request-beads)
              (lambda (_root cb)
-               (funcall cb (list nil nil nil (list (cerebro-test--bead "ah-u1" 1 "first real bead")) nil nil))
+               (funcall cb (cerebro-test--buckets
+                            :unplanned (list (cerebro-test--bead "ah-u1" 1 "first real bead"))))
                'started)))
     (let ((buffer (get-buffer-create "*cerebro-test-window-point*")))
       (unwind-protect
@@ -3561,7 +3578,7 @@ noticed."
   "Claimed, planned, being planned, unplanned, merged - as far as the panel
 follows work, and in the order it moves in read backwards."
   (let* ((text (string-join
-                (cerebro--bead-panel nil nil nil nil nil nil 62 8 (current-time)) "\n"))
+                (cerebro--bead-panel nil 62 8 (current-time)) "\n"))
          (at (lambda (s) (string-match (regexp-quote s) text))))
     (should (< (funcall at "Claimed") (funcall at "Planned, unclaimed")))
     (should (< (funcall at "Planned, unclaimed") (funcall at "Being planned")))
@@ -3577,9 +3594,8 @@ parents rather than work, bd's `event' records are its own bookkeeping, and
 blocked or deferred beads cannot be picked up.  They are left out rather
 than filed somewhere nobody reads."
   (let ((text (string-join
-               (apply #'cerebro--bead-panel
-                      (append (cerebro--partition-beads cerebro-test--every-shape)
-                              (list 62 8 (current-time))))
+               (cerebro--bead-panel (cerebro--partition-beads cerebro-test--every-shape)
+                                    62 8 (current-time))
                "\n")))
     ;; Case-sensitively: "Merged, unverified" contains "verified", and
     ;; `string-match-p' folds case by default.
@@ -3663,21 +3679,38 @@ work that came back."
 told the bucket it asked for is empty is the failure this accessor removes."
   (should-error (cerebro--bucket '(:claimed nil) :megred)))
 
+(ert-deftest cerebro-test/partition-beads-returns-a-bucket-for-every-name ()
+  "Every key in `cerebro--bead-buckets', always - including on an empty board.
+
+`cerebro--trigger-context' tells \"the panel has not answered yet\" from \"the
+buffer is empty\" by whether `cerebro--beads' is nil at all, so a partition that
+skipped its empty buckets would optimise itself down to nil and look exactly
+like a panel that had never answered - which starts both planners at once."
+  (let ((keys (lambda (plist)
+                (let (ks) (while plist (push (car plist) ks) (setq plist (cddr plist)))
+                     (nreverse ks)))))
+    (should (equal (funcall keys (cerebro--partition-beads cerebro-test--every-shape))
+                   cerebro--bead-buckets))
+    (should (cerebro--partition-beads nil))
+    (should (equal (funcall keys (cerebro--partition-beads nil)) cerebro--bead-buckets))))
+
 (ert-deftest cerebro-test/each-shape-lands-where-it-belongs ()
   "Five buckets, and everything else deliberately in none of them."
   (let* ((buckets (cerebro--partition-beads cerebro-test--every-shape))
-         (ids (lambda (n) (mapcar (lambda (b) (alist-get 'id b)) (nth n buckets)))))
-    (should (= 6 (length buckets)))
-    (should (equal (funcall ids 0) '("in-progress")))
-    (should (equal (funcall ids 1) '("open-planned")))
-    (should (equal (funcall ids 2) '("open-planning")))
-    (should (equal (funcall ids 3) '("open-loose")))
+         (ids (lambda (key) (mapcar (lambda (b) (alist-get 'id b))
+                                    (cerebro--bucket buckets key)))))
+    (should (equal (funcall ids :claimed) '("in-progress")))
+    (should (equal (funcall ids :planned) '("open-planned")))
+    (should (equal (funcall ids :being-planned) '("open-planning")))
+    (should (equal (funcall ids :unplanned) '("open-loose")))
     ;; Merged is what still wants verifying: bare, or failed and rebuilt.
-    (should-not (funcall ids 4))
-    (should (equal (sort (funcall ids 5) #'string<) '("closed-bare" "closed-failed")))
+    (should-not (funcall ids :paused))
+    (should (equal (sort (funcall ids :merged) #'string<) '("closed-bare" "closed-failed")))
     ;; And nothing else got in anywhere: verified work, epics, bd's own event
     ;; records, blocked, deferred, and a status from a future bd.
-    (should (= 6 (length (apply #'append buckets))))))
+    (should (= 6 (length (apply #'append
+                                (mapcar (lambda (key) (cerebro--bucket buckets key))
+                                        cerebro--bead-buckets)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; What the planners are holding (ah-2p.2)
@@ -3689,10 +3722,10 @@ it must not sit in Planned, unclaimed, which is what an idle implementer can
 take right now."
   (let* ((beads (list (cerebro-test--any "being-planned" "open" '("planning"))))
          (buckets (cerebro--partition-beads beads)))
-    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 2 buckets))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (cerebro--bucket buckets :being-planned))
                    '("being-planned")))
-    (should-not (nth 1 buckets))
-    (should-not (nth 3 buckets))))
+    (should-not (cerebro--bucket buckets :planned))
+    (should-not (cerebro--bucket buckets :unplanned))))
 
 (ert-deftest cerebro-test/planned-wins-over-planning-when-a-bead-carries-both ()
   "The two labels overlap for one `bd update' - `--add-label planned
@@ -3701,8 +3734,8 @@ planner that forgot the removal, leaves both. Pickable wins: an implementer
 can claim it, whatever else the bead says."
   (let* ((beads (list (cerebro-test--any "both" "open" '("planning" "planned"))))
          (buckets (cerebro--partition-beads beads)))
-    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 1 buckets)) '("both")))
-    (should-not (nth 2 buckets))))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (cerebro--bucket buckets :planned)) '("both")))
+    (should-not (cerebro--bucket buckets :being-planned))))
 
 (ert-deftest cerebro-test/a-named-planning-label-is-being-planned ()
   "A planner names its hold - `planning:<its own name>' - so a finishing
@@ -3711,17 +3744,17 @@ hold whoever holds it, or Being planned silently empties: nothing errors, the
 membership test simply stops matching."
   (let* ((beads (list (cerebro-test--any "held" "open" '("planning:Xavier"))))
          (buckets (cerebro--partition-beads beads)))
-    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 2 buckets))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (cerebro--bucket buckets :being-planned))
                    '("held")))
-    (should-not (nth 1 buckets))
-    (should-not (nth 3 buckets))))
+    (should-not (cerebro--bucket buckets :planned))
+    (should-not (cerebro--bucket buckets :unplanned))))
 
 (ert-deftest cerebro-test/a-bare-planning-label-is-still-being-planned ()
   "The bare spelling is not dropped. Sessions started before the named one
 existed keep writing it, and the panel watches both at once."
   (let* ((beads (list (cerebro-test--any "bare" "open" '("planning"))))
          (buckets (cerebro--partition-beads beads)))
-    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 2 buckets))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (cerebro--bucket buckets :being-planned))
                    '("bare")))))
 
 (ert-deftest cerebro-test/a-label-that-merely-starts-with-the-word-is-not-a-hold ()
@@ -3737,9 +3770,9 @@ and it would vanish from the backlog with nobody thinking to look past."
                       (cerebro-test--any "owned" "open" '("planner:Xavier"))
                       (cerebro-test--any "nearly" "open" '("planned-ish"))))
          (buckets (cerebro--partition-beads beads)))
-    (should-not (nth 1 buckets))
-    (should-not (nth 2 buckets))
-    (should (equal (sort (mapcar (lambda (b) (alist-get 'id b)) (nth 3 buckets))
+    (should-not (cerebro--bucket buckets :planned))
+    (should-not (cerebro--bucket buckets :being-planned))
+    (should (equal (sort (mapcar (lambda (b) (alist-get 'id b)) (cerebro--bucket buckets :unplanned))
                          #'string<)
                    '("nearly" "notes" "owned")))))
 
@@ -3751,10 +3784,10 @@ label by its prefix rather than matching a string."
                       (cerebro-test--any "b" "open" '("planning:Beast"))
                       (cerebro-test--any "old" "open" '("planning"))))
          (buckets (cerebro--partition-beads beads)))
-    (should (equal (sort (mapcar (lambda (b) (alist-get 'id b)) (nth 2 buckets))
+    (should (equal (sort (mapcar (lambda (b) (alist-get 'id b)) (cerebro--bucket buckets :being-planned))
                          #'string<)
                    '("b" "old" "x")))
-    (should-not (nth 3 buckets))))
+    (should-not (cerebro--bucket buckets :unplanned))))
 
 ;; ---------------------------------------------------------------------------
 ;; Parked for the navigator (cb-wfb): the sixth bucket and the section it draws
@@ -3773,10 +3806,9 @@ Unplanned it is indistinguishable from the backlog, which is exactly how a
 pause outlives its reason with nobody counting it."
   (let* ((beads (list (cerebro-test--paused "cb-aaa")))
          (buckets (cerebro--partition-beads beads)))
-    (should (= 6 (length buckets)))
-    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 4 buckets))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (cerebro--bucket buckets :paused))
                    '("cb-aaa")))
-    (should-not (nth 3 buckets))))
+    (should-not (cerebro--bucket buckets :unplanned))))
 
 (ert-deftest cerebro-test/paused-beads-win-over-planned ()
   "A planner parking a question adds `human' without removing `planned', and
@@ -3785,9 +3817,9 @@ human' - so such a bead is NOT claimable. Under Planned, unclaimed it would
 report queue depth that does not exist."
   (let* ((beads (list (cerebro-test--paused "cb-bbb" '("planned"))))
          (buckets (cerebro--partition-beads beads)))
-    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (nth 4 buckets))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (cerebro--bucket buckets :paused))
                    '("cb-bbb")))
-    (should-not (nth 1 buckets))))
+    (should-not (cerebro--bucket buckets :planned))))
 
 (ert-deftest cerebro-test/paused-section-renders-with-age ()
   "The section says how long each bead has been waiting, in the one elapsed
@@ -3796,7 +3828,7 @@ dash rather than as a small number."
   (let* ((now (encode-time (iso8601-parse "2026-08-31T00:00:00Z")))
          (paused (list (cerebro-test--paused "cb-aaa" nil "2026-08-30T20:00:00Z")
                        (cerebro-test--paused "cb-ccc")))
-         (text (string-join (cerebro--bead-panel nil nil nil nil paused nil 62 8 now)
+         (text (string-join (cerebro--bead-panel (cerebro-test--buckets :paused paused) 62 8 now)
                             "\n")))
     (should (string-match-p "Waiting on you 2" text))
     (should (string-match-p "cb-aaa" text))
@@ -3808,7 +3840,7 @@ dash rather than as a small number."
 you 0' is the reassurance the navigator asked for, unlike Sweeps, which
 disappears."
   (let ((text (string-join
-               (cerebro--bead-panel nil nil nil nil nil nil 62 8 (current-time))
+               (cerebro--bead-panel nil 62 8 (current-time))
                "\n")))
     (should (string-match-p "Waiting on you 0" text))
     (should (string-match-p "(none)" text))))
@@ -3817,7 +3849,7 @@ disappears."
   (let* ((being (list (cerebro-test--any "ah-1" "open" '("planning"))
                       (cerebro-test--any "ah-2" "open" '("planning"))))
          (text (string-join
-                (cerebro--bead-panel nil nil being nil nil nil 62 8 (current-time))
+                (cerebro--bead-panel (cerebro-test--buckets :being-planned being) 62 8 (current-time))
                 "\n")))
     (should (string-match-p "Being planned 2" text))
     (should (string-match-p "ah-1" text))
@@ -4899,7 +4931,7 @@ list must still refresh and supervise without error."
 navigator who redraws by hand every twenty seconds would never see one."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
             ((symbol-function 'cerebro--request-beads)
-             (lambda (_root cb) (funcall cb (list nil nil nil nil nil nil)) 'started))
+             (lambda (_root cb) (funcall cb (cerebro--partition-beads nil)) 'started))
             ((symbol-function 'cerebro--sweep) #'ignore)
             ((symbol-function 'cerebro--list-render) #'ignore)
             ((symbol-function 'cerebro--supervise) #'ignore))
@@ -5299,7 +5331,7 @@ and the script run sixty times a minute."
 (ert-deftest cerebro-test/history-rows-reach-the-panel ()
   "The wiring, end to end: rows kept on the buffer are what the panel draws."
   (let ((lines (cerebro--bead-panel
-                nil nil nil nil nil nil 100 3 (current-time) nil
+                nil 100 3 (current-time) nil
                 '(((agent . "Cyclops") (state . "working") (count . 2) (total_min . 10)
                    (median_min . 5) (max_min . 6) (open_min . 40))))))
     (should (cl-some (lambda (l) (string-match-p "History" (substring-no-properties l))) lines))
@@ -5630,14 +5662,15 @@ exactly today's literal."
   "The panel buckets on `cerebro-planned-label', not on the word `planned'."
   (let ((cerebro-planned-label "ready")
         (cerebro-planning-label "drafting"))
-    (pcase-let ((`(,_claimed ,planned ,being-planned ,unplanned ,_merged)
-                 (cerebro--partition-beads
-                  '(((id . "a") (status . "open") (issue_type . "task") (labels . ("ready")))
-                    ((id . "b") (status . "open") (issue_type . "task") (labels . ("drafting")))
-                    ((id . "c") (status . "open") (issue_type . "task") (labels . ("planned")))))))
-      (should (equal (mapcar (lambda (b) (alist-get 'id b)) planned) '("a")))
-      (should (equal (mapcar (lambda (b) (alist-get 'id b)) being-planned) '("b")))
-      (should (equal (mapcar (lambda (b) (alist-get 'id b)) unplanned) '("c"))))))
+    (let* ((buckets (cerebro--partition-beads
+                     '(((id . "a") (status . "open") (issue_type . "task") (labels . ("ready")))
+                       ((id . "b") (status . "open") (issue_type . "task") (labels . ("drafting")))
+                       ((id . "c") (status . "open") (issue_type . "task") (labels . ("planned"))))))
+           (ids (lambda (key) (mapcar (lambda (b) (alist-get 'id b))
+                                      (cerebro--bucket buckets key)))))
+      (should (equal (funcall ids :planned) '("a")))
+      (should (equal (funcall ids :being-planned) '("b")))
+      (should (equal (funcall ids :unplanned) '("c"))))))
 
 (ert-deftest cerebro-test/the-mount-point-is-one-setting-feeding-both-sites ()
   "Mounted anywhere but `.claude/cerebro', `M-x cerebro' simply errored:
@@ -7651,18 +7684,16 @@ it, and the roster - all of which this tick has already read."
                   ((symbol-function 'cerebro--beads-panel-buffer) (lambda () panel)))
           (with-current-buffer panel
             (setq cerebro--beads
-                  (list nil                                        ; claimed
-                        '(((id . "a")) ((id . "b")))               ; planned
-                        nil                                        ; being planned
-                        '(((id . "c") (priority . 0))
-                          ((id . "d") (priority . 4))
-                          ((id . "e") (priority . 4))
-                          ((id . "b2") (priority . 4)
-                           (labels . ["triage:declined"]))
-                          ((id . "f") (priority . 2)
-                           (labels . ["verdict:stale"])))          ; unplanned
-                        nil                                        ; parked
-                        '(((id . "g")) ((id . "h")) ((id . "i"))))) ; merged
+                  (cerebro-test--buckets
+                   :planned '(((id . "a")) ((id . "b")))
+                   :unplanned '(((id . "c") (priority . 0))
+                                ((id . "d") (priority . 4))
+                                ((id . "e") (priority . 4))
+                                ((id . "b2") (priority . 4)
+                                 (labels . ["triage:declined"]))
+                                ((id . "f") (priority . 2)
+                                 (labels . ["verdict:stale"])))
+                   :merged '(((id . "g")) ((id . "h")) ((id . "i")))))
             (setq cerebro--beads-read-at 3.5))
           (with-temp-buffer
             (setq cerebro--agents
@@ -7703,7 +7734,7 @@ deciding whether the figures postdate a transition needs the earlier clock."
                   ((symbol-function 'cerebro--request-beads)
                    (lambda (_root answer)
                      (with-current-buffer panel (setq cerebro--beads-requested-at 41.0))
-                     (funcall answer (list nil nil nil nil nil nil) nil)
+                     (funcall answer (cerebro--partition-beads nil) nil)
                      'answered)))
           (cerebro--beads-render panel)
           (with-current-buffer panel
@@ -7721,7 +7752,7 @@ a planner whose pass found a full buffer and ended."
     (unwind-protect
         (cl-letf (((symbol-function 'cerebro--fleet) (lambda (_) nil))
                   ((symbol-function 'cerebro--beads-panel-buffer) (lambda () panel)))
-          (with-current-buffer panel (setq cerebro--beads (list nil nil nil nil nil nil)))
+          (with-current-buffer panel (setq cerebro--beads (cerebro--partition-beads nil)))
           (with-temp-buffer
             (setq cerebro--agents
                   (list (cerebro-test--agent "Rogue" "implementer" 'implementer 'working)
@@ -8395,12 +8426,44 @@ Emacs's to add."
                    (concat (cerebro--finding-explanation '(unpause "cb-aaa" 2)) " ")))
     (should-not (string-match-p "(y or n)" prompt))))
 
+(ert-deftest cerebro-test/a-seventh-bucket-is-invisible-to-readers-that-do-not-want-it ()
+  "The invariant this change exists for: adding a bucket is a producer-side edit
+and no reader's problem. cb-wfb's sixth bucket changed what every `nth' meant,
+one reader was missed, and the gate stayed green - so this hands the readers a
+seventh bucket directly rather than teaching the partition to make one."
+  (let* ((six (cerebro-test--buckets
+               :claimed (list (cerebro-test--any "cb-held" "in_progress"))
+               :planned (list (cerebro-test--any "cb-ready" "open" '("planned")))
+               :unplanned (list (cerebro-test--any "cb-loose" "open"))
+               :paused (list (cerebro-test--paused "cb-parked"))
+               :merged (list (cerebro-test--any "cb-landed" "closed"))))
+         (seven (append six (list :sabretooth (list (cerebro-test--any "cb-alien" "open")))))
+         (now (current-time))
+         (panel (lambda (buckets) (string-join (cerebro--bead-panel buckets 62 8 now) "\n")))
+         (context (lambda (buckets)
+                    (let ((buffer (generate-new-buffer " *cerebro-test-seventh*")))
+                      (unwind-protect
+                          (cl-letf (((symbol-function 'cerebro--fleet)
+                                     (lambda (_) '(("Rogue" "implementer" implementer))))
+                                    ((symbol-function 'cerebro--beads-panel-buffer)
+                                     (lambda () buffer)))
+                            (with-current-buffer buffer
+                              (setq cerebro--beads buckets cerebro--beads-read-at 3.5))
+                            (with-temp-buffer
+                              (setq cerebro--agents nil)
+                              (cerebro--trigger-context default-directory now)))
+                        (kill-buffer buffer))))))
+    (should (equal (funcall panel seven) (funcall panel six)))
+    (should-not (string-match-p "cb-alien" (funcall panel seven)))
+    (should (equal (funcall context seven) (funcall context six)))))
+
 (ert-deftest cerebro-test/trigger-context-reads-the-buckets-partition-beads-writes ()
-  "`cerebro--trigger-context' indexes `cerebro--beads' by position, and
+  "`cerebro--trigger-context' reads `cerebro--beads' by name, and
 `cerebro--partition-beads' is what fills it - so this builds the buffer through
-the real partition rather than by hand. A sixth bucket inserted ahead of
-`merged' made the verifier's trigger count parked beads as merged ones, and
-every hand-written five-element fixture went on passing (cb-wfb)."
+the real partition rather than by hand. When both were positional, a sixth
+bucket inserted ahead of `merged' made the verifier's trigger count parked beads
+as merged ones, and every hand-written five-element fixture went on passing
+(cb-wfb)."
   (let ((panel (generate-new-buffer " *beads*")))
     (unwind-protect
         (cl-letf (((symbol-function 'cerebro--fleet)

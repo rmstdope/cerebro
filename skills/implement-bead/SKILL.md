@@ -26,7 +26,8 @@ The `test-driven-development` skill stops at every phase for the navigator, and 
 never covered by a blanket approval. This role is the documented exception, and the authority is
 **the consumer's root `CLAUDE.md` and its Four Eye Principle**, which the navigator wrote for
 exactly this: for a planned bead,
-the Copilot reviewer is the second pair of eyes, and an implementation session merges on the
+a review sub-agent you spawn for yourself is the second pair of eyes, and an implementation session
+merges on the
 conditions stated there. Where the two disagree, the consumer's root `CLAUDE.md` governs — it is
 the project's own document, not cerebro's, and `templates/consumer-CLAUDE.md` is where a project
 without one starts.
@@ -37,7 +38,7 @@ follows the TDD skill's gates as written.
 
 ## Waiting, without ending your run
 
-A bead has two long waits in it — the Copilot review, and CI — and how you wait is the difference
+A bead has one long wait in it — CI — and how you wait is the difference
 between finishing a bead and abandoning one. An implementer once armed a `Monitor` against a
 review, said "I'll wait now for the monitor's event", and ended its turn. The review landed two
 minutes later: two comments unanswered, the bead claimed, the PR open, and nothing to wake it.
@@ -56,7 +57,7 @@ Three things about that line, each of which has cost something here:
   and it has done so here. A silent loop is indistinguishable from a hang.
 - **Keep each call well under ten minutes.** A `Bash` call times out — 600000ms at the most,
   120000ms by default — so pass an explicit `timeout` and, for a longer wait, call again. A
-  twenty-minute review wait is three calls, not one.
+  twenty-minute CI wait is three calls, not one.
 
 `Monitor` and `Bash` with `run_in_background` both promise to re-invoke you later. Do not rely on
 either here. Your process survives the end of a turn now, so this is no longer the guaranteed
@@ -89,8 +90,8 @@ hand.
 | *Picking up*, nothing to claim | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
 | *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
 | *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
-| *The review*, after `request-review` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
-| *The review*, once every comment is answered and resolved | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
+| *The review*, before spawning the review sub-agent | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
+| *The review*, once every finding is answered | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
 | *Red CI* | stays `ci` |
 | *Merging*, on `BEHIND`: catch up on GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
 | *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` — merge covers retro, merge, close, cleanup |
@@ -178,8 +179,8 @@ git push
 # then wait for CI again, per *Waiting, without ending your run*, and merge on green
 ```
 
-You do **not** ask for another review: one Copilot review per bead, requested when the PR opens and
-never again, and a docs commit after it is exactly the kind of head movement that rule already
+You do **not** obtain another review: one review per bead, obtained before the merge and never
+again, and a docs commit after it is exactly the kind of head movement that rule already
 accepts. This is also why the bar is high — most runs add nothing and merge straight away, so the
 cycle is paid only when something was genuinely learned.
 
@@ -549,112 +550,32 @@ them here is the failure mode this split exists to prevent.
 
 ## The review — you get exactly one
 
-**One Copilot review per bead. Request it the moment the PR opens, and never again.**
+**One review per bead, and you obtain it yourself.** No review is requested from GitHub, and none is
+waited for. The second pair of eyes is a `reviewer` sub-agent you spawn once, when the gate is green
+and the PR is open, and the standing approval you merge on rests on it — read the consumer's root
+`CLAUDE.md` and its *Four Eye Principle* if you want the authority, because it is there and nowhere
+else.
 
 ```bash
-.claude/cerebro/scripts/request-review <n>
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
+.claude/cerebro/scripts/model-for --role reviewer
 ```
 
-`request-review` runs `gh pr edit <n> --add-reviewer @copilot` and classifies what came back. Branch
-on its exit status:
+`model-for` prints one tab-separated line — `<matched-key>\t<model>\t<effort>` — or **nothing at
+all** when `.cerebro/models.conf` says nothing about the `reviewer` role, in which case the
+sub-agent runs on the CLI's own default. Say out loud in the session which key matched and which
+model you are about to review on, the way `scripts/launch` does, so a review on an unexpected model
+is traceable to the file nobody remembers editing.
 
-- **0** — the review was requested. Wait for it, exactly as below.
-- **3** — GitHub refused the request outright. Go to *When the automatic review cannot be requested*
-  below; nothing else in this section changes.
-- **1** — anything else: no `gh`, no network, not authenticated, an error the script does not
-  recognise. This is **not** a refusal and does not authorise a fallback. Leave the PR open,
-  escalate by the hand-back block, worktree included, and end the pass — quoting what it put on
-  stderr, which is `gh`'s own output.
-
-That command runs once in the life of a PR. Not after you address the comments, not after a rebase,
-not after a fix that changed more than the comment asked for. If you catch yourself weighing whether
-a push is "substantial enough" to deserve another look, the answer is no — that judgement is not
-yours to make any more, and the rule exists so a bead costs one review rather than an unbounded
-number of them.
-
-`requested_reviewers` reading empty a minute later means the request was fulfilled, not dropped — do
-not re-run this off of that.
-
-Then wait for it — blocking, printing, heartbeating, per *Waiting, without ending your run*:
-
-```bash
-until gh api repos/<owner>/<repo>/pulls/<n>/reviews \
-        --jq '[.[] | select(.user.login | startswith("copilot"))] | length' | grep -qv '^0$'; do
-  bd heartbeat <id>
-  echo "waiting for the review on #<n>"
-  sleep 30
-done
-```
-
-Run that with an explicit `timeout` under the ten-minute ceiling and call it again if it returns
-empty-handed. The twenty-minute policy below is three of these calls, not one long one.
-
-Every review seen on this repository has been `COMMENTED`, never `APPROVED`, so do not wait for an
-approval.
-
-**Do not require that review to match your head.** It describes the PR as it stood when it opened,
-and it will keep describing that after your fixes and rebases move the head — which is correct and
-expected, not a reason to ask again. What you owe the review is an answer to every comment, not a
-fresh review of your answers. The Four Eye Principle agrees: its standing approval asks that exactly
-one review is requested as the PR opens, and says nothing about which commit it covers.
-
-**Every comment gets a change or a posted reply saying why not**, and the thread resolved:
-
-```bash
-# read them
-gh api repos/<owner>/<repo>/pulls/<n>/comments --jq '.[] | "\(.id)|\(.path):\(.line)|\(.body)"'
-# reply
-gh api repos/<owner>/<repo>/pulls/<n>/comments/<comment-id>/replies -f body='...'
-# resolve — gh has no built-in for this, so it is the GraphQL mutation
-gh api graphql -f query='{repository(owner:"<owner>",name:"<repo>"){pullRequest(number:<n>)
-  {reviewThreads(first:20){nodes{id isResolved}}}}}' \
-  --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false) | .id'
-gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<id>"}){thread{isResolved}}}'
-```
-
-Take the comments seriously. On this repository they have caught a lock that could be stolen a
-millisecond after being taken, a refusal message that rounded itself into a contradiction, and a
-release step that could strand a version bump — but they also raise things that are wrong or do not
-apply. Judge each one; a reasoned reply is a complete answer.
-
-Once every comment is answered and every thread resolved:
-
-```bash
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
-```
-
-and wait for CI as *Waiting, without ending your run* describes — after first checking the head can
-merge, per *Merging*'s merge-state check, if anything was pushed since the PR opened. *Red CI* below
-stays in this same `ci` phase — a fix-and-push does not change what you are waiting on.
-
-**No review within about twenty minutes**: leave the PR open, escalate the bead (the hand-back block above, worktree included), say so plainly, and take the next bead. Some PRs never get one. Merging anyway is not the
-answer, and neither is waiting forever. Do not re-request in the hope of shaking one loose — your one
-request has been spent, and a second would not arrive faster. **A review that was requested and
-never arrived is not the fallback case below**: the fallback fires only when the request itself was
-refused, and a silence still escalates.
-
-## When the automatic review cannot be requested
-
-This fires on **`request-review` exit 3 and on nothing else**. Exit 1 escalates, and so does the
-twenty-minute silence above; both of those are a review that could have been requested, and neither
-authorises anything.
-
-**The standing approval to merge on a review you obtained yourself comes from the consumer's root
-`CLAUDE.md`, and from nowhere else.** Read its *Four Eye Principle* before you use this section: if
-it does not say that a review the implementer obtains for itself stands in the automatic review's
-place, you have no such approval. Then you still get the review — it is worth having — post it,
-say plainly that GitHub refused the request, escalate by the hand-back block, and end the pass.
-
-**One fallback review per bead**, mirroring the rule above. It is not re-run after a fix, a rebase
-or a force-push.
+This is one round. Not after you address the findings, not after a rebase, not after a fix that
+changed more than the finding asked for. If you catch yourself weighing whether a push is
+"substantial enough" to deserve another look, the answer is no — the rule exists so a bead costs one
+review rather than an unbounded number of them.
 
 ### Getting the review
 
-Spawn a sub-agent of type **`general-purpose`** — the agent *type*, on whichever CLI this consumer
-declares. Never the `reviewer` type: that loads Cypher's whole role, including its rule against
-reviewing the fleet's own PRs and its demand that the navigator look at the running application,
-neither of which is what this is.
+Spawn a sub-agent of type **`reviewer`**, on the model resolved above. Both layouts ship a
+discoverable `reviewer` agent, so this works on either CLI.
 
 Give it three things, and only these three:
 
@@ -665,53 +586,64 @@ Give it three things, and only these three:
 **Do not give it your reasoning.** Summarising your own approach into the prompt is the one thing
 that would make this a second reading of the same mind rather than a second pair of eyes.
 
-Which of `agents/reviewer.md` applies:
+`agents/reviewer.md` has a section saying which of it applies when it is loaded this way rather than
+as Cypher's own session — the sub-agent reads that for itself, and you do not need to repeat it into
+the prompt.
 
-- **Applies** — *What you are actually looking for*, and all five questions under it. That is the
-  review.
-- **Does not apply** — *Telling the fleet view what you are doing* (the sub-agent writes no state
-  file); *The work list: which PRs are yours*; *Before you run anything: the code is not trusted
-  yet* (that rule is about a contributor's code, and this is the fleet's own, written in its own
-  worktree); *The user experience is the navigator's, always* (the plan's *User-facing decisions* is
-  where those answers already are, and the sub-agent holds the change to them rather than asking for
-  a demo); *Writing the review*'s posting commands and its *The user experience* and
-  *Recommendation* lines; *Ending a pass*; and *What Cypher never does* in its entirety, which binds
-  Cypher's session and not this agent.
+The spawn is synchronous: wait for it inside the tool call, exactly as *Waiting, without ending your
+run* says, and heartbeat the bead across it.
 
 ### Posting it
 
-**In full, as a PR comment, before the merge.** `<refusal>` is the message `request-review` put on
-stderr, quoted as GitHub gave it; the numbered list is the sub-agent's findings, most important
-first, each naming the file and the case; when it found none, the list is replaced by the italic
-line and nothing else:
+**In full, as a PR comment, before the merge**, and appended to the bead's notes — so a later
+session reads the review without going to GitHub for it. The numbered list is the sub-agent's
+findings, most important first, each naming the file and the case; when it found none, the list is
+replaced by the italic line and nothing else:
 
 ```markdown
-**Fallback review** — GitHub's automatic review could not be requested on this pull request
-(`<refusal>`), so this review was obtained under the Four Eye Principle's fallback. It was produced
-by an agent given the diff and the bead's plan, and not the implementer's reasoning.
+**Review** — this pull request was reviewed before merge under the Four Eye Principle, by an agent
+given the diff and the bead's plan, and not the implementer's reasoning.
 
 1. <finding, naming the file and the case>
+```
 
+```markdown
 *No findings.*
 ```
 
-### Answering it, and finishing
-
-Findings are answered exactly as Copilot's are — a change, or a posted reply saying why not. A
-finding about **approach or scope** is a hand-back, by the hand-back block above, unchanged.
-
-Before `bd close`:
-
 ```bash
-bd update <id> --add-label review:self
+gh pr comment <n> --body-file <the review>
+bd update <id> --append-notes "$(cat <the review>)"
 bd dolt push
 ```
 
-so every bead that merged this way is one `bd list --label review:self` away. Say in one line, in
-your closing report, that you merged on a review you obtained yourself.
+### Answering it, and going on
 
-**If the sub-agent cannot be spawned, or returns nothing usable, that is exit-1 territory**: leave
-the PR open, escalate by the hand-back block, worktree included, and end the pass.
+**Every finding gets a change or a posted reply saying why not.** Judge each one: the reviews on
+this repository have caught a lock that could be stolen a millisecond after being taken, a refusal
+message that rounded itself into a contradiction, and a release step that could strand a version
+bump — and they also raise things that are wrong or do not apply. A reasoned reply is a complete
+answer.
+
+A finding about **approach, scope or what the audience sees** is a hand-back, by the hand-back block
+above, worktree included — those decisions were made elsewhere on purpose.
+
+Once every finding is answered:
+
+```bash
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID
+```
+
+and wait for CI as *Waiting, without ending your run* describes — after first checking the head can
+merge, per *Merging*'s merge-state check, if anything was pushed since the PR opened. *Red CI* below
+stays in this same `ci` phase — a fix-and-push does not change what you are waiting on.
+
+**If the sub-agent cannot be spawned, or returns nothing usable**: leave the PR open, escalate by
+the hand-back block, worktree included, and end the pass. No retry — this is the only escalation
+route the review has, and a second attempt at a spawn that failed is not a second pair of eyes.
+
+A review a person or a bot leaves on the PR anyway is read and answered like any other comment. It
+is welcome; it is not what the approval rests on, and it does not replace the round above.
 
 ## Red CI
 

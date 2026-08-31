@@ -202,7 +202,14 @@ if ! sqlite3 -readonly "$store" "
       FROM turns t
       JOIN assistant_usage_events e ON e.session_id = t.session_id
       WHERE t.turn_index = 0
-        AND t.user_message LIKE 'This session is % of the cerebro fleet rooted at %';
+        -- A LEADING WILDCARD, deliberately: the sentence APPEARS IN the field, which is what
+        -- cerebro--session-args-p and scripts/agent-alive both ask of it. An anchored pattern
+        -- was a fourth semantics for one sentence and dropped every row carrying anything before
+        -- the marker - launcher flags, a wrapper's own preamble - in SQL, before jq ever saw it
+        -- (cb-akt). No index exists on turns.user_message, so the leading wildcard costs nothing
+        -- that was being saved. No backticks in this comment: the whole statement is a
+        -- double-quoted shell string, where a backtick is command substitution.
+        AND t.user_message LIKE '%This session is % of the cerebro fleet rooted at %';
     " > "$events_file" 2>/dev/null; then
   echo "fleet-cost: could not read the session store at $store. Nothing was reported." >&2
   exit 1

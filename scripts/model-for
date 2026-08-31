@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# The one place `.cerebro/models.conf' is answered:
+#
+#     model-for [--provider <p>] [--name <n>] [--role <r>]
+#
+#     stdout  ONE line, TAB separated: <matched-key>\t<model>\t<effort>
+#             - and NOTHING AT ALL when no key matched.
+#     stderr  one line per row whose key names an agent CLI cerebro does not know: warned, and the
+#             row ignored.
+#     exit 0  an answer was given, hit or miss.
+#     exit 2  usage - an unknown flag, a flag with no value, or neither --name nor --role.
+#
+# A MISS PRINTS NOTHING, rather than an empty line, and that is the whole reason this contract is
+# worth writing down: `<model>' may be the literal `-', which means "pass no --model at all" and is
+# a real answer. An empty line could not be told from it. `<effort>' may be empty, but the line
+# still carries its tab, so a caller reads three fields with one unconditional
+# `IFS=$'\t' read -r k m e'.
+#
+# WHAT IT DOES NOT DO, which is what makes the extraction safe. It answers only what the FILE says.
+# It knows nothing about an agent definition's frontmatter, does not merge the two, and does not
+# decide what `--model' is finally passed to anything. `scripts/launch' keeps every one of those
+# decisions - it lost only the parsing (cb-4z6.1).
+#
+# The file, as `launch' has always documented it:
+#
+#     # <agent-name | role | default>[@provider]   <model | ->   [effort]
+#     default   opus
+#     planner   fable   high      # this role, model and effort
+#     Beast     sonnet            # this agent, keeping the declared effort
+#     Xavier    -                 # no --model at all: whatever the CLI defaults to
+#     default@copilot  gpt-5-mini # only when .cerebro/project.conf declares agent_cli copilot
+#
+# Most specific wins - the agent's own name, then its role, then `default', and within each of
+# those the provider-scoped key beats the plain one.
+#
+# The root is the SHARED one, and that is not a detail: `launch' reads
+# `CEREBRO_CONSUMER_SHARED_ROOT' for exactly this file, so a resolver taking the ENCLOSING tree
+# would answer differently inside an implementer's worktree than the launcher does in the main
+# checkout - one rule with two answers, which is the defect this script exists to prevent.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+usage() {
+  echo "usage: model-for [--provider <p>] [--name <n>] [--role <r>]" >&2
+  exit 2
+}
+
+provider="" name="" role="" provider_given=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --provider) [[ $# -ge 2 ]] || usage; provider="$2"; provider_given=1; shift 2 ;;
+    --name)     [[ $# -ge 2 ]] || usage; name="$2"; shift 2 ;;
+    --role)     [[ $# -ge 2 ]] || usage; role="$2"; shift 2 ;;
+    *)          usage ;;
+  esac
+done
+# Neither is a caller that cannot be answered: with no name and no role only `default' could ever
+# match, which is never what the caller meant.
+[[ -n "$name" || -n "$role" ]] || usage
+
+# `--provider' omitted means resolve it. `launch' passes one because it has already resolved one,
+# and a second fork per launch is exactly the cost this script exists not to multiply; a caller
+# with no provider in hand gets the right answer by asking for none.
+#
+# 2>/dev/null and the `||' are REQUIRED, not incidental, and for `launch's stated reason:
+# `agent-cli' prints an advisory on every call in a consumer that declares no `agent_cli', and a
+# fleet does not need two identical lines above every session. A failure here is not an error for
+# this script - it just means no provider is known, and the three `@' probes are not asked.
+if [[ -z "$provider_given" ]]; then
+  provider="$("$here/agent-cli" 2>/dev/null)" || provider=""
+fi
+
+# The hint first (cb-ue0), never trusted: `cerebro_hinted_root' checks it physically resolves to
+# THIS checkout before believing it, so the fallback fork is mandatory rather than decorative. No
+# root, or no file at that root, means no rows - so every probe misses and stdout is empty, which
+# is not an error.
+source "$here/root-hints.sh"
+root="$(cerebro_hinted_root "$here/.." shared)" \
+  || root="$("$here/consumer-root" --shared 2>/dev/null)" \
+  || root=""
+models_conf="${root:+$root/.cerebro/models.conf}"
+
+# ONE pass over the file into three parallel arrays (bash 3.2, so no associative array), and THEN
+# the probes. Not a lookup per key: the unknown-provider warning below has to be said once per
+# offending ROW per invocation, and re-reading the file six times would say it six times.
+conf_keys=() conf_models=() conf_efforts=()
+if [[ -n "$models_conf" && -f "$models_conf" ]]; then
+  known_providers=""
+  while IFS= read -r kp || [[ -n "$kp" ]]; do
+    [[ -n "$kp" ]] || continue
+    if [[ -z "$known_providers" ]]; then known_providers="$kp"; else known_providers="$known_providers $kp"; fi
+  done < <("$here/agent-cli" --known 2>/dev/null)
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Everything from a `#' on is a comment, wherever it starts. Stripping it here rather than
+    # only skipping whole comment lines is what keeps `planner fable high  # and this role lower'
+    # from passing "# and this role lower" to `--effort' - and `default opus # why' from reading
+    # the `#' itself as the effort column.
+    line="${line%%#*}"
+    read -r k m e <<<"$line"
+    [[ -n "$k" ]] || continue
+    # A key naming an agent CLI: split on the LAST `@', so a name containing one keeps it.
+    if [[ "$k" == *"@"* ]]; then
+      key_provider="${k##*@}"
+      known=""
+      for p in $known_providers; do [[ "$p" == "$key_provider" ]] && known=1; done
+      if [[ -z "$known" ]]; then
+        # Warned rather than refused: one typo here should not take the fleet down, and saying
+        # nothing would leave it invisible for as long as it survives.
+        #
+        # The `{ ... } || true' is .cerebro/traps.md's "an advisory step can eat the exit status
+        # that follows it": an `echo' that fails under errexit would end this script here, and the
+        # exit 0 below would never run. Nothing inside the group is an assignment whose failure
+        # matters - that is the trap's OTHER half, and it must stay that way.
+        pretty=""
+        for p in $known_providers; do
+          if [[ -z "$pretty" ]]; then pretty="$p"; else pretty="$pretty, $p"; fi
+        done
+        { echo "model-for: models.conf: $k names no agent CLI cerebro knows ($pretty) - ignored." >&2; } || true
+        continue
+      fi
+    fi
+    conf_keys+=("$k") conf_models+=("$m") conf_efforts+=("$e")
+  done < "$models_conf"
+fi
+
+# Six keys, most specific first, first hit wins. The three `@' keys are asked only when we know
+# which provider this is.
+probe_keys=()
+if [[ -n "$name" ]]; then
+  [[ -n "$provider" ]] && probe_keys+=("$name@$provider")
+  probe_keys+=("$name")
+fi
+if [[ -n "$role" ]]; then
+  [[ -n "$provider" ]] && probe_keys+=("$role@$provider")
+  probe_keys+=("$role")
+fi
+[[ -n "$provider" ]] && probe_keys+=("default@$provider")
+probe_keys+=(default)
+
+for key in "${probe_keys[@]}"; do
+  conf_model="" conf_effort="" hit=""
+  for ((i = 0; i < ${#conf_keys[@]}; i++)); do
+    if [[ "${conf_keys[$i]}" == "$key" ]]; then
+      conf_model="${conf_models[$i]}" conf_effort="${conf_efforts[$i]}" hit=1
+      break
+    fi
+  done
+  [[ -n "$hit" ]] || continue
+  [[ -n "$conf_model" ]] || continue          # a key with no value says nothing; keep probing
+  printf '%s\t%s\t%s\n' "$key" "$conf_model" "$conf_effort"
+  exit 0
+done
+
+# No key matched: nothing at all on stdout. See the header - this is what distinguishes a miss from
+# an answer of `-'.
+exit 0

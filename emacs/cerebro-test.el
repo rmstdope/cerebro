@@ -2758,8 +2758,28 @@ For the fixtures whose subject is a reader's own behaviour rather than the
 partition - where feeding `cerebro--partition-beads' real beads would say more
 about the partition than about the reader.  Everywhere else, build the
 structure through its real producer."
-  (apply #'append (mapcar (lambda (key) (list key (plist-get kvs key)))
+  (let ((rest kvs))
+    (while rest
+      (unless (memq (car rest) cerebro--bead-buckets)
+        (error "Unknown bead bucket %S; expected one of %S"
+               (car rest) cerebro--bead-buckets))
+      (setq rest (cddr rest))))
+  (apply #'append (mapcar (lambda (key) (list key (cerebro--bucket kvs key)))
                           cerebro--bead-buckets)))
+
+(ert-deftest cerebro-test/the-bucket-fixture-refuses-a-key-it-cannot-place ()
+  "A misspelled key in a fixture is a bug in the fixture, and it is loud.
+
+`cerebro--bucket' cannot catch it: the typo never reaches a reader, because the
+helper would drop those beads and still hand back a well-formed, complete - and
+entirely empty - plist, which every assertion after it would pass against
+vacuously.  That is cb-wfb's failure moved to the fixture side, where it hid the
+first time."
+  (should-error (cerebro-test--buckets :megred '(bead)))
+  (should-error (cerebro-test--buckets :being_planned '(bead)))
+  ;; And a well-spelled key is still placed under its own name.
+  (should (equal (cerebro--bucket (cerebro-test--buckets :merged '(bead)) :merged)
+                 '(bead))))
 
 (defun cerebro-test--bead (id priority title &optional owner)
   `((id . ,id) (priority . ,priority) (title . ,title) (owner . ,owner)))

@@ -148,7 +148,10 @@ Every run also keeps each suite's full output — passing and failing alike — 
 `.cerebro/state/suite-logs/<YYYYmmdd>-<HHMMSS>-<pid>/<suite>.log`, the last three runs, pruned at
 the start of a run; `--log-dir DIR` moves the root, and a red run names its directory on stderr
 (cb-kf8) — written relative to the caller's working directory, reported as an absolute path
-(cb-wxr), since the line outlives the directory it was printed from. The path is already
+(cb-wxr), since the line outlives the directory it was printed from. A run never prunes its own
+directory, whatever else is in the root (cb-1h8): the names sort lexically and two runs inside one
+second are ordered by pid as a string, so a run that sorted first used to delete the directory it
+was writing into and fail every suite with a missing log. The path is already
 gitignored, here and in every consumer. Before it, the only record of
 a red gate was terminal scrollback, and the re-run an implementer does first is what destroyed it.
 

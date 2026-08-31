@@ -281,31 +281,83 @@ pass "--jobs refuses a bad count and --jobs 1 keeps the contract"
 
 # --- 6. suites actually run at the same time ---
 #
-# The point of the bead. Two suites that sleep 2s each finish in under 4s at --jobs 2 and take at
-# least 4s at --jobs 1. Their own directory, so cases 1-5 are untouched by the sleeping.
+# The point of the bead that made the runner parallel (cb-x05), and the property is that the two
+# suites' lifetimes OVERLAP - not that their total elapsed time falls under a threshold. Elapsed
+# time is a proxy, and this is the one case in the gate whose subject is the gate's own scheduler
+# while being run by it, alongside one suite per processor. cb-1h8: each fixture records the second
+# it started and the second it ended, and the assertion is on those four numbers.
+#
+# The recording alone would not be enough, and the review of cb-1h8 is why this says so: load
+# lengthens the sleep but it also delays a fork, so two RECORDED windows could still miss each
+# other on a saturated machine - the same direction as the sighting this bead came from. So each
+# fixture writes its start, then WAITS for its sibling's start before sleeping, bounded so a serial
+# run still terminates. Overlap at --jobs 2 is then a fact the fixtures create rather than a
+# measurement of the scheduler, and no assertion here depends on how busy the machine is. At
+# --jobs 1 the first fixture waits out the bound and the second finds the mark already there, so
+# the windows still cannot touch.
+#
+# Their own directory, so cases 1-5 are untouched by the sleeping.
 
 mkdir -p "$work_dir/slow"
-printf '#!/usr/bin/env bash\nsleep 2\nexit 0\n' >"$work_dir/slow/d-slow.sh"
-printf '#!/usr/bin/env bash\nsleep 2\nexit 0\n' >"$work_dir/slow/e-slow.sh"
+marks="$work_dir/marks"
+# `sleep 1' in an integer loop, not `sleep 0.1': bash 3.2 is the floor and a whole second is what
+# both platforms' sleep certainly take. The bound is what a serial run pays, once.
+for f in d-slow e-slow; do
+  other=e-slow
+  # `if', not `[[ ... ]] && ...': the pair returns 1 when it does not match, and this suite runs
+  # `set -euo pipefail'. See .cerebro/traps.md.
+  if [[ "$f" == e-slow ]]; then other=d-slow; fi
+  printf '#!/usr/bin/env bash\nmkdir -p "%s"\ndate +%%s >"%s/%s.start"\nw=0\nwhile [ $w -lt 5 ] && [ ! -f "%s/%s.start" ]; do sleep 1; w=$((w+1)); done\nsleep 2\ndate +%%s >"%s/%s.end"\nexit 0\n' \
+    "$marks" "$marks" "$f" "$marks" "$other" "$marks" "$f" >"$work_dir/slow/$f.sh"
+done
 
-SECONDS=0
+# The four recorded seconds, as $ds $de $es $ee, and a one-line summary for a failure message.
+# `date +%s' is what bash 3.2 and the coreutils macOS ships can both give; sub-second resolution
+# is not available and is not needed against a 2-second sleep.
+windows=""
+read_windows() {
+  local f
+  for f in d-slow e-slow; do
+    [[ -f "$marks/$f.start" && -f "$marks/$f.end" ]] \
+      || fail "$1: $f.sh recorded no window under $marks
+$(ls "$marks" 2>/dev/null)
+$both"
+  done
+  ds="$(cat "$marks/d-slow.start")"; de="$(cat "$marks/d-slow.end")"
+  es="$(cat "$marks/e-slow.start")"; ee="$(cat "$marks/e-slow.end")"
+  windows="d-slow $ds..$de, e-slow $es..$ee"
+}
+
+# Two windows overlap when the later start is strictly before the earlier end. Sequential suites
+# can only touch at a boundary - e-slow starts when d-slow has already ended - so the strict
+# comparison reads a serial run as no overlap however the seconds truncate.
+overlapping() {
+  local later_start="$ds" earlier_end="$de"
+  # `if', not `[[ ... ]] && ...': a `&&' pair that does not match returns 1, and .cerebro/traps.md
+  # is about exactly that status reaching somewhere it was not meant to.
+  if [[ $es -gt $later_start ]]; then later_start="$es"; fi
+  if [[ $ee -lt $earlier_end ]]; then earlier_end="$ee"; fi
+  [[ $later_start -lt $earlier_end ]]
+}
+
+rm -rf "$marks"
 run --jobs 2 "$work_dir/slow"
-parallel_secs=$SECONDS
 [[ $status -eq 0 ]] || fail "--jobs 2 on two sleeping suites: expected exit 0, got $status
 $both"
 for f in d-slow e-slow; do
   grep -qF -- "ok   $work_dir/slow/$f.sh (" <<<"$both" || fail "--jobs 2: no 'ok' line for $f.sh
 $both"
 done
-[[ $parallel_secs -lt 4 ]] || fail "--jobs 2 on two 2s suites took ${parallel_secs}s - they did not overlap
+read_windows "--jobs 2"
+overlapping || fail "--jobs 2: the two suites did not overlap ($windows)
 $both"
 
-SECONDS=0
+rm -rf "$marks"
 run --jobs 1 "$work_dir/slow"
-serial_secs=$SECONDS
 [[ $status -eq 0 ]] || fail "--jobs 1 on two sleeping suites: expected exit 0, got $status
 $both"
-[[ $serial_secs -ge 4 ]] || fail "--jobs 1 on two 2s suites took ${serial_secs}s - it did not serialise
+read_windows "--jobs 1"
+! overlapping || fail "--jobs 1: the two suites overlapped ($windows) - it did not serialise
 $both"
 
 # At --jobs 1 at most one name is ahead of its result, which is the property a stalled run relies on.
@@ -450,7 +502,53 @@ $want"
 
 pass "the log root keeps the three newest runs and deletes the rest"
 
-# --- 12. a log root that cannot be created falls back and does not fail the run ---
+# --- 12. a run never deletes its own directory, whatever else is in the log root ---
+#
+# cb-1h8. The prune globs the root and drops the lexically first entries, and the run's own
+# directory is in that glob. The name is <YYYYmmdd>-<HHMMSS>-<pid>, so two runs inside one second
+# are ordered by pid as a STRING, where 10000 sorts before 9999 - and a gate running one suite per
+# processor forks hard enough to cross that boundary. A run that sorted ahead of three siblings
+# deleted the directory it was about to write every log into, then failed every suite with
+# "No such file or directory" and exited 1. That was read once as a timing flake and cost a gate
+# cycle plus a baseline run against origin/main (docs/retrospectives/cb-4z6.1.md).
+#
+# Four siblings named 2999... sort after any real run, so the run under test is lexically first and
+# is what the old prune removed. Nothing here depends on a pid: the ordering is forced by name.
+
+mkdir -p "$work_dir/selfprune"
+i=0
+while [[ $i -lt 4 ]]; do
+  mkdir -p "$work_dir/selfprune/29991231-235959-$i"
+  i=$((i+1))
+done
+
+run --log-dir "$work_dir/selfprune" "$work_dir/green"
+[[ $status -eq 0 ]] || fail "a run whose directory sorts first: expected exit 0, got $status
+$both"
+
+# `|| true': grep exits 1 on no match, and a non-zero command substitution in an assignment is
+# fatal under `set -e'. See .cerebro/traps.md.
+mine="$(ls "$work_dir/selfprune" | grep -v '^2999' || true)"
+[[ -n "$mine" ]] || fail "the run deleted its own log directory
+$(ls "$work_dir/selfprune")
+$both"
+# Exactly one, before $mine is used as a path: two lines would make the next assertion read a
+# two-line path and report "holds no log", which is not what would have happened.
+[[ "$(grep -c . <<<"$mine" | tr -d ' ')" == 1 ]] \
+  || fail "the log root holds more than one run of this suite's own:
+$mine"
+[[ -f "$work_dir/selfprune/$mine/a-pass.sh.log" ]] \
+  || fail "the run's own directory survived but holds no log for a-pass.sh
+$(ls "$work_dir/selfprune/$mine" 2>/dev/null)"
+
+left="$(ls "$work_dir/selfprune")"
+[[ "$(wc -l <<<"$left" | tr -d ' ')" == 3 ]] \
+  || fail "the log root should still hold three runs, and holds:
+$left"
+
+pass "a run keeps its own log directory and prunes only older ones"
+
+# --- 13. a log root that cannot be created falls back and does not fail the run ---
 #
 # Logging is a convenience and must never be the reason a green gate is red.
 
@@ -474,7 +572,7 @@ $both"
 
 pass "a log directory that cannot be created warns on stderr and the run still answers"
 
-# --- 13. the default log root is .cerebro/state/suite-logs, relative to the caller's cwd ---
+# --- 14. the default log root is .cerebro/state/suite-logs, relative to the caller's cwd ---
 #
 # A subshell `cd', so this suite's own directory is not moved.
 
@@ -497,7 +595,7 @@ $(ls "$default_root/$runs" 2>/dev/null)"
 
 pass "with no --log-dir, logs land under .cerebro/state/suite-logs in the caller's working directory"
 
-# --- 14. the reported path is absolute, whatever cwd the run was started from ---
+# --- 15. the reported path is absolute, whatever cwd the run was started from ---
 #
 # The bead (cb-wxr): the log directory is WRITTEN relative to the caller's cwd, which is what gives
 # each consumer its own log root, but the line a red run leaves behind is READ from somewhere else
@@ -529,7 +627,7 @@ $(ls "$printed" 2>/dev/null)"
 
 pass "a relative log root is reported as an absolute path that resolves from any working directory"
 
-# --- 15. the fallback names an absolute path too ---
+# --- 16. the fallback names an absolute path too ---
 #
 # A log root that cannot be created names a directory that does not exist, so it cannot be resolved
 # by anything - which is exactly why it has to be printed in full: the reader's only question is

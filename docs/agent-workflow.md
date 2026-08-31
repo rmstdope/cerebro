@@ -120,8 +120,9 @@ The State column names the
 **phase**: `build`, `gate`, `review`, `ci`, `rebase`, `merge` for an implementer; `plan` for
 a planner; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
 Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
-timers — time on the bead, time in this phase — so three implementers sitting in `review` says
-Copilot is slow, and one in `ci` for an hour says something is stuck.
+timers — time on the bead, time in this phase — so one in `ci` for an hour says something is
+stuck. `review` is short and synchronous now, the implementer waiting on a sub-agent it spawned
+itself, so an implementer sitting in it says that sub-agent is expensive or has hung.
 
 A yellow ` ×2` after the state means two sessions of that name are running in this fleet — one of
 them was started outside the view — and `s`, `k` and `f` on that row name both pids instead of
@@ -218,10 +219,11 @@ builder, start another session.
 Implementers are named after X-Men — Cyclops, Storm, Wolverine, Rogue, and on down the roster — so
 that a fleet of them can be talked about without anyone counting session hashes.
 
-Each takes a planned bead, creates its own git worktree, works through the plan test-first, opens a
-PR, answers the Copilot review, waits for CI, merges and cleans up. Then it reports itself `waiting`
-and **that session ends**: the fleet view keeps its buffer and starts a fresh one under the same name
-when there is another planned bead. They run on Sonnet, each with its own context.
+Each takes a planned bead, creates its own git worktree, works through the plan test-first, opens
+a PR, spawns a reviewer sub-agent and answers what it finds, waits for CI, merges and cleans up.
+Then it reports itself `waiting` and **that session ends**: the fleet view keeps its buffer and
+starts a fresh one under the same name when there is another planned bead. They run on Sonnet,
+each with its own context.
 
 The replacement is the point. One bead fills a session with a plan, a diff, a review and three CI
 runs, and nothing can clear that from the inside — so instead of clearing it, the session is thrown
@@ -358,9 +360,9 @@ project, which is why the wording of what she posts is hers to get right and you
 
 ## Reviewing what comes from outside
 
-Anyone can open a pull request. The fleet's own work is planned, built, reviewed by Copilot and
-merged by the implementer that built it — none of which applies to a contributor who holds no bead
-and has read none of that. **Cypher** is the path for those:
+Anyone can open a pull request. The fleet's own work is planned, built, reviewed before merge by a
+sub-agent the implementer spawns, and merged by the implementer that built it — none of which
+applies to a contributor who holds no bead and has read none of that. **Cypher** is the path for those:
 
 ```bash
 .claude/cerebro/scripts/launch Cypher
@@ -390,8 +392,9 @@ a different question from whether a stranger's PR should land at all.
 
 ## Starting a verifier
 
-Every step so far — plan, build, review, merge — is an agent judging its own work. Nothing checks
-that the merged result actually does what it was supposed to, until **Psylocke**:
+Every step so far — plan, build, review, merge — is an agent judging its own work, and since the
+review became a sub-agent the fleet spawns for itself that is truer than it was, not less. Nothing
+checks that the merged result actually does what it was supposed to, until **Psylocke**:
 
 ```bash
 .claude/cerebro/scripts/launch Psylocke
@@ -441,9 +444,9 @@ build, she writes a retrospective of her own, the same way an implementer does.
 ## Starting the architect
 
 Nobody else in the fleet reads the *shape* of the code. A planner plans one bead, an implementer
-builds one bead, Copilot reviews that one diff, Psylocke checks that one merged bead does what it
-claimed — and across fifty merges nobody asks whether the codebase got harder to change along the
-way. **Forge** is that reader:
+builds one bead, a review sub-agent reads that one diff, Psylocke checks that one merged bead does
+what it claimed — and across fifty merges nobody asks whether the codebase got harder to change
+along the way. **Forge** is that reader:
 
 ```bash
 .claude/cerebro/scripts/launch Forge
@@ -564,7 +567,8 @@ bd human list
 
 Beads arrive there for five reasons: a plan turned out to be wrong in a way the builder must not
 decide; a plan was missing something; a user-facing question went unanswered while a planner was
-working on it; the Copilot review never came; or CI stayed red after three attempts. The bead says
+working on it; the review sub-agent could not be spawned or returned nothing usable; or CI stayed
+red after three attempts. The bead says
 which in its notes.
 
 To put one back into circulation after you have answered:
@@ -600,12 +604,10 @@ Honest numbers from building this repository's own harness:
   review round has usually been overtaken, and the rules require catching it up (on GitHub, not
   locally) plus a fresh CI cycle before it can merge. That is deliberate: a green run on a stale tree
   is evidence about a tree that will never exist.
-- **Copilot reviews about four PRs in five**, sometimes minutes late, and never marks one approved.
-  When it does not review, the builder leaves the PR open and tells you rather than merging.
-- **One review per bead**, requested when the PR opens and never again. Fixes and rebases move the
+- **One review per bead**, obtained before the merge and never again. Fixes and rebases move the
   head past what the reviewer read, and that is accepted rather than chased: what a review is owed is
   an answer to every comment, not a re-read of the answers. So the review you see on a merged PR
-  describes the PR as it opened, which is worth knowing when you read one later.
+  describes the PR as it stood when it was reviewed, which is worth knowing when you read one later.
 - **Nothing merges unreviewed and nothing merges red.** The `main` ruleset enforces the second on the
   server; the first is the agents following the rule.
 - **Interactive agents cost nothing between passes** — the view ends them, implementers included

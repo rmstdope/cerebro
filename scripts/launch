@@ -58,9 +58,26 @@ fi
 # below reads it through a process substitution, which never tripped errexit.
 names() { "$here/roster" | while IFS=$'\t' read -r n _ _; do printf '%s\n' "$n"; done; }
 
+# The listing is a courtesy; the exit status is the contract (see above). When the courtesy fails,
+# say the status - roster's own reason, if it had one, is already on stderr immediately above this
+# line, because nothing here redirects it. A parenthesis telling a human to re-run the script by
+# hand is what the second sighting of this left behind (docs/retrospectives/cb-azi.md), and off the
+# loaded run it answers fine.
+#
+# `names >&2 || status=$?' is exempt from errexit (left operand of `||'), and the `if' is this
+# function's last statement so its status is 0 either way - both deliberate; see .cerebro/traps.md,
+# "An advisory step can eat the exit status that follows it".
+list_names() {
+  local status=0
+  names >&2 || status=$?
+  if [[ $status -ne 0 ]]; then
+    echo "launch: the roster listing failed with status $status - roster's own reason, if it gave one, is above." >&2
+  fi
+}
+
 usage() {
   echo "usage: launch <Name> [agent CLI args...]" >&2
-  names >&2 || echo "launch: (the roster listing may be incomplete - run scripts/roster to see why)" >&2
+  list_names
   exit 2
 }
 
@@ -70,7 +87,25 @@ shift
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
-if ! entry="$("$here/roster" --entry "$name" 2>/dev/null)"; then
+# Status 2 is roster's documented "this name is not on the roster" and is handled below; ANY other
+# non-zero status means roster could not answer at all, which is a different thing and used to be
+# indistinguishable here - the name simply read as absent. `2>&1' is safe because roster prints
+# nothing on stderr when it succeeds, an invariant tests/launchers.sh asserts.
+entry=""
+entry_status=0
+entry="$("$here/roster" --entry "$name" 2>&1)" || entry_status=$?
+
+if [[ $entry_status -ne 0 && $entry_status -ne 2 ]]; then
+  if [[ -n "$entry" ]]; then
+    printf '%s\n' "$entry" >&2
+  fi
+  echo "launch: could not read the roster (status $entry_status) - refusing to start $name." >&2
+  exit 2
+fi
+
+if [[ $entry_status -eq 2 ]]; then
+  # On 2 the capture holds roster's own refusal line rather than a row, and it is discarded: launch
+  # says its own refusal, as it always has.
   misspelt=""
   while IFS= read -r row_name; do
     if [[ "$(lower "$row_name")" == "$(lower "$name")" ]]; then
@@ -82,7 +117,7 @@ if ! entry="$("$here/roster" --entry "$name" 2>/dev/null)"; then
     echo "launch: it is spelt $misspelt, not $name" >&2
   else
     echo "launch: $name is not on the roster" >&2
-    names >&2 || echo "launch: (the roster listing may be incomplete - run scripts/roster to see why)" >&2
+    list_names
   fi
   exit 2
 fi

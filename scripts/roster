@@ -49,8 +49,47 @@
 # Bash 3.2, builtins only (plus `dirname`, already required by callers): no `awk`, `grep`, `cut`,
 # `tr`, and no `declare -A` — this runs on macOS's stock bash, and on the PATH the
 # claude-missing test in tests/launchers.sh deliberately narrows to `dirname` and `bash` alone.
+#
+# Exit statuses, which every caller is written against:
+#
+#     0    rows printed             NOTHING on stderr, ever - `scripts/launch' reads this script's
+#                                   stderr into its own diagnosis and depends on the silence
+#     2    a refusal roster planned for      one `roster: ...' line naming it (see `refuse')
+#     anything else                 roster could not answer and does not know why: one
+#                                   `roster: failed with status N while <stage>' line (see the trap)
 
 set -euo pipefail
+
+# What roster was doing, for the diagnosis below. 2 is roster's own documented refusal and always
+# carries its own line; ANY other non-zero status is by definition one roster did not plan for, and
+# the whole point of this trap is that such a status has twice reached a caller with nothing
+# attached to it (docs/retrospectives/cb-u70.md, cb-azi.md).
+#
+# Every `stage' assignment is made in THIS shell and never inside `$( )'. An EXIT trap does not fire
+# in a command-substitution subshell - measured, on bash 3.2 and 5 - so a stage set inside
+# `print_all' would be invisible here and the diagnosis would name the stage before it, for ever.
+stage="starting"
+
+_roster_diagnose() {
+  local status=$?
+  case "$status" in
+    0 | 2) return 0 ;;
+  esac
+  echo "roster: failed with status $status while $stage - roster did not plan for this, so there is no better message than this line" >&2
+}
+trap _roster_diagnose EXIT
+
+# The one refusal. `roster' exits 2 for everything it planned for, and every such exit says why on
+# exactly one line - the trap above stays quiet for 2 precisely because this function guarantees it.
+refuse() {
+  echo "roster: $1" >&2
+  exit 2
+}
+
+usage() {
+  echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
+  exit 2
+}
 
 # NAME        ROLE            (role = the agents/<role>.md file it runs, and the --agent value)
 TABLE="
@@ -127,14 +166,14 @@ consider_root() {
 # `launch' resolves it once and exports it, and this script is the first thing a launch runs and
 # is run again for the refusal paths (cb-ue0). The hint is validated against this checkout by
 # builtins alone, so the narrowed-PATH guarantee above survives it.
+stage="resolving the consumer root"
 source "$here/root-hints.sh"
 root="$(cerebro_hinted_root "$here/.." plain)" \
   || root="$("$here/consumer-root" 2>/dev/null)" || root=""
 consider_root "$root"
 
 if [[ -z "$CONSUMER_ROSTER" && -n "$OLD_ROSTER" ]]; then
-  echo "roster: the fleet declaration has moved - run: mv .claude/cerebro-roster .cerebro/roster.conf" >&2
-  exit 2
+  refuse "the fleet declaration has moved - run: mv .claude/cerebro-roster .cerebro/roster.conf"
 fi
 
 # $1 = what to call the source in a refusal: the consumer file's path, or `built-in table'.
@@ -155,13 +194,11 @@ parse_rows() {
     case "$third" in
       "" | autostart | standby) ;;
       *)
-        echo "roster: $source line $lineno: '$third' is not a word roster knows - the third column is autostart, standby or nothing" >&2
-        exit 2
+        refuse "$source line $lineno: '$third' is not a word roster knows - the third column is autostart, standby or nothing"
         ;;
     esac
     if [[ -n "$rest" ]]; then
-      echo "roster: $source line $lineno: '$rest' is one word too many - a row is NAME ROLE and optionally autostart or standby" >&2
-      exit 2
+      refuse "$source line $lineno: '$rest' is one word too many - a row is NAME ROLE and optionally autostart or standby"
     fi
     printf '%s\t%s\t%s\t%s\n' "$name" "$role" "$(kind_of "$role")" "$third"
   done
@@ -194,6 +231,16 @@ print_all() {
 # substitution runs in a subshell, so `parse_rows' refusing there would exit that subshell and leave
 # the mode looping over nothing with status 0 - exactly the silent fleet the refusal exists to
 # prevent. Captured here, `|| exit $?' propagates it to the caller.
+#
+# The stage is decided HERE rather than inside `print_all', which runs in a subshell whose EXIT trap
+# never fires: it names the source `print_all' is about to try first, which is the source a failure
+# to read is about. A consumer file that parses but yields no rows falls back to the built-in table,
+# and the stage then names the file rather than the table - the more useful of the two to be told.
+if [[ -f "$CONSUMER_ROSTER" ]]; then
+  stage="reading $CONSUMER_ROSTER"
+else
+  stage="reading the built-in table"
+fi
 ROWS="$(print_all)" || exit $?
 
 # Feeds the rows to a mode's `while IFS=$'\t' read ...' loop. Takes no argument - it prints the
@@ -226,6 +273,7 @@ names_where() {
   done < <(each_row)
 }
 
+stage="printing ${1:-(bare)}"
 case "${1:-}" in
   "")
     while IFS=$'\t' read -r name role kind _; do
@@ -247,32 +295,33 @@ case "${1:-}" in
     # `plan-bead's reclaim loop and `agents/orchestrator.md's health check ask for the planners.
     role="${2:-}"
     if [[ -z "$role" ]]; then
-      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
-      exit 2
+      usage
     fi
     names_where role "$role"
     ;;
   --entry)
     name="${2:-}"
     if [[ -z "$name" ]]; then
-      echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
-      exit 2
+      usage
     fi
     found=""
     while IFS=$'\t' read -r row_name row_role row_kind _; do
-      if [[ "$row_name" == "$name" ]]; then
+      # No `break': breaking out of a loop redirected from a process substitution tears the read end
+      # down while the writer may still have rows to push, and this repository has already paid for
+      # exactly that shape once (docs/retrospectives/cb-ue0.md). The roster is nineteen rows, so
+      # reading all of them costs nothing.
+      #
+      # `if', not `[[ ... ]] && printf': see `names_where' above and .cerebro/traps.md.
+      if [[ -z "$found" && "$row_name" == "$name" ]]; then
         printf '%s\t%s\t%s\n' "$row_name" "$row_role" "$row_kind"
         found=1
-        break
       fi
     done < <(each_row)
     if [[ -z "$found" ]]; then
-      echo "roster: $name is not on the roster" >&2
-      exit 2
+      refuse "$name is not on the roster"
     fi
     ;;
   *)
-    echo "usage: roster [--implementers | --role <role> | --entry <Name> | --autostart | --standby]" >&2
-    exit 2
+    usage
     ;;
 esac

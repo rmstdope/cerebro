@@ -36,6 +36,9 @@
 #   cleanup_add <path>...         more paths for that trap (a suite's stub_dir, a second mktemp)
 #   suite_cleanup                 a suite may DEFINE this; the trap calls it FIRST, before removing
 #                                 anything (tests/agent-alive.sh kills background sleeps in it)
+#   suite_died                    0 when the suite is being cleaned up after dying before it reached
+#                                 `suite_passed' or `fail'; for a `suite_cleanup' hook that has
+#                                 context worth naming only on a death
 #
 # WHY the marker exists, and why the obvious fix is not the fix. Under `set -euo pipefail`, a suite
 # that dies of a FATAL SHELL ERROR - a `source` of a file that is not there, an unbound variable, a
@@ -148,6 +151,15 @@ _suite_failed=""
 
 cleanup_add() {
   _cleanup_paths+=("$@")
+}
+
+# 0 when the suite is being cleaned up after dying somewhere in the middle - neither `suite_passed'
+# nor `fail' was reached. Only meaningful from inside a `suite_cleanup' hook, which the EXIT trap
+# calls before it decides anything. A suite that has expensive context to name - the last command it
+# ran, a fixture path - uses this to say it exactly when it is worth saying, and to stay silent on
+# every passing run.
+suite_died() {
+  [ -z "$_suite_reached_end" ] && [ -z "$_suite_failed" ]
 }
 
 _consumer_lib_cleanup() {

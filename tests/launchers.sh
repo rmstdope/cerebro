@@ -32,7 +32,19 @@ source "$repo_root/tests/lib/consumer.sh"
 # `trap ... EXIT': bash keeps one per signal, and a later one would silently replace the library's.
 strays=()
 
+# The last launcher `run_launcher_at' started, named on stderr only when this suite DIES - a launcher
+# that dies where no assertion wraps it takes the suite down with no `FAIL:' naming anything, and
+# cb-azi's whole record of that was terminal scrollback.
+#
+# A FILE rather than a variable, because almost every launcher here is run inside `out="$(...)"' and
+# a variable set in that subshell never reaches the shell whose EXIT trap has to read it. It lives
+# under the library's own work directory, so it goes with everything else.
+_last_launcher_file="$work_dir/last-launcher"
+
 suite_cleanup() {
+  if suite_died && [ -s "$_last_launcher_file" ]; then
+    echo "launchers: the last launcher run before this suite died was: $(cat "$_last_launcher_file")" >&2
+  fi
   local p
   for p in ${strays+"${strays[@]}"}; do kill "$p" 2>/dev/null || true; done
 }
@@ -84,6 +96,8 @@ run_launcher_at() {
   local scripts_dir="$1"
   local name="$2"
   shift 2
+  # For `suite_cleanup' above.
+  printf '%s\n' "$name $* (at $scripts_dir)" > "$_last_launcher_file"
   PATH="$stub_dir:$PATH" bash "$scripts_dir/$name" "$@"
 }
 
@@ -193,6 +207,51 @@ status=$?
 set -e
 [[ $status -eq 2 ]] || fail "roster --bogus: expected exit 2, got $status"
 pass "roster --bogus exits 2"
+
+# A failure roster did NOT plan for. Every refusal it anticipates prints a line and exits 2; anything
+# else used to exit silently, and a caller could not tell "the fleet is short a name" from "I could
+# not read the roster". `tests/launchers.sh` went red twice under the parallel gate on exactly that
+# shape (docs/retrospectives/cb-u70.md, cb-azi.md), and both times the whole record of it was a
+# parenthesis. This asserts the status carries a diagnosis with it.
+if [ "$(id -u)" = 0 ]; then
+  pass "roster on an unreadable declaration: skipped, running as root reads a chmod 000 file"
+else
+  unreadable_dir="$(consumer_new unreadable-roster --copy)"
+  printf 'Ada\tplanner\n' > "$unreadable_dir/.cerebro/roster.conf"
+  chmod 000 "$unreadable_dir/.cerebro/roster.conf"
+  set +e
+  out="$("$unreadable_dir/.claude/cerebro/scripts/roster" 2>&1)"
+  status=$?
+  set -e
+  chmod 644 "$unreadable_dir/.cerebro/roster.conf"
+  [[ $status -ne 0 ]] \
+    || fail "roster on an unreadable declaration: expected a non-zero status, got 0: $out"
+  [[ $status -ne 2 ]] \
+    || fail "roster on an unreadable declaration: 2 is a refusal roster planned for, and this is not one: $out"
+  grep -q "failed with status" <<<"$out" \
+    || fail "roster on an unreadable declaration: no diagnosis, got: $out"
+  grep -q "reading" <<<"$out" \
+    || fail "roster on an unreadable declaration: the stage word says nothing, got: $out"
+  grep -qF "$unreadable_dir/.cerebro/roster.conf" <<<"$out" \
+    || fail "roster on an unreadable declaration: the stage should name the file, got: $out"
+  pass "roster names its status and its stage when it fails for a reason it did not plan for"
+fi
+
+# The invariant `scripts/launch` is built on: when roster succeeds it says NOTHING on stderr, so
+# `launch` can read its stderr into its own refusal without ever printing a row as if it were a
+# diagnosis. It is true today by accident - every `echo ... >&2` is followed by an exit - and this is
+# what stops it becoming untrue.
+for mode_args in "" "--entry Xavier" "--implementers" "--role planner"; do
+  set +e
+  err="$("$builtin_dir/roster" $mode_args 2>&1 >/dev/null)"
+  status=$?
+  set -e
+  [[ $status -eq 0 ]] \
+    || fail "roster $mode_args: expected exit 0, got $status"
+  [[ -z "$err" ]] \
+    || fail "roster $mode_args: expected nothing on stderr, got: $err"
+done
+pass "roster prints nothing on stderr when it exits 0"
 
 # --- a consumer declares its own fleet (ah-qled.5.1) --------------------------------------------
 #
@@ -683,6 +742,7 @@ cat > "$broken_scripts/roster" <<'BROKEN'
 #!/usr/bin/env bash
 printf 'Xavier\tplanner\tinteractive\n'
 printf 'Cyclops\timplementer\timplementer\n'
+echo "roster: failed with status 1 while pretending to be broken" >&2
 exit 1
 BROKEN
 chmod +x "$broken_scripts/roster"
@@ -692,12 +752,16 @@ out="$(run_launcher_at "$broken_scripts" launch Nobody 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] \
-  || fail "launch Nobody with a failing roster: expected exit 2, got $status: $out"
-grep -q "not on the roster" <<<"$out" \
-  || fail "launch Nobody with a failing roster: the refusal itself should still be said, got: $out"
-grep -q "the roster listing may be incomplete" <<<"$out" \
-  || fail "launch Nobody with a failing roster: the listing failure should be said, got: $out"
-pass "launch Nobody keeps exit 2 when the roster listing fails, and says the listing may be short"
+  || fail "launch Nobody with a roster that cannot answer: expected exit 2, got $status: $out"
+grep -q "could not read the roster" <<<"$out" \
+  || fail "launch Nobody with a roster that cannot answer: it should refuse, got: $out"
+grep -q "pretending to be broken" <<<"$out" \
+  || fail "launch Nobody with a roster that cannot answer: roster's own reason should be reproduced, got: $out"
+grep -q "is not on the roster" <<<"$out" \
+  && fail "launch Nobody with a roster that cannot answer: guessing the name is absent is the defect being removed, got: $out"
+grep -q '^BEADS_ACTOR=' <<<"$out" \
+  && fail "launch Nobody with a roster that cannot answer: the session should never have started, got: $out"
+pass "launch refuses, and reproduces what roster said, when the roster cannot answer"
 
 set +e
 out="$(run_launcher_at "$broken_scripts" launch 2>&1)"
@@ -705,16 +769,16 @@ status=$?
 set -e
 [[ $status -eq 2 ]] \
   || fail "launch (no argument) with a failing roster: expected exit 2, got $status: $out"
-grep -q "the roster listing may be incomplete" <<<"$out" \
+grep -q "the roster listing failed with status 1" <<<"$out" \
   || fail "launch (no argument) with a failing roster: the listing failure should be said, got: $out"
-pass "launch with no argument keeps exit 2 when the roster listing fails"
+pass "launch with no argument keeps exit 2 when the roster listing fails, and says the status"
 
 # ...and the everyday refusal is byte-identical to what it always was: the line above appears ONLY
 # when the listing actually failed, so a healthy fleet sees nothing new.
 set +e
 out="$(run_launcher launch Nobody 2>&1)"
 set -e
-grep -q "the roster listing may be incomplete" <<<"$out" \
+grep -q "the roster listing failed" <<<"$out" \
   && fail "launch Nobody on a healthy roster: should say nothing about the listing, got: $out"
 pass "launch Nobody says nothing about the listing when the roster is healthy"
 
@@ -1214,5 +1278,29 @@ grep -qF "CEREBRO_CONSUMER_ROOT=$(cd "$hint_consumer" && pwd -P)" <<<"$out" \
 grep -qF "CEREBRO_CONSUMER_MOUNT=.claude/cerebro" <<<"$out" \
   || fail "hint launch: the mount hint did not reach the session: $out"
 pass "the root hints are exported down the launched session's process tree"
+
+# The mechanism the block above is written in, asserted on a throwaway suite: this one cannot be made
+# to die on purpose without failing the run it is part of.
+set +e
+death_out="$(bash -c '
+  set -euo pipefail
+  repo_root="'"$repo_root"'"
+  suite_cleanup() {
+    if suite_died && [ -s "$_last_launcher_file" ]; then
+      echo "launchers: the last launcher run before this suite died was: $(cat "$_last_launcher_file")" >&2
+    fi
+  }
+  source "$repo_root/tests/lib/consumer.sh"
+  _last_launcher_file="$work_dir/last-launcher"
+  # Written inside a command substitution, exactly as every captured launcher run above writes it:
+  # a variable would not survive the subshell, which is the whole reason this is a file.
+  ignored="$(printf "%s\n" "launch Nobody (at /nowhere)" > "$_last_launcher_file")"
+  false' 2>&1)"
+set -e
+grep -q "died before reaching suite_passed" <<<"$death_out" \
+  || fail "a dying suite should still be reported dead, got: $death_out"
+grep -q "the last launcher run before this suite died was: launch Nobody (at /nowhere)" <<<"$death_out" \
+  || fail "a dying suite should name its last launcher, got: $death_out"
+pass "a suite that dies names the last launcher it ran"
 
 suite_passed

@@ -907,9 +907,14 @@ pass "models.conf: a key scoped to another provider never matches"
 
 # One warning per offending row per launch, not one per key probed: six probes over a file read
 # once, rather than six reads.
+#
+# The prefix is `model-for:' rather than `launch:' since cb-4z6.1: the file is parsed by
+# `scripts/model-for' now, and every script here names itself in what it says (project-conf,
+# agent-cli). The line the launcher still says for itself - `launch: models.conf (<key>) -> ...' -
+# is asserted with its own prefix by the cases above, and did not move.
 models_conf "planner@copilo gpt-5.5"
 warn_out="$(run_launcher_at "$consumer_dir/.claude/cerebro/scripts" launch Xavier 2>&1 >/dev/null)"
-grep -q 'launch: models.conf: planner@copilo names no agent CLI cerebro knows' <<<"$warn_out" \
+grep -q 'model-for: models.conf: planner@copilo names no agent CLI cerebro knows' <<<"$warn_out" \
   || fail "models.conf unknown provider: expected the warning, got: $warn_out"
 count="$(grep -c 'names no agent CLI cerebro knows' <<<"$warn_out")"
 [[ "$count" -eq 1 ]] || fail "models.conf unknown provider: expected one warning, got $count"

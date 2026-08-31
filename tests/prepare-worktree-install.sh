@@ -66,7 +66,76 @@ assert_contract "$out" "$consumer/.cerebro/worktrees/one" "configured install"
   || fail "configured install: expected the declared command to have run in the tree"
 pass "a configured install runs, expanded into a command and its arguments"
 
+# --- `install' is a whitespace-tokenized argument vector, never shell source ---
+#
+# A metacharacter must reach the program literally. The wildcard also proves that command
+# execution does not perform a second round of pathname expansion after tokenization.
+recorder="$consumer/record-args"
+recorded_args="$work_dir/recorded-args"
+cat > "$recorder" <<RECORDER
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$recorded_args"
+RECORDER
+chmod +x "$recorder"
+touch "$consumer/literal-glob"
+git -C "$consumer" add record-args literal-glob
+git_q -C "$consumer" commit -q -m "add argument recorder"
+git -C "$consumer" push -q origin main
+cat > "$conf" <<CONF
+install  $recorder literal && literal-*
+CONF
+out="$("$prepare" --path .cerebro/worktrees/vector --branch vector-branch 2>/dev/null)"
+assert_contract "$out" "$consumer/.cerebro/worktrees/vector" "vector install"
+[[ "$(cat "$recorded_args")" == $'literal\n&&\nliteral-*' ]] \
+  || fail "vector install: expected literal arguments, got: $(cat "$recorded_args")"
+pass "an install declaration is a literal whitespace-tokenized argument vector"
+
+# --- `install_shell' is the explicit opt-in to compound shell syntax ---
+cat > "$conf" <<'CONF'
+install_shell  touch installed.marker && touch second.marker
+CONF
+out="$("$prepare" --path .cerebro/worktrees/shell --branch shell-branch 2>/dev/null)"
+assert_contract "$out" "$consumer/.cerebro/worktrees/shell" "shell install"
+[[ -f "$consumer/.cerebro/worktrees/shell/installed.marker" ]] \
+  || fail "shell install: expected the first command to run in the tree"
+[[ -f "$consumer/.cerebro/worktrees/shell/second.marker" ]] \
+  || fail "shell install: expected the second command to run in the tree"
+pass "an install_shell declaration executes compound commands in the tree"
+
+# --- shell dry runs narrate their own execution contract and execute nothing ---
+out="$("$prepare" --path .cerebro/worktrees/shell-dry --branch shell-dry-branch --dry-run \
+  2>"$work_dir/err")"
+assert_contract "$out" "$consumer/.cerebro/worktrees/shell-dry" "shell --dry-run"
+grep -q "would install with shell: touch installed.marker && touch second.marker" "$work_dir/err" \
+  || fail "shell --dry-run: expected shell-specific narration, got: $(cat "$work_dir/err")"
+[[ ! -e "$consumer/.cerebro/worktrees/shell-dry" ]] \
+  || fail "shell --dry-run: must not create a worktree"
+[[ ! -f "$consumer/.cerebro/worktrees/shell-dry/installed.marker" ]] \
+  || fail "shell --dry-run: must not run the install"
+pass "shell --dry-run narrates the command and creates nothing"
+
+# --- the two install contracts are mutually exclusive ---
+cat > "$conf" <<'CONF'
+install        touch vector-ran.marker
+install_shell  touch shell-ran.marker
+CONF
+set +e
+"$prepare" --path .cerebro/worktrees/conflict --branch conflict-branch >/dev/null 2>"$work_dir/err"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "conflicting installs: expected exit 2, got $status"
+grep -q "install" "$work_dir/err" && grep -q "install_shell" "$work_dir/err" \
+  || fail "conflicting installs: expected both keys named, got: $(cat "$work_dir/err")"
+[[ ! -f "$consumer/.cerebro/worktrees/conflict/vector-ran.marker" ]] \
+  || fail "conflicting installs: vector install ran"
+[[ ! -f "$consumer/.cerebro/worktrees/conflict/shell-ran.marker" ]] \
+  || fail "conflicting installs: shell install ran"
+pass "conflicting install declarations are refused before either runs"
+
 # --- --dry-run prints the command, runs it not, and STILL prints path and sha ---
+cat > "$conf" <<CONF
+install  touch installed.marker
+CONF
 out="$("$prepare" --path .cerebro/worktrees/dry --branch dry-branch --dry-run 2>"$work_dir/err")"
 assert_contract "$out" "$consumer/.cerebro/worktrees/dry" "--dry-run"
 grep -q "touch installed.marker" "$work_dir/err" \

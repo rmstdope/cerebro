@@ -41,9 +41,12 @@
 # Every suite's full output is ALSO kept on disk, passing and failing alike, under
 # <log dir>/<YYYYmmdd>-<HHMMSS>-<pid>/<suite>.log - `tests/launchers.sh' becomes `launchers.sh.log'.
 # The log dir is --log-dir, or `.cerebro/state/suite-logs' relative to the caller's cwd, which is
-# already gitignored here and in every consumer. The last 3 runs are kept and older ones are
-# deleted at the start of a run, so the root never grows; a red run names its directory on stderr
-# and a green run says nothing. cb-kf8: two implementers hit a red gate on the same day and neither
+# already gitignored here and in every consumer; the path this script REPORTS is made absolute
+# first (cb-wxr), so the line means the same thing from every working directory. The last 3 runs
+# are kept and older ones are
+# deleted at the start of a run, so the root never grows; a red run names its directory on stderr,
+# as an absolute path (cb-wxr): the line outlives the working directory it was printed from. A
+# green run says nothing. cb-kf8: two implementers hit a red gate on the same day and neither
 # could say which assertion failed, because the replay lived only in terminal scrollback and the
 # re-run - the first thing you do - is what destroyed it. A passing suite's log matters too: a
 # flake that passed on this run is exactly the one whose output you need. If the log dir cannot be
@@ -97,6 +100,23 @@ done
 # Relative on purpose: `tests/gate' and CI both cd to the repository root first, and a consumer
 # running `.claude/cerebro/scripts/suite-runner tests' from its own root gets its own log root.
 [[ -n "$log_dir" ]] || log_dir=".cerebro/state/suite-logs"
+
+# Absolute from here on (cb-wxr). The default above is relative on purpose - it is what gives each
+# consumer its own log root - but the path this script REPORTS has to mean the same thing from
+# every working directory, and the one that gets reported is the one a reader is standing somewhere
+# else when they read. An implementer runs the gate in .cerebro/worktrees/<Name>; the line survives
+# the run and the cwd does not. cb-azi lost a flake's only log to exactly that.
+#
+# A string join rather than `cd "$log_dir" && pwd': $PWD is always set by bash, the join cannot
+# fail, and there is therefore no failure path that could leave $log_dir empty and print a run
+# directory with nothing after the last slash. `realpath' and `readlink -f' are not options - the
+# gate runs on the bash 3.2 and the coreutils macOS ships. The logical path is deliberate too: it
+# is the spelling the reader recognises, and `pwd -P' would rewrite a symlinked checkout into one
+# they have never seen.
+case "$log_dir" in
+  /*) ;;
+   *) log_dir="$PWD/$log_dir" ;;
+esac
 
 [[ $# -eq 1 ]] || { echo "$usage" >&2; exit 2; }
 dir="$1"

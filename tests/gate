@@ -47,7 +47,8 @@ echo "== bash suites =="
 #
 # It also keeps each suite's full output under .cerebro/state/suite-logs/<timestamp-pid>/<suite>.log,
 # the last three runs, so a red gate is still diagnosable after the re-run that used to destroy the
-# evidence (cb-kf8). A red run names the directory on stderr; the path is already gitignored.
+# evidence (cb-kf8). A red run names the directory on stderr as an absolute path (cb-wxr), so a
+# reader standing in another directory can use it; the path is already gitignored.
 if ! bash scripts/suite-runner tests; then
   status=1
 fi

@@ -143,7 +143,9 @@ own `$work_dir` — a new suite that reaches outside it breaks the whole gate, n
 Every run also keeps each suite's full output — passing and failing alike — under
 `.cerebro/state/suite-logs/<YYYYmmdd>-<HHMMSS>-<pid>/<suite>.log`, the last three runs, pruned at
 the start of a run; `--log-dir DIR` moves the root, and a red run names its directory on stderr
-(cb-kf8). The path is already gitignored, here and in every consumer. Before it, the only record of
+(cb-kf8) — written relative to the caller's working directory, reported as an absolute path
+(cb-wxr), since the line outlives the directory it was printed from. The path is already
+gitignored, here and in every consumer. Before it, the only record of
 a red gate was terminal scrollback, and the re-run an implementer does first is what destroyed it.
 
 Every suite sources `tests/lib/consumer.sh` for `fail`/`pass`, `git_q`, its work directory and the

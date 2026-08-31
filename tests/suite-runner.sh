@@ -497,6 +497,58 @@ $(ls "$default_root/$runs" 2>/dev/null)"
 
 pass "with no --log-dir, logs land under .cerebro/state/suite-logs in the caller's working directory"
 
+# --- 14. the reported path is absolute, whatever cwd the run was started from ---
+#
+# The bead (cb-wxr): the log directory is WRITTEN relative to the caller's cwd, which is what gives
+# each consumer its own log root, but the line a red run leaves behind is READ from somewhere else
+# - an implementer runs the gate in .cerebro/worktrees/<Name> and the reader is in the shared
+# checkout. cb-azi lost a flake's only log that way.
+#
+# Inline with a subshell `cd', not through `run': this case is about the cwd-relative default,
+# which is precisely the flag `run' exists to supply, and the `cd' keeps the default root under
+# $work_dir so the guard at the end of this file is unaffected.
+
+mkdir -p "$work_dir/cwd-red"
+set +e
+err="$(cd "$work_dir/cwd-red" && env -u GITHUB_ACTIONS bash "$script" "$work_dir/suites" 2>&1 >/dev/null)"
+status=$?
+set -e
+[[ $status -eq 1 ]] || fail "a red run from another cwd: expected exit 1, got $status
+$err"
+
+printed="$(sed -n 's/^logs kept (last 3 runs): //p' <<<"$err")"
+[[ -n "$printed" ]] || fail "a red run did not name its log directory
+$err"
+[[ "$printed" == /* ]] || fail "the reported log directory is not absolute: '$printed'
+A reader in another directory cannot find it. See cb-wxr."
+[[ -d "$printed" ]] || fail "the reported log directory does not exist when resolved from $PWD: '$printed'"
+[[ -f "$printed/b-fail.sh.log" ]] || fail "no b-fail.sh.log under the reported directory '$printed'
+$(ls "$printed" 2>/dev/null)"
+[[ "$printed" == "$work_dir/cwd-red/.cerebro/state/suite-logs/"* ]] \
+  || fail "the reported directory is not under the caller's own log root: '$printed'"
+
+pass "a relative log root is reported as an absolute path that resolves from any working directory"
+
+# --- 15. the fallback names an absolute path too ---
+#
+# A log root that cannot be created names a directory that does not exist, so it cannot be resolved
+# by anything - which is exactly why it has to be printed in full: the reader's only question is
+# where the run tried to write.
+
+mkdir -p "$work_dir/cwd-blocked"
+printf 'not a directory\n' >"$work_dir/cwd-blocked/blocked"
+set +e
+both="$(cd "$work_dir/cwd-blocked" && env -u GITHUB_ACTIONS bash "$script" --log-dir blocked/logs "$work_dir/green" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 0 ]] || fail "an unwritable relative log root over passing suites: expected exit 0, got $status
+$both"
+grep -qF -- "cannot write logs to $work_dir/cwd-blocked/blocked/logs" <<<"$both" \
+  || fail "the fallback did not name the log root it could not create as an absolute path
+$both"
+
+pass "the log root that could not be created is named as an absolute path"
+
 default_runs_after="$(ls "$default_log_root" 2>/dev/null || true)"
 [[ "$default_runs_after" == "$default_runs_before" ]] || fail "a call in this suite wrote to the default log root at $default_log_root.
 Every call must carry --log-dir under \$work_dir; go through \`run', which supplies one.

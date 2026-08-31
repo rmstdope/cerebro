@@ -448,9 +448,17 @@ what `skills/plan-bead/SKILL.md` calls in the one place it needs liveness: decid
 needs to know whether an agent is up calls this; a bare `kill -0` there is the pre-ah-bqi shape, and
 it makes a dead planner look alive, which strands the very label the reclaim loop exists to free.
 It is the bash copy of `cerebro--session-args-p` — pid, and the marker's two halves — and both are held to one
-case table, `tests/lib/session-args.cases`, which `tests/agent-alive.sh` and `emacs/cerebro-test.el`
-both run in full, so a case added on either side fails the other until both answer it (they drifted
-twice before the table existed: `7bd5962`, `9420ff2`).
+case table, `tests/lib/session-args.cases`, so a case added on either side fails the other until
+both answer it (they drifted twice before the table existed: `7bd5962`, `9420ff2`). Since cb-akt
+that table holds **every** reader of the marker sentence, not only the two predicates:
+`tests/fleet-cost.sh` runs the same rows against `scripts/fleet-cost`'s SQL prefilter and its two
+jq captures, and its rows carry the store's shape — the marker as the *first sentence of a whole
+seed prompt* — with `\n` as their one escape. `tests/lib/session-args.sh` is the one bash reader of
+the table, sourced by both bash subscribers; elisp keeps its own parser because it cannot source
+one, the same qualification `cerebro--log-line` carries against `scripts/jsonl-log.sh`. A fourth
+reader subscribes rather than inventing plausible spellings — the third one did not, anchored its
+root capture at the end of the message, and reported a silent zero for a fleet that had spent ten
+thousand credits that week (cb-d89).
 
 ## Gotchas
 

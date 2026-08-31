@@ -29,6 +29,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
+# session_args_render - the one bash reader of the shared case table (cb-akt).
+source "$repo_root/tests/lib/session-args.sh"
 
 command -v sqlite3 >/dev/null 2>&1 \
   || fail "sqlite3 is not on PATH - it is what reads the session store, and this suite fabricates one"
@@ -194,32 +196,6 @@ pass "a marker naming a different root - the probe fixtures - is excluded from t
 # assertions all passed through that normalisation, so state it as its own line.
 pass "a marker root with a trailing slash matches a consumer root without one"
 
-# --- the marker is the first sentence of a prompt, not the whole of it -----------------------------
-#
-# Every real marker is followed by the rest of the seed prompt in the same field. A capture
-# anchored at the end of the message swallows all of it and matches no root, which reads as a
-# fleet that has never run - which is exactly what the first real run of this script did.
-
-real="$(new_fixture)"
-real_root="$(root_of "$real")"
-make_store "$real/store.db"
-sqlite3 "$real/store.db" "
-  INSERT INTO sessions(id) VALUES('s1');
-  INSERT INTO turns(session_id, turn_index, user_message)
-    VALUES('s1', 0, 'This session is Cyclops of the cerebro fleet rooted at $real_root/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.
-
-You are Cyclops. Your agent definition (implementer) is the whole of your instructions.');
-"
-event "$real/store.db" s1 "$(ago_ms 110)" 3000000000
-{
-  line "$(ago 120)" Cyclops working build cb-aaa
-  line "$(ago 60)"  Cyclops waiting "" ""
-} > "$real/.cerebro/state/transitions.jsonl"
-
-[[ "$(run "$real" --by-bead --json | aic_of cb-aaa)" == "3" ]] \
-  || fail "a marker followed by the rest of the prompt must still yield its agent and its root"
-pass "the marker is read as the first sentence of a prompt, not as the whole message"
-
 # --- a marker with launcher flags before it in the field ------------------------------------------
 #
 # The two predicate readers ask whether the sentence APPEARS IN the field. The SQL prefilter asked
@@ -244,6 +220,76 @@ event "$flagged/store.db" s1 "$(ago_ms 110)" 5000000000
 [[ "$(run "$flagged" --by-bead --json | aic_of cb-aaa)" == "5" ]] \
   || fail "a marker with launcher flags before it in the field is still this fleet's session"
 pass "a marker with launcher flags before it in the field is still this fleet's session"
+
+# --- every row of the shared case table -----------------------------------------------------------
+#
+# The third subscription (cb-akt). The rows live in tests/lib/session-args.cases and drive
+# cerebro--session-args-p and scripts/agent-alive too: a row one reader answers differently is the
+# drift the table exists to catch, and this script was added without subscribing at all.
+#
+# The equivalence the table's header states, in this reader's terms: build a store holding one
+# session whose turn 0 user_message is the row's field, and one priced event inside the window;
+# the row's NAME appears among .[].agent if and only if the row says alive. That covers the SQL
+# prefilter and both jq captures end to end, which is the whole of fleet-cost's reading of the
+# sentence.
+
+sub_root="$(new_fixture)"
+sub_other="$(new_fixture)"
+sub_root_r="$(root_of "$sub_root")"
+sub_other_r="$(root_of "$sub_other")"
+# The marker as launch writes it carries a trailing slash the consumer root does not; the table's
+# rows spell {root}/ themselves, so the substitution is the root without one.
+for f in "$sub_root" "$sub_other"; do
+  # fleet-cost exits 1 with no transition log at all, before it reads the store - a fixture that
+  # forgets this fails with a message about attribution and nothing about the marker. One line is
+  # enough, and it need not name the row's agent: an event inside no interval still produces a row
+  # carrying the agent the marker named, which is the whole of the assertion.
+  line "$(ago 120)" Cyclops waiting "" "" > "$f/.cerebro/state/transitions.jsonl"
+done
+
+sub_rows="$(session_args_render "$repo_root/tests/lib/session-args.cases" \
+                                "$sub_root_r" "$sub_other_r" "$work_dir/session-args.rendered")"
+seen=0
+while IFS= read -r -d '' expect \
+   && IFS= read -r -d '' name \
+   && IFS= read -r -d '' row_root \
+   && IFS= read -r -d '' field; do
+  seen=$((seen+1))
+  case "$row_root" in
+    "$sub_root_r")  fixture="$sub_root" ;;
+    "$sub_other_r") fixture="$sub_other" ;;
+    *) fail "session-args row $seen: root $row_root is neither fixture root" ;;
+  esac
+  # ONE STORE PER ROW, named for the row: --by-agent groups by agent, so two rows naming one agent
+  # at one root would merge and a dead row would read as alive because of its neighbour. `run'
+  # hard-codes $tmp/store.db, so this block sets FLEET_COST_STORE itself the way `run' does.
+  db="$work_dir/session-args-$seen.db"
+  make_store "$db"
+  sqlite3 "$db" "
+    INSERT INTO sessions(id) VALUES('s1');
+    INSERT INTO turns(session_id, turn_index, user_message) VALUES('s1', 0, '$field');
+  "
+  event "$db" s1 "$(ago_ms 110)" 1000000000
+  agents="$(FLEET_HISTORY_NOW="$now_epoch" FLEET_COST_STORE="$db" FLEET_COST_COLUMNS=100 \
+              "$fixture/.claude/cerebro/scripts/fleet-cost" --by-agent --json 2>/dev/null \
+            | jq -r '[.[].agent] | join(" ")')"
+  # An empty answer is [], not a message: --json emits the agent array in every case, so a dead
+  # row needs no output-shape special case.
+  if [[ "$expect" == alive ]]; then
+    case " $agents " in
+      *" $name "*) : ;;
+      *) fail "session-args row $seen: expected $name among fleet-cost's agents, got [$agents]" ;;
+    esac
+  else
+    case " $agents " in
+      *" $name "*) fail "session-args row $seen: expected $name absent from fleet-cost's agents, got [$agents]" ;;
+      *) : ;;
+    esac
+  fi
+done < "$work_dir/session-args.rendered"
+[[ "$seen" -eq "$sub_rows" ]] \
+  || fail "session-args table: rendered $sub_rows rows, consumed $seen"
+pass "every row of tests/lib/session-args.cases holds for fleet-cost ($seen rows)"
 
 # --- a store bigger than one argument -------------------------------------------------------------
 #

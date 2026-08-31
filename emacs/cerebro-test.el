@@ -3017,6 +3017,39 @@ clear the \"bd did not answer\" indicator (PR #42 review)."
     ;; Before the first answer: no "as of" clause yet.
     (should (equal (cerebro--panel-header nil requested-at nil) "Beads · refreshing…"))))
 
+(ert-deftest cerebro-test/draw-beads-draws-the-buckets-partition-beads-writes ()
+  "`cerebro--draw-beads' reads `cerebro--beads' as a whole, so this fills it
+through the real partition rather than by hand - the fixture a seventh bucket
+cannot fool. The buckets are deliberately different sizes: same-sized ones give
+a wrong index the right answer, which is how cb-wfb hid."
+  (let ((buffer (get-buffer-create "*cerebro-test-draw-beads*")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (cerebro-beads-mode)
+          (setq cerebro--beads
+                (cerebro--partition-beads
+                 (list (cerebro-test--any "cb-held" "in_progress")
+                       (cerebro-test--any "cb-ready" "open" '("planned"))
+                       (cerebro-test--any "cb-ready-2" "open" '("planned"))
+                       (cerebro-test--any "cb-holding" "open" '("planning"))
+                       (cerebro-test--paused "cb-parked")
+                       (cerebro-test--any "cb-loose" "open")
+                       (cerebro-test--any "cb-loose-2" "open")
+                       (cerebro-test--any "cb-loose-3" "open")
+                       (cerebro-test--any "cb-landed" "closed"))))
+          (cerebro--draw-beads buffer)
+          (let* ((text (buffer-string))
+                 (at (lambda (s) (string-match (regexp-quote s) text))))
+            ;; Each bead under its own heading, not merely present somewhere.
+            (should (< (funcall at "Claimed") (funcall at "cb-held")))
+            (should (< (funcall at "cb-held") (funcall at "Planned, unclaimed")))
+            (should (< (funcall at "Planned, unclaimed") (funcall at "cb-ready")))
+            (should (< (funcall at "Being planned") (funcall at "cb-holding")))
+            (should (< (funcall at "Unplanned") (funcall at "cb-loose")))
+            (should (< (funcall at "Waiting on you") (funcall at "cb-parked")))
+            (should (< (funcall at "Merged, unverified") (funcall at "cb-landed")))))
+      (kill-buffer buffer))))
+
 (ert-deftest cerebro-test/beads-render-keeps-the-rows-while-bd-is-out ()
   "The panel keeps showing the last answer while a fresh request is in
 flight, and says so in the header."

@@ -32,11 +32,12 @@ script="$repo_root/scripts/marker-readers"
 
 # A fresh, whole self-consumer. `copy_cerebro_into' brings `scripts/', `agents/', `skills/' and
 # `hooks/' only - deliberately not `emacs/', which no other bash suite reads - so this check's other
-# two scanned directories are copied here, or every fixture reports a table full of `stale:' rows.
+# three scanned directories (`emacs', `tests', `githooks' and, since cb-vyp.1, `fleet-view') are
+# copied here, or every fixture reports a table full of `stale:' rows.
 new_fixture() {
   local fix="$work_dir/$(fixture_name markers)" d
   copy_cerebro_into "$fix"
-  for d in emacs tests githooks; do
+  for d in emacs tests githooks fleet-view; do
     [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$fix/"
   done
   git init -q "$fix"
@@ -92,6 +93,25 @@ run "$fix/scripts/marker-readers"
 grep -qF "unsubscribed: scripts/fake-reader (spells the session marker and is not a declared reader)" <<<"$out" \
   || fail "expected the unsubscribed finding, got: $out"
 pass "a file spelling the marker with no declared row is reported"
+
+# --- a file under fleet-view/ spelling the marker with no declared row is reported ----------------
+#
+# The same finding as scripts/fake-reader above, proven under the directory cb-vyp.1 added to the
+# scan set - a scan-set edit that missed a directory would leave this fixture green.
+
+fix="$(new_fixture)"
+mkdir -p "$fix/fleet-view/src"
+cat >"$fix/fleet-view/src/fake_reader.rs" <<'READER'
+// A reader that invented its own spelling of "cerebro fleet rooted at" and told nobody.
+pub fn spells_it(s: &str) -> bool {
+    s.contains("cerebro fleet rooted at")
+}
+READER
+run "$fix/scripts/marker-readers"
+[[ $status -eq 1 ]] || fail "an unsubscribed reader under fleet-view/ must exit 1, got $status (output: $out)"
+grep -qF "unsubscribed: fleet-view/src/fake_reader.rs (spells the session marker and is not a declared reader)" <<<"$out" \
+  || fail "expected the unsubscribed finding, got: $out"
+pass "a file under fleet-view/ spelling the marker with no declared row is reported"
 
 # --- a declared row whose file no longer spells it is reported ------------------------------------
 #

@@ -3,6 +3,12 @@
 #   cerebro--session-args-p   (emacs/cerebro.el)    via emacs/cerebro-test.el
 #   scripts/agent-alive       (bash)                via tests/agent-alive.sh
 #   scripts/fleet-cost        (SQL and jq)          via tests/fleet-cost.sh
+#   model::session_liveness  (Rust, fleet-view/)    via fleet-view/src/model.rs's own #[cfg(test)]
+#
+# The Rust reader answers the tri-state `cerebro--session-liveness' rather than the strict
+# two-part `cerebro--session-args-p' the other three answer, so its case matches this table's
+# `alive'/`dead' as "proven" versus "not proven" - see model.rs's own doc comment on the test for
+# why that is the right comparison and not a second predicate to keep in step.
 #
 # The rule: a field is <name>'s session of the fleet at <root> when it carries cerebro's own
 # marker sentence, which `scripts/launch' puts at the head of every session's prompt:

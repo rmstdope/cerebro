@@ -10,6 +10,9 @@
 # Built distribution
 dist/
 
+# Cargo build artefacts for the fleet-view workspace (cb-vyp.1). Cargo.lock is tracked, not this.
+/target
+
 # Backup files
 *~
 .DS_Store

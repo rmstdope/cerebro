@@ -550,8 +550,9 @@ the current worktree before writing the first failing test that depends on it; c
 merged source, not a sibling bead's design. If the source still supports the claim, proceed with
 the planned increment. If `main` already supplies its outcome, do not recreate the code or duplicate
 its tests: skip that overtaken increment and name the current evidence in the PR body, then continue
-with the remaining increments. If the source moved but the intent remains unambiguous, use the
-current location or shape and record the deviation in the PR body, as with the helper rule above.
+with the remaining increments. If the source moved or changed in place but the intent remains
+unambiguous, use the current location or shape and record the deviation in the PR body, as with the
+helper rule above.
 If the change affects or obscures approach, scope, or audience-visible intent, use the existing
 hand-back block rather than inferring a replacement design.
 

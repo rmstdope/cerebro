@@ -23,5 +23,5 @@ pub use readers::{
     read_beads, read_fleet, read_processes, read_roster, read_states, read_work, Programs,
     ReadError, ReaderPaths,
 };
-pub use app::{App, AppAction, FleetWorker, Pane, PaneContent, WorkWorker, Worker};
+pub use app::{App, AppAction, FleetWorker, Pane, PaneContent, WorkWorker};
 pub use ui::{draw, metrics, Metrics};

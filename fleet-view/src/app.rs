@@ -365,14 +365,12 @@ impl Worker<WorkBuckets> {
 
 impl<T> Drop for Worker<T> {
     fn drop(&mut self) {
-        // Dropping the sender ends the loop above; joining then guarantees no reader is still
-        // running while the terminal is being restored.
+        // Dropping the sender asks the loop to end, but do not join: a reader may be inside its
+        // timeout while the navigator is quitting, and terminal cleanup must remain immediate.
         let (dead, _) = mpsc::channel();
         let sender = std::mem::replace(&mut self.requests, dead);
         drop(sender);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        drop(self.handle.take());
     }
 }
 

@@ -233,11 +233,12 @@ something — every launch re-syncs the links.
 ## What the fleet cost
 
 A Copilot session prints its AI-credit cost as it ends — `Session: 264.44 AIC used` — and is then
-gone, and the number with it. `scripts/fleet-cost` asks afterwards, and answers per **bead** rather
-than only per session:
+gone, and the number with it. `scripts/fleet-cost` asks afterwards, and answers per **bead and
+agent** rather than only per session:
 
 ```bash
-.claude/cerebro/scripts/fleet-cost --by-bead --since 7d      # what each bead cost to build
+.claude/cerebro/scripts/fleet-cost --by-bead --since 7d      # what each agent cost on each bead
+.claude/cerebro/scripts/fleet-cost --by-bead --phase         # the same, split by phase as well
 .claude/cerebro/scripts/fleet-cost --by-agent --since 30d    # what each agent spent
 .claude/cerebro/scripts/fleet-cost --bead cb-d89             # one bead, split by agent and phase
 ```
@@ -253,7 +254,8 @@ Cerebro           6      0       0.0    1686.5    1686.5        14
 
 `--since` takes a span (`90m`, `24h`, `7d`; the default is `7d`) or an ISO-8601 UTC timestamp.
 `--agent <Name>` narrows `--by-bead`, and `--json` gives the same answer for a script. A window with
-nothing in it is exit 0 and a sentence — nothing ran is an answer.
+nothing in it is exit 0 and a sentence — nothing ran is an answer. `SHARE` is share **of that
+bead** — each bead's rows sum to 100%, so the column answers who spent this bead's money.
 
 **Nothing is captured while a session runs**, and no writer is added to any path: both halves of the
 join are already on disk. `~/.copilot/session-store.db` has the per-request cost; turn 0 of every
@@ -267,8 +269,9 @@ Two columns are worth understanding before you trust a total:
   holds no bead by design, and every pass spends before it claims anything. It gets a row of its own
   rather than being tidied away, which is what makes the rows add up to the true total.
 - **`UNPRICED`** counts requests the store records no cost for — a couple of per cent, and every
-  request on some models. They are excluded from the sums, so a row showing `0.0` beside a number
-  there did real work whose price nobody wrote down.
+  request on some models. They are excluded from the sums, and the count is **per row**, so an
+  agent whose whole contribution to a bead was unpriced reads `0.0` beside a number there rather
+  than looking free.
 
 It needs `sqlite3` and `jq` on `PATH`, and a project running on Copilot — cost is recorded per
 machine, and a project declaring `agent_cli claude` is told so and gets nothing rather than a

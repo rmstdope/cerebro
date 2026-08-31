@@ -4,7 +4,7 @@
 # while spending them (cb-d89). Every Copilot session prints its cost as it ends and is then gone;
 # this asks the question afterwards, from two records that both outlive the session.
 #
-#     scripts/fleet-cost --by-bead   [--since <when>] [--agent <name>] [--json]
+#     scripts/fleet-cost --by-bead [--phase] [--since <when>] [--agent <name>] [--json]
 #     scripts/fleet-cost --by-agent  [--since <when>] [--json]
 #     scripts/fleet-cost --bead <id> [--since <when>] [--json]
 #
@@ -58,6 +58,10 @@
 # It is the first script here that FORMATS FOR A HUMAN: an aligned table by default, the same
 # answer as JSON under `--json`. `work-beads` and `fleet-history` print JSON and nothing else; the
 # navigator asked for a table, because "what did this week cost" should not need a jq incantation.
+# `--by-bead' is ONE ROW PER BEAD-AND-AGENT, not a cross-tab with agents as columns: the matrix
+# grows about nine columns per agent, and on this fleet's own roster of eight it stops fitting a
+# terminal. The long form is a fixed width whatever the roster does, pipes into grep and awk, and
+# gets the per-cell UNPRICED as a real column rather than as a mark to invent (cb-azi).
 #
 # It fails LOUDLY - non-zero, a line on stderr, NOTHING on stdout - when the store is missing,
 # `sqlite3` is missing, there is no transition log, or the project declares a provider other than
@@ -74,7 +78,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/root-hints.sh"
 
 usage() {
-  echo "usage: fleet-cost --by-bead|--by-agent|--bead <id> [--since <when>] [--agent <name>] [--json]" >&2
+  echo "usage: fleet-cost --by-bead|--by-agent|--bead <id> [--phase] [--since <when>] [--agent <name>] [--json]" >&2
   exit 2
 }
 
@@ -83,12 +87,14 @@ bead=""
 since_arg="7d"
 agent=""
 as_json="no"
+phase="no"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --by-bead)  mode="by-bead"; shift ;;
     --by-agent) mode="by-agent"; shift ;;
     --json)     as_json="yes"; shift ;;
+    --phase)    phase="yes"; shift ;;
     # `[[ $2 != --* ]]` so `--bead --json` is the typo it is rather than a bead called `--json`,
     # which would silently answer about nothing.
     --bead)
@@ -104,6 +110,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$mode" ]] || usage
+
+# --phase splits --by-bead further. `--bead <id>' is ALREADY split by agent and phase, and
+# --by-agent has no phase dimension at all, so asking for it there is a typo rather than a
+# request. Same two-line shape as the `unknown argument' arm above.
+if [[ "$phase" == "yes" && "$mode" != "by-bead" ]]; then
+  echo "fleet-cost: --phase applies to --by-bead only; --bead <id> is already split by agent and phase." >&2
+  usage
+fi
 
 # --- the window ------------------------------------------------------------------------------------
 #
@@ -233,6 +247,7 @@ if ! out="$(jq -n \
       --arg agent "$agent" \
       --arg bead "$bead" \
       --arg mode "$mode" \
+      --arg phase "$phase" \
       --arg json "$as_json" \
       --arg window "$window_words" \
       --arg since_arg "$since_arg" \
@@ -248,6 +263,32 @@ if ! out="$(jq -n \
   def pad($n): tostring | . + (" " * ($n - length) | if . == null then "" else . end);
   def lpad($n): tostring | ((" " * ($n - length) | if . == null then "" else . end) + .);
   def clip($n): if ($n < 1) then "" elif (length <= $n) then . else (.[0:($n - 1)] + "\u2026") end;
+
+  # A group of $rows as AIC. Named because four places want it and one of them is a divisor.
+  def group_aic: (map(select(.nano != null) | .nano) | add // 0) / 1000000000 | aic;
+
+  # One row per bead-and-agent, or per bead-and-agent-and-phase under --phase. `share'"'"' is filled
+  # in by the caller, which is the only thing that knows the bead'"'"'s own total.
+  def cells($g):
+    $g
+    | group_by(if $phase == "yes" then [.bead, ._agent, .phase] else [.bead, ._agent] end)
+    | map({bead: .[0].bead,
+           title: (if .[0].bead == null then null else ($titles[.[0].bead] // null) end),
+           agent: .[0]._agent,
+           phase: (if $phase == "yes" then .[0].phase else null end),
+           aic: (group_aic),
+           share: 0,
+           unpriced: (map(select(.nano == null)) | length),
+           requests: length})
+    | sort_by([-.aic, .agent, (.phase // "")]);
+
+  # SHARE is share OF THAT BEAD - each bead'"'"'s rows sum to 100% - so the column answers "who spent
+  # this bead'"'"'s money" rather than "how big was this bead". A bead whose whole spend is unpriced
+  # has a zero total, and every row of it reads 0.0% rather than dividing by nothing. Under
+  # `--agent <name>'"'"' the rows shown are one agent'"'"'s, so every share reads 100.0%: share of what
+  # is shown, which is what the column already meant under that flag.
+  def shares($t):
+    map(. + {share: (if $t == 0 then 0 else (.aic / $t * 1000 | round / 10) end)});
 
   # The marker sentence, cut into the two halves that identify a session: the name, and the root.
   # The root as written carries a trailing slash the consumer root does not - normalise here,
@@ -323,47 +364,58 @@ if ! out="$(jq -n \
   | def share: if $total == 0 then 0 else (. / $total * 1000 | round / 10) end;
 
   if $mode == "by-bead" then
-      ($rows | group_by(.bead)
-        | map({
-            bead: .[0].bead,
-            title: (if .[0].bead == null then null else ($titles[.[0].bead] // null) end),
-            aic: ((map(select(.nano != null) | .nano) | add // 0) / 1000000000 | aic),
-            share: 0,
-            unpriced: (map(select(.nano == null)) | length),
-            requests: length,
-            agents: (map(._agent) | unique)
-          })
-        | map(. + {share: (.aic | share)})) as $all
-      | ($all | map(select(.bead != null)) | sort_by(-.aic)) as $beads
-      | ($all | map(select(.bead == null))) as $none
+      ($rows | map(select(.bead != null))) as $bead_rows
+      | ($rows | map(select(.bead == null))) as $none_rows
+      # Beads by their own total, dearest first; within a bead, dearest agent first. group_by
+      # sorts, so two beads costing the same come out in bead order rather than at random.
+      | ($bead_rows
+         | group_by(.bead)
+         | map({t: (group_aic), cells: cells(.)})
+         | sort_by(-.t)
+         | map(.t as $t | .cells | shares($t))
+         | add // []) as $beads
+      | ($none_rows | cells(.) | shares($none_rows | group_aic)) as $none
       | if $json == "yes" then ($beads + $none | tojson)
         else
-          if ($all | length) == 0 then
+          if (($beads | length) + ($none | length)) == 0 then
             "No cerebro sessions \($window)." +
             (if $record_from == null then "" else " (Cost is recorded from \($record_from | stamp).)" end)
           else
-            # Column widths from the data, so a long agent list wraps past 80 rather than losing a
-            # name - the navigator chose every name over a tidy line.
+            # Column widths from the data, exactly as they always were - AGENT and PHASE join
+            # them, and TITLE still takes whatever is left.
             (([$beads[].bead, "no bead", "BEAD"] | map(length) | max)) as $wb
+            | (([$beads[], $none[]] | map(.agent | length)) + [5] | max) as $wn
+            | (([$beads[], $none[]] | map(.phase // "-" | length)) + [5] | max) as $wp
             | (([$beads[], $none[]] | map(.aic | fmt1 | length)) + [3] | max) as $wa
             | (([$beads[], $none[]] | map(.unpriced | tostring | length)) + [8] | max) as $wu
-            | ($cols - $wb - $wa - $wu - 30) as $wt
-            | (if ($beads | map(.title) | map(select(. != null)) | length) == 0 then 0 else $wt end) as $wt
+            # What is left after every fixed column and the two-space gaps between them:
+            # BEAD TITLE AGENT [PHASE] AIC [SHARE(7)] UNPRICED, five gaps of two either way.
+            | (if $phase == "yes"
+               then $cols - $wb - $wn - $wp - $wa - $wu - 10
+               else $cols - $wb - $wn - $wa - $wu - 17 end) as $wt
+            # No board, no titles: the column disappears rather than printing a blank one. This
+            # is what the fixtures see, since they have no bd that knows cb-aaa.
+            | (if ([$beads[], $none[]] | map(.title) | map(select(. != null)) | length) == 0
+               then 0 else $wt end) as $wt
             | def row($r):
                 ("\($r.bead // "no bead" | pad($wb))  " +
                  (if $wt > 0 then "\(($r.title // "") | clip($wt) | pad($wt))  " else "" end) +
+                 "\($r.agent | pad($wn))  " +
+                 (if $phase == "yes" then "\(($r.phase // "-") | pad($wp))  " else "" end) +
                  "\($r.aic | fmt1 | lpad($wa))  " +
-                 "\("\($r.share | fmt1)%" | lpad(7))  " +
-                 "\((if $r.unpriced == 0 then "-" else $r.unpriced end) | lpad($wu))  " +
-                 "\($r.agents | join(", "))");
+                 (if $phase == "yes" then "" else "\("\($r.share | fmt1)%" | lpad(7))  " end) +
+                 "\((if $r.unpriced == 0 then "-" else $r.unpriced end) | lpad($wu))");
               ([("BEAD" | pad($wb)) + "  " +
                 (if $wt > 0 then ("TITLE" | pad($wt)) + "  " else "" end) +
-                ("AIC" | lpad($wa)) + "  " + ("SHARE" | lpad(7)) + "  " +
-                ("UNPRICED" | lpad($wu)) + "  AGENTS"]
+                ("AGENT" | pad($wn)) + "  " +
+                (if $phase == "yes" then ("PHASE" | pad($wp)) + "  " else "" end) +
+                ("AIC" | lpad($wa)) + "  " +
+                (if $phase == "yes" then "" else ("SHARE" | lpad(7)) + "  " end) +
+                ("UNPRICED" | lpad($wu))]
                + ($beads | map(row(.)))
                + (if ($none | length) > 0 then ["--"] + ($none | map(row(.))) else [] end)
                + [""]
-               + ["\($beads | length) bead\(if ($beads | length) == 1 then "" else "s" end), " +
+               + ["\($beads | map(.bead) | unique | length) bead\(if ($beads | map(.bead) | unique | length) == 1 then "" else "s" end), " +
                   "\($beads | map(.aic) | add // 0 | aic | fmt1) AIC on beads; " +
                   "\($none | map(.aic) | add // 0 | aic | fmt1) AIC on no bead; " +
                   "\($total | aic | fmt1) AIC in all."]

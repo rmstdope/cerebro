@@ -518,6 +518,7 @@ agent and the root, and `transitions.jsonl` says which bead that agent held at t
 
 ```bash
 .claude/cerebro/scripts/fleet-cost --by-bead --since 7d
+.claude/cerebro/scripts/fleet-cost --by-bead --phase
 .claude/cerebro/scripts/fleet-cost --by-agent --since 30d
 .claude/cerebro/scripts/fleet-cost --bead cb-ue0
 ```
@@ -526,8 +527,9 @@ Two of its columns are the ones worth knowing about before you read a total. **`
 third of the fleet's spend** — an orchestrator holds none by design, and every pass spends before it
 claims anything — so it sits below a rule with a row of its own rather than being tidied away.
 **`UNPRICED`** counts requests the store records no cost for (a couple of per cent, and every
-request on some models); they are excluded from the sums, so a row showing `0.0` beside a number
-there did real work whose price nobody wrote down.
+request on some models); they are excluded from the sums, and the count is **per row**, so an
+agent whose whole contribution to a bead was unpriced reads `0.0` beside a number there rather than
+looking free.
 
 **`decisions.jsonl`** is the fleet view's, and it answers the other half: not what the agents did but
 what Emacs decided about them. One line per start (with the trigger that fired and whether it was a

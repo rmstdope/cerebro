@@ -55,6 +55,9 @@ fi
 # before it is believed - see scripts/root-hints.sh - and the fork below is what answers otherwise,
 # including its failure, which is still how a standalone clone is refused.
 source "$script_dir/root-hints.sh"
+# The marker sentence's one bash spelling (cb-9su): the two needles below are cut from it here
+# rather than written out again, so this reader and `scripts/launch' cannot disagree about the text.
+source "$script_dir/session-marker.sh"
 repo_root="$(cerebro_hinted_root "$script_dir/.." shared)" \
   || repo_root="$("$script_dir/consumer-root" --shared)"
 state_file="$repo_root/.cerebro/state/$name.state.json"
@@ -80,9 +83,11 @@ args="$(ps -o args= -p "$pid" 2>/dev/null)" || exit 1
 # marker sentence, up to and including the space after "rooted at" - which is what keeps one roster
 # name that is a prefix of another (Cyclops / Cyclopsly) from silently reading as alive, the job the
 # elisp `\_>' word boundary used to do on `--name'. Quoted inside the pattern, so a `*?[' in a name
-# is literal.
+# is literal - and quoted the same way now that the text comes from the library, since a `case'
+# pattern expands globs in an unquoted expansion just as it does in a literal.
+name_needle="$(cerebro_marker_name_needle "$name")"
 case "$args" in
-  *"This session is $name of the cerebro fleet rooted at "*) ;;
+  *"$name_needle"*) ;;
   *) exit 1 ;;
 esac
 
@@ -98,9 +103,10 @@ esac
 # `consumer-root --shared', a `pwd -P' result, and `scripts/launch' embeds that identical physical
 # string, so no further resolution step is needed. The trailing `/' is what makes it a whole path
 # component, so a sibling checkout whose path merely starts with this one's (`{root}-hud') does not
-# match.
+# match - `cerebro_marker_root_needle' is where that slash is appended (cb-9su).
+root_needle="$(cerebro_marker_root_needle "$repo_root")"
 case "$args" in
-  *"cerebro fleet rooted at ${repo_root%/}/"*) ;;
+  *"$root_needle"*) ;;
   *) exit 1 ;;
 esac
 

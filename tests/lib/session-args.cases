@@ -20,6 +20,12 @@
 # own fixture spellings, and reported a silent zero for a fleet that had spent ten thousand
 # credits that week (cb-d89, cb-akt).
 #
+# A NEW READER SUBSCRIBES HERE *AND* DECLARES ITSELF IN `scripts/marker-readers' (cb-9su). This
+# table only ever held the readers that opted in, so a reader that never subscribed was not red -
+# it was silently wrong. That check is what makes the opt-in mandatory: it fails the gate on any
+# file under scripts, emacs, tests, hooks or githooks that spells the sentence without a declared
+# row naming its subscribing suite.
+#
 # THE FIELD IS NOT ALWAYS A COMMAND LINE. The row's last field is *the text a reader sees*: a
 # process's command line for `scripts/agent-alive' and `cerebro--session-args-p', and turn 0's
 # `user_message' for `scripts/fleet-cost'. `alive'/`dead' means *this field is NAME's session of

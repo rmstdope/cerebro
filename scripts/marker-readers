@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+#
+# marker-readers - is every reader of the session marker sentence a declared subscriber?
+#
+# One sentence identifies every session this fleet starts - `scripts/session-marker.sh' is its one
+# bash spelling - and it is parsed in more than one language. The same class of defect, two readers
+# of that sentence disagreeing about it, has been fixed three times: 7bd5962 and 9420ff2 between the
+# bash and elisp copies, and 94bef94/cb-akt in `scripts/fleet-cost'. This repository's rule is that
+# a class of defect earns a check the SECOND time it happens; this is the third, so the check is
+# overdue rather than premature.
+#
+# `tests/lib/session-args.cases' closed the drift between readers THAT OPT IN. It is a test fixture,
+# so it is silent about a reader that never subscribes - which is what cb-akt was: fleet-cost's SQL
+# prefilter asked whether the field BEGINS WITH the marker where its siblings ask whether it APPEARS
+# IN it, dropped every row carrying anything before it, and reported a silent zero for a fleet that
+# had spent ten thousand credits that week. A zero reads as a fleet that has never run rather than as
+# a failure, which is why an opt-in fixture was not enough on its own.
+#
+#   no arguments.
+#   stdout   one line per finding, or nothing at all when whole:
+#              unsubscribed: <path> (spells the session marker and is not a declared reader)
+#              stale: <path> (declared a session-marker reader and no longer spells it)
+#              unpinned: <path> -> <suite> (its declared suite does not run tests/lib/session-args.cases)
+#            paths relative to the repository root.
+#   exit 0   whole.
+#   exit 1   at least one finding.
+#   exit 2   usage.
+#
+# IT IS NOT ITSELF A READER. It sources `scripts/session-marker.sh' and greps for
+# `cerebro_marker_infix', so the check never spells the sentence. That is not a trick to dodge its
+# own rule - it IS the rule: the one bash spelling is the library, and everything in bash that needs
+# the text asks for it.
+#
+# THE SCAN SET IS PART OF THE DESIGN, the same way tracked-links' pathspec is. Only `scripts',
+# `emacs', `tests', `hooks' and `githooks' are scanned. Scanning the whole repository would make
+# this suite read `docs/', `README.md', `LICENSE' and `models.conf.example' - the entries on
+# `scripts/ci-needed''s skip list - and a suite that starts reading one of them makes a green pull
+# request that should have been red. All five are on ci-needed's `*)' arm, so it needs no edit for
+# this. `CLAUDE.md' and the files under `docs/' quote the sentence as prose, and prose is not a
+# parser.
+#
+# `--cached --others --exclude-standard', not plain `git ls-files': tracked files alone would give a
+# green gate to an implementer who wrote a new reader and ran the gate before `git add', which is
+# exactly the moment this is meant to fire. `--exclude-standard' keeps `.cerebro/scratch/' and
+# `.beads/' out.
+#
+# It is a GATE predicate and must never join `launch-preflight''s hot path: the sync runs before
+# every single session, and a check that refuses there is a fleet that cannot start.
+#
+# NOT under `tests/': the gate's suite loop is `tests/*.sh', and a script whose exit status is an
+# answer must not be picked up as a suite. Its suite is `tests/marker-readers.sh'.
+
+# Not -e: the answer IS the exit status, and a failing grep inside a loop would exit before the
+# finding could be printed.
+set -uo pipefail
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: marker-readers" >&2
+  exit 2
+fi
+
+# -P for the same reason tracked-links gives: a logical spelling compares two names for one
+# directory. The subject is the checkout this script lives in - for a fixture, that is the fixture.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT" || exit 2
+
+# Guarded explicitly: there is no `set -e' here, and an unsourced library would leave the needle
+# empty and every scanned file matching it.
+source "$ROOT/scripts/session-marker.sh" || {
+  echo "marker-readers: cannot read scripts/session-marker.sh" >&2
+  exit 2
+}
+infix="$(cerebro_marker_infix)"
+[[ -n "$infix" ]] || {
+  echo "marker-readers: scripts/session-marker.sh gave an empty infix" >&2
+  exit 2
+}
+
+# --- the declared readers -------------------------------------------------------------------------
+#
+# PATH then SUITE. A suite of `-' means "no case-table subscription, and the reason below says why";
+# any other value is a path that must exist and must mention `tests/lib/session-args.cases'.
+# A heredoc-shaped string read with `while read -r', the shape scripts/roster uses, because macOS
+# ships bash 3.2 and there is no `declare -A'. The reason for each row is the comment above it.
+
+READERS="
+# The elisp copy: cerebro--session-args-p, cerebro--name-in-args-p, cerebro--root-in-args-p and
+# cerebro--marker-needle. Elisp cannot source a bash library - the same qualification
+# cerebro--log-line carries against scripts/jsonl-log.sh - so it subscribes instead.
+emacs/cerebro.el                emacs/cerebro-test.el
+# It parses the case table itself, in elisp, for that same reason: both a reader and its own pin.
+emacs/cerebro-test.el           emacs/cerebro-test.el
+# The bash reader. Its needles come from the library; its header quotes the sentence to say why.
+scripts/agent-alive             tests/agent-alive.sh
+# The SQL LIKE prefilter and the two jq capture() definitions - cb-akt's reader.
+scripts/fleet-cost              tests/fleet-cost.sh
+# The one bash spelling. Pinned literally by tests/session-marker.sh, which deliberately does not
+# derive its expectations from here, so it is not a case-table subscriber.
+scripts/session-marker.sh       -
+# Runs the case table against fleet-cost's prefilter and its two captures; it is the subscription.
+tests/fleet-cost.sh             tests/fleet-cost.sh
+# Pins the launcher's emitted prompt against a literal, on purpose: a test that re-derived the
+# sentence from the library would prove nothing.
+tests/launchers.sh              -
+# Fabricates a file spelling the marker to prove the unsubscribed finding fires, and quotes the
+# sentence in its header to say why. A fixture, not a parser, so there is nothing to subscribe.
+tests/marker-readers.sh         -
+# The table itself.
+tests/lib/session-args.cases    -
+# Pins the library's four functions against literals, for the same reason as tests/launchers.sh.
+tests/session-marker.sh         -
+"
+
+declared_paths=()
+declared_suites=()
+while read -r path suite; do
+  [[ -n "$path" ]] || continue
+  case "$path" in \#*) continue ;; esac
+  declared_paths+=("$path")
+  declared_suites+=("$suite")
+done <<<"$READERS"
+
+is_declared() {
+  local want="$1" p
+  for p in "${declared_paths[@]}"; do
+    [[ "$p" == "$want" ]] && return 0
+  done
+  return 1
+}
+
+findings=0
+
+# --- check one: every scanned file spelling the marker has a row -----------------------------------
+#
+# `-z' and a NUL-terminated read: without it, core.quotePath quotes a non-ASCII path and the finding
+# names a file that does not exist. Each file is tested with its own `grep -qF' rather than one
+# `xargs -0 grep -lF' - with an empty scan set xargs still runs grep once, which then reads stdin and
+# hangs the gate.
+
+while IFS= read -r -d '' path; do
+  [[ -f "$path" ]] || continue
+  grep -qF "$infix" "$path" 2>/dev/null || continue
+  is_declared "$path" && continue
+  echo "unsubscribed: $path (spells the session marker and is not a declared reader)"
+  findings=$((findings + 1))
+done < <(git ls-files --cached --others --exclude-standard -z -- scripts emacs tests hooks githooks)
+
+# --- checks two and three: every row still describes a reader, and names a real subscription -------
+#
+# A row that has stopped describing anything makes the table read as covering more than it does;
+# a row pinned to a suite that no longer runs the case table is a reader nothing holds to the other
+# copies' spelling. Both are read from the declaration rather than the scan, so a declared path that
+# has been deleted outright is a `stale:' finding too rather than silence.
+
+for i in "${!declared_paths[@]}"; do
+  path="${declared_paths[$i]}"
+  suite="${declared_suites[$i]}"
+
+  if [[ ! -f "$path" ]] || ! grep -qF "$infix" "$path" 2>/dev/null; then
+    echo "stale: $path (declared a session-marker reader and no longer spells it)"
+    findings=$((findings + 1))
+    continue
+  fi
+
+  [[ "$suite" == "-" ]] && continue
+  if [[ ! -f "$suite" ]] || ! grep -qF "session-args.cases" "$suite" 2>/dev/null; then
+    echo "unpinned: $path -> $suite (its declared suite does not run tests/lib/session-args.cases)"
+    findings=$((findings + 1))
+  fi
+done
+
+[[ $findings -eq 0 ]] || exit 1
+exit 0

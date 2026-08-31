@@ -543,6 +543,18 @@ wrong about approach, and it goes back. The same care applies to your own PR bod
 about what a helper or a label does is read by the reviewer and the navigator with the trust a
 plan gets, so run or read the thing before writing the sentence.
 
+**A current-source claim the plan relies on is checked before its increment begins.** This includes
+a quoted `Currently:` region, the old side of a proposed diff, a line-number or body claim, and
+replacement prose whose factual wording describes current behavior. Open the referenced region in
+the current worktree before writing the first failing test that depends on it; compare it with
+merged source, not a sibling bead's design. If the source still supports the claim, proceed with
+the planned increment. If `main` already supplies its outcome, do not recreate the code or duplicate
+its tests: skip that overtaken increment and name the current evidence in the PR body, then continue
+with the remaining increments. If the source moved but the intent remains unambiguous, use the
+current location or shape and record the deviation in the PR body, as with the helper rule above.
+If the change affects or obscures approach, scope, or audience-visible intent, use the existing
+hand-back block rather than inferring a replacement design.
+
 Anything touching **approach, scope, or what the user sees** goes back, by the same hand-back block as a missing section, worktree included. You were given a plan precisely so those decisions were made elsewhere; making
 them here is the failure mode this split exists to prevent.
 

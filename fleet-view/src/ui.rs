@@ -11,15 +11,18 @@
 //! guessed - there is no `standby` row here and no stop-flag mark, because neither is in this
 //! reader's normalized model, and inventing one would show supervisor intent as observed fact.
 
+use std::cmp::Ordering;
+
 use chrono::{DateTime, Utc};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, PaneContent};
-use crate::model::{FleetRow, RowState};
+use crate::app::{App, Pane, PaneContent};
+use crate::model::{Bead, FleetRow, RowState, WorkBuckets};
 
 /// The floor the whole document needs. Below it the screen says so and shows nothing else: half a
 /// row of a fleet is worse than a sentence saying the window is too small.
@@ -32,6 +35,11 @@ pub const WIDE_COLUMNS: u16 = 64;
 
 /// The exact title agreed in the parent epic's interview, em dash and all.
 const TITLE: &str = "Cerebro — read-only";
+
+/// How many beads each Work section shows before it says `+N more` - the panel's own
+/// `cerebro-beads-per-section`, and for the same reason: an unplanned backlog is unbounded, and
+/// without a cap the two sections worth reading are pushed off the bottom by the third.
+pub const WORK_ROWS_PER_SECTION: usize = 8;
 
 const AGENT_FLOOR: usize = 14;
 const ROLE_FLOOR: usize = 13;
@@ -96,13 +104,13 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     frame.render_widget(Paragraph::new(header_line(app)), rows[0]);
 
     let pane = rows[1];
+    // One border around one document: Fleet and Work are stacked inside it and scroll together,
+    // because a navigator reading the bottom of the board still wants the rows above it to move
+    // with the same key. Each pane's own state is carried by its title line and its own colour
+    // rather than by this border, which belongs to neither of them.
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(pane_color(app)))
-        .title(Span::styled(
-            pane_title(app),
-            Style::default().fg(pane_color(app)),
-        ));
+        .border_style(Style::default().fg(BLUE));
     // The wide/narrow decision is about the TERMINAL the navigator sized, not about the pane's
     // inner width: 64 columns is what was agreed, and taking the border off first would move the
     // boundary to 66 for no reason anyone could see.
@@ -145,48 +153,100 @@ fn clock(at: DateTime<Utc>) -> String {
     at.format("%H:%M:%S").to_string()
 }
 
-fn pane_color(app: &App) -> Color {
-    match &app.fleet.content {
+fn pane_color<T>(pane: &Pane<T>) -> Color {
+    match &pane.content {
         PaneContent::Stale { .. } => GOLD,
         PaneContent::Unavailable { .. } => RED,
         _ => BLUE,
     }
 }
 
-fn pane_title(app: &App) -> String {
-    match &app.fleet.content {
-        PaneContent::Loading => "Fleet".to_string(),
-        PaneContent::Fresh { value, .. } => format!("Fleet {}", value.len()),
-        PaneContent::Stale { failed_at, .. } => {
-            format!("Fleet — stale since {}", clock(*failed_at))
+/// True when this pane has nothing current to show - the condition its healthy peer answers by
+/// putting its own last refresh time in its title, so a navigator reading past a failure can see
+/// how current the surviving half is.
+fn failed<T>(pane: &Pane<T>) -> bool {
+    matches!(
+        pane.content,
+        PaneContent::Stale { .. } | PaneContent::Unavailable { .. }
+    )
+}
+
+/// One pane's title. NAME is `Fleet` or `Work`; COUNT is the number a fresh pane carries beside
+/// its name, and `None` for Work, whose six section headers each carry one already.
+fn pane_title<T>(pane: &Pane<T>, name: &str, peer_failed: bool, count: Option<usize>) -> String {
+    match &pane.content {
+        PaneContent::Loading => name.to_string(),
+        PaneContent::Fresh { read_at, .. } => {
+            if peer_failed {
+                format!("{name} — refreshed {}", clock(*read_at))
+            } else {
+                match count {
+                    Some(count) => format!("{name} {count}"),
+                    None => name.to_string(),
+                }
+            }
         }
-        PaneContent::Unavailable { .. } => "Fleet unavailable".to_string(),
+        PaneContent::Stale { failed_at, .. } => {
+            format!("{name} — stale since {}", clock(*failed_at))
+        }
+        PaneContent::Unavailable { .. } => format!("{name} unavailable"),
     }
 }
 
-/// The one status line: the title, what is happening to the fleet right now, and the keys.
+fn title_line<T>(pane: &Pane<T>, title: String) -> Line<'static> {
+    Line::from(Span::styled(
+        title,
+        Style::default()
+            .fg(pane_color(pane))
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
+/// The newest failure on the screen, and whether the pane that suffered it still has something
+/// worth reading.
 ///
-/// `g retry` rather than `g refresh` once something has failed - the key is the same, and what it
-/// is for has changed.
+/// One headline for two panes, decided while planning cb-vyp.3: the pane titles and bodies
+/// already say which source failed, and naming a pane up here wraps the line sooner than the
+/// approved header allows. So the header answers the only question it can answer in one clause -
+/// how recently something went wrong.
+fn newest_failure(app: &App) -> Option<(DateTime<Utc>, bool)> {
+    fn of<T>(content: &PaneContent<T>) -> Option<(DateTime<Utc>, bool)> {
+        match content {
+            PaneContent::Stale { failed_at, .. } => Some((*failed_at, true)),
+            PaneContent::Unavailable { failed_at, .. } => Some((*failed_at, false)),
+            _ => None,
+        }
+    }
+    let fleet = of(&app.fleet.content);
+    let work = of(&app.work.content);
+    match (fleet, work) {
+        (Some(fleet), Some(work)) => Some(if work.0 > fleet.0 { work } else { fleet }),
+        (some, None) | (None, some) => some,
+    }
+}
+
+/// The one status line: the title, what is happening right now, and the keys.
+///
+/// `refreshing...` wins over a retained failure: a navigator looking at a stale pane most wants
+/// to know that recovery is already under way, and the pane's own title keeps saying it is
+/// stale. `g retry` rather than `g refresh` until BOTH panes are fresh - the key is the same, and
+/// what it is for has changed.
 fn header_line(app: &App) -> Line<'static> {
     let mut spans = vec![Span::raw(TITLE)];
-    if app.fleet.refreshing {
+    if app.fleet.refreshing || app.work.refreshing {
         spans.push(Span::styled(" | refreshing...", dim()));
+    } else if let Some((failed_at, stale)) = newest_failure(app) {
+        let (text, color) = if stale {
+            (format!(" | stale — refresh failed at {}", clock(failed_at)), GOLD)
+        } else {
+            (format!(" | refresh failed at {}", clock(failed_at)), RED)
+        };
+        spans.push(Span::styled(text, Style::default().fg(color)));
     }
-    match &app.fleet.content {
-        PaneContent::Stale { failed_at, .. } => spans.push(Span::styled(
-            format!(" | stale — refresh failed at {}", clock(*failed_at)),
-            Style::default().fg(GOLD),
-        )),
-        PaneContent::Unavailable { failed_at, .. } => spans.push(Span::styled(
-            format!(" | refresh failed at {}", clock(*failed_at)),
-            Style::default().fg(RED),
-        )),
-        _ => {}
-    }
-    let refresh_key = match &app.fleet.content {
-        PaneContent::Stale { .. } | PaneContent::Unavailable { .. } => "g retry",
-        _ => "g refresh",
+    let refresh_key = if failed(&app.fleet) || failed(&app.work) {
+        "g retry"
+    } else {
+        "g refresh"
     };
     spans.push(Span::styled(
         format!(" | ↑/↓/PgUp/PgDn scroll | {refresh_key} | q/Esc/Ctrl-C quit"),
@@ -195,9 +255,28 @@ fn header_line(app: &App) -> Line<'static> {
     Line::from(spans)
 }
 
-/// The pane's whole document, before scrolling. WIDTH is the terminal's own width, which decides
-/// how many columns each row carries.
+/// The whole scrollable document: the Fleet pane, a blank line, then the Work pane. WIDTH is the
+/// terminal's own width; the Work rows are measured against the inner width, which is what is
+/// left once the border's two cells are taken off.
 fn document(app: &App, now: DateTime<Utc>, width: u16) -> Vec<Line<'static>> {
+    let inner = (width as usize).saturating_sub(2);
+    let fleet_count = app.fleet.content.value().map(|rows| rows.len());
+    let mut lines = vec![title_line(
+        &app.fleet,
+        pane_title(&app.fleet, "Fleet", failed(&app.work), fleet_count),
+    )];
+    lines.extend(fleet_document(app, now, width));
+    lines.push(Line::from(""));
+    lines.push(title_line(
+        &app.work,
+        pane_title(&app.work, "Work", failed(&app.fleet), None),
+    ));
+    lines.extend(work_document(app, now, inner));
+    lines
+}
+
+/// The Fleet pane's body.
+fn fleet_document(app: &App, now: DateTime<Utc>, width: u16) -> Vec<Line<'static>> {
     match &app.fleet.content {
         PaneContent::Loading => vec![Line::from(Span::styled("Loading fleet...", dim()))],
         PaneContent::Fresh { value, .. } => fleet_lines(value, now, width),
@@ -221,6 +300,214 @@ fn document(app: &App, now: DateTime<Utc>, width: u16) -> Vec<Line<'static>> {
             Line::from("Press g to retry."),
         ],
     }
+}
+
+/// The Work pane's body, in the same four shapes the Fleet pane has - and with the same rule
+/// under them: a failed refresh never destroys queues that are still worth reading.
+fn work_document(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'static>> {
+    match &app.work.content {
+        PaneContent::Loading => vec![Line::from(Span::styled("Loading work...", dim()))],
+        PaneContent::Fresh { value, .. } => work_lines(value, now, width),
+        PaneContent::Stale { value, error, .. } => {
+            let mut lines = vec![
+                Line::from(Span::styled(error.clone(), Style::default().fg(GOLD))),
+                Line::from(""),
+            ];
+            lines.extend(work_lines(value, now, width));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "The last successful work snapshot remains visible.",
+                dim(),
+            )));
+            lines
+        }
+        PaneContent::Unavailable { error, .. } => vec![
+            Line::from(Span::styled(error.clone(), Style::default().fg(RED))),
+            Line::from(""),
+            Line::from("No work snapshot is available."),
+            Line::from("Press g to retry."),
+        ],
+    }
+}
+
+/// How a section orders its rows and what it puts at the far end of one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SectionKind {
+    /// Priority, then id: P0 reads first, and a tie does not shuffle between redraws.
+    Open,
+    /// `Open`'s order, plus how long the bead has been waiting for a person.
+    Paused,
+    /// Newest first. Priority says nothing about finished work - a merged P3 is no less done
+    /// than a merged P0 - so this section answers "what just landed" instead.
+    Merged,
+}
+
+/// The six queues, in the order work moves in read backwards, and in the panel's own spelling.
+///
+/// Exactly the sections `cerebro--bead-panel` shows, minus the two that are Emacs's alone: this
+/// view has no sweeps to act on and no history to keep.
+fn work_lines(buckets: &WorkBuckets, now: DateTime<Utc>, width: usize) -> Vec<Line<'static>> {
+    let sections: [(&str, &Vec<Bead>, SectionKind); 6] = [
+        ("Claimed", &buckets.claimed, SectionKind::Open),
+        ("Planned, unclaimed", &buckets.planned, SectionKind::Open),
+        ("Being planned", &buckets.being_planned, SectionKind::Open),
+        ("Unplanned", &buckets.unplanned, SectionKind::Open),
+        ("Waiting on you", &buckets.paused, SectionKind::Paused),
+        ("Merged, unverified", &buckets.merged, SectionKind::Merged),
+    ];
+    let mut lines = Vec::new();
+    for (index, (title, beads, kind)) in sections.into_iter().enumerate() {
+        if index > 0 {
+            lines.push(Line::from(""));
+        }
+        lines.extend(work_section(title, beads, kind, now, width));
+    }
+    lines
+}
+
+/// One section: its title with the FULL count, then at most eight rows, then what is left.
+///
+/// The count is on the header rather than implied by the rows, because the rows are the part
+/// that gets capped - and a section whose remainder is hidden still has to say how much work is
+/// really in it.
+fn work_section(
+    title: &str,
+    beads: &[Bead],
+    kind: SectionKind,
+    now: DateTime<Utc>,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let sorted = match kind {
+        SectionKind::Merged => sorted_by_recency(beads),
+        SectionKind::Open | SectionKind::Paused => sorted_by_priority(beads),
+    };
+    let mut lines = vec![Line::from(Span::styled(
+        format!("{title} {}", sorted.len()),
+        Style::default().add_modifier(Modifier::BOLD),
+    ))];
+    if sorted.is_empty() {
+        lines.push(Line::from(Span::styled("  (none)", dim())));
+        return lines;
+    }
+    for bead in sorted.iter().take(WORK_ROWS_PER_SECTION) {
+        let suffix = (kind == SectionKind::Paused).then(|| paused_age(bead, now));
+        lines.push(work_row(bead, width, suffix.as_deref()));
+    }
+    let hidden = sorted.len().saturating_sub(WORK_ROWS_PER_SECTION);
+    if hidden > 0 {
+        lines.push(Line::from(Span::styled(format!("  +{hidden} more"), dim())));
+    }
+    lines
+}
+
+fn sorted_by_priority(beads: &[Bead]) -> Vec<&Bead> {
+    let mut sorted: Vec<&Bead> = beads.iter().collect();
+    // A missing priority sorts after P4 rather than before P0: an unranked bead is not urgent.
+    sorted.sort_by(|a, b| {
+        a.priority
+            .unwrap_or(9)
+            .cmp(&b.priority.unwrap_or(9))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    sorted
+}
+
+fn sorted_by_recency(beads: &[Bead]) -> Vec<&Bead> {
+    let mut sorted: Vec<&Bead> = beads.iter().collect();
+    // Undated last, and the id breaks every tie: this list is redrawn on a timer, and one that
+    // reorders under the navigator's eyes is unreadable.
+    sorted.sort_by(|a, b| {
+        match (a.updated_at, b.updated_at) {
+            (Some(a), Some(b)) => b.cmp(&a),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        }
+        .then_with(|| a.id.cmp(&b.id))
+    });
+    sorted
+}
+
+/// How long this bead has been waiting for a person, or an em dash when it never said.
+///
+/// The one place the empty string `elapsed` returns becomes something the eye can find: a bead
+/// parked before the pause sites wrote `metadata.paused_at` has no age, and rendering it as a
+/// small number would read as "just now".
+fn paused_age(bead: &Bead, now: DateTime<Utc>) -> String {
+    let age = elapsed(bead.paused_at(), now);
+    if age.is_empty() {
+        "—".to_string()
+    } else {
+        age
+    }
+}
+
+/// One bead row, fitted to WIDTH terminal cells.
+///
+/// `  cb-123  P1 Some title`, exactly as `cerebro--bead-line` builds it. A bead whose last
+/// verification failed replaces the two-space indent with `↻ ` - two cells either way, so the id
+/// and title columns of the ordinary rows beside it do not move.
+///
+/// Only the title is ever cut: the prefix is what makes the rows a column, and a truncated id
+/// would be worse than a truncated title in every case. SUFFIX, when given, is right-aligned
+/// after two separating spaces and takes its room before the title does.
+fn work_row(bead: &Bead, width: usize, suffix: Option<&str>) -> Line<'static> {
+    let reopened = bead.labels.iter().any(|l| l == "verification:failed");
+    let priority = bead
+        .priority
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let prefix = format!(
+        "{}{} P{priority} ",
+        if reopened { "↻ " } else { "  " },
+        pad_cells(&bead.id, 7),
+    );
+    let reserved = suffix.map(|s| s.width() + 2).unwrap_or(0);
+    let room = width
+        .saturating_sub(prefix.width() + reserved)
+        .max(8);
+    let title = truncate_cells(&bead.title, room);
+    match suffix {
+        Some(suffix) => {
+            let gap = room.saturating_sub(title.width());
+            Line::from(format!("{prefix}{title}{}  {suffix}", " ".repeat(gap)))
+        }
+        None => Line::from(format!("{prefix}{title}")),
+    }
+}
+
+/// TEXT padded to WIDTH terminal cells, never cut: a bead id is a key, not a label.
+fn pad_cells(text: &str, width: usize) -> String {
+    let used = text.width();
+    if used >= width {
+        return text.to_string();
+    }
+    format!("{text}{}", " ".repeat(width - used))
+}
+
+/// TEXT cut to WIDTH terminal CELLS, ending in the Unicode ellipsis when something was removed.
+///
+/// Cells rather than bytes or `char`s: a title carrying a wide glyph would otherwise overflow the
+/// pane and push the border off the row, and a bytewise cut would split one in half.
+fn truncate_cells(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut kept = String::new();
+    let mut used = 0;
+    for character in text.chars() {
+        let cell = character.to_string().width();
+        if used + cell > width - 1 {
+            break;
+        }
+        kept.push(character);
+        used += cell;
+    }
+    kept.push('…');
+    kept
 }
 
 struct Columns {
@@ -456,6 +743,7 @@ mod tests {
     use super::*;
     use crate::model::AgentKind;
     use crate::readers::ReadError;
+    use std::time::Instant;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::Terminal;
@@ -501,6 +789,14 @@ mod tests {
             source: "ps".into(),
             status: Some(3),
             stderr: "ps: boom".into(),
+        }
+    }
+
+    fn bd_failure() -> ReadError {
+        ReadError::Exit {
+            source: "bd".into(),
+            status: Some(1),
+            stderr: "bd list failed: database is locked".into(),
         }
     }
 
@@ -628,7 +924,7 @@ mod tests {
         assert!(line_with(&rendered, "Fleet").contains("Fleet"));
 
         let mut app = App::new();
-        assert!(app.begin_refresh());
+        assert!(app.begin_refresh(Instant::now()));
         let rendered = lines(&render(&app, 100, 20));
         assert!(rendered[0].contains("refreshing..."), "a read in flight says so: {:?}", rendered[0]);
 
@@ -802,11 +1098,13 @@ mod tests {
         assert!(!scrolled.iter().any(|line| line.contains("Agent00")));
         assert!(scrolled.iter().any(|line| line.contains("Agent20")));
 
-        // The geometry the caller clamps by: one heading line plus thirty rows, in a viewport of
-        // the pane's inner height.
+        // The geometry the caller clamps by, and it is the WHOLE document: the Fleet title, one
+        // heading line and thirty rows, then the blank line, the Work title and the work pane's
+        // own line - in a viewport of the bordered area's inner height. A page is a page of that,
+        // never of either pane's own height.
         let area = Rect::new(0, 0, 100, 14);
         let metrics = metrics(&app, now(), area);
-        assert_eq!(metrics.document_lines, 31);
+        assert_eq!(metrics.document_lines, 1 + 31 + 1 + 1 + 1);
         assert_eq!(metrics.viewport_lines, 11);
     }
 
@@ -840,5 +1138,492 @@ mod tests {
         );
         // Gold, never the blue of `idle': a state this view does not understand is not "free".
         assert_eq!(style_of(&buffer, "●").fg, Some(GOLD));
+    }
+
+    // --- cb-vyp.3: the Work pane -----------------------------------------------------------------
+
+    /// The rendered lines with the document border taken off each end, so one row can be compared
+    /// exactly rather than merely searched for.
+    fn body(buffer: &Buffer) -> Vec<String> {
+        lines(buffer)
+            .into_iter()
+            .map(|line| {
+                let line = line.strip_prefix('│').unwrap_or(&line);
+                let line = line.strip_suffix('│').unwrap_or(line);
+                line.trim_end().to_string()
+            })
+            .collect()
+    }
+
+    fn bead(id: &str, priority: Option<u8>, title: &str) -> Bead {
+        Bead {
+            id: id.into(),
+            title: title.into(),
+            status: "open".into(),
+            issue_type: "feature".into(),
+            labels: vec![],
+            priority,
+            updated_at: None,
+            assignee: None,
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn work_app(buckets: WorkBuckets) -> App {
+        let mut app = App::new();
+        app.finish_work_refresh(Ok(buckets), at(86_400));
+        app
+    }
+
+    /// The index of the first rendered line containing NEEDLE, so an order can be asserted
+    /// without a whitespace snapshot of the whole frame.
+    fn index_of(rendered: &[String], needle: &str) -> usize {
+        rendered
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| {
+                panic!("no line contains {needle:?}; screen was:\n{}", rendered.join("\n"))
+            })
+    }
+
+    /// The style of the first cell of NEEDLE, wherever it is on the screen. Cell-for-character,
+    /// which every string asserted here is.
+    fn style_where(buffer: &Buffer, needle: &str) -> Style {
+        let rendered = lines(buffer);
+        let y = index_of(&rendered, needle) as u16;
+        let x = rendered[y as usize]
+            .char_indices()
+            .position(|(index, _)| rendered[y as usize][index..].starts_with(needle))
+            .expect("the needle is on that line") as u16;
+        let cell = buffer.cell((x, y)).expect("a cell inside the frame");
+        Style::default()
+            .fg(cell.fg)
+            .bg(cell.bg)
+            .add_modifier(cell.modifier)
+    }
+
+    #[test]
+    fn renders_all_six_work_sections_in_lifecycle_order() {
+        let app = work_app(WorkBuckets {
+            claimed: vec![bead("cb-123", Some(1), "Preserve session output")],
+            being_planned: vec![
+                bead("cb-kcs", Some(1), "Ratatui supervises the fleet"),
+                bead("cb-vyp", Some(1), "Standalone Ratatui fleet view"),
+            ],
+            paused: vec![bead("cb-9xy", Some(2), "Choose compact rows")],
+            ..WorkBuckets::default()
+        });
+        let rendered = body(&render(&app, 100, 40));
+
+        // The order work moves in, read backwards - and the Work pane is below the Fleet one.
+        let order = [
+            "Claimed 1",
+            "Planned, unclaimed 0",
+            "Being planned 2",
+            "Unplanned 0",
+            "Waiting on you 1",
+            "Merged, unverified 0",
+        ];
+        let mut previous = index_of(&rendered, "Work");
+        for title in order {
+            let index = index_of(&rendered, title);
+            assert!(index > previous, "{title:?} is out of order: {rendered:?}");
+            // Exactly one blank line separates one section from the one before it.
+            previous = index;
+        }
+        assert!(
+            index_of(&rendered, "Work") > index_of(&rendered, "Loading fleet..."),
+            "Work is rendered below Fleet"
+        );
+
+        assert!(line_with(&rendered, "cb-123").contains("  cb-123  P1 Preserve session output"));
+        assert!(line_with(&rendered, "cb-kcs").contains("  cb-kcs  P1 Ratatui supervises the fleet"));
+        assert_eq!(
+            rendered[index_of(&rendered, "Planned, unclaimed 0") + 1],
+            "  (none)",
+            "an empty bucket says so rather than disappearing"
+        );
+        assert_eq!(rendered[index_of(&rendered, "Being planned 2") - 1], "");
+
+        // The pane title carries no aggregate count: all six headers already have one.
+        assert_eq!(rendered[index_of(&rendered, "Claimed 1") - 1], "Work");
+    }
+
+    #[test]
+    fn work_sections_count_all_rows_and_show_only_eight() {
+        let app = work_app(WorkBuckets {
+            unplanned: (1..=31)
+                .map(|n| bead(&format!("cb-{n:03}"), Some(1), &format!("item {n}")))
+                .collect(),
+            ..WorkBuckets::default()
+        });
+        let rendered = body(&render(&app, 100, 60));
+
+        assert!(line_with(&rendered, "Unplanned").contains("Unplanned 31"), "the FULL count");
+        let first = index_of(&rendered, "Unplanned 31");
+        let shown: Vec<&String> = rendered[first + 1..first + 9].iter().collect();
+        assert_eq!(shown.len(), 8);
+        assert!(shown[0].contains("cb-001"), "{shown:?}");
+        assert!(shown[7].contains("cb-008"), "{shown:?}");
+        assert_eq!(rendered[first + 9], "  +23 more");
+        assert!(
+            !rendered.iter().any(|line| line.contains("cb-009")),
+            "the ninth row is behind the count, not on the screen"
+        );
+
+        // A section at exactly the cap says nothing extra.
+        let app = work_app(WorkBuckets {
+            unplanned: (1..=8)
+                .map(|n| bead(&format!("cb-{n:03}"), Some(1), &format!("item {n}")))
+                .collect(),
+            ..WorkBuckets::default()
+        });
+        let rendered = body(&render(&app, 100, 60));
+        assert!(!rendered.iter().any(|line| line.contains("more")), "{rendered:?}");
+    }
+
+    #[test]
+    fn work_rows_sort_open_by_priority_then_id_and_merged_by_recency() {
+        let dated = |id: &str, when: Option<&str>| Bead {
+            updated_at: when.map(|w| {
+                chrono::DateTime::parse_from_rfc3339(w).unwrap().with_timezone(&Utc)
+            }),
+            status: "closed".into(),
+            ..bead(id, Some(1), &format!("{id} landed"))
+        };
+        let app = work_app(WorkBuckets {
+            unplanned: vec![
+                bead("cb-b", Some(2), "second"),
+                bead("cb-d", None, "unranked"),
+                bead("cb-a", Some(2), "first"),
+                bead("cb-c", Some(0), "urgent"),
+            ],
+            merged: vec![
+                dated("cb-old", Some("2026-01-01T00:00:00Z")),
+                dated("cb-undated-b", None),
+                dated("cb-new", Some("2026-02-01T00:00:00Z")),
+                dated("cb-undated-a", None),
+            ],
+            ..WorkBuckets::default()
+        });
+        let rendered = body(&render(&app, 100, 60));
+
+        let open = index_of(&rendered, "Unplanned 4");
+        let ids: Vec<&str> = rendered[open + 1..open + 5]
+            .iter()
+            .map(|line| line.split_whitespace().next().unwrap())
+            .collect();
+        assert_eq!(ids, ["cb-c", "cb-a", "cb-b", "cb-d"], "priority, then id, unranked last");
+
+        let merged = index_of(&rendered, "Merged, unverified 4");
+        let ids: Vec<&str> = rendered[merged + 1..merged + 5]
+            .iter()
+            .map(|line| line.split_whitespace().next().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            ["cb-new", "cb-old", "cb-undated-a", "cb-undated-b"],
+            "newest first, undated last, id breaking the tie"
+        );
+    }
+
+    #[test]
+    fn work_rows_truncate_only_titles() {
+        let app = work_app(WorkBuckets {
+            unplanned: vec![
+                bead("cb-verylongid", Some(1), "short"),
+                bead("cb-001", Some(1), &"a very long title that cannot fit ".repeat(4)),
+                bead("cb-002", Some(1), "四字熟語 とても長い題名 ばかり ならんで いる 行 です とても"),
+            ],
+            ..WorkBuckets::default()
+        });
+        let rendered = body(&render(&app, 60, 40));
+        let inner = 60 - 2;
+
+        let long = line_with(&rendered, "cb-001");
+        assert!(long.ends_with('…'), "only the title is cut: {long:?}");
+        assert!(long.width() <= inner, "the row fits the pane: {} in {long:?}", long.width());
+
+        // A wide-glyph title is measured in terminal cells, never in bytes or `char's - asserted
+        // on the row the renderer builds, because the test backend spreads a wide glyph over two
+        // cells and a string read back out of it no longer measures what was drawn.
+        let wide = work_row(
+            &bead("cb-002", Some(1), "四字熟語 とても長い題名 ばかり ならんで いる 行 です とても"),
+            inner,
+            None,
+        );
+        let wide: String = wide.spans.iter().map(|span| span.content.as_ref()).collect();
+        assert!(wide.ends_with('…'), "{wide:?}");
+        assert!(wide.width() <= inner, "{} cells in {wide:?}", wide.width());
+        assert!(rendered.iter().any(|line| line.contains("cb-002")), "and it is on the screen");
+
+        // The prefix is never truncated, whatever it costs: an id is a key, not a label.
+        let over = line_with(&rendered, "cb-verylongid");
+        assert!(over.starts_with("  cb-verylongid P1 short"), "{over:?}");
+    }
+
+    #[test]
+    fn reopened_and_paused_rows_keep_their_markers_and_columns() {
+        let reopened = Bead {
+            labels: vec!["verification:failed".into()],
+            ..bead("cb-777", Some(0), "came back")
+        };
+        let parked = |id: &str, minutes: Option<i64>| Bead {
+            metadata: match minutes {
+                Some(minutes) => serde_json::json!({
+                    "paused_at": (now() - chrono::Duration::minutes(minutes)).to_rfc3339()
+                }),
+                None => serde_json::Value::Null,
+            },
+            ..bead(id, Some(2), "waiting for a person")
+        };
+        let app = work_app(WorkBuckets {
+            unplanned: vec![reopened, bead("cb-888", Some(0), "arrived")],
+            paused: vec![parked("cb-9xy", Some(123)), parked("cb-9zz", None)],
+            ..WorkBuckets::default()
+        });
+        let rendered = body(&render(&app, 100, 40));
+
+        let back = line_with(&rendered, "cb-777");
+        let ordinary = line_with(&rendered, "cb-888");
+        assert!(back.starts_with("↻ cb-777  P0 came back"), "{back:?}");
+        assert!(ordinary.starts_with("  cb-888  P0 arrived"), "{ordinary:?}");
+        let column = |line: &str, needle: &str| {
+            line.char_indices()
+                .position(|(index, _)| line[index..].starts_with(needle))
+                .expect("the needle is on that line")
+        };
+        assert_eq!(
+            column(back, "P0"),
+            column(ordinary, "P0"),
+            "the marker replaces the indent; it does not shift the columns"
+        );
+
+        // The paused age is right-aligned, in the fleet's own elapsed spelling, and an em dash
+        // when the bead never said when it was parked.
+        let aged = line_with(&rendered, "cb-9xy");
+        assert!(aged.ends_with("2h03"), "{aged:?}");
+        let undated = line_with(&rendered, "cb-9zz");
+        assert!(undated.ends_with('—'), "{undated:?}");
+        assert_eq!(aged.width(), undated.width(), "one column, whatever it says");
+    }
+
+    #[test]
+    fn loading_work_is_visible_below_fleet() {
+        let app = App::new();
+        let rendered = body(&render(&app, 100, 20));
+        assert_eq!(rendered[index_of(&rendered, "Loading work...")], "Loading work...");
+        assert!(
+            index_of(&rendered, "Loading work...") > index_of(&rendered, "Loading fleet..."),
+            "{rendered:?}"
+        );
+        assert_eq!(rendered[index_of(&rendered, "Loading work...") - 1], "Work");
+        assert!(!rendered[0].contains("refreshing..."), "nothing is in flight yet");
+    }
+
+    #[test]
+    fn stale_work_keeps_all_last_good_sections_and_exact_error() {
+        let mut app = work_app(WorkBuckets {
+            claimed: vec![bead("cb-123", Some(1), "Preserve session output")],
+            ..WorkBuckets::default()
+        });
+        app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
+
+        let rendered = body(&render(&app, 100, 40));
+        assert!(rendered[0].contains("stale — refresh failed at 00:00:05"), "{:?}", rendered[0]);
+        assert!(rendered[0].contains("g retry"), "{:?}", rendered[0]);
+        assert!(line_with(&rendered, "Work — stale since 00:00:05").contains("Work"));
+        assert!(line_with(&rendered, "database is locked").contains("bd exited with status"));
+        assert!(line_with(&rendered, "cb-123").contains("Preserve session output"));
+        for title in [
+            "Claimed 1",
+            "Planned, unclaimed 0",
+            "Being planned 0",
+            "Unplanned 0",
+            "Waiting on you 0",
+            "Merged, unverified 0",
+        ] {
+            assert!(rendered.iter().any(|line| line.contains(title)), "{title} survived");
+        }
+        assert!(line_with(&rendered, "The last successful work snapshot remains visible.")
+            .contains("remains visible."));
+    }
+
+    #[test]
+    fn first_work_failure_is_unavailable_with_recovery_guidance() {
+        let mut app = App::new();
+        app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
+
+        let rendered = body(&render(&app, 100, 20));
+        assert!(rendered[0].contains("refresh failed at 00:00:05"), "{:?}", rendered[0]);
+        assert!(!rendered[0].contains("stale"), "there is nothing to be stale: {:?}", rendered[0]);
+        assert!(rendered[0].contains("g retry"), "{:?}", rendered[0]);
+        assert!(line_with(&rendered, "Work unavailable").contains("Work unavailable"));
+        assert!(line_with(&rendered, "database is locked").contains("database is locked"));
+        assert_eq!(rendered[index_of(&rendered, "No work snapshot is available.")],
+                   "No work snapshot is available.");
+        assert_eq!(rendered[index_of(&rendered, "Press g to retry.")], "Press g to retry.");
+        assert!(
+            !rendered.iter().any(|line| line.contains("Claimed")),
+            "a first failure has no queues to keep"
+        );
+    }
+
+    #[test]
+    fn narrow_work_keeps_sections_counts_and_overflow() {
+        let app = work_app(WorkBuckets {
+            unplanned: (1..=31)
+                .map(|n| bead(&format!("cb-{n:03}"), Some(1), "This title is cut at some point"))
+                .collect(),
+            ..WorkBuckets::default()
+        });
+        let rendered = body(&render(&app, 44, 60));
+
+        assert!(line_with(&rendered, "Unplanned").contains("Unplanned 31"));
+        assert_eq!(rendered[index_of(&rendered, "Unplanned 31") + 9], "  +23 more");
+        for title in ["Claimed 0", "Planned, unclaimed 0", "Merged, unverified 0"] {
+            assert!(rendered.iter().any(|line| line.contains(title)), "{title} at 44 columns");
+        }
+        let row = line_with(&rendered, "cb-001");
+        assert!(row.ends_with('…'), "the title is cut, not the row: {row:?}");
+        assert!(row.width() <= 42, "{} cells in {row:?}", row.width());
+    }
+
+    // --- the two panes together ------------------------------------------------------------------
+
+    #[test]
+    fn refreshing_header_wins_over_an_existing_pane_failure() {
+        let mut app = populated();
+        app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
+        assert!(app.begin_work_refresh(Instant::now()), "the retry is under way");
+
+        let rendered = body(&render(&app, 100, 30));
+        assert!(rendered[0].contains("refreshing..."), "{:?}", rendered[0]);
+        assert!(
+            !rendered[0].contains("refresh failed at"),
+            "active recovery is the headline, not the failure it is recovering from: {:?}",
+            rendered[0]
+        );
+        // The pane still says what happened to it, which is where a failure belongs.
+        assert!(line_with(&rendered, "Work unavailable").contains("Work unavailable"));
+    }
+
+    #[test]
+    fn failure_keeps_the_retry_hint_while_the_peer_refreshes() {
+        let mut app = populated();
+        app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
+        assert!(app.begin_refresh(Instant::now()), "the FLEET is the one refreshing");
+
+        let rendered = body(&render(&app, 100, 30));
+        assert!(rendered[0].contains("refreshing..."), "{:?}", rendered[0]);
+        assert!(
+            rendered[0].contains("g retry"),
+            "the key stays a retry until BOTH panes are fresh: {:?}",
+            rendered[0]
+        );
+
+        // And it goes back to `g refresh' only when the failed pane recovers.
+        app.finish_refresh(Ok(vec![working("Xavier", "planner", "plan", "cb-kcs")]), at(86_400 + 6));
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(86_400 + 7));
+        let rendered = body(&render(&app, 100, 30));
+        assert!(rendered[0].contains("g refresh"), "{:?}", rendered[0]);
+    }
+
+    #[test]
+    fn header_uses_the_newest_failure_when_both_panes_fail() {
+        let mut app = App::new();
+        app.finish_refresh(Err(failure()), at(86_400 + 5));
+        app.finish_work_refresh(Err(bd_failure()), at(86_400 + 9));
+
+        let rendered = body(&render(&app, 100, 30));
+        assert!(rendered[0].contains("refresh failed at 00:00:09"), "{:?}", rendered[0]);
+        assert!(!rendered[0].contains("00:00:05"), "the older failure is not the headline");
+        // Neither pane is named up here - both bodies already say which source failed.
+        assert!(!rendered[0].contains("Fleet") && !rendered[0].contains("Work"), "{:?}", rendered[0]);
+        assert!(line_with(&rendered, "Fleet unavailable").contains("Fleet unavailable"));
+        assert!(line_with(&rendered, "Work unavailable").contains("Work unavailable"));
+
+        // A retained snapshot behind the newest failure is what makes it `stale'.
+        let mut app = App::new();
+        app.finish_refresh(Err(failure()), at(86_400 + 9));
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(86_400));
+        app.finish_work_refresh(Err(bd_failure()), at(86_400 + 11));
+        let rendered = body(&render(&app, 100, 30));
+        assert!(rendered[0].contains("stale — refresh failed at 00:00:11"), "{:?}", rendered[0]);
+    }
+
+    #[test]
+    fn one_failed_pane_does_not_apply_failure_style_to_the_fresh_pane() {
+        let mut app = populated();
+        app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
+
+        let buffer = render(&app, 100, 30);
+        let rendered = lines(&buffer);
+        assert_eq!(style_where(&buffer, "Work unavailable").fg, Some(RED));
+        assert_eq!(
+            style_where(&buffer, "Fleet —").fg,
+            Some(BLUE),
+            "the healthy pane keeps its own colour: {rendered:?}"
+        );
+        assert!(line_with(&rendered, "Xavier").contains("● Xavier"), "and its own rows");
+        assert_eq!(style_where(&buffer, "● Xavier").fg, Some(GREEN));
+    }
+
+    #[test]
+    fn healthy_peer_shows_its_last_refresh_time() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![working("Xavier", "planner", "plan", "cb-kcs")]),
+            at(86_400 + 4),
+        );
+        app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
+
+        let rendered = body(&render(&app, 100, 30));
+        assert!(
+            line_with(&rendered, "Fleet — refreshed 00:00:04").contains("refreshed 00:00:04"),
+            "{rendered:?}"
+        );
+        assert!(!rendered.iter().any(|line| line.contains("Fleet 1")), "not the count: {rendered:?}");
+
+        // The other way round, and with the ordinary titles back once both are fresh.
+        let mut app = App::new();
+        app.finish_refresh(Err(failure()), at(86_400 + 5));
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(86_400 + 4));
+        let rendered = body(&render(&app, 100, 30));
+        assert!(line_with(&rendered, "Work — refreshed 00:00:04").contains("refreshed 00:00:04"));
+
+        app.finish_refresh(Ok(vec![working("Xavier", "planner", "plan", "cb-kcs")]), at(86_400 + 6));
+        let rendered = body(&render(&app, 100, 30));
+        assert!(line_with(&rendered, "Fleet 1").contains("Fleet 1"));
+        assert_eq!(rendered[index_of(&rendered, "Claimed 0") - 1], "Work");
+    }
+
+    #[test]
+    fn tiny_screen_still_replaces_both_panes() {
+        let mut app = populated();
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                claimed: vec![bead("cb-123", Some(1), "Preserve session output")],
+                ..WorkBuckets::default()
+            }),
+            at(86_400),
+        );
+
+        for (width, height) in [(34, 9), (39, 20), (100, 11)] {
+            let joined = body(&render(&app, width, height)).join("\n");
+            assert!(joined.contains("Terminal too small"), "{width}x{height}: {joined}");
+            assert!(!joined.contains("Xavier"), "no fleet rows below the floor: {joined}");
+            assert!(!joined.contains("Claimed"), "and no work sections either: {joined}");
+            assert!(!joined.contains("cb-123"), "{joined}");
+        }
+
+        // 40x12 is the floor itself, and both panes are there.
+        let rendered = body(&render(&app, 40, 12));
+        assert!(line_with(&rendered, "Xavier").contains("● Xavier"));
+        let metrics = metrics(&app, now(), Rect::new(0, 0, 40, 12));
+        assert!(
+            metrics.document_lines > metrics.viewport_lines,
+            "the work sections are below the fold, and scrolling is what reaches them"
+        );
     }
 }

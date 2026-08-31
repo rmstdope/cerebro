@@ -14,6 +14,7 @@ use wait_timeout::ChildExt;
 
 use crate::model::{
     self, Bead, FleetRow, ProcessRow, RosterEntry, StateInputs, StateObservation, StateRecord,
+    WorkBuckets,
 };
 
 /// How long a reader's child may run before it is killed and reported as a failure.
@@ -222,8 +223,19 @@ pub fn read_processes(programs: &Programs) -> Result<Vec<ProcessRow>, ReadError>
 /// about whatever repository it runs in and defaults to open beads only
 /// (`scripts/work-beads:17-29`).
 pub fn read_beads(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<Bead>, ReadError> {
+    read_beads_with_timeout(paths, programs, COMMAND_TIMEOUT)
+}
+
+/// `read_beads`, with the wall-clock bound as a parameter. Crate-private: production reads go
+/// through the five-second boundary above, and only a test injects a shorter one so the
+/// kill-and-reap path costs a second rather than five.
+fn read_beads_with_timeout(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    timeout: Duration,
+) -> Result<Vec<Bead>, ReadError> {
     let root = paths.shared_root.to_string_lossy().into_owned();
-    let stdout = run(
+    let stdout = run_with_timeout(
         &programs.bd,
         &[
             "--readonly",
@@ -236,11 +248,32 @@ pub fn read_beads(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<Bead>,
             "--brief",
         ],
         None,
+        timeout,
     )?;
     serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
         source: programs.bd.display().to_string(),
         message: e.to_string(),
     })
+}
+
+/// The whole bead panel in one read: one `bd` answer, partitioned by `model::partition_beads`.
+///
+/// The only aggregate Work read there is, and the counterpart of `read_fleet` above. A failure of
+/// any kind - a non-zero `bd`, a timed-out one, output that is not the JSON list it promised - is
+/// returned as itself. `Ok(WorkBuckets::default())` would render as six empty queues, which is a
+/// fleet with nothing to do rather than a board nobody could read.
+pub fn read_work(paths: &ReaderPaths, programs: &Programs) -> Result<WorkBuckets, ReadError> {
+    read_work_with_timeout(paths, programs, COMMAND_TIMEOUT)
+}
+
+fn read_work_with_timeout(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    timeout: Duration,
+) -> Result<WorkBuckets, ReadError> {
+    Ok(model::partition_beads(read_beads_with_timeout(
+        paths, programs, timeout,
+    )?))
 }
 
 /// The whole fleet in one read: roster, every state file, the process table - fed to
@@ -634,5 +667,164 @@ mod tests {
             }
             other => panic!("expected the roster failure, got {other:?}"),
         }
+    }
+
+    // --- cb-vyp.3: the aggregate work read -------------------------------------------------------
+
+    /// A `bd` that refuses any argv but the panel's own, and answers with one bead per bucket.
+    /// The shape is deliberately exhaustive: the argv assertion and the partition assertion are
+    /// the whole contract of `read_work`.
+    fn bucketed_bd(dir: &Path, capture: &Path, shared: &Path) -> PathBuf {
+        write_executable(
+            dir,
+            "bd",
+            &format!(
+                "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > {}\n\
+                 want='--readonly -C {} list --status open,in_progress,blocked,deferred,closed --json --brief'\n\
+                 got=\"$*\"\n\
+                 if [ \"$got\" != \"$want\" ]; then echo \"unexpected argv: $got\" >&2; exit 2; fi\n\
+                 cat <<'JSON'\n\
+                 [{{\"id\":\"cb-claimed\",\"title\":\"being built\",\"status\":\"in_progress\",\"issue_type\":\"feature\",\"labels\":[],\"priority\":1,\"updated_at\":null,\"assignee\":\"Cyclops\"}},\n\
+                  {{\"id\":\"cb-planned\",\"title\":\"ready\",\"status\":\"open\",\"issue_type\":\"feature\",\"labels\":[\"planned\"],\"priority\":2,\"updated_at\":null,\"assignee\":null}},\n\
+                  {{\"id\":\"cb-held\",\"title\":\"mid-plan\",\"status\":\"open\",\"issue_type\":\"feature\",\"labels\":[\"planning:Xavier\"],\"priority\":2,\"updated_at\":null,\"assignee\":null}},\n\
+                  {{\"id\":\"cb-new\",\"title\":\"filed\",\"status\":\"open\",\"issue_type\":\"bug\",\"labels\":[],\"priority\":4,\"updated_at\":null,\"assignee\":null}},\n\
+                  {{\"id\":\"cb-human\",\"title\":\"parked\",\"status\":\"open\",\"issue_type\":\"feature\",\"labels\":[\"human\"],\"priority\":2,\"updated_at\":null,\"assignee\":null}},\n\
+                  {{\"id\":\"cb-merged\",\"title\":\"landed\",\"status\":\"closed\",\"issue_type\":\"feature\",\"labels\":[],\"priority\":1,\"updated_at\":\"2026-01-01T00:00:00Z\",\"assignee\":null}},\n\
+                  {{\"id\":\"cb-epic\",\"title\":\"a family\",\"status\":\"open\",\"issue_type\":\"epic\",\"labels\":[],\"priority\":1,\"updated_at\":null,\"assignee\":null}}]\n\
+                 JSON\n",
+                capture.display(),
+                shared.display(),
+            ),
+        )
+    }
+
+    #[test]
+    fn work_reader_returns_the_partitioned_single_bd_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let capture = dir.path().join("argv.txt");
+        let shared = dir.path().join("shared");
+        let fake_bd = bucketed_bd(dir.path(), &capture, &shared);
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: shared,
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+
+        let work = read_work(&paths, &programs).expect("the fixture bd answers the panel's argv");
+        assert_eq!(ids(&work.claimed), ["cb-claimed"]);
+        assert_eq!(ids(&work.planned), ["cb-planned"]);
+        assert_eq!(ids(&work.being_planned), ["cb-held"]);
+        assert_eq!(ids(&work.unplanned), ["cb-new"]);
+        assert_eq!(ids(&work.paused), ["cb-human"]);
+        assert_eq!(ids(&work.merged), ["cb-merged"]);
+
+        // Exactly one `bd` run, with the panel's whole argv - the shared root, every status,
+        // `--readonly' and `--brief'.
+        let recorded = std::fs::read_to_string(&capture).unwrap();
+        let recorded: Vec<&str> = recorded.lines().collect();
+        assert_eq!(
+            recorded,
+            vec![
+                "--readonly",
+                "-C",
+                paths.shared_root.to_string_lossy().as_ref(),
+                "list",
+                "--status",
+                "open,in_progress,blocked,deferred,closed",
+                "--json",
+                "--brief",
+            ]
+        );
+    }
+
+    fn ids(beads: &[Bead]) -> Vec<&str> {
+        beads.iter().map(|b| b.id.as_str()).collect()
+    }
+
+    /// A `bd` that exits non-zero is a failure, not six empty queues: an empty board and an
+    /// unreadable one are opposite screens.
+    #[test]
+    fn work_reader_preserves_bd_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake_bd = write_executable(
+            dir.path(),
+            "bd",
+            "#!/usr/bin/env bash\necho 'bd list failed: database is locked' >&2\nexit 1\n",
+        );
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().join("shared"),
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+        match read_work(&paths, &programs) {
+            Err(ReadError::Exit { status, stderr, .. }) => {
+                assert_eq!(status, Some(1));
+                assert!(stderr.contains("database is locked"), "{stderr}");
+            }
+            other => panic!("expected the bd failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn work_reader_rejects_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake_bd = write_executable(
+            dir.path(),
+            "bd",
+            "#!/usr/bin/env bash\nprintf 'bd: nothing to list\\n'\n",
+        );
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().join("shared"),
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+        assert!(matches!(read_work(&paths, &programs), Err(ReadError::Invalid { .. })));
+    }
+
+    /// A `bd` that never answers is killed, reaped and reported. Without the bound the Work pane
+    /// would say `refreshing...` forever: the request is in flight, so no later tick replaces it.
+    #[test]
+    fn work_reader_timeout_kills_and_reaps_bd() {
+        let dir = tempfile::tempdir().unwrap();
+        let slow_bd = write_executable(
+            dir.path(),
+            "bd",
+            "#!/usr/bin/env bash\nexec sleep 30\n",
+        );
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().join("shared"),
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        let programs = Programs { bd: slow_bd, ps: PathBuf::from("ps") };
+
+        let started = std::time::Instant::now();
+        let err = read_work_with_timeout(&paths, &programs, Duration::from_secs(1)).unwrap_err();
+        let elapsed = started.elapsed();
+        match err {
+            ReadError::Timeout { seconds, source } => {
+                assert_eq!(seconds, 1);
+                assert!(source.ends_with("bd"), "the failure names the program: {source}");
+            }
+            other => panic!("expected Timeout, got {other:?}"),
+        }
+        assert!(elapsed < Duration::from_secs(10), "it waited for the child: {elapsed:?}");
+
+        let mine = std::process::id().to_string();
+        let table = Command::new("ps").args(["-axo", "stat=,ppid="]).output().unwrap();
+        let table = String::from_utf8_lossy(&table.stdout);
+        let zombies: Vec<&str> = table
+            .lines()
+            .filter(|line| {
+                let mut fields = line.split_whitespace();
+                let stat = fields.next().unwrap_or("");
+                let ppid = fields.next().unwrap_or("");
+                stat.starts_with('Z') && ppid == mine
+            })
+            .collect();
+        assert!(zombies.is_empty(), "the timed-out bd was left as a zombie: {zombies:?}");
     }
 }

@@ -5,6 +5,12 @@ buffer showing every agent on `scripts/roster` — with its
 state, and for one working a bead (an implementer, or one of the interactive agents
 mid-verification or mid-triage) the bead it is on and for how long.
 
+**This is the supervising view**, and the only one: it starts sessions, ends them, hosts them in
+`vterm`, writes stop flags and deletes state files. If all you want is to *watch* — the same rows
+and the same six work queues, with no Emacs and nothing written — there is a standalone read-only
+terminal program beside it, `.claude/cerebro/scripts/cerebro-tui` (see the repository README). The
+two may run at once against one repository; only this one supervises.
+
 ## Getting the fleet view
 
 Nothing to install by hand — from anywhere inside the consumer:

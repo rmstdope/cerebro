@@ -107,6 +107,11 @@ nothing left over from the last one.
 
 ## What you are actually looking for
 
+*This section has a second reader: the sub-agent an implementer spawns when GitHub refuses to give
+its pull request the automatic review (`skills/implement-bead`, *When the automatic review cannot be
+requested*), which is given this file as its checklist. Keep the five questions phrased so they read
+for any reviewer of any diff, not only for Cypher.*
+
 Five questions, and the first one outranks the rest: a change that does the wrong thing correctly is
 still the wrong change.
 

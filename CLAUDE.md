@@ -38,9 +38,13 @@ stops.*
 Nothing merges unreviewed and nothing merges red.
 
 For a change built by an agent, GitHub Copilot's automatic review counts as the second pair of eyes
-when all of these hold: it has reviewed the head commit that is being merged; every comment it left
-is answered, by a change or by a posted reply saying why not; and every check is green. That is the
-whole standing approval, and it covers a planned bead only.
+when all of these hold: exactly one review is requested as the pull request opens; every comment it
+left is answered, by a change or by a posted reply saying why not; and every check is green. That is
+the whole standing approval, and it covers a planned bead only.
+
+When that review cannot be requested at all — GitHub refuses the request itself — a review the
+implementer obtains for itself stands in its place, on the same terms. A review that was requested
+and never arrived is not that case, and still needs the navigator.
 
 Everything else needs the navigator — a change nobody planned, a red or missing check, a review
 comment answered by neither a change nor a reply, and any pull request that came from outside the

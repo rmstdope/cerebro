@@ -156,6 +156,10 @@ fi
 # whole fleet, here, for the same reason everything else in this file is here once.
 . "$here/agent-hooks-env" "$name"
 
+# The marker sentence's one bash spelling (cb-9su): this file writes it, `scripts/agent-alive' cuts
+# its needles from it, and neither carries the text any more. See scripts/session-marker.sh.
+source "$here/session-marker.sh"
+
 # ah-cuc: link whatever a submodule bump brought in, so the agent CLI finds the role by name.
 # ah-bri: refuse with one line if it cannot, instead of exiting silently.
 "$here/launch-preflight" "$role" "$name"
@@ -311,12 +315,12 @@ fi
 #
 # The trailing slash on the root is required: `cerebro--root-in-args-p' builds its needle as the
 # root with one `/' appended, so that `/repos/atlantis-hud' does not match a sibling
-# `/repos/atlantis-hud-hud' - `${consumer_root%/}/' normalises whether or not `consumer_root' ever
-# grows a trailing slash of its own. The sentence carries no apostrophe, for the same bash-3.2
-# reason as the models.conf line above and this file's own convention.
+# `/repos/atlantis-hud-hud'. Since cb-9su the normalisation and the text both live in
+# `scripts/session-marker.sh', which is also where the no-apostrophe rule is recorded - this file
+# and `scripts/agent-alive' can no longer disagree about the sentence, because neither spells it.
 marker=""
 if [[ -n "$consumer_root" ]]; then
-  marker="This session is $name of the cerebro fleet rooted at ${consumer_root%/}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it."
+  marker="$(cerebro_marker_sentence "$name" "$consumer_root")"
 fi
 
 # The marker leads the prompt, then exactly one blank line, then the instruction (cb-d59.3, Q1):

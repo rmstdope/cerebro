@@ -8,7 +8,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use thiserror::Error;
 
 use crate::model::{self, Bead, ProcessRow, RosterEntry, StateInputs, StateObservation, StateRecord};
 

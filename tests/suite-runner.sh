@@ -285,17 +285,30 @@ pass "--jobs refuses a bad count and --jobs 1 keeps the contract"
 # suites' lifetimes OVERLAP - not that their total elapsed time falls under a threshold. Elapsed
 # time is a proxy, and this is the one case in the gate whose subject is the gate's own scheduler
 # while being run by it, alongside one suite per processor. cb-1h8: each fixture records the second
-# it started and the second it ended, and the assertion is on those four numbers. Load can only
-# LENGTHEN both windows, which makes an overlap more certain rather than less; the old
-# `parallel_secs -lt 4' bound broke in exactly the direction a busy machine pushes it.
+# it started and the second it ended, and the assertion is on those four numbers.
+#
+# The recording alone would not be enough, and the review of cb-1h8 is why this says so: load
+# lengthens the sleep but it also delays a fork, so two RECORDED windows could still miss each
+# other on a saturated machine - the same direction as the sighting this bead came from. So each
+# fixture writes its start, then WAITS for its sibling's start before sleeping, bounded so a serial
+# run still terminates. Overlap at --jobs 2 is then a fact the fixtures create rather than a
+# measurement of the scheduler, and no assertion here depends on how busy the machine is. At
+# --jobs 1 the first fixture waits out the bound and the second finds the mark already there, so
+# the windows still cannot touch.
 #
 # Their own directory, so cases 1-5 are untouched by the sleeping.
 
 mkdir -p "$work_dir/slow"
 marks="$work_dir/marks"
+# `sleep 1' in an integer loop, not `sleep 0.1': bash 3.2 is the floor and a whole second is what
+# both platforms' sleep certainly take. The bound is what a serial run pays, once.
 for f in d-slow e-slow; do
-  printf '#!/usr/bin/env bash\nmkdir -p "%s"\ndate +%%s >"%s/%s.start"\nsleep 2\ndate +%%s >"%s/%s.end"\nexit 0\n' \
-    "$marks" "$marks" "$f" "$marks" "$f" >"$work_dir/slow/$f.sh"
+  other=e-slow
+  # `if', not `[[ ... ]] && ...': the pair returns 1 when it does not match, and this suite runs
+  # `set -euo pipefail'. See .cerebro/traps.md.
+  if [[ "$f" == e-slow ]]; then other=d-slow; fi
+  printf '#!/usr/bin/env bash\nmkdir -p "%s"\ndate +%%s >"%s/%s.start"\nw=0\nwhile [ $w -lt 5 ] && [ ! -f "%s/%s.start" ]; do sleep 1; w=$((w+1)); done\nsleep 2\ndate +%%s >"%s/%s.end"\nexit 0\n' \
+    "$marks" "$marks" "$f" "$marks" "$other" "$marks" "$f" >"$work_dir/slow/$f.sh"
 done
 
 # The four recorded seconds, as $ds $de $es $ee, and a one-line summary for a failure message.
@@ -519,6 +532,11 @@ mine="$(ls "$work_dir/selfprune" | grep -v '^2999' || true)"
 [[ -n "$mine" ]] || fail "the run deleted its own log directory
 $(ls "$work_dir/selfprune")
 $both"
+# Exactly one, before $mine is used as a path: two lines would make the next assertion read a
+# two-line path and report "holds no log", which is not what would have happened.
+[[ "$(grep -c . <<<"$mine" | tr -d ' ')" == 1 ]] \
+  || fail "the log root holds more than one run of this suite's own:
+$mine"
 [[ -f "$work_dir/selfprune/$mine/a-pass.sh.log" ]] \
   || fail "the run's own directory survived but holds no log for a-pass.sh
 $(ls "$work_dir/selfprune/$mine" 2>/dev/null)"

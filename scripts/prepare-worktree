@@ -169,25 +169,41 @@ install_cmd="$("$script_dir/project-conf" install 2>/dev/null)"
 install_shell_cmd="$("$script_dir/project-conf" install_shell 2>/dev/null)"
 prewarm_cmd="$("$script_dir/project-conf" prewarm 2>/dev/null)"
 
+# `project-conf install' may infer a package-manager command. A declared `install_shell' replaces
+# that inference, but not an explicitly declared `install', which remains a configuration error.
+install_is_declared=0
+conf="$consumer/.cerebro/project.conf"
+if [[ -f "$conf" && -r "$conf" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    line="${line%%#*}"
+    read -r key value <<<"$line"
+    if [[ "$key" == "install" && -n "$value" ]]; then
+      install_is_declared=1
+      break
+    fi
+  done < "$conf"
+fi
+
 # `install' is deliberately limited to normal whitespace tokenization. Its values are command
 # vectors, not shell source: embedded quotes remain unsupported, but glob expansion, operators,
 # redirects, and other shell syntax cannot change what runs. `install_shell' is the explicit,
 # mutually exclusive opt-in for a command fragment that needs Bash syntax.
-if [[ -n "$install_cmd" && -n "$install_shell_cmd" ]]; then
+if [[ "$install_is_declared" -eq 1 && -n "$install_shell_cmd" ]]; then
   echo "prepare-worktree: install and install_shell cannot both be declared; choose one execution contract" >&2
   exit 2
+elif [[ -n "$install_shell_cmd" ]]; then
+  if [[ "$dry_run" -eq 1 ]]; then
+    echo "prepare-worktree: would install with shell: $install_shell_cmd" >&2
+  else
+    (cd "$abs_path" && bash -euo pipefail -c "$install_shell_cmd" >&2)
+  fi
 elif [[ -n "$install_cmd" ]]; then
   read -r -a install_argv <<<"$install_cmd"
   if [[ "$dry_run" -eq 1 ]]; then
     echo "prepare-worktree: would install with: $install_cmd" >&2
   else
     (cd "$abs_path" && "${install_argv[@]}" >&2)
-  fi
-elif [[ -n "$install_shell_cmd" ]]; then
-  if [[ "$dry_run" -eq 1 ]]; then
-    echo "prepare-worktree: would install with shell: $install_shell_cmd" >&2
-  else
-    (cd "$abs_path" && bash -euo pipefail -c "$install_shell_cmd" >&2)
   fi
 else
   echo "prepare-worktree: no install declared or detected - installing nothing" >&2

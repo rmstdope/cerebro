@@ -91,6 +91,7 @@ assert_contract "$out" "$consumer/.cerebro/worktrees/vector" "vector install"
 pass "an install declaration is a literal whitespace-tokenized argument vector"
 
 # --- `install_shell' is the explicit opt-in to compound shell syntax ---
+touch "$consumer/package-lock.json"
 cat > "$conf" <<'CONF'
 install_shell  touch installed.marker && touch second.marker
 CONF

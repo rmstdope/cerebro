@@ -12,6 +12,7 @@ dist/
 
 # Backup files
 *~
+.DS_Store
 
 # Undo-tree save-files
 *.~undo-tree

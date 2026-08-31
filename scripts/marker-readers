@@ -32,12 +32,12 @@
 # the text asks for it.
 #
 # THE SCAN SET IS PART OF THE DESIGN, the same way tracked-links' pathspec is. Only `scripts',
-# `emacs', `tests', `hooks' and `githooks' are scanned. Scanning the whole repository would make
-# this suite read `docs/', `README.md', `LICENSE' and `models.conf.example' - the entries on
-# `scripts/ci-needed''s skip list - and a suite that starts reading one of them makes a green pull
-# request that should have been red. All five are on ci-needed's `*)' arm, so it needs no edit for
-# this. `CLAUDE.md' and the files under `docs/' quote the sentence as prose, and prose is not a
-# parser.
+# `emacs', `tests', `hooks', `githooks' and, since cb-vyp.1, `fleet-view' are scanned. Scanning the
+# whole repository would make this suite read `docs/', `README.md', `LICENSE' and
+# `models.conf.example' - the entries on `scripts/ci-needed''s skip list - and a suite that starts
+# reading one of them makes a green pull request that should have been red. All five are on
+# ci-needed's `*)' arm, so it needs no edit for this. `CLAUDE.md' and the files under `docs/' quote
+# the sentence as prose, and prose is not a parser.
 #
 # `--cached --others --exclude-standard', not plain `git ls-files': tracked files alone would give a
 # green gate to an implementer who wrote a new reader and ran the gate before `git add', which is
@@ -109,6 +109,10 @@ tests/marker-readers.sh         -
 tests/lib/session-args.cases    -
 # Pins the library's four functions against literals, for the same reason as tests/launchers.sh.
 tests/session-marker.sh         -
+# The Rust reader (cb-vyp.1): model::session_liveness/name_needle/root_needle. It parses the case
+# table itself, in its own #[cfg(test)] module, so it is both a reader and its own pin - the same
+# shape as emacs/cerebro-test.el above.
+fleet-view/src/model.rs         fleet-view/src/model.rs
 "
 
 declared_paths=()
@@ -143,7 +147,7 @@ while IFS= read -r -d '' path; do
   is_declared "$path" && continue
   echo "unsubscribed: $path (spells the session marker and is not a declared reader)"
   findings=$((findings + 1))
-done < <(git ls-files --cached --others --exclude-standard -z -- scripts emacs tests hooks githooks)
+done < <(git ls-files --cached --others --exclude-standard -z -- scripts emacs tests hooks githooks fleet-view)
 
 # --- checks two and three: every row still describes a reader, and names a real subscription -------
 #

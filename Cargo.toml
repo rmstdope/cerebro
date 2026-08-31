@@ -1,0 +1,3 @@
+[workspace]
+members = ["fleet-view"]
+resolver = "2"

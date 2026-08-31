@@ -53,6 +53,15 @@ if ! bash scripts/suite-runner tests; then
   status=1
 fi
 
+echo "== cargo test =="
+# The Rust workspace (fleet-view/, cb-vyp.1) is gated the same way as everything else: locked, so
+# a gate never resolves a dependency crates.io was not asked to fix in place, and --all-targets so
+# a test-only compile error cannot hide behind a green `cargo build`.
+if ! cargo test --workspace --all-targets --locked; then
+  echo "FAILED: cargo test" >&2
+  status=1
+fi
+
 if [[ $status -eq 0 ]]; then
   echo "gate: green"
 else

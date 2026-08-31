@@ -460,7 +460,9 @@ the table, sourced by both bash subscribers; elisp keeps its own parser because 
 one, the same qualification `cerebro--log-line` carries against `scripts/jsonl-log.sh`. A fourth
 reader subscribes rather than inventing plausible spellings — the third one did not, anchored its
 root capture at the end of the message, and reported a silent zero for a fleet that had spent ten
-thousand credits that week (cb-d89).
+thousand credits that week (cb-d89). Since cb-9su that subscription is checked mechanically rather
+than trusted: `scripts/marker-readers` fails the gate on any file that spells the sentence without
+declaring itself.
 
 ## Gotchas
 
@@ -533,6 +535,33 @@ thousand credits that week (cb-d89).
   no edit as it stands. It never checks **where** a link points — `.github/copilot-instructions.md`
   and `.claude/cerebro` are tracked links the sync does not write. It is a gate predicate and must
   never join `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start.
+- **`scripts/session-marker.sh` is the one place bash spells the marker sentence** (cb-9su) —
+  `cerebro_marker_sentence`, `cerebro_marker_name_needle`, `cerebro_marker_root_needle` and
+  `cerebro_marker_infix`, sourced never executed, builtins alone for the narrowed PATH, in the shape
+  of `scripts/root-hints.sh` beside it. Its two callers are the writer (`scripts/launch`) and a
+  reader (`scripts/agent-alive`), which is what took four hand-tuned parsers of one sentence down to
+  three: those two can no longer disagree at all. Three properties are load-bearing and each was
+  already paid for — the name needle ends at the space after `rooted at ` (so `Cyclops` never
+  matches `Cyclopsly`), the root needle carries exactly one trailing slash (so `/repos/x` never
+  matches `/repos/x-hud`), and the sentence carries no apostrophe (`launch`'s bash-3.2 convention,
+  and `tests/fleet-cost.sh` interpolates the field into a `sqlite3` string literal). `emacs/cerebro.el`
+  and `scripts/fleet-cost`'s SQL/jq stay copies for the reasons above; what changed is that a copy
+  can no longer exist *undeclared*. `tests/session-marker.sh` pins the four functions against
+  literals on purpose — a test that re-derived the sentence from the library would prove nothing.
+- **`scripts/marker-readers` is the one place "is every reader of the session marker a subscriber"
+  is answered** (cb-9su). `tests/lib/session-args.cases` is a test fixture, so it only ever caught
+  drift between readers that opt in; a reader that never subscribed was not red but silently wrong,
+  and cb-akt's was a **zero**, which reads as a fleet that has never run rather than as a failure.
+  This scans `scripts`, `emacs`, `tests`, `hooks` and `githooks` — those five and no others, for
+  `scripts/tracked-links`'s reason: a wider pathspec would make the suite read `docs/`, `README.md`,
+  `LICENSE` or `models.conf.example` and quietly break `scripts/ci-needed`'s skip list, which needs
+  no edit as it stands. `--cached --others --exclude-standard`, so a new reader written but not yet
+  `git add`ed is caught at exactly the moment the check exists for. Findings on stdout, exit 1,
+  in `tracked-links`'s house format — `unsubscribed:`, `stale:`, `unpinned:` — with
+  `tests/marker-readers.sh` as its suite. **It is not itself a reader**: it sources
+  `scripts/session-marker.sh` and greps for `cerebro_marker_infix`, which is the rule rather than a
+  way round it. Like `tracked-links` it is a gate predicate and must never join
+  `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start.
 - `scripts/consumer-root` is the one place "where is the consumer root" is answered (ah-e0w). Every
   other script that needs it asks this one rather than deriving it itself — `consumer-root` (no
   argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the

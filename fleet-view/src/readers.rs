@@ -5,11 +5,24 @@
 //! parse. Nothing here writes a file, launches, stops, triggers, supervises, or cleans up state -
 //! Emacs remains the sole supervisor (cb-vyp.1's own scope).
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
+use wait_timeout::ChildExt;
 
-use crate::model::{self, Bead, ProcessRow, RosterEntry, StateInputs, StateObservation, StateRecord};
+use crate::model::{
+    self, Bead, FleetRow, ProcessRow, RosterEntry, StateInputs, StateObservation, StateRecord,
+};
+
+/// How long a reader's child may run before it is killed and reported as a failure.
+///
+/// A `roster` that blocks on a lock, or a `ps` that never returns, would otherwise leave the
+/// screen saying `refreshing...` forever: the request is in flight, so no later tick can replace
+/// it, and nothing on screen says anything is wrong. Five seconds is far longer than either
+/// program has ever taken and short enough that the next five-second tick is the recovery.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Roots this crate reads from, supplied by the launcher (`cb-vyp.2`); this child does not
 /// rediscover them itself.
@@ -53,6 +66,7 @@ pub enum ReadError {
         stderr: String,
     },
     Invalid { source: String, message: String },
+    Timeout { source: String, seconds: u64 },
 }
 
 impl std::fmt::Display for ReadError {
@@ -63,6 +77,8 @@ impl std::fmt::Display for ReadError {
                 write!(f, "{source} exited with status {status:?}: {stderr}"),
             Self::Invalid { source, message } =>
                 write!(f, "{source} produced invalid output: {message}"),
+            Self::Timeout { source, seconds } =>
+                write!(f, "{source} did not answer within {seconds}s"),
         }
     }
 }
@@ -70,24 +86,79 @@ impl std::fmt::Display for ReadError {
 impl std::error::Error for ReadError {}
 
 fn run(program: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Vec<u8>, ReadError> {
+    run_with_timeout(program, args, cwd, COMMAND_TIMEOUT)
+}
+
+/// `run`, with the wall-clock bound as a parameter so a test can prove the kill-and-reap path in
+/// milliseconds rather than in the five production seconds.
+///
+/// Both pipes are drained on their own threads *before* anything waits: a child that fills a pipe
+/// blocks writing while the parent blocks waiting, which is a deadlock no timeout can see, since
+/// the child is not idle - it is running, waiting on us. A timed-out child is killed and then
+/// waited for, so no zombie is left behind.
+fn run_with_timeout(
+    program: &Path,
+    args: &[&str],
+    cwd: Option<&Path>,
+    timeout: Duration,
+) -> Result<Vec<u8>, ReadError> {
     let program_name = program.display().to_string();
+    let spawn_failed = |e: std::io::Error| ReadError::Spawn {
+        source: program_name.clone(),
+        message: e.to_string(),
+    };
+
     let mut command = Command::new(program);
-    command.args(args);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if let Some(dir) = cwd {
         command.current_dir(dir);
     }
-    let output = command.output().map_err(|e| ReadError::Spawn {
-        source: program_name.clone(),
-        message: e.to_string(),
-    })?;
-    if !output.status.success() {
+    let mut child = command.spawn().map_err(spawn_failed)?;
+
+    let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
+    let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut buffer);
+        buffer
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buffer);
+        buffer
+    });
+
+    let waited = child.wait_timeout(timeout).map_err(spawn_failed)?;
+    let status = match waited {
+        Some(status) => status,
+        None => {
+            // Kill, then wait: killing alone leaves a zombie, and this process outlives every
+            // refresh it makes.
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err(ReadError::Timeout {
+                source: program_name,
+                seconds: timeout.as_secs(),
+            });
+        }
+    };
+
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    if !status.success() {
         return Err(ReadError::Exit {
             source: program_name,
-            status: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            status: status.code(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
         });
     }
-    Ok(output.stdout)
+    Ok(stdout)
 }
 
 /// The roster, via `<scripts_dir>/roster` - the one place the fleet is declared
@@ -172,13 +243,32 @@ pub fn read_beads(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<Bead>,
     })
 }
 
+/// The whole fleet in one read: roster, every state file, the process table - fed to
+/// `model::derive_fleet` against the SHARED root, which is both where the state files live and
+/// what `scripts/launch` roots every session's marker sentence at (`scripts/agent-alive:61-107`).
+///
+/// One call rather than three, because a screen showing rows read at three different moments is a
+/// screen that can show a bead in a row whose process scan predates the claim. A failure in
+/// either subprocess is returned as itself: a fleet that could not be read is never an empty
+/// fleet, which would read as "every agent is dead".
+pub fn read_fleet(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<FleetRow>, ReadError> {
+    let roster = read_roster(paths)?;
+    let states = read_states(paths, &roster);
+    let processes = read_processes(programs)?;
+    Ok(model::derive_fleet(
+        &roster,
+        &states,
+        &processes,
+        &paths.shared_root,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::partition_beads;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
-
     fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -361,8 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn bd_reader_refuses_without_the_expected_argv() {
-        let dir = tempfile::tempdir().unwrap();
+    fn bd_reader_refuses_without_the_expected_argv() {        let dir = tempfile::tempdir().unwrap();
         let fake_bd = write_executable(
             dir.path(),
             "bd",
@@ -381,6 +470,169 @@ mod tests {
                 assert!(stderr.contains("refusing"));
             }
             other => panic!("expected Exit, got {other:?}"),
+        }
+    }
+
+    // --- cb-vyp.2: the aggregate fleet read, and the wall-clock bound under it -------------------
+
+    /// A roster script, a state file and a `ps` table that agree, read in one call: the row for a
+    /// state file whose pid carries this consumer's marker is the state file's own, and the row
+    /// for an agent with neither is dead.
+    #[test]
+    fn fleet_reader_composes_roster_states_and_processes() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("shared");
+        std::fs::create_dir_all(shared.join(".cerebro/state")).unwrap();
+        std::fs::write(
+            shared.join(".cerebro/state/Xavier.state.json"),
+            r#"{"state":"working","phase":"plan","bead":"cb-kcs","since":"2026-01-01T00:00:00Z","phase_since":"2026-01-01T00:10:00Z","pid":4242}"#,
+        )
+        .unwrap();
+
+        let scripts = dir.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        write_executable(
+            &scripts,
+            "roster",
+            "#!/usr/bin/env bash\nprintf '%s\\n' 'Xavier\tplanner\tinteractive' 'Storm\timplementer\timplementer'\n",
+        );
+        // Built by `model::marker_sentence`, never typed: this crate spells the marker sentence
+        // in one file, which is what `scripts/marker-readers` holds it to.
+        let marker = format!("claude {}", model::marker_sentence("Xavier", &shared));
+        write_executable(
+            dir.path(),
+            "ps",
+            &format!(
+                "#!/usr/bin/env bash\nprintf '%s\\n' ' 4242     1 {marker}'\n"
+            ),
+        );
+
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: shared.clone(),
+            scripts_dir: scripts,
+        };
+        let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
+        let rows = read_fleet(&paths, &programs).unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "Xavier");
+        assert_eq!(rows[0].state, model::RowState::Working);
+        assert_eq!(rows[0].phase.as_deref(), Some("plan"));
+        assert_eq!(rows[0].bead.as_deref(), Some("cb-kcs"));
+        assert_eq!(rows[0].sessions, 1);
+        assert_eq!(rows[1].name, "Storm");
+        assert_eq!(rows[1].state, model::RowState::Dead);
+    }
+
+    /// A child that never returns is killed, reaped and reported - never waited on forever, and
+    /// never left behind as a zombie. The bound is injected so this costs a second rather than
+    /// the five the screen uses.
+    #[test]
+    fn command_timeout_kills_and_reaps_the_child() {
+        let dir = tempfile::tempdir().unwrap();
+        // `exec' so the process this crate spawns IS the sleeping one: a bash that forked `sleep'
+        // would be reaped here while its child lived on. It writes a pipe-buffer's worth first,
+        // so a runner that waited before draining would deadlock rather than time out.
+        let slow = write_executable(
+            dir.path(),
+            "slow",
+            "#!/usr/bin/env bash\nhead -c 200000 /dev/zero | tr '\\0' 'x'\nexec sleep 30\n",
+        );
+
+        let started = std::time::Instant::now();
+        let err = run_with_timeout(&slow, &[], None, Duration::from_secs(1)).unwrap_err();
+        let elapsed = started.elapsed();
+
+        match err {
+            ReadError::Timeout { seconds, source } => {
+                assert_eq!(seconds, 1);
+                assert!(source.ends_with("slow"), "the failure names the program: {source}");
+            }
+            other => panic!("expected Timeout, got {other:?}"),
+        }
+        assert!(elapsed < Duration::from_secs(10), "it waited for the child to finish: {elapsed:?}");
+
+        // Killed AND waited for: a kill without a wait leaves a zombie, and this process outlives
+        // every refresh it makes. Asked of the process table rather than of a recorded pid, so a
+        // loaded machine cannot make the assertion itself flaky.
+        let mine = std::process::id().to_string();
+        let table = Command::new("ps").args(["-axo", "stat=,ppid="]).output().unwrap();
+        let table = String::from_utf8_lossy(&table.stdout);
+        let zombies: Vec<&str> = table
+            .lines()
+            .filter(|line| {
+                let mut fields = line.split_whitespace();
+                let stat = fields.next().unwrap_or("");
+                let ppid = fields.next().unwrap_or("");
+                stat.starts_with('Z') && ppid == mine
+            })
+            .collect();
+        assert!(zombies.is_empty(), "the timed-out child was left as a zombie: {zombies:?}");
+    }
+
+    /// A child that writes more than one pipe buffer and then exits is read whole: both pipes are
+    /// drained while it runs, so a large roster or process table is not a deadlock.
+    #[test]
+    fn large_output_is_read_without_deadlocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let loud = write_executable(
+            dir.path(),
+            "loud",
+            "#!/usr/bin/env bash\nhead -c 200000 /dev/zero | tr '\\0' 'x'\nhead -c 200000 /dev/zero | tr '\\0' 'e' >&2\n",
+        );
+        let stdout = run_with_timeout(&loud, &[], None, Duration::from_secs(5)).unwrap();
+        assert_eq!(stdout.len(), 200_000);
+    }
+
+    /// Every way the aggregate read can fail comes back as a failure. `Ok(vec![])` would render
+    /// as a fleet in which every agent is dead - the most alarming screen this view can draw, and
+    /// a lie.
+    #[test]
+    fn fleet_reader_failure_is_not_an_empty_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        write_executable(
+            &scripts,
+            "roster",
+            "#!/usr/bin/env bash\nprintf '%s\\n' 'Xavier\tplanner\tinteractive'\n",
+        );
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: scripts.clone(),
+        };
+
+        // `ps' fails: the roster read succeeded, and the fleet is still unavailable rather than
+        // a roster's worth of dead rows.
+        write_executable(
+            dir.path(),
+            "ps",
+            "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
+        );
+        let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
+        match read_fleet(&paths, &programs) {
+            Err(ReadError::Exit { status, stderr, .. }) => {
+                assert_eq!(status, Some(3));
+                assert!(stderr.contains("boom"));
+            }
+            other => panic!("expected the ps failure, got {other:?}"),
+        }
+
+        // The roster fails: the same, and the error still names the roster.
+        write_executable(
+            &scripts,
+            "roster",
+            "#!/usr/bin/env bash\necho 'roster: refusing' >&2\nexit 2\n",
+        );
+        write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf ''\n");
+        match read_fleet(&paths, &programs) {
+            Err(ReadError::Exit { status, source, .. }) => {
+                assert_eq!(status, Some(2));
+                assert!(source.ends_with("roster"), "expected the roster to be named: {source}");
+            }
+            other => panic!("expected the roster failure, got {other:?}"),
         }
     }
 }

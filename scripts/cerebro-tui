@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+#
+# Opens the standalone Ratatui fleet view, beside `M-x cerebro' rather than instead of it. The
+# second script here meant for a person to type rather than for an agent to call, from anywhere
+# inside a consumer:
+#
+#     .claude/cerebro/scripts/cerebro-tui
+#
+# It is a READER. The process it starts writes no state file, no stop flag and no bead, starts and
+# stops nothing, and supervises nothing - Emacs remains the sole supervisor, and both views may
+# read the same state at the same time (docs/fleet-view-alternatives.md).
+#
+# It resolves the consumer's three roots ONCE (`consumer-root --hints', cb-ue0), exports them with
+# the scripts directory, cd's to the enclosing consumer and exec's Cargo, so nothing sits between
+# the terminal and the binary. The binary resolves NO root of its own: `scripts/consumer-root' is
+# the one place that question is answered, and it refuses to start when any of the four is missing
+# - which is what a `cargo run' typed by hand gets, by design.
+#
+# Cargo's own build output is deliberately left visible: the first run in a fresh checkout compiles
+# the workspace, and a silent minute looks like a hang.
+#
+#   exit 0   never returns - Cargo replaces this process.
+#   exit 2   a usage error (any argument at all), not inside a consumer, no cargo on PATH, or this
+#            checkout of cerebro has no Rust workspace. One line on stderr each, the same shape
+#            `cerebro', `launch' and `launch-preflight' use.
+
+set -euo pipefail
+
+# Nothing is passed through: an argument would reach `cargo run' and be read as one of its flags.
+if [[ $# -gt 0 ]]; then
+  echo "usage: cerebro-tui (no arguments; run it from anywhere inside the consumer)" >&2
+  exit 2
+fi
+
+# -P (physical) throughout, as sync-symlinks.sh explains: consumer-root hands back physical paths
+# and the --manifest-path below is compared against them.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SOURCE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+
+# All three roots in one call. `read', not three forks: the enclosing root is what the readers run
+# in, the shared root is where state files live and what every session's marker sentence is rooted
+# at, and the mount is what makes the hints validatable further down the tree.
+hints="$("$SCRIPT_DIR/consumer-root" --hints 2>/dev/null)" || {
+  echo "cerebro-tui: not inside a consumer - run this from a repository that mounts cerebro" >&2
+  exit 2
+}
+{ IFS= read -r CEREBRO_CONSUMER_ROOT
+  IFS= read -r CEREBRO_CONSUMER_SHARED_ROOT
+  IFS= read -r CEREBRO_CONSUMER_MOUNT; } <<<"$hints"
+
+# `--hints' leaves the shared line empty when the consumer is not a git working tree, which is the
+# one case where the enclosing tree is all there is. Falling back to it keeps the binary's own
+# refusal for the thing it cannot do anything about - a variable the launcher never set at all.
+if [[ -z "$CEREBRO_CONSUMER_SHARED_ROOT" ]]; then
+  CEREBRO_CONSUMER_SHARED_ROOT="$CEREBRO_CONSUMER_ROOT"
+fi
+
+CEREBRO_SCRIPTS="$SCRIPT_DIR"
+export CEREBRO_CONSUMER_ROOT CEREBRO_CONSUMER_SHARED_ROOT CEREBRO_CONSUMER_MOUNT CEREBRO_SCRIPTS
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "cerebro-tui: cargo is not on PATH - install Rust and Cargo" >&2
+  exit 2
+fi
+
+# A vendored partial copy, or a submodule pinned before the Rust workspace landed: refuse here
+# rather than letting `cargo run --manifest-path' fail with a path error the navigator has to read
+# Cargo's manual to understand.
+if [[ ! -f "$SOURCE_ROOT/Cargo.toml" ]]; then
+  echo "cerebro-tui: $SOURCE_ROOT/Cargo.toml is missing - this checkout of cerebro has no Ratatui fleet view" >&2
+  exit 2
+fi
+
+# cd first, so `roster' and every reader run in the tree the navigator is standing in. The manifest
+# path is absolute, so the command is correct from a subdirectory and for a submodule mounted
+# elsewhere. `--locked' is this project's rule wherever Cargo runs: a launcher that re-resolved a
+# dependency would run something no gate has ever seen.
+cd "$CEREBRO_CONSUMER_ROOT"
+exec cargo run --release --locked \
+  --manifest-path "$SOURCE_ROOT/Cargo.toml" \
+  --package cerebro-tui --bin cerebro-tui

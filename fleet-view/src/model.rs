@@ -483,6 +483,21 @@ pub struct Bead {
     pub metadata: serde_json::Value,
 }
 
+impl Bead {
+    /// This bead's `metadata.paused_at`, or `None`.
+    ///
+    /// Nil-safe both ways, exactly as `cerebro--paused-at` is: the key is absent rather than null
+    /// on a bead parked before the pause sites started writing it, and a value that is not an
+    /// RFC 3339 time is no time at all rather than a guess. The renderer shows the absence as an
+    /// em dash, never as a small age.
+    pub fn paused_at(&self) -> Option<DateTime<Utc>> {
+        let raw = self.metadata.get("paused_at")?.as_str()?;
+        DateTime::parse_from_rfc3339(raw)
+            .ok()
+            .map(|t| t.with_timezone(&Utc))
+    }
+}
+
 /// The panel's six sections, in the order `emacs/cerebro.el:4652-4764`
 /// (`cerebro--partition-beads`) builds them; a bead's input order is preserved within its bucket.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -968,5 +983,31 @@ mod tests {
             buckets.unplanned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
             vec!["b", "a"]
         );
+    }
+
+    /// The paused section's age column comes from `metadata.paused_at`, and from nothing else. A
+    /// bead parked before the pause sites wrote one has no age at all, which the panel shows as
+    /// an em dash rather than as "just now".
+    #[test]
+    fn paused_at_is_read_from_metadata_or_absent() {
+        let dated = Bead {
+            metadata: serde_json::json!({ "paused_at": "2026-01-01T00:00:00Z" }),
+            ..bead("dated", "open", "feature", &["human"])
+        };
+        assert_eq!(
+            dated.paused_at(),
+            Some(DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap().with_timezone(&Utc))
+        );
+
+        assert_eq!(bead("no-metadata", "open", "feature", &["human"]).paused_at(), None);
+        for metadata in [
+            serde_json::json!({}),
+            serde_json::json!({ "paused_at": null }),
+            serde_json::json!({ "paused_at": "yesterday" }),
+            serde_json::json!({ "paused_at": 1767225600 }),
+        ] {
+            let bead = Bead { metadata, ..bead("odd", "open", "feature", &["human"]) };
+            assert_eq!(bead.paused_at(), None, "an unusable value is no time at all");
+        }
     }
 }

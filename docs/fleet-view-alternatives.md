@@ -513,6 +513,20 @@ supervising.
 That is a good shape — the risky half can be exercised for weeks before the irreversible half moves
 — but it does mean a migration is not "run both for a while and let the better one win".
 
+### Delivered: the read-only half exists (cb-vyp)
+
+The first increment above is no longer hypothetical. `cerebro-tui` — a Rust/Ratatui binary in
+`fleet-view/`, started by `.claude/cerebro/scripts/cerebro-tui` from anywhere inside a consumer —
+draws the fleet rows and the six work queues from the same `scripts/roster`, `.cerebro/state/*.state.json`
+and `bd --readonly` contracts the Emacs view reads, on its own five-second and thirty-second
+cadences. It is stacked and scrollable, with scroll, refresh and quit keys and nothing else.
+
+**The supervision half has not moved.** The Ratatui process starts no session, ends none, evaluates
+no trigger, writes no stop flag, deletes no state file and changes no bead. `M-x cerebro` remains
+the sole supervisor, and both views may read one repository at the same time — which is exactly
+the property this section said made the read-only increment safe. Nothing below is revised by it:
+the measurements and the recommendation stand as they were made.
+
 ## Recommendation
 
 **Ranked, all three:**

@@ -26,6 +26,9 @@ The fleet is bash and Emacs Lisp on top of programs it does not ship:
 - `git` and `jq` — every script.
 - Emacs 28 or later for the fleet view; `vterm` if you want sessions started from it with `s`.
   Without vterm you start sessions in a terminal and the view still shows them.
+- **Optional:** Rust and Cargo, for the standalone read-only terminal view
+  (`.claude/cerebro/scripts/cerebro-tui`, below). Nothing else here needs a Rust toolchain — the
+  fleet runs without one, and the supervising view is the Emacs one either way.
 
 Check:
 
@@ -33,6 +36,7 @@ Check:
 for t in bd gh git jq emacs; do command -v "$t" >/dev/null && echo "$t ok" || echo "$t MISSING"; done
 if command -v claude >/dev/null || command -v copilot >/dev/null
 then echo "agent CLI ok"; else echo "agent CLI MISSING"; fi
+command -v cargo >/dev/null && echo "cargo ok (cerebro-tui available)" || echo "cargo absent (cerebro-tui unavailable)"
 ```
 
 ### 2. Add cerebro as a submodule at `.claude/cerebro`
@@ -198,6 +202,26 @@ else. In the fleet view the row turns green a few seconds after the session star
 its state file. [docs/agent-workflow.md](docs/agent-workflow.md) is what to read next: it is the
 operating guide for everything after this point.
 
+#### Watching without Emacs
+
+There is a second, **read-only** view — a standalone terminal program, run from anywhere inside the
+consumer:
+
+```bash
+.claude/cerebro/scripts/cerebro-tui
+```
+
+It shows the same fleet rows and the same six work queues (Claimed, Planned unclaimed, Being
+planned, Unplanned, Waiting on you, Merged unverified), refreshing the fleet every five seconds and
+the board every thirty. `↑`/`↓` scroll a line, `PgUp`/`PgDn` a viewport, `g` refreshes both panes,
+and `q`, `Esc` or `Ctrl-C` quits.
+
+**It observes and nothing else.** It starts no session, ends none, writes no state file, no stop
+flag and no bead. `.claude/cerebro/scripts/cerebro` / `M-x cerebro` remains the supervising view —
+the one that starts, stops and hosts sessions — and the two can run side by side against the same
+repository. Building it needs Rust and Cargo (step 1); the first run in a fresh checkout compiles
+the workspace, so give it a minute before deciding it has hung.
+
 ## Launchers
 
 Each agent is started by a script of its own, run from the consumer repository root:
@@ -206,6 +230,8 @@ Each agent is started by a script of its own, run from the consumer repository r
 .claude/cerebro/scripts/launch <Name>            # any agent, by name - the one way to start one
 .claude/cerebro/scripts/roster                   # the fleet: name, role, kind - one line per agent
 .claude/cerebro/scripts/roster --implementers    # the implementer names, one per line
+.claude/cerebro/scripts/cerebro                  # the fleet view - the supervising one
+.claude/cerebro/scripts/cerebro-tui              # the standalone read-only view (needs cargo)
 ```
 
 Every agent starts the same way, by its own name: `launch Xavier`, `launch Cyclops`, `launch Forge`.

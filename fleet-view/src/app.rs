@@ -18,13 +18,18 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::model::FleetRow;
-use crate::readers::{read_fleet, Programs, ReaderPaths, ReadError};
+use crate::model::{FleetRow, WorkBuckets};
+use crate::readers::{read_fleet, read_work, Programs, ReaderPaths, ReadError};
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
 /// interview: fast enough that a claim appears while the navigator is still looking at the row,
 /// slow enough that a `ps` per tick is not what the machine is doing.
 pub const FLEET_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How often the bead panel is re-read. Six times the fleet's interval, and agreed separately in
+/// the same interview: work moves in the minutes a bead takes, not in the seconds a claim takes,
+/// and each read is a whole `bd` query against the shared board.
+pub const WORK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// What a pane has to show, and how sure it is of it.
 ///
@@ -67,6 +72,53 @@ pub struct Pane<T> {
     pub refreshing: bool,
 }
 
+impl<T> Pane<T> {
+    /// Claim this pane's one in-flight slot: true when the request may go to its worker, false
+    /// when one is already running and this one is dropped. Per pane, deliberately - a global
+    /// busy bit would let the five-second fleet cadence starve the thirty-second work read.
+    fn begin(&mut self) -> bool {
+        if self.refreshing {
+            return false;
+        }
+        self.refreshing = true;
+        true
+    }
+
+    /// The only content transition there is, and the only place `refreshing` is cleared.
+    ///
+    /// A success always wins - it replaces a stale snapshot and its error together. A failure
+    /// keeps whatever was worth reading: `Fresh`/`Stale` become `Stale` with the original
+    /// `read_at` preserved (the value is as old as its read, not as old as the failure), while
+    /// `Loading`/`Unavailable` have nothing to keep and become `Unavailable`.
+    fn finish(&mut self, result: Result<T, ReadError>, at: DateTime<Utc>) {
+        self.refreshing = false;
+        match result {
+            Ok(value) => {
+                self.content = PaneContent::Fresh { value, read_at: at };
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let previous = std::mem::replace(&mut self.content, PaneContent::Loading);
+                self.content = match previous {
+                    PaneContent::Fresh { value, read_at }
+                    | PaneContent::Stale { value, read_at, .. } => PaneContent::Stale {
+                        value,
+                        read_at,
+                        failed_at: at,
+                        error: message,
+                    },
+                    PaneContent::Loading | PaneContent::Unavailable { .. } => {
+                        PaneContent::Unavailable {
+                            failed_at: at,
+                            error: message,
+                        }
+                    }
+                };
+            }
+        }
+    }
+}
+
 impl<T> Default for Pane<T> {
     fn default() -> Self {
         Self {
@@ -78,10 +130,15 @@ impl<T> Default for Pane<T> {
 
 /// What the caller must do about the key or tick it just handed over. The app itself starts no
 /// process and ends no program: it says what is wanted, and `main` does it.
+///
+/// `RefreshBoth` is "attempt each pane independently", never "both or neither": the caller calls
+/// each pane's own `begin_*_refresh`, and a `false` from one says nothing about the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppAction {
     None,
     RefreshFleet,
+    RefreshWork,
+    RefreshBoth,
     Quit,
 }
 
@@ -89,12 +146,15 @@ pub enum AppAction {
 #[derive(Debug)]
 pub struct App {
     pub fleet: Pane<Vec<FleetRow>>,
+    pub work: Pane<WorkBuckets>,
     /// The first document line the viewport shows. Kept as a document offset rather than a
     /// selected row, because there is no selection in this read-only screen and a refresh must
-    /// leave the navigator looking at the same place.
+    /// leave the navigator looking at the same place. One offset for the whole document, panes
+    /// and all: the two panes scroll together because they are one document.
     pub scroll: usize,
     pub quit: bool,
-    last_request: Option<Instant>,
+    last_fleet_request: Option<Instant>,
+    last_work_request: Option<Instant>,
 }
 
 impl Default for App {
@@ -107,28 +167,36 @@ impl App {
     pub fn new() -> Self {
         Self {
             fleet: Pane::default(),
+            work: Pane::default(),
             scroll: 0,
             quit: false,
-            last_request: None,
+            last_fleet_request: None,
+            last_work_request: None,
         }
     }
 
-    /// The schedule: a request at once, then one no sooner than `FLEET_REFRESH_INTERVAL` after
-    /// the last one was asked for.
+    /// The schedule: a request for each pane at once, then one no sooner than that pane's own
+    /// interval after it last *started* a read.
     ///
-    /// It counts from the *request*, not from the answer, so a reader that takes four seconds
-    /// does not turn the cadence into nine. A request while one is in flight is refused by
-    /// `begin_refresh` rather than here, so the two rules stay one each.
+    /// It counts from the request, not from the answer, so a reader that takes four seconds does
+    /// not turn a five-second cadence into nine. The two panes are timed separately: a work read
+    /// that is due says nothing about the fleet, and a fleet read that is refused says nothing
+    /// about the work. Recording the moment is `begin_*_refresh`'s job and not this function's,
+    /// so a request this returns and the caller cannot start is asked for again on the next tick
+    /// rather than silently postponed by a whole interval.
     pub fn on_tick(&mut self, now: Instant) -> AppAction {
-        let due = match self.last_request {
+        let due = |last: Option<Instant>, interval: Duration| match last {
             None => true,
-            Some(last) => now.duration_since(last) >= FLEET_REFRESH_INTERVAL,
+            Some(last) => now.duration_since(last) >= interval,
         };
-        if due {
-            self.last_request = Some(now);
-            AppAction::RefreshFleet
-        } else {
-            AppAction::None
+        match (
+            due(self.last_fleet_request, FLEET_REFRESH_INTERVAL),
+            due(self.last_work_request, WORK_REFRESH_INTERVAL),
+        ) {
+            (true, true) => AppAction::RefreshBoth,
+            (true, false) => AppAction::RefreshFleet,
+            (false, true) => AppAction::RefreshWork,
+            (false, false) => AppAction::None,
         }
     }
 
@@ -153,10 +221,7 @@ impl App {
                 self.quit = true;
                 AppAction::Quit
             }
-            KeyCode::Char('g') => {
-                self.last_request = Some(Instant::now());
-                AppAction::RefreshFleet
-            }
+            KeyCode::Char('g') => AppAction::RefreshBoth,
             KeyCode::Up => {
                 self.scroll = self.scroll.saturating_sub(1);
                 AppAction::None
@@ -177,51 +242,43 @@ impl App {
         }
     }
 
-    /// Claim the one in-flight slot: true when this request may go to the worker, false when one
-    /// is already running and this one is dropped.
-    pub fn begin_refresh(&mut self) -> bool {
-        if self.fleet.refreshing {
-            return false;
+    /// Claim the fleet's one in-flight slot: true when this request may go to the worker, false
+    /// when one is already running and this one is dropped.
+    ///
+    /// AT is when the request is being made, and it is recorded only when the slot was free -
+    /// a rejected duplicate neither postpones nor accelerates the next scheduled read.
+    pub fn begin_refresh(&mut self, at: Instant) -> bool {
+        if self.fleet.begin() {
+            self.last_fleet_request = Some(at);
+            true
+        } else {
+            false
         }
-        self.fleet.refreshing = true;
-        true
     }
 
-    /// The only content transition there is, and the only place `refreshing` is cleared.
-    ///
-    /// A success always wins - it replaces a stale snapshot and its error together. A failure
-    /// keeps whatever was worth reading: `Fresh`/`Stale` become `Stale` with the original
-    /// `read_at` preserved (the rows are as old as their read, not as old as the failure), while
-    /// `Loading`/`Unavailable` have nothing to keep and become `Unavailable`.
-    pub fn finish_refresh(&mut self, result: Result<Vec<FleetRow>, ReadError>, at: DateTime<Utc>) {
-        self.fleet.refreshing = false;
-        match result {
-            Ok(rows) => {
-                self.fleet.content = PaneContent::Fresh {
-                    value: rows,
-                    read_at: at,
-                };
-            }
-            Err(error) => {
-                let message = error.to_string();
-                let previous = std::mem::replace(&mut self.fleet.content, PaneContent::Loading);
-                self.fleet.content = match previous {
-                    PaneContent::Fresh { value, read_at }
-                    | PaneContent::Stale { value, read_at, .. } => PaneContent::Stale {
-                        value,
-                        read_at,
-                        failed_at: at,
-                        error: message,
-                    },
-                    PaneContent::Loading | PaneContent::Unavailable { .. } => {
-                        PaneContent::Unavailable {
-                            failed_at: at,
-                            error: message,
-                        }
-                    }
-                };
-            }
+    /// The work pane's counterpart of `begin_refresh`, on its own slot and its own clock.
+    pub fn begin_work_refresh(&mut self, at: Instant) -> bool {
+        if self.work.begin() {
+            self.last_work_request = Some(at);
+            true
+        } else {
+            false
         }
+    }
+
+    /// The fleet pane's content transition; see `Pane::finish` for the whole rule.
+    pub fn finish_refresh(&mut self, result: Result<Vec<FleetRow>, ReadError>, at: DateTime<Utc>) {
+        self.fleet.finish(result, at);
+    }
+
+    /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
+    /// cannot answer must not make the fleet rows beside it look stale.
+    pub fn finish_work_refresh(
+        &mut self,
+        result: Result<WorkBuckets, ReadError>,
+        at: DateTime<Utc>,
+    ) {
+        self.work.finish(result, at);
     }
 
     /// Pull `scroll` back only when the document no longer reaches it.
@@ -237,29 +294,37 @@ impl App {
     }
 }
 
-/// The one background thread that runs the readers.
+/// One background thread per pane, running that pane's reader.
 ///
-/// The UI thread may never block: a `ps` that takes five seconds to fail would otherwise freeze
-/// the screen, keys and all, for exactly as long as the thing that went wrong. So every read
-/// happens here, and the UI thread only ever asks (`request`) and looks (`poll`).
+/// The UI thread may never block: a `ps` or a `bd` that takes five seconds to fail would
+/// otherwise freeze the screen, keys and all, for exactly as long as the thing that went wrong.
+/// So every read happens here, and the UI thread only ever asks (`request`) and looks (`poll`).
 ///
-/// One thread and one request at a time, deliberately: `App::begin_refresh` already guarantees a
-/// single in-flight read, so a pool would only add ways for two `ps` runs to overlap.
-pub struct FleetWorker {
+/// One thread and one request at a time per pane, deliberately: `App::begin_refresh` and
+/// `App::begin_work_refresh` already guarantee a single in-flight read each, so a pool would only
+/// add ways for two `ps` runs to overlap. Two workers rather than one shared thread, equally
+/// deliberately: a thirty-second `bd` behind a five-second `ps` would make each wait for the
+/// other, which is the one thing independent panes must not do.
+pub struct Worker<T> {
     requests: Sender<()>,
-    results: Receiver<Result<Vec<FleetRow>, ReadError>>,
+    results: Receiver<Result<T, ReadError>>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
-impl FleetWorker {
-    pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
+/// The fleet's worker: `read_fleet` on its own thread.
+pub type FleetWorker = Worker<Vec<FleetRow>>;
+/// The bead panel's worker: `read_work` on its own thread.
+pub type WorkWorker = Worker<WorkBuckets>;
+
+impl<T: Send + 'static> Worker<T> {
+    fn spawn_reader(reader: impl Fn() -> Result<T, ReadError> + Send + 'static) -> Self {
         let (request_tx, request_rx) = mpsc::channel::<()>();
         let (result_tx, result_rx) = mpsc::channel();
         let handle = std::thread::spawn(move || {
             // The loop ends when the sender is dropped, which is what `Drop` below does: the
             // thread cannot outlive the screen it reads for.
             while request_rx.recv().is_ok() {
-                if result_tx.send(read_fleet(&paths, &programs)).is_err() {
+                if result_tx.send(reader()).is_err() {
                     break;
                 }
             }
@@ -278,7 +343,7 @@ impl FleetWorker {
     }
 
     /// The finished read, if one is waiting. Never blocks.
-    pub fn poll(&self) -> Option<Result<Vec<FleetRow>, ReadError>> {
+    pub fn poll(&self) -> Option<Result<T, ReadError>> {
         match self.results.try_recv() {
             Ok(result) => Some(result),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
@@ -286,16 +351,26 @@ impl FleetWorker {
     }
 }
 
-impl Drop for FleetWorker {
+impl Worker<Vec<FleetRow>> {
+    pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
+        Self::spawn_reader(move || read_fleet(&paths, &programs))
+    }
+}
+
+impl Worker<WorkBuckets> {
+    pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
+        Self::spawn_reader(move || read_work(&paths, &programs))
+    }
+}
+
+impl<T> Drop for Worker<T> {
     fn drop(&mut self) {
-        // Dropping the sender ends the loop above; joining then guarantees no reader is still
-        // running while the terminal is being restored.
+        // Dropping the sender asks the loop to end, but do not join: a reader may be inside its
+        // timeout while the navigator is quitting, and terminal cleanup must remain immediate.
         let (dead, _) = mpsc::channel();
         let sender = std::mem::replace(&mut self.requests, dead);
         drop(sender);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        drop(self.handle.take());
     }
 }
 
@@ -332,21 +407,67 @@ mod tests {
         }
     }
 
+    fn bd_failure() -> ReadError {
+        ReadError::Exit {
+            source: "bd".into(),
+            status: Some(1),
+            stderr: "bd list failed: database is locked".into(),
+        }
+    }
+
+    /// Work buckets with IDS in the claimed queue - enough to tell one snapshot from another
+    /// without repeating the partition's own contract, which `model` already owns.
+    fn buckets(ids: &[&str]) -> WorkBuckets {
+        WorkBuckets {
+            claimed: ids
+                .iter()
+                .map(|id| crate::model::Bead {
+                    id: (*id).to_string(),
+                    title: "t".into(),
+                    status: "in_progress".into(),
+                    issue_type: "feature".into(),
+                    labels: vec![],
+                    priority: Some(1),
+                    updated_at: None,
+                    assignee: None,
+                    metadata: serde_json::Value::Null,
+                })
+                .collect(),
+            ..WorkBuckets::default()
+        }
+    }
+
+    /// What `main` does with a `RefreshBoth`, followed by both answers arriving: the request time
+    /// is recorded and neither slot is left in flight.
+    fn started_both(app: &mut App, when: Instant) {
+        start_fleet(app, when);
+        assert!(app.begin_work_refresh(when), "the work slot was free");
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(0));
+    }
+
+    fn start_fleet(app: &mut App, when: Instant) {
+        assert!(app.begin_refresh(when), "the fleet slot was free");
+        app.finish_refresh(Ok(vec![]), at(0));
+    }
+
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
     #[test]
-    fn first_tick_requests_fleet_immediately() {
+    fn first_tick_requests_both_panes() {
         let mut app = App::new();
         assert!(matches!(app.fleet.content, PaneContent::Loading));
+        assert!(matches!(app.work.content, PaneContent::Loading));
         assert_eq!(app.scroll, 0);
         assert!(!app.quit);
 
         let start = Instant::now();
-        assert_eq!(app.on_tick(start), AppAction::RefreshFleet);
-        // No second request on the very next tick: one read is in flight and the interval has
-        // not passed.
+        assert_eq!(app.on_tick(start), AppAction::RefreshBoth);
+        assert!(app.begin_refresh(start));
+        assert!(app.begin_work_refresh(start));
+        // No second request on the very next tick: both reads are in flight and neither interval
+        // has passed.
         assert_eq!(app.on_tick(start + Duration::from_millis(1)), AppAction::None);
     }
 
@@ -354,32 +475,102 @@ mod tests {
     fn fleet_refresh_is_due_every_five_seconds() {
         let mut app = App::new();
         let start = Instant::now();
-        assert_eq!(app.on_tick(start), AppAction::RefreshFleet);
+        assert_eq!(app.on_tick(start), AppAction::RefreshBoth);
+        started_both(&mut app, start);
         assert_eq!(app.on_tick(start + Duration::from_millis(4_999)), AppAction::None);
         assert_eq!(app.on_tick(start + Duration::from_secs(5)), AppAction::RefreshFleet);
+        start_fleet(&mut app, start + Duration::from_secs(5));
         assert_eq!(app.on_tick(start + Duration::from_secs(9)), AppAction::None);
         assert_eq!(app.on_tick(start + Duration::from_secs(10)), AppAction::RefreshFleet);
     }
 
     #[test]
+    fn work_refresh_is_due_every_thirty_seconds() {
+        let mut app = App::new();
+        let start = Instant::now();
+        assert_eq!(app.on_tick(start), AppAction::RefreshBoth);
+        started_both(&mut app, start);
+
+        // Every fleet tick in between is the fleet's alone; the work read is not due again for
+        // half a minute.
+        for seconds in [5, 10, 15, 20, 26] {
+            let at = start + Duration::from_secs(seconds);
+            assert_eq!(app.on_tick(at), AppAction::RefreshFleet, "at {seconds}s");
+            start_fleet(&mut app, at);
+        }
+        let at = start + Duration::from_secs(30);
+        assert_eq!(app.on_tick(at), AppAction::RefreshWork, "the fleet is not due at 30s");
+        started_both(&mut app, at);
+        assert_eq!(app.on_tick(at + Duration::from_secs(30)), AppAction::RefreshBoth);
+    }
+
+    /// Each pane counts from its own last *start*, so a work read that took twenty seconds does
+    /// not push the fleet's five-second cadence out, and a refused duplicate moves neither.
+    #[test]
+    fn fleet_and_work_cadences_are_independent() {
+        let mut app = App::new();
+        let start = Instant::now();
+        assert_eq!(app.on_tick(start), AppAction::RefreshBoth);
+        assert!(app.begin_refresh(start));
+        assert!(app.begin_work_refresh(start));
+        // The fleet answers; the work read is still running.
+        app.finish_refresh(Ok(vec![row("Xavier")]), at(0));
+
+        // A work read still in flight at 30s: the tick still says so, and the refusal leaves the
+        // work clock where it was rather than postponing it by another thirty seconds.
+        let due = start + Duration::from_secs(30);
+        assert_eq!(app.on_tick(due), AppAction::RefreshBoth);
+        assert!(app.begin_refresh(due));
+        assert!(!app.begin_work_refresh(due), "the work read is still running");
+        app.finish_refresh(Ok(vec![row("Xavier")]), at(1));
+
+        assert_eq!(
+            app.on_tick(due + Duration::from_millis(1)),
+            AppAction::RefreshWork,
+            "the refused work request is asked for again, not deferred"
+        );
+    }
+
+    #[test]
     fn duplicate_refresh_is_ignored() {
         let mut app = App::new();
-        assert!(app.begin_refresh(), "the first request takes the slot");
+        let start = Instant::now();
+        assert!(app.begin_refresh(start), "the first request takes the slot");
         assert!(app.fleet.refreshing);
-        assert!(!app.begin_refresh(), "a second request while one is in flight is dropped");
+        assert!(
+            !app.begin_refresh(start + Duration::from_secs(1)),
+            "a second request while one is in flight is dropped"
+        );
 
         app.finish_refresh(Ok(vec![row("Xavier")]), at(0));
         assert!(!app.fleet.refreshing, "finishing always frees the slot");
-        assert!(app.begin_refresh(), "and the next request may take it");
+        assert!(app.begin_refresh(start + Duration::from_secs(2)), "and the next request may take it");
 
         app.finish_refresh(Err(failure()), at(1));
         assert!(!app.fleet.refreshing, "a failed read frees the slot too");
     }
 
+    /// The two slots are separate. A fleet read in flight may not swallow a work request, which
+    /// is what a single global `busy` bit would have done six times a minute.
+    #[test]
+    fn duplicate_work_refresh_is_ignored_without_blocking_fleet() {
+        let mut app = App::new();
+        let start = Instant::now();
+        assert!(app.begin_work_refresh(start));
+        assert!(app.work.refreshing);
+        assert!(!app.begin_work_refresh(start), "a second work request is dropped");
+        assert!(!app.fleet.refreshing, "and it never touched the fleet's slot");
+        assert!(app.begin_refresh(start), "the fleet may still start its own read");
+
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(0));
+        assert!(!app.work.refreshing);
+        assert!(app.fleet.refreshing, "finishing one pane frees only that pane");
+    }
+
     #[test]
     fn first_failure_is_unavailable() {
         let mut app = App::new();
-        app.begin_refresh();
+        app.begin_refresh(Instant::now());
         app.finish_refresh(Err(failure()), at(5));
         match &app.fleet.content {
             PaneContent::Unavailable { failed_at, error } => {
@@ -390,7 +581,7 @@ mod tests {
         }
 
         // A second failure with still nothing to show stays unavailable, with the newer moment.
-        app.begin_refresh();
+        app.begin_refresh(Instant::now());
         app.finish_refresh(Err(failure()), at(10));
         match &app.fleet.content {
             PaneContent::Unavailable { failed_at, .. } => assert_eq!(*failed_at, at(10)),
@@ -399,11 +590,91 @@ mod tests {
     }
 
     #[test]
+    fn work_first_failure_is_unavailable() {
+        let mut app = App::new();
+        app.begin_work_refresh(Instant::now());
+        app.finish_work_refresh(Err(bd_failure()), at(5));
+        match &app.work.content {
+            PaneContent::Unavailable { failed_at, error } => {
+                assert_eq!(*failed_at, at(5));
+                assert!(error.contains("database is locked"), "{error}");
+            }
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn work_later_failure_keeps_the_last_snapshot() {
+        let mut app = App::new();
+        app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(4));
+        app.finish_work_refresh(Err(bd_failure()), at(5));
+        match &app.work.content {
+            PaneContent::Stale { value, read_at, failed_at, error } => {
+                assert_eq!(value.claimed.len(), 2, "the queues are still worth reading");
+                assert_eq!(*read_at, at(4));
+                assert_eq!(*failed_at, at(5));
+                assert!(error.contains("database is locked"));
+            }
+            other => panic!("expected Stale, got {other:?}"),
+        }
+
+        app.finish_work_refresh(Err(bd_failure()), at(10));
+        match &app.work.content {
+            PaneContent::Stale { value, read_at, failed_at, .. } => {
+                assert_eq!(value.claimed.len(), 2);
+                assert_eq!(*read_at, at(4), "the queues are as old as their read");
+                assert_eq!(*failed_at, at(10));
+            }
+            other => panic!("expected Stale, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn work_success_clears_its_stale_error() {
+        let mut app = App::new();
+        app.finish_work_refresh(Ok(buckets(&["cb-1"])), at(4));
+        app.finish_work_refresh(Err(bd_failure()), at(5));
+        app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(9));
+        match &app.work.content {
+            PaneContent::Fresh { value, read_at } => {
+                assert_eq!(value.claimed.len(), 2);
+                assert_eq!(*read_at, at(9));
+            }
+            other => panic!("expected Fresh, got {other:?}"),
+        }
+    }
+
+    /// The whole point of two panes: `bd` being unreadable says nothing about the fleet, and the
+    /// fleet being unreadable says nothing about the board.
+    #[test]
+    fn work_failure_does_not_stale_fleet() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![row("Xavier")]), at(4));
+        app.finish_work_refresh(Ok(buckets(&["cb-1"])), at(4));
+
+        app.finish_work_refresh(Err(bd_failure()), at(5));
+        match &app.fleet.content {
+            PaneContent::Fresh { read_at, .. } => assert_eq!(*read_at, at(4)),
+            other => panic!("the fleet is untouched by a work failure: {other:?}"),
+        }
+        assert!(matches!(app.work.content, PaneContent::Stale { .. }));
+
+        // And the other way round.
+        app.finish_work_refresh(Ok(buckets(&["cb-1"])), at(6));
+        app.finish_refresh(Err(failure()), at(7));
+        match &app.work.content {
+            PaneContent::Fresh { read_at, .. } => assert_eq!(*read_at, at(6)),
+            other => panic!("the work pane is untouched by a fleet failure: {other:?}"),
+        }
+        assert!(matches!(app.fleet.content, PaneContent::Stale { .. }));
+    }
+
+    #[test]
     fn later_failure_keeps_the_last_snapshot_stale() {
         let mut app = App::new();
-        app.begin_refresh();
+        app.begin_refresh(Instant::now());
         app.finish_refresh(Ok(vec![row("Xavier"), row("Beast")]), at(4));
-        app.begin_refresh();
+        app.begin_refresh(Instant::now());
         app.finish_refresh(Err(failure()), at(5));
 
         match &app.fleet.content {
@@ -417,7 +688,7 @@ mod tests {
         }
 
         // Failing again keeps the same rows and the same read_at, moving only the failure.
-        app.begin_refresh();
+        app.begin_refresh(Instant::now());
         app.finish_refresh(Err(failure()), at(10));
         match &app.fleet.content {
             PaneContent::Stale { value, read_at, failed_at, .. } => {
@@ -446,25 +717,30 @@ mod tests {
     }
 
     #[test]
-    fn refresh_preserves_and_clamps_scroll() {
+    fn either_pane_refresh_preserves_and_clamps_document_scroll() {
         let mut app = App::new();
         app.finish_refresh(Ok((0..20).map(|i| row(&format!("A{i}"))).collect()), at(0));
+        app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(0));
         app.scroll = 12;
 
         // Same-sized document: the offset is exactly where it was.
         app.clamp_scroll(24, 10);
         assert_eq!(app.scroll, 12);
 
-        // A refresh that returns rows does not touch the offset on its own.
+        // A refresh of either pane that returns the same content does not touch the offset.
         app.finish_refresh(Ok((0..20).map(|i| row(&format!("A{i}"))).collect()), at(5));
         assert_eq!(app.scroll, 12);
+        app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(5));
+        assert_eq!(app.scroll, 12);
 
-        // Only a shorter document pulls it back, and only as far as the last full viewport.
-        app.finish_refresh(Ok(vec![row("Xavier")]), at(10));
+        // Only a shorter document pulls it back, and only as far as the last full viewport - and
+        // the document is both panes, so a shrinking work pane clamps the fleet's offset too.
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(10));
         app.clamp_scroll(5, 10);
         assert_eq!(app.scroll, 0);
 
         app.scroll = 40;
+        app.finish_refresh(Ok(vec![row("Xavier")]), at(10));
         app.clamp_scroll(30, 10);
         assert_eq!(app.scroll, 20);
     }
@@ -522,17 +798,35 @@ mod tests {
     }
 
     #[test]
-    fn g_requests_the_fleet_reader() {
+    fn g_requests_both_readers() {
         let mut app = App::new();
-        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshFleet);
-        // The request is only honoured once: `begin_refresh' is what the caller asks next, and a
-        // second `g' while that read runs is dropped there.
-        assert!(app.begin_refresh());
-        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshFleet);
-        assert!(!app.begin_refresh(), "a second g while one is in flight changes nothing");
+        let start = Instant::now();
+        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshBoth);
+        assert!(app.begin_refresh(start));
+        assert!(app.begin_work_refresh(start));
 
-        // A manual refresh restarts the cadence rather than leaving a tick due immediately after.
-        assert_eq!(app.on_tick(Instant::now()), AppAction::None);
+        // The request is only honoured once per pane: a second `g' while both reads run is
+        // dropped at each pane's own door.
+        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshBoth);
+        assert!(!app.begin_refresh(start + Duration::from_secs(1)));
+        assert!(!app.begin_work_refresh(start + Duration::from_secs(1)));
+
+        // A manual refresh restarts both cadences rather than leaving a tick due immediately
+        // after it.
+        assert_eq!(app.on_tick(start + Duration::from_millis(1)), AppAction::None);
+    }
+
+    /// `g` is a request per pane, not one request for the pair: a fleet read in flight must not
+    /// swallow the retry the navigator pressed `g` for.
+    #[test]
+    fn g_starts_the_idle_reader_when_the_other_is_busy() {
+        let mut app = App::new();
+        let start = Instant::now();
+        assert!(app.begin_refresh(start), "the fleet is already reading");
+
+        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshBoth);
+        assert!(!app.begin_refresh(start), "the busy pane refuses");
+        assert!(app.begin_work_refresh(start), "and the idle one still starts");
     }
 
     #[test]

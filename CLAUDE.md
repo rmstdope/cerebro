@@ -15,6 +15,11 @@ in a *consumer* repo, and the launchers in `scripts/` only make sense from a con
 this repo is mounted at `.claude/cerebro`. So a change here is generally not testable by running it
 in this tree.
 
+The one exception, since the `cb-vyp` family, is `fleet-view/` — a Rust workspace whose
+`cerebro-tui` binary **does** run here, and is the one thing in this repository a person can start
+and look at. It is a **reader**: it draws the fleet and the bead panel from the same contracts
+`M-x cerebro` reads and writes nothing at all. Emacs remains the sole supervisor.
+
 Every project-specific fact is read from `<consumer>/.cerebro/project.conf`
 (`scripts/project-conf`), and the fleet's names from `<consumer>/.cerebro/roster.conf`
 (`scripts/roster`). Nothing in this repository names a consumer.
@@ -75,9 +80,11 @@ aside first.
 ## Development practices
 
 - Work is delivered in small increments that stand on their own.
-- Code is written test-first. That is not a style preference here: the two suites are the only thing
+- Code is written test-first. That is not a style preference here: the suites are the only thing
   that can tell a change to this harness from a change that quietly breaks every consumer, since
-  almost nothing in this repository executes in this repository.
+  almost nothing in this repository executes in this repository. `fleet-view/` is held to the same
+  rule by `cargo test`, and more strictly: it is the one part that *does* run here, so a test that
+  fails is a screen a navigator would have seen.
 - **Tests assert behaviour, and nothing else is checked mechanically.** A test here exercises the
   code this repository ships — the elisp in `emacs/` and the bash in `scripts/`. Prose and
   configuration are not code: an agent file, a skill file, a declaration file gets no test, because
@@ -100,7 +107,12 @@ Not prose — files, each tracked so that every clone has it.
   the application, which agent CLI its sessions run on (`agent_cli`, answered by
   `scripts/agent-cli` — `claude` or, since cb-d59.6, `copilot`, both runnable rather than one
   planned; absent means `claude`), and the gate. Both gates name `tests/gate`, which runs exactly what
-  `.github/workflows/ci.yml` runs (cb-i3l.2).
+  `.github/workflows/ci.yml` runs (cb-i3l.2). Since the `cb-vyp` family it also declares the Rust
+  build — `rust_paths` (what `scripts/build-workload --classify` calls a Cargo workload),
+  `install`, `prewarm`, `disk_floor_gb`, `reclaim_dirs` and `cargo_reclaim_packages` — and one
+  launch target, `launch_tui` → `.claude/cerebro/scripts/cerebro-tui`, which is the one thing here
+  a navigator can start and look at. `verification none` is gone with it: a merged bead that
+  touched the fleet view is verified by running it.
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
   built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that
   agent as it comes up (cb-0r6), `standby` **arms** it without starting it (cb-98u) — its row reads
@@ -113,13 +125,13 @@ Not prose — files, each tracked so that every clone has it.
 ## Commands
 
 The whole gate, which is what an implementer runs before it opens a pull request and what CI runs
-on it (cb-i3l.2) — byte-compile, ERT, every `tests/*.sh`:
+on it (cb-i3l.2) — byte-compile, ERT, every `tests/*.sh`, and the locked Cargo tests:
 
 ```bash
 bash tests/gate
 ```
 
-Its three parts, for when only one of them is the question. The Emacs package (ERT):
+Its four parts, for when only one of them is the question. The Emacs package (ERT):
 
 ```bash
 emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit    # all tests
@@ -134,6 +146,19 @@ assertion), run from this repository's root:
 bash scripts/suite-runner tests             # all of them, each named as it starts
 bash tests/launchers.sh                     # one suite
 ```
+
+And the Rust workspace (`fleet-view/`, the `cerebro-tui` binary), from this repository's root:
+
+```bash
+cargo test --workspace --all-targets --locked          # model, readers, app, renderer, binary
+cargo test --workspace --locked work_reader            # one test, or a substring of one
+```
+
+`--locked` everywhere, including in `scripts/cerebro-tui`: a gate that re-resolved a dependency
+would run something no gate has ever seen. `--all-targets` because a test-only compile error
+otherwise hides behind a green `cargo build`. `/target` is gitignored, and a Rust change needs
+`scripts/disk-preflight --workload rust` before it starts — several worktrees each keep a build
+tree, and running out of disk announces itself as a linker fault rather than as a full disk.
 
 `scripts/suite-runner` names each suite before it runs it and replays a failing suite's output, so a
 stalled suite is identifiable by name; both `tests/gate` and CI call it, which is what keeps the one
@@ -171,8 +196,9 @@ new suite that forgets the line is red, which is the safe direction.
 A rule whose grep or awk fails is itself an advisory naming the rule and the step, never an `ok`
 line — `|| true` could not tell a no-match from a grep that never ran (cb-u5e).
 
-CI (`.github/workflows/ci.yml`) runs both: ERT on Emacs 28.2 and 30.1, and every `tests/*.sh` on
-ubuntu-latest. A suite that only passes on macOS is a red PR.
+CI (`.github/workflows/ci.yml`) runs all of it: ERT on Emacs 28.2 and 30.1, every `tests/*.sh` on
+ubuntu-latest, and `cargo test --workspace --all-targets --locked`. A suite that only passes on
+macOS is a red PR, and so is a Rust test that only passes on the developer's own `bd`.
 
 A pull request that touches only `docs/` (except `docs/agent-workflow.md`, which a suite reads),
 `README.md`, `LICENSE` or `models.conf.example` runs none of that: `scripts/ci-needed` is the one
@@ -472,6 +498,51 @@ root capture at the end of the message, and reported a silent zero for a fleet t
 thousand credits that week (cb-d89). Since cb-9su that subscription is checked mechanically rather
 than trusted: `scripts/marker-readers` fails the gate on any file that spells the sentence without
 declaring itself.
+
+## fleet-view/ — the standalone read-only view
+
+`.claude/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
+same fleet and the same six work queues as `M-x cerebro` **and touches nothing**. It runs no
+launcher, writes no state file, no stop flag and no bead, and evaluates no trigger. Both views may
+read the same consumer at the same time; the supervision half has not moved and is not planned to
+move here (`docs/fleet-view-alternatives.md`).
+
+One screen, one vertically scrolling document: the Fleet pane above the Work pane, `↑`/`↓` by a
+line, `PgUp`/`PgDn` by a viewport, `g` to refresh, `q`/`Esc`/`Ctrl-C` to quit. There is no
+selection, no detail window and no lifecycle key, deliberately — the approved surface is
+`docs/ui/cb-vyp-read-only-view.html`.
+
+The crate is split the way `cerebro.el` is, and for the same reason:
+
+- `model.rs` — pure parsing and derivation (roster, state files, the marker sentence, the process
+  tree, `partition_beads`). It is the Rust copy of the elisp rules, held to the same
+  `tests/lib/session-args.cases` table as every other reader of the marker sentence.
+- `readers.rs` — every file and subprocess: `scripts/roster`, `ps -axo pid=,ppid=,args=`, and one
+  `bd --readonly -C <shared root> list --status open,in_progress,blocked,deferred,closed --json
+  --brief`. Each child has a five-second wall-clock bound, is killed **and reaped** on it, and has
+  both pipes drained on their own threads before anything waits — a child that fills a pipe while
+  the parent waits is a deadlock no timeout can see. `read_fleet` and `read_work` are the two
+  aggregate reads, and **a failure is never an empty answer**: `Ok(vec![])` would draw a fleet in
+  which every agent is dead, and `Ok(WorkBuckets::default())` a board with nothing on it.
+- `app.rs` — the display state, the two independent cadences (fleet every 5s, work every 30s) and
+  one worker thread per pane. The panes are independent all the way down: one in-flight slot each,
+  one clock each, one `Pane<T>` state machine each. A global busy bit would let the five-second
+  fleet read starve the thirty-second work read, and a busy fleet would swallow the retry a
+  navigator pressed `g` for.
+- `ui.rs` — pure over `App` plus an injected `DateTime<Utc>`. It never reads a file, runs a
+  program or asks the clock, which is what makes its `TestBackend` cases assertions about the
+  screen rather than about the machine. Widths are **terminal cells** (`unicode-width`), never
+  bytes or `char`s.
+- `main.rs` — the terminal, the event loop and nothing else. Raw mode and the alternate screen are
+  entered under an RAII guard, because `?`, an early return and a panic all skip a cleanup call
+  and none of them skips a drop.
+
+Two rules a change here must keep. **A failed refresh never destroys a snapshot still worth
+reading**: a first failure is `Unavailable`, a later one is `Stale` carrying the original
+`read_at`, and a success clears the error with the value. And **the two panes fail apart**: `bd`
+being unreadable says nothing about the fleet. The header is the one place they meet — while
+either pane is retrying it says `refreshing...`, otherwise it carries the newest failure's time,
+and the key hint stays `g retry` until both panes are fresh.
 
 ## Gotchas
 

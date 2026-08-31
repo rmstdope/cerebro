@@ -63,6 +63,11 @@ M-x cerebro                       # in your own
 Everything below can be done from a terminal, and almost nobody does. The Emacs fleet view lists
 every agent on the roster with its state, the bead or PR it is on, and how long it has been there.
 
+**This is the view that operates the fleet**, and the only one: every key below, every trigger,
+every stop flag and every state file it deletes belongs to it. There is a second, read-only view
+for watching — `.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering* — which
+shows the same rows and the same queues and can do none of this.
+
 | Key | Does |
 |---|---|
 | `s` | start the agent on this row, in an Emacs-owned `vterm` session |
@@ -580,8 +585,26 @@ bd update <id> --remove-label human                        # back to a planner
 
 ## Watching without interfering
 
-The fleet view is the short answer — the agent list, the bead panel and the sweeps in one buffer. In
-a terminal:
+The fleet view is the short answer — the agent list, the bead panel and the sweeps in one buffer.
+
+If you only want to watch, and especially from a machine or a terminal without Emacs, there is a
+standalone read-only view:
+
+```bash
+.claude/cerebro/scripts/cerebro-tui     # needs cargo; anywhere inside the consumer
+```
+
+It draws the same fleet rows and the same six queues — Claimed, Planned unclaimed, Being planned,
+Unplanned, Waiting on you, Merged unverified — refreshing the fleet every five seconds and the
+board every thirty. `↑`/`↓` scroll a line, `PgUp`/`PgDn` a viewport, `g` refreshes both panes,
+`q`/`Esc`/`Ctrl-C` quits. If one of the two readers fails, that pane keeps its last good data and
+says when it went stale; the other carries on.
+
+It is a reader and only a reader: no `s`, no `k`, no `f`, no priority keys, no sweep actions — it
+starts nothing, ends nothing and writes nothing at all. Everything under *The fleet view is the
+console* still needs Emacs, and the two may run side by side on one repository.
+
+In a terminal:
 
 ```bash
 bd ready --label planned      # what builders can pick up

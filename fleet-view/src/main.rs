@@ -21,7 +21,7 @@ use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use cerebro_tui::app::{App, AppAction, FleetWorker};
+use cerebro_tui::app::{App, AppAction, FleetWorker, WorkWorker};
 use cerebro_tui::readers::{Programs, ReadError, ReaderPaths};
 use cerebro_tui::ui;
 
@@ -91,7 +91,10 @@ fn reader_paths(read: impl Fn(&str) -> Option<String>) -> Result<ReaderPaths, St
 type Fatal = Box<dyn std::error::Error>;
 
 fn start(paths: ReaderPaths) -> Result<(), Fatal> {
-    let worker = FleetWorker::spawn(paths, Programs::default());
+    // One worker per pane: a thirty-second `bd` behind a five-second `ps` would make each wait
+    // for the other, which is the one thing two independently refreshed panes must not do.
+    let fleet_worker = FleetWorker::spawn(paths.clone(), Programs::default());
+    let work_worker = WorkWorker::spawn(paths, Programs::default());
     let mut app = App::new();
 
     // Raw mode and the alternate screen are entered HERE and nowhere else, under a guard whose
@@ -102,7 +105,14 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let mut events = CrosstermEvents;
-    let result = run(&mut terminal, &mut events, &mut app, &worker, Utc::now);
+    let result = run(
+        &mut terminal,
+        &mut events,
+        &mut app,
+        &fleet_worker,
+        &work_worker,
+        Utc::now,
+    );
     guard.leave()?;
     result
 }
@@ -113,7 +123,8 @@ fn run<B: Backend, E: Events>(
     terminal: &mut Terminal<B>,
     events: &mut E,
     app: &mut App,
-    worker: &FleetWorker,
+    fleet_worker: &FleetWorker,
+    work_worker: &WorkWorker,
     clock: impl Fn() -> DateTime<Utc>,
 ) -> Result<(), Fatal>
 where
@@ -127,28 +138,31 @@ where
         let area = Rect::new(0, 0, size.width, size.height);
         let metrics = ui::metrics(app, now, area);
         // A page is a page of the frame just drawn, so PageDown moves by what the navigator can
-        // actually see rather than by a number chosen in advance.
+        // actually see rather than by a number chosen in advance. It is the whole document's
+        // viewport, not either pane's own height: the two panes are one scrolling document.
         let viewport_lines = metrics.viewport_lines.max(1);
         // Clamped from the document that was just drawn, never before it: a refresh that returns
         // the same rows must leave the navigator looking at the same line.
         app.clamp_scroll(metrics.document_lines, metrics.viewport_lines);
 
-        if let Some(result) = worker.poll() {
+        // Each answer updates only its own pane. Neither poll blocks.
+        if let Some(result) = fleet_worker.poll() {
             app.finish_refresh(result, clock());
         }
-
-        if app.on_tick(Instant::now()) == AppAction::RefreshFleet {
-            request_refresh(app, worker, &clock);
+        if let Some(result) = work_worker.poll() {
+            app.finish_work_refresh(result, clock());
         }
+
+        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, &clock);
 
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    match app.on_key(key, viewport_lines) {
-                        AppAction::Quit => break,
-                        AppAction::RefreshFleet => request_refresh(app, worker, &clock),
-                        AppAction::None => {}
+                    let action = app.on_key(key, viewport_lines);
+                    if action == AppAction::Quit {
+                        break;
                     }
+                    dispatch(action, app, fleet_worker, work_worker, &clock);
                 }
                 // A resize needs nothing but the redraw at the top of the loop.
                 _ => {}
@@ -158,20 +172,36 @@ where
     Ok(())
 }
 
-/// One request, if the slot is free. A worker that has stopped answering is a failed refresh on
-/// screen rather than a silent `refreshing...` forever.
-fn request_refresh(app: &mut App, worker: &FleetWorker, clock: &impl Fn() -> DateTime<Utc>) {
-    if !app.begin_refresh() {
-        return;
+/// Turn one `AppAction` into requests. `RefreshBoth` asks each pane in turn and never as a pair:
+/// a fleet read already in flight must not swallow the work retry the navigator pressed `g` for.
+fn dispatch(
+    action: AppAction,
+    app: &mut App,
+    fleet_worker: &FleetWorker,
+    work_worker: &WorkWorker,
+    clock: &impl Fn() -> DateTime<Utc>,
+) {
+    let now = Instant::now();
+    if matches!(action, AppAction::RefreshFleet | AppAction::RefreshBoth)
+        && app.begin_refresh(now)
+        && !fleet_worker.request()
+    {
+        app.finish_refresh(Err(worker_gone("fleet reader")), clock());
     }
-    if !worker.request() {
-        app.finish_refresh(
-            Err(ReadError::Spawn {
-                source: "fleet reader".into(),
-                message: "the reader thread has stopped".into(),
-            }),
-            clock(),
-        );
+    if matches!(action, AppAction::RefreshWork | AppAction::RefreshBoth)
+        && app.begin_work_refresh(now)
+        && !work_worker.request()
+    {
+        app.finish_work_refresh(Err(worker_gone("work reader")), clock());
+    }
+}
+
+/// A worker that has stopped answering is a failed refresh on screen rather than a silent
+/// `refreshing...` forever.
+fn worker_gone(source: &str) -> ReadError {
+    ReadError::Spawn {
+        source: source.to_string(),
+        message: "the reader thread has stopped".into(),
     }
 }
 
@@ -364,10 +394,41 @@ mod main_tests {
         }
     }
 
-    fn worker() -> FleetWorker {
-        // A worker whose programs do not exist: every read fails at once, which is the loop's
-        // ordinary failure path and needs no fixture on disk.
-        FleetWorker::spawn(
+    /// A fixed list of keystrokes, handed to the loop one per poll. `ScriptedEvents` above says
+    /// only "always the same key"; this says what a navigator typed, in order.
+    struct QueuedEvents {
+        keys: std::collections::VecDeque<crossterm::event::KeyCode>,
+    }
+
+    impl QueuedEvents {
+        fn new(keys: Vec<crossterm::event::KeyCode>) -> Self {
+            Self { keys: keys.into() }
+        }
+        fn remaining(&self) -> usize {
+            self.keys.len()
+        }
+    }
+
+    impl Events for QueuedEvents {
+        fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+            Ok(!self.keys.is_empty())
+        }
+        fn read(&mut self) -> io::Result<Event> {
+            let code = self
+                .keys
+                .pop_front()
+                .ok_or_else(|| io::Error::other("no keystroke left"))?;
+            Ok(Event::Key(crossterm::event::KeyEvent::new(
+                code,
+                crossterm::event::KeyModifiers::NONE,
+            )))
+        }
+    }
+
+    fn nowhere() -> (ReaderPaths, Programs) {
+        // Programs that do not exist: every read fails at once, which is the loop's ordinary
+        // failure path and needs no fixture on disk.
+        (
             ReaderPaths {
                 consumer_root: "/nonexistent".into(),
                 shared_root: "/nonexistent".into(),
@@ -378,6 +439,16 @@ mod main_tests {
                 ps: "/nonexistent/ps".into(),
             },
         )
+    }
+
+    fn worker() -> FleetWorker {
+        let (paths, programs) = nowhere();
+        FleetWorker::spawn(paths, programs)
+    }
+
+    fn work_worker() -> WorkWorker {
+        let (paths, programs) = nowhere();
+        WorkWorker::spawn(paths, programs)
     }
 
     #[test]
@@ -398,6 +469,7 @@ mod main_tests {
                 &mut ScriptedEvents { poll_fails: false, read_fails: false },
                 &mut app,
                 &worker(),
+                &work_worker(),
                 Utc::now,
             )
             .unwrap_err();
@@ -421,6 +493,7 @@ mod main_tests {
                 &mut ScriptedEvents { poll_fails: true, read_fails: false },
                 &mut app,
                 &worker(),
+                &work_worker(),
                 Utc::now,
             )
             .unwrap_err();
@@ -445,6 +518,7 @@ mod main_tests {
                 &mut ScriptedEvents { poll_fails: false, read_fails: true },
                 &mut app,
                 &worker(),
+                &work_worker(),
                 Utc::now,
             )
             .is_err());
@@ -480,6 +554,7 @@ mod main_tests {
                 &mut ScriptedEvents { poll_fails: false, read_fails: false },
                 &mut app,
                 &worker(),
+                &work_worker(),
                 Utc::now,
             )
             .unwrap();
@@ -487,6 +562,53 @@ mod main_tests {
             guard.leave().unwrap();
         }
         assert_eq!(*events.borrow(), vec!["enter", "leave"], "leaving twice is refused");
+    }
+
+    /// A `bd` that takes a whole second must not stop the screen from drawing or the keyboard
+    /// from working for that second. The work read runs on its own thread, so the loop goes on
+    /// handling every keystroke while it is still in flight.
+    #[test]
+    fn work_reader_never_blocks_terminal_events() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let slow_bd = dir.path().join("bd");
+        std::fs::write(&slow_bd, "#!/usr/bin/env bash\nsleep 1\nprintf '[]\\n'\n").unwrap();
+        let mut perms = std::fs::metadata(&slow_bd).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&slow_bd, perms).unwrap();
+
+        let work = WorkWorker::spawn(
+            ReaderPaths {
+                consumer_root: dir.path().to_path_buf(),
+                shared_root: dir.path().to_path_buf(),
+                scripts_dir: dir.path().to_path_buf(),
+            },
+            Programs { bd: slow_bd, ps: "/nonexistent/ps".into() },
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        let mut app = App::new();
+        let mut events = QueuedEvents::new(vec![
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyCode::PageDown,
+            crossterm::event::KeyCode::Char('q'),
+        ]);
+
+        let started = Instant::now();
+        run(&mut terminal, &mut events, &mut app, &worker(), &work, Utc::now).unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(events.remaining() == 0, "every keystroke was read while bd was running");
+        assert!(app.quit, "and the last of them still quit");
+        assert!(
+            app.work.refreshing,
+            "the work read is genuinely still in flight - otherwise this proves nothing"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "the loop waited for the reader: {elapsed:?}"
+        );
     }
 
     #[test]

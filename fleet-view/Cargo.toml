@@ -12,6 +12,10 @@ ratatui = { version = "0.30.2", features = ["crossterm_0_29"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# Terminal cells, not bytes or `char's: a Work title carrying a wide glyph would otherwise
+# overflow the pane and push its border off the row. A direct dependency rather than Ratatui's
+# transitive copy - a crate this one measures with is this crate's own contract.
+unicode-width = "0.2"
 # A `roster' or `ps' that never returns must become a visible pane failure rather than an
 # eternal `refreshing...': this is what puts a wall-clock bound on a reader's child.
 wait-timeout = "0.2"

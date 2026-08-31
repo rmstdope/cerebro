@@ -28,13 +28,14 @@
 <body>
 <h1>Agreed read-only Ratatui view</h1>
 <p>The standalone <code>cerebro-tui</code> is a live, read-only companion to the Emacs supervisor.
-It writes no state and exposes only refresh and quit keys. Emacs-only armed/standby state is not a
-shared contract, so an agent with no live session reads as dead here even when Emacs intends to
-start it later.</p>
+It writes no state and exposes only scrolling, refresh, and quit keys. Up/Down scroll one line;
+PageUp/PageDown scroll one viewport. A refresh preserves the current line and clamps it only when
+the new content is shorter. Emacs-only armed/standby state is not a shared contract, so an agent
+with no live session reads as dead here even when Emacs intends to start it later.</p>
 
 <h2>Populated view</h2>
 <div class="term">
-  <div class="bar">Cerebro — read-only <span class="dim">| refreshed 12:14:05 | g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="bar">Cerebro — read-only <span class="dim">| ↑/↓/PgUp/PgDn scroll | g refresh | q/Esc/Ctrl-C quit</span></div>
   <div class="pane"><div class="title">Fleet 19</div><pre>  AGENT         ROLE           STATE       BEAD      FOR
 <span class="green">● Xavier</span>        planner        plan        cb-kcs    18m 18m
 <span class="green">● Beast</span>         planner        plan        cb-vyp     7m  7m
@@ -66,14 +67,14 @@ start it later.</p>
 
 <h2>Initial loading and stale refresh</h2>
 <div class="term">
-  <div class="bar">Cerebro — read-only <span class="dim">| g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="bar">Cerebro — read-only <span class="dim">| ↑/↓/PgUp/PgDn scroll | g refresh | q/Esc/Ctrl-C quit</span></div>
   <div class="pane"><div class="title">Fleet</div><pre><span class="dim">Loading fleet...</span></pre></div>
   <div class="pane"><div class="title">Work</div><pre><span class="dim">Loading work...</span></pre></div>
 </div>
 <br>
 <div class="term">
   <div class="bar">Cerebro — read-only <span class="gold">| stale — refresh failed at 12:14:05</span>
-    <span class="dim">| g retry | q/Esc/Ctrl-C quit</span></div>
+    <span class="dim">| ↑/↓/PgUp/PgDn scroll | g retry | q/Esc/Ctrl-C quit</span></div>
   <div class="pane"><div class="title">Fleet — refreshed 12:14:04</div><pre><span class="green">● Xavier</span>        planner        plan        cb-kcs    18m 18m
 <span class="green">● Beast</span>         planner        plan        cb-vyp     7m  7m</pre></div>
   <div class="pane stale"><div class="title">Work — stale since 12:14:05</div><pre><span class="gold">bd list failed: database is locked</span>
@@ -86,7 +87,7 @@ start it later.</p>
 
 <h2>Malformed agent state</h2>
 <div class="term">
-  <div class="bar">Cerebro — read-only <span class="dim">| refreshed 12:14:05 | g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="bar">Cerebro — read-only <span class="dim">| ↑/↓/PgUp/PgDn scroll | g refresh | q/Esc/Ctrl-C quit</span></div>
   <div class="pane"><div class="title">Fleet 4</div><pre>  AGENT         ROLE           STATE       BEAD      FOR
 <span class="green">● Xavier</span>        planner        plan        cb-kcs    18m 18m
 <span class="red">! Beast</span>         planner        invalid
@@ -106,7 +107,7 @@ start it later.</p>
 <span class="dim">○ Psylocke</span>       dead
 
 <span class="dim">Below 64 columns, Role and For are hidden.
-The screen scrolls vertically.</span></pre></div>
+Up/Down and PageUp/PageDown scroll the screen.</span></pre></div>
   <div class="pane"><div class="title">Work</div><pre><strong>Unplanned 31</strong>
   cb-001  P1 This title is cut at...
   cb-002  P1 A second item

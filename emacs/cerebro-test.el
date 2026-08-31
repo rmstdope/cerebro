@@ -207,8 +207,17 @@ are replaced by ROOT and OTHER, and ARGS gets the program name prepended,
 since the table holds the command line after it.  A malformed row is an
 error, not a skipped case."
   (let ((sub (lambda (s)
+               ;; `\n' in the field is a newline, and it is the table's only escape - the store's
+               ;; rows carry the marker as the first sentence of a whole prompt, which a
+               ;; line-based table cannot hold otherwise.  Elisp keeps its own parser rather than
+               ;; sourcing `tests/lib/session-args.sh' - it cannot - the same qualification
+               ;; `cerebro--log-line' already carries against `scripts/jsonl-log.sh'.  The table
+               ;; is what holds the two honest.
                (replace-regexp-in-string
-                "{other}" other (replace-regexp-in-string "{root}" root s t t) t t)))
+                "\\\\n" "\n"
+                (replace-regexp-in-string
+                 "{other}" other (replace-regexp-in-string "{root}" root s t t) t t)
+                t t)))
         rows)
     (with-temp-buffer
       (insert-file-contents cerebro-test--session-args-cases-file)
@@ -234,6 +243,16 @@ error, not a skipped case."
   (let ((rows (cerebro-test--session-args-cases "/Users/x/repos/cerebro" "/Users/x/repos/elsewhere")))
     (should (cl-some #'car rows))
     (should (cl-some (lambda (r) (not (car r))) rows))))
+
+(ert-deftest cerebro-test/session-args-table-renders-the-newline-escape ()
+  "`\\n' in a row's field is a newline, unescaped by every runner.
+The store's copy of the marker is the FIRST SENTENCE of a whole seed prompt
+rather than the whole field, and a line-based table cannot hold that shape
+without an escape.  A row written with the escape and tested as the two
+characters is a row that proves nothing about the shape it was added for."
+  (let ((rows (cerebro-test--session-args-cases "/Users/x/repos/cerebro" "/Users/x/repos/elsewhere")))
+    (should (cl-some (lambda (r) (string-match-p "\n" (nth 3 r))) rows))
+    (should-not (cl-some (lambda (r) (string-match-p "\\\\n" (nth 3 r))) rows))))
 
 (ert-deftest cerebro-test/session-args-p-answers-every-row-of-the-shared-table ()
   "The one rule, over the cases both implementations run.

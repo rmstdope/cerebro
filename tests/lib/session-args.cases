@@ -1,10 +1,11 @@
-# The liveness rule's cases, run by BOTH implementations of the rule:
+# The marker sentence's cases, run by EVERY reader of it:
 #
-#   cerebro--session-args-p   (emacs/cerebro.el)   via emacs/cerebro-test.el
+#   cerebro--session-args-p   (emacs/cerebro.el)    via emacs/cerebro-test.el
 #   scripts/agent-alive       (bash)                via tests/agent-alive.sh
+#   scripts/fleet-cost        (SQL and jq)          via tests/fleet-cost.sh
 #
-# The rule: a pid is <name>'s session of the fleet at <root> when its own command line carries
-# cerebro's own marker sentence, which `scripts/launch' puts at the head of every session's prompt:
+# The rule: a field is <name>'s session of the fleet at <root> when it carries cerebro's own
+# marker sentence, which `scripts/launch' puts at the head of every session's prompt:
 #
 #   This session is <Name> of the cerebro fleet rooted at <root>/. This sentence is how the fleet
 #   view proves the session belongs to this checkout; do not remove it.
@@ -13,12 +14,26 @@
 # at ' for the name, and `cerebro fleet rooted at <root>/' for the root - so the rule keeps the
 # two-test shape `cerebro--session-liveness' builds its three answers on. No provider's flag
 # spelling is evidence any more (cb-d59.3): `--name' is still passed, and proves nothing.
-# Add a case here and BOTH suites run it; a case that only one side answers is a divergence, which
-# is what this file exists to make impossible. Before this table each side kept its own list and
-# the two drifted, twice.
+# Add a case here and EVERY suite runs it; a case one side answers differently is a divergence,
+# which is what this file exists to make impossible. Before this table each side kept its own list
+# and the two drifted, twice; the third reader was added without subscribing at all, invented its
+# own fixture spellings, and reported a silent zero for a fleet that had spent ten thousand
+# credits that week (cb-d89, cb-akt).
 #
-# Format:  <alive|dead>  <name>  <{root}|{other}>  <command line after the program name>
-#   - fields are separated by runs of blanks; the command line is the rest of the line
+# THE FIELD IS NOT ALWAYS A COMMAND LINE. The row's last field is *the text a reader sees*: a
+# process's command line for `scripts/agent-alive' and `cerebro--session-args-p', and turn 0's
+# `user_message' for `scripts/fleet-cost'. `alive'/`dead' means *this field is NAME's session of
+# the fleet at ROOT* - answered as a predicate by the first two, and by the third as: extract the
+# name and the root from the field, and compare both.
+#
+# Format:  <alive|dead>  <name>  <{root}|{other}>  <the field>
+#   - fields are separated by runs of blanks; the field is the rest of the line
+#   - `\n' IN THE FIELD IS A NEWLINE, unescaped by every runner, and it is the only escape. A real
+#     turn 0 is the marker, a blank line, then the instruction, and a line-based table cannot hold
+#     that otherwise.
+#   - NO APOSTROPHE IN ANY ROW: tests/fleet-cost.sh interpolates the field into a `sqlite3' string
+#     literal, and scripts/launch avoids apostrophes in the marker for its own bash-3.2 reason.
+#   - KEEP A ROW'S FIELD SHORT: scripts/agent-alive reads it back with `ps -o args='.
 #   - <name> must be on the built-in roster (scripts/roster): the bash runner's fixture declares
 #     no roster of its own, and agent-alive refuses a name it does not know
 #   - {root}, {other} and {root}-hud are the three consumer roots the bash runner creates
@@ -44,3 +59,9 @@ alive  Cyclops  {other}  This session is Cyclops of the cerebro fleet rooted at 
 dead   Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {root}-hud/.
 # the previous launcher's carrier, which the new rule still recognises: no flag day on merge
 alive  Cyclops  {root}   --name Cyclops --append-system-prompt This session is Cyclops of the cerebro fleet rooted at {root}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.
+# the store's shape: the marker is the FIRST SENTENCE of a whole seed prompt, not the whole field.
+# `\n' is a newline, so the row carries the blank line scripts/launch writes between the marker and
+# the instruction. The second row is the probe fixture's shape - a session of another root - in
+# prompt shape, so "wrong root" and "prompt shape" meet in one row rather than only separately.
+alive  Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {root}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.\n\nYou are Cyclops.
+dead   Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {other}/. This sentence is how the fleet view proves the session belongs to this checkout; do not remove it.\n\nYou are Cyclops.

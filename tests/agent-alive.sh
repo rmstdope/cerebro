@@ -16,6 +16,11 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # fail, pass, git_q, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
+# session_args_render - the one bash reader of the shared case table.
+source "$repo_root/tests/lib/session-args.sh"
+
+# A newline, for the case pattern below: `$'\n'` inside a case pattern is not portable to bash 3.2.
+nl=$'\n'
 
 # The background `sleep's this suite starts to stand in for live sessions. The library's EXIT trap
 # calls suite_cleanup first, before it removes anything, so a failed assertion leaves none of them
@@ -72,7 +77,6 @@ pass "dead-for-a-live-pid-that-is-not-that-session"
 # way the hand-written cases they replace did: the table is read by the ERT suite too, which has no
 # roster to ask, and the fixture here declares none of its own and so runs the built-in fleet.
 cases="$repo_root/tests/lib/session-args.cases"
-[[ -r "$cases" ]] || fail "session-args table: cannot read $cases"
 tmp="$(new_fixture)"
 other="$(new_fixture)"
 # The three consumer roots a row may be rooted at. Rows do not require any of these to exist (the
@@ -87,20 +91,20 @@ mkdir -p "$tmp/.claude/cerebro/hooks" "$other/.claude/cerebro/hooks" "$tmp-hud/.
 # carried, for a reason that has nothing to do with the rule under test.
 printf '#!/usr/bin/env bash\nsleep 30\n' > "$work_dir/fake-session"
 chmod +x "$work_dir/fake-session"
+# One reader of the table, shared with every other bash subscriber - see tests/lib/session-args.sh
+# for why it writes a file rather than being piped from a subshell.
+expected_rows="$(session_args_render "$cases" "$tmp" "$other" "$work_dir/session-args.rendered")"
 rows=0
-while read -r expect name root args; do
-  case "$expect" in ''|'#'*) continue ;; esac
-  case "$root" in
-    '{root}')  root="$tmp" ;;
-    '{other}') root="$other" ;;
-    *) fail "session-args table: row $((rows+1)) names a root that is not {root} or {other}: $root" ;;
-  esac
-  args="${args//\{root\}/$tmp}"
-  args="${args//\{other\}/$other}"
-  # Unquoted on purpose: a row is a command line, and the process must carry it as separate
-  # arguments the way `scripts/launch' passes them. No row carries a quoted or globbing argument.
-  # shellcheck disable=SC2086
-  bash "$work_dir/fake-session" $args &
+saw_newline=0
+while IFS= read -r -d '' expect \
+   && IFS= read -r -d '' name \
+   && IFS= read -r -d '' root \
+   && IFS= read -r -d '' args; do
+  case "$args" in *"$nl"*) saw_newline=1 ;; esac
+  # ONE argument, not word-split: that is what keeps a newline in the field. It changes nothing
+  # else - `ps -o args=' joins argv with single spaces and quotes nothing, so every row that
+  # carried flags reads back byte-identically.
+  bash "$work_dir/fake-session" "$args" &
   pid=$!
   strays+=("$pid")
   for child in $(pgrep -P "$pid" 2>/dev/null || true); do strays+=("$child"); done
@@ -113,13 +117,20 @@ while read -r expect name root args; do
       if run_alive "$root" "$name"; then
         fail "session-args row $((rows+1)): expected dead, reported alive ($name at $root: $args)"
       fi ;;
-    *) fail "session-args table: row $((rows+1)) expects '$expect', not alive or dead" ;;
   esac
   rows=$((rows+1))
-done < "$cases"
-# A table nobody can read, or one that went empty, must not pass as "every row held".
-[[ "$rows" -ge 2 ]] || fail "session-args table: only $rows rows read from $cases"
+done < "$work_dir/session-args.rendered"
+# Assert the count rather than report one: a renderer that silently dropped rows would otherwise
+# pass here with a smaller number nobody reads.
+[[ "$rows" -eq "$expected_rows" ]] \
+  || fail "session-args table: rendered $expected_rows rows, consumed $rows"
 pass "every row of tests/lib/session-args.cases holds for agent-alive ($rows rows)"
+
+# The bash half of cerebro-test/session-args-table-renders-the-newline-escape: a row written with
+# the escape and read back as the two characters would prove nothing about the store's shape.
+[[ "$saw_newline" -eq 1 ]] \
+  || fail "session-args table: no rendered field carried a real newline - is the \\n escape unescaped?"
+pass "a row's \`\\n' renders as a real newline for the bash subscriber too"
 
 # --- dead-for-a-pid-that-no-longer-exists ---
 tmp="$(new_fixture)"

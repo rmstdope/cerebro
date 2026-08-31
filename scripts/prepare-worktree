@@ -37,8 +37,9 @@
 # Every check this script owns exits 2 with one line on stderr naming what is wrong. In both
 # modes, once the tree exists, it always then:
 #   1. git -C <path> submodule update --init --recursive   - the missing line this bead is about.
-#   2. whatever the project declared as `install' (project-conf), or nothing if it declared none
-#      and none can be detected - most repositories have nothing to install into a fresh tree, and
+#   2. whatever the project declared as `install' (a whitespace-tokenized argument vector) or
+#      `install_shell' (an explicit Bash fragment), or nothing if it declared neither. Only
+#      `install' can be detected: most repositories have nothing to install into a fresh tree, and
 #      that must be a no-op rather than a failure.
 #   3. --prewarm only: whatever the project declared as `prewarm'. Never inferred.
 # and finally prints, on stdout, the tree's path and its current short sha - the sha is what a
@@ -165,19 +166,44 @@ fi
 # under `set -euo pipefail' an assumed `pnpm install' took the whole script down before it could
 # print the path its caller was waiting for. `prewarm' is never detected - project-conf says why.
 install_cmd="$("$script_dir/project-conf" install 2>/dev/null)"
+install_shell_cmd="$("$script_dir/project-conf" install_shell 2>/dev/null)"
 prewarm_cmd="$("$script_dir/project-conf" prewarm 2>/dev/null)"
 
-# Deliberately UNQUOTED, both here and below: the value is a whole command line - `pnpm install
-# --frozen-lockfile' - and must word-split into a command and its arguments. project-conf reads it
-# as one `rest' running to the end of the line for exactly this reason. The limitation that falls
-# out of it: a value whose arguments need embedded quoting cannot be expressed this way. `eval'
-# would allow it and is not worth the exposure in a script that runs whatever a tracked file says,
-# so a consumer needing quoting points the key at a script of their own instead.
-if [[ -n "$install_cmd" ]]; then
+# `project-conf install' may infer a package-manager command. A declared `install_shell' replaces
+# that inference, but not an explicitly declared `install', which remains a configuration error.
+install_is_declared=0
+conf="$consumer/.cerebro/project.conf"
+if [[ -f "$conf" && -r "$conf" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    line="${line%%#*}"
+    read -r key value <<<"$line"
+    if [[ "$key" == "install" && -n "$value" ]]; then
+      install_is_declared=1
+      break
+    fi
+  done < "$conf"
+fi
+
+# `install' is deliberately limited to normal whitespace tokenization. Its values are command
+# vectors, not shell source: embedded quotes remain unsupported, but glob expansion, operators,
+# redirects, and other shell syntax cannot change what runs. `install_shell' is the explicit,
+# mutually exclusive opt-in for a command fragment that needs Bash syntax.
+if [[ "$install_is_declared" -eq 1 && -n "$install_shell_cmd" ]]; then
+  echo "prepare-worktree: install and install_shell cannot both be declared; choose one execution contract" >&2
+  exit 2
+elif [[ -n "$install_shell_cmd" ]]; then
+  if [[ "$dry_run" -eq 1 ]]; then
+    echo "prepare-worktree: would install with shell: $install_shell_cmd" >&2
+  else
+    (cd "$abs_path" && bash -euo pipefail -c "$install_shell_cmd" >&2)
+  fi
+elif [[ -n "$install_cmd" ]]; then
+  read -r -a install_argv <<<"$install_cmd"
   if [[ "$dry_run" -eq 1 ]]; then
     echo "prepare-worktree: would install with: $install_cmd" >&2
   else
-    (cd "$abs_path" && $install_cmd >&2)
+    (cd "$abs_path" && "${install_argv[@]}" >&2)
   fi
 else
   echo "prepare-worktree: no install declared or detected - installing nothing" >&2

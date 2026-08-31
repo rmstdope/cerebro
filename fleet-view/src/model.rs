@@ -233,6 +233,21 @@ fn root_needle(root: &Path) -> String {
     format!("cerebro fleet rooted at {trimmed}/")
 }
 
+/// The whole marker sentence for NAME at ROOT, composed from the two needles above.
+///
+/// Test-only, and deliberately built rather than typed: `scripts/marker-readers` holds every file
+/// that spells the sentence to being a declared reader, and this crate's one declared spelling is
+/// the needles in this file. A fixture elsewhere in the crate asks for the sentence here instead
+/// of writing a fourth copy of it.
+#[cfg(test)]
+pub(crate) fn marker_sentence(name: &str, root: &Path) -> String {
+    format!(
+        "{}{}/.",
+        name_needle(name),
+        root.to_string_lossy().trim_end_matches('/')
+    )
+}
+
 /// Tri-state liveness for one process's command-line field as NAME's session of the fleet at
 /// ROOT. `--name` alone is never evidence (a Claude Code flag, still passed, proves nothing); the
 /// marker sentence `scripts/launch` opens every session's prompt with is the only proof.

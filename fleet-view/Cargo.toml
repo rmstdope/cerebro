@@ -5,9 +5,16 @@ edition = "2021"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
+crossterm = "0.29.0"
+# `crossterm_0_29' so ratatui's backend writes through the same crossterm this crate reads
+# events with: the default pulls a second, older copy in beside it for no gain.
+ratatui = { version = "0.30.2", features = ["crossterm_0_29"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# A `roster' or `ps' that never returns must become a visible pane failure rather than an
+# eternal `refreshing...': this is what puts a wall-clock bound on a reader's child.
+wait-timeout = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

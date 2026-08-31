@@ -3,13 +3,16 @@
 //! This crate is read-only by construction: it may read files and run
 //! `scripts/roster`, `ps` and `bd --readonly`, but it exposes no write,
 //! launch, stop, trigger, supervision or state-cleanup operation. Emacs
-//! remains the sole supervisor. Rendering (`cb-vyp.2`) and the bead panel
-//! (`cb-vyp.3`) are later children; this crate only re-exports pure
-//! parsing/derivation (`model`) and the impure readers that feed it
-//! (`readers`).
+//! remains the sole supervisor. The bead panel is `cb-vyp.3`; since cb-vyp.2
+//! this crate also carries the screen itself - the pure parsing/derivation
+//! (`model`), the impure readers that feed it (`readers`), the display state
+//! and refresh schedule (`app`) and the renderer (`ui`). The binary in
+//! `main.rs` owns nothing but the terminal, the event loop and the worker.
 
+pub mod app;
 pub mod model;
 pub mod readers;
+pub mod ui;
 
 pub use model::{
     derive_fleet, parse_processes, parse_roster, partition_beads, session_liveness, AgentKind,
@@ -17,5 +20,8 @@ pub use model::{
     StateObservation, StateRecord, WorkBuckets,
 };
 pub use readers::{
-    read_beads, read_processes, read_roster, read_states, Programs, ReadError, ReaderPaths,
+    read_beads, read_fleet, read_processes, read_roster, read_states, Programs, ReadError,
+    ReaderPaths,
 };
+pub use app::{App, AppAction, FleetWorker, Pane, PaneContent};
+pub use ui::{draw, metrics, Metrics};

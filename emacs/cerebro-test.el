@@ -8577,6 +8577,35 @@ and neither failure is visible until a session is started twice or never."
   (should (equal (cerebro--supervision-mode-line '(draining nil 2))
                  "handoff pending: invalid fleet_supervisor")))
 
+(ert-deftest cerebro-test/a-failed-reconciliation-says-so-rather-than-blaming-the-lease ()
+  "A reconciliation that signalled may still be holding the listener.
+
+So it gets its own reason word and its own sentence: `read-only: the supervision
+lease could not be taken' would be false twice over when the holder is us."
+  (let ((mode '(read-only reconcile-failed "could not reconcile ownership (x)")))
+    (should (equal (cerebro--supervision-mode-line mode)
+                   "read-only: ownership could not be worked out"))
+    (should (equal (cerebro--supervision-refusal mode)
+                   "Ownership could not be worked out; this Emacs view is read-only"))
+    (should-not (cerebro--supervision-may-act-p mode))
+    (should-not (cerebro--supervision-may-end-p mode))))
+
+(ert-deftest cerebro-test/a-failed-reconciliation-is-reported-once ()
+  "The detail reaches the log, once per distinct message, re-arming on recovery."
+  (with-temp-buffer
+    (setq-local cerebro--supervision-reported nil)
+    (let ((reported nil))
+      (cl-letf (((symbol-function 'cerebro--report-error)
+                 (lambda (_context format &rest args)
+                   (push (apply #'format format args) reported))))
+        (let ((mode '(read-only reconcile-failed "boom")))
+          (cerebro--report-supervision-error mode)
+          (cerebro--report-supervision-error mode)
+          (cerebro--report-supervision-error '(supervising))
+          (cerebro--report-supervision-error mode))
+        (should (= (length reported) 2))
+        (should (cl-every (lambda (line) (string-match-p "boom" line)) reported))))))
+
 ;; --- reader contracts: the real script, feeding the real decision -----------
 
 (defun cerebro-test--supervisor-consumer (declaration)
@@ -8770,6 +8799,7 @@ this, and that is what the reviewer looks for."
                   (read-only invalid "rat")
                   (read-only owned-by tui)
                   (read-only lock-error "bound elsewhere")
+                  (read-only reconcile-failed "could not reconcile ownership (x)")
                   (read-only not-owned)))
     (should-not (cerebro--supervision-may-act-p mode))
     (should-not (cerebro--supervision-may-end-p mode))
@@ -8912,7 +8942,7 @@ fails if the reporting call is removed from it."
       (delete-directory tmp t))))
 
 (ert-deftest cerebro-test/a-reconciliation-that-signals-reports-once-not-per-tick ()
-  "The fail-closed branch is throttled like every other lock error.
+  "The fail-closed branch is throttled the way a lock error is.
 
 It exists for a condition that persists, so reporting per tick would put
 seventeen thousand lines a day into `errors.jsonl\=' - the log CLAUDE.md calls

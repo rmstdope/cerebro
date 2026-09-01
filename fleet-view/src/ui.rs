@@ -86,13 +86,12 @@ pub fn supervision_title(mode: &SupervisionMode) -> String {
         SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration(raw)) => {
             format!("Cerebro — read-only; invalid fleet_supervisor {raw:?}")
         }
-        // The detail - which file, what was wrong with it - goes to stderr when the screen exits,
-        // never into the header: an absolute path in a status line is unreadable at any width,
-        // and the navigator asked for the short sentence here (cb-kcs.1).
         // True of every lock error, which "held by another process" was not: a bind that
         // succeeded and a record that then could not be written, and a bind refused for a reason
         // that is not `AddrInUse`, are both states in which nobody holds anything. The detail -
-        // which endpoint, which other checkout - is printed on the way out.
+        // which endpoint, which other checkout - goes to stderr when the screen exits, never into
+        // the header: an absolute path in a status line is unreadable at any width, and the
+        // navigator asked for the short sentence here (cb-kcs.1).
         SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_)) => {
             "Cerebro — read-only; the supervision lease could not be taken".to_string()
         }

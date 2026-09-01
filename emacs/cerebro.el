@@ -4655,14 +4655,16 @@ consume a row of fleet data.  The wording is theirs, approved in cb-kcs.1."
     ;; which of the two it is rather than the bare role word (the navigator's wording, cb-kcs.1).
     (`(read-only owned-by emacs) "read-only: another Emacs supervises this checkout")
     (`(read-only owned-by tui) "read-only: Ratatui supervises")
-    ;; The detail - which file, what was wrong with it - goes to `errors.jsonl' and the echo area,
-    ;; never onto the mode line: an absolute path there is unreadable and pushes everything else
-    ;; off the window.
     ;; True of every lock error, which "held by another process" was not: a record that could not
-    ;; be written, a bind refused for some other reason, and a reconciliation that signalled are
-    ;; all states in which nobody holds anything. The detail goes to `errors.jsonl' and the echo
-    ;; area; an absolute path on a mode line is unreadable and pushes everything else off.
+    ;; be written, and a bind refused for some other reason, are both states in which nobody holds
+    ;; anything. The detail - which file, what was wrong with it - goes to `errors.jsonl' and the
+    ;; echo area, never onto the mode line: an absolute path there is unreadable and pushes
+    ;; everything else off the window.
     (`(read-only lock-error ,_) "read-only: the supervision lease could not be taken")
+    ;; This Emacs may be holding a live listener while this is true - what failed is working out
+    ;; whose the checkout is, not taking the lease. Ratatui's `DeclarationUnreadable' is the same
+    ;; distinction from the other side.
+    (`(read-only reconcile-failed ,_) "read-only: ownership could not be worked out")
     (`(read-only . ,_) "read-only")
     (`(draining nil ,_) "handoff pending: invalid fleet_supervisor")
     (`(draining ,_ ,_) "handoff pending")
@@ -4675,6 +4677,8 @@ consume a row of fleet data.  The wording is theirs, approved in cb-kcs.1."
     (`(draining ,_ ,count)
      (format "Handoff pending: %d session%s still hosted; only f and k act now"
              count (if (= count 1) "" "s")))
+    (`(read-only reconcile-failed ,_)
+     "Ownership could not be worked out; this Emacs view is read-only")
     (_ "Ratatui owns supervision; this Emacs view is read-only")))
 
 ;;; The readers, and the lease itself
@@ -4936,10 +4940,10 @@ arms nothing, because changing the owner must not itself launch processes."
     mode))
 
 (defvar-local cerebro--supervision-reported nil
-  "The last lock-error message this buffer reported, so it reports it once.")
+  "The last supervision fault message this buffer reported, so it reports it once.")
 
 (defun cerebro--report-supervision-error (mode)
-  "Log MODE\='s lock error, if it has one and it is new.
+  "Log MODE\='s ownership fault - a lock error or a failed reconciliation - if it is new.
 
 The mode line carries the short sentence the navigator approved; the DETAIL -
 which endpoint, which other checkout, which record was malformed - has to reach
@@ -4948,7 +4952,7 @@ design.  It goes to `errors.jsonl\=' and the echo area, once per distinct
 message: this runs every five seconds, and the same sentence a thousand times
 over is not a report."
   (pcase mode
-    (`(read-only lock-error ,message)
+    ((or `(read-only lock-error ,message) `(read-only reconcile-failed ,message))
      (unless (equal message cerebro--supervision-reported)
        (setq cerebro--supervision-reported message)
        (cerebro--report-error "supervision" "supervision: %s" message)))
@@ -4966,11 +4970,11 @@ may no longer own."
       (cerebro--reconcile-supervision repo-root)
     (error
      (setq cerebro--supervision
-           (list 'read-only 'lock-error
+           (list 'read-only 'reconcile-failed
                  (format "could not reconcile ownership (%s)"
                          (error-message-string error))))
      (cerebro--apply-supervision-mode-line cerebro--supervision)
-     ;; Through the same once-per-distinct-message gate as every other lock error, and NOT a bare
+     ;; Through the same once-per-distinct-message gate a lock error goes through, and NOT a bare
      ;; `cerebro--report-error': this branch exists for a condition that PERSISTS, so reporting it
      ;; per tick would put seventeen thousand lines a day into the log CLAUDE.md calls the short
      ;; one and the one to be pointed at, and blank the echo area every five seconds while it did.

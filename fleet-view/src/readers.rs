@@ -173,8 +173,19 @@ fn run_with_timeout(
 /// The roster, via `<scripts_dir>/roster` - the one place the fleet is declared
 /// (`emacs/cerebro.el:117-129`).
 pub fn read_roster(paths: &ReaderPaths) -> Result<Vec<RosterEntry>, ReadError> {
+    read_roster_with_timeout(paths, COMMAND_TIMEOUT)
+}
+
+/// `read_roster`, with the wall-clock bound as a parameter — the shape `read_beads_with_timeout`
+/// already has, and for the mirror of its reason: a test proves the timeout path in milliseconds,
+/// and a test that wants the *reader* rather than the bound gives itself room the machine cannot
+/// take away. See the tests' `TEST_TIMEOUT`.
+pub(crate) fn read_roster_with_timeout(
+    paths: &ReaderPaths,
+    timeout: Duration,
+) -> Result<Vec<RosterEntry>, ReadError> {
     let program = paths.scripts_dir.join("roster");
-    let stdout = run(&program, &[], Some(&paths.consumer_root))?;
+    let stdout = run_with_timeout(&program, &[], Some(&paths.consumer_root), timeout)?;
     let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
         source: program.display().to_string(),
         message: e.to_string(),
@@ -196,8 +207,17 @@ pub fn read_roster(paths: &ReaderPaths) -> Result<Vec<RosterEntry>, ReadError> {
 pub fn read_configured_supervisor(
     paths: &ReaderPaths,
 ) -> Result<Result<SupervisorKind, String>, ReadError> {
+    read_configured_supervisor_with_timeout(paths, COMMAND_TIMEOUT)
+}
+
+/// `read_configured_supervisor`, with the wall-clock bound as a parameter. See
+/// `read_roster_with_timeout`.
+pub(crate) fn read_configured_supervisor_with_timeout(
+    paths: &ReaderPaths,
+    timeout: Duration,
+) -> Result<Result<SupervisorKind, String>, ReadError> {
     let program = paths.scripts_dir.join("fleet-supervisor");
-    match run(&program, &[], Some(&paths.consumer_root)) {
+    match run_with_timeout(&program, &[], Some(&paths.consumer_root), timeout) {
         Ok(stdout) => {
             let word = String::from_utf8_lossy(&stdout).trim().to_string();
             Ok(SupervisorKind::parse(&word).ok_or(word))
@@ -262,7 +282,15 @@ pub fn read_states(paths: &ReaderPaths, roster: &[RosterEntry]) -> StateInputs {
 /// Every system process, via `ps -axo pid=,ppid=,args=` - matching `cerebro--system-processes`'s
 /// contract (`emacs/cerebro.el:3255-3271`), fed to the pure `model::parse_processes`.
 pub fn read_processes(programs: &Programs) -> Result<Vec<ProcessRow>, ReadError> {
-    let stdout = run(&programs.ps, &["-axo", "pid=,ppid=,args="], None)?;
+    read_processes_with_timeout(programs, COMMAND_TIMEOUT)
+}
+
+/// `read_processes`, with the wall-clock bound as a parameter. See `read_roster_with_timeout`.
+pub(crate) fn read_processes_with_timeout(
+    programs: &Programs,
+    timeout: Duration,
+) -> Result<Vec<ProcessRow>, ReadError> {
+    let stdout = run_with_timeout(&programs.ps, &["-axo", "pid=,ppid=,args="], None, timeout)?;
     let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
         source: programs.ps.display().to_string(),
         message: e.to_string(),
@@ -341,9 +369,18 @@ fn read_work_with_timeout(
 /// either subprocess is returned as itself: a fleet that could not be read is never an empty
 /// fleet, which would read as "every agent is dead".
 pub fn read_fleet(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<FleetRow>, ReadError> {
-    let roster = read_roster(paths)?;
+    read_fleet_with_timeout(paths, programs, COMMAND_TIMEOUT)
+}
+
+/// `read_fleet`, with the wall-clock bound as a parameter. See `read_roster_with_timeout`.
+pub(crate) fn read_fleet_with_timeout(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    timeout: Duration,
+) -> Result<Vec<FleetRow>, ReadError> {
+    let roster = read_roster_with_timeout(paths, timeout)?;
     let states = read_states(paths, &roster);
-    let processes = read_processes(programs)?;
+    let processes = read_processes_with_timeout(programs, timeout)?;
     Ok(model::derive_fleet(
         &roster,
         &states,
@@ -356,6 +393,22 @@ pub fn read_fleet(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<FleetR
 mod tests {
     use super::*;
     use crate::partition_beads;
+
+    /// The bound the tests give a fixture, and why it is not production's five seconds.
+    ///
+    /// Every reader here spawns a child under a wall-clock bound, and the tests below assert that
+    /// a *trivial* fixture succeeds. Five seconds is a statement about a healthy machine: measured
+    /// on this one, three concurrent `cargo test` runs beside a fleet building in its worktrees is
+    /// enough to make a two-line bash script exceed it, and the suite then fails with
+    /// `Timeout { source: ".../bd", seconds: 5 }` in whichever tests happened to be running — three
+    /// or four different ones each time, which reads as flakiness rather than as one cause. It went
+    /// red three times on this branch's own gate before it was tracked down.
+    ///
+    /// So a test that is about the reader gives itself room the machine cannot take away, and a
+    /// test that is about the *bound* keeps passing its own tiny value. Production is untouched:
+    /// `read_roster`, `read_processes`, `read_beads`, `read_work` and `read_fleet` still bound
+    /// their children at `COMMAND_TIMEOUT`, which is the five seconds `CLAUDE.md` documents.
+    const TEST_TIMEOUT: Duration = Duration::from_secs(60);
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     fn repo_root() -> PathBuf {
@@ -383,7 +436,7 @@ mod tests {
     /// and a test whose fixture sleeps is never re-run, because a timeout is not this error.
     fn retry_if_text_busy<T>(mut call: impl FnMut() -> Result<T, ReadError>) -> Result<T, ReadError> {
         const TEXT_FILE_BUSY: &str = "os error 26";
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + TEST_TIMEOUT;
         loop {
             match call() {
                 Err(ReadError::Spawn { message, .. })
@@ -414,7 +467,7 @@ mod tests {
             shared_root: root.clone(),
             scripts_dir: root.join("scripts"),
         };
-        let roster = retry_if_text_busy(|| read_roster(&paths)).expect("this checkout's scripts/roster must run");
+        let roster = retry_if_text_busy(|| read_roster_with_timeout(&paths, TEST_TIMEOUT)).expect("this checkout's scripts/roster must run");
         assert!(!roster.is_empty(), "this repository's roster must declare at least one agent");
 
         // Pure consumption: feed the impure read straight into the pure deriver, with no state
@@ -482,7 +535,7 @@ mod tests {
             "#!/usr/bin/env bash\nprintf '%s\\n' '    1     0 /sbin/launchd' '  123     1 some prog --flag a  b'\n",
         );
         let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd") };
-        let rows = retry_if_text_busy(|| read_processes(&programs)).unwrap();
+        let rows = retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)).unwrap();
         assert_eq!(
             rows,
             vec![
@@ -501,7 +554,7 @@ mod tests {
             "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
         );
         let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd") };
-        let err = retry_if_text_busy(|| read_processes(&programs)).unwrap_err();
+        let err = retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
                 assert_eq!(status, Some(3));
@@ -514,11 +567,11 @@ mod tests {
     #[test]
     fn readers_report_spawn_and_decode_failures() {
         let programs = Programs { ps: PathBuf::from("/does/not/exist/ps"), bd: PathBuf::from("bd") };
-        assert!(matches!(retry_if_text_busy(|| read_processes(&programs)), Err(ReadError::Spawn { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)), Err(ReadError::Spawn { .. })));
         let dir = tempfile::tempdir().unwrap();
         let bad_ps = write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf '\\377'\n");
         let programs = Programs { ps: bad_ps, bd: PathBuf::from("bd") };
-        assert!(matches!(retry_if_text_busy(|| read_processes(&programs)), Err(ReadError::Invalid { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)), Err(ReadError::Invalid { .. })));
     }
 
     /// The declaration reader, against the real script: default, both values, and the refusal
@@ -558,20 +611,20 @@ mod tests {
 
         std::fs::write(&declaration, "emacs").unwrap();
         assert_eq!(
-            retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
+            retry_if_text_busy(|| read_configured_supervisor_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
             Ok(SupervisorKind::Emacs)
         );
 
         std::fs::write(&declaration, "tui").unwrap();
         assert_eq!(
-            retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
+            retry_if_text_busy(|| read_configured_supervisor_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
             Ok(SupervisorKind::Tui)
         );
 
         // The refusal is an answer: the raw word survives, and it is NOT rounded to the default.
         std::fs::write(&declaration, "rat").unwrap();
         assert_eq!(
-            retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
+            retry_if_text_busy(|| read_configured_supervisor_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
             Err("rat".to_string())
         );
     }
@@ -615,7 +668,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        let beads = retry_if_text_busy(|| read_beads(&paths, &programs)).unwrap();
+        let beads = retry_if_text_busy(|| read_beads_with_timeout(&paths, &programs, TEST_TIMEOUT)).unwrap();
         assert_eq!(beads.len(), 1);
         assert_eq!(beads[0].id, "cb-1");
         assert_eq!(partition_beads(beads).unplanned.len(), 1);
@@ -636,7 +689,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        assert!(matches!(retry_if_text_busy(|| read_beads(&paths, &programs)), Err(ReadError::Invalid { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_beads_with_timeout(&paths, &programs, TEST_TIMEOUT)), Err(ReadError::Invalid { .. })));
     }
 
     #[test]
@@ -652,7 +705,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        let err = retry_if_text_busy(|| read_beads(&paths, &programs)).unwrap_err();
+        let err = retry_if_text_busy(|| read_beads_with_timeout(&paths, &programs, TEST_TIMEOUT)).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
                 assert_eq!(status, Some(2));
@@ -702,7 +755,7 @@ mod tests {
             scripts_dir: scripts,
         };
         let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
-        let rows = retry_if_text_busy(|| read_fleet(&paths, &programs)).unwrap();
+        let rows = retry_if_text_busy(|| read_fleet_with_timeout(&paths, &programs, TEST_TIMEOUT)).unwrap();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].name, "Xavier");
@@ -770,7 +823,7 @@ mod tests {
             "loud",
             "#!/usr/bin/env bash\nhead -c 200000 /dev/zero | tr '\\0' 'x'\nhead -c 200000 /dev/zero | tr '\\0' 'e' >&2\n",
         );
-        let stdout = run_with_timeout(&loud, &[], None, Duration::from_secs(5)).unwrap();
+        let stdout = run_with_timeout(&loud, &[], None, TEST_TIMEOUT).unwrap();
         assert_eq!(stdout.len(), 200_000);
     }
 
@@ -801,7 +854,7 @@ mod tests {
             "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
         );
         let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
-        match retry_if_text_busy(|| read_fleet(&paths, &programs)) {
+        match retry_if_text_busy(|| read_fleet_with_timeout(&paths, &programs, TEST_TIMEOUT)) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(3));
                 assert!(stderr.contains("boom"));
@@ -816,7 +869,7 @@ mod tests {
             "#!/usr/bin/env bash\necho 'roster: refusing' >&2\nexit 2\n",
         );
         write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf ''\n");
-        match retry_if_text_busy(|| read_fleet(&paths, &programs)) {
+        match retry_if_text_busy(|| read_fleet_with_timeout(&paths, &programs, TEST_TIMEOUT)) {
             Err(ReadError::Exit { status, source, .. }) => {
                 assert_eq!(status, Some(2));
                 assert!(source.ends_with("roster"), "expected the roster to be named: {source}");
@@ -867,7 +920,7 @@ mod tests {
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
 
-        let work = retry_if_text_busy(|| read_work(&paths, &programs)).expect("the fixture bd answers the panel's argv");
+        let work = retry_if_text_busy(|| read_work_with_timeout(&paths, &programs, TEST_TIMEOUT)).expect("the fixture bd answers the panel's argv");
         assert_eq!(ids(&work.claimed), ["cb-claimed"]);
         assert_eq!(ids(&work.planned), ["cb-planned"]);
         assert_eq!(ids(&work.being_planned), ["cb-held"]);
@@ -914,7 +967,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        match retry_if_text_busy(|| read_work(&paths, &programs)) {
+        match retry_if_text_busy(|| read_work_with_timeout(&paths, &programs, TEST_TIMEOUT)) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(1));
                 assert!(stderr.contains("database is locked"), "{stderr}");
@@ -937,7 +990,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        assert!(matches!(retry_if_text_busy(|| read_work(&paths, &programs)), Err(ReadError::Invalid { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_work_with_timeout(&paths, &programs, TEST_TIMEOUT)), Err(ReadError::Invalid { .. })));
     }
 
     /// A `bd` that never answers is killed, reaped and reported. Without the bound the Work pane

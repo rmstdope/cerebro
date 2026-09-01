@@ -177,10 +177,9 @@ git push
 # then wait for CI again, per *Waiting, without ending your run*, and merge on green
 ```
 
-You do **not** obtain another review: one review per bead, obtained before the merge and never
-again, and a docs commit after it is exactly the kind of head movement that rule already
-accepts. This is also why the bar is high — most runs add nothing and merge straight away, so the
-cycle is paid only when something was genuinely learned.
+The retrospective commit changes the head, so it returns through the review loop and then CI before
+merge. If there is no retrospective file, no extra round is introduced. Ordinary beads usually cost
+one review; the additional round is required whenever the head changes.
 
 ### The format
 
@@ -561,11 +560,12 @@ plan gets, so run or read the thing before writing the sentence.
 Anything touching **approach, scope, or what the user sees** goes back, by the same hand-back block as a missing section, worktree included. You were given a plan precisely so those decisions were made elsewhere; making
 them here is the failure mode this split exists to prevent.
 
-## The review — you get exactly one
+## The review loop
 
-**One review per bead, and you obtain it yourself.** No review is requested from GitHub, and none is
-waited for. The second pair of eyes is a `reviewer` sub-agent you spawn once, when the gate is green
-and the PR is open, and the standing approval you merge on rests on it — read the consumer's root
+**Review the exact head being merged, and obtain it yourself.** No review is requested from GitHub,
+and none is waited for. The second pair of eyes is a `reviewer` sub-agent you spawn synchronously
+when the gate is green and the PR is open, and the standing approval you merge on rests on at least
+one usable review of that head — read the consumer's root
 `CLAUDE.md` and its *Four Eye Principle* if you want the authority, because it is there and nowhere
 else.
 
@@ -588,10 +588,15 @@ the CLI's default, never on a model named `-`. Say out loud in the session which
 which model you are about to review on, the way `scripts/launch` does, so a review on an unexpected
 model is traceable to the file nobody remembers editing.
 
-This is one round. Not after you address the findings, not after a rebase, not after a fix that
-changed more than the finding asked for. If you catch yourself weighing whether a push is
-"substantial enough" to deserve another look, the answer is no — the rule exists so a bead costs one
-review rather than an unbounded number of them.
+Before each invocation, read and retain `reviewed_head` from
+`gh pr view <n> --json headRefOid`. Give the reviewer the diff, bead plan, and reviewer checklist,
+never your reasoning. A tool failure, empty response, or response lacking both findings and an
+explicit no-findings verdict is unusable; retry that head up to three attempts, heartbeating between
+attempts, then use the hand-back path and record the failed attempts. For a usable response, post
+the complete review with its `reviewed_head` in the heading and answer every finding. Re-read
+`headRefOid` after answers: any difference requires a fresh review, with the counter reset. Every
+later push or server-side head change (finding or CI fixes, retrospective, rebase, or update-branch)
+also returns here; do not decide whether a change is substantial enough.
 
 ### Getting the review
 
@@ -622,7 +627,7 @@ findings, most important first, each naming the file and the case; when it found
 replaced by the italic line and nothing else:
 
 ```markdown
-**Review** — this pull request was reviewed before merge under the Four Eye Principle, by an agent
+**Review (`reviewed_head`: `<sha>`)** — this pull request was reviewed before merge under the Four Eye Principle, by an agent
 given the diff and the bead's plan, and not the implementer's reasoning.
 
 1. <finding, naming the file and the case>
@@ -670,11 +675,11 @@ Once every finding is answered:
 
 and wait for CI as *Waiting, without ending your run* describes — after first checking the head can
 merge, per *Merging*'s merge-state check, if anything was pushed since the PR opened. *Red CI* below
-stays in this same `ci` phase — a fix-and-push does not change what you are waiting on.
+returns every fix-and-push through the review loop; only after that review is complete does it return
+to `ci` and wait for checks on the reviewed head.
 
-**If the sub-agent cannot be spawned, or returns nothing usable**: leave the PR open, escalate by
-the hand-back block, worktree included, and end the pass. No retry — this is the only escalation
-route the review has, and a second attempt at a spawn that failed is not a second pair of eyes.
+**If three attempts for one head are unusable**: leave the PR open, record the attempts, and escalate
+by the hand-back block, worktree included, and end the pass.
 
 A review a person or a bot leaves on the PR anyway is read and answered like any other comment. It
 is welcome; it is not what the approval rests on, and it does not replace the round above.
@@ -767,6 +772,11 @@ An update (or a resolved rebase) that brings in commits touching nothing the bea
 can still leave nothing new to test beyond what CI already ran — if the resulting diff against main
 is empty, close the PR unmerged rather than merging a no-op — a retrospective here recorded exactly
 that, an empty bump PR after a rebase.
+
+Immediately before merging, require all three facts together: the PR's current `headRefOid` equals
+the most recently reviewed head, mergeability is not behind or conflicting, and required checks for
+that head are green. If the SHA differs, return to the review loop; if mergeability or checks differ,
+follow the existing rebase and CI paths.
 
 ```bash
 gh pr merge <n> --squash --delete-branch

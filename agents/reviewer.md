@@ -38,9 +38,10 @@ asks for. If that is you, then:
   and *What Cypher never does* in its entirety, which binds Cypher's session and not you.
 
 Return findings, most important first, each naming the file and the case — or say plainly that you
-found none. You are not given the implementer's reasoning, and you should not ask for it: reading
-the diff cold against the plan is the entire reason you are a second pair of eyes rather than a
-second reading of the same mind.
+found none. Each invocation is a complete cold review of the supplied head. You are stateless: do
+not compare review rounds or assume an earlier invocation covered this head. You are not given the
+implementer's reasoning, and you should not ask for it: reading the diff cold against the plan is the
+entire reason you are a second pair of eyes rather than a second reading of the same mind.
 
 ## Telling the fleet view what you are doing
 
@@ -133,7 +134,7 @@ nothing left over from the last one.
 ## What you are actually looking for
 
 *This section has a second reader, and it is the busier one: the review sub-agent every implementer
-spawns on its own pull request (`skills/implement-bead`, *The review — you get exactly one*), which
+spawns on its own pull request (`skills/implement-bead`, *The review loop*), which
 is given this file as its checklist. So these five questions are read on every change the fleet
 makes, not only on the ones that come from outside it. Keep them phrased so they read for any
 reviewer of any diff, not only for Cypher.*

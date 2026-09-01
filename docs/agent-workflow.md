@@ -627,10 +627,10 @@ Honest numbers from building this repository's own harness:
   review round has usually been overtaken, and the rules require catching it up (on GitHub, not
   locally) plus a fresh CI cycle before it can merge. That is deliberate: a green run on a stale tree
   is evidence about a tree that will never exist.
-- **One review per bead**, obtained before the merge and never again. Fixes and rebases move the
-  head past what the reviewer read, and that is accepted rather than chased: what a review is owed is
-  an answer to every comment, not a re-read of the answers. So the review you see on a merged PR
-  describes the PR as it stood when it was reviewed, which is worth knowing when you read one later.
+- **A usable review of the merge head**, obtained before the merge. Ordinary beads still usually cost
+ one review, but unusable attempts and any later head change add rounds. Each review names the head it
+ covered, every finding from every usable round is answered, and the merged head has independent review
+ evidence rather than a review of an older tree.
 - **Nothing merges unreviewed and nothing merges red.** The `main` ruleset enforces the second on the
   server; the first is the agents following the rule.
 - **Interactive agents cost nothing between passes** — the view ends them, implementers included

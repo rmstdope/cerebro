@@ -65,11 +65,19 @@ impl<T> PaneContent<T> {
     }
 }
 
-/// One pane's content plus whether a read for it is in flight right now.
+/// One pane's content plus whether a read for it is in flight right now, and its own scroll
+/// offset. Bundling all three here is what keeps them from drifting apart: a pane's rendered
+/// content, its refresh status and its viewport position are one unit, not three parallel fields
+/// on `App` that could disagree about which pane they belong to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pane<T> {
     pub content: PaneContent<T>,
     pub refreshing: bool,
+    /// The first line of this pane's own body the viewport shows. Kept as a pane-local offset
+    /// rather than a selected row, because there is no selection in this read-only screen and a
+    /// refresh must leave the navigator looking at the same place. Fleet and Work are separate
+    /// widgets and scroll independently - this offset belongs to this pane and no other.
+    pub scroll: usize,
 }
 
 impl<T> Pane<T> {
@@ -117,6 +125,19 @@ impl<T> Pane<T> {
             }
         }
     }
+
+    /// Pull this pane's own scroll back only when its own rendered content no longer reaches it.
+    ///
+    /// Called after a frame is laid out, never before: it is the *rendered* content that decides
+    /// what is scrollable, and a refresh that returns the same content must leave the navigator
+    /// looking at exactly where they left it. Each pane clamps against its own geometry alone -
+    /// a shrinking Work pane must never pull back the Fleet pane's offset, or the reverse.
+    pub fn clamp_scroll(&mut self, content_lines: usize, viewport_lines: usize) {
+        let max = content_lines.saturating_sub(viewport_lines);
+        if self.scroll > max {
+            self.scroll = max;
+        }
+    }
 }
 
 impl<T> Default for Pane<T> {
@@ -124,8 +145,45 @@ impl<T> Default for Pane<T> {
         Self {
             content: PaneContent::Loading,
             refreshing: false,
+            scroll: 0,
         }
     }
+}
+
+/// Which of the two widgets the keyboard acts on. Fleet is focused on startup; `Tab` and
+/// `Shift-Tab` both toggle it, and arrow/page keys move only the focused pane's own scroll.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaneFocus {
+    #[default]
+    Fleet,
+    Work,
+}
+
+impl PaneFocus {
+    /// The other pane. There are exactly two, so toggling is its own inverse.
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Fleet => Self::Work,
+            Self::Work => Self::Fleet,
+        }
+    }
+}
+
+/// One pane's geometry for a drawn frame: how many lines its body came to, and how many the
+/// viewport actually shows once its border is taken off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaneMetrics {
+    pub content_lines: usize,
+    pub viewport_lines: usize,
+}
+
+/// The geometry one draw of `App` at one `now` in one `Rect` would produce, one `PaneMetrics` per
+/// widget. `ui::metrics` derives this from the same pure layout `ui::draw` renders from, so a
+/// page size, a clamp and a range cue can never be computed from three different geometries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Metrics {
+    pub fleet: PaneMetrics,
+    pub work: PaneMetrics,
 }
 
 /// What the caller must do about the key or tick it just handed over. The app itself starts no
@@ -147,11 +205,8 @@ pub enum AppAction {
 pub struct App {
     pub fleet: Pane<Vec<FleetRow>>,
     pub work: Pane<WorkBuckets>,
-    /// The first document line the viewport shows. Kept as a document offset rather than a
-    /// selected row, because there is no selection in this read-only screen and a refresh must
-    /// leave the navigator looking at the same place. One offset for the whole document, panes
-    /// and all: the two panes scroll together because they are one document.
-    pub scroll: usize,
+    /// Which widget the keyboard currently acts on. Fleet by default.
+    pub focus: PaneFocus,
     pub quit: bool,
     last_fleet_request: Option<Instant>,
     last_work_request: Option<Instant>,
@@ -168,7 +223,7 @@ impl App {
         Self {
             fleet: Pane::default(),
             work: Pane::default(),
-            scroll: 0,
+            focus: PaneFocus::default(),
             quit: false,
             last_fleet_request: None,
             last_work_request: None,
@@ -200,18 +255,19 @@ impl App {
         }
     }
 
-    /// The whole keyboard contract: scroll, refresh, quit. No selection, no detail, no lifecycle
-    /// key - this screen may not act on the fleet at all.
+    /// The whole keyboard contract: focus, scroll, refresh, quit. No selection, no detail, no
+    /// lifecycle key - this screen may not act on the fleet at all.
     ///
-    /// `viewport_lines` is what PageUp/PageDown move by: the document height the last frame
-    /// actually showed, so a page is a page of what the navigator is looking at.
+    /// `viewport_lines` is what PageUp/PageDown move the focused pane by: that pane's own body
+    /// height the last frame actually showed, so a page is a page of what the navigator is
+    /// looking at in the widget they are looking at. `App::focused_viewport` is the one place the
+    /// at-least-one floor on that number is applied; this method never applies its own.
     pub fn on_key(&mut self, key: KeyEvent, viewport_lines: usize) -> AppAction {
         // A terminal that reports key releases (Windows, and any terminal with the kitty
         // protocol on) would otherwise scroll twice per keystroke.
         if key.kind == KeyEventKind::Release {
             return AppAction::None;
         }
-        let page = viewport_lines.max(1);
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quit = true;
@@ -222,23 +278,53 @@ impl App {
                 AppAction::Quit
             }
             KeyCode::Char('g') => AppAction::RefreshBoth,
+            // Both bindings toggle the same way, so both are discoverable regardless of which
+            // one a terminal or a navigator reaches for first. A boundary clamps within the
+            // focused pane; it never transfers focus on its own.
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.focus = self.focus.toggled();
+                AppAction::None
+            }
             KeyCode::Up => {
-                self.scroll = self.scroll.saturating_sub(1);
+                let scroll = self.focused_scroll_mut();
+                *scroll = scroll.saturating_sub(1);
                 AppAction::None
             }
             KeyCode::Down => {
-                self.scroll = self.scroll.saturating_add(1);
+                let scroll = self.focused_scroll_mut();
+                *scroll = scroll.saturating_add(1);
                 AppAction::None
             }
             KeyCode::PageUp => {
-                self.scroll = self.scroll.saturating_sub(page);
+                let scroll = self.focused_scroll_mut();
+                *scroll = scroll.saturating_sub(viewport_lines);
                 AppAction::None
             }
             KeyCode::PageDown => {
-                self.scroll = self.scroll.saturating_add(page);
+                let scroll = self.focused_scroll_mut();
+                *scroll = scroll.saturating_add(viewport_lines);
                 AppAction::None
             }
             _ => AppAction::None,
+        }
+    }
+
+    /// A mutable handle on whichever pane's scroll offset the keyboard currently moves. Both
+    /// panes' `scroll` fields are `usize`, so this returns the same type regardless of which one
+    /// is focused - `on_key` never needs to know which pane it moved.
+    fn focused_scroll_mut(&mut self) -> &mut usize {
+        match self.focus {
+            PaneFocus::Fleet => &mut self.fleet.scroll,
+            PaneFocus::Work => &mut self.work.scroll,
+        }
+    }
+
+    /// The focused pane's own viewport height, floored at one page. The single owner of that
+    /// floor: callers pass this straight to `on_key` and never apply their own `.max(1)`.
+    pub fn focused_viewport(&self, metrics: Metrics) -> usize {
+        match self.focus {
+            PaneFocus::Fleet => metrics.fleet.viewport_lines.max(1),
+            PaneFocus::Work => metrics.work.viewport_lines.max(1),
         }
     }
 
@@ -281,17 +367,6 @@ impl App {
         self.work.finish(result, at);
     }
 
-    /// Pull `scroll` back only when the document no longer reaches it.
-    ///
-    /// Called after a frame is laid out, never before: it is the *rendered* document that decides
-    /// what is scrollable, and a refresh that returns the same rows must leave the offset exactly
-    /// where the navigator left it.
-    pub fn clamp_scroll(&mut self, document_lines: usize, viewport_lines: usize) {
-        let max = document_lines.saturating_sub(viewport_lines);
-        if self.scroll > max {
-            self.scroll = max;
-        }
-    }
 }
 
 /// One background thread per pane, running that pane's reader.
@@ -459,7 +534,9 @@ mod tests {
         let mut app = App::new();
         assert!(matches!(app.fleet.content, PaneContent::Loading));
         assert!(matches!(app.work.content, PaneContent::Loading));
-        assert_eq!(app.scroll, 0);
+        assert_eq!(app.focus, PaneFocus::Fleet, "Fleet is focused on startup");
+        assert_eq!(app.fleet.scroll, 0);
+        assert_eq!(app.work.scroll, 0);
         assert!(!app.quit);
 
         let start = Instant::now();
@@ -716,33 +793,40 @@ mod tests {
         }
     }
 
+    /// Each pane clamps against its own content and viewport alone: a shrinking Work pane must
+    /// never pull back the Fleet pane's offset, and the reverse.
     #[test]
-    fn either_pane_refresh_preserves_and_clamps_document_scroll() {
+    fn each_pane_preserves_and_clamps_its_own_scroll() {
         let mut app = App::new();
         app.finish_refresh(Ok((0..20).map(|i| row(&format!("A{i}"))).collect()), at(0));
         app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(0));
-        app.scroll = 12;
+        app.fleet.scroll = 12;
+        app.work.scroll = 3;
 
-        // Same-sized document: the offset is exactly where it was.
-        app.clamp_scroll(24, 10);
-        assert_eq!(app.scroll, 12);
+        // Same-sized content: both offsets are exactly where they were.
+        app.fleet.clamp_scroll(24, 10);
+        app.work.clamp_scroll(10, 5);
+        assert_eq!(app.fleet.scroll, 12);
+        assert_eq!(app.work.scroll, 3);
 
-        // A refresh of either pane that returns the same content does not touch the offset.
+        // A refresh of either pane that returns the same content does not touch either offset.
         app.finish_refresh(Ok((0..20).map(|i| row(&format!("A{i}"))).collect()), at(5));
-        assert_eq!(app.scroll, 12);
+        assert_eq!(app.fleet.scroll, 12);
         app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(5));
-        assert_eq!(app.scroll, 12);
+        assert_eq!(app.work.scroll, 3);
 
-        // Only a shorter document pulls it back, and only as far as the last full viewport - and
-        // the document is both panes, so a shrinking work pane clamps the fleet's offset too.
+        // Only a shorter pane's own content pulls its own offset back, and only as far as its own
+        // last full viewport - the other pane's offset is untouched.
         app.finish_work_refresh(Ok(WorkBuckets::default()), at(10));
-        app.clamp_scroll(5, 10);
-        assert_eq!(app.scroll, 0);
+        app.work.clamp_scroll(2, 10);
+        assert_eq!(app.work.scroll, 0);
+        assert_eq!(app.fleet.scroll, 12, "the fleet offset is untouched by the work pane shrinking");
 
-        app.scroll = 40;
+        app.fleet.scroll = 40;
         app.finish_refresh(Ok(vec![row("Xavier")]), at(10));
-        app.clamp_scroll(30, 10);
-        assert_eq!(app.scroll, 20);
+        app.fleet.clamp_scroll(30, 10);
+        assert_eq!(app.fleet.scroll, 20);
+        assert_eq!(app.work.scroll, 0, "and the work offset is untouched by the fleet clamping");
     }
 
     // --- the keyboard ---------------------------------------------------------------------------
@@ -751,31 +835,90 @@ mod tests {
     fn scroll_keys_move_by_line_or_viewport() {
         let mut app = App::new();
         assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
-        assert_eq!(app.scroll, 1);
+        assert_eq!(app.fleet.scroll, 1);
         assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
-        assert_eq!(app.scroll, 2);
+        assert_eq!(app.fleet.scroll, 2);
         app.on_key(key(KeyCode::Up), 10);
-        assert_eq!(app.scroll, 1);
+        assert_eq!(app.fleet.scroll, 1);
 
         // The top is a floor, never a negative offset.
         app.on_key(key(KeyCode::Up), 10);
         app.on_key(key(KeyCode::Up), 10);
-        assert_eq!(app.scroll, 0);
+        assert_eq!(app.fleet.scroll, 0);
 
         app.on_key(key(KeyCode::PageDown), 10);
-        assert_eq!(app.scroll, 10, "a page is the viewport the frame just showed");
+        assert_eq!(app.fleet.scroll, 10, "a page is the viewport the frame just showed");
         app.on_key(key(KeyCode::PageDown), 7);
-        assert_eq!(app.scroll, 17);
+        assert_eq!(app.fleet.scroll, 17);
         app.on_key(key(KeyCode::PageUp), 7);
-        assert_eq!(app.scroll, 10);
+        assert_eq!(app.fleet.scroll, 10);
         app.on_key(key(KeyCode::PageUp), 100);
-        assert_eq!(app.scroll, 0);
+        assert_eq!(app.fleet.scroll, 0);
 
         // A key release is the same keystroke reported twice; it moves nothing.
         let mut release = key(KeyCode::Down);
         release.kind = KeyEventKind::Release;
         assert_eq!(app.on_key(release, 10), AppAction::None);
-        assert_eq!(app.scroll, 0);
+        assert_eq!(app.fleet.scroll, 0);
+    }
+
+    #[test]
+    fn tab_and_backtab_toggle_the_focused_pane() {
+        let mut app = App::new();
+        assert_eq!(app.focus, PaneFocus::Fleet, "Fleet is focused on startup");
+
+        assert_eq!(app.on_key(key(KeyCode::Tab), 10), AppAction::None);
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert_eq!(app.on_key(key(KeyCode::Tab), 10), AppAction::None);
+        assert_eq!(app.focus, PaneFocus::Fleet, "Tab toggles back");
+
+        // Shift-Tab (BackTab) is the same two-pane toggle as Tab, not its own direction.
+        assert_eq!(app.on_key(key(KeyCode::BackTab), 10), AppAction::None);
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert_eq!(app.on_key(key(KeyCode::BackTab), 10), AppAction::None);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+    }
+
+    /// Arrow and page keys act on the focused pane alone; the boundary clamps within it and never
+    /// transfers focus.
+    #[test]
+    fn scroll_keys_move_only_the_focused_pane() {
+        let mut app = App::new();
+        app.on_key(key(KeyCode::Down), 10);
+        assert_eq!(app.fleet.scroll, 1);
+        assert_eq!(app.work.scroll, 0, "Work is not focused, so it does not move");
+
+        app.on_key(key(KeyCode::Tab), 10);
+        assert_eq!(app.focus, PaneFocus::Work);
+        app.on_key(key(KeyCode::PageDown), 6);
+        assert_eq!(app.work.scroll, 6, "the page moves by the focused pane's own viewport");
+        assert_eq!(app.fleet.scroll, 1, "the fleet offset is untouched while work is focused");
+
+        app.on_key(key(KeyCode::Up), 10);
+        assert_eq!(app.work.scroll, 5);
+        assert_eq!(app.fleet.scroll, 1);
+
+        app.on_key(key(KeyCode::Tab), 10);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        app.on_key(key(KeyCode::PageUp), 100);
+        assert_eq!(app.fleet.scroll, 0, "the top is a floor for the fleet pane too");
+        assert_eq!(app.work.scroll, 5, "and work is untouched now that fleet is focused");
+    }
+
+    #[test]
+    fn focused_viewport_is_the_focused_panes_own_and_never_zero() {
+        let mut app = App::new();
+        let metrics = Metrics {
+            fleet: PaneMetrics { content_lines: 30, viewport_lines: 8 },
+            work: PaneMetrics { content_lines: 12, viewport_lines: 0 },
+        };
+        assert_eq!(app.focused_viewport(metrics), 8, "Fleet is focused by default");
+
+        app.focus = PaneFocus::Work;
+        assert_eq!(
+            app.focused_viewport(metrics), 1,
+            "a pane with no visible rows still yields at least one page line"
+        );
     }
 
     #[test]

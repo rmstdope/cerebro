@@ -595,10 +595,12 @@ standalone read-only view:
 ```
 
 It draws the same fleet rows and the same six queues — Claimed, Planned unclaimed, Being planned,
-Unplanned, Waiting on you, Merged unverified — refreshing the fleet every five seconds and the
-board every thirty. `↑`/`↓` scroll a line, `PgUp`/`PgDn` a viewport, `g` refreshes both panes,
-`q`/`Esc`/`Ctrl-C` quits. If one of the two readers fails, that pane keeps its last good data and
-says when it went stale; the other carries on.
+Unplanned, Waiting on you, Merged unverified — as two separately bordered widgets stacked one above
+the other, Fleet on top and Work below, each scrolling independently of the other. Fleet refreshes
+every five seconds and Work every thirty. `Tab`/`Shift-Tab` swap which widget is focused; the
+focused one draws a bright-blue thick-line border and `↑`/`↓`/`PgUp`/`PgDn` scroll only it. `g`
+refreshes both panes regardless of focus, `q`/`Esc`/`Ctrl-C` quits. If one of the two readers fails,
+that pane keeps its last good data and says when it went stale; the other carries on.
 
 It is a reader and only a reader: no `s`, no `k`, no `f`, no priority keys, no sweep actions — it
 starts nothing, ends nothing and writes nothing at all. Everything under *The fleet view is the

@@ -8,6 +8,10 @@
 //! (`model`), the impure readers that feed it (`readers`), the display state
 //! and refresh schedule (`app`) and the renderer (`ui`). The binary in
 //! `main.rs` owns nothing but the terminal, the event loop and the worker.
+//! Since cb-42k, Fleet and Work are two independently focused, independently
+//! scrolling widgets rather than one shared document - `PaneFocus`, and each
+//! pane's own `PaneMetrics` inside `Metrics`, are what the event loop and the
+//! renderer share to keep that true.
 
 pub mod app;
 pub mod model;
@@ -23,5 +27,5 @@ pub use readers::{
     read_beads, read_fleet, read_processes, read_roster, read_states, read_work, Programs,
     ReadError, ReaderPaths,
 };
-pub use app::{App, AppAction, FleetWorker, Pane, PaneContent, WorkWorker};
-pub use ui::{draw, metrics, Metrics};
+pub use app::{App, AppAction, FleetWorker, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, WorkWorker};
+pub use ui::{draw, metrics};

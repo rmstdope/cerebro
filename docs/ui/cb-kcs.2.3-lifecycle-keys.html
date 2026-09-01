@@ -74,18 +74,21 @@ cancelling keystroke is <em>consumed</em>: <code>q</code> at this prompt cancels
 also quit.</p>
 
 <h2>A key that cannot act says why</h2>
-<p>Five sentences, in gold, in the notice slot. They are the sentences the Emacs view already says in
-its echo area, so one situation reads the same wherever you meet it.</p>
+<p>Five sentences, in gold, in the notice slot. Four of them are the sentences the Emacs view already
+says in its echo area, so one situation reads the same wherever you meet it. The read-only one is
+this view's own: Emacs has two reasons for being read-only and can name the owner in a fixed
+sentence, while this view has six and its <em>title</em> already names which — so the notice adds
+nothing to it and can never contradict it.</p>
 <table>
 <tr><th>When</th><th>Line</th></tr>
-<tr><td><code>s</code>, <code>f</code> or <code>k</code>, read-only</td><td><code>Emacs owns supervision; this view is read-only</code></td></tr>
+<tr><td><code>s</code>, <code>f</code> or <code>k</code>, read-only</td><td><code>This view is read-only; it starts and stops nothing</code></td></tr>
 <tr><td><code>s</code>, handing over</td><td><code>Handoff pending: 3 sessions still hosted; only f and k act now</code></td></tr>
 <tr><td><code>f</code> or <code>k</code>, agent not started by this view</td><td><code>Storm is running outside this view - stop it from its own terminal</code></td></tr>
 <tr><td><code>f</code> or <code>k</code>, agent not running</td><td><code>Storm is not running</code></td></tr>
 <tr><td><code>s</code>, agent already up</td><td><code>Storm is already up</code></td></tr>
 </table>
 <div class="term">
-  <div class="bar">Cerebro — read-only; Emacs owns supervision<span class="gold"> | Emacs owns supervision; this view is read-only</span></div>
+  <div class="bar">Cerebro — read-only; Emacs owns supervision<span class="gold"> | This view is read-only; it starts and stops nothing</span></div>
   <div class="cols"><div class="col left">
     <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
 <span class="sel"><span class="dim">○ Rogue</span>     standby       </span></pre></div>
@@ -138,6 +141,23 @@ that move around it.</p>
 <div class="term"><div class="bar">Cerebro — supervising<span class="dim"> | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</span></div></div>
 <p>A read-only header offers none of the three, and is unchanged from today.</p>
 <div class="term"><div class="bar">Cerebro — read-only; Emacs owns supervision<span class="dim"> | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | g refresh | q/Esc/Ctrl-C quit</span></div></div>
+
+<h3>After a kill, the pass is retained like any other</h3>
+<p>A killed child is a child that exited, so it keeps its scrollback and gets the ordinary ended
+title. What the agent had reached is usually why it was stopped.</p>
+<div class="term">
+  <div class="bar">Cerebro — supervising<span class="dim"> | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="cols"><div class="col left">
+    <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="red">○ Cyclops</span>   dead          </span></pre></div>
+  </div><div class="col right">
+    <div class="pane"><div class="title">Cyclops — ended 15:42 <span class="dim">[retained until next start]</span></div><pre>  Running tests…
+  <span class="dim">…</span>
+<span class="red">Cyclops was killed by signal 9.</span>
+
+<span class="dim">End of retained scrollback. Up/Down scroll while focused.</span></pre></div>
+  </div></div>
+</div>
 
 <h2>A launch that was refused</h2>
 <p>Unchanged from <code>docs/ui/cb-kcs.2-split-console.html</code>: the fleet row reads

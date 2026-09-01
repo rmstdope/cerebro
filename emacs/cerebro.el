@@ -2427,12 +2427,13 @@ One of `launch\=', `launch-clearing-flag\=', `already-up\=', `external\=' or
 the first.  A duplicated name is never launched by autostart either; the
 answer is inherited rather than repeated.
 
-FLAGGED is whether a stop flag exists for AGENT.  Unlike `s\='
-(`cerebro--start-clears-flag-p\=', implementers only), autostart clears a
-flag for EVERY kind: the navigator decided that opening the fleet view is a
-statement that everything the roster declares should be running, and a flag
-left on such a name is stale by the same argument ah-kgc made for `s\='
-(cb-0r6).
+FLAGGED is whether a stop flag exists for AGENT.  Autostart clears it for
+EVERY kind: the navigator decided that opening the fleet view is a statement
+that everything the roster declares should be running, and a flag left on
+such a name is stale by the same argument ah-kgc made for `s\=' (cb-0r6).
+That was once the difference between the two - `cerebro--start-clears-flag-p\='
+tested the kind until cb-sxf, and clears a flag for every kind now, so `s\='
+and autostart agree about this.
 
 A flag on a name that is already up changes nothing - there is nothing to
 start, so there is nothing to clear."
@@ -6626,7 +6627,10 @@ An interactive role has a pass rather than a bead, and the flag means the
 same thing about it: the pass finishes, and nothing starts in its place
 (cb-5yr).  `cerebro--supervise-action' reads it at `waiting' or `idle', ends
 the session and disarms the name, so `f' then `s' is the round trip.  A role
-on standby has no pass to finish and gets a line saying which key does what.
+on standby has no pass to finish, so `f' says which key does what instead -
+unless a flag is already on disk, and then it is the way back: the view will
+not start a flagged name (cb-sxf), so `f' offers to clear it, for either
+kind.
 
 The flag is read between beads, never during one (see `orchestrator.md'):
 a working or asking session completes the bead it is on, closes it, and only

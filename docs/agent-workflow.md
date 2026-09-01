@@ -642,10 +642,14 @@ Honest numbers from building this repository's own harness:
   review round has usually been overtaken, and the rules require catching it up (on GitHub, not
   locally) plus a fresh CI cycle before it can merge. That is deliberate: a green run on a stale tree
   is evidence about a tree that will never exist.
-- **Usually one review per bead, sometimes more.** A review covers one head, so an unusable
-  attempt or a later push buys another round; the rule itself is the *Four Eye Principle* section
-  of the root `CLAUDE.md`, which is the only place it is stated. What it costs in practice is a
-  second Opus call on the beads where CI went red or a retrospective was written.
+- **One cold review per bead, then a delta round per set of findings answered.** The first round
+  reads the whole change; each round after it gets only the diff since the head it last saw, plus
+  the findings and the answers, and asks whether they were addressed. The rule itself is the *Four
+  Eye Principle* section of the root `CLAUDE.md`, which is the only place it is stated. This is
+  where a bead's wall-clock goes: a cold read costs an Opus sub-agent the better part of ten
+  minutes, and before the delta rule cb-kcs.2.1 paid it seven times — eighty-five minutes from open
+  to merge, all of it review. The check is not skipped, only narrowed: several of this fleet's
+  worst defects were introduced by a commit answering a review and caught by the round after it.
 - **Nothing merges unreviewed and nothing merges red.** The `main` ruleset enforces the second on the
   server; the first is the agents following the rule.
 - **Interactive agents cost nothing between passes** — the view ends them, implementers included

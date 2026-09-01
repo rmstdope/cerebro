@@ -15,3 +15,10 @@ Documentation only does not need reviews — `docs/`, `README.md` and the like. 
 changed there changes how every consumer behaves, and they are reviewed like any other behaviour.
 `scripts/app-paths --classify` settles the question when it is not obvious; anything it calls
 `application` needs a review.
+
+**A commit that only answers findings does not start a review over.** The first round is a cold
+read of the whole change; every round after it is given the delta since the head it reviewed, the
+findings it raised and the answers to them, and asks one question — were they addressed, and does
+the delta introduce anything new. A round that returns nothing blocking ends the review. Work that
+goes beyond answering findings — new behaviour, a different approach, anything the reviewer has not
+seen — is a fresh cold read, and so is the first round after a hand-back.

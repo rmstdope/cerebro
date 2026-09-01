@@ -432,7 +432,7 @@ asking is only the faster path when somebody is there.
 
 ## The review loop
 
-**Review the exact head being merged, and obtain it yourself.** No review is requested from GitHub,
+**Review the implementation being merged, and obtain it yourself.** No review is requested from GitHub,
 and none is waited for. The second pair of eyes is a `reviewer` sub-agent you spawn synchronously
 when the gate is green and the PR is open, and the standing approval you merge on rests on the
 consumer's root `CLAUDE.md` and its *Four Eye Principle*, because the rule is there and nowhere
@@ -458,14 +458,34 @@ which model you are about to review on, the way `scripts/launch` does, so a revi
 model is traceable to the file nobody remembers editing.
 
 Before each invocation, read and retain `reviewed_head` from
-`gh pr view <n> --json headRefOid`. Give the reviewer the diff, bead plan, and reviewer checklist,
-never your reasoning. A tool failure, empty response, or response lacking both findings and an
-explicit no-findings verdict is unusable; retry that head up to three attempts, heartbeating between
-attempts, then use the hand-back path and record the failed attempts. For a usable response, post
-the complete review with its `reviewed_head` in the heading and answer every finding. Re-read
-`headRefOid` after answers: any difference requires a fresh review, with the counter reset. Every
-later push or server-side head change (finding or CI fixes, retrospective, rebase, or update-branch)
-also returns here; do not decide whether a change is substantial enough.
+`gh pr view <n> --json headRefOid`. A tool failure, empty response, or response lacking both
+findings and an explicit no-findings verdict is unusable; retry that head up to three attempts,
+heartbeating between attempts, then use the hand-back path and record the failed attempts. For a
+usable response, post the complete review with its `reviewed_head` in the heading and answer every
+finding.
+
+**The first round is a cold read; the rounds after it are about the delta.** Give the first
+reviewer the whole diff, the bead's plan and the checklist, and never your reasoning. Push your
+answers, then give the next reviewer four things: the diff **since the head it last reviewed**
+(`git diff <reviewed_head>..<new head>`), the findings that round raised, the answers you posted,
+and the checklist. It asks one question — were the findings addressed, and does the delta introduce
+anything new — and a round that returns nothing blocking is the end of the review.
+
+**This is where a bead's wall-clock goes, so the rule is worth knowing exactly.** A cold read of a
+whole PR takes an Opus sub-agent the better part of ten minutes, and a bead that answered seven
+rounds of findings paid that seven times: cb-kcs.2.1 was eighty-five minutes from open to merge and
+eighty-five of them were review. A delta round asks a smaller question and answers it faster. What
+it does not do is skip the check: **every fix is still read by somebody who did not write it**, and
+that matters because a fix that answers a finding is exactly where the next defect goes — this
+repository has shipped an inert loop, a fail-open cache and a test that passed against the code it
+was meant to catch, each of them introduced by a commit answering a review and each caught by the
+round after it.
+
+**A change that goes beyond answering findings is a fresh cold read** — new behaviour, a different
+approach, work the reviewer has not seen — and so is the first round after a hand-back. A rebase, a
+conflict resolution or an `update-branch` is neither: those need no additional review at all (the
+Four Eye Principle says so). Do not weigh whether your own delta is "substantial": if it does
+something the findings did not ask for, it is new.
 
 ### Getting the review
 

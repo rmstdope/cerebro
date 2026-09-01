@@ -309,6 +309,38 @@ mod tests {
             .to_path_buf()
     }
 
+    /// Linux's ETXTBSY, and why every fixture spawn below goes through this.
+    ///
+    /// `exec` of a file fails with `ETXTBSY` while ANY process still holds a writable descriptor
+    /// for it. Cargo runs these tests as threads of one process, so the window is not this test's
+    /// own write - `write_executable` closes its handle before it returns - but any OTHER test
+    /// that forks during it: `fork` duplicates every descriptor, so a child sitting between fork
+    /// and exec is holding our write handle open on its behalf. It closes a moment later
+    /// (`O_CLOEXEC`), which is what makes this transient and worth retrying rather than a defect
+    /// in the code under test.
+    ///
+    /// Observed on main as a red `Rust tests` job on ubuntu-latest, 2026-09-01: `Spawn { source:
+    /// "/tmp/.tmpIsHhre/bd", message: "Text file busy (os error 26)" }`. macOS does not enforce
+    /// ETXTBSY the same way, which is why the whole local gate was green.
+    ///
+    /// The retry is on the *error*, not on the operation: a genuine spawn failure still fails,
+    /// and a test whose fixture sleeps is never re-run, because a timeout is not this error.
+    fn retry_if_text_busy<T>(mut call: impl FnMut() -> Result<T, ReadError>) -> Result<T, ReadError> {
+        const TEXT_FILE_BUSY: &str = "os error 26";
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match call() {
+                Err(ReadError::Spawn { source, message })
+                    if message.contains(TEXT_FILE_BUSY) && std::time::Instant::now() < deadline =>
+                {
+                    let _ = source;
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                other => return other,
+            }
+        }
+    }
+
     fn write_executable(dir: &Path, name: &str, script: &str) -> PathBuf {
         let path = dir.join(name);
         let mut file = std::fs::File::create(&path).unwrap();
@@ -327,7 +359,7 @@ mod tests {
             shared_root: root.clone(),
             scripts_dir: root.join("scripts"),
         };
-        let roster = read_roster(&paths).expect("this checkout's scripts/roster must run");
+        let roster = retry_if_text_busy(|| read_roster(&paths)).expect("this checkout's scripts/roster must run");
         assert!(!roster.is_empty(), "this repository's roster must declare at least one agent");
 
         // Pure consumption: feed the impure read straight into the pure deriver, with no state
@@ -395,7 +427,7 @@ mod tests {
             "#!/usr/bin/env bash\nprintf '%s\\n' '    1     0 /sbin/launchd' '  123     1 some prog --flag a  b'\n",
         );
         let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd") };
-        let rows = read_processes(&programs).unwrap();
+        let rows = retry_if_text_busy(|| read_processes(&programs)).unwrap();
         assert_eq!(
             rows,
             vec![
@@ -414,7 +446,7 @@ mod tests {
             "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
         );
         let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd") };
-        let err = read_processes(&programs).unwrap_err();
+        let err = retry_if_text_busy(|| read_processes(&programs)).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
                 assert_eq!(status, Some(3));
@@ -427,11 +459,11 @@ mod tests {
     #[test]
     fn readers_report_spawn_and_decode_failures() {
         let programs = Programs { ps: PathBuf::from("/does/not/exist/ps"), bd: PathBuf::from("bd") };
-        assert!(matches!(read_processes(&programs), Err(ReadError::Spawn { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_processes(&programs)), Err(ReadError::Spawn { .. })));
         let dir = tempfile::tempdir().unwrap();
         let bad_ps = write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf '\\377'\n");
         let programs = Programs { ps: bad_ps, bd: PathBuf::from("bd") };
-        assert!(matches!(read_processes(&programs), Err(ReadError::Invalid { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_processes(&programs)), Err(ReadError::Invalid { .. })));
     }
 
     #[test]
@@ -459,7 +491,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        let beads = read_beads(&paths, &programs).unwrap();
+        let beads = retry_if_text_busy(|| read_beads(&paths, &programs)).unwrap();
         assert_eq!(beads.len(), 1);
         assert_eq!(beads[0].id, "cb-1");
         assert_eq!(partition_beads(beads).unplanned.len(), 1);
@@ -480,7 +512,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        assert!(matches!(read_beads(&paths, &programs), Err(ReadError::Invalid { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_beads(&paths, &programs)), Err(ReadError::Invalid { .. })));
     }
 
     #[test]
@@ -496,7 +528,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        let err = read_beads(&paths, &programs).unwrap_err();
+        let err = retry_if_text_busy(|| read_beads(&paths, &programs)).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
                 assert_eq!(status, Some(2));
@@ -546,7 +578,7 @@ mod tests {
             scripts_dir: scripts,
         };
         let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
-        let rows = read_fleet(&paths, &programs).unwrap();
+        let rows = retry_if_text_busy(|| read_fleet(&paths, &programs)).unwrap();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].name, "Xavier");
@@ -645,7 +677,7 @@ mod tests {
             "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
         );
         let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
-        match read_fleet(&paths, &programs) {
+        match retry_if_text_busy(|| read_fleet(&paths, &programs)) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(3));
                 assert!(stderr.contains("boom"));
@@ -660,7 +692,7 @@ mod tests {
             "#!/usr/bin/env bash\necho 'roster: refusing' >&2\nexit 2\n",
         );
         write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf ''\n");
-        match read_fleet(&paths, &programs) {
+        match retry_if_text_busy(|| read_fleet(&paths, &programs)) {
             Err(ReadError::Exit { status, source, .. }) => {
                 assert_eq!(status, Some(2));
                 assert!(source.ends_with("roster"), "expected the roster to be named: {source}");
@@ -711,7 +743,7 @@ mod tests {
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
 
-        let work = read_work(&paths, &programs).expect("the fixture bd answers the panel's argv");
+        let work = retry_if_text_busy(|| read_work(&paths, &programs)).expect("the fixture bd answers the panel's argv");
         assert_eq!(ids(&work.claimed), ["cb-claimed"]);
         assert_eq!(ids(&work.planned), ["cb-planned"]);
         assert_eq!(ids(&work.being_planned), ["cb-held"]);
@@ -758,7 +790,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        match read_work(&paths, &programs) {
+        match retry_if_text_busy(|| read_work(&paths, &programs)) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(1));
                 assert!(stderr.contains("database is locked"), "{stderr}");
@@ -781,7 +813,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        assert!(matches!(read_work(&paths, &programs), Err(ReadError::Invalid { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_work(&paths, &programs)), Err(ReadError::Invalid { .. })));
     }
 
     /// A `bd` that never answers is killed, reaped and reported. Without the bound the Work pane

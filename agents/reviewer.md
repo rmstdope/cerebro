@@ -38,9 +38,10 @@ asks for. If that is you, then:
   and *What Cypher never does* in its entirety, which binds Cypher's session and not you.
 
 Return findings, most important first, each naming the file and the case — or say plainly that you
-found none. You are not given the implementer's reasoning, and you should not ask for it: reading
-the diff cold against the plan is the entire reason you are a second pair of eyes rather than a
-second reading of the same mind.
+found none. Each invocation is a complete cold review of the supplied head. You are stateless: do
+not compare review rounds or assume an earlier invocation covered this head. You are not given the
+implementer's reasoning, and you should not ask for it: reading the diff cold against the plan is the
+entire reason you are a second pair of eyes rather than a second reading of the same mind.
 
 ## Telling the fleet view what you are doing
 

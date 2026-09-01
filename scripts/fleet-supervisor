@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# Which fleet view may supervise this checkout, and where its lease lives (cb-kcs.1):
+#
+#     fleet-supervisor                    -> "emacs" or "tui"
+#     fleet-supervisor --endpoint         -> "127.0.0.1:<port>"
+#     fleet-supervisor --identity         -> the canonical absolute shared root
+#     fleet-supervisor --record           -> <shared root>/.cerebro/state/supervisor.json
+#     fleet-supervisor --endpoint-for <r> -> the endpoint any given root would take
+#
+#   exit 0  answered
+#   exit 2  a usage error, an invalid declaration, an unresolvable root, or a root that cannot be
+#           written into the diagnostic record
+#
+# THE ONE PLACE either implementation answers this. `emacs/cerebro.el' and `fleet-view/' both call
+# this script rather than parsing project.conf or hashing a root themselves. That is the whole
+# reason a lease is safe to hold across two languages: a port or an identity computed twice can
+# disagree once, and a disagreement here is two supervisors on one fleet, each starting the
+# sessions the other cannot see.
+#
+# ABSENCE MEANS `emacs', which is the backwards-compatibility guarantee for every consumer whose
+# project.conf predates this key. It is `project-conf''s ordinary missing-value contract, so an
+# explicitly empty value means `emacs' too.
+#
+# AN INVALID VALUE IS FAIL-CLOSED AND LOUD, and this is the one place it must not behave like
+# `project-conf'. Every other reader in this repository treats a value it does not understand as a
+# reason to fall back; here a fallback would silently keep supervision in Emacs after the navigator
+# moved it to the TUI - or, worse, hand it back to Emacs while a TUI still holds the lease. So a
+# value that is not exactly `emacs' or `tui' exits 2, says the exact sentence on stderr, and prints
+# THE RAW OFFENDING VALUE ALONE on stdout. Two channels because two readers: a navigator reads the
+# sentence, and a view that has to render `invalid fleet_supervisor "<value>"' takes the value from
+# stdout rather than parsing English out of stderr.
+#
+# THE SHARED ROOT, NOT THE ENCLOSING ONE. Every worktree of one checkout supervises the same
+# sessions, so all four answers come from `consumer-root --shared', the same rule `project-conf'
+# and `agent-state' already follow. A bead worktree therefore computes the same port as the main
+# checkout and contends for the same lease, which is what makes the lease meaningful at all.
+#
+# THE ENDPOINT IS DERIVED, NOT REGISTERED. There is no port registry and no reservation: the port
+# is a pure function of the shared root, so two processes that mean the same checkout always meet
+# on the same address and two different checkouts almost never do. TWO checksums are XOR-ed rather
+# than one taken, because a single `cksum' over two roots that share a long prefix - which is
+# exactly what `~/repos/x' and `~/repos/x-hud' are - moves in step and folds onto neighbouring
+# ports. A collision is not silently wrong, either: the diagnostic record names the identity, so
+# two checkouts that did collide both report a lock error and neither acts. Fail-closed twice over.
+#
+# THE ENDPOINT, IDENTITY AND RECORD ANSWER EVEN WHEN THE DECLARATION IS INVALID. That is not an
+# oversight - it is when a view most needs them, because "who holds this lease" is the question an
+# invalid declaration leaves open.
+#
+# IT WRITES NOTHING. Not the state directory, not the record, not a declaration it failed to find.
+# The record is written by whichever implementation actually binds the listener, and only after it
+# binds; this script only says where it goes.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+usage() {
+  echo "usage: fleet-supervisor [--endpoint | --identity | --record | --endpoint-for <root>]" >&2
+  exit 2
+}
+
+# The shared root, hint first and validated - see scripts/root-hints.sh for why an inherited answer
+# can only ever skip work rather than answer wrongly.
+#
+# It RETURNS non-zero rather than exiting, and every caller is `root="$(shared_root)" || exit 2'.
+# That is not a style choice: this function is only ever called from a command substitution, and an
+# `exit' inside one leaves the SUBSHELL, not the script. Written the obvious way it exited 0 with an
+# empty stdout on an unresolvable root - and an empty string is exactly what a caller would then
+# bind a listener to, or compare an identity against. Fail-closed means the status has to leave the
+# subshell with the value.
+shared_root() {
+  local root
+  source "$here/root-hints.sh"
+  root="$(cerebro_hinted_root "$here/.." shared)" \
+    || root="$("$here/consumer-root" --shared 2>/dev/null)" \
+    || root=""
+  if [[ -z "$root" ]]; then
+    echo "fleet-supervisor: no consumer root above this checkout - cannot locate the supervision lease" >&2
+    return 1
+  fi
+  (cd "$root" && pwd -P)
+}
+
+# One POSIX `cksum' field, without `awk' or `cut': `set --' on the unquoted output splits it, and
+# the sum is the first word. `printf %s' rather than `echo', so the byte string hashed is exactly
+# the one named here and carries no trailing newline.
+cksum_of() {
+  local out
+  out="$(printf '%s' "$1" | cksum)"
+  # shellcheck disable=SC2086
+  set -- $out
+  printf '%s' "$1"
+}
+
+# 20000 + ((cksum("A:<root>") ^ cksum("B:<root>")) % 20000): the private range, two sums so that a
+# shared prefix cannot walk two checkouts onto adjacent ports.
+endpoint_for() {
+  local root="$1" a b
+  a="$(cksum_of "A:$root")"
+  b="$(cksum_of "B:$root")"
+  printf '127.0.0.1:%s\n' "$(( 20000 + ((a ^ b) % 20000) ))"
+}
+
+# The identity has to survive a round trip through the JSON record and back out to a comparison, so
+# a root carrying a tab or a newline is refused rather than written. An identity that comes back
+# ambiguous is what would turn a port collision into a silent takeover.
+identity_of() {
+  local root="$1"
+  case "$root" in
+    *$'\t'*|*$'\n'*)
+      echo "fleet-supervisor: a root containing a tab or a newline cannot be used as a supervision identity: $root" >&2
+      exit 2 ;;
+  esac
+  printf '%s\n' "$root"
+}
+
+case "${1:---declaration}" in
+  --endpoint-for)
+    [[ $# -eq 2 && -n "$2" ]] || usage
+    endpoint_for "$2"
+    ;;
+  --endpoint)
+    [[ $# -eq 1 ]] || usage
+    root="$(shared_root)" || exit 2
+    endpoint_for "$root"
+    ;;
+  --identity)
+    [[ $# -eq 1 ]] || usage
+    root="$(shared_root)" || exit 2
+    identity_of "$root"
+    ;;
+  --record)
+    [[ $# -eq 1 ]] || usage
+    root="$(shared_root)" || exit 2
+    printf '%s/.cerebro/state/supervisor.json\n' "$root"
+    ;;
+  --declaration)
+    [[ $# -eq 0 ]] || usage
+    # `project-conf' says on stderr which branch it took, which is noise here: this script's stderr
+    # is the invalid-declaration sentence and nothing else. Its own failures are not swallowed
+    # though - a declaration left at the retired path exits 2 there, and is re-run so its own
+    # diagnosis reaches the caller rather than being replaced by a guess.
+    set +e
+    value="$("$here/project-conf" fleet_supervisor emacs 2>/dev/null)"
+    status=$?
+    set -e
+    if [[ $status -ne 0 ]]; then
+      "$here/project-conf" fleet_supervisor emacs >/dev/null || true
+      exit 2
+    fi
+    case "$value" in
+      emacs|tui) printf '%s\n' "$value" ;;
+      *)
+        printf '%s\n' "$value"
+        echo "fleet-supervisor: invalid fleet_supervisor \"$value\" - expected \"emacs\" or \"tui\"" >&2
+        exit 2 ;;
+    esac
+    ;;
+  *)
+    usage
+    ;;
+esac

@@ -583,6 +583,7 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[test]
     fn a_rows_document_line_counts_the_heading_and_every_diagnostic_above_it() {
@@ -625,7 +626,6 @@ mod tests {
         ];
         assert_eq!(row_document_line(&rows, 1), 2);
     }
-    use super::*;
     use std::path::PathBuf;
 
     // --- roster --------------------------------------------------------------------------------

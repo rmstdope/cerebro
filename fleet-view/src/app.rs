@@ -442,7 +442,7 @@ impl App {
             0
         };
         let line = prefix + row_document_line(rows, target);
-        self.follow_selection(line, viewport_lines);
+        self.follow_selection(line, prefix, viewport_lines);
     }
 
     /// Bring DOCUMENT_LINE into the Fleet pane's viewport, moving `scroll` by the least that does
@@ -452,11 +452,16 @@ impl App {
     /// the row index: the document opens with a heading line, and a row whose state file failed
     /// to parse contributes a second line of its own. `model::row_document_line` is the one place
     /// that arithmetic lives.
-    fn follow_selection(&mut self, document_line: usize, viewport_lines: usize) {
+    ///
+    /// PREFIX is how many lines sit above the table itself - zero for a fresh pane, and
+    /// `FLEET_STALE_PREFIX_LINES` for a stale one, whose retained error and blank line come first.
+    /// It is a parameter rather than a literal because the first row moves with its heading, and
+    /// under a stale pane the heading is not line 0.
+    fn follow_selection(&mut self, document_line: usize, prefix: usize, viewport_lines: usize) {
         let viewport = viewport_lines.max(1);
-        // Line 0 is the column heading, so a scroll of 1 would clip it to reveal nothing: the
-        // first row and its heading move as one.
-        if document_line <= 1 {
+        // The table's heading line would be clipped to reveal nothing, so the first row and
+        // everything above it move as one.
+        if document_line <= prefix + 1 {
             self.fleet.scroll = 0;
         } else if document_line < self.fleet.scroll {
             self.fleet.scroll = document_line;
@@ -1173,6 +1178,20 @@ mod tests {
             stale.fleet.scroll,
             fresh.fleet.scroll + FLEET_STALE_PREFIX_LINES,
             "the stale pane scrolls past its own error and blank line as well"
+        );
+
+        // And back up: the first row moves with its heading, and under a stale pane the heading
+        // sits below the prefix - so the whole prefix comes back into view with it.
+        for _ in 0..5 {
+            fresh.on_key(key(KeyCode::Up), 3);
+            stale.on_key(key(KeyCode::Up), 3);
+        }
+        assert_eq!(fresh.selected.as_deref(), Some("A"));
+        assert_eq!(stale.selected.as_deref(), Some("A"));
+        assert_eq!(fresh.fleet.scroll, 0);
+        assert_eq!(
+            stale.fleet.scroll, 0,
+            "the retained error and the heading come back into view with the first row"
         );
     }
 

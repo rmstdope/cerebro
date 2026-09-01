@@ -217,6 +217,11 @@ fn split(
 /// whatever its body comes to - so this builds nothing at all on a wide screen. In the stacked
 /// layout the pane is the screen's own width, so there is no probe and no guess: the width passed
 /// here is the width the body will be built at.
+///
+/// It does mean a narrow terminal builds the Work body twice per `draw` and twice per `metrics`.
+/// That is deliberate and measured against the alternative: threading one build through both
+/// would make `split` take the lines rather than derive them, and the panes refresh on a
+/// five-second and a thirty-second clock over a roster and a board of a few dozen rows.
 fn work_content_lines(app: &App, now: DateTime<Utc>, area: Rect) -> usize {
     if area.width >= SPLIT_COLUMNS {
         return 0;

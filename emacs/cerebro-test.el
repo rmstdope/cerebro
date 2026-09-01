@@ -8716,6 +8716,59 @@ and neither failure is visible until a session is started twice or never."
                              (symbol-name (cdr decision)))
                        (cons mode-word action-word)))))))
 
+(defconst cerebro-test--supervise-cases-file
+  (expand-file-name "tests/lib/supervise.cases" cerebro-test--repo-root)
+  "The supervision table both implementations of the poll's decision run.
+`fleet-view/src/lifecycle.rs' runs the same rows against `supervise_action'.")
+
+(defun cerebro-test--supervise-cases ()
+  "The rows of `cerebro-test--supervise-cases-file' as plain lists.
+Each is (KIND STATE OURS STOP IDLE-ENDS-PASS STOOD ACTION).  A malformed row
+is an error, not a skipped case."
+  (let (rows)
+    (with-temp-buffer
+      (insert-file-contents cerebro-test--supervise-cases-file)
+      (dolist (line (split-string (buffer-string) "\n" t))
+        (unless (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" line)
+          (let ((fields (split-string (string-trim line) "[ \t]+" t)))
+            (unless (= (length fields) 7)
+              (error "supervise.cases: malformed row: %s" line))
+            (push fields rows)))))
+    (nreverse rows)))
+
+(ert-deftest cerebro-test/both-implementations-follow-the-supervision-table ()
+  "Every row of `tests/lib/supervise.cases', answered here as well as in Rust.
+
+A row the two answer differently is a session ended twice or never - and
+cb-kcs.5 is a cutover, so for a while both answer about the same checkout.
+
+The table speaks `ours', which is this implementation's `external' inverted,
+and it names the grace and the timeout its rows assume, so they are bound
+here rather than taken from whatever the running fleet is customised to."
+  (let ((rows (cerebro-test--supervise-cases))
+        (now (current-time))
+        (cerebro-end-grace 30)
+        (cerebro-answer-timeout 900))
+    (should (>= (length rows) 30))
+    (dolist (row rows)
+      (pcase-let* ((`(,kind ,state ,ours ,stop ,ends-pass ,stood ,action) row)
+                   (cerebro-idle-ends-pass-roles
+                    (if (equal ends-pass "yes") '("ends-pass") nil))
+                   (agent (make-cerebro-agent
+                           :name "Cyclops"
+                           :role (if (equal ends-pass "yes") "ends-pass" "planner")
+                           :kind (intern kind)
+                           :state (intern state)
+                           :external (not (equal ours "yes"))
+                           :since (unless (equal stood "none")
+                                    (format-time-string
+                                     "%Y-%m-%dT%H:%M:%SZ"
+                                     (time-subtract now (string-to-number stood))
+                                     t))))
+                   (answer (cerebro--supervise-action agent (equal stop "yes") now)))
+        (should (equal (cons (if answer (symbol-name answer) "none") row)
+                       (cons action row)))))))
+
 (ert-deftest cerebro-test/a-drain-names-who-it-is-for-and-how-many-are-left ()
   "The drain carries the new owner and the count, which is what ends it."
   (let ((decision (cerebro--supervision-decision 'emacs 'tui t 3)))

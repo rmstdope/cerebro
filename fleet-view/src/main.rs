@@ -350,6 +350,9 @@ where
         let size = terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
         let metrics = ui::metrics(app, now, area);
+        // Kept for the refresh that moves the selected row with nothing pressed - the only place
+        // `App` learns any geometry, and always from a frame that was actually drawn.
+        app.note_metrics(metrics);
         // A page is a page of the FOCUSED pane's own viewport, not the other pane's and not the
         // whole terminal: `App::focused_viewport` is the one place the at-least-one floor lives.
         let viewport_lines = app.focused_viewport(metrics);

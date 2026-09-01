@@ -20,6 +20,14 @@
 //! scrolling widgets rather than one shared document - `PaneFocus`, and each
 //! pane's own `PaneMetrics` inside `Metrics`, are what the event loop and the
 //! renderer share to keep that true.
+//!
+//! Since cb-kcs.2.2 the Session pane can hold a real child: `session` owns the
+//! pty, the terminal emulator behind it and the pure functions that turn a
+//! keystroke into bytes and a screen into lines. `main` owns the `SessionHost`;
+//! `App` only ever sees a `SessionView` materialised before the frame, which is
+//! what keeps `ui::draw` pure while a reader thread writes continuously. Nothing
+//! a navigator can press starts a child yet - `s`, `f` and `k` are cb-kcs.2.3's -
+//! so this crate still starts nothing on its own.
 
 pub mod app;
 pub mod model;
@@ -40,6 +48,10 @@ pub use readers::{
 pub use supervisor::{
     reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
     SupervisorKind, SupervisorLease,
+};
+pub use session::{
+    exit_line, key_bytes, materialise, paste_bytes, transcript, Ended, Retained, Session,
+    SessionHost, SessionView, SCROLLBACK_LINES,
 };
 pub use app::{
     App, AppAction, FleetWorker, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics,

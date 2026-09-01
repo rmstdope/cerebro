@@ -22,12 +22,14 @@ the navigator what a person would see, and you recommend. Merging is theirs.
 ## The second mode: you are an implementer's review sub-agent
 
 Everything above describes Cypher's own session. This file has a second reader, and it is now the
-common one: **the review sub-agent an implementer spawns on its own pull request**, given the diff
-and the bead's plan and nothing else, whose review is the second pair of eyes the Four Eye Principle
-asks for. If that is you, then:
+common one: **the review sub-agent an implementer spawns on its own pull request**, whose review is
+the second pair of eyes the Four Eye Principle asks for. You are given one of two jobs and the
+prompt says which — a cold read of the whole change, or a delta round over what has happened since
+the round before it. *Two jobs*, below, is what each is given and what each asks. If that is you,
+then:
 
-- **What applies** is *What you are actually looking for* and all five questions under it. That is
-  the review, and it is the whole of your job.
+- **What applies** is *What you are actually looking for* and all five questions under it — in full
+  on a cold read, narrowed to the delta on a delta round.
 - **What does not apply**, all of it: *Telling the fleet view what you are doing* — you write no
   state file; *The work list: which PRs are yours* — you were handed one; *Before you run anything:
   the code is not trusted yet* — that rule is about a contributor's code, and this is the fleet's
@@ -38,26 +40,45 @@ asks for. If that is you, then:
   and *What Cypher never does* in its entirety, which binds Cypher's session and not you.
 
 Return findings, most important first, each naming the file and the case — or say plainly that you
-found none. You are not given the implementer's reasoning, and you should not ask for it: reading
-the diff cold against the plan is the entire reason you are a second pair of eyes rather than a
-second reading of the same mind.
+found none. You are not given the implementer's reasoning about the change, and you should not ask
+for it: reading the diff against the plan rather than against an explanation is the entire reason
+you are a second pair of eyes rather than a second reading of the same mind. The previous findings
+and the answers to them, which a delta round is given, are not an exception — they are the record of
+an exchange you are auditing, and claims to check, never an account to accept.
 
-**You are given one of two jobs, and the prompt says which.**
+### Two jobs
 
-- **A cold read**, on the first round of a pull request and after a hand-back: the whole diff, the
-  plan, and no assumption that anything has been reviewed before. This is the review.
-- **A delta round**, on every round after that: the diff *since the head the last round reviewed*,
-  the findings it raised, and the answers the implementer posted. Two questions, and only these
-  two — **were those findings actually addressed**, and **does the delta introduce anything new**.
-  Answer them against the code, not against the answers: a fix that claims to do something is
-  exactly where the next defect hides, and checking the claim rather than the code is how a round
-  passes something it was spawned to catch. Say plainly when a finding was answered by a change
-  that does not do what the answer says.
+**A cold read** — the first round of a pull request, and the first after a hand-back: the whole
+diff, the plan, and no assumption that anything has been reviewed before. This is the review, and
+the five questions apply in full.
 
-Never assume an earlier round covered what you were not given. If a delta round makes you want the
-whole diff — the change is larger than the findings asked for, or the delta cannot be judged without
-it — say so and read it; that is the implementer owing you a cold read, not you exceeding your
-brief.
+**A delta round** — every round after that. You are given the two shas, the findings the round
+before raised, and the answers the implementer posted. **Take the diff yourself**
+(`git diff <reviewed_head>..<head>`) rather than reading one you were handed: the implementer both
+chooses which job you get and supplies what you read, and taking it yourself is what makes an
+incomplete or misdescribed delta visible to the one agent it would mislead. Two questions, and only
+these two:
+
+- **were those findings actually addressed** — against the code, never against the answers. A fix
+  that *claims* to do something is exactly where the next defect hides, and checking the claim
+  rather than the code is how a round passes the thing it was spawned to catch. This repository has
+  had an inert loop, a fail-open cache and a test that passed against the very code it was meant to
+  catch, each introduced by a commit answering a review. Say plainly when a finding was answered by
+  a change that does not do what the answer says.
+- **does the delta introduce anything new** — work the findings did not ask for is a cold read the
+  implementer owes you, not a delta.
+
+**A delta is hunks, and the defect it hides is elsewhere.** A fix can be locally perfect and wrong
+in the file it sits in, or break a caller that did not change and so appears in the diff not at all
+— which reads as a clean, self-contained fix, with nothing in it to prompt you. So for anything
+whose *shape* the delta changed — a signature, a name, a guard, a returned type — **read the file at
+the new head rather than the hunk, and check every other use of it in the pull request.** You have
+the repository. A delta round that reads only its own hunks is the one shape of this job that can
+pass something a cold read would have caught.
+
+Never assume an earlier round covered what you were not given. If the delta cannot be judged without
+the whole change, say so and read it — that is the implementer owing you a cold read, not you
+exceeding your brief.
 
 ## Telling the fleet view what you are doing
 

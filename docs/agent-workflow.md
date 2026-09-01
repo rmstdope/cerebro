@@ -247,7 +247,8 @@ hand the bead to your queue instead — so a fleet left alone overnight drains t
 sitting blocked on you.
 
 **Two or three is a sensible number on one machine.** More is not faster: every merge makes every
-other open PR stale, so each of them pays for a `BEHIND` catch-up and a fresh CI run — and CI is
+other open PR stale, and where the branch protection sets `strict` each of them pays for a `BEHIND`
+catch-up and a fresh CI run — and CI is
 where the browser suites actually run now, in parallel jobs implementers no longer serialize behind
 locally. The orchestrator will say so if you ask for more, once, and then do as it is told.
 
@@ -638,10 +639,12 @@ and checking out a branch there moves an agent off its own work.
 Honest numbers from building this repository's own harness:
 
 - **A bead is an hour or more**, most of it CI. The code is usually the short part.
-- **Expect a `BEHIND` branch on nearly every merge.** With several agents, a PR that sat through one
-  review round has usually been overtaken, and the rules require catching it up (on GitHub, not
-  locally) plus a fresh CI cycle before it can merge. That is deliberate: a green run on a stale tree
-  is evidence about a tree that will never exist.
+- **Expect a `BEHIND` branch on nearly every merge**, and expect it to merge anyway. With several
+  agents, a PR that sat through one review round has usually been overtaken; whether that has to be
+  caught up is `required_status_checks.strict` on the branch protection, which this repository
+  leaves `false`, so a behind-but-mergeable head with green checks merges as it stands. Setting it
+  `true` buys the catch that two agents changed the same function compatibly-but-wrongly, at a
+  `BEHIND` catch-up and a fresh CI cycle per merge — one switch, and every implementer follows it.
 - **One cold review per bead, then a delta round per set of findings answered.** The first round
   reads the whole change; each round after it gets only the diff since the head it last saw, plus
   the findings and the answers, and asks whether they were addressed. The rule itself is the *Four

@@ -133,7 +133,7 @@ nothing left over from the last one.
 ## What you are actually looking for
 
 *This section has a second reader, and it is the busier one: the review sub-agent every implementer
-spawns on its own pull request (`skills/implement-bead`, *The review — you get exactly one*), which
+spawns on its own pull request (`skills/implement-bead`, *The review loop*), which
 is given this file as its checklist. So these five questions are read on every change the fleet
 makes, not only on the ones that come from outside it. Keep them phrased so they read for any
 reviewer of any diff, not only for Cypher.*

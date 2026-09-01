@@ -201,6 +201,16 @@ pub fn materialise(screen: &vt100::Screen, rows: u16, cols: u16) -> Vec<Line<'st
 }
 
 
+/// The signal `portable_pty::Child::kill` actually sends on the platforms this fleet runs on.
+///
+/// **SIGHUP, not SIGKILL.** The plan for cb-kcs.2.3 allowed for either and asked for the crate to
+/// be read rather than assumed: `portable-pty` 0.9's `ChildKiller for std::process::Child` sends
+/// `libc::SIGHUP` on unix, with the comment that a process receiving it is killed unless it has
+/// installed a handler. So this view, which sent the signal, reports 1 - and it can report a
+/// number at all only because it sent it: `ended_from` cannot, since 0.9 renders a terminating
+/// signal as a NAME (`"Killed: 9"`) rather than as an integer.
+const KILL_SIGNAL: i32 = 1;
+
 /// How a child ended, in this crate's own vocabulary rather than the pty crate's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ended {
@@ -279,6 +289,45 @@ pub fn transcript(
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "End of retained scrollback. Up/Down scroll while focused.".to_string(),
+        Style::default().add_modifier(Modifier::DIM),
+    )));
+    lines
+}
+
+/// Every non-blank line of a refused launch's final screen, as one message.
+///
+/// The transcript's own closing lines - the blank, the exit line and the scrollback footer - are
+/// what the ordinary retained pass says, and the refusal pane says its own instead.
+fn last_message(lines: &[Line<'static>]) -> String {
+    let text: Vec<String> = lines
+        .iter()
+        .map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
+        .map(|line| line.trim_end().to_string())
+        .filter(|line| !line.trim().is_empty())
+        .take_while(|line| !line.contains("finished with status"))
+        .collect();
+    text.join("\n")
+}
+
+/// A refusal, as the lines the pane draws: the launcher's own words in red, then what to do.
+///
+/// `scripts/launch-refused` writes exactly `cerebro: $message` to stderr, and the approved pane
+/// drops that prefix before showing it - the pane's title already says whose refusal it is.
+fn refusal_lines(message: &str) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = message
+        .lines()
+        .map(|line| line.strip_prefix("cerebro: ").unwrap_or(line).to_string())
+        .map(|line| Line::from(Span::styled(line, Style::default().fg(Color::Red))))
+        .collect();
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "The launcher refused, and said nothing.".to_string(),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Press s to try again.".to_string(),
         Style::default().add_modifier(Modifier::DIM),
     )));
     lines
@@ -454,6 +503,16 @@ impl Session {
         }
     }
 
+    /// Signal the child and leave it to be reaped by the next `sync`, so a killed pass becomes an
+    /// ordinary retained transcript rather than vanishing. Returns the signal that was sent.
+    ///
+    /// The reader thread is NOT joined here: it ends at EOF on its own, and joining it would make
+    /// a keystroke wait for a child to die.
+    fn signal(&mut self) -> i32 {
+        let _ = self.child.kill();
+        KILL_SIGNAL
+    }
+
     /// Kill the child and let the reader thread end at EOF. Idempotent: `into_transcript` calls
     /// it, and so does `Drop`.
     fn stop(&mut self) {
@@ -484,6 +543,9 @@ pub enum SessionView {
     Starting,
     /// At most the pane's own height, rebuilt every frame - which costs nothing.
     Live { lines: Vec<Line<'static>>, cursor: (u16, u16) },
+    /// A launch this view attempted and the launcher refused. Kept until that agent is started
+    /// again, exactly as a retained pass is, and drawn in a red pane.
+    Refused { lines: Arc<Vec<Line<'static>>>, at: DateTime<Utc> },
     /// Up to `SCROLLBACK_LINES` lines, built once when the child is reaped and shared by
     /// reference from then on. **The `Arc` is load-bearing**: `sync` runs five times a second,
     /// and cloning ten thousand `Line`s per frame would be the most expensive thing this program
@@ -512,6 +574,11 @@ pub struct Retained {
 pub struct SessionHost {
     live: HashMap<String, Session>,
     retained: HashMap<String, Retained>,
+    /// Launches this view attempted and the launcher refused, kept until that agent starts again.
+    refused: HashMap<String, Retained>,
+    /// Names this view has signalled, and with what. The reap path trusts this over whatever the
+    /// pty crate says the status was, because this view is the one that sent the signal.
+    killed: HashMap<String, i32>,
 }
 
 impl SessionHost {
@@ -526,7 +593,39 @@ impl SessionHost {
     /// will put behind the `s` key.
     pub fn insert(&mut self, name: &str, session: Session) {
         self.retained.remove(name);
+        self.refused.remove(name);
+        self.killed.remove(name);
         self.live.insert(name.to_string(), session);
+    }
+
+    /// Kill NAME's live session, if there is one, and delete its state file. Returns whether there
+    /// was one.
+    ///
+    /// The child is killed and left to be reaped by the next `sync`, so a killed pass becomes an
+    /// ordinary retained view carrying `<Name> was killed by signal 1.` - the navigator's choice
+    /// (Q13), and where `k` parts company with Emacs, which removes the buffer and its output
+    /// with it. The stop flag is NOT touched: `k` is not a retire.
+    pub fn kill(&mut self, paths: &ReaderPaths, name: &str) -> bool {
+        let Some(session) = self.live.get_mut(name) else { return false };
+        let signal = session.signal();
+        self.killed.insert(name.to_string(), signal);
+        // A state file that outlives its session outlives its pid, and a pid is reused.
+        let _ = crate::lifecycle::delete_state_file(paths, name);
+        true
+    }
+
+    /// The names of every live session, in ROSTER order rather than map order: the quit-refusal
+    /// pane names them, and a set iteration order would reorder them between frames.
+    pub fn live_names(&self, roster_order: &[String]) -> Vec<String> {
+        roster_order.iter().filter(|name| self.live.contains_key(*name)).cloned().collect()
+    }
+
+    /// Record that NAME's launch was refused, with the launcher's own words. Replaces that agent's
+    /// retained pass, the way a start does.
+    pub fn note_refusal(&mut self, name: &str, message: &str, at: DateTime<Utc>) {
+        self.retained.remove(name);
+        let lines = refusal_lines(message);
+        self.refused.insert(name.to_string(), Retained { lines: Arc::new(lines), at });
     }
 
     /// How many children are alive. This is what `SupervisorController::hosted_sessions` reads.
@@ -567,11 +666,24 @@ impl SessionHost {
             .collect();
         for (name, end) in ended {
             let Some(session) = self.live.remove(&name) else { continue };
+            // This view knows what it signalled; the pty crate cannot say. See `KILL_SIGNAL`.
+            let end = match self.killed.remove(&name) {
+                Some(signal) => Ended::Signal(signal),
+                None => end,
+            };
             // The transcript is taken at the size the child was last drawn at, which is the size
             // its own screen was written for.
             let (child_rows, child_cols) = session.size;
             let lines = session.into_transcript(child_rows, child_cols, end);
-            self.retained.insert(name, Retained { lines: Arc::new(lines), at: now });
+            // `scripts/launch-preflight` and `scripts/launch` refuse with exit 2 and one line on
+            // stderr in every one of their refusal paths; `launch` then EXECS the agent CLI, so
+            // every other non-zero status belongs to the CLI rather than to the launcher.
+            if end == Ended::Status(2) {
+                let message = last_message(&lines);
+                self.note_refusal(&name, &message, now);
+            } else {
+                self.retained.insert(name, Retained { lines: Arc::new(lines), at: now });
+            }
         }
         let Some(name) = selected else { return SessionView::None };
         if let Some(session) = self.live.get_mut(name) {
@@ -581,6 +693,9 @@ impl SessionHost {
                 // Spawned and silent: never `None`, which would read as "no session at all".
                 None => SessionView::Starting,
             };
+        }
+        if let Some(refused) = self.refused.get(name) {
+            return SessionView::Refused { lines: Arc::clone(&refused.lines), at: refused.at };
         }
         match self.retained.get(name) {
             Some(retained) => {
@@ -731,6 +846,109 @@ mod tests {
 
     fn text_of(lines: &[Line<'static>]) -> Vec<String> {
         lines.iter().map(|line| texts(line).join("")).collect()
+    }
+
+    #[test]
+    fn a_launcher_that_exits_two_becomes_a_refusal() {
+        let mut host = SessionHost::default();
+        host.insert(
+            "Rogue",
+            shell(r#"printf "cerebro: agents/implementer.md is missing\r\n" >&2; exit 2"#, 24, 80),
+        );
+        let view = settle_host(&mut host, "Rogue", |view| {
+            matches!(view, SessionView::Refused { .. })
+        });
+        let SessionView::Refused { lines, .. } = view else { panic!("not a refusal: {view:?}") };
+        let text = text_of(&lines);
+        assert!(
+            text.iter().any(|line| line == "agents/implementer.md is missing"),
+            "the launcher's own words, without its prefix: {text:?}"
+        );
+        assert!(
+            !text.iter().any(|line| line.contains("cerebro: ")),
+            "the prefix is dropped: {text:?}"
+        );
+    }
+
+    /// Exit 2 is the launcher's; every other non-zero status belongs to the agent CLI it execs.
+    #[test]
+    fn any_other_non_zero_status_is_an_ordinary_ended_pass() {
+        let mut host = SessionHost::default();
+        host.insert("Rogue", shell("exit 101", 24, 80));
+        let view = settle_host(&mut host, "Rogue", |view| {
+            matches!(view, SessionView::Ended { .. } | SessionView::Refused { .. })
+        });
+        assert!(matches!(view, SessionView::Ended { .. }), "{view:?}");
+    }
+
+    #[test]
+    fn starting_again_replaces_a_refusal() {
+        let mut host = SessionHost::default();
+        host.note_refusal("Rogue", "cerebro: nope", at("2026-01-01T00:00:00Z"));
+        host.insert("Rogue", shell("sleep 5", 24, 80));
+        let view = host.sync(Some("Rogue"), 24, 80, at("2026-01-01T00:00:01Z"));
+        assert!(matches!(view, SessionView::Starting | SessionView::Live { .. }), "{view:?}");
+    }
+
+    #[test]
+    fn a_killed_session_says_it_was_killed() {
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", shell("while :; do sleep 1; done", 24, 80));
+        let paths = ReaderPaths {
+            consumer_root: std::path::PathBuf::from("/nonexistent"),
+            shared_root: std::path::PathBuf::from("/nonexistent"),
+            scripts_dir: std::path::PathBuf::from("/nonexistent"),
+        };
+        assert!(host.kill(&paths, "Cyclops"));
+        assert!(!host.kill(&paths, "Storm"), "a name with no session here is not killed");
+
+        let view = settle_host(&mut host, "Cyclops", |view| {
+            matches!(view, SessionView::Ended { .. })
+        });
+        let SessionView::Ended { lines, .. } = view else { panic!("{view:?}") };
+        let text = text_of(&lines);
+        assert!(
+            text.iter().any(|line| line == "Cyclops was killed by signal 1."),
+            "this view sent the signal and knows which, and 0.9 sends SIGHUP: {text:?}"
+        );
+        let killed = lines
+            .iter()
+            .find(|line| texts(line).join("") == "Cyclops was killed by signal 1.")
+            .expect("the exit line");
+        assert_eq!(killed.spans[0].style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn live_names_follow_the_roster_rather_than_the_map() {
+        let mut host = SessionHost::default();
+        for name in ["Cyclops", "Xavier", "Beast"] {
+            host.insert(name, shell("sleep 5", 24, 80));
+        }
+        let order: Vec<String> =
+            ["Xavier", "Beast", "Storm", "Cyclops"].iter().map(|n| n.to_string()).collect();
+        assert_eq!(
+            host.live_names(&order),
+            vec!["Xavier".to_string(), "Beast".to_string(), "Cyclops".to_string()]
+        );
+    }
+
+    /// Poll `sync` until PREDICATE holds, so a case never depends on how fast a child exits.
+    fn settle_host(
+        host: &mut SessionHost,
+        name: &str,
+        predicate: impl Fn(&SessionView) -> bool,
+    ) -> SessionView {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let view = host.sync(Some(name), 24, 80, at("2026-01-01T00:00:00Z"));
+            if predicate(&view) {
+                return view;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("never settled for {name}: {view:?}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     #[test]

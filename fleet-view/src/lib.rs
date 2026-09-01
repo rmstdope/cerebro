@@ -30,6 +30,7 @@
 //! so this crate still starts nothing on its own.
 
 pub mod app;
+pub mod lifecycle;
 pub mod model;
 pub mod readers;
 pub mod session;
@@ -54,7 +55,11 @@ pub use session::{
     SessionHost, SessionView, SCROLLBACK_LINES,
 };
 pub use app::{
-    App, AppAction, FleetWorker, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics,
+    App, AppAction, FleetWorker, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, Prompt,
     SupervisorWorker, WorkWorker,
+};
+pub use lifecycle::{
+    finish_outcome, join_names, kill_outcome, quit_refusal_lines, quit_refusal_title,
+    start_outcome, FinishOutcome, KillOutcome, Situation, StartOutcome,
 };
 pub use ui::{draw, metrics};

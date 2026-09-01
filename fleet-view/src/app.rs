@@ -344,6 +344,13 @@ pub struct App {
     /// its surface - the navigator chose that over an Ownership pane, so that ownership never
     /// takes a row or a Tab stop from Fleet and Work.
     pub supervision: SupervisionMode,
+    /// The confirmation the screen is waiting on. While this is `Some`, the header shows its text
+    /// in gold and EVERY key is consumed by it: `y` acts, anything else cancels silently and does
+    /// nothing else, so `q` at a kill prompt cancels the kill and does not also quit (Q10).
+    pub confirm: Option<Prompt>,
+    /// The live agents that refused a quit, in fleet order. While this is `Some`, the whole screen
+    /// is the refusal pane and ANY key clears it and does nothing else (Q8).
+    pub quit_refusal: Option<Vec<String>>,
     pub quit: bool,
     /// The Fleet pane's viewport height from the last frame that was actually drawn.
     ///
@@ -355,6 +362,14 @@ pub struct App {
     fleet_viewport: usize,
     last_fleet_request: Option<Instant>,
     last_work_request: Option<Instant>,
+}
+
+/// A question the screen is waiting on. `k` is the only key that asks (the navigator's choice),
+/// so this has one variant, and it is an enum for the next one rather than for this one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Prompt {
+    /// The agent to kill, and the gold line `lifecycle::kill_prompt` already built.
+    Kill { name: String, text: String },
 }
 
 impl Default for App {
@@ -385,6 +400,8 @@ impl App {
             notice: None,
             focus: PaneFocus::default(),
             supervision,
+            confirm: None,
+            quit_refusal: None,
             quit: false,
             fleet_viewport: 0,
             last_fleet_request: None,
@@ -396,6 +413,35 @@ impl App {
     /// controller's, and this cannot bind, release or write anything.
     pub fn set_supervision(&mut self, supervision: SupervisionMode) {
         self.supervision = supervision;
+    }
+
+    /// Refuse a quit over LIVE agents: show the pane, and undo the `quit` flag `on_key` set.
+    pub fn refuse_quit(&mut self, live: Vec<String>) {
+        self.quit = false;
+        self.quit_refusal = Some(live);
+    }
+
+    /// Put TEXT in the notice slot. The one writer other than `reconcile_selection`; `on_key`
+    /// remains the one place it is cleared.
+    pub fn set_notice(&mut self, text: String) {
+        self.notice = Some(text);
+    }
+
+    /// Every roster name, in fleet order, for `SessionHost::live_names`. Empty when the fleet read
+    /// has never succeeded - and a quit is then never refused, because a view with no fleet is a
+    /// view hosting nothing it could name.
+    pub fn roster_order(&self) -> Vec<String> {
+        self.fleet
+            .content
+            .value()
+            .map(|rows| rows.iter().map(|row| row.name.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// The selected fleet row, when a successful read has one under that name.
+    pub fn selected_row(&self) -> Option<&FleetRow> {
+        let name = self.selected.as_deref()?;
+        self.fleet.content.value()?.iter().find(|row| row.name == name)
     }
 
     /// The schedule: a request for each pane at once, then one no sooner than that pane's own
@@ -423,8 +469,13 @@ impl App {
         }
     }
 
-    /// The whole keyboard contract: focus, scroll, refresh, quit. No selection, no detail, no
-    /// lifecycle key - this screen may not act on the fleet at all.
+    /// The whole keyboard contract this method owns: focus, scroll, refresh, quit.
+    ///
+    /// The lifecycle keys are NOT here. `main::route_key` takes `s`, `f` and `k` before this is
+    /// reached, and the quit-refusal and kill-confirmation panes consume every key ahead of it, so
+    /// by the time a key arrives here it is one of the movement, refresh and quit keys alone. They
+    /// cannot travel through this method because `AppAction` is `Copy` and field-less and is
+    /// compared with `==` in the loop, so no variant may carry an agent's name.
     ///
     /// `viewport_lines` is what PageUp/PageDown move the focused pane by: that pane's own body
     /// height the last frame actually showed, so a page is a page of what the navigator is

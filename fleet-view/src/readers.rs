@@ -269,10 +269,9 @@ pub fn read_supervisor_record(paths: &ReaderPaths) -> Result<PathBuf, ReadError>
 pub fn read_states(paths: &ReaderPaths, roster: &[RosterEntry]) -> StateInputs {
     let mut states = StateInputs::new();
     for entry in roster {
-        let path = paths
-            .shared_root
-            .join(".cerebro/state")
-            .join(format!("{}.state.json", entry.name));
+        // The path is spelled once, in `lifecycle`, which is also where it is deleted: two
+        // spellings of one contract path is drift this repository has already paid for.
+        let path = crate::lifecycle::state_file_path(paths, &entry.name);
         let observation = match std::fs::read_to_string(&path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => StateObservation::Missing,
             Err(e) => StateObservation::Invalid(format!("{}: {e}", path.display())),

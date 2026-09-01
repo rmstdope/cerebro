@@ -4839,7 +4839,8 @@ panel render."
               ;; up, has a batch Emacs take the fleet's lease for the length of the suite. A test
               ;; that reaches for a real port is a test about the machine.
               ((symbol-function 'cerebro--reconcile-supervision-safely)
-               (lambda (&rest _) '(supervising))))
+               (lambda (&rest _) '(supervising)))
+              ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore))
       (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-list*"))
             (panel (generate-new-buffer cerebro-beads-buffer-name)))
         (unwind-protect
@@ -4885,7 +4886,8 @@ buffer's own cadence rather than the panel's."
               ;; `tick-refreshes-the-panel-only-when-due': an unstubbed tick binds this machine's
               ;; real supervision lease.
               ((symbol-function 'cerebro--reconcile-supervision-safely)
-               (lambda (&rest _) '(supervising))))
+               (lambda (&rest _) '(supervising)))
+              ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore))
       (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-gh*")))
         (unwind-protect
             (progn
@@ -4902,6 +4904,7 @@ list must still refresh and supervise without error."
             ;; an unstubbed tick binds this machine's real supervision lease.
             ((symbol-function 'cerebro--reconcile-supervision-safely)
              (lambda (&rest _) '(supervising)))
+            ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore)
             ((symbol-function 'cerebro--supervise) #'ignore)
             ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
     (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-no-panel*")))
@@ -4921,6 +4924,7 @@ navigator who redraws by hand every twenty seconds would never see one."
             ;; an unstubbed tick binds this machine's real supervision lease.
             ((symbol-function 'cerebro--reconcile-supervision-safely)
              (lambda (&rest _) '(supervising)))
+            ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore)
             ((symbol-function 'cerebro--request-beads)
              (lambda (_root cb) (funcall cb (cerebro-test--buckets)) 'started))
             ((symbol-function 'cerebro--sweep) #'ignore)

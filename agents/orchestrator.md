@@ -83,9 +83,12 @@ bd list --status open --exclude-label planned --exclude-label triage:declined --
            | "\(.id)\t\(.external_ref // "-")\t\(.title)"'
 ```
 
-A bead's parent is a `parent-child` edge in its own `dependencies`, pointing at the parent — there is
-no `parent` field to read. Every query here pipes `bd list` and selects on `.type`: `bd show` returns
+A bead names its parent in a `parent` field, and also carries a `parent-child` edge in its
+`dependencies`. The queries here read the edge because they pipe `bd list` and want the whole
+family in one call — and they select on `.type`, which is `bd list`'s spelling: `bd show` returns
 the same edges under `dependency_type`, and a filter written for one finds nothing in the other.
+For one bead's parent, `bd show <id> --json | jq -r '… .parent // empty'` is shorter and is what
+`beads-workflow` and `plan-bead` use.
 
 The `external_ref` column is there because it changes the recommendation: a `gh-<n>` in it means the
 bead came from a real person filing a real GitHub issue. See *A bead from a GitHub issue outranks one

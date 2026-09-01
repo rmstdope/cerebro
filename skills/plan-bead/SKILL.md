@@ -631,6 +631,11 @@ Three details that decide whether this works:
   blocker.
 - **`bd show --json` returns an array**, hence the `if type=="array"` — indexing it as an object
   fails with `Cannot index array with string "dependencies"`.
+- **The field is `dependency_type` because this is `bd show`.** In `bd list` the same edge calls it
+  `type` and `dependency_type` is null, so a filter written for one command silently matches nothing
+  in the other — for every bead, which reads as "no blockers" rather than as a mistake.
+  `agents/orchestrator.md` pipes `bd list` and selects on `.type` for exactly that reason; neither
+  is wrong, and neither is portable to the other command.
 - **Closed counts as satisfied.** A delivered blocker needs no plan, and a closed bead keeps its
   `planned` label anyway, so both tests agree — but the status test is the one that means it.
 

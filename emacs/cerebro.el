@@ -4482,6 +4482,11 @@ trigger read as well as what it decided."
              ;; role's last launches produced no session. Without the count
              ;; beside it, a backed-off row and a broken one read alike.
              (cons 'backed_off (and (alist-get 'backed-off context) t))
+             ;; And the two guards a standby name can be held by whatever its
+             ;; trigger says (cb-sxf): a stop flag it has not been retired
+             ;; under yet, and a disarm that happened earlier in this tick.
+             (cons 'stop_flag (and (alist-get 'flagged context) t))
+             (cons 'disarmed (and (alist-get 'disarmed context) t))
              (cons 'failed_starts (alist-get 'failed-starts context)))))
     (setf (alist-get name cerebro--log-seen nil nil #'equal) reason)))
 
@@ -6068,16 +6073,30 @@ is where that is said."
                  ;; is due (`cerebro--retry-wait').
                  (backed-off (and reason failed
                                   (> (cerebro--retry-wait failures started now-float) 0)))
+                 ;; A name told to finish takes no further pass, whatever its
+                 ;; kind (cb-sxf).  `cerebro--supervise-action' answers
+                 ;; `retire' for a flagged standby implementer and leaves a
+                 ;; role's flag to this loop; before this it was read here by
+                 ;; nobody, so the trigger started a whole pass under a flag.
+                 (flagged (cerebro--stop-flag-p repo-root name))
+                 ;; And a name disarmed EARLIER IN THIS TICK is not started on
+                 ;; it: `cerebro--supervise' removes it from `cerebro--armed'
+                 ;; and clears its flag, but the struct in `cerebro--agents'
+                 ;; still says `standby' - it was derived before the retire.
+                 (disarmed (not (member name cerebro--armed)))
                  ;; `failed-starts' is already in the context
                  ;; (`cerebro--agent-context'), which is where the row reads
                  ;; it too - one source, so the label and the decision cannot
                  ;; disagree about how far into the backoff this name is.
                  (agent-context (append (list (cons 'spaced-out too-soon)
                                               (cons 'spacing spacing)
-                                              (cons 'backed-off backed-off))
+                                              (cons 'backed-off backed-off)
+                                              (cons 'flagged flagged)
+                                              (cons 'disarmed disarmed))
                                         agent-context)))
             (cerebro--log-evaluation repo-root agent reason agent-context)
-            (when (and reason (not too-soon) (not backed-off))
+            (when (and reason (not too-soon) (not backed-off)
+                       (not flagged) (not disarmed))
               (if (cerebro--give-up-p failed failures)
                   ;; Nothing is coming back on its own from here: the record
                   ;; says so on the row, and the name leaves `cerebro--armed',

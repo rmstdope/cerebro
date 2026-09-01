@@ -7423,6 +7423,7 @@ the next tick starting it again."
         (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)
                                     (cerebro-test--interactive "Moira" "user-feedback" 'waiting)
                                     (cerebro-test--interactive "Cerebro" "orchestrator" 'standby))
+              cerebro--armed '("Psylocke" "Cerebro")
               cerebro--parked '(("Psylocke" . (990000.0 980000.0 nil))
                                 ("Cerebro" . (990000.0 980000.0 nil)))
               cerebro--started-at '(("Psylocke" . 980000.0) ("Cerebro" . 980000.0)))
@@ -7433,6 +7434,59 @@ the next tick starting it again."
         (setq cerebro--started-at '(("Psylocke" . 999900.0)))
         (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
         (should (equal launched '("Psylocke")))))))
+
+(ert-deftest cerebro-test/start-due-never-starts-a-flagged-name ()
+  "A name told to finish is not started again by the trigger, whatever its
+kind: the flag is read in the start path, and an unflagged peer on the same
+tick is unaffected."
+  (let ((launched nil))
+    (cl-letf (((symbol-function 'cerebro--launch)
+               (lambda (a) (push (cerebro-agent-name a) launched)))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'message) #'ignore)
+              ((symbol-function 'cerebro--stop-flag-p)
+               (lambda (_root name) (equal name "Psylocke")))
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _)
+                 '((now . 1000000.0) (implementers . 2) (planned . 4)
+                   (planned-ids "cb-1" "cb-2" "cb-3" "cb-4")
+                   (p0-unplanned) (p4-unranked . 0)
+                   (merged-unverified . 2) (stale-verdicts . 0) (gh)))))
+      (with-temp-buffer
+        (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)
+                                    (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby))
+              cerebro--armed '("Psylocke" "Rogue")
+              cerebro--parked '(("Psylocke" . (990000.0 980000.0 nil))
+                                ("Rogue" . (990000.0 980000.0 nil)))
+              cerebro--started-at '(("Psylocke" . 980000.0) ("Rogue" . 980000.0)))
+        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
+        (should (equal launched '("Rogue")))))))
+
+(ert-deftest cerebro-test/start-due-skips-a-name-disarmed-on-this-tick ()
+  "`cerebro--supervise\=' retires on the same tick `cerebro--start-due\=' runs,
+over the same agent structs: the armed set is the authority, not the
+five-second-old `standby\=' in the struct."
+  (let ((launched nil))
+    (cl-letf (((symbol-function 'cerebro--launch)
+               (lambda (a) (push (cerebro-agent-name a) launched)))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'message) #'ignore)
+              ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _)
+                 '((now . 1000000.0) (implementers . 2) (planned . 4)
+                   (planned-ids "cb-1" "cb-2" "cb-3" "cb-4")
+                   (p0-unplanned) (p4-unranked . 0)
+                   (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+      (with-temp-buffer
+        (setq cerebro--agents
+              (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby))
+              cerebro--armed nil
+              cerebro--parked nil
+              cerebro--seen-up nil
+              cerebro--started-at '(("Cyclops" . 980000.0)))
+        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
+        (should (null launched))))))
 
 (ert-deftest cerebro-test/a-dead-implementer-is-retried-on-the-backoff ()
   "The same schedule the roles wait out, indexed by the same counter: a
@@ -7454,6 +7508,7 @@ retried at 30s, 2m and then every 10m rather than every five seconds."
       (with-temp-buffer
         (setq cerebro--agents
               (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby))
+              cerebro--armed '("Cyclops")
               cerebro--parked nil
               cerebro--seen-up nil
               cerebro--started-at '(("Cyclops" . 999990.0))
@@ -7491,6 +7546,7 @@ retried at 30s, 2m and then every 10m rather than every five seconds."
       (with-temp-buffer
         (setq cerebro--agents
               (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby))
+              cerebro--armed '("Cyclops")
               cerebro--parked nil
               cerebro--seen-up '(("Cyclops" . 999995.0))
               cerebro--started-at '(("Cyclops" . 990000.0))
@@ -7524,6 +7580,7 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
         (setq cerebro--agents
               (list (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
                     (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby))
+              cerebro--armed '("Cyclops" "Rogue")
               cerebro--parked nil
               cerebro--seen-up nil
               cerebro--started-at nil
@@ -7577,6 +7634,32 @@ seven ticks\" answerable as \"it held because the number in force was 30\"."
             (should (string-match-p "\"spaced_out\":true" line))))
       (delete-directory root t))))
 
+(ert-deftest cerebro-test/evaluation-log-records-a-flagged-and-a-disarmed-name ()
+  "A decision NOT to start is otherwise indistinguishable from a tick that
+never ran, which is why `spaced_out\=' and `backed_off\=' are recorded - and the
+two guards cb-sxf adds are recorded the same way, null rather than absent
+on an ordinary evaluation - the same shape `spaced_out\=' and `backed_off\='
+already write for a guard that did not fire."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-log-verbosity 'evaluations)
+        (cerebro--log-seen nil))
+    (unwind-protect
+        (let ((file (expand-file-name ".cerebro/state/decisions.jsonl" root))
+              (agent (cerebro-test--interactive "Beast" "planner" 'standby)))
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (cerebro--log-evaluation root agent "buffer 0 of 4" '((flagged . t)))
+          (cerebro--log-evaluation root agent "buffer 0 of 4" '((disarmed . t)))
+          (cerebro--log-evaluation root agent "buffer 0 of 4" nil)
+          (let ((lines (with-temp-buffer
+                         (insert-file-contents file)
+                         (split-string (buffer-string) "\n" t))))
+            (should (string-match-p "\"stop_flag\":true" (nth 0 lines)))
+            (should (string-match-p "\"disarmed\":null" (nth 0 lines)))
+            (should (string-match-p "\"disarmed\":true" (nth 1 lines)))
+            (should (string-match-p "\"stop_flag\":null" (nth 2 lines)))
+            (should (string-match-p "\"disarmed\":null" (nth 2 lines)))))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/a-project-that-declares-no-spacing-gap-starts-both-planners-at-once ()
   "The whole path: a number in the consumer\='s own `project.conf\=' deciding which
 sessions `cerebro--start-due\=' launches.  A declared 0 is \"never space this
@@ -7603,6 +7686,7 @@ the built-in 30 would have let it through."
         (setq cerebro--agents
               (list (cerebro-test--interactive "Xavier" "planner" 'standby)
                     (cerebro-test--interactive "Beast" "planner" 'standby))
+              cerebro--armed '("Xavier" "Beast")
               cerebro--parked nil
               cerebro--seen-up nil
               cerebro--started-at nil
@@ -7640,7 +7724,8 @@ seconds into a `user-error' is not a way to say so."
               ((symbol-function 'cerebro--trigger-context) (lambda (&rest _) nil))
               ((symbol-function 'message) #'ignore))
       (with-temp-buffer
-        (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)))
+        (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby))
+              cerebro--armed '("Psylocke"))
         (cerebro--start-due "/tmp/nowhere" (current-time))
         (should (null launched))))))
 
@@ -7665,7 +7750,8 @@ while 30.1 passed on the same commit."
               ((symbol-function 'message) #'ignore))
       (with-temp-buffer
         (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)
-                                    (cerebro-test--interactive "Xavier" "planner" 'standby)))
+                                    (cerebro-test--interactive "Xavier" "planner" 'standby))
+              cerebro--armed '("Psylocke" "Xavier"))
         (cerebro--start-due "/tmp/nowhere" (current-time))
         (should (equal launched '("Xavier")))))))
 

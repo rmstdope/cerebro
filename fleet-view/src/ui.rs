@@ -518,6 +518,15 @@ fn newest_failure(app: &App) -> Option<(DateTime<Utc>, bool)> {
 /// stale. `g retry` rather than `g refresh` until BOTH panes are fresh - the key is the same, and
 /// what it is for has changed.
 fn header_line(app: &App, width: u16) -> Line<'static> {
+    // A live session that holds the keyboard replaces the header entirely - the navigator's
+    // choice, over keeping a hint line that advertises `q`, `g` and the arrows while none of them
+    // reach this screen. Everything else the header carries applies whenever one does not.
+    if app.session_has_keyboard() {
+        let name = app.selected.clone().unwrap_or_else(|| "The session".to_string());
+        return Line::from(Span::raw(format!(
+            "{name} has the keyboard | Shift-Tab leaves the session"
+        )));
+    }
     let mut spans = vec![Span::raw(supervision_title(&app.supervision))];
     // A notice takes the place `refreshing...` or a failure would have had: it is transient, gone
     // on the next keystroke, while a stale pane goes on saying so in its own title anyway.
@@ -1498,6 +1507,48 @@ mod tests {
         app.selected = None;
         let rendered = lines(&render(&app, 120, 20));
         assert!(rendered.iter().any(|line| line.contains("No agent selected.")), "{rendered:?}");
+    }
+
+
+    #[test]
+    fn a_focused_live_session_replaces_the_header() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        app.focus = PaneFocus::Session;
+        live(&mut app, &["building"]);
+        let rendered = lines(&render(&app, 120, 20));
+        assert_eq!(rendered[0], "Xavier has the keyboard | Shift-Tab leaves the session");
+
+        // Unfocused, the ordinary header is back untouched - ownership span, hints and all.
+        app.focus = PaneFocus::Fleet;
+        let rendered = lines(&render(&app, 120, 20));
+        assert!(rendered[0].starts_with("Cerebro — supervising"), "{:?}", rendered[0]);
+        assert!(rendered[0].contains("q/Esc/Ctrl-C quit"), "{:?}", rendered[0]);
+    }
+
+    #[test]
+    fn the_cursor_is_placed_only_while_the_session_has_the_keyboard() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        live(&mut app, &["one", "two", "three"]);
+
+        app.focus = PaneFocus::Session;
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &app, now())).unwrap();
+        let focused = terminal.get_cursor_position().unwrap();
+        // The session pane starts at column LEFT_COLUMN in the split layout, one row under the
+        // header, and the view's cursor is (1, 3) inside it.
+        assert_eq!((focused.x, focused.y), (LEFT_COLUMN + 1 + 3, 1 + 1 + 1));
+
+        app.focus = PaneFocus::Fleet;
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &app, now())).unwrap();
+        let unfocused = terminal.get_cursor_position().unwrap();
+        assert_ne!(
+            (unfocused.x, unfocused.y),
+            (focused.x, focused.y),
+            "an unfocused pane must not move the terminal cursor into the child"
+        );
     }
 
     #[test]

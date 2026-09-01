@@ -427,9 +427,13 @@ impl App {
         self.notice = Some(text);
     }
 
-    /// Every roster name, in fleet order, for `SessionHost::live_names`. Empty when the fleet read
-    /// has never succeeded - and a quit is then never refused, because a view with no fleet is a
-    /// view hosting nothing it could name.
+    /// Every roster name, in fleet order, for `SessionHost::live_names` to ORDER its answer by.
+    ///
+    /// Empty until a fleet read has succeeded, and that is exactly why it may not be the whole of
+    /// the answer: `live_names` names every live session and uses this only for the order, so a
+    /// child hosted before the first successful read is still named and still refuses a quit. A
+    /// caller that treated an empty roster as "nothing is live" would let `q` through and let
+    /// `Session::Drop` kill the agents on the way out.
     pub fn roster_order(&self) -> Vec<String> {
         self.fleet
             .content

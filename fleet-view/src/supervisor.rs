@@ -395,8 +395,6 @@ mod tests {
             .unwrap_or_else(|| panic!("supervisor.cases: unknown kind {word}"))
     }
 
-    /// Every row of `tests/lib/supervisor.cases`, which `cerebro--supervision-decision` answers
-    /// too. A row either side answers differently is a fleet with two supervisors or none.
     #[test]
     fn a_draining_view_may_end_but_not_start() {
         let supervising = SupervisionMode::Supervising;
@@ -424,6 +422,8 @@ mod tests {
         }
     }
 
+    /// Every row of `tests/lib/supervisor.cases`, which `cerebro--supervision-decision` answers
+    /// too. A row either side answers differently is a fleet with two supervisors or none.
     #[test]
     fn both_implementations_follow_the_shared_transition_table() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/supervisor.cases");

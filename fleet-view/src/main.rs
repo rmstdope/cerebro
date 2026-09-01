@@ -338,6 +338,7 @@ where
         if !ui::too_small(area) {
             app.fleet.clamp_scroll(metrics.fleet.content_lines, metrics.fleet.viewport_lines);
             app.work.clamp_scroll(metrics.work.content_lines, metrics.work.viewport_lines);
+            app.session.clamp_scroll(metrics.session.content_lines, metrics.session.viewport_lines);
         }
 
         // Each answer updates only its own pane. Neither poll blocks.
@@ -962,7 +963,11 @@ mod main_tests {
             &supervision().0, &mut supervision().1, Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
-        assert_eq!(app.fleet.scroll, 1, "Down moved Fleet, which is focused by default");
+        assert_eq!(
+            app.selected.as_deref(),
+            Some("A01"),
+            "Down moved the SELECTION in Fleet, which is focused by default"
+        );
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Work, "Tab moved focus to Work");
         assert_eq!(app.work.scroll, expected_work_page, "PageDown moved Work by its own viewport");
     }
@@ -997,6 +1002,7 @@ mod main_tests {
         );
         app.fleet.scroll = 20;
         app.work.scroll = 5;
+        app.session.scroll = 2;
 
         // Below the 40x12 floor: every draw this loop makes is the too-small replacement screen.
         let mut terminal = Terminal::new(TestBackend::new(30, 10)).unwrap();
@@ -1009,6 +1015,42 @@ mod main_tests {
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");
+        assert_eq!(app.session.scroll, 2, "or the Session pane's");
+    }
+
+    /// The loop clamps all three offsets from the frame it has just drawn, not two of them.
+    #[test]
+    fn the_session_offset_is_clamped_like_the_other_two() {
+        let mut app = App::with_supervision(cerebro_tui::supervisor::SupervisionMode::Supervising);
+        app.finish_refresh(
+            Ok(vec![cerebro_tui::model::FleetRow {
+                name: "Storm".into(),
+                role: "implementer".into(),
+                kind: cerebro_tui::model::AgentKind::Implementer,
+                state: cerebro_tui::model::RowState::Idle,
+                phase: None,
+                bead: None,
+                since: None,
+                phase_since: None,
+                pid: None,
+                sessions: 0,
+                diagnostic: None,
+            }]),
+            Utc::now(),
+        );
+        // Far past a four-line body: the clamp must pull it back to what that body reaches.
+        app.session.scroll = 500;
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let mut events = QueuedEvents::new(vec![crossterm::event::KeyCode::Char('q')]);
+        let area = Rect::new(0, 0, 120, 30);
+        let m = ui::metrics(&app, Utc::now(), area);
+        let expected = m.session.content_lines.saturating_sub(m.session.viewport_lines);
+
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, Utc::now).unwrap();
+
+        assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
     }
 
     #[test]

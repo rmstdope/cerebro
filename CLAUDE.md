@@ -543,15 +543,31 @@ still hosts no sessions and offers no lifecycle key — `cb-kcs.2` adds the PTYs
 `.4` triggers, and `.5` is what would set `fleet_supervisor tui` here. This repository keeps the
 key absent and stays Emacs-supervised.
 
-One screen, two independently bordered, independently scrolling widgets: Fleet above Work, each
-with its own title, focus and scroll offset rather than one shared document. Fleet takes its
-natural height up to half the area below the header; Work takes the rest. `Tab`/`Shift-Tab` toggle
-which widget is focused - the focused one draws a bright-blue thick-line border and a bold title;
-`↑`/`↓`/`PgUp`/`PgDn` move only it, stopping at its own boundary rather than transferring focus.
-`g` refreshes both panes regardless of focus, `q`/`Esc`/`Ctrl-C` quits. A pane whose content
-outgrows its inner height reserves its last row for a dim `Rows n–m of total` cue. There is no
-selection, no detail window and no lifecycle key, deliberately — the approved surface is
-`docs/ui/cb-42k-independent-widgets.html`, which superseded the original single-document
+One screen, **three** independently bordered, independently scrolling widgets since cb-kcs.2.1:
+Fleet, Work and Session, each with its own title, focus and scroll offset rather than one shared
+document. At `SPLIT_COLUMNS` (100) or wider the screen is a fixed `LEFT_COLUMN` (40) holding Fleet
+over Work, with Session taking every remaining cell beside them; below that width all three stack.
+`Tab` cycles Fleet → Work → Session and `Shift-Tab` reverses it — the focused one draws a
+bright-blue thick-line border and a bold title. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:
+under Work and Session that is its own scroll offset, and **under Fleet it is the selection**, which
+the pane then scrolls to follow. `g` refreshes both readers regardless of focus, `q`/`Esc`/`Ctrl-C`
+quits. A pane whose content outgrows its inner height reserves its last row for a dim
+`Rows n–m of total` cue.
+
+**The selection is a name, never an index** (`App::selected`, `App::selected_index`): the roster can
+shrink under the navigator, and an index would silently come to mean a different agent. A selected
+agent that leaves the roster moves the selection to the row at its old index, clamped, and says so
+in the header in gold until the next keystroke (`App::notice`) — and only ever on a **successful**
+fleet read, so a five-second `ps` hiccup can never reselect anybody. The fleet body is not one line
+per row (a heading, plus a diagnostic line per invalid row), so `model::row_document_line` is the
+one place a row index becomes a document line and the renderer calls it rather than keeping a
+second copy.
+
+Session hosts nothing yet: no PTY, no child process, and no `s`/`f`/`k` — the pane says why there is
+no session in it, and the header hint names no key that does not exist. `cb-kcs.2.2` adds the pty
+and the focused-session header, `.3` the lifecycle keys. The approved surface is
+`docs/ui/cb-kcs.2-split-console.html`, which refines `docs/ui/cb-kcs-supervisor.html` and
+superseded `docs/ui/cb-42k-independent-widgets.html` and the original single-document
 `docs/ui/cb-vyp-read-only-view.html`.
 
 The crate is split the way `cerebro.el` is, and for the same reason:

@@ -371,6 +371,20 @@ fn row_state_for(raw: &str) -> RowState {
 ///
 /// `sessions` is always the wrapper-collapsed leaf count for this name at this root, independent
 /// of which branch above produced the row's state.
+/// Which line of the Fleet pane's body the row at INDEX occupies.
+///
+/// The body opens with one heading line, and every `RowState::Invalid` row *before* INDEX that
+/// carries a diagnostic contributes one extra line of its own. `ui::fleet_lines` is the code
+/// this mirrors, and `ui` does not keep a second copy of the arithmetic: the renderer calls this.
+pub fn row_document_line(rows: &[FleetRow], index: usize) -> usize {
+    let extra = rows
+        .iter()
+        .take(index)
+        .filter(|row| row.state == RowState::Invalid && row.diagnostic.is_some())
+        .count();
+    1 + index + extra
+}
+
 pub fn derive_fleet(
     roster: &[RosterEntry],
     states: &StateInputs,
@@ -569,6 +583,48 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_rows_document_line_counts_the_heading_and_every_diagnostic_above_it() {
+        let plain = |name: &str| FleetRow {
+            name: name.into(),
+            role: "implementer".into(),
+            kind: AgentKind::Implementer,
+            state: RowState::Idle,
+            phase: None,
+            bead: None,
+            since: None,
+            phase_since: None,
+            pid: None,
+            sessions: 0,
+            diagnostic: None,
+        };
+        let invalid = |name: &str| FleetRow {
+            state: RowState::Invalid,
+            diagnostic: Some("bad json".into()),
+            ..plain(name)
+        };
+
+        assert_eq!(row_document_line(&[], 0), 1, "an empty fleet still has its heading");
+
+        let rows = vec![plain("A"), plain("B"), plain("C")];
+        assert_eq!(row_document_line(&rows, 0), 1);
+        assert_eq!(row_document_line(&rows, 2), 3);
+
+        // An invalid row BEFORE the index contributes its own diagnostic line; one after it
+        // does not, and one AT the index contributes nothing above itself.
+        let rows = vec![plain("A"), invalid("B"), plain("C"), invalid("D")];
+        assert_eq!(row_document_line(&rows, 1), 2, "the invalid row's own line");
+        assert_eq!(row_document_line(&rows, 2), 4, "one diagnostic line above it");
+        assert_eq!(row_document_line(&rows, 3), 5);
+
+        // An invalid row carrying no diagnostic emits no extra line, exactly as the renderer does.
+        let rows = vec![
+            FleetRow { diagnostic: None, ..invalid("A") },
+            plain("B"),
+        ];
+        assert_eq!(row_document_line(&rows, 1), 2);
+    }
     use super::*;
     use std::path::PathBuf;
 

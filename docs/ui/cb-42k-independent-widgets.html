@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-42k - stacked independent widgets</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
+          --dim:#8b949e; --blue:#58a6ff; --green:#3fb950; --gold:#d29922; --red:#f85149; }
+  body { margin:0; padding:32px; color:#24292f; background:#f6f8fa;
+         font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  h2 { margin:28px 0 8px; font-size:17px; }
+  p { max-width:900px; color:#57606a; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .term { max-width:850px; color:var(--text); background:var(--bg); border-radius:9px;
+          padding:10px; box-shadow:0 8px 28px #1f232833;
+          font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .bar { color:var(--dim); padding:2px 4px 8px; white-space:pre-wrap; }
+  .pane { border:1px solid var(--line); background:var(--panel); margin-bottom:8px; }
+  .pane.focus { border:2px solid var(--blue); }
+  .title { color:var(--dim); padding:2px 8px; }
+  .focus .title { color:var(--blue); font-weight:bold; }
+  pre { margin:0; padding:2px 8px 8px; white-space:pre-wrap; }
+  .green { color:var(--green); } .blue { color:var(--blue); }
+  .gold { color:var(--gold); } .red { color:var(--red); } .dim { color:var(--dim); }
+  .narrow { width:420px; }
+</style>
+</head>
+<body>
+<h1>Stacked, independently scrolling widgets</h1>
+<p>Fleet uses its natural height up to half the available pane area. Work receives the remainder.
+<code>Tab</code> and <code>Shift-Tab</code> move focus; arrows and page keys scroll only the focused
+widget. The focused widget has a bright blue two-cell border and bold blue title. A refresh preserves
+both scroll positions independently, clamping only when new content is shorter.</p>
+
+<h2>Wide terminal — Fleet focused</h2>
+<div class="term">
+  <div class="bar">Cerebro — read-only | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn scroll pane | g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="pane focus"><div class="title">Fleet 8</div><pre>  AGENT         ROLE           STATE       BEAD      FOR
+<span class="green">● Xavier</span>        planner        plan        cb-42k     9m  9m
+<span class="green">● Beast</span>         planner        plan        cb-kcs    16m 16m
+<span class="gold">? Cerebro</span>       orchestrator   asking                4m
+<span class="blue">◆ Moira</span>         user-feedback idle
+<span class="dim">○ Psylocke</span>      verifier       dead</pre></div>
+  <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-123  P1 Preserve session output
+
+<strong>Planned, unclaimed 0</strong>
+  <span class="dim">(none)</span>
+
+<span class="dim">Rows 1–5 of 23</span></pre></div>
+</div>
+
+<h2>Narrow terminal — Work focused</h2>
+<div class="term narrow">
+  <div class="bar">Cerebro — read-only | Tab/Shift-Tab pane | ↑/↓ scroll pane
+| g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="pane"><div class="title">Fleet 8</div><pre>  AGENT          STATE       BEAD
+<span class="green">● Xavier</span>         plan        cb-42k
+<span class="green">● Beast</span>          plan        cb-kcs
+<span class="gold">? Cerebro</span>        asking
+<span class="dim">Rows 1–4 of 8</span></pre></div>
+  <div class="pane focus"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-123  P1 Preserve session output
+
+<strong>Planned, unclaimed 0</strong>
+  <span class="dim">(none)</span>
+
+<strong>Being planned 2</strong>
+  cb-42k  P1 Rust TUI gives...
+<span class="dim">Rows 1–7 of 21</span></pre></div>
+</div>
+
+<h2>Many agents</h2>
+<p>Fleet is capped at half the available height. Work always remains visible, and Fleet scrolls
+independently.</p>
+<div class="term narrow">
+  <div class="bar">Cerebro — read-only | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn scroll pane
+| g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="pane focus"><div class="title">Fleet 19</div><pre>  AGENT          STATE       BEAD
+<span class="green">● Xavier</span>         plan        cb-42k
+<span class="green">● Beast</span>          plan        cb-kcs
+<span class="gold">? Cerebro</span>        asking
+<span class="blue">◆ Moira</span>          idle
+<span class="dim">○ Psylocke</span>       dead
+<span class="dim">Rows 5–9 of 19</span></pre></div>
+  <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-123  P1 Preserve session output
+
+<strong>Planned, unclaimed 0</strong>
+  <span class="dim">(none)</span></pre></div>
+</div>
+
+<h2>Independent loading and failure states</h2>
+<div class="term">
+  <div class="bar">Cerebro — read-only | refresh failed at 12:14:05 | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn scroll pane | g retry | q/Esc/Ctrl-C quit</div>
+  <div class="pane focus"><div class="title">Fleet 8 — refreshed 12:14:04</div><pre>  AGENT         ROLE           STATE       BEAD      FOR
+<span class="green">● Xavier</span>        planner        plan        cb-42k     9m  9m
+<span class="green">● Beast</span>         planner        plan        cb-kcs    16m 16m</pre></div>
+  <div class="pane"><div class="title red">Work unavailable</div><pre><span class="red">bd list failed: database is locked</span>
+
+No work snapshot is available.
+Press g to retry.</pre></div>
+</div>
+<br>
+<div class="term">
+  <div class="bar">Cerebro — read-only | refreshing... | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn scroll pane | g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="pane focus"><div class="title">Fleet</div><pre><span class="dim">Loading fleet...</span></pre></div>
+  <div class="pane"><div class="title">Work</div><pre><span class="dim">Loading work...</span></pre></div>
+</div>
+</body>
+</html>

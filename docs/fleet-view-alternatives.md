@@ -519,9 +519,13 @@ The first increment above is no longer hypothetical. `cerebro-tui` — a Rust/Ra
 `fleet-view/`, started by `.claude/cerebro/scripts/cerebro-tui` from anywhere inside a consumer —
 draws the fleet rows and the six work queues from the same `scripts/roster`, `.cerebro/state/*.state.json`
 and `bd --readonly` contracts the Emacs view reads, on its own five-second and thirty-second
-cadences. It is stacked and scrollable — since cb-42k, as two independently focused widgets that
-scroll separately rather than one shared document — with focus, scroll, refresh and quit keys and
-nothing else.
+cadences. It is stacked and scrollable — since cb-42k as independently focused widgets that scroll
+separately rather than one shared document, and since cb-kcs.2.1 as **three** of them, Fleet and
+Work in a fixed left column with a Session pane beside them on a wide terminal and all three
+stacked below a hundred columns. `Tab` cycles the three, `↑`/`↓`/`PgUp`/`PgDn` move the focused
+one — the **selection** under Fleet, which the pane scrolls to follow, and the pane's own offset
+under the other two — and `g` and the quit keys are as they were. The Session pane hosts nothing:
+it says why there is no session in it, and no lifecycle key exists yet.
 
 **The supervision half has not moved.** The Ratatui process starts no session, ends none, evaluates
 no trigger, writes no stop flag, deletes no state file and changes no bead. `M-x cerebro` remains

@@ -442,7 +442,7 @@ impl App {
             0
         };
         let line = prefix + row_document_line(rows, target);
-        self.follow_selection(line, prefix, viewport_lines);
+        self.follow_selection(line, viewport_lines);
     }
 
     /// Bring DOCUMENT_LINE into the Fleet pane's viewport, moving `scroll` by the least that does
@@ -453,15 +453,16 @@ impl App {
     /// to parse contributes a second line of its own. `model::row_document_line` is the one place
     /// that arithmetic lives.
     ///
-    /// PREFIX is how many lines sit above the table itself - zero for a fresh pane, and
-    /// `FLEET_STALE_PREFIX_LINES` for a stale one, whose retained error and blank line come first.
-    /// It is a parameter rather than a literal because the first row moves with its heading, and
-    /// under a stale pane the heading is not line 0.
-    fn follow_selection(&mut self, document_line: usize, prefix: usize, viewport_lines: usize) {
+    /// Everything above the first row - and under a stale pane that is `FLEET_STALE_PREFIX_LINES`
+    /// more than under a fresh one, which is why the caller adds the prefix to `document_line`
+    /// rather than this function taking it - - the retained error, its blank line, the column heading -
+    /// comes back into view WITH that row, but only when the viewport can hold it as well.
+    /// Snapping to the top unconditionally would scroll the selected row off a pane with one
+    /// visible line, which is exactly what the 40x12 floor gives the Fleet pane in the stacked
+    /// layout: showing the navigator a heading and no selection.
+    fn follow_selection(&mut self, document_line: usize, viewport_lines: usize) {
         let viewport = viewport_lines.max(1);
-        // The table's heading line would be clipped to reveal nothing, so the first row and
-        // everything above it move as one.
-        if document_line <= prefix + 1 {
+        if document_line < viewport {
             self.fleet.scroll = 0;
         } else if document_line < self.fleet.scroll {
             self.fleet.scroll = document_line;
@@ -1153,6 +1154,27 @@ mod tests {
         assert_eq!(app.fleet.scroll, 0);
     }
 
+    /// A viewport of one line - what the 40x12 floor gives the Fleet pane in the stacked layout -
+    /// must still show the selected ROW rather than the heading above it.
+    #[test]
+    fn a_one_line_viewport_shows_the_row_and_not_the_heading() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(["A", "B", "C"].iter().map(|n| row(n)).collect()),
+            at(0),
+        );
+        assert_eq!(app.selected.as_deref(), Some("A"));
+
+        // Row A is document line 1, and one visible line can hold the heading or the row, not
+        // both: it must be the row.
+        app.on_key(key(KeyCode::Down), 1);
+        assert_eq!(app.selected.as_deref(), Some("B"));
+        assert_eq!(app.fleet.scroll, 2, "row B, alone, is what the one line shows");
+        app.on_key(key(KeyCode::Up), 1);
+        assert_eq!(app.selected.as_deref(), Some("A"));
+        assert_eq!(app.fleet.scroll, 1, "and coming back shows row A rather than the heading");
+    }
+
     /// A stale pane's body opens with its retained error and a blank line, so following the
     /// table's own line number would leave the selected row two rows below the fold.
     #[test]
@@ -1190,8 +1212,9 @@ mod tests {
         assert_eq!(stale.selected.as_deref(), Some("A"));
         assert_eq!(fresh.fleet.scroll, 0);
         assert_eq!(
-            stale.fleet.scroll, 0,
-            "the retained error and the heading come back into view with the first row"
+            stale.fleet.scroll, FLEET_STALE_PREFIX_LINES + 1,
+            "three visible lines cannot hold the error, the blank, the heading AND the row, so \
+             the row is what they show"
         );
     }
 

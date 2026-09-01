@@ -1680,8 +1680,15 @@ mod tests {
         let mut focused = populated();
         focused.focus = PaneFocus::Session;
         let buffer = focused_buffer(&focused);
-        assert_eq!(style_where(&buffer, "Xavier").fg, Some(BLUE), "the session title is focused");
-        assert!(style_where(&buffer, "Xavier").add_modifier.contains(Modifier::BOLD));
+        // At the session pane's own origin, so this cannot accidentally read the fleet row of
+        // the same name one line below.
+        let (row, column) = top_corners(&buffer)[1];
+        let title = buffer
+            .cell((column + 1, row))
+            .map(|c| Style::default().fg(c.fg).add_modifier(c.modifier))
+            .expect("the session title's first cell");
+        assert_eq!(title.fg, Some(BLUE), "the session title is focused");
+        assert!(title.add_modifier.contains(Modifier::BOLD));
         assert!(
             !style_where(&buffer, "Fleet 5").add_modifier.contains(Modifier::BOLD),
             "and Fleet's is not"

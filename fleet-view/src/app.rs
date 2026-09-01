@@ -366,9 +366,9 @@ impl App {
                 AppAction::Quit
             }
             KeyCode::Char('g') => AppAction::RefreshBoth,
-            // Both bindings toggle the same way, so both are discoverable regardless of which
-            // one a terminal or a navigator reaches for first. A boundary clamps within the
-            // focused pane; it never transfers focus on its own.
+            // Three panes, so the two bindings are opposite directions round one cycle rather
+            // than the same toggle. A boundary clamps within the focused pane; it never
+            // transfers focus on its own.
             KeyCode::Tab => {
                 self.focus = self.focus.next();
                 AppAction::None
@@ -453,13 +453,17 @@ impl App {
     /// to parse contributes a second line of its own. `model::row_document_line` is the one place
     /// that arithmetic lives.
     ///
-    /// Everything above the first row - and under a stale pane that is `FLEET_STALE_PREFIX_LINES`
-    /// more than under a fresh one, which is why the caller adds the prefix to `document_line`
-    /// rather than this function taking it - - the retained error, its blank line, the column heading -
-    /// comes back into view WITH that row, but only when the viewport can hold it as well.
-    /// Snapping to the top unconditionally would scroll the selected row off a pane with one
-    /// visible line, which is exactly what the 40x12 floor gives the Fleet pane in the stacked
-    /// layout: showing the navigator a heading and no selection.
+    /// The rule is **least movement**, in both directions: a line already visible moves nothing,
+    /// and a line outside the viewport is brought just inside it. The one extra branch is
+    /// `document_line < viewport`, which snaps to the top - it can only be taken when the line is
+    /// already visible at offset 0, so the heading (and, under a stale pane, the retained error
+    /// and its blank line above it) comes along for free rather than being chased. It deliberately
+    /// does NOT try to reveal what sits above the row when that would cost the row its place:
+    /// snapping to 0 unconditionally scrolls the selection off a pane with one visible line, which
+    /// is exactly what the 40x12 floor gives Fleet in the stacked layout.
+    ///
+    /// The stale prefix is not a parameter: the caller adds it to DOCUMENT_LINE, which is the one
+    /// place that arithmetic belongs.
     fn follow_selection(&mut self, document_line: usize, viewport_lines: usize) {
         let viewport = viewport_lines.max(1);
         if document_line < viewport {
@@ -471,9 +475,14 @@ impl App {
         }
     }
 
-    /// A mutable handle on whichever pane's scroll offset the keyboard currently moves. Both
-    /// panes' `scroll` fields are `usize`, so this returns the same type regardless of which one
-    /// is focused - `on_key` never needs to know which pane it moved.
+    /// A mutable handle on whichever pane's scroll offset the keyboard currently moves. Every
+    /// pane's `scroll` is a `usize`, so this returns the same type whichever is focused and
+    /// `on_key` never needs to know which one it moved.
+    ///
+    /// The `Fleet` arm is unreachable and required: the four guarded arms above intercept every
+    /// key that would reach here under Fleet focus, because Fleet's arrows move the SELECTION.
+    /// It stays for exhaustiveness, and returning that pane's own offset is the only answer that
+    /// could not surprise a future caller.
     fn focused_scroll_mut(&mut self) -> &mut usize {
         match self.focus {
             PaneFocus::Fleet => &mut self.fleet.scroll,
@@ -1202,8 +1211,10 @@ mod tests {
             "the stale pane scrolls past its own error and blank line as well"
         );
 
-        // And back up: the first row moves with its heading, and under a stale pane the heading
-        // sits below the prefix - so the whole prefix comes back into view with it.
+        // And back up. The fresh pane snaps to the top and brings its heading with it, because
+        // three visible lines can hold both. The stale pane's first row is document line 3, so
+        // three lines cannot also hold the error, the blank and the heading - least movement puts
+        // the row at the top and shows none of them, which is the right trade.
         for _ in 0..5 {
             fresh.on_key(key(KeyCode::Up), 3);
             stale.on_key(key(KeyCode::Up), 3);

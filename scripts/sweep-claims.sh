@@ -6,7 +6,7 @@
 #     .claude/cerebro/scripts/sweep-claims.sh --json
 #
 # This script never mutates anything - no `bd close`, no `bd reclaim`, no git write of any kind. It
-# only gathers the facts `agents/orchestrator.md`'s "Beads that finished without being closed"
+# only gathers the facts `docs/cerebro-sweeps.md`'s "Beads that finished without being closed"
 # section already spells out as the guard conditions, so that a pure elisp function
 # (`cerebro--claim-finding`) can turn them into a decision, and a human confirms every one of those
 # decisions before anything destructive runs. Keeping this script read-only is what makes that
@@ -37,7 +37,7 @@
 # `lease_age_min` exists because `assignee' alone cannot tell a dead implementer from a live claim
 # held by hand or by a session this script's roster does not know about: a name that is not on
 # `scripts/roster' is not a `pid'-tracked session and never will be, but the bead can be very
-# much in flight under it. `agents/orchestrator.md's own rule is "an expired lease with no live
+# much in flight under it. `docs/cerebro-sweeps.md's own rule is "an expired lease with no live
 # agent behind it" - not "an unfamiliar name" - and the elisp guard keys on this field, not on
 # `assignee' membership, for exactly that reason.
 

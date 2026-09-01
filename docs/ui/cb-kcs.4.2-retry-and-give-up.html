@@ -1,0 +1,111 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+</style>
+<meta charset="utf-8"><title>cb-kcs.4.2 — the agreed surface</title>
+
+<h1>cb-kcs.4.2 — the surface the navigator approved, 2026-09-01</h1>
+<p class="lede">Two rounds. This file is the specification for what the Ratatui fleet view shows while a
+start keeps failing, and for the one sentence it says when it stops trying. Where this file and the
+bead's plan disagree, this file is right. It follows
+<code>docs/ui/cb-kcs.4.1-standby-and-starts.html</code>, which specified the sessions this view
+<b>starts</b>, and <b>supersedes that file's section 6</b>: with a backoff in place, not every failure
+parks a row for good.</p>
+
+<h2>1. A refusal parks; a death comes back</h2>
+<p class="lede">There are two ways a start comes to nothing. The launcher <b>refused</b> — exit status 2,
+which is <code>scripts/launch-preflight</code>'s status on all ten of its refusal paths and
+<code>scripts/launch</code>'s for a name already running — and it printed a reason on the way out. Or
+the session simply <b>died</b>: any other non-zero code, or a start that never became a session at all.
+A refusal is not going to say anything different in thirty seconds, so its row is honest about nobody
+coming. A death is retried.</p>
+
+<div class="screen"><pre><span class="b">┌ Fleet ─────────────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">  AGENT       STATE       BEAD                  </span><span class="b">│</span>
+<span class="b">│</span><span class="g">●</span> Beast       plan        cb-kcs.4.2            <span class="b">│</span>
+<span class="b">│</span><span class="d">○</span> Storm       <span class="d">dead</span>        <span class="e">✗ refused</span>             <span class="b">│</span>  <span class="dim">said why — only s</span>
+<span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">↻ retry in 30s, 1 failed</span>  <span class="b">│</span>  <span class="dim">died — coming back</span>
+<span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">→ planned</span>              <span class="b">│</span>  <span class="dim">nothing wrong</span>
+<span class="b">└────────────────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>This is <code>M-x cerebro</code>'s own rule</b> (cb-eat), reached there through
+whether the dying session left a line behind. This view has no line to read — cb-kcs.3 chose the exit
+code, always — so the two kinds are told apart by the status itself, which is the same distinction
+stated in the one thing this view can see.</p>
+
+<h2>2. The row counts the wait down</h2>
+<p class="lede">The schedule is <code>0, 30s, 2m, 10m</code>, and 10m for every failure after that. The
+first retry is immediate: something that failed once should come straight back, and a clock there would
+cost the fleet a pass every time anything went wrong once. What escalates is the second failure and
+every one after it. The wait is measured from the failed start itself, so the figure the row counts down
+and the wait the view enforces are one calculation.</p>
+
+<div class="screen"><pre><span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">↻ retry in 45s, 2 failed</span>  <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">↻ retry in 2m, 3 failed</span>   <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Beast       <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>                <span class="b">│</span></pre></div>
+
+<p class="note"><b>Blue, and in place of the condition</b> — not the red verdict plus a countdown, which
+was drawn and declined: it would break cb-kcs.4.1's rule that a row shows a bead, <i>or</i> a verdict,
+<i>or</i> a condition and never two, and it would put a red cell on a row that is not dead. The count of
+failed starts is on the row; the exit code is one <b class="k">Tab</b> away on the retained screen.
+Seconds below a minute, whole minutes above it, <b>rounded up</b>, so a row never names a smaller figure
+than the wait actually left.</p>
+
+<p class="note"><b>The countdown wins even when the role's own condition is false.</b> A planner backing
+off in front of a full buffer still reads <code>↻ retry in 2m, 2 failed</code> rather than
+<code>→ buffer&lt;4</code>. One rule and one source of truth: while a backoff is running the row says
+so, and a failure is never invisible. The accepted cost is a countdown that reaches zero and visibly
+does nothing, because nothing was due anyway. Showing the condition instead was declined — two failed
+starts would be invisible until work arrived, and the cell would flip between two vocabularies as the
+board moved.</p>
+
+<h2>3. After five, the view stops</h2>
+<p class="lede">Five consecutive starts that produced no pass is a fleet that is not going to succeed on
+the sixth without a person. The name leaves the armed set, the row goes grey, and <b class="k">s</b> is
+the only way back.</p>
+
+<div class="screen"><pre>Cerebro — supervising <span class="y">Xavier: 5 starts produced no pass; the view has stopped trying.</span>
+<span class="b">┌ Fleet ─────────────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">  AGENT       STATE       BEAD                  </span><span class="b">│</span>
+<span class="b">│</span><span class="d">○</span> Xavier      <span class="d">dead</span>        <span class="e">✗ 5 failed starts</span>     <span class="b">│</span>
+<span class="b">└────────────────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>The gold line is said once</b>, in the header's notice slot, cleared by the next
+keystroke like every notice — the same slot that says <code>Started Beast — buffer 2 of 4.</code>,
+saying the opposite thing. Nothing is said for the individual retries. Naming <b class="k">s</b> in the
+sentence, and naming the last exit code in it, were both drawn and declined: the header's key hints
+already name the key, and the code is on the retained screen.</p>
+
+<p class="note"><b>The cell is the count alone.</b> <code>✗ code 2, 5 failed</code> and Emacs's fuller
+<code>✗ code 2, 5 failed starts — press s</code> were declined; the count is what distinguishes this
+row from every other dead one, and the code is already in the pane.</p>
+
+<h2>4. The Session pane is unchanged</h2>
+<p class="lede">A name that gave up is a dead agent like any other, and cb-kcs.3's rule holds without an
+exception: the pane is <b>the retained screen itself</b>, scrollable, closed by its red exit line and
+the dim footer. A written report above the footer was drawn and declined — the pane holds terminal
+output and one kind of thing only.</p>
+
+<div class="screen"><pre><span class="dim">┌ Xavier — ended 14:32 ────────────────────────────────────┐</span>
+<span class="dim">│</span>                                                          <span class="dim">│</span>
+<span class="dim">│</span> <span class="e">Xavier exited with code 137.</span>                             <span class="dim">│</span>
+<span class="dim">│</span> <span class="dim">End of retained scrollback. Up/Down scroll while focused.</span> <span class="dim">│</span>
+<span class="dim">└──────────────────────────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>Accepted, and named rather than discovered:</b> a name that failed five times printing
+nothing has a nearly empty pane. The grey row, its red <code>✗ 5 failed starts</code> and the gold line
+are what account for it.</p>
+
+<h2>5. <b class="k">s</b> is the way back, and it starts over</h2>
+<p class="lede">Pressing <b class="k">s</b> on a row that is backing off starts it at once, whatever the
+countdown said: a start the navigator asked for waits for nothing. It also clears the count, so the
+schedule begins again from immediate. That is <code>M-x cerebro</code>'s own rule — a start with no
+trigger behind it is the navigator's, and it resets the backoff. <b class="k">k</b> on such a row still
+means <i>disarm</i>, exactly as cb-kcs.4.1 specified.</p>

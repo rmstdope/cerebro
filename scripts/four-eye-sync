@@ -13,6 +13,7 @@
 #   stdout   one line per finding, or nothing at all when the copies agree:
 #              drifted: <carrier> (block differs from templates/four-eye-principle.md)
 #              unmarked: <carrier> (no four-eye:begin/end pair)
+#              missing: <carrier> (carrier file not found)
 #              missing: templates/four-eye-principle.md (the canonical block)
 #            paths relative to the repository root.
 #   exit 0   they agree.
@@ -80,8 +81,10 @@ canonical="$(strip_blanks "$(<"$CANONICAL")")"
 findings=0
 
 for carrier in "${CARRIERS[@]}"; do
+  # Its own line rather than `unmarked:': a carrier that is gone has no markers to have lost, and
+  # saying it does sends a reader to grep a file that is not there.
   if [[ ! -f "$carrier" ]]; then
-    echo "unmarked: $carrier (no four-eye:begin/end pair)"
+    echo "missing: $carrier (carrier file not found)"
     findings=1
     continue
   fi

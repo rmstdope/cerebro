@@ -133,6 +133,18 @@ for shape in no-begin no-end end-first two-begins; do
 done
 pass "a carrier with no usable marker pair is reported"
 
+# --- a carrier that is not there says so ----------------------------------------------------------
+#
+# Not `unmarked:': that would send a reader to grep a file that is gone.
+
+fix="$(new_fixture)"
+rm "$fix/CLAUDE.md"
+run "$fix/scripts/four-eye-sync"
+[[ $status -eq 1 ]] || fail "a missing carrier must exit 1, got $status (output: $out)"
+[[ "$out" == "missing: CLAUDE.md (carrier file not found)" ]] \
+  || fail "expected exactly the missing carrier line, got: $out"
+pass "a carrier file that is not there is named as missing, not as unmarked"
+
 # --- the real repository --------------------------------------------------------------------------
 #
 # The case the bead exists for. The script resolves its own root, so the suite's shell needs no

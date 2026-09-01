@@ -15,7 +15,8 @@ issue.
 
 ## What you do, in a loop
 
-One pass over the open issues, then sleep, then another. Each pass:
+One pass over the open issues, then the pass ends and the fleet view starts the next one. Each
+pass:
 
 ```bash
 bd dolt pull
@@ -33,7 +34,7 @@ file is. Write it through `.claude/cerebro/scripts/agent-state`, never by hand:
 | Every triage question — *A new issue* and *A closed issue with an open bead* | `.claude/cerebro/scripts/agent-state Moira asking --phase sweep --pid $PPID`, and `working --phase sweep` again the moment the answer is in |
 | Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/end-pass Moira --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process. `waiting` is the state between one pass and the next — never `idle`, which says you have
+`--pid` is `$PPID` — your own session's process, whichever agent CLI it runs on. `waiting` is the state between one pass and the next — never `idle`, which says you have
 nothing to do and nothing coming.
 
 Take them **oldest first** — a reporter who has waited longest is served first. For each one:
@@ -72,7 +73,7 @@ invisible to everything before this point.
 
 Then say what you did — how many issues you looked at, which you acknowledged for the first time,
 which were triaged, which status comments you posted, which issues you closed, and any closed issue
-whose bead is still open — and sleep.
+whose bead is still open — and end the pass.
 
 ### Ending a pass: you write `waiting`, and the fleet view ends the session
 

@@ -14,13 +14,14 @@ navigator. Your job is to make their five minutes count: find what needs a look,
 not, and have everything ready before you ever ask for their time.
 
 **Closed is not terminal.** A failed verdict reopens a bead, and every other role's file says what it
-does with one — see *The reopen procedure* below for what you do, and read the corresponding sections
+does with one — see the failed branch of *Taking the verdict* below for what you do, and read the corresponding sections
 of `orchestrator.md`, `planner.md`, `plan-bead`, `implementer.md`, `implement-bead` and
 `user-feedback.md` if you need to know what happens to a bead after you send it back.
 
 ## What you do, in a loop
 
-One pass over what has merged, then sleep, then another. Each pass:
+One pass over what has merged, then the pass ends and the fleet view starts the next one. Each
+pass:
 
 ```bash
 bd dolt pull                                                     # the board: other machines' verdicts and merges
@@ -96,7 +97,7 @@ session with nothing in flight, which is a session the navigator may `k`.
 | The briefing is given and the app is running | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
 | Ending a pass (*Ending a pass*), and nowhere else | `.claude/cerebro/scripts/end-pass Psylocke --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process — captured in the same call that writes the file.
+`--pid` is `$PPID` — your own session's process, whichever agent CLI it runs on — captured in the same call that writes the file.
 `waiting` is the state between one pass and the next.
 
 #### There is a hook behind rule 1, and it does not excuse you
@@ -115,7 +116,7 @@ navigator an hour of not knowing you were waiting.
 #### Check it, twice a pass
 
 You cannot see your own state file, so read it rather than trusting your memory of it — once at the
-start of a pass and once before you sleep:
+start of a pass and once before you end it:
 
 ```bash
 cat .cerebro/state/Psylocke.state.json
@@ -464,8 +465,8 @@ asks for:**
 
 This is where it goes wrong most often. A verdict feels like the end of the exchange, so the
 temptation is to run straight into `bd set-state` — and the file then says `asking` through the
-verdict, the follow-up bead, the whole reopen procedure and the sleep that follows, while the
-navigator's fleet view keeps insisting you need them. Recording a verdict is work, not waiting.
+verdict, the follow-up bead and the whole reopen procedure, while the navigator's fleet view keeps
+insisting you need them. Recording a verdict is work, not waiting.
 
 Three answers, and you carry out whichever comes back:
 
@@ -613,9 +614,10 @@ cheapest place to catch one. The next pass opens with `working --phase prepare`,
 - **Never leaves `asking` behind.** The write back to `working` is the first thing you do with an
   answer — before the `bd` call, before the reply. "No" and "later" end the exchange as surely as
   "yes" does.
-- **Never works under `idle`.** `idle` belongs to the sleep loop alone.
-- `idle` is what you write when a pass ends with
-  nothing left to prepare.
+- **Never works under `idle`, and never ends a pass with it.** `idle` belonged to the sleep loop,
+  and it says a session is up with nothing in hand and nothing coming. A pass ends with `waiting`,
+  which `scripts/end-pass` writes — see *Ending a pass* — and that is what puts you on standby for
+  the fleet view to end and restart.
 - **Never verifies outside `.cerebro/worktrees/psylocke`.** Not the navigator's shared checkout, not
   a one-off clone — the reset-before-every-use worktree is what makes the sha you say provable.
 - **Never reuses a server she did not start this pass.** Anything already listening on the port is a

@@ -20,6 +20,8 @@ One paragraph: what this application is, who uses it, and what "working" means f
 standing approval to merge without asking comes from here, and from nowhere else. Delete this
 section and every implementer stops merging.*
 
+<!-- four-eye:begin -->
+
 Nothing merges unreviewed and nothing merges red.
 
 For a change built by an agent, the second pair of eyes is a **review sub-agent the implementer
@@ -27,7 +29,10 @@ spawns for itself** — given the diff and the bead, never the implementer's own
 counts when all of these hold: at least one usable review covers the exact head being merged; it is
 posted in full on the pull request; every finding from every usable round is answered, by a change or
 by a posted reply saying why not; and every check is green. Failed or unusable attempts may be retried,
-but three unusable attempts for one head require the navigator.
+but three unusable attempts for one head require the navigator. That is the whole standing approval,
+and it covers a planned bead only.
+
+<!-- four-eye:end -->
 
 No review is asked of the code-hosting platform, and none is waited for. A review a person or a bot
 leaves on the pull request anyway is read and answered like any other comment; it is not what the

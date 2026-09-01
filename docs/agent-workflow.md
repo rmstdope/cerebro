@@ -642,10 +642,10 @@ Honest numbers from building this repository's own harness:
   review round has usually been overtaken, and the rules require catching it up (on GitHub, not
   locally) plus a fresh CI cycle before it can merge. That is deliberate: a green run on a stale tree
   is evidence about a tree that will never exist.
-- **A usable review of the merge head**, obtained before the merge. Ordinary beads still usually cost
- one review, but unusable attempts and any later head change add rounds. Each review names the head it
- covered, every finding from every usable round is answered, and the merged head has independent review
- evidence rather than a review of an older tree.
+- **Usually one review per bead, sometimes more.** A review covers one head, so an unusable
+  attempt or a later push buys another round; the rule itself is the *Four Eye Principle* section
+  of the root `CLAUDE.md`, which is the only place it is stated. What it costs in practice is a
+  second Opus call on the beads where CI went red or a retrospective was written.
 - **Nothing merges unreviewed and nothing merges red.** The `main` ruleset enforces the second on the
   server; the first is the agents following the rule.
 - **Interactive agents cost nothing between passes** — the view ends them, implementers included

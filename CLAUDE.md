@@ -40,6 +40,8 @@ implementer's standing approval to merge without asking comes from this section 
 else — delete it and every implementer in this repository builds, opens its pull request, and then
 stops.*
 
+<!-- four-eye:begin -->
+
 Nothing merges unreviewed and nothing merges red.
 
 For a change built by an agent, the second pair of eyes is a **review sub-agent the implementer
@@ -49,6 +51,8 @@ posted in full on the pull request; every finding from every usable round is ans
 by a posted reply saying why not; and every check is green. Failed or unusable attempts may be retried,
 but three unusable attempts for one head require the navigator. That is the whole standing approval,
 and it covers a planned bead only.
+
+<!-- four-eye:end -->
 
 No review is asked of GitHub, and none is waited for. A review a person or a bot leaves on the
 pull request anyway is read and answered like any other comment; it is not what the approval

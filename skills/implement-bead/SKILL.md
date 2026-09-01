@@ -434,10 +434,9 @@ asking is only the faster path when somebody is there.
 
 **Review the exact head being merged, and obtain it yourself.** No review is requested from GitHub,
 and none is waited for. The second pair of eyes is a `reviewer` sub-agent you spawn synchronously
-when the gate is green and the PR is open, and the standing approval you merge on rests on at least
-one usable review of that head — read the consumer's root
-`CLAUDE.md` and its *Four Eye Principle* if you want the authority, because it is there and nowhere
-else.
+when the gate is green and the PR is open, and the standing approval you merge on rests on the
+consumer's root `CLAUDE.md` and its *Four Eye Principle*, because the rule is there and nowhere
+else. Everything below is how you satisfy it.
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID

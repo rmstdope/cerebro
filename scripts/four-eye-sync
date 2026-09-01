@@ -56,6 +56,11 @@ if [[ -z "$ROOT" ]] || ! cd "$ROOT"; then
   exit 3
 fi
 
+# The marker parse, the comparison and the finding text live in `scripts/block-sync.sh', shared
+# with `scripts/state-contract-sync' (cb-mqa). This script owns its header, its carrier list, its
+# root resolution and its exit codes, and nothing else.
+source "$(dirname "${BASH_SOURCE[0]}")/block-sync.sh"
+
 CANONICAL="templates/four-eye-principle.md"
 
 # The two documents in THIS repository that must state the rule. A consumer's own CLAUDE.md is
@@ -65,75 +70,5 @@ CARRIERS=(
   templates/consumer-CLAUDE.md   # what a new consumer copies
 )
 
-# Without the canonical block there is nothing to compare against, and every carrier would report
-# `drifted:' as well - burying the one real fault.
-if [[ ! -f "$CANONICAL" ]]; then
-  echo "missing: $CANONICAL (the canonical block)"
-  exit 1
-fi
-
-# `$(<file)' strips trailing newlines but not leading blank lines, and the markers are surrounded by
-# blank lines on purpose: CommonMark ends an HTML block at a blank line, so a marker immediately
-# followed by prose swallows that prose into the comment. Both sides have their leading and trailing
-# EMPTY lines stripped, so those load-bearing blanks are never drift. A line of spaces is not an
-# empty line and is drift, deliberately: the comparison is otherwise byte-exact, and an invisible
-# difference that the checker forgives is one no reader can see either.
-strip_blanks() {
-  local s="$1"
-  while [[ $s == $'\n'* ]]; do s="${s#$'\n'}"; done
-  while [[ $s == *$'\n' ]]; do s="${s%$'\n'}"; done
-  printf '%s' "$s"
-}
-
-canonical="$(strip_blanks "$(<"$CANONICAL")")"
-
-findings=0
-
-for carrier in "${CARRIERS[@]}"; do
-  # Its own line rather than `unmarked:': a carrier that is gone has no markers to have lost, and
-  # saying it does sends a reader to grep a file that is not there.
-  if [[ ! -f "$carrier" ]]; then
-    echo "missing: $carrier (carrier file not found)"
-    findings=1
-    continue
-  fi
-
-  # Markers are matched on the whole trimmed line, so a mention of one inside prose is not one.
-  # Zero of either, more than one of either, or an end before a begin: there is no block to compare.
-  block=""
-  inside=0
-  begins=0
-  ends=0
-  out_of_order=0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    trimmed="${line#"${line%%[![:space:]]*}"}"
-    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-    if [[ "$trimmed" == "<!-- four-eye:begin -->" ]]; then
-      begins=$((begins + 1))
-      inside=1
-      continue
-    fi
-    if [[ "$trimmed" == "<!-- four-eye:end -->" ]]; then
-      ends=$((ends + 1))
-      [[ $inside -eq 1 ]] || out_of_order=1   # an end before any begin: never a usable pair
-      inside=0
-      continue
-    fi
-    if [[ $inside -eq 1 ]]; then
-      block+="$line"$'\n'
-    fi
-  done <"$carrier"
-
-  if [[ $begins -ne 1 || $ends -ne 1 || $out_of_order -eq 1 ]]; then
-    echo "unmarked: $carrier (no four-eye:begin/end pair)"
-    findings=1
-    continue
-  fi
-
-  if [[ "$(strip_blanks "$block")" != "$canonical" ]]; then
-    echo "drifted: $carrier (block differs from $CANONICAL)"
-    findings=1
-  fi
-done
-
-exit "$findings"
+cerebro_block_sync four-eye "$CANONICAL" "${CARRIERS[@]}"
+exit $?

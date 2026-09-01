@@ -59,7 +59,11 @@ fi
 # The marker parse, the comparison and the finding text live in `scripts/block-sync.sh', shared
 # with `scripts/state-contract-sync' (cb-mqa). This script owns its header, its carrier list, its
 # root resolution and its exit codes, and nothing else.
-source "$(dirname "${BASH_SOURCE[0]}")/block-sync.sh"
+# `source "$var/lib"' is the spelling `tests/lib/place-scripts' derives a script's libraries
+# from (cb-u70), so a fixture built with `link_scripts' arrives with `block-sync.sh' beside this
+# script rather than dying at the source line.
+script_dir="$(dirname "${BASH_SOURCE[0]}")"
+source "$script_dir/block-sync.sh"
 
 CANONICAL="templates/four-eye-principle.md"
 

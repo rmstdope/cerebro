@@ -412,8 +412,8 @@ happen, and is not the churn this rule prevents: that rule is about one pass, an
 ended is asking nobody anything.
 
 **"No", "later" and silence are answers.** They close the sandwich exactly like a yes does: write
-`working --phase prepare` and get on with the rest of the pass, or `idle` if the pass is over. The
-only state that must never survive an exchange is `asking`.
+`working --phase prepare` and get on with the rest of the pass, or end it with `end-pass` if the
+pass is over. The only state that must never survive an exchange is `asking`.
 
 ```bash
 bd set-state <id> verification=pending --reason "selected for verification"

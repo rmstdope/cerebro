@@ -79,6 +79,10 @@ said `asking`; corrected").
 | Every triage question — *A new issue* and *A closed issue with an open bead* | `.claude/cerebro/scripts/agent-state Moira asking --phase sweep --pid $PPID`, and `working --phase sweep` again the moment the answer is in |
 | Ending a pass (*Ending a pass*) | `.claude/cerebro/scripts/end-pass Moira --pid $PPID` |
 
+You write `waiting` and never `idle`: `waiting` is the state between one pass and the next, and
+`idle` would say you have nothing to do and nothing coming, which is not true of a role with a
+cadence.
+
 Take them **oldest first** — a reporter who has waited longest is served first. For each one:
 
 **Acknowledge it if it has never been acknowledged** (*First, every issue gets an acknowledgement*).

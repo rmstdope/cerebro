@@ -8468,3 +8468,318 @@ and the consumer to the same seam so a future bucket cannot repeat that."
             ;; make a stale verdict stop being stale.
             (should (equal (alist-get 'stale-verdicts context) 1))))
       (kill-buffer panel))))
+;; ---------------------------------------------------------------------------
+;; Supervision ownership (cb-kcs.1)
+;;
+;; Two views may read one checkout; one may act on it. These cases hold this
+;; half of that rule to the same table `fleet-view/src/supervisor.rs' answers,
+;; prove the lease is the bound listener rather than anything written down, and
+;; prove that a view which does not own the checkout starts, nudges, arms and
+;; prunes nothing at all.
+
+(defconst cerebro-test--supervisor-cases-file
+  (expand-file-name "tests/lib/supervisor.cases" cerebro-test--repo-root)
+  "The transition table both implementations of the ownership rule run.
+`fleet-view/src/supervisor.rs' runs the same rows against
+`reconcile_supervision'.")
+
+(defun cerebro-test--supervisor-cases ()
+  "The rows of `cerebro-test--supervisor-cases-file' as plain lists.
+Each is (LOCAL CONFIGURED HOLDS HOSTED MODE ACTION).  A malformed row is an
+error, not a skipped case."
+  (let (rows)
+    (with-temp-buffer
+      (insert-file-contents cerebro-test--supervisor-cases-file)
+      (dolist (line (split-string (buffer-string) "\n" t))
+        (unless (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" line)
+          (let ((fields (split-string (string-trim line) "[ \t]+" t)))
+            (unless (= (length fields) 6)
+              (error "supervisor.cases: malformed row: %s" line))
+            (push fields rows)))))
+    (nreverse rows)))
+
+(ert-deftest cerebro-test/both-implementations-follow-the-shared-transition-table ()
+  "Every row of `tests/lib/supervisor.cases', answered here as well as in Rust.
+
+A row the two answer differently is a fleet with two supervisors or with none,
+and neither failure is visible until a session is started twice or never."
+  (let ((rows (cerebro-test--supervisor-cases)))
+    (should (>= (length rows) 20))
+    (dolist (row rows)
+      (pcase-let* ((`(,local ,configured ,holds ,hosted ,mode-word ,action-word) row)
+                   (decision (cerebro--supervision-decision
+                              (intern local)
+                              (if (equal configured "invalid")
+                                  (cons 'invalid "rat")
+                                (intern configured))
+                              (equal holds "yes")
+                              (string-to-number hosted))))
+        (should (equal (cons (cerebro--supervision-mode-word (car decision))
+                             (symbol-name (cdr decision)))
+                       (cons mode-word action-word)))))))
+
+(ert-deftest cerebro-test/a-drain-names-who-it-is-for-and-how-many-are-left ()
+  "The drain carries the new owner and the count, which is what ends it."
+  (let ((decision (cerebro--supervision-decision 'emacs 'tui t 3)))
+    (should (equal (car decision) '(draining tui 3)))
+    (should (eq (cdr decision) 'keep))
+    (should-not (cerebro--supervision-may-act-p (car decision)))
+    ;; The whole point of a graceful handover: what is already hosted may still
+    ;; finish, and `f' and `k' still work on it.
+    (should (cerebro--supervision-may-end-p (car decision))))
+  ;; An invalid declaration drains for nobody, and says so.
+  (let ((decision (cerebro--supervision-decision 'emacs (cons 'invalid "rat") t 1)))
+    (should (equal (car decision) '(draining nil 1)))))
+
+(ert-deftest cerebro-test/read-only-may-neither-act-nor-end ()
+  "A view that owns nothing does nothing, including to sessions it can see."
+  (let ((mode '(read-only configured-for tui)))
+    (should-not (cerebro--supervision-may-act-p mode))
+    (should-not (cerebro--supervision-may-end-p mode))
+    (should (equal (cerebro--supervision-refusal mode)
+                   "Ratatui owns supervision; this Emacs view is read-only"))))
+
+(ert-deftest cerebro-test/the-mode-line-carries-the-approved-wording ()
+  "The navigator chose the mode line over a banner row, and chose these words."
+  (should-not (cerebro--supervision-mode-line '(supervising)))
+  (should (equal (cerebro--supervision-mode-line '(read-only configured-for tui))
+                 "read-only: Ratatui supervises"))
+  (should (equal (cerebro--supervision-mode-line '(read-only invalid "rat"))
+                 "read-only: invalid fleet_supervisor \"rat\""))
+  (should (equal (cerebro--supervision-mode-line '(draining tui 2)) "handoff pending"))
+  (should (equal (cerebro--supervision-mode-line '(draining nil 2))
+                 "handoff pending: invalid fleet_supervisor")))
+
+;; --- reader contracts: the real script, feeding the real decision -----------
+
+(defun cerebro-test--supervisor-consumer (declaration)
+  "A throwaway consumer declaring DECLARATION, or none when it is nil.
+Returns its root; the caller deletes it."
+  (let* ((tmp (make-temp-file "cerebro-supervision" t))
+         (scripts (expand-file-name ".claude/cerebro/scripts" tmp)))
+    (make-directory scripts t)
+    (make-directory (expand-file-name ".cerebro" tmp) t)
+    ;; A git working tree, because `consumer-root --shared' answers from git:
+    ;; the shared root is the main working tree every worktree of a checkout
+    ;; shares, and a plain directory is not a checkout at all.
+    (let ((default-directory tmp))
+      (should (eq 0 (call-process "git" nil nil nil "init" "-q" tmp)))
+      (should (eq 0 (call-process "git" nil nil nil "-c" "user.name=test"
+                                  "-c" "user.email=test@example.com"
+                                  "commit" "-q" "--allow-empty" "-m" "fixture"))))
+    (cerebro-test--place-scripts scripts "--copy" "fleet-supervisor" "project-conf"
+                                 "consumer-root")
+    (when declaration
+      (with-temp-file (expand-file-name ".cerebro/project.conf" tmp)
+        (insert (format "fleet_supervisor %s\n" declaration))))
+    tmp))
+
+(ert-deftest cerebro-test/the-declaration-reader-answers-the-decision-function ()
+  "`scripts/fleet-supervisor' run for real, feeding `cerebro--supervision-decision'.
+
+A pure function tested only against invented inputs can still be wrong about
+every real one (cb-os4), so the reader's own output is what is fed in here."
+  (let ((tmp (cerebro-test--supervisor-consumer nil)))
+    (unwind-protect
+        (progn
+          ;; Absent: the default, and the behaviour every existing consumer keeps.
+          (should (eq (cerebro--configured-supervisor tmp) 'emacs))
+          (should (equal (cerebro--supervision-decision
+                          'emacs (cerebro--configured-supervisor tmp) t 0)
+                         '((supervising) . keep)))
+          ;; Declared for the other implementation.
+          (with-temp-file (expand-file-name ".cerebro/project.conf" tmp)
+            (insert "fleet_supervisor tui\n"))
+          (should (eq (cerebro--configured-supervisor tmp) 'tui))
+          (should (equal (cerebro--supervision-decision
+                          'emacs (cerebro--configured-supervisor tmp) t 0)
+                         '((read-only configured-for tui) . release)))
+          ;; Invalid: fail-closed, and the raw word survives to the mode line.
+          (with-temp-file (expand-file-name ".cerebro/project.conf" tmp)
+            (insert "fleet_supervisor rat\n"))
+          (should (equal (cerebro--configured-supervisor tmp) '(invalid . "rat")))
+          (should (equal (cerebro--supervision-mode-line
+                          (car (cerebro--supervision-decision
+                                'emacs (cerebro--configured-supervisor tmp) nil 0)))
+                         "read-only: invalid fleet_supervisor \"rat\"")))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/the-endpoint-identity-and-record-come-from-the-shared-root ()
+  "The three diagnostic values, read for real."
+  (let ((tmp (cerebro-test--supervisor-consumer "emacs")))
+    (unwind-protect
+        (let ((endpoint (cerebro--supervisor-endpoint tmp))
+              (identity (cerebro--supervisor-identity tmp))
+              (record (cerebro--supervisor-record tmp)))
+          (should (equal (car endpoint) "127.0.0.1"))
+          (should (and (>= (cdr endpoint) 20000) (<= (cdr endpoint) 39999)))
+          ;; The script answers `pwd -P', so the comparison is against the
+          ;; physical path too - on macOS a temp directory is reached through
+          ;; /var and lives at /private/var, and an identity compared in the
+          ;; display spelling would never match (cb-os4's lesson, in the small).
+          (should (equal identity (directory-file-name (file-truename tmp))))
+          (should (equal record (expand-file-name ".cerebro/state/supervisor.json" identity)))
+          ;; Reading ownership writes nothing.
+          (should-not (file-exists-p record)))
+      (delete-directory tmp t))))
+
+;; --- the lease ---------------------------------------------------------------
+
+(ert-deftest cerebro-test/supervisor-lock-is-exclusive-and-recovers-a-crashed-owner ()
+  "The bind is the lock: one holder, and a killed holder releases at once.
+
+The second half is what no pid file or lease timeout can do - the crashed owner
+here is a real second Emacs, killed without a chance to clean up, and the lease
+is free the instant its process is gone rather than after a timeout nobody
+could have chosen correctly."
+  (skip-unless (executable-find "emacs"))
+  (let ((tmp (cerebro-test--supervisor-consumer "emacs")))
+    (unwind-protect
+        (let* ((endpoint (cerebro--supervisor-endpoint tmp))
+               (record (cerebro--supervisor-record tmp))
+               (identity (cerebro--supervisor-identity tmp))
+               ;; The child's program is built as DATA and printed, never as a
+               ;; format string: a nested `format' quoting JSON inside elisp
+               ;; inside a shell argument is three levels of escaping and got
+               ;; one of them wrong the first time.
+               (program `(progn
+                           (make-network-process
+                            :name "held" :family 'ipv4
+                            :host ,(car endpoint) :service ,(cdr endpoint)
+                            :server t :noquery t :reuseaddr nil)
+                           (make-directory ,(file-name-directory record) t)
+                           (with-temp-file ,record
+                             (insert (format "{\"identity\":%S,\"owner\":\"emacs\",\"pid\":%d}"
+                                             ,identity (emacs-pid))))
+                           (sleep-for 60)))
+               (other (start-process
+                       "cerebro-test-owner" nil (expand-file-name invocation-name
+                                                                  invocation-directory)
+                       "--batch" "-L" (expand-file-name "emacs" cerebro-test--repo-root)
+                       "-l" "cerebro"
+                       "--eval" (prin1-to-string program))))
+          (unwind-protect
+              (progn
+                ;; Wait for the other Emacs to actually hold it.
+                (let ((deadline (+ (float-time) 20)))
+                  (while (and (< (float-time) deadline)
+                              (not (file-exists-p record)))
+                    (sleep-for 0.1)))
+                (should (file-exists-p record))
+                (with-temp-buffer
+                  (setq-local cerebro--supervision-process nil)
+                  ;; Refused, and told exactly who holds it.
+                  (should (equal (cerebro--acquire-supervision tmp)
+                                 '(read-only owned-by emacs)))
+                  ;; The owner dies without cleaning up. The kernel closes its
+                  ;; listener, so the lease is free at once - the stale record
+                  ;; it left behind is not permission and not an obstacle.
+                  (kill-process other)
+                  (let ((deadline (+ (float-time) 20)))
+                    (while (and (< (float-time) deadline) (process-live-p other))
+                      (sleep-for 0.1)))
+                  (should-not (process-live-p other))
+                  (let ((acquired (cerebro--acquire-supervision tmp)))
+                    (should (eq acquired t))
+                    (should (equal (cerebro--supervision-record-field record "owner") "emacs"))
+                    (should (equal (cerebro--supervision-record-field record "identity")
+                                   identity)))
+                  ;; And releasing takes the record with it, in that order.
+                  (cerebro--release-supervision tmp)
+                  (should-not (file-exists-p record))
+                  (should-not cerebro--supervision-process)))
+            (when (process-live-p other) (kill-process other))))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/a-foreign-record-on-a-bound-port-is-never-a-takeover ()
+  "A record naming another checkout is a lock error, not permission."
+  (let ((tmp (cerebro-test--supervisor-consumer "emacs")))
+    (unwind-protect
+        (let* ((endpoint (cerebro--supervisor-endpoint tmp))
+               (record (cerebro--supervisor-record tmp))
+               (foreign (make-network-process
+                         :name "cerebro-test-foreign" :family 'ipv4
+                         :host (car endpoint) :service (cdr endpoint)
+                         :server t :noquery t :reuseaddr nil)))
+          (unwind-protect
+              (with-temp-buffer
+                (setq-local cerebro--supervision-process nil)
+                ;; No record at all behind a bound port.
+                (pcase (cerebro--acquire-supervision tmp)
+                  (`(read-only lock-error ,message)
+                   (should (string-match-p "missing or malformed" message)))
+                  (other (ert-fail (format "expected a lock error, got %S" other))))
+                ;; A record naming somebody else's checkout.
+                (make-directory (file-name-directory record) t)
+                (with-temp-file record
+                  (insert "{\"identity\":\"/repos/elsewhere\",\"owner\":\"tui\",\"pid\":1}\n"))
+                (pcase (cerebro--acquire-supervision tmp)
+                  (`(read-only lock-error ,message)
+                   (should (string-match-p "another checkout" message)))
+                  (other (ert-fail (format "expected a collision, got %S" other)))))
+            (delete-process foreign)))
+      (delete-directory tmp t))))
+
+;; --- what a non-owner is allowed to do, which is nothing --------------------
+
+(ert-deftest cerebro-test/non-owner-never-acts ()
+  "Read-only starts nothing, nudges nothing and prunes nothing.
+
+The whole of the gate, asserted through the two predicates every caller in
+`cerebro.el' asks - so a new caller that forgets to ask is the only way past
+this, and that is what the reviewer looks for."
+  (dolist (mode '((read-only configured-for tui)
+                  (read-only invalid "rat")
+                  (read-only owned-by tui)
+                  (read-only lock-error "bound elsewhere")
+                  (read-only not-owned)))
+    (should-not (cerebro--supervision-may-act-p mode))
+    (should-not (cerebro--supervision-may-end-p mode))
+    (should (cerebro--supervision-refusal mode))))
+
+(ert-deftest cerebro-test/owner-change-drains-without-start-or-nudge ()
+  "A declaration that moves supervision keeps the lease while sessions are hosted.
+
+`cerebro--supervise' still ends and retires - that is what empties the drain -
+but the nudge branch is closed, because a nudge is a new instruction and a view
+handing supervision over issues none."
+  (let ((mode (car (cerebro--supervision-decision 'emacs 'tui t 2))))
+    (should (equal mode '(draining tui 2)))
+    (should (cerebro--supervision-may-end-p mode))
+    (should-not (cerebro--supervision-may-act-p mode))
+    ;; A nudge asks `may-act-p', which a drain fails.
+    (should-not (cerebro--supervision-may-act-p mode))))
+
+(ert-deftest cerebro-test/last-hosted-session-releases-for-the-new-owner ()
+  "The drain ends by itself when the last session goes."
+  (should (equal (cerebro--supervision-decision 'emacs 'tui t 1)
+                 '((draining tui 1) . keep)))
+  (should (equal (cerebro--supervision-decision 'emacs 'tui t 0)
+                 '((read-only configured-for tui) . release))))
+
+(ert-deftest cerebro-test/a-correction-during-a-drain-resumes-with-the-held-lease ()
+  "Put back to `emacs' mid-drain, supervision resumes - no gap, no reacquisition."
+  (should (equal (cerebro--supervision-decision 'emacs 'emacs t 3)
+                 '((supervising) . keep))))
+
+(ert-deftest cerebro-test/reacquisition-starts-nothing ()
+  "Taking the lease back is quiet: the navigator chose acquisition with no
+session start or arming side effect, so the decision that acquires reports
+read-only until the bind succeeds and never asks for an autostart."
+  (should (equal (cerebro--supervision-decision 'emacs 'emacs nil 0)
+                 '((read-only not-owned) . acquire))))
+
+(ert-deftest cerebro-test/a-missing-lease-script-keeps-the-historical-behaviour ()
+  "A consumer whose submodule predates cb-kcs.1 keeps supervising.
+
+Fail-closed is right for a declaration this build cannot read, and wrong here:
+nothing else can compute an endpoint that does not exist either, so nobody can
+be holding it.  Read-only would have silently stopped a working fleet the day
+it bumped to a submodule missing one script."
+  (let ((tmp (make-temp-file "cerebro-no-supervisor" t)))
+    (unwind-protect
+        (with-temp-buffer
+          (setq-local cerebro--supervision-process nil)
+          (should (eq (cerebro--acquire-supervision tmp) 'unavailable))
+          (should (equal (cerebro--reconcile-supervision tmp) '(supervising))))
+      (delete-directory tmp t))))

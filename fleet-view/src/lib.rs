@@ -16,6 +16,7 @@
 pub mod app;
 pub mod model;
 pub mod readers;
+pub mod supervisor;
 pub mod ui;
 
 pub use model::{
@@ -26,6 +27,10 @@ pub use model::{
 pub use readers::{
     read_beads, read_fleet, read_processes, read_roster, read_states, read_work, Programs,
     ReadError, ReaderPaths,
+};
+pub use supervisor::{
+    reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
+    SupervisorKind, SupervisorLease,
 };
 pub use app::{App, AppAction, FleetWorker, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, WorkWorker};
 pub use ui::{draw, metrics};

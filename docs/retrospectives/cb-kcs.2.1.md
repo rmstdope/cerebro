@@ -36,6 +36,23 @@ gets, so run or read the thing before writing the sentence") covers claims about
 claims about *what the diff contains*. One clause extending it to "and a claim that a finding is
 already answered is checked against `git show HEAD:<file>` or `gh pr diff`, not against memory"
 would have caught this. Cheap mechanical form: every scripted edit asserts its `old` matched.
-
 **Seen before.** None found — `grep -rl` over `docs/retrospectives/` for a silently-skipped edit or
 an answer given from memory returns nothing.
+
+## A code comment two reviewers read the opposite way
+
+**What happened.** `App::follow_selection`'s doc said its snap-to-top branch "can only be taken when
+the line is already visible at offset 0". I meant *at offset 0 the line would be visible*, which is
+true; round five read it as a claim about the current offset and called it a phrasing nit, and round
+six read it the same way, ran a case (twelve rows, viewport 5, a row already visible at scroll 3
+snapping to 0) and called it false. Both are right about the sentence: it is ambiguous in a way that
+makes the branch look like a bug. Rewritten as two named rules, with the snap explicitly called
+*more* movement than least and the 40x12 floor given as the reason it is bounded.
+
+**Why.** A comment that has to disambiguate "visible" between two offsets is doing too much work in
+one clause.
+**Cost.** Two review rounds, about ten minutes each.
+**Prevent by.** Nothing mechanical, and no rule change: this is what the review loop is for, and it
+caught it twice. Recorded only because the same sentence survived one rewrite - a comment flagged
+twice is worth restructuring rather than rewording.
+**Seen before.** None found.

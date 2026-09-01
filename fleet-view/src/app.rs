@@ -453,14 +453,18 @@ impl App {
     /// to parse contributes a second line of its own. `model::row_document_line` is the one place
     /// that arithmetic lives.
     ///
-    /// The rule is **least movement**, in both directions: a line already visible moves nothing,
-    /// and a line outside the viewport is brought just inside it. The one extra branch is
-    /// `document_line < viewport`, which snaps to the top - it can only be taken when the line is
-    /// already visible at offset 0, so the heading (and, under a stale pane, the retained error
-    /// and its blank line above it) comes along for free rather than being chased. It deliberately
-    /// does NOT try to reveal what sits above the row when that would cost the row its place:
-    /// snapping to 0 unconditionally scrolls the selection off a pane with one visible line, which
-    /// is exactly what the 40x12 floor gives Fleet in the stacked layout.
+    /// Two rules, and the second is the exception:
+    ///
+    /// - **Least movement.** A line already visible moves nothing; a line outside the viewport is
+    ///   brought just inside it, from whichever side it left.
+    /// - **A row inside the document's first viewport snaps to the top** (`document_line <
+    ///   viewport`). That is deliberately MORE movement than least: it can fire on a row that is
+    ///   already visible, and it does, so that walking back up to the top of the table brings the
+    ///   column heading - and, under a stale pane, the retained error and its blank line - back
+    ///   into view rather than leaving the table headless. It is bounded by the viewport rather
+    ///   than unconditional because snapping to 0 on a pane with ONE visible line would scroll
+    ///   the selection off it, which is exactly what the 40x12 floor gives Fleet in the stacked
+    ///   layout.
     ///
     /// The stale prefix is not a parameter: the caller adds it to DOCUMENT_LINE, which is the one
     /// place that arithmetic belongs.

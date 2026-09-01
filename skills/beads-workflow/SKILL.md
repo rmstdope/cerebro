@@ -21,7 +21,7 @@ bd update <id> --claim         # before any code is read — see "Claiming" belo
 bd dolt push                   # publish the claim now, not at session end
 git fetch origin main          # bd dolt pull moves beads, not git refs
 git checkout -b <id>-short-description origin/main
-# ... test-driven-development skill: RED → GREEN → REFACTOR → COMMIT ...
+# ... RED → GREEN → REFACTOR → COMMIT, announcing each transition ...
 # ... bd heartbeat <id> at every phase gate, and before any long wait ...
 gh pr create ...               # then the review round: the Four Eye Principle in the consumer's root CLAUDE.md
 gh pr merge <n> --squash --delete-branch    # only once reviewed at head, green, and not behind
@@ -36,11 +36,13 @@ allows `bd show` first. `bd ready --claim` takes the **first** match itself, whi
 roles below want, since they take whatever is next rather than choosing:
 
 ```bash
-bd ready --label planned --exclude-label human --exclude-type epic --claim --json          # builder
+bd ready --label planned --exclude-label human --exclude-label verdict:stale \
+        --exclude-type epic --claim --json                                       # builder
 ```
 
 `human` is already waiting on the navigator, and re-claiming it just re-asks a question nobody is
-there to answer. `epic` is a split parent: it has children rather than a plan.
+there to answer. `epic` is a split parent: it has children rather than a plan. `verdict:stale` is a
+bead waiting for the verifier to look again, not for a builder — `implement-bead` has why.
 
 **Claiming belongs to the implementer, and to nobody else.** A claim says *this is being built
 right now*, which is why it takes the bead off `bd ready` and holds a lease that has to be
@@ -112,10 +114,13 @@ runs out. That is the exact condition the reclaim rule below exists to repair, m
 deliberately every time an implementer escalates.
 
 **One exception, and `implement-bead` is where it is written in full:** a bead already carrying
-`verification:failed`, handed back because there is nothing left to implement, is **closed** rather
-than escalated — a closed bead still carrying `verification:failed` is what the verifier's work list
-is built from, and left open it reaches no role at all. Nothing here ever adds `plan:revise`; only
-the verifier sets that.
+`verification:failed`, handed back because there is nothing left to implement, runs all three
+commands but **adds no `human`** and no `paused_at` — nobody is waiting on a person, so there is no
+pause to time. It is left **open**, unclaimed, carrying
+`verification:failed` and neither `planned` nor `plan:revise`, which is exactly what
+`scripts/second-look-beads` matches and what sends it back to the verifier for a second look.
+Parking it in front of the navigator instead gives a person nothing to decide. Nothing here ever
+adds `plan:revise`; only the verifier sets that.
 
 **A planner escalating has no claim to release**, so it runs the first and third commands and
 `--remove-label planning:<its own name>` in place of the second. `bd unclaim` on a bead you never claimed is not

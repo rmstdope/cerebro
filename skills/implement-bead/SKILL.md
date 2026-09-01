@@ -10,11 +10,10 @@ You take a bead somebody else planned, build exactly what the plan says, see it 
 
 You do not loop, and you do not end yourself either. You are an interactive session, so your process
 outlives your turn — which is what lets the navigator talk to you, and what means you cannot simply
-stop. When the bead is closed you write `waiting` to your state file and say what you did; the fleet
-view ends you half a minute later and starts a fresh session under your name when there is another
-planned bead.
-Everything you learned building this one goes with you, which is the point: a new session starts
-with a clean context instead of five beads of residue.
+stop. When the bead is closed you run `end-pass` (see *Ending a pass*) and say what you did; the
+fleet view ends you half a minute later and starts a fresh session under your name when there is
+another planned bead. Everything you learned building this one goes with you, which is the point: a
+new session starts with a clean context instead of five beads of residue.
 
 Read `beads-workflow` for the label lifecycle and the consumer's root `CLAUDE.md` — its Four Eye
 Principle — for the review
@@ -22,17 +21,16 @@ rules; this is the role on top of them.
 
 ## Standing approval, and where it comes from
 
-The `test-driven-development` skill stops at every phase for the navigator, and says a merge is
-never covered by a blanket approval. This role is the documented exception, and the authority is
-**the consumer's root `CLAUDE.md` and its Four Eye Principle**, which the navigator wrote for
-exactly this: for a planned bead, a review sub-agent you spawn for yourself is the second pair of
-eyes, and an implementation session merges on the conditions stated there. Where the two disagree,
-the consumer's root `CLAUDE.md` governs — it is the project's own document, not cerebro's, and
-`templates/consumer-CLAUDE.md` is where a project without one starts.
+Merging is not normally something a blanket approval covers. This role is the documented exception,
+and the authority is **the consumer's root `CLAUDE.md` and its Four Eye Principle**, which the
+navigator wrote for exactly this: for a planned bead, a review sub-agent you spawn for yourself is
+the second pair of eyes, and an implementation session merges on the conditions stated there.
+`templates/consumer-CLAUDE.md` is where a project without one starts, and where anything in this
+skill disagrees with the project's own document, the project's governs.
 
 So: RED → GREEN → REFACTOR → COMMIT without stopping, announcing each transition, and still stopping
-on a genuine design question — see *When the plan is wrong*. Everything outside a planned bead
-follows the TDD skill's gates as written.
+on a genuine design question — see *When the plan is wrong*. The approval covers a planned bead and
+nothing else: work outside one stops for the navigator at each phase, like any other change.
 
 ## Waiting, without ending your run
 
@@ -77,8 +75,8 @@ it at every transition, in the same `Bash` call as the thing it describes — th
 navigator, `waiting` when the bead is closed and the worktree gone — or when there was nothing to
 claim. `working` and `asking` also take
 `--phase <build|gate|review|ci|rebase|merge>`, naming what the wait or the work actually is — see the
-table below for where each is written. `--pid` is `$PPID` — your own `claude` process — and must be
-captured in the call that writes the file; a stale number shows you as dead while you are working,
+table below for where each is written. `--pid` is `$PPID` — your own session's process, whichever agent CLI it runs on, which the shell in
+a `Bash` call is a child of — and it must be captured in the call that writes the file; a stale number shows you as dead while you are working,
 and the navigator will start a second implementer over the top of you. The script keeps `since`
 across a phase-only change and stamps `phase_since` on a phase change — do not write the file by
 hand.
@@ -88,199 +86,45 @@ hand.
 | *Picking up*, nothing to claim | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
 | *Picking up*, right after `bd ready … --claim` | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase build --pid $PPID` |
 | *Building*, before the fast gate | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase gate --pid $PPID` |
-| *The review*, before spawning the review sub-agent | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
-| *The review*, once every finding is answered | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
-| *Red CI* | stays `ci` |
+| *The review loop*, before spawning the review sub-agent | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID` |
+| *The review loop*, once every finding is answered | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase ci --pid $PPID` |
+| *Red CI*, after each fix-and-push | back to `--phase review` for the new head, then `--phase ci` again |
+| *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` |
+| *The retrospective*, if you committed one | back to `--phase review` for the new head, then `--phase ci`, then `--phase merge` again |
 | *Merging*, on `BEHIND`: catch up on GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
-| *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` — merge covers retro, merge, close, cleanup |
 | *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
-| *Finishing*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
+| *Finishing, then going again*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
 
 `waiting` is a request to be ended, granted within about half a minute. Run `end-pass` last. There
 is no wake to ask for: the view starts an implementer on a planned bead, not on a clock.
 
-## Finishing means finishing
+## Ending a pass
 
 There is no next bead to take, and no flag for **you** to check. The `.stop` flag still means what
 `orchestrator.md` says it means — the fleet view reads it when you report `waiting`, and decides
 whether a fresh session starts in your place. That is not your business, and you must not read it:
-an implementer that saw a stop flag mid-bead and wound up early would strand exactly what the
-between-beads rule exists to protect.
+an implementer that saw a stop flag mid-bead and wound up early would strand exactly what
+one-bead-per-session is arranged to protect.
 
-So: **do the retrospective below before you merge**, and when the bead is merged, closed and cleaned
-up, write `waiting`, say what you did, and stop producing output. **Never write `waiting` before that point.** A
-bead abandoned in flight strands a claim, a worktree and an open PR for somebody to unpick by hand,
-which is exactly what one-bead-per-session is arranged to avoid.
-
-The one exception is a bead you hand back — a missing plan section, a question only the navigator
-can answer. That is a complete run too: hand it back with the block below, clean up, write `waiting`,
-and finish.
-
-## The retrospective
-
-```bash
-.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID
-```
-
-Write it once, entering this section — `merge` covers the retrospective, the merge itself, closing
-the bead and cleaning up, so no more phase writes are needed until `waiting`.
-
-**When the review is answered and CI is green, before you merge**, look back over the run and ask
-one question: *did anything happen that I did not expect?*
-
-This is not optional. You are the only one who saw the run, your context is about to be thrown away
-by design, and whatever cost you an hour will cost the next session an hour too unless it is
-written down.
-
-**Why before the merge, when the run is not quite over.** It is a tracked file, and nothing reaches
-main here unreviewed or un-green — so it travels in the bead's own PR, and once that PR is merged
-there is no branch left to put it on. The last stretch of the run is the merge itself, which is the
-one part a retrospective written here cannot cover; if something goes wrong there, the next session
-will hit it too and record it then.
-
-### What is worth recording
-
-Something that **would need attention so it does not happen again**. Concretely: a step that failed
-for a reason the plan or these instructions did not prepare you for; a check that passed locally and
-failed in CI; a tool that behaved differently from how it is documented here; a rule you found
-yourself unable to follow as written; time lost to something that reads as avoidable in hindsight.
-
-**Not** worth recording, and actively harmful if you do: the bead going normally, a test failing
-during RED, a review comment you answered, anything already written in these instructions. A
-directory with a file per bead is one nobody reads, and then a real finding sits in it unseen.
-
-If nothing qualifies — which is the common case for a bead that went to plan — **write no file at
-all** and say so in your closing message: *"retrospective: nothing to record."* That is a complete
-retrospective, and it is how the navigator can tell you did one. A directory that only ever gains a
-file when something went wrong is one worth opening.
-
-### Where it goes
-
-`docs/retrospectives/<bead id>.md` — the bead's own id as the file name, and nothing else.
-
-**One retrospective per file, and one file per bead.** Never append to another bead's file and never
-rewrite one: they are the record of runs that are over. If your bead produced two findings, both go
-in your own file, as two sections of the one retrospective.
-
-It lives under `docs/` rather than beside your state file because it is knowledge rather than live
-state — `.cerebro/state/` is gitignored, so a retrospective there would never leave the
-machine that wrote it.
-
-**Committing it costs a CI cycle, and that is the intended trade.** Adding the file moves the head
-past the green run:
-
-```bash
-mkdir -p docs/retrospectives          # the first finding in a fresh checkout creates it
-git add docs/retrospectives/<bead id>.md
-git commit -m "docs(<bead id>): retrospective — <the one-line symptom>"
-git push
-# then wait for CI again, per *Waiting, without ending your run*, and merge on green
-```
-
-The retrospective commit changes the head, so it returns through the review loop and then CI before
-merge. If there is no retrospective file, no extra round is introduced. Ordinary beads usually cost
-one review; the additional round is required whenever the head changes.
-
-### The format
-
-**Create `docs/retrospectives/README.md` with this exact content if it does not exist**, so the
-format is documented where the files are rather than only here. `mkdir -p docs/retrospectives`
-first: yours may be the first finding this checkout has ever had, and `>` into a directory that is
-not there fails.
-
-```markdown
-# Retrospectives
-
-One file per bead, `<bead id>.md`, written by the implementer that built it — but only when
-something went unexpectedly. A bead that went to plan leaves no file, so everything in here is
-something that cost somebody time.
-
-Each file is one retrospective and is never edited afterwards: it is the record of a run that is
-over. A later bead that hits the same thing writes its own file and names this one under
-**Seen before**, which is how a recurring problem becomes visible as a count rather than a feeling.
-
-## Format
-
-    # <bead id> — retrospective
-
-    - **Implementer:** <name>
-    - **Date:** <YYYY-MM-DD>
-    - **PR:** #<n>
-
-    ## <one line: the symptom, not the cause>
-
-    **What happened.** What you observed, concretely, with the command or step that produced it.
-    **Why.** The cause if you established one; "not established" if you did not. Do not guess.
-    **Cost.** What it took: wall-clock, CI cycles, a bead handed back, a rebase.
-    **Prevent by.** The specific change that would stop it — a file and section, a step to add, a
-    check to run earlier. "Be careful" is not a prevention.
-    **Seen before.** Other bead ids whose file describes the same thing, or "none found".
-
-Two findings in one run are two `##` sections in that bead's one file.
-```
-
-### Writing it
-
-**Grep the directory before you write**, so *Seen before* is real rather than decorative — a
-finding on its third sighting is the strongest evidence the fleet produces that something needs
-fixing rather than tolerating:
-
-```bash
-grep -rl "<a word from your symptom>" docs/retrospectives/ 2>/dev/null || echo "nothing like it yet"
-```
-
-A complete example:
-
-```markdown
-# <bead-id> — retrospective
-
-- **Implementer:** Cyclops
-- **Date:** 2026-08-14
-- **PR:** #231
-
-## The browser suite passed locally and failed in CI
-
-**What happened.** The project's browser suite was green on this machine three times. The same commit failed
-twice in CI on `smoke (web, 2, 2)`, both times on a timeout in the map-drag spec.
-**Why.** Not established. The CI runner is slower and the spec waits on a fixed 500ms, but I did not
-prove that is the cause.
-**Cost.** Two CI cycles and a rebase, about 50 minutes.
-**Prevent by.** The plan's *Validation* section should name which suite covers a map interaction, so
-it is run in CI-like conditions before the PR opens rather than after.
-**Seen before.** <an earlier bead id> — same spec, same job.
-```
-
-Two rules for the writing itself. **Be specific enough to act on**: name the file, the command, the
-job, the section. A future reader has none of your context and cannot ask you. And **do not fix it
-here** — recording is your job; changing the rules, the skill or CI is outside a planned bead and
-belongs to the navigator, who reads these precisely so they can decide.
-
-### Asking instead of handing back
-
-You are interactive, so the navigator can answer you. For a question that genuinely blocks the bead
-you may ask rather than hand back — write `asking` to your state file first, with the bead still in
-`bead` and the current phase passed again, then ask plainly and wait.
-
-Nobody waits for ever. You do not enforce the timeout and cannot see it: if it expires, a line
-starting `[cerebro]` arrives in your session telling you to give up. Treat it as the navigator
-speaking — stop waiting, hand the bead back exactly as below, and finish.
-
-Prefer handing back outright when the answer plainly needs somebody awake, or when the bead can wait
-for the planner rather than the navigator. Asking is the faster path only when somebody is there.
-
-## Picking up
-
-**This is your first turn's work.** Nothing gates it: a running implementer is a working one, and
-there is no flag to wait for. (There was a `.go` flag once; it is gone.)
-
-If the queue is empty, **end the pass** — do not poll. Write `waiting`, say "queue empty, ending
-the pass" in one line, and stop producing output. The fleet view ends this session and starts a
-fresh one under your name the moment a planned bead exists; a session that sits polling is a session
-the view cannot tell from one that has hung.
+**A pass is ended in one place**, and `waiting` is what it writes for you:
 
 ```bash
 .claude/cerebro/scripts/end-pass <name> --pid $PPID
 ```
+
+Run it last — after the bead is merged and closed, the retrospective below is written and the
+worktree is gone — then say what you did and stop producing output. **Never end a pass before that
+point.** A bead abandoned in flight strands a claim, a worktree and an open PR for somebody to
+unpick by hand.
+
+The one exception is a bead you hand back — a missing plan section, a question only the navigator
+can answer. That is a complete run too: hand it back with the block in *Picking up*, clean up, and
+end the pass exactly the same way.
+
+## Picking up
+
+**This is your first turn's work.** Nothing gates it: a running implementer is a working one, and
+there is no flag to wait for.
 
 ```bash
 bd dolt pull
@@ -308,9 +152,12 @@ then it is worth building.
 lease is short, about five minutes, and a cycle is an hour; the exact TTL is bd's and not
 configurable here, so heartbeat on every boundary rather than on a timer.
 
-Nothing planned means the planner has not got there yet, or another implementer took the last one
-first — the view may have started you for a bead a peer claimed a moment ago. End the pass as
-*Picking up* describes; the view brings you back when there is one.
+**Nothing to claim? End the pass — do not poll.** The planner has not got there yet, or another
+implementer took the last one first; the view may have started you for a bead a peer claimed a
+moment ago. Say "queue empty, ending the pass" in one line, run `end-pass` as *Ending a pass*
+describes, and stop producing output. The view starts a fresh session under your name the moment a
+planned bead exists, and a session that sits polling is one it cannot tell from a session that has
+hung.
 
 **Read the plan with `bd show <id> --json`.** The pretty renderer mangles it.
 
@@ -325,11 +172,10 @@ bd dolt push
 ```
 
 
-`--set-metadata paused_at=…` is what makes the pause visible as a *duration*: the fleet view's
-*Waiting on you* section reads it and says how long the bead has been sitting there, and a bead
-parked without it reads as parked just now, for ever (cb-wfb).
-
-All three, and this is the **hand-back block** referred to throughout.
+All three, and this is the **hand-back block** referred to throughout. `beads-workflow` carries why
+each command matters; the short of it is that `paused_at` is what makes the pause visible as a
+*duration* rather than as parked-just-now-for-ever (cb-wfb), and that `bd unclaim` is what stops the
+bead sitting `in_progress` under an agent that has walked away.
 
 **One variation, and it is about where the bead goes next.** A bead carrying `verification:failed`
 that you are handing back because there is **nothing left to implement** — you read the failure
@@ -352,13 +198,9 @@ which is why the query now lives in a script with a test under it rather than in
 
 **Never add `plan:revise` in either case.** Whether the plan was wrong is the navigator's answer to
 Psylocke's question, asked at the verdict, and it is not an implementer's to assert — the label is
-hers alone to set, and it is what sends the bead to a planner. After it, remove the worktree
-if one exists (see *Finishing*) and run `.claude/cerebro/scripts/end-pass <name> --pid $PPID`
-last, exactly as a merged bead does — a hand-back is a complete run too.
-`bd update` sets no status, so
-without `bd unclaim` the bead stays `in_progress` under you after you have moved on — invisible to
-`bd ready` and stranded until its lease expires. Without the push, no other machine learns it was
-released. If a worktree exists by then, remove it too (see *Finishing*).
+hers alone to set, and it is what sends the bead to a planner. After either block, remove the
+worktree if one exists (see *Finishing, then going again*) and run `end-pass` last, exactly as a
+merged bead does — a hand-back is a complete run too.
 
 ### A reopened bead
 
@@ -382,7 +224,7 @@ saw; that is the increment that matters most.
 
 On merge, close it exactly as usual — it keeps `verification:failed` through the close, and that is
 by design: it is what puts the bead back on Psylocke's list for a second look. The parent-close walk
-in *Finishing* needs nothing different either; Psylocke already reopened the parent chain when she
+in *Finishing, then going again* needs nothing different either; Psylocke already reopened the parent chain when she
 reopened this bead, so closing the last open child closes it again the same way it always does.
 
 ## Workspace
@@ -461,8 +303,9 @@ into another agent's worktree to look at something leaves every later command th
 `git checkout -b` then moves that agent off its own branch.
 
 **Give each session its own block of ports** so two agents never test each other's bundle, and
-**check before claiming one**. The project declares where the blocks start and how far apart they
-are; nothing here knows the numbers:
+**check before claiming one**. A project that declares no `port_base` has no port-sharing problem to
+solve — skip the rest of this section. Otherwise the project declares where the blocks start and how
+far apart they are; nothing here knows the numbers:
 
 ```bash
 base="$(.claude/cerebro/scripts/project-conf port_base)"          # where this project's blocks start
@@ -472,8 +315,6 @@ lsof -i :$mine -i :$((mine + 1)) -i :$((mine + 2))   # silence means the block i
 export "$(.claude/cerebro/scripts/project-conf port_env)=$mine"   # the variable the project's suites read
 export CI=1                          # so a dying server from your own last run is never reused
 ```
-
-A project that declares no `port_base` has no port-sharing problem to solve — skip this and carry on.
 
 There is no registry, so the check is the whole mechanism. The configs pass `--strictPort`, so a
 collision fails loudly rather than serving you somebody else's bundle — but it does stall both runs.
@@ -487,20 +328,20 @@ collision fails loudly rather than serving you somebody else's bundle — but it
 Write it once, before you run the fast gate for the first time — `gate` is still the word for
 this step even though there is no machine-wide lock behind it any more.
 
-Follow the plan's increments in order, each opening with its named failing test. **Run the fast gate
-before opening the PR.** The command is the project's, not this skill's — ask for it, and run exactly
-what it names:
+Follow the plan's increments in order, each opening with its named failing test.
 
-Immediately before that gate, classify the actual changed paths:
+**Before you open the PR: classify what you actually changed, then run the fast gate.** Classify
+first, because the answer decides which gate you run:
 
 ```bash
 git diff --name-only -z origin/main...HEAD |
   xargs -0 .claude/cerebro/scripts/build-workload --classify
 ```
 
-If a planned `non-rust` workload classifies as `rust` or classification fails, rerun the preflight
+If a planned `non-rust` workload classifies as `rust`, or classification fails, rerun the preflight
 with `--workload rust` and use the normal private-target gate. Otherwise use the plan's shared-target
-fast gate; keep every existing gate leg.
+fast gate; keep every existing gate leg. The command itself is the project's, not this skill's — ask
+for it, and run exactly what it names:
 
 ```bash
 .claude/cerebro/scripts/project-conf gate_fast     # the fast gate, and what to run
@@ -572,6 +413,22 @@ hand-back block rather than inferring a replacement design.
 
 Anything touching **approach, scope, or what the user sees** goes back, by the same hand-back block as a missing section, worktree included. You were given a plan precisely so those decisions were made elsewhere; making
 them here is the failure mode this split exists to prevent.
+
+### Asking instead of handing back
+
+You are interactive, so the navigator can answer you. For a question that genuinely blocks the bead
+you may ask rather than hand back — write `asking` to your state file first, with the bead still in
+`bead` and the current phase passed again, then ask plainly and wait.
+
+Nobody waits for ever. You do not enforce the timeout and cannot see it: the fleet view holds the
+clock (`cerebro-answer-timeout`, fifteen minutes by default), and when it expires a line starting
+`[cerebro]` arrives in your session telling you to give up. Treat it as the navigator speaking —
+stop waiting, hand the bead back by the hand-back block in *Picking up*, and end the pass.
+
+So a question worth asking is one somebody could answer inside that quarter of an hour. Prefer
+handing back outright when the answer plainly needs somebody awake, or when the bead can wait for
+the planner rather than the navigator: handing back is always available and always correct, and
+asking is only the faster path when somebody is there.
 
 ## The review loop
 
@@ -691,24 +548,147 @@ merge, per *Merging*'s merge-state check, if anything was pushed since the PR op
 returns every fix-and-push through the review loop; only after that review is complete does it return
 to `ci` and wait for checks on the reviewed head.
 
-**If three attempts for one head are unusable**: leave the PR open, record the attempts, and escalate
-by the hand-back block, worktree included, and end the pass.
+**If three attempts for one head are unusable**: leave the PR open, record the attempts in the
+bead's notes, hand it back by the hand-back block in *Picking up*, worktree included, and end the
+pass.
 
 A review a person or a bot leaves on the PR anyway is read and answered like any other comment. It
 is welcome; it is not what the approval rests on, and it does not replace the round above.
 
 ## Red CI
 
-Three fix attempts. Diagnose, fix, push — and read the failure before believing it: a wall of
-identical connection errors is infrastructure, not a defect.
+**Three fix attempts, and two bare re-runs, for the whole bead.** They are two budgets, not one
+each per failure: a fix that pushes a new commit spends a fix attempt, a job re-run of the same head
+spends a re-run, and neither refills. Diagnose, fix, push — and read the failure before believing
+it: a wall of identical connection errors is infrastructure, not a defect.
 
-A suspected flake gets the job re-run instead, capped at two re-runs, and only after you have
-reproduced it locally once — reproducing locally means running that one suite directly, by whatever
-command the project runs it with, for the specific spec: the full gate, or the project's own suite
-for the surface in question, rather than everything. Without that cap, "it was a flake" is an unbounded loop that ends with a
+A re-run is for a suspected flake, and only after you have reproduced it locally once — that means
+running the one suite directly, by whatever command the project runs it with, for the specific spec,
+rather than everything. Without the cap, "it was a flake" is an unbounded loop that ends with a
 genuinely broken timing test merged.
 
-On exhaustion, leave the PR open, escalate, move on.
+Every fix changes the head, so it returns through the review loop before CI, exactly as *The review
+loop* says — which makes this budget the only thing bounding how many review rounds one red bead
+costs. **It is deliberately scoped differently from the review budget**, which is three attempts
+*per head* and resets on every new head: a review retried is a supplier that failed, while a fix
+retried is this bead failing, and the second is what has to be bounded for the bead as a whole. On
+exhaustion of either budget here, leave the PR open, hand the bead back by the hand-back block in
+*Picking up*, and end the pass.
+
+## The retrospective
+
+```bash
+.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID
+```
+
+Write it entering this section. `merge` covers the retrospective, the merge itself, closing the bead
+and cleaning up — so if you write no file, which is the common case, there is no further phase write
+until the pass ends. Committing one changes the head, which sends you back through `review` and `ci`
+and then to `merge` again, exactly as any other head change does.
+
+**When the review is answered and CI is green, before you merge**, look back over the run and ask
+one question: *did anything happen that I did not expect?*
+
+This is not optional. You are the only one who saw the run, your context is about to be thrown away
+by design, and whatever cost you an hour will cost the next session an hour too unless it is
+written down.
+
+**Before the merge, because it is a tracked file**: it travels in the bead's own PR, and once that
+PR is merged there is no branch left to put it on. The merge itself is the one stretch a
+retrospective written here cannot cover; if something goes wrong there, the next session hits it too
+and records it then.
+
+### What is worth recording
+
+Something that **would need attention so it does not happen again**. Concretely: a step that failed
+for a reason the plan or these instructions did not prepare you for; a check that passed locally and
+failed in CI; a tool that behaved differently from how it is documented here; a rule you found
+yourself unable to follow as written; time lost to something that reads as avoidable in hindsight.
+
+**Not** worth recording, and actively harmful if you do: the bead going normally, a test failing
+during RED, a review comment you answered, anything already written in these instructions. A
+directory with a file per bead is one nobody reads, and then a real finding sits in it unseen.
+
+If nothing qualifies — which is the common case for a bead that went to plan — **write no file at
+all** and say so in your closing message: *"retrospective: nothing to record."* That is a complete
+retrospective, and it is how the navigator can tell you did one. A directory that only ever gains a
+file when something went wrong is one worth opening.
+
+### Where it goes
+
+`docs/retrospectives/<bead id>.md` — the bead's own id as the file name, and nothing else.
+
+**One retrospective per file, and one file per bead.** Never append to another bead's file and never
+rewrite one: they are the record of runs that are over. If your bead produced two findings, both go
+in your own file, as two sections of the one retrospective.
+
+It lives under `docs/` rather than beside your state file because it is knowledge rather than live
+state — `.cerebro/state/` is gitignored, so a retrospective there would never leave the
+machine that wrote it.
+
+**Committing it costs a review round and a CI cycle, and that is the intended trade** — which is
+also why the bar for writing one is high. Adding the file moves the head past the green run:
+
+```bash
+mkdir -p docs/retrospectives          # the first finding in a fresh checkout creates it
+[ -f docs/retrospectives/README.md ] || \
+  cp .claude/cerebro/templates/retrospectives-README.md docs/retrospectives/README.md
+git add docs/retrospectives/          # the README too, on the run that creates it
+git commit -m "docs(<bead id>): retrospective — <the one-line symptom>"
+git push
+# then wait for CI again, per *Waiting, without ending your run*, and merge on green
+```
+
+**Stage the directory, not just your own file.** The `cp` above writes the README into your
+worktree, and a worktree is removed at the end of the pass: a copy that is never staged is a copy nobody ever sees,
+and the next bead finds the directory undocumented again.
+
+The commit changes the head, so it returns through the review loop and then CI before the merge, as
+every head change does. A bead with no retrospective adds no round at all.
+
+### The format
+
+The template the block above copies in — `templates/retrospectives-README.md`, in this mount — is
+the format, documented where the files are rather than only here.
+
+Five fields, and the README has them in full: **What happened** (concretely, with the command that
+produced it), **Why** (or "not established" — do not guess), **Cost**, **Prevent by** (a file and a
+section, a step, a check — "be careful" is not a prevention), **Seen before** (other bead ids, or
+"none found").
+
+### Writing it
+
+**Grep the directory before you write**, so *Seen before* is real rather than decorative — a
+finding on its third sighting is the strongest evidence the fleet produces that something needs
+fixing rather than tolerating:
+
+```bash
+grep -rl "<a word from your symptom>" docs/retrospectives/ 2>/dev/null || echo "nothing like it yet"
+```
+
+A complete example, indented here so its own headings stay out of this skill's outline:
+
+    # <bead-id> — retrospective
+
+    - **Implementer:** Cyclops
+    - **Date:** 2026-08-14
+    - **PR:** #231
+
+    ## The browser suite passed locally and failed in CI
+
+    **What happened.** The project's browser suite was green on this machine three times. The same
+    commit failed twice in CI on `smoke (web, 2, 2)`, both times on a timeout in the map-drag spec.
+    **Why.** Not established. The CI runner is slower and the spec waits on a fixed 500ms, but I did
+    not prove that is the cause.
+    **Cost.** Two CI cycles and a rebase, about 50 minutes.
+    **Prevent by.** The plan's *Validation* section should name which suite covers a map
+    interaction, so it is run in CI-like conditions before the PR opens rather than after.
+    **Seen before.** <an earlier bead id> — same spec, same job.
+
+Two rules for the writing itself. **Be specific enough to act on**: name the file, the command, the
+job, the section. A future reader has none of your context and cannot ask you. And **do not fix it
+here** — recording is your job; changing the rules, the skill or CI is outside a planned bead and
+belongs to the navigator, who reads these precisely so they can decide.
 
 ## Merging
 
@@ -837,25 +817,14 @@ bd children <parent> --json | jq -r '.[].status'            # includes closed ch
 bd close <parent> --reason "All children closed; last was <id>, delivered in PR #NN"
 ```
 
-An empty first line means there is no parent and you are done. `bd show --json` returns an array, so
-index it as one — but guard the shape as `plan-bead` and `user-feedback` already do, because
-indexing the wrong one fails with `Cannot index array with string "parent"` and reads like a missing
-parent rather than a broken command.
+An empty first line means there is no parent and you are done. Close the parent only when **every**
+child reads `closed`, then repeat the lookup on *its* parent — a child of a child leaves two levels
+to settle. If the walk runs after you have already pushed, push again; it costs nothing.
 
-Close the parent only when **every** child reads `closed`, and then repeat the lookup on *its*
-parent — a child of a child leaves two levels to settle, and each is the same three commands. If the
-walk runs after you have already pushed, push again; it costs nothing and the alternative is a
-family that looks half-closed everywhere but here.
-
-Two things this is not:
-
-- **Not `bd epic close-eligible`.** That sweeps every eligible epic in the database, including
-  families no session of yours ever touched. Walk up from your own bead, the way `bd reclaim --id`
-  names one bead rather than reaping every stale lease.
-- **Not a judgement about whether the epic is finished.** All children closed is the whole test. An
-  epic that still has work left in it has that work as an open child, or it has a scope the navigator
-  changed — and a scope change is theirs, not yours. If the children are all closed but the parent
-  plainly is not done, leave it open, `--append-notes` why, and say so on the way out.
+`beads-workflow` has the rest of this walk — why the `if type=="array"` guard is there, and why it
+is not `bd epic close-eligible`. The one part that is yours to judge: all children closed is the
+whole test, and a parent that plainly is not done anyway is left open with `--append-notes` saying
+why, because changing an epic's scope is the navigator's.
 
 Say what you merged and anything the navigator should know — a deviation, a trap the plan missed, a
 bead you handed back.
@@ -879,14 +848,9 @@ into it.
   serving — which looks exactly like a hang rather than a mistake.
 - **A stale lease is not an abandoned agent** unless it is genuinely stale — see `beads-workflow`
   before reclaiming anything.
-- **A merge verdict about the wrong head.** After a rebase, a force-push or an `update-branch`,
-  `gh pr view --json mergeable,mergeStateStatus` describes whichever head GitHub last finished
-  computing — which may be the previous one. Read one way that is a `CONFLICTING`/`DIRTY` while the
-  check state you are about to poll still describes an older head; read the other it is a stale
-  `CONFLICTING` after a clean push that sends you into a needless second rebase. Look at the merge
-  state before the checks, and only believe it once `headRefOid` is the tip you pushed — *Merging*
-  has the loop. Cost a wasted check-state poll here once, and a near-miss on a wasted CI cycle
-  twice.
+- **A merge verdict about the wrong head.** `gh pr view --json mergeable,mergeStateStatus` can
+  describe the head before your push. Never believe it until `headRefOid` is the tip you pushed —
+  *Merging* has the loop and what it cost.
 - **An accessible name is a shared namespace.** A browser suite selects on the names controls
   expose, so a new control whose name contains — or is contained by — one an existing spec relies on
   makes that spec match two elements and fail, in a file with nothing to do with your change. Before

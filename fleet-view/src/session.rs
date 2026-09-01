@@ -8,6 +8,8 @@
 //! into a parser on another thread.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 
 /// How many lines of a finished pass are kept. The navigator's number, agreed in the parent
 /// epic's interview and unchanged here.
@@ -94,6 +96,102 @@ pub fn paste_bytes(text: &str) -> Vec<u8> {
     bytes
 }
 
+/// vt100's colour in ratatui's vocabulary: the default stays the terminal's own (`None`, so no
+/// `fg`/`bg` is set at all), an indexed colour becomes `Color::Indexed` and a true colour
+/// `Color::Rgb`. Both prototype runs are the evidence that this round trip preserves what an
+/// agent CLI actually paints (S1's colour lists).
+fn colour(from: vt100::Color) -> Option<Color> {
+    match from {
+        vt100::Color::Default => None,
+        vt100::Color::Idx(index) => Some(Color::Indexed(index)),
+        vt100::Color::Rgb(r, g, b) => Some(Color::Rgb(r, g, b)),
+    }
+}
+
+/// One cell's style, in ratatui's vocabulary.
+fn cell_style(cell: &vt100::Cell) -> Style {
+    let mut style = Style::default();
+    if let Some(fg) = colour(cell.fgcolor()) {
+        style = style.fg(fg);
+    }
+    if let Some(bg) = colour(cell.bgcolor()) {
+        style = style.bg(bg);
+    }
+    for (on, modifier) in [
+        (cell.bold(), Modifier::BOLD),
+        (cell.dim(), Modifier::DIM),
+        (cell.italic(), Modifier::ITALIC),
+        (cell.underline(), Modifier::UNDERLINED),
+        (cell.inverse(), Modifier::REVERSED),
+    ] {
+        if on {
+            style = style.add_modifier(modifier);
+        }
+    }
+    style
+}
+
+/// One row of SCREEN, as a `Line` whose spans carry the cell colours and attributes.
+///
+/// Cells are merged into a span while their style is unchanged, so a row of one colour is one
+/// span rather than eighty. Trailing blank cells are dropped: a pane whose every row is padded to
+/// its full width cannot be scrolled sensibly and doubles what a retained transcript costs.
+///
+/// A wide glyph's continuation cell contributes nothing - its contents belong to the cell before
+/// it, and emitting them again would print the glyph twice.
+fn row_line(screen: &vt100::Screen, row: u16, cols: u16) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut pending = String::new();
+    let mut pending_style = Style::default();
+    let flush = |text: &mut String, style: Style, spans: &mut Vec<Span<'static>>| {
+        if !text.is_empty() {
+            spans.push(Span::styled(std::mem::take(text), style));
+        }
+    };
+    for col in 0..cols {
+        let Some(cell) = screen.cell(row, col) else { continue };
+        if cell.is_wide_continuation() {
+            continue;
+        }
+        let style = cell_style(cell);
+        let contents = cell.contents();
+        // An untouched cell reads as empty; on screen it is a space, and a span of spaces is what
+        // carries a background colour across a gap.
+        let text = if contents.is_empty() { " " } else { contents };
+        if style != pending_style {
+            flush(&mut pending, pending_style, &mut spans);
+            pending_style = style;
+        }
+        pending.push_str(text);
+    }
+    flush(&mut pending, pending_style, &mut spans);
+    trim_trailing_blanks(&mut spans);
+    Line::from(spans)
+}
+
+/// Drop the trailing run of unstyled spaces from SPANS - the padding a terminal row always
+/// carries. A span that is blank but *styled* is kept: a coloured background running to the edge
+/// of the screen is something the child painted deliberately.
+fn trim_trailing_blanks(spans: &mut Vec<Span<'static>>) {
+    while let Some(last) = spans.last_mut() {
+        if last.style != Style::default() {
+            break;
+        }
+        let trimmed = last.content.trim_end_matches(' ').to_string();
+        if trimmed.is_empty() {
+            spans.pop();
+        } else {
+            last.content = trimmed.into();
+            break;
+        }
+    }
+}
+
+/// Every visible row of SCREEN, top to bottom.
+pub fn materialise(screen: &vt100::Screen, rows: u16, cols: u16) -> Vec<Line<'static>> {
+    (0..rows).map(|row| row_line(screen, row, cols)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +246,50 @@ mod tests {
         let mut release = key(KeyCode::Char('a'));
         release.kind = KeyEventKind::Release;
         assert_eq!(key_bytes(release), None);
+    }
+
+    /// A parser of the given size, fed BYTES.
+    fn parser(rows: u16, cols: u16, bytes: &[u8]) -> vt100::Parser {
+        let mut parser = vt100::Parser::new(rows, cols, SCROLLBACK_LINES);
+        parser.process(bytes);
+        parser
+    }
+
+    fn texts(line: &Line<'static>) -> Vec<String> {
+        line.spans.iter().map(|span| span.content.to_string()).collect()
+    }
+
+    #[test]
+    fn a_coloured_line_materialises_into_styled_spans() {
+        // Bold red `hi', then ordinary `there'.
+        let parser = parser(4, 20, b"\x1b[1;31mhi\x1b[0m there");
+        let lines = materialise(parser.screen(), 4, 20);
+        assert_eq!(texts(&lines[0]), vec!["hi".to_string(), " there".to_string()]);
+        assert_eq!(
+            lines[0].spans[0].style,
+            Style::default().fg(Color::Indexed(1)).add_modifier(Modifier::BOLD)
+        );
+        assert_eq!(lines[0].spans[1].style, Style::default());
+        // The row is twenty cells wide and the padding is gone.
+        assert_eq!(lines[0].spans.len(), 2);
+    }
+
+    #[test]
+    fn an_indexed_and_a_true_colour_both_survive() {
+        let parser = parser(2, 20, b"\x1b[38;5;208ma\x1b[38;2;10;20;30mb");
+        let lines = materialise(parser.screen(), 2, 20);
+        assert_eq!(lines[0].spans[0].style.fg, Some(Color::Indexed(208)));
+        assert_eq!(lines[0].spans[1].style.fg, Some(Color::Rgb(10, 20, 30)));
+    }
+
+    #[test]
+    fn a_blank_screen_materialises_to_blank_lines() {
+        let parser = parser(3, 10, b"");
+        let lines = materialise(parser.screen(), 3, 10);
+        assert_eq!(lines.len(), 3);
+        for line in &lines {
+            assert!(line.spans.is_empty(), "expected an empty line, got {line:?}");
+        }
     }
 
     #[test]

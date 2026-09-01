@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#
+# state-contract-sync - do this repository's copies of the state-file contract agree?
+#
+# The contract - how to call `scripts/agent-state', what the four state words mean, what
+# `--pid $PPID' is, the question sandwich, the hook behind `asking' - is what every role writes its
+# row in the fleet view under, and until cb-mqa it was written out separately in seven documents.
+# It drifted, and in the direction that makes an agent write a wrong state: `5c12795' corrected one
+# sentence in `agents/implementer.md', `1f09133' (#247) re-corrected the identical sentence in five
+# more files the same day, and the same commit found `agents/verifier.md' still telling Psylocke to
+# write `idle' at the end of a pass directly under the bullet forbidding it. The contract now lives
+# once, in `templates/state-file-contract.md', and each carrier wraps its copy in
+# `<!-- state-contract:begin -->' / `<!-- state-contract:end -->'.
+#
+#   no arguments.
+#   stdout   one line per finding, or nothing at all when the copies agree:
+#              drifted: <carrier> (block differs from templates/state-file-contract.md)
+#              unmarked: <carrier> (no state-contract:begin/end pair)
+#              missing: <carrier> (carrier file not found)
+#              missing: templates/state-file-contract.md (the canonical block)
+#            paths relative to the repository root.
+#   exit 0   they agree.
+#   exit 1   at least one finding.
+#   exit 2   any argument at all.
+#   exit 3   the repository root could not be resolved, with a line on stderr saying so - never
+#            silence, and never 2, which a caller reads as its own usage mistake.
+#
+# THE CARRIER LIST IS A DECISION, not a scan - the shape `scripts/four-eye-sync' and
+# `scripts/ci-needed''s skip list use. `agents/implementer.md' and `agents/planner.md' are
+# deliberately NOT carriers: both are thin role files that defer to their skill, and both sessions
+# load that skill, so a copy in the role file would be read twice per session and kept in step for
+# no gain. Each points at its skill's section instead.
+#
+# THE CONTENT OF THE BLOCK IS DELIBERATELY NOT ASSERTED. That the copies agree is a fact about
+# files; that the contract says the right thing is a decision, and a check on prose content fails on
+# the day somebody changes their mind rather than the day something breaks (root `CLAUDE.md',
+# *Development practices*).
+#
+# It is a GATE predicate and must never join `launch-preflight''s hot path: a check that refuses
+# there is a fleet that cannot start.
+#
+# NOT under `tests/': the gate's suite loop is `tests/*.sh', and a script whose exit status is an
+# answer must not be picked up as a suite. Its suite is `tests/state-contract-sync.sh'.
+
+# Not -e: the answer IS the exit status, and a failed comparison inside the carrier loop must print
+# its finding rather than end the script. (`.cerebro/traps.md', "An advisory step can eat the exit
+# status that follows it".)
+set -uo pipefail
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: state-contract-sync" >&2
+  exit 2
+fi
+
+# -P: a logical spelling compares two names for one directory. The subject is the checkout this
+# script lives in - for a fixture, that is the fixture.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# Exit 3, not 2: a caller reading the header takes 2 as "I passed a bad argument", and a checkout
+# that is not where this script thought is a different thing entirely. It says so on stderr.
+if [[ -z "$ROOT" ]] || ! cd "$ROOT"; then
+  echo "state-contract-sync: cannot resolve the repository root from ${BASH_SOURCE[0]}" >&2
+  exit 3
+fi
+
+# The marker parse, the comparison and the finding text live in `scripts/block-sync.sh', shared
+# with `scripts/four-eye-sync'. This script owns its header, its carrier list, its root resolution
+# and its exit codes, and nothing else.
+# `source "$var/lib"' is the spelling `tests/lib/place-scripts' derives a script's libraries
+# from (cb-u70), so a fixture built with `link_scripts' arrives with `block-sync.sh' beside this
+# script rather than dying at the source line.
+script_dir="$(dirname "${BASH_SOURCE[0]}")"
+source "$script_dir/block-sync.sh"
+
+CANONICAL="templates/state-file-contract.md"
+
+# The seven documents a session actually loads. See the header for why the two thin role files are
+# not among them.
+CARRIERS=(
+  agents/architect.md
+  agents/orchestrator.md
+  agents/reviewer.md
+  agents/user-feedback.md
+  agents/verifier.md
+  skills/implement-bead/SKILL.md
+  skills/plan-bead/SKILL.md
+)
+
+cerebro_block_sync state-contract "$CANONICAL" "${CARRIERS[@]}"
+exit $?

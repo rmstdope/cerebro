@@ -41,51 +41,58 @@ git fetch origin "$(.claude/cerebro/scripts/default-branch)"     # the refs: bd 
 
 ### Telling the fleet view what you are doing
 
-`.cerebro/state/Psylocke.state.json` is how the fleet view sees you, exactly as an
-implementer's file is. Write it at every transition, through
-`.claude/cerebro/scripts/agent-state`, never by hand:
+`.cerebro/state/Psylocke.state.json` is your row in the fleet view.
 
 **This is the part of your job you are worst at.** Not the verifying — the two lines of bash around
 it. Sessions have sat at `asking` for an hour after the navigator answered, and have prepared and
-briefed a whole verification while the fleet view said `idle`. So it is written here as two
-mechanical rules with no judgement in them, and everything else in this file just repeats them at
-the place they apply.
+briefed a whole verification while the fleet view said `idle`. The contract below has no judgement
+in it; follow it mechanically.
 
-#### Rule 1 — the question sandwich
+<!-- state-contract:begin -->
 
-**A question to the navigator is three actions, never one.** Whenever you are about to use the
-question tool — any question, named in this file or not:
+Write it at every transition, in the same `Bash` call as the thing it describes, through
+`.claude/cerebro/scripts/agent-state` — never by hand, and never with a state word of your own
+invention. There are four, and no others: `idle`, `working`, `asking`, `waiting`.
 
-```bash
-.claude/cerebro/scripts/agent-state Psylocke asking --bead <id> --phase <prepare|verify> --pid $PPID
-```
+- `working` covers everything you are actually doing.
+- `asking` says you are blocked on the navigator and nothing is moving until they answer.
+- `idle` says a live session with nothing in hand, waiting to be spoken to.
+- `waiting` says *this pass is over and my turn has ended*. The fleet view ends the session about
+  half a minute later, keeps its buffer as the record of the pass, and starts a fresh one on your
+  role's own trigger.
 
-1. that `Bash` call,
-2. the question tool,
-3. and then, as **the very first thing you do with the answer — before any `bd`, `git`, `pnpm` or
-   reply** — the same call again with `working` in place of `asking`:
+The table below is where you find which of them you write, and when. Work done under the wrong one
+is invisible or misleading: a session shown with nothing in flight is one the navigator may `k`, and
+one shown as `asking` is one they think is blocked on them.
 
-```bash
-.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase <prepare|verify> --pid $PPID
-```
+`working` and `asking` also take `--phase`, naming what the work or the wait actually is; the words
+your role uses are in that same table. The script keeps `since` across a phase-only change and
+stamps `phase_since` on one — which is another reason never to write the file by hand.
 
-If you find yourself typing `bd` or `git` straight after an answer, you have skipped step 3: stop,
-write the state, then carry on. Answering the navigator in prose without step 3 is the single most
-common way this goes wrong, because the answer feels like the end of the exchange and the state file
-is still saying you are blocked on them.
+`--pid` is `$PPID` — your own session's process, whichever agent CLI it runs on — and it must be
+captured in the call that writes the file. A stale number shows you as dead while you are working,
+and the navigator will start a second session over the top of you.
 
-Omit `--bead` when no candidate is in hand (the first-pass cutoff, anything asked mid-sweep); keep
-`--phase`, which is `prepare` before the briefing and `verify` from the briefing to the verdict.
+**Every question to the navigator is three actions, not one.** Write `asking`, ask, and then — as
+the very first thing you do with the answer, before any `bd`, `git` or reply — write `working`
+again. If you find yourself typing `bd` or `git` straight after an answer, you have skipped the
+third: stop, write the state, then carry on. That is the most common way this goes wrong, because
+the answer feels like the end of the exchange while the file still says you are blocked.
 
-#### Rule 2 — `working` covers everything but the wait between passes
+**There is a hook behind that, and it does not excuse you.** `hooks/question-state.settings.json`
+and `scripts/agent-asking`, which `scripts/launch` gives every session, flip the file to `asking`
+for the lifetime of a question tool call and back again on the answer or a cancellation. Keep
+writing the states anyway: the hook knows about the question tool and nothing else, so a question
+put in prose, a wait on a port or a "say when" is invisible to it, and it cannot tell `idle` from
+`working`. Two writes that agree cost nothing; a missing one costs the navigator an hour of not
+knowing you were waiting.
 
-`working` covers everything you are actually doing: sweeping, preparing, resetting the worktree,
-building, briefing, recording a verdict, filing a follow-up, reopening a bead, writing a
-retrospective, and anything the navigator asks of you between passes. `idle` is written in exactly
-`waiting` is written in exactly one place — ending a pass, in *Ending a pass* — and the first thing
-the next pass does is write `working` again. `idle` you never write at all: it says you have nothing
-to do and nothing coming, which is not true of a role with a cadence. Work done under `idle` is invisible: the fleet view shows a
-session with nothing in flight, which is a session the navigator may `k`.
+**You cannot see your own state file**, so read it rather than trusting your memory of it — once at
+the start of a pass and once before you end it. If it does not describe what you are doing at that
+moment, fix it with `agent-state` before anything else, and say so in one line ("my state file still
+said `asking`; corrected").
+
+<!-- state-contract:end -->
 
 #### The ordinary spellings
 
@@ -93,39 +100,14 @@ session with nothing in flight, which is a session the navigator may `k`.
 |---|---|
 | A pass starts, before `bd dolt pull` and the fetch | `.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID` |
 | A candidate is selected to prepare | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase prepare --pid $PPID` |
-| Any question at all (rule 1) | `... asking --bead <id> --phase <prepare\|verify> --pid $PPID`, then the question, then `... working ...` on the answer |
+| Any question at all (the sandwich above) | `... asking --bead <id> --phase <prepare\|verify> --pid $PPID`, then the question, then `... working ...` on the answer |
 | The briefing is given and the app is running | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
 | Ending a pass (*Ending a pass*), and nowhere else | `.claude/cerebro/scripts/end-pass Psylocke --pid $PPID` |
 
-`--pid` is `$PPID` — your own session's process, whichever agent CLI it runs on — captured in the same call that writes the file.
-`waiting` is the state between one pass and the next.
-
-#### There is a hook behind rule 1, and it does not excuse you
-
-Because this kept going wrong, `scripts/launch` now starts every session with hooks
-(`hooks/question-state.settings.json` → `scripts/agent-asking`) that flip your file to `asking` when
-the question tool opens and back to what it said before when the answer — or a cancellation — comes
-back. So your row will usually be right even on a pass where you forget.
-
-Keep writing the states anyway. The hook only knows about the question tool: a question you put in
-prose, a wait on a port, a "say when" — all of those are invisible to it, and those are exactly the
-waits that stranded sessions before. Nor does it know the difference between `idle` and `working`,
-which is rule 2's job entirely. Two writes that agree cost nothing; a missing one costs the
-navigator an hour of not knowing you were waiting.
-
-#### Check it, twice a pass
-
-You cannot see your own state file, so read it rather than trusting your memory of it — once at the
-start of a pass and once before you end it:
-
-```bash
-cat .cerebro/state/Psylocke.state.json
-```
-
-If it does not describe what you are doing at that moment, fix it with `agent-state` before doing
-anything else, and say so in one line ("my state file still said `asking`; corrected"). A leftover
-`asking` is worth saying out loud: it means the navigator was being told, wrongly, that you were
-waiting on them — possibly for a long time.
+Omit `--bead` when no candidate is in hand (the first-pass cutoff, anything asked mid-sweep); keep
+`--phase`, which is `prepare` before the briefing and `verify` from the briefing to the verdict. For
+you `working` covers sweeping, preparing, resetting the worktree, building, briefing, recording a
+verdict, filing a follow-up, reopening a bead and writing a retrospective.
 
 ### The work list
 
@@ -249,7 +231,7 @@ live on 2026-08-16, with 118 closed beads already carrying labels and this check
 
 Zero means this is the first pass. There are closed beads from before this role existed, and
 verifying all of them is not this bead's job — ask the navigator for a cutoff (a date, or "everything
-before bead X"). A question, so the sandwich (rule 1), with no bead in hand:
+before bead X"). A question, so the sandwich, with no bead in hand:
 
 ```bash
 .claude/cerebro/scripts/agent-state Psylocke asking --phase prepare --pid $PPID
@@ -430,8 +412,8 @@ happen, and is not the churn this rule prevents: that rule is about one pass, an
 ended is asking nobody anything.
 
 **"No", "later" and silence are answers.** They close the sandwich exactly like a yes does: write
-`working --phase prepare` and get on with the rest of the pass, or `idle` if the pass is over. The
-only state that must never survive an exchange is `asking`.
+`working --phase prepare` and get on with the rest of the pass, or end it with `end-pass` if the
+pass is over. The only state that must never survive an exchange is `asking`.
 
 ```bash
 bd set-state <id> verification=pending --reason "selected for verification"
@@ -609,7 +591,7 @@ cheapest place to catch one. The next pass opens with `working --phase prepare`,
 - **Never blocks a release on verification.** An unverified bead does not gate a release; Cerebro
   names what is unverified when cutting one and the navigator decides.
 - **Never uses the question tool without writing `asking` in the same breath.** Every question, named
-  in this file or not, is the sandwich in rule 1. A question asked under `working` or `idle` is one
+  in this file or not, is the sandwich in *Telling the fleet view what you are doing*. A question asked under `working` or `idle` is one
   the fleet view cannot flag, so nobody comes and you wait for ever.
 - **Never leaves `asking` behind.** The write back to `working` is the first thing you do with an
   answer — before the `bd` call, before the reply. "No" and "later" end the exchange as surely as

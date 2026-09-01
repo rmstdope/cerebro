@@ -733,7 +733,27 @@ and the key hint stays `g retry` until both panes are fresh.
   in the script: a **consumer's** own `CLAUDE.md` is theirs to edit and is never read. What the
   block *says* is deliberately not asserted, for the reason *Development practices* gives about
   grepping prose. Like `tracked-links` and `marker-readers` it is a gate predicate and must never
-  join `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start.
+  join `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start. Its
+  marker parsing now lives in `scripts/block-sync.sh`, shared with `scripts/state-contract-sync`
+  (cb-mqa); its own output, exit codes and suite are unchanged, and `tests/four-eye-sync.sh` passing
+  unedited is what proved that extraction behaviour-preserving.
+- **`scripts/state-contract-sync` is the one place "do this repository's copies of the state-file
+  contract agree" is answered** (cb-mqa). The contract — how to call `scripts/agent-state`, what the
+  four state words mean, what `--pid $PPID` is, the question sandwich, the hook behind `asking` —
+  was written out in seven role documents, and it drifted in the direction that makes an agent write
+  a wrong state: one sentence was corrected in `agents/implementer.md` and re-corrected across five
+  more files the same day (`5c12795`, `1f09133`), and `agents/verifier.md` still told Psylocke to
+  write `idle` at the end of a pass directly under the bullet forbidding it. It now lives once, in
+  `templates/state-file-contract.md`, and each carrier wraps its copy in
+  `<!-- state-contract:begin -->` / `<!-- state-contract:end -->`; the blank lines inside those
+  markers are load-bearing, for the same CommonMark reason. Findings on stdout, exit 1, in
+  `tracked-links`'s house format, with `tests/state-contract-sync.sh` as its suite. The carrier list
+  is a decision, literal in the script: the seven documents a session actually **loads**.
+  `agents/implementer.md` and `agents/planner.md` are deliberately not on it — both are thin role
+  files that defer to their skill, and both sessions load that skill, so a copy there would be read
+  twice per session and kept in step for nothing; each points at its skill's section instead. What
+  the block *says* is deliberately not asserted. Like `four-eye-sync` it is a gate predicate and
+  must never join `launch-preflight`'s hot path.
 - **`scripts/marker-readers` is the one place "is every reader of the session marker a subscriber"
   is answered** (cb-9su). `tests/lib/session-args.cases` is a test fixture, so it only ever caught
   drift between readers that opt in; a reader that never subscribed was not red but silently wrong,

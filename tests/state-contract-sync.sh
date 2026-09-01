@@ -130,4 +130,14 @@ run "$fix/scripts/state-contract-sync"
   || fail "expected exactly the missing: line, got: $out"
 pass "a missing canonical block is the only finding"
 
+# --- the real repository --------------------------------------------------------------------------
+#
+# The case the bead exists for, and the one a fixture cannot make. The script resolves its own root,
+# so the suite's shell needs no `cd'.
+
+run "$script"
+[[ $status -eq 0 ]] || fail "this repository's state-file contract copies must agree, got $status: $out"
+[[ -z "$out" ]] || fail "this repository's state-file contract copies must agree, got: $out"
+pass "this repository's own state-file contract copies agree"
+
 suite_passed

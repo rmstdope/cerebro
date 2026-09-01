@@ -61,7 +61,11 @@ fn dim() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
 
-fn too_small(area: Rect) -> bool {
+/// True when AREA is below the floor the whole screen needs - the one frame `main`'s clamp must
+/// skip entirely rather than run against, because a too-small frame's own metrics are the zeros
+/// `draw_too_small` implies, and clamping either pane's real offset against a borrowed zero would
+/// silently reset it the moment the terminal happens to dip below the floor and come back.
+pub fn too_small(area: Rect) -> bool {
     area.width < MIN_COLUMNS || area.height < MIN_ROWS
 }
 

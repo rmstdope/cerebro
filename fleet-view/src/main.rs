@@ -142,9 +142,15 @@ where
         let viewport_lines = app.focused_viewport(metrics);
         // Clamped from the frame that was just drawn, never before it, and each pane against its
         // own geometry alone: a refresh that returns the same rows must leave the navigator
-        // looking at the same line in whichever pane they were reading.
-        app.fleet.clamp_scroll(metrics.fleet.content_lines, metrics.fleet.viewport_lines);
-        app.work.clamp_scroll(metrics.work.content_lines, metrics.work.viewport_lines);
+        // looking at the same line in whichever pane they were reading. A too-small frame is
+        // skipped entirely rather than clamped against its own borrowed-zero metrics: neither
+        // pane is actually shorter just because the terminal briefly dipped below the floor, and
+        // clamping there would silently reset whichever offset a navigator had scrolled to the
+        // moment they resized back.
+        if !ui::too_small(area) {
+            app.fleet.clamp_scroll(metrics.fleet.content_lines, metrics.fleet.viewport_lines);
+            app.work.clamp_scroll(metrics.work.content_lines, metrics.work.viewport_lines);
+        }
 
         // Each answer updates only its own pane. Neither poll blocks.
         if let Some(result) = fleet_worker.poll() {
@@ -680,6 +686,49 @@ mod main_tests {
         assert_eq!(app.fleet.scroll, 1, "Down moved Fleet, which is focused by default");
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Work, "Tab moved focus to Work");
         assert_eq!(app.work.scroll, expected_work_page, "PageDown moved Work by its own viewport");
+    }
+
+    /// A terminal that dips below the 40x12 floor draws the "too small" replacement screen, whose
+    /// own metrics are all zero (`ui::too_small`) - and the loop must not clamp either pane's real
+    /// offset against that borrowed zero, or a navigator who briefly shrank the terminal would find
+    /// their scroll position silently reset the moment it came back, breaking the plan's promise
+    /// that both offsets survive resizing.
+    #[test]
+    fn a_too_small_terminal_does_not_clamp_either_offset() {
+        use cerebro_tui::model::{AgentKind, RowState};
+
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok((0..30)
+                .map(|i| cerebro_tui::model::FleetRow {
+                    name: format!("A{i:02}"),
+                    role: "implementer".into(),
+                    kind: AgentKind::Interactive,
+                    state: RowState::Dead,
+                    phase: None,
+                    bead: None,
+                    since: None,
+                    phase_since: None,
+                    pid: None,
+                    sessions: 0,
+                    diagnostic: None,
+                })
+                .collect()),
+            Utc::now(),
+        );
+        app.fleet.scroll = 20;
+        app.work.scroll = 5;
+
+        // Below the 40x12 floor: every draw this loop makes is the too-small replacement screen.
+        let mut terminal = Terminal::new(TestBackend::new(30, 10)).unwrap();
+        let mut events = QueuedEvents::new(vec![
+            crossterm::event::KeyCode::Char('g'),
+            crossterm::event::KeyCode::Char('q'),
+        ]);
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), Utc::now).unwrap();
+
+        assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
+        assert_eq!(app.work.scroll, 5, "or Work's");
     }
 
     #[test]

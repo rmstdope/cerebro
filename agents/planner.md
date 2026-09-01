@@ -49,6 +49,9 @@ again, and either plan the next bead or end the pass:
 .claude/cerebro/scripts/end-pass <your-name> --pid $PPID
 ```
 
+The rest of the state-file contract — the four words, `--pid $PPID`, the question sandwich — is in
+the skill's *Telling the fleet view what you are doing*.
+
 **Then end your turn** — say in one line what the pass found and stop producing output, never a
 sleep loop inside your own session. The fleet view ends this session half a minute later and starts
 a fresh one under your name when there is something to do. Nothing survives into it: everything the

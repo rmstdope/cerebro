@@ -55,17 +55,10 @@ the skill or CI is outside a planned bead and is the navigator's.
 ## How you are seen
 
 `.cerebro/state/<your-name>.state.json` is the only way the fleet view knows what you are doing and
-when to replace you. Write it at **every** transition, in the same `Bash` call that does the thing it
-describes, through `scripts/agent-state` — never by hand, and never with a state word of your own
-invention:
-
-```bash
-.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase build --pid $PPID
-```
-
-`idle`, `working`, `asking`, `waiting`, and nothing else. The skill's *Telling the fleet view what
-you are doing* has the phase vocabulary and names the exact call for every step of a bead; follow
-that table rather than improvising a transition here.
+when to replace you. The contract you write it under — the four state words, `--pid $PPID`, the
+question sandwich, the hook — is in the skill's *Telling the fleet view what you are doing*,
+together with the exact call for every step of a bead. Follow that table rather than improvising a
+transition here.
 
 ## What you never do
 

@@ -1,0 +1,116 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+</style>
+<meta charset="utf-8"><title>cb-kcs.4.3 — the agreed surface</title>
+
+<h1>cb-kcs.4.3 — the surface the navigator approved, 2026-09-01</h1>
+<p class="lede">Two rounds. This file is the specification for how the Ratatui fleet view shows the
+three roles whose work arrives from <b>outside</b> the fleet — Moira (<code>user-feedback</code>),
+Cypher (<code>reviewer</code>) and Forge (<code>architect</code>) — and for every sentence it says
+while starting one. Where this file and the bead's plan disagree, this file is right. It extends
+<code>docs/ui/cb-kcs.4.1-standby-and-starts.html</code>, which armed the other four roles and left
+these three <code>dead</code> until a GitHub reader existed; this bead builds that reader, and this
+file specifies the two cells and four sentences it adds. Nothing here changes any row
+cb-kcs.4.1 or cb-kcs.4.2 already specified.</p>
+
+<h2>1. A cadence row counts down to its next pass</h2>
+<p class="lede">The four roles cb-kcs.4.1 armed name a <b>condition</b>, because there is no moment at
+which it becomes true. These three also carry an <b>hourly floor</b> that starts them whatever else
+is true — what they watch moves outside this fleet, so a floor is what covers what no timestamp the
+view reads can show. That floor is a moment, so the cell counts down to it.</p>
+
+<div class="screen"><pre><span class="b">┌ Fleet ───────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">  AGENT       STATE       BEAD        </span><span class="b">│</span>
+<span class="b">│</span><span class="g">●</span> Beast       plan        cb-kcs.4.3  <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>  <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">→ planned</span>   <span class="b">│</span>
+<span class="b">│</span><span class="sel"><span class="b">◌</span> Moira       <span class="b">standby</span>     <span class="b">→ 43m</span>       </span><span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Cypher      <span class="b">standby</span>     <span class="b">→ 8m</span>        <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Forge       <span class="b">standby</span>     <span class="b">→ due</span>       <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+
+<h3>The vocabulary this bead adds, and it is closed</h3>
+<div class="screen"><pre>  <span class="b">→ 43m</span>       under an hour to the next pass
+  <span class="b">→ 21h04</span>     an hour or more, as hours and minutes
+  <span class="b">→ due</span>       the floor has passed and the start has not happened yet
+  <span class="b">→ hourly</span>    this view has no end to count from at all
+  <span class="b">→ 43m gh?</span>   the same countdown, with `gh' not answering (section 2)</pre></div>
+
+<p class="note"><b>A space after the arrow, on every one of them.</b> One spacing rule for the whole
+BEAD column, so <code>→ 43m</code> sits under <code>→ buffer&lt;4</code> and the column reads as one
+thing. <b>The elisp view's own spelling — <code>→43m</code>, <code>→due</code>, with no space — was
+rejected</b>: byte-identical cells across the two views were worth less than a column that does not
+change its spacing rule halfway down. The two views deliberately differ here, and cb-kcs.4.4's log
+line follows this file. <b>Naming a condition instead (<code>→ issues</code>, <code>→ PRs</code>,
+<code>→ hourly</code> for all three) was rejected</b> because the one row where a number is actually
+useful — is Forge back in a minute or in fifty — would lose it.</p>
+
+<p class="note"><b><code>→ hourly</code> is the fallback, not an error.</b> A countdown needs the end
+of the role's last pass; a role this view has no end for has nothing to count from. It names the
+floor instead. <b>An empty cell was rejected</b> — that is what <code>M-x cerebro</code> draws, and a
+standby row with a blank cell says nothing at all about why it is asleep. At startup the roster's own
+<code>standby</code> declaration stamps an end, so the ordinary first frame is <code>→ 60m</code> and
+this cell is rare.</p>
+
+<p class="note"><b>A backoff countdown still wins.</b> cb-kcs.4.2's <code>↻ retry in 30s, 2 failed</code>
+comes before the role's own cell for every kind, and that is unchanged: a row that is backing off says
+so, whatever it would otherwise be waiting for.</p>
+
+<h2>2. When <code>gh</code> stops answering</h2>
+<p class="lede">Moira's and Cypher's conditions are read from <code>gh</code> every ten minutes. When
+that fails — no network, no <code>gh</code> on PATH, a rate limit — the view keeps the last answer it
+had but must not act on it, so both roles fall back to their hourly floor alone. Forge is unaffected:
+its trigger reads no <code>gh</code>.</p>
+
+<div class="screen"><pre><span class="b">┌ Fleet ───────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">  AGENT       STATE       BEAD        </span><span class="b">│</span>
+<span class="b">│</span><span class="sel"><span class="b">◌</span> Moira       <span class="b">standby</span>     <span class="b">→ 43m gh?</span>   </span><span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Cypher      <span class="b">standby</span>     <span class="b">→ 8m gh?</span>    <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Forge       <span class="b">standby</span>     <span class="b">→ due</span>       <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>On the two rows it affects, in the same blue as the rest of the cell, and nowhere
+else.</b> The countdown is all that is left of their trigger, and the suffix says that is why. Blue
+rather than red: nothing is broken — both roles still run hourly — so this is part of what the row is
+waiting for, not a fault, and red is already this view's colour for a refused launch's verdict.
+<b>A gold header notice on the first failure was rejected</b>: the notice slot is shared with every
+start, end and retire, so a start on the same tick overwrites it, and a navigator who was not looking
+sees only the suffix anyway. <b>Saying nothing at all was rejected</b> — a fleet that has quietly lost
+half of Moira's trigger would look exactly like a fleet with nothing to do, and the first evidence
+would be an issue nobody answered for an hour.</p>
+
+<p class="note"><b>No suffix before the first answer.</b> A reader that has not answered <i>yet</i> is
+not a reader that failed: the cell is a plain countdown until a request actually fails.</p>
+
+<h2>3. <code>g</code> re-asks <code>gh</code></h2>
+<p class="lede">The header hint is unchanged — <code>g refresh</code> — and what changes is what it
+covers.</p>
+<div class="screen"><pre>Cerebro — supervising <span class="dim">| Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | g refresh | q quit</span></pre></div>
+<p class="note">A navigator who sees <code>gh?</code>, fixes their network and presses <code>g</code>
+gets an answer at once instead of waiting out the ten-minute clock. <b>Leaving <code>gh</code> on its
+own clock was rejected</b> for exactly that: a suffix that persists for ten minutes after its cause is
+fixed, with no way to hurry it. A request already in flight is not stacked, so holding <code>g</code>
+down asks once.</p>
+
+<h2>4. The four sentences a start says</h2>
+<p class="lede">cb-kcs.4.1 settled the shape: <code>Started &lt;Name&gt; — &lt;the trigger's own
+phrase&gt;.</code> These are the four new phrases, verbatim, each already the elisp view's own
+wording, so the two views stay on one vocabulary and cb-kcs.4.4 logs the same string.</p>
+<div class="screen"><pre><span class="y">Started Moira — issue #212 moved.</span>
+<span class="y">Started Moira — bead cb-3qh moved (issue #58).</span>
+<span class="y">Started Cypher — PR #244 moved.</span>
+<span class="y">Started Forge — 60m since its last sweep.</span></pre></div>
+<p class="note">The second is the half of Moira's job that has no GitHub timestamp behind it: a status
+comment owed to an issue because its <b>bead</b> moved — CLAIMED, MERGED, VERIFIED — which never
+touches the issue's own <code>updatedAt</code>. Forge says <b>sweep</b> where the other two say
+<b>pass</b>, because that is what its own role file calls the thing it does. An issue comes before a
+bead in Moira's order, because an issue is a person waiting and a linked bead is the fleet's own
+bookkeeping.</p>

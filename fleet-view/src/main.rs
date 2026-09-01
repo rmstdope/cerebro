@@ -858,7 +858,10 @@ mod main_tests {
 
         let dir = tempfile::tempdir().unwrap();
         let slow_bd = dir.path().join("bd");
-        std::fs::write(&slow_bd, "#!/usr/bin/env bash\nsleep 1\nprintf '[]\\n'\n").unwrap();
+        // Thirty seconds, not one: the window this test needs is "longer than the loop takes",
+        // and the loop's duration is the machine's business. Paired with the injected bound below,
+        // load cannot close it.
+        std::fs::write(&slow_bd, "#!/usr/bin/env bash\nsleep 30\nprintf '[]\\n'\n").unwrap();
         let mut perms = std::fs::metadata(&slow_bd).unwrap().permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&slow_bd, perms).unwrap();
@@ -880,20 +883,26 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
 
-        let started = Instant::now();
         run(&mut terminal, &mut events, &mut app, &worker(), &work,
             &supervision().0, &mut supervision().1, Utc::now).unwrap();
-        let elapsed = started.elapsed();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
         assert!(app.quit, "and the last of them still quit");
+        // THE assertion, and why there is no stopwatch beside it. `refreshing` is true only while
+        // the read has neither answered nor timed out, so a loop that waited for the reader
+        // arrives here with it false — proved by mutation: making the loop block on the work read
+        // fails this line, and the `PaneContent::Fresh` test tried first did NOT fail it, because
+        // a blocked loop gets the reader's five-second timeout rather than the fixture's answer.
+        //
+        // The stopwatch this replaces read `elapsed < 500ms`, and a machine that can add five
+        // seconds to a `fork` can add half a second to three keystrokes — it would have failed as
+        // an accusation about production code, which is the same defect the rest of this change
+        // removes, one crate over and ten times tighter. What is left has the reader's own bound
+        // as its margin: the fixture sleeps thirty seconds, so this loop has five to finish in,
+        // against the microseconds three queued keystrokes actually take.
         assert!(
             app.work.refreshing,
-            "the work read is genuinely still in flight - otherwise this proves nothing"
-        );
-        assert!(
-            elapsed < Duration::from_millis(500),
-            "the loop waited for the reader: {elapsed:?}"
+            "the loop waited for the reader: the work read had finished by the time it exited"
         );
     }
 

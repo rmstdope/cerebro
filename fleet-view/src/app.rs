@@ -730,12 +730,29 @@ impl Worker<Vec<FleetRow>> {
     pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
         Self::spawn_reader(move || read_fleet(&paths, &programs))
     }
+
+    /// The same worker with the reader's wall-clock bound as a parameter, for the tests alone.
+    ///
+    /// A test that drives this worker over a fixture is asserting that the *worker* answers, not
+    /// that a two-line bash script beats production's five seconds on a loaded machine — see
+    /// `TEST_TIMEOUT` in `readers.rs` for what that cost before it was tracked down.
+    #[cfg(test)]
+    pub(crate) fn spawn_with_timeout(
+        paths: ReaderPaths,
+        programs: Programs,
+        timeout: std::time::Duration,
+    ) -> Self {
+        Self::spawn_reader(move || {
+            crate::readers::read_fleet_with_timeout(&paths, &programs, timeout)
+        })
+    }
 }
 
 impl Worker<WorkBuckets> {
     pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
         Self::spawn_reader(move || read_work(&paths, &programs))
     }
+
 }
 
 impl Worker<Result<SupervisorKind, String>> {
@@ -1599,7 +1616,7 @@ mod tests {
             std::fs::set_permissions(&path, perms).unwrap();
         }
 
-        let worker = FleetWorker::spawn(
+        let worker = FleetWorker::spawn_with_timeout(
             ReaderPaths {
                 consumer_root: dir.path().to_path_buf(),
                 shared_root: dir.path().to_path_buf(),
@@ -1609,11 +1626,14 @@ mod tests {
                 ps: dir.path().join("ps"),
                 bd: "bd".into(),
             },
+            Duration::from_secs(60),
         );
         assert!(worker.poll().is_none(), "nothing was asked for yet");
         assert!(worker.request());
 
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // Generous on purpose: this asserts the worker answers off the UI thread, not that a
+        // fixture beats a stopwatch on a loaded machine.
+        let deadline = Instant::now() + Duration::from_secs(60);
         let result = loop {
             if let Some(result) = worker.poll() {
                 break result;

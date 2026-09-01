@@ -43,6 +43,12 @@
 # ports. A collision is not silently wrong, either: the diagnostic record names the identity, so
 # two checkouts that did collide both report a lock error and neither acts. Fail-closed twice over.
 #
+# THE RANGE STOPS BELOW 32768, which is where Linux's default `ip_local_port_range' begins. A port
+# above it can be taken transiently by somebody's outbound connection, and the fleet would read
+# that as a lock error and go read-only until the next tick - self-healing, but a puzzle worth not
+# handing anybody. 20000-32767 is entirely below the ephemeral ranges of both platforms the fleet
+# runs on (macOS starts at 49152).
+#
 # THE ENDPOINT, IDENTITY AND RECORD ANSWER EVEN WHEN THE DECLARATION IS INVALID. That is not an
 # oversight - it is when a view most needs them, because "who holds this lease" is the question an
 # invalid declaration leaves open.
@@ -92,13 +98,14 @@ cksum_of() {
   printf '%s' "$1"
 }
 
-# 20000 + ((cksum("A:<root>") ^ cksum("B:<root>")) % 20000): the private range, two sums so that a
-# shared prefix cannot walk two checkouts onto adjacent ports.
+# 20000 + ((cksum("A:<root>") ^ cksum("B:<root>")) % 12768): 20000-32767, two sums so that a
+# shared prefix cannot walk two checkouts onto adjacent ports, and a ceiling below Linux's
+# ephemeral range (see above).
 endpoint_for() {
   local root="$1" a b
   a="$(cksum_of "A:$root")"
   b="$(cksum_of "B:$root")"
-  printf '127.0.0.1:%s\n' "$(( 20000 + ((a ^ b) % 20000) ))"
+  printf '127.0.0.1:%s\n' "$(( 20000 + ((a ^ b) % 12768) ))"
 }
 
 # The identity has to survive a round trip through the JSON record and back out to a comparison, so

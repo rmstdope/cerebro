@@ -4485,15 +4485,17 @@ trigger read as well as what it decided."
              (cons 'failed_starts (alist-get 'failed-starts context)))))
     (setf (alist-get name cerebro--log-seen nil nil #'equal) reason)))
 
-(defun cerebro--supervise (agents repo-root now &optional mode)
+(defun cerebro--supervise (agents repo-root now mode)
   "Act on what `cerebro--supervise-action' says about each of AGENTS.
 
 Errors are demoted: this runs from a timer, and one agent whose session
 cannot be replaced must not stop the fleet view refreshing or take the
 other agents down with it.
 
-MODE is this buffer's supervision mode (cb-kcs.1); absent means supervising,
-which is what every caller before ownership existed meant.  While DRAINING the
+MODE is this buffer\='s supervision mode (cb-kcs.1), and it is REQUIRED: an
+optional one that defaulted to acting is a caller that forgets it and nudges
+during a handover, which is the wrong direction for every other rule here.
+While DRAINING the
 retire and end branches still run - the sessions this view hosts must be
 allowed to finish, which is what ends the drain - but nothing is nudged: a
 nudge is a new instruction, and a view handing supervision over issues none."
@@ -4544,7 +4546,7 @@ nudge is a new instruction, and a view handing supervision over issues none."
              (progn (setq cerebro--armed (delete name cerebro--armed))
                     (cerebro--end-session agent repo-root 'clear-stop-flag))))
           ('end (cerebro--park-session agent repo-root now))
-          ('nudge (when (and (or (null mode) (cerebro--supervision-may-act-p mode))
+          ('nudge (when (and (cerebro--supervision-may-act-p mode)
                              (not (member name cerebro--nudged)))
                     (push name cerebro--nudged)
                     (cerebro--nudge agent))))))))
@@ -4649,9 +4651,14 @@ consume a row of fleet data.  The wording is theirs, approved in cb-kcs.1."
      (format "read-only: invalid fleet_supervisor %S" raw))
     (`(read-only configured-for tui) "read-only: Ratatui supervises")
     (`(read-only configured-for emacs) "read-only: Emacs supervises")
-    (`(read-only owned-by ,who) (format "read-only: %s owns supervision"
-                                        (if (eq who 'tui) "Ratatui" "Emacs")))
-    (`(read-only lock-error ,message) (format "read-only: %s" message))
+    ;; Another Emacs on this checkout - the common way a navigator meets this feature, so it says
+    ;; which of the two it is rather than the bare role word (the navigator's wording, cb-kcs.1).
+    (`(read-only owned-by emacs) "read-only: another Emacs supervises this checkout")
+    (`(read-only owned-by tui) "read-only: Ratatui supervises")
+    ;; The detail - which file, what was wrong with it - goes to `errors.jsonl' and the echo area,
+    ;; never onto the mode line: an absolute path there is unreadable and pushes everything else
+    ;; off the window.
+    (`(read-only lock-error ,_) "read-only: the lease is held by another process")
     (`(read-only . ,_) "read-only")
     (`(draining nil ,_) "handoff pending: invalid fleet_supervisor")
     (`(draining ,_ ,_) "handoff pending")
@@ -4683,6 +4690,26 @@ human sentence on stderr, and a destination of t would mix it into the value."
                          nil (list t nil) nil args)))
       (cons status (string-trim (buffer-string))))))
 
+(defvar-local cerebro--configured-supervisor-cache nil
+  "The last (MTIME . VALUE) this buffer read, or nil.
+
+The declaration is re-read only when `.cerebro/project.conf\=' has changed, for
+the reason `cerebro--project-spacing-cache\=' gives about itself: this is
+consulted on every five-second tick, and a fork per tick is not a thing the view
+may do - the whole chain is `fleet-supervisor\=' to `project-conf\=' to a root
+resolution, about eighty milliseconds, on the thread that draws.
+
+An mtime rather than a plain cache, because the declaration must still be
+obeyed on the next tick after it changes: that is the whole point of
+reconciling every five seconds rather than once at startup.  A file that
+vanishes or cannot be stat-ed reads as a change, so absence is noticed too.")
+
+(defun cerebro--project-conf-mtime (repo-root)
+  "The modification time of REPO-ROOT\='s project.conf, or nil when there is none."
+  (let ((attributes (file-attributes
+                     (expand-file-name ".cerebro/project.conf" repo-root))))
+    (and attributes (file-attribute-modification-time attributes))))
+
 (defun cerebro--configured-supervisor (repo-root)
   "Which implementation REPO-ROOT declares: `emacs\=', `tui\=', or (invalid . RAW).
 
@@ -4691,13 +4718,24 @@ reason `cerebro--autostart-names\=' gives: a consumer with no submodule checked
 out degrades to the built-in behaviour rather than taking the render down.  A
 script that RAN and refused is never rounded that way - that is the fail-closed
 half, and it is the whole point of the typed reader."
-  (condition-case nil
-      (pcase-let ((`(,status . ,output) (cerebro--supervisor-value repo-root)))
-        (cond ((and (eq status 0) (member output '("emacs" "tui"))) (intern output))
-              ((eq status 0) (cons 'invalid output))
-              ((eq status 2) (cons 'invalid output))
-              (t 'emacs)))
-    (error 'emacs)))
+  (let ((mtime (cerebro--project-conf-mtime repo-root)))
+    (if (and cerebro--configured-supervisor-cache
+             mtime
+             (equal (car cerebro--configured-supervisor-cache) mtime))
+        (cdr cerebro--configured-supervisor-cache)
+      (let ((value (condition-case nil
+                       (pcase-let ((`(,status . ,output)
+                                    (cerebro--supervisor-value repo-root)))
+                         (cond ((and (eq status 0) (member output '("emacs" "tui")))
+                                (intern output))
+                               ((eq status 0) (cons 'invalid output))
+                               ((eq status 2) (cons 'invalid output))
+                               (t 'emacs)))
+                     (error 'emacs))))
+        ;; Only a readable declaration is cached. With no project.conf there is nothing to
+        ;; invalidate against, and a cached answer would outlive the file appearing.
+        (setq cerebro--configured-supervisor-cache (and mtime (cons mtime value)))
+        value))))
 
 (defun cerebro--supervisor-endpoint (repo-root)
   "The (HOST . PORT) this checkout\='s lease lives at, or nil."
@@ -4768,7 +4806,9 @@ record on a bound port is a visible lock error, never permission to take over."
      ;; had before ownership existed. Read-only here would silently stop a
      ;; working fleet the day it bumped to a submodule missing one script.
      ((not (and endpoint identity record)) 'unavailable)
-     (cerebro--supervision-process '(supervising))
+     ((and cerebro--supervision-process
+           (process-live-p cerebro--supervision-process))
+      '(supervising))
      (t
       (let ((process (condition-case nil
                          (make-network-process
@@ -4827,8 +4867,14 @@ An acquisition is quiet by the navigator\='s choice: taking the lease starts and
 arms nothing, because changing the owner must not itself launch processes."
   (let* ((configured (cerebro--configured-supervisor repo-root))
          (hosted (length (cerebro--owned)))
+         ;; `process-live-p', not merely non-nil: a server process deleted by hand (or by
+         ;; anything else that reaches for `delete-process') leaves this variable set while the
+         ;; port is free, and Emacs would then believe it supervises a checkout it has let go of.
          (decision (cerebro--supervision-decision
-                    'emacs configured (and cerebro--supervision-process t) hosted))
+                    'emacs configured
+                    (and cerebro--supervision-process
+                         (process-live-p cerebro--supervision-process))
+                    hosted))
          (mode (car decision))
          (action (cdr decision)))
     (pcase action
@@ -4848,6 +4894,25 @@ arms nothing, because changing the owner must not itself launch processes."
     (setq cerebro--supervision mode)
     (cerebro--apply-supervision-mode-line mode)
     mode))
+
+(defun cerebro--reconcile-supervision-safely (repo-root)
+  "`cerebro--reconcile-supervision\=', with a failure that is fail-closed.
+
+The tick demotes its errors, which is right for the render - but a signal here
+would leave `cerebro--supervision\=' saying whatever it said last, and `s\=',
+`f\=' and `k\=' are judged against that.  A reconciliation that could not be
+made is read-only: it is the one answer that cannot act on a checkout this view
+may no longer own."
+  (condition-case error
+      (cerebro--reconcile-supervision repo-root)
+    (error
+     (cerebro--report-error "supervision"
+                            "supervision: could not reconcile ownership (%s)"
+                            (error-message-string error))
+     (setq cerebro--supervision
+           (list 'read-only 'lock-error (error-message-string error)))
+     (cerebro--apply-supervision-mode-line cerebro--supervision)
+     cerebro--supervision)))
 
 (defun cerebro--apply-supervision-mode-line (mode)
   "Show MODE in this buffer\='s mode line, or nothing while supervising."
@@ -6216,8 +6281,7 @@ left and runs every `cerebro-system-scan-seconds'."
                ;; Ownership FIRST, before anything acts (cb-kcs.1): a
                ;; declaration that moved supervision to Ratatui has to be
                ;; obeyed on this tick, not after one more round of starts.
-               (mode (cerebro--with-logged-errors "supervision"
-                       (cerebro--reconcile-supervision repo-root))))
+               (mode (cerebro--reconcile-supervision-safely repo-root)))
           ;; Ending and retiring survive a drain; starting, nudging and
           ;; triaging do not. That is the graceful handover: the sessions this
           ;; Emacs already hosts stay usable and are allowed to finish, and
@@ -6601,8 +6665,7 @@ would have taken TAB from every vterm the navigator has, fleet or not.
       ;; Before the first autostart, never after it: autostart is the one
       ;; action that runs outside the tick, and a view that does not own this
       ;; checkout must not launch a roster's worth of sessions into it.
-      (let ((mode (cerebro--with-logged-errors "supervision"
-                    (cerebro--reconcile-supervision (cerebro--repo-root)))))
+      (let ((mode (cerebro--reconcile-supervision-safely (cerebro--repo-root))))
         (when (cerebro--supervision-may-act-p mode)
           (cerebro--ensure-prune-watcher (cerebro--repo-root))
           (when fresh

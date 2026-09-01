@@ -51,27 +51,37 @@ const TITLE: &str = "Cerebro — read-only";
 /// Fleet and Work. So the remediation and no-action lines in `docs/ui/cb-kcs-supervisor.html`
 /// are not rendered here - they remain the approved wording for the Emacs mode line, which keeps
 /// them.
+///
+/// **The ordinary case says nothing.** A project that has not moved supervision - which is every
+/// consumer today - gets the bare `Cerebro — read-only` this screen has always shown, because
+/// spelling ownership out there cost the pane and scroll hints their room at a hundred columns
+/// and told the navigator nothing they did not already know. The long spellings are spent where
+/// there is something to say: the lease is contested, or the declaration is wrong. That is the
+/// navigator's own call, taken when the measurement was put to them.
 fn supervision_title(mode: &SupervisionMode) -> String {
     match mode {
         SupervisionMode::Supervising => "Cerebro — supervising".to_string(),
         SupervisionMode::Draining { .. } => "Cerebro — handoff pending".to_string(),
-        SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)) => {
-            "Cerebro — read-only; Emacs owns supervision".to_string()
-        }
+        // Configured for the other view, or configured for us and not yet asked for: the
+        // uncontested cases, and the screen every consumer sees today.
+        SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(_))
+        | SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned) => TITLE.to_string(),
+        // Contested: somebody else is holding a lease this project says is ours.
         SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Emacs)) => {
             "Cerebro — read-only; Emacs owns supervision".to_string()
         }
-        SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Tui))
-        | SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui)) => {
+        SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui)) => {
             "Cerebro — read-only; another Ratatui process owns supervision".to_string()
         }
         SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration(raw)) => {
             format!("Cerebro — read-only; invalid fleet_supervisor {raw:?}")
         }
-        SupervisionMode::ReadOnly(ReadOnlyReason::LockError(message)) => {
-            format!("Cerebro — read-only; {message}")
+        // The detail - which file, what was wrong with it - goes to stderr when the screen exits,
+        // never into the header: an absolute path in a status line is unreadable at any width,
+        // and the navigator asked for the short sentence here (cb-kcs.1).
+        SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_)) => {
+            "Cerebro — read-only; the lease is held by another process".to_string()
         }
-        SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned) => TITLE.to_string(),
     }
 }
 
@@ -1326,9 +1336,18 @@ mod tests {
     fn the_header_names_every_supervision_state() {
         let cases = [
             (SupervisionMode::Supervising, "Cerebro — supervising"),
+            // The ordinary case is silent: no project has moved supervision, so the screen says
+            // what it has always said and keeps every hint (the navigator's call).
             (
                 SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
-                "Cerebro — read-only; Emacs owns supervision",
+                "Cerebro — read-only",
+            ),
+            (
+                SupervisionMode::ReadOnly(ReadOnlyReason::LockError(
+                    "the supervision lease is held, but /some/very/long/path.json is malformed"
+                        .into(),
+                )),
+                "Cerebro — read-only; the lease is held by another process",
             ),
             (
                 SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui)),
@@ -1361,6 +1380,21 @@ mod tests {
     /// `q/Esc/Ctrl-C quit` clean off a hundred-column screen. A hint the terminal has cut in half
     /// is worse than a shorter hint that fits, so the scroll and pane hints go first and the two
     /// keys a navigator cannot guess from the screen stay.
+    /// The screen every consumer sees today keeps every hint it had before this bead.
+    ///
+    /// This is the assertion the navigator asked for by name: ownership must not cost the default
+    /// hundred-column screen its pane and scroll hints, because that is the only place either is
+    /// discoverable.
+    #[test]
+    fn the_ordinary_screen_keeps_every_hint_at_a_hundred_columns() {
+        let app = populated(); // App::new(): no declaration, so read-only because Emacs
+        let rendered = lines(&render(&app, 100, 20));
+        assert!(rendered[0].starts_with("Cerebro — read-only |"), "{:?}", rendered[0]);
+        for hint in ["Tab/Shift-Tab pane", "↑/↓/PgUp/PgDn scroll pane", "g refresh", "q/Esc/Ctrl-C quit"] {
+            assert!(rendered[0].contains(hint), "the default screen keeps {hint}: {:?}", rendered[0]);
+        }
+    }
+
     #[test]
     fn a_long_ownership_title_shortens_the_hints_rather_than_losing_them() {
         let mut app = populated();

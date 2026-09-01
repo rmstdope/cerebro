@@ -386,10 +386,9 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             match call() {
-                Err(ReadError::Spawn { source, message })
+                Err(ReadError::Spawn { message, .. })
                     if message.contains(TEXT_FILE_BUSY) && std::time::Instant::now() < deadline =>
                 {
-                    let _ = source;
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
                 other => return other,
@@ -532,17 +531,24 @@ mod tests {
 
         // A stand-in for `scripts/fleet-supervisor` with its documented contract: the value on
         // stdout, and exit 2 with the RAW value on stdout when it is neither word.
+        //
+        // The declaration's path is baked into the script rather than passed in the environment:
+        // cargo runs these tests as threads of one process, several siblings here spawn
+        // subprocesses concurrently, and `set_var` racing another thread's `getenv` or `fork` is
+        // a data race in `std` - and it would leak the variable on a panic besides.
+        let declaration = dir.path().join("declaration");
         let fake = write_executable(
             &scripts,
             "fleet-supervisor",
-            "#!/usr/bin/env bash\n\
-             value=\"$(cat \"$CEREBRO_TEST_DECLARATION\")\"\n\
-             printf '%s\\n' \"$value\"\n\
-             case \"$value\" in emacs|tui) exit 0 ;; *) echo 'invalid' >&2; exit 2 ;; esac\n",
+            &format!(
+                "#!/usr/bin/env bash\n\
+                 value=\"$(cat {declaration})\"\n\
+                 printf '%s\\n' \"$value\"\n\
+                 case \"$value\" in emacs|tui) exit 0 ;; *) echo 'invalid' >&2; exit 2 ;; esac\n",
+                declaration = declaration.display(),
+            ),
         );
         assert!(fake.exists());
-        let declaration = dir.path().join("declaration");
-        std::env::set_var("CEREBRO_TEST_DECLARATION", &declaration);
 
         let paths = ReaderPaths {
             consumer_root: dir.path().to_path_buf(),
@@ -568,8 +574,6 @@ mod tests {
             retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
             Err("rat".to_string())
         );
-
-        std::env::remove_var("CEREBRO_TEST_DECLARATION");
     }
 
     /// A reader that cannot run at all is an error, never `emacs`. Fail-open here is the one

@@ -527,7 +527,11 @@ lock error, never permission to take over. `tests/lib/supervisor.cases` is the t
 both implementations answer, because Emacs and Ratatui disagreeing about ownership is a fleet with
 two supervisors or with none.
 
-A view that does not own the checkout starts, nudges, arms, triages and prunes nothing; one whose
+A view that does not own the checkout starts, nudges, arms, triages and prunes nothing — the
+**session lifecycle** is what the lease gates. The bead panel's own keys are deliberately outside
+it: `x` on a sweep finding and the priority keys write to the shared board rather than to this
+checkout's sessions, they are the navigator's own act and each asks first, and a board `bd` runs
+the same from any machine whether or not this Emacs supervises anything. A view whose
 declaration moved *while it hosts sessions* **drains** — it keeps the lease so the new owner cannot
 start duplicates, keeps those sessions usable, and releases when the last one ends. Emacs shows
 this in its mode line (`Cerebro[read-only: Ratatui supervises]`); the TUI shows it in its header

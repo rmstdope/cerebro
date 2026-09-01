@@ -124,8 +124,19 @@ pass "an unknown option or a stray argument is a usage error, not an answer"
 endpoint="$("$supervisor" --endpoint)"
 [[ "$endpoint" =~ ^127\.0\.0\.1:[0-9]+$ ]] || fail "--endpoint: unexpected shape '$endpoint'"
 port="${endpoint##*:}"
-[[ "$port" -ge 20000 && "$port" -le 39999 ]] || fail "--endpoint: port $port outside 20000-39999"
-pass "--endpoint is a loopback address in the 20000-39999 block"
+# Below 32768 deliberately: Linux's default ephemeral range starts there, and a lease port an
+# outbound connection can borrow reads as a lock error and takes the fleet read-only until the
+# next tick.
+[[ "$port" -ge 20000 && "$port" -le 32767 ]] || fail "--endpoint: port $port outside 20000-32767"
+pass "--endpoint is a loopback address below the ephemeral range"
+
+for probe in /repos/alpha /repos/beta /repos/alpha2 / /a "$HOME" "$work_dir"; do
+  probe_port="$("$supervisor" --endpoint-for "$probe")"
+  probe_port="${probe_port##*:}"
+  [[ "$probe_port" -ge 20000 && "$probe_port" -le 32767 ]] \
+    || fail "--endpoint-for $probe: port $probe_port outside 20000-32767"
+done
+pass "every root lands in the 20000-32767 block"
 
 again="$("$supervisor" --endpoint)"
 [[ "$again" == "$endpoint" ]] || fail "--endpoint is not deterministic: $endpoint then $again"

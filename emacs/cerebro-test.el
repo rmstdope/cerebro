@@ -2435,13 +2435,13 @@ what it was told, which is worse than not telling it at all."
               ((symbol-function 'cerebro--nudge)
                (lambda (a) (push (cerebro-agent-name a) nudged))))
       (with-temp-buffer
-        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
-        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now '(supervising))
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now '(supervising))
         (should (equal nudged '("Cyclops")))
         ;; Once it answers and moves on, a later question is nudgeable again.
         (cerebro--supervise (list (cerebro-test--supervised 'working))
-                                    "/fake/repo" cerebro-test--now)
-        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+                                    "/fake/repo" cerebro-test--now '(supervising))
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now '(supervising))
         (should (equal nudged '("Cyclops" "Cyclops")))))))
 
 ;; ---------------------------------------------------------------------------
@@ -2508,7 +2508,7 @@ kind of race that surfaces once a fortnight and never reproduces."
               ((symbol-function 'cerebro--launch)
                (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls))))
       (with-temp-buffer
-        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now '(supervising))
         (should (null calls))))))
 
 (ert-deftest cerebro-test/supervise-retire-kills-without-launching ()
@@ -2521,7 +2521,7 @@ kind of race that surfaces once a fortnight and never reproduces."
               ((symbol-function 'cerebro--launch)
                (lambda (a) (push (cons 'launch (cerebro-agent-name a)) calls))))
       (with-temp-buffer
-        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now '(supervising))
         (should (equal calls '((kill . "Cyclops"))))))))
 
 (ert-deftest cerebro-test/clear-stop-flag-tolerates-a-missing-file ()
@@ -2548,7 +2548,7 @@ longer exists."
           (cl-letf (((symbol-function 'cerebro--forget-session) (lambda (_a) nil))
                     ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
             (with-temp-buffer
-              (cerebro--supervise (list agent) root cerebro-test--now)))
+              (cerebro--supervise (list agent) root cerebro-test--now '(supervising))))
           (should-not (cerebro--stop-flag-p root "Cyclops")))
       (delete-directory root t))))
 
@@ -2562,7 +2562,7 @@ implementer under a stop flag - the session-ender, not `cerebro--launch'."
                (lambda (a) (push (cerebro-agent-name a) ended)))
               ((symbol-function 'cerebro--launch) (lambda (&rest _) (error "launched"))))
       (with-temp-buffer
-        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now)
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now '(supervising))
         (should (equal ended '("Cyclops")))))))
 
 (ert-deftest cerebro-test/stop-flag-path-is-the-documented-one ()
@@ -5126,7 +5126,7 @@ recycling above turns into a phantom row (see the tests just above)."
           (cl-letf (((symbol-function 'cerebro--forget-session) (lambda (_a) nil))
                     ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
             (with-temp-buffer
-              (cerebro--supervise (list agent) root cerebro-test--now)))
+              (cerebro--supervise (list agent) root cerebro-test--now '(supervising))))
           (should-not (file-exists-p path)))
       (delete-directory root t))))
 
@@ -5440,7 +5440,7 @@ state file - which describes a session that is over - goes with the park."
                     ((symbol-function 'cerebro--launch)
                      (lambda (&rest _) (push 'launched launched))))
             (with-temp-buffer
-              (cerebro--supervise (list agent) root cerebro-test--now)))
+              (cerebro--supervise (list agent) root cerebro-test--now '(supervising))))
           (should (equal parked '("Cyclops")))
           (should (null launched))
           (should-not (file-exists-p path)))
@@ -5463,7 +5463,7 @@ record of the pass it just finished - the flag cleared, and the name disarmed."
                     ((symbol-function 'cerebro--launch) (lambda (&rest _) nil)))
             (with-temp-buffer
               (setq cerebro--armed (list "Cyclops"))
-              (cerebro--supervise (list agent) root cerebro-test--now)
+              (cerebro--supervise (list agent) root cerebro-test--now '(supervising))
               (should (equal parked '("Cyclops")))
               (should-not (member "Cyclops" cerebro--armed))))
           (should-not (cerebro--stop-flag-p root "Cyclops")))
@@ -5515,7 +5515,7 @@ the session is parked exactly as an ordinary end parks it, then disarmed."
        (setq cerebro--armed (list "Moira"))
        (make-directory (expand-file-name ".cerebro/state" root) t)
        (write-region "" nil (expand-file-name ".cerebro/state/Moira.stop" root))
-       (cerebro--supervise (list agent) root cerebro-test--now)
+       (cerebro--supervise (list agent) root cerebro-test--now '(supervising))
        (should (equal (funcall acted) '("Moira")))
        (should-not (member "Moira" cerebro--armed))
        ;; The instruction has been carried out, so it does not outlive it.
@@ -5541,7 +5541,7 @@ reported, just no longer fatal to the instruction."
                  ((symbol-function 'cerebro--report-error)
                   (lambda (&rest args) (push args reported))))
          ;; Demoted, not signalled: `cerebro--with-logged-errors\=' wraps it.
-         (cerebro--supervise (list agent) root cerebro-test--now))
+         (cerebro--supervise (list agent) root cerebro-test--now '(supervising)))
        (should (= 1 (length reported)))
        (should-not (member "Moira" cerebro--armed))
        (should-not (file-exists-p (expand-file-name ".cerebro/state/Moira.stop" root)))))))
@@ -5561,7 +5561,7 @@ start the next session, so it goes before the step that can fail."
                      (lambda (&rest _) (error "Selecting deleted buffer")))
                     ((symbol-function 'cerebro--report-error)
                      (lambda (&rest args) (push args reported))))
-            (cerebro--supervise (list agent) root cerebro-test--now))
+            (cerebro--supervise (list agent) root cerebro-test--now '(supervising)))
           (should (= 1 (length reported)))
           (should-not (member "Cyclops" cerebro--armed)))
       (delete-directory root t))))
@@ -8679,7 +8679,15 @@ could have chosen correctly."
                     (while (and (< (float-time) deadline) (process-live-p other))
                       (sleep-for 0.1)))
                   (should-not (process-live-p other))
-                  (let ((acquired (cerebro--acquire-supervision tmp)))
+                  ;; The same bounded retry the Rust twin needs, and for the same reason: the
+                  ;; kernel closes the listener as the process is reaped, and on a loaded runner
+                  ;; that is milliseconds after the wait returns rather than before it. One
+                  ;; attempt here would be a flake on exactly the CI job that runs it twice.
+                  (let ((acquired nil)
+                        (deadline (+ (float-time) 20)))
+                    (while (and (not (eq acquired t)) (< (float-time) deadline))
+                      (setq acquired (cerebro--acquire-supervision tmp))
+                      (unless (eq acquired t) (sleep-for 0.05)))
                     (should (eq acquired t))
                     (should (equal (cerebro--supervision-record-field record "owner") "emacs"))
                     (should (equal (cerebro--supervision-record-field record "identity")
@@ -8768,6 +8776,71 @@ session start or arming side effect, so the decision that acquires reports
 read-only until the bind succeeds and never asks for an autostart."
   (should (equal (cerebro--supervision-decision 'emacs 'emacs nil 0)
                  '((read-only not-owned) . acquire))))
+
+(ert-deftest cerebro-test/a-deleted-lease-process-is-not-a-held-lease ()
+  "Holding a lease means holding a LIVE one.
+
+A server process deleted by hand leaves the variable set while the port is free;
+believing that would be an Emacs supervising a checkout it has let go of."
+  (let ((tmp (cerebro-test--supervisor-consumer "emacs")))
+    (unwind-protect
+        (with-temp-buffer
+          (setq-local cerebro--supervision-process nil)
+          (should (eq (cerebro--acquire-supervision tmp) t))
+          (should (process-live-p cerebro--supervision-process))
+          ;; Deleted behind its back, the way anything reaching for `delete-process' would.
+          (delete-process cerebro--supervision-process)
+          ;; The variable is still set, and the answer must still be `not holding it'.
+          (should cerebro--supervision-process)
+          (should (equal (cerebro--reconcile-supervision tmp) '(supervising)))
+          ;; ... which it reached by ACQUIRING again, not by believing the dead process.
+          (should (process-live-p cerebro--supervision-process))
+          (cerebro--release-supervision tmp))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/the-declaration-is-not-re-read-until-it-changes ()
+  "No fork per tick: the reader runs again only when project.conf has moved.
+
+`cerebro--project-spacing-cache' states the rule this follows - a fork per
+five-second tick is not a thing the view may do - and an mtime rather than a
+plain cache is what keeps a changed declaration obeyed on the next tick."
+  (let ((tmp (cerebro-test--supervisor-consumer "emacs")))
+    (unwind-protect
+        (with-temp-buffer
+          (let ((reads 0))
+            (cl-letf* ((real (symbol-function 'cerebro--supervisor-value))
+                       ((symbol-function 'cerebro--supervisor-value)
+                        (lambda (&rest args)
+                          (when (= (length args) 1) (setq reads (1+ reads)))
+                          (apply real args))))
+              (should (eq (cerebro--configured-supervisor tmp) 'emacs))
+              (should (eq reads 1))
+              ;; Nine more ticks, no more forks.
+              (dotimes (_ 9) (cerebro--configured-supervisor tmp))
+              (should (eq reads 1))
+              ;; The declaration changes, and the very next call sees it.
+              (sleep-for 0.01)
+              (with-temp-file (expand-file-name ".cerebro/project.conf" tmp)
+                (insert "fleet_supervisor tui\n"))
+              (should (eq (cerebro--configured-supervisor tmp) 'tui))
+              (should (eq reads 2)))))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/a-reconciliation-that-signals-is-read-only ()
+  "A failure leaves the mode fail-closed, never whatever it said last.
+
+The tick demotes its errors, which is right for the render - but `s', `f' and
+`k' are judged against `cerebro--supervision', so a signal that left the old
+value there would let a view act on a checkout it may no longer own."
+  (with-temp-buffer
+    (setq-local cerebro--supervision '(supervising))
+    (cl-letf (((symbol-function 'cerebro--configured-supervisor)
+               (lambda (&rest _) (error "project.conf is on fire"))))
+      (let ((mode (cerebro--reconcile-supervision-safely "/fake/repo")))
+        (should (eq (car mode) 'read-only))
+        (should (equal mode cerebro--supervision))
+        (should-not (cerebro--supervision-may-act-p cerebro--supervision))
+        (should (cerebro--supervision-blocks 'act))))))
 
 (ert-deftest cerebro-test/a-missing-lease-script-keeps-the-historical-behaviour ()
   "A consumer whose submodule predates cb-kcs.1 keeps supervising.

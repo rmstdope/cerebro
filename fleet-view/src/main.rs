@@ -151,8 +151,13 @@ impl SupervisorController {
     fn apply(&mut self, answer: Result<Result<SupervisorKind, String>, ReadError>) -> SupervisionMode {
         let configured = match answer {
             Ok(configured) => configured,
+            // A reader that could not run is read-only, and KEEPS whatever lease it holds. The
+            // failures here are transient - a five-second timeout, a fork that failed, a
+            // non-answer - and releasing on one would hand the checkout to an observer over a
+            // subprocess hiccup, which from cb-kcs.2 means moving live sessions. It is the same
+            // rule the table already states for a declaration that is not ours: never release out
+            // from under something. Emacs does not release here either.
             Err(error) => {
-                self.release();
                 return SupervisionMode::ReadOnly(ReadOnlyReason::LockError(error.to_string()));
             }
         };
@@ -605,6 +610,53 @@ mod main_tests {
     fn supervision() -> (SupervisorWorker, SupervisorController) {
         let (paths, _) = nowhere();
         (SupervisorWorker::spawn(paths.clone()), SupervisorController::new(&paths))
+    }
+
+    /// A reader that could not answer must not cost this process a lease it holds.
+    ///
+    /// `read_configured_supervisor` fails on a five-second timeout, a fork that failed, or any
+    /// non-2 exit - all transient. Releasing on one would hand the checkout to an observer over a
+    /// subprocess hiccup, which from cb-kcs.2 means moving live sessions; Emacs does not release
+    /// here either.
+    #[test]
+    fn a_transient_reader_failure_goes_read_only_without_releasing() {
+        let (paths, _) = nowhere();
+        let mut controller = SupervisorController::new(&paths);
+
+        // Hold a lease on a port this test owns for its whole life.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record = dir.path().join("supervisor.json");
+        controller.identity = Some("/repos/x".to_string());
+        controller.record = Some(record.clone());
+        // Whatever port is actually free: between a probe closing and the lease binding, anything
+        // on the machine may take it, so a lost race here is setup noise and simply tries again.
+        let mut held = false;
+        for _ in 0..64 {
+            let listener =
+                std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("probe");
+            let addr = listener.local_addr().expect("addr");
+            drop(listener);
+            controller.endpoint = Some(addr);
+            if controller.apply(Ok(Ok(SupervisorKind::Tui))) == SupervisionMode::Supervising {
+                held = true;
+                break;
+            }
+        }
+        assert!(held && controller.lease.is_some(), "the setup must actually hold a lease");
+
+        let failure = ReadError::Timeout { source: "fleet-supervisor".into(), seconds: 5 };
+        let mode = controller.apply(Err(failure));
+        assert!(
+            matches!(mode, SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_))),
+            "a failed read is read-only: {mode:?}"
+        );
+        assert!(
+            controller.lease.is_some(),
+            "and it keeps the lease: a subprocess hiccup must not hand the checkout away"
+        );
+
+        // The next good answer takes it straight back to supervising, with no reacquisition.
+        assert_eq!(controller.apply(Ok(Ok(SupervisorKind::Tui))), SupervisionMode::Supervising);
     }
 
     #[test]

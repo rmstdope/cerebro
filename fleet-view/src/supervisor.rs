@@ -497,6 +497,34 @@ mod tests {
         panic!("no free loopback port for a test lease");
     }
 
+    /// Take a lease that ought to be free, allowing for the moment after a release in which it is
+    /// not quite.
+    ///
+    /// `fork` duplicates every descriptor, so any process on the machine sitting between fork and
+    /// exec is holding a copy of a listener that has just been closed - it goes at the child's own
+    /// exec (`O_CLOEXEC`), milliseconds later. That is a real property of the lease and not a test
+    /// artefact: a supervisor releasing while something else forks is a lease that is free on the
+    /// NEXT attempt, which is why both implementations retry on their own tick rather than
+    /// treating one refusal as final.
+    fn acquire_once_free(
+        addr: SocketAddr,
+        record: &Path,
+        identity: &str,
+        owner: SupervisorKind,
+    ) -> SupervisorLease {
+        let mut last = None;
+        for _ in 0..200 {
+            match SupervisorLease::try_acquire(addr, record, identity, owner) {
+                Ok(lease) => return lease,
+                Err(error) => {
+                    last = Some(error);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            }
+        }
+        panic!("the lease never became free: {last:?}");
+    }
+
     /// Somebody else's listener, and the address it actually got. Bound on port 0, so there is no
     /// window between finding the port and holding it.
     fn foreign_listener() -> (TcpListener, SocketAddr) {
@@ -521,8 +549,7 @@ mod tests {
 
         drop(held);
         assert!(!record.exists(), "dropping the lease removes its own record");
-        SupervisorLease::try_acquire(addr, &record, "/repos/x", SupervisorKind::Emacs)
-            .expect("the port is free once the lease drops");
+        acquire_once_free(addr, &record, "/repos/x", SupervisorKind::Emacs);
     }
 
     /// The one test that proves the two implementations share one lease (cb-kcs.1).
@@ -541,6 +568,14 @@ mod tests {
     #[test]
     fn emacs_and_tui_share_one_crash_released_lease() {
         let Some(emacs) = which_emacs() else {
+            // CI installs Emacs in the Rust job FOR this test. If it is missing there, the setup
+            // step has broken and this would otherwise pass as a green no-op - which would leave
+            // the fleet's only cross-language lock proof silently unrun, the exact failure this
+            // test exists to rule out.
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "CI must install Emacs for the cross-implementation lease test"
+            );
             eprintln!("emacs is not on PATH: skipping the cross-implementation lease test");
             return;
         };
@@ -597,27 +632,37 @@ mod tests {
             other => Err(format!("{other:?}")),
         };
 
-        // The owner dies without cleaning up.
+        // A LIVE CHILD BEHIND THE OWNER, which is the trap the plan names by hand: `fork`
+        // duplicates every descriptor, so a session the owning view spawns would keep the
+        // listener bound after the supervisor itself is gone - and the replacement would then
+        // find a bound port with a stale record, i.e. a lock error for as long as that session
+        // lives, on a checkout with no supervisor at all. `TcpListener` is opened `O_CLOEXEC`, so
+        // the child drops it at exec and the lease dies with its owner and not with its children.
+        // This assertion is what keeps that true when cb-kcs.2 gives the view real sessions.
+        let mut grandchild = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 60"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn a session behind the owner");
+
+        // The owner dies without cleaning up. Its child does not.
         let _ = child.kill();
         let _ = child.wait();
+        assert!(
+            grandchild.try_wait().expect("try_wait").is_none(),
+            "the child must still be running, or it proves nothing about inherited descriptors"
+        );
 
         assert_eq!(outcome, Ok(SupervisorKind::Emacs), "Rust must see the Emacs owner");
 
         // And the lease is free at once, with the crashed owner's record still on disk.
         assert!(record.exists(), "the crashed owner left its record behind");
-        let mut taken = None;
-        for _ in 0..100 {
-            match SupervisorLease::try_acquire(addr, &record, identity, SupervisorKind::Tui) {
-                Ok(lease) => {
-                    taken = Some(lease);
-                    break;
-                }
-                // The kernel closes the listener as the process is reaped; on a loaded runner that
-                // is milliseconds after `wait` returns, not before it.
-                Err(_) => std::thread::sleep(std::time::Duration::from_millis(20)),
-            }
-        }
-        assert!(taken.is_some(), "a killed owner must release the lease immediately");
+        // The kernel closes the listener as the process is reaped; on a loaded runner that is
+        // milliseconds after `wait` returns, not before it.
+        let _taken = acquire_once_free(addr, &record, identity, SupervisorKind::Tui);
+        let _ = grandchild.kill();
+        let _ = grandchild.wait();
         assert_eq!(
             read_record(&record).expect("record").owner,
             Some(SupervisorKind::Tui),
@@ -626,10 +671,17 @@ mod tests {
     }
 
     fn which_emacs() -> Option<std::path::PathBuf> {
+        use std::os::unix::fs::PermissionsExt;
         let path = std::env::var_os("PATH")?;
         std::env::split_paths(&path)
             .map(|dir| dir.join("emacs"))
-            .find(|candidate| candidate.is_file())
+            .find(|candidate| {
+                // Executable, not merely present: a file named `emacs` that cannot be run would
+                // fail this test for a reason that has nothing to do with the lease.
+                std::fs::metadata(candidate)
+                    .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+                    .unwrap_or(false)
+            })
     }
 
     #[test]

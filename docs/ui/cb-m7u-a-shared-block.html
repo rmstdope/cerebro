@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-m7u — Option A: one canonical block, mechanically checked</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 62rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.5rem 0 .2rem; }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; white-space: pre-wrap; }
+  .prose { background:#fff; border:1px solid var(--line); border-left:3px solid #c8d1da;
+           border-radius:4px; padding:.7rem .9rem; margin:.4rem 0; font-size:14px; }
+  .canon { border-left-color:#2f6f9f; background:#f3f8fc; }
+  .del { color: var(--bad); } .ins { color: var(--good); }
+  .note { color: var(--dim); font-size: 13.5px; }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .4rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<h1>Option A — one canonical block, carried twice, checked by the gate</h1>
+<p class="lede">cb-m7u. Nothing here is committed. The normative paragraph lives in one tracked file;
+the two documents that must state it carry it verbatim between markers, and a gate predicate refuses
+a pull request in which they have drifted. The three <em>derived</em> surfaces are untouched.</p>
+
+<h2>The one source — <code>templates/four-eye-principle.md</code></h2>
+<p class="note">A fragment, not a document: no heading, no preamble. Just the normative core.</p>
+<div class="prose canon">
+Nothing merges unreviewed and nothing merges red.
+<br><br>
+For a change built by an agent, the second pair of eyes is a <b>review sub-agent the implementer
+spawns for itself</b> — given the diff and the bead, never the implementer's own reasoning — and it
+counts when all of these hold: at least one usable review covers the exact head being merged; it is
+posted in full on the pull request; every finding from every usable round is answered, by a change or
+by a posted reply saying why not; and every check is green. Failed or unusable attempts may be
+retried, but three unusable attempts for one head require the navigator. That is the whole standing
+approval, and it covers a planned bead only.
+</div>
+
+<h2>Carrier 1 — this repository's <code>CLAUDE.md</code></h2>
+<pre>## Four Eye Principle
+
+<i>Read by `skills/implement-bead` and `skills/plan-bead` by this exact heading. …unchanged…</i>
+
+<span class="ins">&lt;!-- four-eye:begin --&gt;</span>
+<b>[the canonical block, verbatim]</b>
+<span class="ins">&lt;!-- four-eye:end --&gt;</span>
+
+No review is asked of GitHub, and none is waited for. …unchanged…
+
+Everything else needs the navigator — …unchanged, including the Cypher sentence…</pre>
+
+<h2>Carrier 2 — <code>templates/consumer-CLAUDE.md</code></h2>
+<pre>## Four Eye Principle
+
+<i>Read by `skills/implement-bead` and `skills/plan-bead` — by this exact heading. …unchanged…</i>
+
+<span class="ins">&lt;!-- four-eye:begin --&gt;</span>
+<b>[the canonical block, verbatim]</b>
+<span class="ins">&lt;!-- four-eye:end --&gt;</span>
+
+No review is asked of the code-hosting platform, and none is waited for. …unchanged…
+
+Everything else needs a person — …unchanged…</pre>
+<p class="note">The template gains the one sentence it has never carried — <i>“That is the whole
+standing approval, and it covers a planned bead only.”</i> — because a shared block cannot be shared
+and different at once. That is the drift this option is buying its way out of.</p>
+
+<h2>The checker — <code>scripts/four-eye-sync</code></h2>
+<p class="note">Same house shape as <code>scripts/tracked-links</code> and
+<code>scripts/marker-readers</code>: no arguments, findings on stdout, exit 1 when it finds any.</p>
+<pre>$ scripts/four-eye-sync
+drifted: CLAUDE.md (block between four-eye markers differs from templates/four-eye-principle.md)
+missing: templates/consumer-CLAUDE.md (no four-eye:begin marker)
+$ echo $?
+1</pre>
+<p>Its suite is <code>tests/four-eye-sync.sh</code>: fixtures for each finding, and — like
+<code>tests/tracked-links.sh</code> — a last assertion that <b>this repository's own copies agree</b>.</p>
+
+<h2>What one policy change costs afterwards</h2>
+<table>
+<tr><th></th><th>Today</th><th>Option A</th></tr>
+<tr><td>Normative rule</td><td class="del">2 files, hand-synchronised, unchecked</td><td class="ins">1 file; drift is a red gate</td></tr>
+<tr><td>Procedure (<code>skills/implement-bead</code>)</td><td>1 file</td><td>1 file</td></tr>
+<tr><td>Reviewer checklist (<code>agents/reviewer.md</code>)</td><td>1 file</td><td>1 file</td></tr>
+<tr><td>Navigator's guide (<code>docs/agent-workflow.md</code>)</td><td>1 file</td><td>1 file</td></tr>
+<tr><td><b>Total for a rule-only change</b></td><td class="del">up to 5</td><td class="ins">1 (+ whatever genuinely changed)</td></tr>
+</table>
+<p class="note">Option A does nothing about the other three. It is the smallest change that removes
+the only <em>unchecked</em> duplication.</p>
+</body></html>

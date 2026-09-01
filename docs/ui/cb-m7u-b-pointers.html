@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-m7u — Option B: the derived surfaces stop restating the rule</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 62rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.5rem 0 .2rem; color: var(--dim); }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; white-space: pre-wrap; }
+  .prose { background:#fff; border:1px solid var(--line); border-left:3px solid #c8d1da;
+           border-radius:4px; padding:.7rem .9rem; margin:.4rem 0; font-size:14px; }
+  .was { border-left-color:#e0a0a0; background:#fff8f8; }
+  .now { border-left-color:#8fc79a; background:#f6fbf7; }
+  .del { color: var(--bad); } .ins { color: var(--good); }
+  .note { color: var(--dim); font-size: 13.5px; }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .4rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<h1>Option B — the derived surfaces stop restating the rule</h1>
+<p class="lede">cb-m7u. Nothing here is committed. No new file and no new gate script: instead, the
+three documents that <em>paraphrase</em> the policy keep only what is theirs and point at the
+authority for the rest. The two <code>CLAUDE.md</code> copies stay two hand-maintained copies.</p>
+
+<h2>1. <code>docs/agent-workflow.md</code> — the navigator's cost note</h2>
+<h3>Today (four lines, and a restatement of the rule)</h3>
+<div class="prose was">
+<b>A usable review of the merge head</b>, obtained before the merge. Ordinary beads still usually
+cost one review, but unusable attempts and any later head change add rounds. Each review names the
+head it covered, every finding from every usable round is answered, and the merged head has
+independent review evidence rather than a review of an older tree.
+</div>
+<h3>After — an observation about cost, and nothing normative</h3>
+<div class="prose now">
+<b>Usually one review per bead, sometimes more.</b> A review covers one head, so an unusable attempt
+or a later push buys another round; the rule itself is the <i>Four Eye Principle</i> section of the
+root <code>CLAUDE.md</code>, which is the only place it is stated. What it costs in practice is a
+second Opus call on the beads where CI went red or a retrospective was written.
+</div>
+<p class="note">The guide keeps describing observed behaviour and cost — which is what it is for —
+and stops being a third place the rule can be wrong.</p>
+
+<h2>2. <code>agents/reviewer.md</code> — the cross-reference that broke</h2>
+<h3>Today (names a section title in another file)</h3>
+<div class="prose was">
+…the review sub-agent every implementer spawns on its own pull request
+(<code>skills/implement-bead</code>, <i>The review loop</i>), which is given this file as its
+checklist.
+</div>
+<p class="note"><span class="del">This exact line was stale until the commit that filed this bead
+fixed it: the title was <i>The review — you get exactly one</i>.</span></p>
+<h3>After — names the file, never the heading</h3>
+<div class="prose now">
+…the review sub-agent every implementer spawns on its own pull request
+(<code>skills/implement-bead</code> is where that is described), which is given this file as its
+checklist.
+</div>
+
+<h2>3. <code>skills/implement-bead/SKILL.md</code> — procedure only</h2>
+<p>The one restatement of the norm goes; the procedure stays whole.</p>
+<div class="prose was">
+<b>Review the exact head being merged, and obtain it yourself.</b> … the standing approval you merge
+on rests on at least one usable review of that head — read the consumer's root <code>CLAUDE.md</code>
+and its <i>Four Eye Principle</i> if you want the authority, because it is there and nowhere else.
+</div>
+<div class="prose now">
+<b>Review the exact head being merged, and obtain it yourself.</b> … the standing approval you merge
+on comes from the consumer's root <code>CLAUDE.md</code> and its <i>Four Eye Principle</i> section,
+which is where the rule is stated and the only place it is stated. Everything below is how you
+satisfy it, not what it says.
+</div>
+
+<h2>What one policy change costs afterwards</h2>
+<table>
+<tr><th></th><th>Today</th><th>Option B</th></tr>
+<tr><td>Normative rule</td><td class="del">2 files, hand-synchronised, unchecked</td><td class="del">2 files, hand-synchronised, unchecked</td></tr>
+<tr><td>Procedure</td><td>1 file, part restatement</td><td class="ins">1 file, only when procedure changes</td></tr>
+<tr><td>Reviewer checklist</td><td>1 file, title-coupled</td><td class="ins">1 file, uncoupled</td></tr>
+<tr><td>Navigator's guide</td><td>1 file, restates the rule</td><td class="ins">1 file, only when cost changes</td></tr>
+<tr><td><b>Total for a rule-only change</b></td><td class="del">up to 5</td><td class="ins">2</td></tr>
+</table>
+<p class="note">Cheaper and smaller than Option A, and it leaves the one drift that has already
+happened — the sentence the template has never carried — undetected and free to happen again.</p>
+</body></html>

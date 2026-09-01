@@ -2,8 +2,13 @@
 //!
 //! Read-only by construction: every function here reads a file or runs a read-only external
 //! program (`scripts/roster`, `ps`, `bd --readonly`) and returns data for `crate::model` to
-//! parse. Nothing here writes a file, launches, stops, triggers, supervises, or cleans up state -
-//! Emacs remains the sole supervisor (cb-vyp.1's own scope).
+//! parse. Nothing here writes a file, launches, stops, triggers, supervises, or cleans up state.
+//!
+//! That sentence is still true of THIS file, and `crate::lifecycle` exists so that it stays so:
+//! since cb-kcs.2.3 the crate does write to the fleet's contracts - a stop flag, and the deletion
+//! of a state file - and every one of those writes lives there. The one thing this module shares
+//! with it is the state-file path, which it asks `lifecycle::state_file_path` for rather than
+//! spelling a second time.
 
 use std::io::Read;
 use std::net::SocketAddr;

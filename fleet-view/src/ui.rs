@@ -1964,9 +1964,8 @@ mod tests {
             rendered.iter().any(|line| line.contains("agents/implementer.md is missing")),
             "{rendered:?}"
         );
-        assert_eq!(
-            rendered.iter().rev().find(|line| line.contains("Press s to try again.")).is_some(),
-            true,
+        assert!(
+            rendered.iter().any(|line| line.contains("Press s to try again.")),
             "{rendered:?}"
         );
         assert_eq!(style_where(&buffer, "Rogue — launch refused").fg, Some(RED));

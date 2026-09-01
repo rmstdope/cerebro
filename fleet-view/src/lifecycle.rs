@@ -18,7 +18,7 @@ use ratatui::text::{Line, Span};
 use crate::model::{AgentKind, FleetRow, RowState};
 use crate::readers::{ReadError, ReaderPaths};
 use crate::session::SessionHost;
-use crate::supervisor::{ReadOnlyReason, SupervisionMode};
+use crate::supervisor::SupervisionMode;
 
 /// `<shared root>/.cerebro/state` - where both contract files live, in the checkout every
 /// worktree shares rather than the enclosing one. A stop flag written under `consumer_root` from
@@ -253,9 +253,43 @@ pub fn quit_refusal_lines(live: &[String]) -> Vec<Line<'static>> {
     ]
 }
 
+/// Everything `s` does once `start_outcome` said `Launch`, in this order:
+///
+/// 1. clear the stale stop flag, when the decision asked for it;
+/// 2. delete NAME's state file - one present now is a previous session's, since a name with a
+///    live session was refused at step 3 of `start_outcome`, and a file that outlives its session
+///    outlives its pid (cb-hzs);
+/// 3. spawn.
+///
+/// Returns the line for the notice slot on success, and the launcher's own error on failure -
+/// which the caller turns into a refused-launch pane rather than into a notice.
+pub fn start(
+    host: &mut SessionHost,
+    paths: &ReaderPaths,
+    name: &str,
+    clears_flag: bool,
+) -> Result<String, ReadError> {
+    if clears_flag {
+        clear_stop_flag(paths, name).map_err(|error| ReadError::Spawn {
+            source: format!("the stop flag for {name}"),
+            message: error.to_string(),
+        })?;
+    }
+    // A state file that could not be removed is not a reason to refuse a start: the agent's own
+    // first transition overwrites it, and refusing here would leave a name unstartable.
+    let _ = delete_state_file(paths, name);
+    host.spawn(name, paths)?;
+    Ok(if clears_flag {
+        format!("Started {name}, and cleared a stale stop flag.")
+    } else {
+        format!("Started {name}.")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::supervisor::ReadOnlyReason;
 
     fn paths(root: &Path) -> ReaderPaths {
         ReaderPaths {

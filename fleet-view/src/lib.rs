@@ -1,8 +1,12 @@
 //! The Rust data boundary for the standalone fleet view (cb-vyp.1).
 //!
 //! This crate reads files and runs `scripts/roster`, `ps`, `bd --readonly` and
-//! `scripts/fleet-supervisor`, and it exposes no launch, stop, trigger or
-//! state-cleanup operation: it still starts and ends nothing.
+//! `scripts/fleet-supervisor`. Since cb-kcs.2.3 it also WRITES to two of the
+//! fleet's contracts, and only through `lifecycle`: it creates and removes an
+//! agent's stop flag, and it deletes the state file of a session it is ending
+//! or replacing. It never writes a state file - `scripts/agent-state` is the
+//! one author of those - and it evaluates no trigger, ends no `waiting`
+//! session and disarms no name, which are cb-kcs.3 and cb-kcs.4.
 //!
 //! Since cb-kcs.1 it may hold ONE piece of state - the supervision lease
 //! (`supervisor`), a bound loopback listener that says which fleet view a
@@ -26,8 +30,12 @@
 //! keystroke into bytes and a screen into lines. `main` owns the `SessionHost`;
 //! `App` only ever sees a `SessionView` materialised before the frame, which is
 //! what keeps `ui::draw` pure while a reader thread writes continuously. Nothing
-//! a navigator can press starts a child yet - `s`, `f` and `k` are cb-kcs.2.3's -
-//! so this crate still starts nothing on its own.
+//! Since cb-kcs.2.3 the navigator can press `s`, `f` and `k` - start the selected
+//! agent, toggle its stop flag, and kill a session this process hosts after a
+//! confirmation - each of them gated on `SupervisionMode` (`may_supervise` to
+//! start, `may_end` to finish or kill) and each refused with a visible line when
+//! it is not. `lifecycle` is where all three decide and where every write lives;
+//! `main::route_key` is the one path a keystroke takes to reach them.
 
 pub mod app;
 pub mod lifecycle;
@@ -60,6 +68,6 @@ pub use app::{
 };
 pub use lifecycle::{
     finish_outcome, join_names, kill_outcome, quit_refusal_lines, quit_refusal_title,
-    start_outcome, FinishOutcome, KillOutcome, Situation, StartOutcome,
+    start, start_outcome, FinishOutcome, KillOutcome, Situation, StartOutcome,
 };
 pub use ui::{draw, metrics};

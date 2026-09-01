@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::model::{FleetRow, WorkBuckets};
+use crate::model::{row_document_line, FleetRow, WorkBuckets};
 use crate::readers::{read_configured_supervisor, read_fleet, read_work, Programs, ReaderPaths, ReadError};
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
@@ -134,10 +134,7 @@ impl<T> Pane<T> {
     /// looking at exactly where they left it. Each pane clamps against its own geometry alone -
     /// a shrinking Work pane must never pull back the Fleet pane's offset, or the reverse.
     pub fn clamp_scroll(&mut self, content_lines: usize, viewport_lines: usize) {
-        let max = content_lines.saturating_sub(viewport_lines);
-        if self.scroll > max {
-            self.scroll = max;
-        }
+        clamp_scroll(&mut self.scroll, content_lines, viewport_lines);
     }
 }
 
@@ -151,22 +148,69 @@ impl<T> Default for Pane<T> {
     }
 }
 
-/// Which of the two widgets the keyboard acts on. Fleet is focused on startup; `Tab` and
-/// `Shift-Tab` both toggle it, and arrow/page keys move only the focused pane's own scroll.
+/// Which of the three widgets the keyboard acts on. Fleet is focused on startup; `Tab` and
+/// `Shift-Tab` cycle it in opposite directions, and arrow/page keys act on the focused pane
+/// alone - moving the selection under Fleet, and that pane's own scroll under Work and Session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PaneFocus {
     #[default]
     Fleet,
     Work,
+    Session,
 }
 
 impl PaneFocus {
-    /// The other pane. There are exactly two, so toggling is its own inverse.
-    pub fn toggled(self) -> Self {
+    /// Tab: Fleet -> Work -> Session -> Fleet.
+    pub fn next(self) -> Self {
         match self {
             Self::Fleet => Self::Work,
+            Self::Work => Self::Session,
+            Self::Session => Self::Fleet,
+        }
+    }
+
+    /// Shift-Tab: the reverse of `next`.
+    pub fn previous(self) -> Self {
+        match self {
+            Self::Fleet => Self::Session,
+            Self::Session => Self::Work,
             Self::Work => Self::Fleet,
         }
+    }
+}
+
+/// The Session pane's own scroll offset. It has no reader and therefore no `PaneContent`: what it
+/// shows is derived from the selection and the supervision mode, not from a subprocess that can
+/// fail. cb-kcs.2.2 gives it a child's screen; until then it holds only an offset, so that the
+/// scroll rule is written once rather than acquired later.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SessionPane {
+    pub scroll: usize,
+}
+
+impl SessionPane {
+    /// The same clamp the reader panes get, against this pane's own geometry alone.
+    pub fn clamp_scroll(&mut self, content_lines: usize, viewport_lines: usize) {
+        clamp_scroll(&mut self.scroll, content_lines, viewport_lines);
+    }
+}
+
+/// How many lines `ui::fleet_document` puts ABOVE the fleet table when the pane is stale: the
+/// retained error and one blank line.
+///
+/// It lives here rather than in the renderer because `App::move_selection` needs it and `app`
+/// must not import `ui`. `ui::fleet_lines` is the code it mirrors, and
+/// `ui::tests::a_stale_fleet_document_opens_with_exactly_the_prefix_app_counts` is what keeps the
+/// two from drifting - a row index is not a document line, and under a stale pane a document line
+/// is not the table line either.
+pub const FLEET_STALE_PREFIX_LINES: usize = 2;
+
+/// Pull SCROLL back only when CONTENT_LINES no longer reaches it. The one owner of that rule,
+/// shared by `Pane<T>` and `SessionPane` so a third widget cannot acquire a fourth spelling.
+pub fn clamp_scroll(scroll: &mut usize, content_lines: usize, viewport_lines: usize) {
+    let max = content_lines.saturating_sub(viewport_lines);
+    if *scroll > max {
+        *scroll = max;
     }
 }
 
@@ -185,6 +229,7 @@ pub struct PaneMetrics {
 pub struct Metrics {
     pub fleet: PaneMetrics,
     pub work: PaneMetrics,
+    pub session: PaneMetrics,
 }
 
 /// What the caller must do about the key or tick it just handed over. The app itself starts no
@@ -206,6 +251,16 @@ pub enum AppAction {
 pub struct App {
     pub fleet: Pane<Vec<FleetRow>>,
     pub work: Pane<WorkBuckets>,
+    /// The Session pane's scroll offset. Not a `Pane<T>`: no reader stands behind it.
+    pub session: SessionPane,
+    /// The selected agent, held by NAME rather than by index: the roster can shrink, and an
+    /// index would silently come to mean a different agent. `None` only before the first
+    /// successful fleet read, or when the fleet is empty.
+    pub selected: Option<String>,
+    /// A one-line message shown in the header in gold, in place of the refresh/stale span, and
+    /// cleared by the next key press. Today it has exactly one writer: a selection lost to a
+    /// roster change.
+    pub notice: Option<String>,
     /// Which widget the keyboard currently acts on. Fleet by default.
     pub focus: PaneFocus,
     /// What this process is allowed to do with the checkout it is drawing (cb-kcs.1).
@@ -243,6 +298,9 @@ impl App {
         Self {
             fleet: Pane::default(),
             work: Pane::default(),
+            session: SessionPane::default(),
+            selected: None,
+            notice: None,
             focus: PaneFocus::default(),
             supervision,
             quit: false,
@@ -295,6 +353,9 @@ impl App {
         if key.kind == KeyEventKind::Release {
             return AppAction::None;
         }
+        // A notice is transient by design: it survives exactly until the navigator touches the
+        // keyboard, whatever they press.
+        self.notice = None;
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quit = true;
@@ -305,11 +366,33 @@ impl App {
                 AppAction::Quit
             }
             KeyCode::Char('g') => AppAction::RefreshBoth,
-            // Both bindings toggle the same way, so both are discoverable regardless of which
-            // one a terminal or a navigator reaches for first. A boundary clamps within the
-            // focused pane; it never transfers focus on its own.
-            KeyCode::Tab | KeyCode::BackTab => {
-                self.focus = self.focus.toggled();
+            // Three panes, so the two bindings are opposite directions round one cycle rather
+            // than the same toggle. A boundary clamps within the focused pane; it never
+            // transfers focus on its own.
+            KeyCode::Tab => {
+                self.focus = self.focus.next();
+                AppAction::None
+            }
+            KeyCode::BackTab => {
+                self.focus = self.focus.previous();
+                AppAction::None
+            }
+            // Under Fleet these four move the SELECTION and let the pane follow it; under Work
+            // and Session they move that pane's own offset, as they always have.
+            KeyCode::Up if self.focus == PaneFocus::Fleet => {
+                self.move_selection(-1, viewport_lines);
+                AppAction::None
+            }
+            KeyCode::Down if self.focus == PaneFocus::Fleet => {
+                self.move_selection(1, viewport_lines);
+                AppAction::None
+            }
+            KeyCode::PageUp if self.focus == PaneFocus::Fleet => {
+                self.move_selection(-(viewport_lines as isize), viewport_lines);
+                AppAction::None
+            }
+            KeyCode::PageDown if self.focus == PaneFocus::Fleet => {
+                self.move_selection(viewport_lines as isize, viewport_lines);
                 AppAction::None
             }
             KeyCode::Up => {
@@ -336,13 +419,79 @@ impl App {
         }
     }
 
-    /// A mutable handle on whichever pane's scroll offset the keyboard currently moves. Both
-    /// panes' `scroll` fields are `usize`, so this returns the same type regardless of which one
-    /// is focused - `on_key` never needs to know which pane it moved.
+    /// Move the selection by DELTA rows, saturating at both ends of the current fleet, and
+    /// scroll the Fleet pane by the least that keeps the new row visible. With no rows, or no
+    /// selection, it does nothing at all.
+    fn move_selection(&mut self, delta: isize, viewport_lines: usize) {
+        let Some(current) = self.selected_index() else { return };
+        let Some(rows) = self.fleet.content.value() else { return };
+        if rows.is_empty() {
+            return;
+        }
+        let last = rows.len() - 1;
+        let target = (current as isize)
+            .saturating_add(delta)
+            .clamp(0, last as isize) as usize;
+        self.selected = Some(rows[target].name.clone());
+        // A stale pane's body opens with its retained error and a blank line, so the table's own
+        // line number is not the document's. Following the wrong one puts the selected row below
+        // the fold by exactly that much.
+        let prefix = if matches!(self.fleet.content, PaneContent::Stale { .. }) {
+            FLEET_STALE_PREFIX_LINES
+        } else {
+            0
+        };
+        let line = prefix + row_document_line(rows, target);
+        self.follow_selection(line, viewport_lines);
+    }
+
+    /// Bring DOCUMENT_LINE into the Fleet pane's viewport, moving `scroll` by the least that does
+    /// so and leaving it alone when the line is already visible.
+    ///
+    /// DOCUMENT_LINE is where the row sits in what `ui::fleet_document` produced, which is NOT
+    /// the row index: the document opens with a heading line, and a row whose state file failed
+    /// to parse contributes a second line of its own. `model::row_document_line` is the one place
+    /// that arithmetic lives.
+    ///
+    /// Two rules, and the second is the exception:
+    ///
+    /// - **Least movement.** A line already visible moves nothing; a line outside the viewport is
+    ///   brought just inside it, from whichever side it left.
+    /// - **A row inside the document's first viewport snaps to the top** (`document_line <
+    ///   viewport`). That is deliberately MORE movement than least: it can fire on a row that is
+    ///   already visible, and it does, so that walking back up to the top of the table brings the
+    ///   column heading - and, under a stale pane, the retained error and its blank line - back
+    ///   into view rather than leaving the table headless. It is bounded by the viewport rather
+    ///   than unconditional because snapping to 0 on a pane with ONE visible line would scroll
+    ///   the selection off it, which is exactly what the 40x12 floor gives Fleet in the stacked
+    ///   layout.
+    ///
+    /// The stale prefix is not a parameter: the caller adds it to DOCUMENT_LINE, which is the one
+    /// place that arithmetic belongs.
+    fn follow_selection(&mut self, document_line: usize, viewport_lines: usize) {
+        let viewport = viewport_lines.max(1);
+        if document_line < viewport {
+            self.fleet.scroll = 0;
+        } else if document_line < self.fleet.scroll {
+            self.fleet.scroll = document_line;
+        } else if document_line >= self.fleet.scroll + viewport {
+            self.fleet.scroll = document_line + 1 - viewport;
+        }
+    }
+
+    /// A mutable handle on whichever pane's scroll offset the keyboard currently moves. Every
+    /// pane's `scroll` is a `usize`, so this returns the same type whichever is focused and
+    /// `on_key` never needs to know which one it moved.
+    ///
+    /// The `Fleet` arm is unreachable and required: the four guarded arms above intercept every
+    /// key that would reach here under Fleet focus, because Fleet's arrows move the SELECTION.
+    /// It stays for exhaustiveness, and returning that pane's own offset is the only answer that
+    /// could not surprise a future caller.
     fn focused_scroll_mut(&mut self) -> &mut usize {
         match self.focus {
             PaneFocus::Fleet => &mut self.fleet.scroll,
             PaneFocus::Work => &mut self.work.scroll,
+            PaneFocus::Session => &mut self.session.scroll,
         }
     }
 
@@ -352,6 +501,7 @@ impl App {
         match self.focus {
             PaneFocus::Fleet => metrics.fleet.viewport_lines.max(1),
             PaneFocus::Work => metrics.work.viewport_lines.max(1),
+            PaneFocus::Session => metrics.session.viewport_lines.max(1),
         }
     }
 
@@ -379,9 +529,65 @@ impl App {
         }
     }
 
+    /// The selected agent's index in the current fleet rows, if there is one and it is still
+    /// there. Re-derived every time rather than stored: only the name is state.
+    pub fn selected_index(&self) -> Option<usize> {
+        let name = self.selected.as_deref()?;
+        let rows = self.fleet.content.value()?;
+        rows.iter().position(|row| row.name == name)
+    }
+
+    /// Reconcile the selection against the rows a successful fleet read has just installed.
+    ///
+    /// PREVIOUS_INDEX is the index the selection had BEFORE this read, which is why it is a
+    /// parameter: by the time this runs, the old rows are gone.
+    ///
+    /// Called from the `Ok` arm of `finish_refresh` alone. A failed refresh must never move or
+    /// clear the selection - a five-second `ps` hiccup is not a roster change.
+    fn reconcile_selection(&mut self, previous_index: Option<usize>) {
+        // Read the rows in place rather than taking a copy: this runs every five seconds, and
+        // the pane already owns them.
+        let (first, still_there, replacement) = {
+            let Some(rows) = self.fleet.content.value() else { return };
+            let selected = self.selected.as_deref();
+            (
+                rows.first().map(|row| row.name.clone()),
+                selected.is_some_and(|name| rows.iter().any(|row| row.name == name)),
+                rows.get(previous_index.unwrap_or(0).min(rows.len().saturating_sub(1)))
+                    .map(|row| row.name.clone()),
+            )
+        };
+        let Some(lost) = self.selected.clone() else {
+            // No selection yet: the first successful read selects the first row, silently.
+            self.selected = first;
+            return;
+        };
+        if still_there {
+            return;
+        }
+        match replacement {
+            Some(new) => {
+                self.notice = Some(format!("{lost} is no longer on the roster. Selected {new}."));
+                self.selected = Some(new);
+            }
+            None => {
+                self.selected = None;
+                self.notice = Some(format!("{lost} is no longer on the roster."));
+            }
+        }
+    }
+
     /// The fleet pane's content transition; see `Pane::finish` for the whole rule.
+    ///
+    /// A successful read also reconciles the selection against the rows it brought back. A
+    /// failure does not: a five-second `ps` hiccup must never silently reselect an agent.
     pub fn finish_refresh(&mut self, result: Result<Vec<FleetRow>, ReadError>, at: DateTime<Utc>) {
+        let previous_index = self.selected_index();
+        let succeeded = result.is_ok();
         self.fleet.finish(result, at);
+        if succeeded {
+            self.reconcile_selection(previous_index);
+        }
     }
 
     /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
@@ -837,7 +1043,198 @@ mod tests {
     }
 
     /// Each pane clamps against its own content and viewport alone: a shrinking Work pane must
-    /// never pull back the Fleet pane's offset, and the reverse.
+    /// Line and page movement on a pane that scrolls: Work, since Fleet's own arrows move the
+    /// selection instead (cb-kcs.2.1).
+    #[test]
+    fn scroll_keys_move_by_line_or_viewport() {
+        let mut app = App::new();
+        app.focus = PaneFocus::Work;
+        assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
+        assert_eq!(app.work.scroll, 1);
+        assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
+        assert_eq!(app.work.scroll, 2);
+        app.on_key(key(KeyCode::Up), 10);
+        assert_eq!(app.work.scroll, 1);
+
+        // The top is a floor, never a negative offset.
+        app.on_key(key(KeyCode::Up), 10);
+        app.on_key(key(KeyCode::Up), 10);
+        assert_eq!(app.work.scroll, 0);
+
+        app.on_key(key(KeyCode::PageDown), 10);
+        assert_eq!(app.work.scroll, 10, "a page is the viewport the frame just showed");
+        app.on_key(key(KeyCode::PageDown), 7);
+        assert_eq!(app.work.scroll, 17);
+        app.on_key(key(KeyCode::PageUp), 7);
+        assert_eq!(app.work.scroll, 10);
+        app.on_key(key(KeyCode::PageUp), 100);
+        assert_eq!(app.work.scroll, 0);
+
+        // A key release is the same keystroke reported twice; it moves nothing.
+        let mut release = key(KeyCode::Down);
+        release.kind = KeyEventKind::Release;
+        assert_eq!(app.on_key(release, 10), AppAction::None);
+        assert_eq!(app.work.scroll, 0);
+    }
+
+    #[test]
+    fn tab_cycles_fleet_work_session_and_backtab_reverses() {
+        let mut app = App::new();
+        assert_eq!(app.focus, PaneFocus::Fleet, "Fleet is focused on startup");
+
+        for expected in [PaneFocus::Work, PaneFocus::Session, PaneFocus::Fleet, PaneFocus::Work] {
+            assert_eq!(app.on_key(key(KeyCode::Tab), 10), AppAction::None);
+            assert_eq!(app.focus, expected);
+        }
+
+        // Shift-Tab is the reverse of that cycle, not the same toggle.
+        let mut app = App::new();
+        for expected in [PaneFocus::Session, PaneFocus::Work, PaneFocus::Fleet, PaneFocus::Session] {
+            assert_eq!(app.on_key(key(KeyCode::BackTab), 10), AppAction::None);
+            assert_eq!(app.focus, expected);
+        }
+    }
+
+    /// Arrow and page keys act on the focused pane alone; the boundary clamps within it and never
+    /// transfers focus. Under Fleet they move the SELECTION, not that pane's raw offset.
+    #[test]
+    fn scroll_keys_move_only_the_focused_pane() {
+        let mut app = App::new();
+        app.on_key(key(KeyCode::Tab), 10);
+        assert_eq!(app.focus, PaneFocus::Work);
+        app.on_key(key(KeyCode::PageDown), 6);
+        assert_eq!(app.work.scroll, 6, "the page moves by the focused pane's own viewport");
+        assert_eq!(app.fleet.scroll, 0, "the fleet offset is untouched while work is focused");
+        assert_eq!(app.session.scroll, 0, "and so is the session's");
+
+        app.on_key(key(KeyCode::Up), 10);
+        assert_eq!(app.work.scroll, 5);
+
+        app.on_key(key(KeyCode::Tab), 10);
+        assert_eq!(app.focus, PaneFocus::Session);
+        app.on_key(key(KeyCode::PageDown), 4);
+        assert_eq!(app.session.scroll, 4, "the session pane has its own offset");
+        assert_eq!(app.work.scroll, 5, "and work is untouched now that session is focused");
+        app.on_key(key(KeyCode::PageUp), 100);
+        assert_eq!(app.session.scroll, 0, "the top is a floor for the session pane too");
+        assert_eq!(app.work.scroll, 5);
+    }
+
+    /// Under Fleet focus the arrows move the selection, and the pane scrolls by the least that
+    /// keeps the selected row's own DOCUMENT line visible.
+    #[test]
+    fn arrows_move_the_selection_and_scroll_the_fleet_to_follow_it() {
+        let mut app = App::new();
+        let names = ["A", "B", "C", "D", "E", "F", "G", "H"];
+        app.finish_refresh(Ok(names.iter().map(|n| row(n)).collect()), at(0));
+        assert_eq!(app.selected.as_deref(), Some("A"));
+        assert_eq!(app.fleet.scroll, 0);
+
+        // Three lines of viewport: the heading plus rows A and B are visible at scroll 0, so the
+        // selection can reach row B (document line 2) before anything has to move.
+        for _ in 0..5 {
+            app.on_key(key(KeyCode::Down), 3);
+        }
+        assert_eq!(app.selected.as_deref(), Some("F"), "five rows down from A");
+        // F is at index 5, document line 6; the least scroll showing line 6 in a 3-line viewport
+        // is 4.
+        assert_eq!(app.fleet.scroll, 4);
+        assert_eq!(app.work.scroll, 0, "the work pane never moves for a fleet key");
+
+        for _ in 0..5 {
+            app.on_key(key(KeyCode::Up), 3);
+        }
+        assert_eq!(app.selected.as_deref(), Some("A"));
+        assert_eq!(app.fleet.scroll, 0, "coming back to the top scrolls back to it");
+
+        // The ends saturate rather than wrapping.
+        app.on_key(key(KeyCode::Up), 3);
+        assert_eq!(app.selected.as_deref(), Some("A"));
+        app.on_key(key(KeyCode::PageDown), 3);
+        assert_eq!(app.selected.as_deref(), Some("D"), "a page is a viewport of rows");
+        app.on_key(key(KeyCode::PageDown), 100);
+        assert_eq!(app.selected.as_deref(), Some("H"), "and it stops at the last row");
+        app.on_key(key(KeyCode::PageUp), 100);
+        assert_eq!(app.selected.as_deref(), Some("A"));
+    }
+
+    /// With no rows at all there is nothing to select and nothing to move.
+    #[test]
+    fn selection_keys_do_nothing_without_a_fleet() {
+        let mut app = App::new();
+        assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
+        assert_eq!(app.selected, None);
+        assert_eq!(app.fleet.scroll, 0);
+    }
+
+    /// A viewport of one line - what the 40x12 floor gives the Fleet pane in the stacked layout -
+    /// must still show the selected ROW rather than the heading above it.
+    #[test]
+    fn a_one_line_viewport_shows_the_row_and_not_the_heading() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(["A", "B", "C"].iter().map(|n| row(n)).collect()),
+            at(0),
+        );
+        assert_eq!(app.selected.as_deref(), Some("A"));
+
+        // Row A is document line 1, and one visible line can hold the heading or the row, not
+        // both: it must be the row.
+        app.on_key(key(KeyCode::Down), 1);
+        assert_eq!(app.selected.as_deref(), Some("B"));
+        assert_eq!(app.fleet.scroll, 2, "row B, alone, is what the one line shows");
+        app.on_key(key(KeyCode::Up), 1);
+        assert_eq!(app.selected.as_deref(), Some("A"));
+        assert_eq!(app.fleet.scroll, 1, "and coming back shows row A rather than the heading");
+    }
+
+    /// A stale pane's body opens with its retained error and a blank line, so following the
+    /// table's own line number would leave the selected row two rows below the fold.
+    #[test]
+    fn the_follow_scroll_counts_a_stale_panes_own_prefix() {
+        let names: Vec<FleetRow> = ["A", "B", "C", "D", "E", "F", "G", "H"]
+            .iter()
+            .map(|n| row(n))
+            .collect();
+
+        let mut fresh = App::new();
+        fresh.finish_refresh(Ok(names.clone()), at(0));
+        let mut stale = App::new();
+        stale.finish_refresh(Ok(names.clone()), at(0));
+        stale.finish_refresh(Err(failure()), at(5));
+        assert_eq!(stale.selected.as_deref(), Some("A"), "the failure kept the selection");
+
+        for _ in 0..5 {
+            fresh.on_key(key(KeyCode::Down), 3);
+            stale.on_key(key(KeyCode::Down), 3);
+        }
+        assert_eq!(fresh.selected.as_deref(), stale.selected.as_deref());
+        assert_eq!(
+            stale.fleet.scroll,
+            fresh.fleet.scroll + FLEET_STALE_PREFIX_LINES,
+            "the stale pane scrolls past its own error and blank line as well"
+        );
+
+        // And back up. The fresh pane snaps to the top and brings its heading with it, because
+        // three visible lines can hold both. The stale pane's first row is document line 3, so
+        // three lines cannot also hold the error, the blank and the heading - least movement puts
+        // the row at the top and shows none of them, which is the right trade.
+        for _ in 0..5 {
+            fresh.on_key(key(KeyCode::Up), 3);
+            stale.on_key(key(KeyCode::Up), 3);
+        }
+        assert_eq!(fresh.selected.as_deref(), Some("A"));
+        assert_eq!(stale.selected.as_deref(), Some("A"));
+        assert_eq!(fresh.fleet.scroll, 0);
+        assert_eq!(
+            stale.fleet.scroll, FLEET_STALE_PREFIX_LINES + 1,
+            "three visible lines cannot hold the error, the blank, the heading AND the row, so \
+             the row is what they show"
+        );
+    }
+
+    /// Each pane's offset survives a refresh that returns the same content, and each clamps
+    /// against its own geometry alone - what a third pane makes easiest to break.
     #[test]
     fn each_pane_preserves_and_clamps_its_own_scroll() {
         let mut app = App::new();
@@ -845,107 +1242,57 @@ mod tests {
         app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(0));
         app.fleet.scroll = 12;
         app.work.scroll = 3;
+        app.session.scroll = 2;
 
-        // Same-sized content: both offsets are exactly where they were.
+        // Same-sized content: every offset is exactly where it was.
         app.fleet.clamp_scroll(24, 10);
         app.work.clamp_scroll(10, 5);
+        app.session.clamp_scroll(6, 3);
         assert_eq!(app.fleet.scroll, 12);
         assert_eq!(app.work.scroll, 3);
+        assert_eq!(app.session.scroll, 2);
 
-        // A refresh of either pane that returns the same content does not touch either offset.
+        // A refresh of either pane that returns the same content does not touch any offset.
         app.finish_refresh(Ok((0..20).map(|i| row(&format!("A{i}"))).collect()), at(5));
         assert_eq!(app.fleet.scroll, 12);
         app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(5));
         assert_eq!(app.work.scroll, 3);
+        assert_eq!(app.session.scroll, 2);
 
         // Only a shorter pane's own content pulls its own offset back, and only as far as its own
-        // last full viewport - the other pane's offset is untouched.
+        // last full viewport - no other pane's offset moves with it.
         app.finish_work_refresh(Ok(WorkBuckets::default()), at(10));
         app.work.clamp_scroll(2, 10);
         assert_eq!(app.work.scroll, 0);
         assert_eq!(app.fleet.scroll, 12, "the fleet offset is untouched by the work pane shrinking");
+        assert_eq!(app.session.scroll, 2, "and so is the session's");
 
         app.fleet.scroll = 40;
         app.finish_refresh(Ok(vec![row("Xavier")]), at(10));
         app.fleet.clamp_scroll(30, 10);
         assert_eq!(app.fleet.scroll, 20);
         assert_eq!(app.work.scroll, 0, "and the work offset is untouched by the fleet clamping");
+        assert_eq!(app.session.scroll, 2);
+
+        // The session's own clamp reaches nothing but the session.
+        app.session.clamp_scroll(1, 3);
+        assert_eq!(app.session.scroll, 0);
+        assert_eq!(app.fleet.scroll, 20);
     }
 
-    // --- the keyboard ---------------------------------------------------------------------------
-
     #[test]
-    fn scroll_keys_move_by_line_or_viewport() {
+    fn a_key_press_clears_the_notice() {
         let mut app = App::new();
-        assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
-        assert_eq!(app.fleet.scroll, 1);
-        assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
-        assert_eq!(app.fleet.scroll, 2);
-        app.on_key(key(KeyCode::Up), 10);
-        assert_eq!(app.fleet.scroll, 1);
+        app.notice = Some("Storm is no longer on the roster.".into());
+        app.on_key(key(KeyCode::Tab), 10);
+        assert_eq!(app.notice, None);
 
-        // The top is a floor, never a negative offset.
-        app.on_key(key(KeyCode::Up), 10);
-        app.on_key(key(KeyCode::Up), 10);
-        assert_eq!(app.fleet.scroll, 0);
-
-        app.on_key(key(KeyCode::PageDown), 10);
-        assert_eq!(app.fleet.scroll, 10, "a page is the viewport the frame just showed");
-        app.on_key(key(KeyCode::PageDown), 7);
-        assert_eq!(app.fleet.scroll, 17);
-        app.on_key(key(KeyCode::PageUp), 7);
-        assert_eq!(app.fleet.scroll, 10);
-        app.on_key(key(KeyCode::PageUp), 100);
-        assert_eq!(app.fleet.scroll, 0);
-
-        // A key release is the same keystroke reported twice; it moves nothing.
+        // A key RELEASE is not a key press, and clears nothing.
+        app.notice = Some("Storm is no longer on the roster.".into());
         let mut release = key(KeyCode::Down);
         release.kind = KeyEventKind::Release;
-        assert_eq!(app.on_key(release, 10), AppAction::None);
-        assert_eq!(app.fleet.scroll, 0);
-    }
-
-    #[test]
-    fn tab_and_backtab_toggle_the_focused_pane() {
-        let mut app = App::new();
-        assert_eq!(app.focus, PaneFocus::Fleet, "Fleet is focused on startup");
-
-        assert_eq!(app.on_key(key(KeyCode::Tab), 10), AppAction::None);
-        assert_eq!(app.focus, PaneFocus::Work);
-        assert_eq!(app.on_key(key(KeyCode::Tab), 10), AppAction::None);
-        assert_eq!(app.focus, PaneFocus::Fleet, "Tab toggles back");
-
-        // Shift-Tab (BackTab) is the same two-pane toggle as Tab, not its own direction.
-        assert_eq!(app.on_key(key(KeyCode::BackTab), 10), AppAction::None);
-        assert_eq!(app.focus, PaneFocus::Work);
-        assert_eq!(app.on_key(key(KeyCode::BackTab), 10), AppAction::None);
-        assert_eq!(app.focus, PaneFocus::Fleet);
-    }
-
-    /// Arrow and page keys act on the focused pane alone; the boundary clamps within it and never
-    /// transfers focus.
-    #[test]
-    fn scroll_keys_move_only_the_focused_pane() {
-        let mut app = App::new();
-        app.on_key(key(KeyCode::Down), 10);
-        assert_eq!(app.fleet.scroll, 1);
-        assert_eq!(app.work.scroll, 0, "Work is not focused, so it does not move");
-
-        app.on_key(key(KeyCode::Tab), 10);
-        assert_eq!(app.focus, PaneFocus::Work);
-        app.on_key(key(KeyCode::PageDown), 6);
-        assert_eq!(app.work.scroll, 6, "the page moves by the focused pane's own viewport");
-        assert_eq!(app.fleet.scroll, 1, "the fleet offset is untouched while work is focused");
-
-        app.on_key(key(KeyCode::Up), 10);
-        assert_eq!(app.work.scroll, 5);
-        assert_eq!(app.fleet.scroll, 1);
-
-        app.on_key(key(KeyCode::Tab), 10);
-        assert_eq!(app.focus, PaneFocus::Fleet);
-        app.on_key(key(KeyCode::PageUp), 100);
-        assert_eq!(app.fleet.scroll, 0, "the top is a floor for the fleet pane too");
-        assert_eq!(app.work.scroll, 5, "and work is untouched now that fleet is focused");
+        app.on_key(release, 10);
+        assert!(app.notice.is_some());
     }
 
     #[test]
@@ -954,6 +1301,7 @@ mod tests {
         let metrics = Metrics {
             fleet: PaneMetrics { content_lines: 30, viewport_lines: 8 },
             work: PaneMetrics { content_lines: 12, viewport_lines: 0 },
+            session: PaneMetrics { content_lines: 4, viewport_lines: 3 },
         };
         assert_eq!(app.focused_viewport(metrics), 8, "Fleet is focused by default");
 
@@ -962,6 +1310,93 @@ mod tests {
             app.focused_viewport(metrics), 1,
             "a pane with no visible rows still yields at least one page line"
         );
+
+        app.focus = PaneFocus::Session;
+        assert_eq!(app.focused_viewport(metrics), 3, "the session pane reports its own");
+    }
+
+    /// The selection is a name, never an index: a roster that shrinks under the navigator must
+    /// not silently come to mean a different agent.
+    #[test]
+    fn a_lost_selection_moves_to_a_surviving_row_and_says_so() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![
+                row("Xavier"),
+                row("Beast"),
+                row("Storm"),
+                row("Cyclops"),
+            ]),
+            at(0),
+        );
+        assert_eq!(app.selected.as_deref(), Some("Xavier"), "the first read selects row 0");
+        assert_eq!(app.notice, None, "and says nothing about it");
+
+        app.selected = Some("Storm".into());
+        app.finish_refresh(
+            Ok(vec![
+                row("Xavier"),
+                row("Beast"),
+                row("Cyclops"),
+            ]),
+            at(5),
+        );
+        assert_eq!(app.selected.as_deref(), Some("Cyclops"), "the old index, clamped into range");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Storm is no longer on the roster. Selected Cyclops."),
+        );
+    }
+
+    #[test]
+    fn a_surviving_selection_that_moved_keeps_its_row_silently() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![
+                row("Xavier"),
+                row("Storm"),
+            ]),
+            at(0),
+        );
+        app.selected = Some("Storm".into());
+        app.finish_refresh(
+            Ok(vec![
+                row("Storm"),
+                row("Beast"),
+                row("Xavier"),
+            ]),
+            at(5),
+        );
+        assert_eq!(app.selected.as_deref(), Some("Storm"));
+        assert_eq!(app.selected_index(), Some(0), "the index is re-derived, never stored");
+        assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn an_emptied_fleet_leaves_nothing_selected() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![row("Storm")]), at(0));
+        app.finish_refresh(Ok(vec![]), at(5));
+        assert_eq!(app.selected, None);
+        assert_eq!(app.notice.as_deref(), Some("Storm is no longer on the roster."));
+    }
+
+    /// A five-second `ps` hiccup must never silently reselect an agent: `reconcile_selection`
+    /// is called from the `Ok` path alone.
+    #[test]
+    fn a_failed_refresh_never_moves_the_selection() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![
+                row("Xavier"),
+                row("Storm"),
+            ]),
+            at(0),
+        );
+        app.selected = Some("Storm".into());
+        app.finish_refresh(Err(failure()), at(5));
+        assert_eq!(app.selected.as_deref(), Some("Storm"));
+        assert_eq!(app.notice, None);
     }
 
     #[test]

@@ -73,7 +73,7 @@ invisible to everything before this point.
 
 Then say what you did — how many issues you looked at, which you acknowledged for the first time,
 which were triaged, which status comments you posted, which issues you closed, and any closed issue
-whose bead is still open — and sleep.
+whose bead is still open — and end the pass.
 
 ### Ending a pass: you write `waiting`, and the fleet view ends the session
 

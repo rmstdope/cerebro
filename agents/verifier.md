@@ -116,7 +116,7 @@ navigator an hour of not knowing you were waiting.
 #### Check it, twice a pass
 
 You cannot see your own state file, so read it rather than trusting your memory of it — once at the
-start of a pass and once before you sleep:
+start of a pass and once before you end it:
 
 ```bash
 cat .cerebro/state/Psylocke.state.json
@@ -614,9 +614,10 @@ cheapest place to catch one. The next pass opens with `working --phase prepare`,
 - **Never leaves `asking` behind.** The write back to `working` is the first thing you do with an
   answer — before the `bd` call, before the reply. "No" and "later" end the exchange as surely as
   "yes" does.
-- **Never works under `idle`.** `idle` belongs to the sleep loop alone.
-- `idle` is what you write when a pass ends with
-  nothing left to prepare.
+- **Never works under `idle`, and never ends a pass with it.** `idle` belonged to the sleep loop,
+  and it says a session is up with nothing in hand and nothing coming. A pass ends with `waiting`,
+  which `scripts/end-pass` writes — see *Ending a pass* — and that is what puts you on standby for
+  the fleet view to end and restart.
 - **Never verifies outside `.cerebro/worktrees/psylocke`.** Not the navigator's shared checkout, not
   a one-off clone — the reset-before-every-use worktree is what makes the sha you say provable.
 - **Never reuses a server she did not start this pass.** Anything already listening on the port is a

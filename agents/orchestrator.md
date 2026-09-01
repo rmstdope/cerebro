@@ -718,7 +718,7 @@ measured `origin/main..HEAD` from a worktree under `.cerebro/worktrees/`, fallin
 itself (`started_at`) when the branch has no commit of its own yet. Every one of those 36 clean
 beads made its first commit 6 to 36 minutes after being claimed; the four parked ones sat 2.3 hours
 or more. Sixty minutes separates them with no false positive in that window, which is where
-`cerebro-stalled-minutes` comes from - a `defcustom`, so the navigator can change it while the
+`cerebro-stalled-minutes` comes from — a `defcustom`, so the navigator can change it while the
 fleet runs.
 
 Three guards, each of which is a case the sweep must stay out of:
@@ -927,10 +927,11 @@ for f in "$state"/*.state.json; do
   jq -r --arg name "$name" '"\($name): \(.state)\(if .phase then " (" + .phase + ")" else "" end) \(.bead // "")"' "$f"
 done
 
-# And anybody up that the first loop cannot see. Column one is the name.
-.claude/cerebro/scripts/roster | awk '{print $1}' | while read -r name; do
-  [ -f "$state/$name.state.json" ] && continue
-  .claude/cerebro/scripts/agent-alive "$name" && echo "$name: up, but writing no state file"
+# And a file that has outlived the session it describes.
+for f in "$state"/*.state.json; do
+  [ -e "$f" ] || continue
+  name="$(basename "$f" .state.json)"
+  .claude/cerebro/scripts/agent-alive "$name" || echo "$name: state file, but no live session"
 done
 ```
 
@@ -941,20 +942,31 @@ fleet view already reads.)
 **A state file is the answer, and its absence is an answer too.** The fleet view deletes the file
 on every path that ends a session and again before it starts one, so a file present is a session
 that has not ended and a name with no file is a name that is not running. That is why the first
-loop is the whole of the ordinary case: it names everyone who is up, with what they are doing.
+loop is the whole of the ordinary case: it names everyone who is up, with what they are doing — the
+list to skip when you pick a new X-Man name for the navigator to start, and the list to choose from
+when you set a stop flag.
 
 **`scripts/agent-alive` is the one place bash answers "is this agent up"**, and the second loop is
-where it earns its keep: a session launched by hand, or one started seconds ago that has not written
-its first transition yet, is up with no file to find it by. It prints nothing in the ordinary case,
-which is what makes a line from it worth reading. Ask it about a name in the first loop too when a
-file looks wrong — a session killed hard leaves its file behind until the fleet view notices, and
-`agent-alive` is what tells that from a session that is genuinely working.
+what it is for here: a session killed hard leaves its file behind until the fleet view notices, and
+this is what tells that from a session that is genuinely working. It reads the pid **out of** the
+state file and checks that process still carries this agent's own marker sentence, so it can only
+ever answer about a name that has a file — asking it about a name with no file is asking it a
+question it exits 1 on by construction, which is why the loop is over the files rather than over the
+roster. It prints nothing in the ordinary case, which is what makes a line from it worth reading.
+
+**The opposite question — somebody up who has written no file at all — has no answer here**, and is
+the fleet view's: `cerebro--consumer-processes` scans the process table for the marker sentence, and
+nothing in bash does. A session launched by hand writes its own state file at its first transition,
+so the gap is seconds and it closes itself.
 
 **Do not ask the CLI's own session list** — `claude agents --json` and its equivalents. Measured on
-this fleet: it reported both planners as `waiting` when neither process existed, while the state
-files (correctly) did not name them at all and `agent-alive` said they were gone. It answers about
-one provider's sessions on one machine, not about this checkout's fleet, and this fleet does not
-even have to be running on that provider (`scripts/agent-cli`).
+this machine: it reported both planners as `waiting` when neither was a session of *this* fleet —
+both were live planner sessions of a different checkout, `rooted at` another consumer entirely. The
+state files correctly did not name them, and `agent-alive` correctly said they were gone from here,
+because the marker sentence carries the root as well as the name and that is the discriminator doing
+its job (cb-lzi). A CLI's session list answers about one provider's sessions on one machine, not
+about this checkout's fleet — and this fleet need not be running on that provider at all
+(`scripts/agent-cli`).
 
 **Keep this list fresh.** A launcher the navigator closed leaves its flags behind, so a `.stop` file is
 evidence of an instruction, never of a running agent.

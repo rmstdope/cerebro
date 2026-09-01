@@ -314,6 +314,11 @@ one line and go back to `waiting`; the next pass re-reads the buffer.
 
 ## Choosing what to plan
 
+Everything about *how* a candidate is taken — the two labels, family ownership, the order the state
+file and the label are written in, and the check immediately before you write — is *How two planners
+stay off each other's work*, the section after this one. **Read it before you run the block below**;
+what follows here is which bead to take.
+
 ```bash
 bd dolt pull
 # Candidates: never a P4. Unranked is not a rank, and planning one takes the navigator's
@@ -330,8 +335,8 @@ bd list --exclude-label planned --exclude-label human \
 # ... and never one carrying verdict:stale: main has moved past the commit that verdict was formed
 # against, so the finding may not hold and the plan may be sound. It is Psylocke's to settle.
 # ... and skip any candidate whose family another planner owns: see *How two planners
-# stay off each other's work*, the section that follows this one - it is what the jq filter here
-# and the order of the three commands below obey.
+# stay off each other's work*, which is what the jq filter here and the order of the three
+# commands below obey.
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID
 bd update <id> --add-label planning:<your-name>
 bd dolt push                                       # publish it at once
@@ -339,10 +344,6 @@ bd dolt push                                       # publish it at once
 bd update <id> --design-file plan.md --add-label planned --remove-label planning:<your-name>
 bd dolt push                                       # or the release is invisible elsewhere
 ```
-
-Everything about *how* a candidate is taken — the two labels, family ownership, the order the
-state file and the label are written in, and the check immediately before you write — is in *How two
-planners stay off each other's work*. What follows is which bead to take.
 
 ### Which bead, and in what order
 

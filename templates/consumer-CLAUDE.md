@@ -34,7 +34,11 @@ and it covers a planned bead only.
 
 Updates after rebase and/or conflict resolution does not need to trigger an additional review.
 
-Documentation only does not need reviews.
+Documentation only does not need reviews — `docs/`, `README.md` and the like. **A change under
+`agents/` or `skills/` is never documentation**: those files are what the fleet reads, so a word
+changed there changes how every consumer behaves, and they are reviewed like any other behaviour.
+`scripts/app-paths --classify` settles the question when it is not obvious; anything it calls
+`application` needs a review.
 
 <!-- four-eye:end -->
 

@@ -40,6 +40,15 @@ pub const MIN_ROWS: u16 = 12;
 /// Bead survive, which is what the navigator chose over squeezing five columns into forty.
 pub const WIDE_COLUMNS: u16 = 64;
 
+/// At or above this width the screen splits into a fixed-width left column and a session pane;
+/// below it all three panes stack. The navigator chose 100 so the session never gets fewer than
+/// sixty cells beside the fleet, and so a 110-cell half-screen stays split.
+pub const SPLIT_COLUMNS: u16 = 100;
+
+/// The left column's width when the screen is split - Fleet and Work in their narrow columns, and
+/// every remaining cell to the session.
+pub const LEFT_COLUMN: u16 = 40;
+
 /// The exact title agreed in the parent epic's interview, em dash and all - now the read-only
 /// spelling of five, one per supervision state (`supervision_title`).
 const TITLE: &str = "Cerebro — read-only";
@@ -109,6 +118,11 @@ const GOLD: Color = Color::Yellow;
 const BLUE: Color = Color::Blue;
 const RED: Color = Color::Red;
 
+/// The selected row's background. `DarkGray` rather than an RGB colour: the fleet view runs in
+/// whatever terminal the navigator has, and every state colour on the row must stay legible on
+/// it. Reversed video was the alternative and loses the row's own green/gold/red entirely.
+const SELECTED_BG: Color = Color::DarkGray;
+
 fn dim() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
@@ -130,37 +144,104 @@ pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
         return Metrics {
             fleet: PaneMetrics { content_lines: 0, viewport_lines: 0 },
             work: PaneMetrics { content_lines: 0, viewport_lines: 0 },
+            session: PaneMetrics { content_lines: 0, viewport_lines: 0 },
         };
     }
-    let fleet_lines = fleet_document(app, now, area.width);
-    let (_, fleet_rect, work_rect) = split(area, fleet_lines.len());
+    let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
+    let (_, fleet_rect, work_rect, session_rect) =
+        split(area, fleet_lines.len(), work_content_lines(app, now, area));
     let work_inner_width = (work_rect.width as usize).saturating_sub(2);
     let work_lines = work_document(app, now, work_inner_width);
+    let session_lines = session_document(app);
     let (fleet_viewport, _) = pane_geometry(fleet_rect, fleet_lines.len());
     let (work_viewport, _) = pane_geometry(work_rect, work_lines.len());
+    let (session_viewport, _) = pane_geometry(session_rect, session_lines.len());
     Metrics {
         fleet: PaneMetrics { content_lines: fleet_lines.len(), viewport_lines: fleet_viewport },
         work: PaneMetrics { content_lines: work_lines.len(), viewport_lines: work_viewport },
+        session: PaneMetrics {
+            content_lines: session_lines.len(),
+            viewport_lines: session_viewport,
+        },
     }
 }
 
-/// Split AREA into the one-line header and the two panes below it.
+/// Split AREA into the one-line header, the Fleet, Work and Session rects.
 ///
-/// Fleet takes its natural outer height - its body-line count plus its own two border rows - up
-/// to half the area below the header (floor division), floored itself at three outer rows so a
-/// pane at the 40x12 minimum still gets one inner row. Work takes every row Fleet does not. This
-/// rule is width-independent, so narrow terminals stay vertically stacked rather than moving to a
-/// side-by-side layout.
-fn split(area: Rect, fleet_content_lines: usize) -> (Rect, Rect, Rect) {
+/// At `SPLIT_COLUMNS` or wider: a `LEFT_COLUMN`-wide column holding Fleet over Work by the
+/// existing rule - Fleet's natural outer height capped at half the column, Work taking the rest -
+/// and the Session pane taking the remaining width at the column's full height.
+///
+/// Below it: three stacked panes. Fleet takes its natural outer height capped at a third of the
+/// available height, then Work takes its natural outer height capped at half of what is left, and
+/// Session takes the remainder. Both caps are floored at three outer rows, so every pane keeps at
+/// least one inner row at the 40x12 minimum.
+fn split(
+    area: Rect,
+    fleet_content_lines: usize,
+    work_content_lines: usize,
+) -> (Rect, Rect, Rect, Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
     let header = rows[0];
     let available = rows[1];
     let fleet_natural = fleet_content_lines + 2;
-    let half = (available.height as usize) / 2;
-    let cap = half.max(3);
-    let fleet_outer = fleet_natural.min(cap) as u16;
-    let panes = Layout::vertical([Constraint::Length(fleet_outer), Constraint::Min(0)]).split(available);
-    (header, panes[0], panes[1])
+
+    if area.width >= SPLIT_COLUMNS {
+        let columns =
+            Layout::horizontal([Constraint::Length(LEFT_COLUMN), Constraint::Min(0)]).split(available);
+        let left = columns[0];
+        let cap = ((left.height as usize) / 2).max(3);
+        let fleet_outer = fleet_natural.min(cap) as u16;
+        let stacked =
+            Layout::vertical([Constraint::Length(fleet_outer), Constraint::Min(0)]).split(left);
+        return (header, stacked[0], stacked[1], columns[1]);
+    }
+
+    let height = available.height as usize;
+    let fleet_outer = fleet_natural.min((height / 3).max(3));
+    let remaining = height.saturating_sub(fleet_outer);
+    let work_outer = (work_content_lines + 2).min((remaining / 2).max(3)).min(remaining);
+    let panes = Layout::vertical([
+        Constraint::Length(fleet_outer as u16),
+        Constraint::Length(work_outer as u16),
+        Constraint::Min(0),
+    ])
+    .split(available);
+    (header, panes[0], panes[1], panes[2])
+}
+
+/// How many lines the Work pane's body will come to, for the one caller that needs it before
+/// `split` has said how wide that pane is.
+///
+/// Only the stacked layout reads it - the split layout gives Work every row Fleet does not want,
+/// whatever its body comes to - so this builds nothing at all on a wide screen. In the stacked
+/// layout the pane is the screen's own width, so there is no probe and no guess: the width passed
+/// here is the width the body will be built at.
+///
+/// It does mean a narrow terminal builds the Work body twice per `draw` and twice per `metrics`.
+/// That is deliberate and measured against the alternative: threading one build through both
+/// would make `split` take the lines rather than derive them, and the panes refresh on a
+/// five-second and a thirty-second clock over a roster and a board of a few dozen rows.
+fn work_content_lines(app: &App, now: DateTime<Utc>, area: Rect) -> usize {
+    if area.width >= SPLIT_COLUMNS {
+        return 0;
+    }
+    work_document(app, now, (area.width as usize).saturating_sub(2)).len()
+}
+
+/// How wide the Fleet pane will be, before `split` runs - `LEFT_COLUMN` when AREA is at least
+/// `SPLIT_COLUMNS` wide, AREA's own width otherwise.
+///
+/// It exists because `draw` and `metrics` both need the fleet body before the split, and the
+/// screen's width stopped being the Fleet pane's width the moment a third pane appeared beside
+/// it. Safe to compute first: the fleet body's LINE COUNT does not depend on width, only its
+/// column layout does.
+fn fleet_width(area: Rect) -> u16 {
+    if area.width >= SPLIT_COLUMNS {
+        LEFT_COLUMN
+    } else {
+        area.width
+    }
 }
 
 /// OUTER's visible body-line count and whether its content is long enough to need the range cue,
@@ -189,8 +270,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
         draw_too_small(frame, area);
         return;
     }
-    let fleet_lines = fleet_document(app, now, area.width);
-    let (header, fleet_rect, work_rect) = split(area, fleet_lines.len());
+    let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
+    let (header, fleet_rect, work_rect, session_rect) =
+        split(area, fleet_lines.len(), work_content_lines(app, now, area));
     frame.render_widget(Paragraph::new(header_line(app, header.width)), header);
 
     let fleet_count = app.fleet.content.value().map(|rows| rows.len());
@@ -199,7 +281,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
         frame,
         fleet_rect,
         fleet_title,
-        &app.fleet,
+        title_style(&app.fleet, app.focus == PaneFocus::Fleet),
         app.focus == PaneFocus::Fleet,
         fleet_lines,
         app.fleet.scroll,
@@ -212,10 +294,20 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
         frame,
         work_rect,
         work_title,
-        &app.work,
+        title_style(&app.work, app.focus == PaneFocus::Work),
         app.focus == PaneFocus::Work,
         work_lines,
         app.work.scroll,
+    );
+
+    render_pane(
+        frame,
+        session_rect,
+        session_title(app),
+        plain_title_style(app.focus == PaneFocus::Session),
+        app.focus == PaneFocus::Session,
+        session_document(app),
+        app.session.scroll,
     );
 }
 
@@ -227,11 +319,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
 /// whatever its title reports, and a focused pane is always the thick, bright-blue one - status
 /// colour is the title's own signal, not the border's, so a focused stale/unavailable pane keeps
 /// its gold/red title behind a blue border rather than losing that colour to focus.
-fn render_pane<T>(
+fn render_pane(
     frame: &mut Frame<'_>,
     outer: Rect,
     title: String,
-    pane: &Pane<T>,
+    title_style: Style,
     focused: bool,
     lines: Vec<Line<'static>>,
     scroll: usize,
@@ -245,7 +337,7 @@ fn render_pane<T>(
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(border_style)
-        .title(Span::styled(title, title_style(pane, focused)));
+        .title(Span::styled(title, title_style));
     let inner = block.inner(outer);
     frame.render_widget(block, outer);
     if inner.height == 0 || inner.width == 0 {
@@ -388,7 +480,11 @@ fn newest_failure(app: &App) -> Option<(DateTime<Utc>, bool)> {
 /// what it is for has changed.
 fn header_line(app: &App, width: u16) -> Line<'static> {
     let mut spans = vec![Span::raw(supervision_title(&app.supervision))];
-    if app.fleet.refreshing || app.work.refreshing {
+    // A notice takes the place `refreshing...` or a failure would have had: it is transient, gone
+    // on the next keystroke, while a stale pane goes on saying so in its own title anyway.
+    if let Some(notice) = &app.notice {
+        spans.push(Span::styled(format!(" | {notice}"), Style::default().fg(GOLD)));
+    } else if app.fleet.refreshing || app.work.refreshing {
         spans.push(Span::styled(" | refreshing...", dim()));
     } else if let Some((failed_at, stale)) = newest_failure(app) {
         let (text, color) = if stale {
@@ -409,7 +505,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     // when it shortens is the two keys a navigator cannot guess from the screen: refresh and quit.
     let used: usize = spans.iter().map(|span| span.content.width()).sum();
     let full =
-        format!(" | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn scroll pane | {refresh_key} | q/Esc/Ctrl-C quit");
+        format!(" | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | {refresh_key} | q/Esc/Ctrl-C quit");
     let hints = if used + full.width() <= width as usize {
         full
     } else {
@@ -419,17 +515,66 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     Line::from(spans)
 }
 
-/// The Fleet pane's body.
-fn fleet_document(app: &App, now: DateTime<Utc>, width: u16) -> Vec<Line<'static>> {
+/// A title style for a widget that has no reader behind it: bold blue when focused, dim
+/// otherwise - the same two spellings `title_style` gives a healthy pane.
+fn plain_title_style(focused: bool) -> Style {
+    if focused {
+        Style::default().fg(BLUE).add_modifier(Modifier::BOLD)
+    } else {
+        dim()
+    }
+}
+
+/// The Session pane's title: the selected agent's name, or `Session` when nothing is selected.
+fn session_title(app: &App) -> String {
+    app.selected.clone().unwrap_or_else(|| "Session".to_string())
+}
+
+/// The Session pane's body. Three shapes in this increment; cb-kcs.2.2 adds a child's screen and
+/// a retained-scrollback shape to it.
+///
+/// Read-only wins over everything else: a view that does not supervise cannot host a session
+/// whatever is selected, and offering `s` there would be a key that does nothing. The wording
+/// names nobody deliberately (the navigator's choice) - naming Emacs would need a second spelling
+/// for the case where another Ratatui process holds the lease.
+fn session_document(app: &App) -> Vec<Line<'static>> {
+    let line = |text: &str| Line::from(Span::styled(text.to_string(), dim()));
+    if !app.supervision.may_supervise() {
+        return vec![
+            line("Sessions are hosted by the view that supervises this"),
+            line("checkout. This one does not."),
+        ];
+    }
+    match &app.selected {
+        Some(name) => vec![
+            line("No live session."),
+            line(""),
+            line(&format!("Press s to start {name}.")),
+            line("The last completed pass is not available."),
+        ],
+        // The fleet is empty, loading, or unavailable - and a failed read must keep saying so in
+        // the Fleet pane rather than reading as "nothing is wrong" here.
+        None => vec![line("No agent selected.")],
+    }
+}
+
+/// The Fleet pane's body. SELECTED is the index of the highlighted row, when there is one and it
+/// is in these rows.
+fn fleet_document(
+    app: &App,
+    now: DateTime<Utc>,
+    width: u16,
+    selected: Option<usize>,
+) -> Vec<Line<'static>> {
     match &app.fleet.content {
         PaneContent::Loading => vec![Line::from(Span::styled("Loading fleet...", dim()))],
-        PaneContent::Fresh { value, .. } => fleet_lines(value, now, width),
+        PaneContent::Fresh { value, .. } => fleet_lines(value, now, width, selected),
         PaneContent::Stale { value, error, .. } => {
             let mut lines = vec![
                 Line::from(Span::styled(error.clone(), Style::default().fg(GOLD))),
                 Line::from(""),
             ];
-            lines.extend(fleet_lines(value, now, width));
+            lines.extend(fleet_lines(value, now, width, selected));
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "The last successful fleet snapshot remains visible.",
@@ -690,11 +835,29 @@ fn columns(rows: &[FleetRow], width: u16) -> Columns {
     }
 }
 
-fn fleet_lines(rows: &[FleetRow], now: DateTime<Utc>, width: u16) -> Vec<Line<'static>> {
+fn fleet_lines(
+    rows: &[FleetRow],
+    now: DateTime<Utc>,
+    width: u16,
+    selected: Option<usize>,
+) -> Vec<Line<'static>> {
     let columns = columns(rows, width);
+    let inner_width = (width as usize).saturating_sub(2);
     let mut lines = vec![heading(&columns)];
-    for row in rows {
-        lines.push(row_line(row, now, &columns));
+    for (index, row) in rows.iter().enumerate() {
+        let mut line = row_line(row, now, &columns);
+        if selected == Some(index) {
+            // Padded across the pane's whole inner width so the highlight is a band rather than a
+            // ragged one. A Line-level style sits BENEATH each span's own, so the row keeps its
+            // green/gold/red - which reversed video would have taken away.
+            let used: usize = line.spans.iter().map(|span| span.content.width()).sum();
+            let gap = inner_width.saturating_sub(used);
+            if gap > 0 {
+                line.spans.push(Span::raw(pad_cells("", gap)));
+            }
+            line = line.style(Style::default().bg(SELECTED_BG));
+        }
+        lines.push(line);
         // A malformed state file gets its parser's own words, on its own line, rather than a
         // pane-wide failure: one unreadable file must not hide eighteen readable rows.
         if row.state == RowState::Invalid {
@@ -1103,6 +1266,14 @@ mod tests {
         app
     }
 
+    /// `populated()`, but owning supervision - what a project declaring `fleet_supervisor tui`
+    /// gets, and the only mode in which the Session pane offers to start anything.
+    fn supervising() -> App {
+        let mut app = populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        app
+    }
+
     /// Both panes populated with enough rows that each needs to scroll on its own - the fixture
     /// the pane-independence and range-cue cases share.
     fn both_populated() -> App {
@@ -1132,17 +1303,20 @@ mod tests {
         assert!(!rendered[0].contains("refreshing..."), "nothing is in flight");
         assert!(line_with(&rendered, "Fleet 5").contains("Fleet 5"), "the pane counts its rows");
 
+        // The screen is split: the fleet lives in a `LEFT_COLUMN`-wide column, so it shows the
+        // narrow three-column table rather than the five-column one. The navigator chose that
+        // (a fixed left column, the session taking the rest) over half and half, which would
+        // have kept ROLE and FOR at the cost of the session's width.
         let heading = line_with(&rendered, "AGENT");
-        for column in ["AGENT", "ROLE", "STATE", "BEAD", "FOR"] {
-            assert!(heading.contains(column), "the wide heading shows {column}: {heading:?}");
+        for column in ["AGENT", "STATE", "BEAD"] {
+            assert!(heading.contains(column), "the narrow heading shows {column}: {heading:?}");
         }
+        assert!(!heading.contains("ROLE"), "and not the wide ones: {heading:?}");
 
-        let xavier = line_with(&rendered, "Xavier");
+        let xavier = line_with(&rendered, "● Xavier");
         assert!(xavier.contains("● Xavier"), "{xavier:?}");
-        assert!(xavier.contains("planner"), "{xavier:?}");
         assert!(xavier.contains("plan "), "a working row shows its phase: {xavier:?}");
         assert!(xavier.contains("cb-kcs"), "{xavier:?}");
-        assert!(xavier.contains("18m 18m"), "bead time and phase time: {xavier:?}");
 
         let cerebro = line_with(&rendered, "? Cerebro");
         assert!(cerebro.contains("asking"), "{cerebro:?}");
@@ -1152,6 +1326,12 @@ mod tests {
         assert!(psylocke.contains("○ Psylocke") && psylocke.contains("dead"), "{psylocke:?}");
         let storm = line_with(&rendered, "Storm");
         assert!(storm.contains("◐ Storm") && storm.contains("waiting"), "{storm:?}");
+
+        // The third pane is there, and it says why it holds no session.
+        assert!(
+            line_with(&rendered, "Sessions are hosted by").contains("supervises this"),
+            "{rendered:?}"
+        );
 
         // The glyph colours are the Emacs vocabulary, and `asking' is the one bold row.
         assert_eq!(style_of(&buffer, "●").fg, Some(GREEN));
@@ -1191,7 +1371,7 @@ mod tests {
 
         // Wide enough that the whole header - now carrying the focus/scroll hint too - is not
         // clipped before the failure clause and the retry key it drives.
-        let rendered = lines(&render(&app, 150, 20));
+        let rendered = lines(&render(&app, 99, 40));
         assert!(rendered[0].contains("refresh failed at 00:00:05"), "{:?}", rendered[0]);
         assert!(!rendered[0].contains("stale"), "there is nothing to be stale: {:?}", rendered[0]);
         assert!(rendered[0].contains("g retry"), "the key hint changes: {:?}", rendered[0]);
@@ -1209,7 +1389,7 @@ mod tests {
         // Tall enough that Fleet's whole stale body - the error, the retained rows and the
         // trailing note - fits without being clipped; this test is about what is kept, not
         // about the range cue a shorter pane would need instead.
-        let rendered = lines(&render(&app, 150, 30));
+        let rendered = lines(&render(&app, 99, 60));
         assert!(rendered[0].contains("stale — refresh failed at 00:00:05"), "{:?}", rendered[0]);
         assert!(rendered[0].contains("g retry"), "{:?}", rendered[0]);
         assert!(line_with(&rendered, "stale since 00:00:05").contains("Fleet"));
@@ -1233,7 +1413,7 @@ mod tests {
             at(86_400),
         );
 
-        let buffer = render(&app, 100, 20);
+        let buffer = render(&app, 99, 40);
         let rendered = lines(&buffer);
         let beast = line_with(&rendered, "! Beast");
         assert!(beast.contains("invalid"), "{beast:?}");
@@ -1259,7 +1439,7 @@ mod tests {
             at(86_400),
         );
 
-        let buffer = render(&app, 100, 20);
+        let buffer = render(&app, 99, 40);
         let rendered = lines(&buffer);
         let beast = line_with(&rendered, "Beast");
         assert!(beast.contains("plan ?"), "the state word is qualified, not replaced: {beast:?}");
@@ -1285,7 +1465,7 @@ mod tests {
             }]),
             at(86_400),
         );
-        let rendered = lines(&render(&app, 100, 20));
+        let rendered = lines(&render(&app, 99, 40));
         assert!(line_with(&rendered, "Cyclops").contains("build ×2"));
     }
 
@@ -1330,10 +1510,12 @@ mod tests {
             assert!(!joined.contains("read-only"), "the screen is replaced, not added to");
         }
 
-        // 40x12 is the floor itself, and it renders the fleet.
+        // 40x12 is the floor itself, and it renders the fleet screen rather than the
+        // replacement. Its own rows are below the fold at that size, so the heading is what
+        // proves the pane is the fleet's.
         let rendered = lines(&render(&app, 40, 12));
         assert!(rendered[0].contains("Cerebro — read-only"));
-        assert!(line_with(&rendered, "Xavier").contains("● Xavier"));
+        assert!(line_with(&rendered, "AGENT").contains("AGENT"));
     }
 
     /// The five approved header spellings, and nothing else (cb-kcs.1).
@@ -1393,7 +1575,7 @@ mod tests {
         let app = populated(); // App::new(): no declaration, so read-only because Emacs
         let rendered = lines(&render(&app, 100, 20));
         assert!(rendered[0].starts_with("Cerebro — read-only |"), "{:?}", rendered[0]);
-        for hint in ["Tab/Shift-Tab pane", "↑/↓/PgUp/PgDn scroll pane", "g refresh", "q/Esc/Ctrl-C quit"] {
+        for hint in ["Tab/Shift-Tab pane", "↑/↓/PgUp/PgDn move", "g refresh", "q/Esc/Ctrl-C quit"] {
             assert!(rendered[0].contains(hint), "the default screen keeps {hint}: {:?}", rendered[0]);
         }
     }
@@ -1420,7 +1602,7 @@ mod tests {
         // With room for everything, everything is shown.
         let wide = lines(&render(&app, 160, 20));
         assert!(wide[0].contains("Tab/Shift-Tab pane"), "{:?}", wide[0]);
-        assert!(wide[0].contains("↑/↓/PgUp/PgDn scroll pane"), "{:?}", wide[0]);
+        assert!(wide[0].contains("↑/↓/PgUp/PgDn move"), "{:?}", wide[0]);
     }
 
     #[test]
@@ -1443,7 +1625,7 @@ mod tests {
             ]),
             at(86_400),
         );
-        let buffer = render(&app, 100, 20);
+        let buffer = render(&app, 99, 40);
         let rendered = lines(&buffer);
         assert!(line_with(&rendered, "Beast").contains("perplexed"));
         assert!(
@@ -1460,7 +1642,7 @@ mod tests {
     #[test]
     fn fleet_and_work_render_as_separate_stacked_widgets() {
         let app = populated();
-        let buffer = render(&app, 100, 30);
+        let buffer = render(&app, 99, 60);
         let rendered = lines(&buffer);
 
         // Fleet is focused by default: a thick, bright-blue one-cell border and a bold blue title.
@@ -1483,8 +1665,264 @@ mod tests {
         );
 
         // Each widget's own body content is unchanged.
-        assert!(line_with(&rendered, "Xavier").contains("● Xavier"));
+        assert!(line_with(&rendered, "● Xavier").contains("● Xavier"));
         assert!(index_of(&rendered, "Work") > index_of(&rendered, "Fleet 5"), "Work sits below Fleet");
+
+        // And the Session pane is a third widget of the same kind, below Work, with a plain
+        // unfocused title of its own.
+        assert_eq!(top_corners(&buffer).len(), 3, "{rendered:?}");
+        assert!(
+            index_of(&rendered, "Sessions are hosted by") > index_of(&rendered, "Work"),
+            "Session sits below Work: {rendered:?}"
+        );
+
+        // Focusing it gives it the thick blue border and bold title, and takes them off Fleet.
+        let mut focused = populated();
+        focused.focus = PaneFocus::Session;
+        let buffer = focused_buffer(&focused);
+        // At the session pane's own origin, so this cannot accidentally read the fleet row of
+        // the same name one line below.
+        let (row, column) = top_corners(&buffer)[1];
+        let title = buffer
+            .cell((column + 1, row))
+            .map(|c| Style::default().fg(c.fg).add_modifier(c.modifier))
+            .expect("the session title's first cell");
+        assert_eq!(title.fg, Some(BLUE), "the session title is focused");
+        assert!(title.add_modifier.contains(Modifier::BOLD));
+        assert!(
+            !style_where(&buffer, "Fleet 5").add_modifier.contains(Modifier::BOLD),
+            "and Fleet's is not"
+        );
+    }
+
+    /// `render` at the wide split size, named for what the case beside it is asking about.
+    fn focused_buffer(app: &App) -> Buffer {
+        render(app, 120, 30)
+    }
+
+    /// Every top-left corner on the screen, as (row, column): one per bordered widget.
+    fn top_corners(buffer: &Buffer) -> Vec<(u16, u16)> {
+        let area = buffer.area;
+        let mut found = Vec::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                if buffer
+                    .cell((x, y))
+                    .is_some_and(|c| matches!(c.symbol(), "┌" | "┏"))
+                {
+                    found.push((y, x));
+                }
+            }
+        }
+        found
+    }
+
+    /// The columns a top border row's corners sit in.
+    fn corners_on_row(buffer: &Buffer, row: u16) -> Vec<u16> {
+        (0..buffer.area.width)
+            .filter(|&x| {
+                buffer
+                    .cell((x, row))
+                    .is_some_and(|c| matches!(c.symbol(), "┌" | "┏" | "┐" | "┓"))
+            })
+            .collect()
+    }
+
+    /// At `SPLIT_COLUMNS` and wider the screen is a fixed left column of Fleet over Work, with
+    /// the Session pane taking every remaining cell at the column's full height.
+    /// The selected row is a band across the pane's whole inner width, and the row keeps its own
+    /// state colour: a Line-level background sits beneath each span's own style.
+    #[test]
+    fn the_selected_row_is_highlighted_across_the_pane() {
+        let app = populated();
+        assert_eq!(app.selected.as_deref(), Some("Xavier"), "the first read selects row 0");
+        let buffer = render(&app, 120, 30);
+        let rendered = lines(&buffer);
+
+        let selected_y = index_of(&rendered, "● Xavier") as u16;
+        // Every cell of the pane's inner width, border to border.
+        for x in 1..LEFT_COLUMN - 1 {
+            assert_eq!(
+                buffer.cell((x, selected_y)).map(|c| c.bg),
+                Some(SELECTED_BG),
+                "column {x} of the selected row is highlighted: {:?}",
+                rendered[selected_y as usize]
+            );
+        }
+
+        // No other fleet row is, and the row's own glyph colour survives the band.
+        let other_y = index_of(&rendered, "? Cerebro") as u16;
+        assert_eq!(buffer.cell((1, other_y)).map(|c| c.bg), Some(Color::Reset));
+        assert_eq!(style_of(&buffer, "●").fg, Some(GREEN), "the glyph keeps its own colour");
+    }
+
+    /// The highlight lands on the line `model::row_document_line` names - the test that keeps that
+    /// function and `fleet_lines` from drifting apart.
+    #[test]
+    fn the_highlight_lands_on_the_row_the_model_names() {
+        let rows = vec![
+            row("Xavier", "planner", RowState::Idle),
+            FleetRow {
+                diagnostic: Some("bad json".into()),
+                ..row("Beast", "planner", RowState::Invalid)
+            },
+            row("Storm", "implementer", RowState::Idle),
+        ];
+        let mut app = App::new();
+        app.finish_refresh(Ok(rows.clone()), at(86_400));
+        app.selected = Some("Storm".into());
+
+        let buffer = render(&app, 120, 30);
+        let rendered = lines(&buffer);
+        // The fleet pane's body starts one row below its top border.
+        let body_top = top_corners(&buffer)[0].0 + 1;
+        let expected = body_top + crate::model::row_document_line(&rows, 2) as u16;
+
+        assert_eq!(
+            buffer.cell((1, expected)).map(|c| c.bg),
+            Some(SELECTED_BG),
+            "the highlight is on the line the model names: {rendered:?}"
+        );
+        assert!(rendered[expected as usize].contains("Storm"), "{rendered:?}");
+    }
+
+    /// `app::FLEET_STALE_PREFIX_LINES` is what `App::move_selection` adds to the table's own line
+    /// number under a stale pane. This is the case that keeps that constant and the document it
+    /// describes from drifting: it counts the lines this renderer actually puts above the table.
+    #[test]
+    fn a_stale_fleet_document_opens_with_exactly_the_prefix_app_counts() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        app.finish_refresh(Err(failure()), at(5));
+
+        let document = fleet_document(&app, now(), 99, app.selected_index());
+        let heading = document
+            .iter()
+            .position(|line| line.spans.iter().any(|span| span.content.contains("AGENT")))
+            .expect("the fleet table's own heading");
+        assert_eq!(
+            heading,
+            crate::app::FLEET_STALE_PREFIX_LINES,
+            "the stale prefix is exactly what app.rs counts: {:?}",
+            document
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+                .collect::<Vec<_>>()
+        );
+
+        // And a fresh pane has no prefix at all, which is the other half of the same rule.
+        let mut fresh = App::new();
+        fresh.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        let document = fleet_document(&fresh, now(), 99, fresh.selected_index());
+        assert!(
+            document[0].spans.iter().any(|span| span.content.contains("AGENT")),
+            "a fresh document opens with the heading"
+        );
+    }
+
+    /// The Session pane's three shapes, verbatim.
+    #[test]
+    fn the_session_pane_says_why_there_is_no_session() {
+        // Read-only wins over everything else, and names nobody.
+        let app = populated();
+        let rendered = lines(&render(&app, 120, 30));
+        assert!(line_with(&rendered, "Sessions are hosted by")
+            .contains("Sessions are hosted by the view that supervises this"));
+        assert!(line_with(&rendered, "checkout. This one").contains("checkout. This one does not."));
+        assert!(!rendered.join("\n").contains("Press s to start"), "no key that does not exist");
+
+        // Supervising, with an agent selected: its name is the title, and the body offers `s`.
+        let app = supervising();
+        let buffer = render(&app, 120, 30);
+        let rendered = lines(&buffer);
+        let session_top = &rendered[top_corners(&buffer)[1].0 as usize];
+        assert!(
+            session_top.contains("┌Xavier"),
+            "the pane is titled with the selected agent's name: {session_top:?}"
+        );
+        assert!(line_with(&rendered, "No live session.").contains("No live session."));
+        assert!(line_with(&rendered, "Press s to start").contains("Press s to start Xavier."));
+        assert!(line_with(&rendered, "The last completed pass")
+            .contains("The last completed pass is not available."));
+
+        // Supervising with nothing selected - a fleet that is loading, empty or unavailable.
+        let mut app = App::with_supervision(SupervisionMode::Supervising);
+        app.finish_refresh(Ok(vec![]), at(86_400));
+        let buffer = render(&app, 120, 30);
+        let rendered = lines(&buffer);
+        assert!(line_with(&rendered, "No agent selected.").contains("No agent selected."));
+        let session_top = &rendered[top_corners(&buffer)[1].0 as usize];
+        assert!(
+            session_top.contains("┌Session"),
+            "with nothing selected the pane is titled Session: {session_top:?}"
+        );
+    }
+
+    /// A notice takes the place of the refresh/stale span, in gold, and the hints still follow.
+    #[test]
+    fn a_notice_replaces_the_refresh_span_and_is_gold() {
+        let mut app = populated();
+        app.notice = Some("Storm is no longer on the roster. Selected Cyclops.".into());
+        assert!(app.begin_refresh(Instant::now()));
+
+        let buffer = render(&app, 160, 30);
+        let rendered = lines(&buffer);
+        assert!(rendered[0].contains("Storm is no longer on the roster."), "{:?}", rendered[0]);
+        assert!(!rendered[0].contains("refreshing..."), "the notice wins: {:?}", rendered[0]);
+        assert!(rendered[0].contains("q/Esc/Ctrl-C quit"), "the hints still follow");
+        assert_eq!(style_where(&buffer, "Storm is no longer").fg, Some(GOLD));
+    }
+
+    #[test]
+    fn a_wide_screen_splits_into_a_left_column_and_a_session_pane() {
+        let app = supervising();
+        let buffer = render(&app, 120, 30);
+
+        let corners = top_corners(&buffer);
+        assert_eq!(corners.len(), 3, "three bordered widgets: {:?}", lines(&buffer));
+
+        // Fleet and Session open on the same row; Fleet ends at the left column's last cell and
+        // Session runs from the next one to the right edge.
+        let (fleet_row, fleet_col) = corners[0];
+        assert_eq!(fleet_col, 0);
+        assert_eq!(corners[1], (fleet_row, LEFT_COLUMN), "Session opens beside Fleet");
+        assert_eq!(corners_on_row(&buffer, fleet_row), vec![0, LEFT_COLUMN - 1, LEFT_COLUMN, 119]);
+
+        // Work sits below Fleet, in the same left column and no wider.
+        let (work_row, work_col) = corners[2];
+        assert!(work_row > fleet_row);
+        assert_eq!(work_col, 0);
+        assert_eq!(corners_on_row(&buffer, work_row), vec![0, LEFT_COLUMN - 1]);
+
+        // The Session pane spans the whole column height beside them: its own bottom border is
+        // the screen's last row.
+        let last = buffer.area.height - 1;
+        assert_eq!(
+            buffer.cell((LEFT_COLUMN, last)).map(|c| c.symbol()),
+            Some("└"),
+            "the session pane reaches the bottom: {:?}",
+            lines(&buffer)[last as usize]
+        );
+    }
+
+    #[test]
+    fn a_screen_below_the_split_width_stacks_all_three_panes() {
+        let app = supervising();
+        let buffer = render(&app, 99, 30);
+        let rendered = lines(&buffer);
+
+        let corners = top_corners(&buffer);
+        assert_eq!(corners.len(), 3, "three stacked widgets: {rendered:?}");
+        for (row, column) in &corners {
+            assert_eq!(*column, 0, "every stacked pane starts at the left edge");
+            assert_eq!(corners_on_row(&buffer, *row), vec![0, 98], "and is full width");
+        }
+        assert!(corners[0].0 < corners[1].0 && corners[1].0 < corners[2].0);
+        assert!(
+            index_of(&rendered, "Fleet") < index_of(&rendered, "Work")
+                && index_of(&rendered, "Work") < index_of(&rendered, "No live session."),
+            "Fleet, Work, Session, in that order: {rendered:?}"
+        );
     }
 
     #[test]
@@ -1508,24 +1946,20 @@ mod tests {
     }
 
     #[test]
-    fn forty_by_twelve_gives_both_widgets_a_body() {
+    fn forty_by_twelve_gives_all_three_widgets_a_body() {
         let app = both_populated();
         let rendered = lines(&render(&app, 40, 12));
 
-        let fleet_top = rendered.iter().position(|l| l.contains("Fleet")).expect("Fleet's title");
-        let work_top = rendered.iter().position(|l| l.contains("Work")).expect("Work's title");
-        assert_eq!(work_top - fleet_top, 5, "five outer rows for Fleet at the 40x12 floor");
-        assert_eq!(rendered.len() - work_top, 6, "Work receives the remaining six rows");
+        // Below `SPLIT_COLUMNS` all three stack, and each keeps one inner row at the floor.
+        let tops: Vec<usize> = (0..rendered.len())
+            .filter(|&y| rendered[y].starts_with(['┌', '┏']))
+            .collect();
+        assert_eq!(tops.len(), 3, "three widgets at the floor: {rendered:?}");
 
         let m = metrics(&app, now(), Rect::new(0, 0, 40, 12));
         assert!(m.fleet.viewport_lines >= 1, "Fleet keeps at least one visible body row");
         assert!(m.work.viewport_lines >= 1, "Work keeps at least one visible body row");
-
-        let cues: Vec<&String> = rendered
-            .iter()
-            .filter(|line| line.contains("Rows ") && line.contains(" of "))
-            .collect();
-        assert_eq!(cues.len(), 2, "both bodies are clipped at the floor: {rendered:?}");
+        assert!(m.session.viewport_lines >= 1, "and so does Session");
     }
 
     #[test]
@@ -1565,6 +1999,15 @@ mod tests {
             .find(|line| line.contains("Rows ") && line.contains(" of "))
             .expect("Work's own range cue");
         assert!(cue.starts_with("Rows 1–"), "{cue:?}");
+
+        // The Session pane gets the same cue from the same helper, at no extra cost.
+        let mut app = App::with_supervision(SupervisionMode::Supervising);
+        app.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        let rendered = body(&render(&app, 99, 12));
+        assert!(
+            rendered.iter().any(|line| line.contains("Rows 1–2 of 4")),
+            "the session body carries its own range cue: {rendered:?}"
+        );
     }
 
     #[test]
@@ -1577,14 +2020,15 @@ mod tests {
             at(0),
         );
 
-        let unscrolled = body(&render(&app, 100, 30));
-        assert!(unscrolled.iter().any(|line| line.contains("A00")));
-        assert!(!unscrolled.iter().any(|line| line.contains("A20")));
+        // Stacked, so each pane is a full-width band and `body` reads as one document.
+        let unscrolled = body(&render(&app, 99, 40));
+        assert!(unscrolled.iter().any(|line| line.contains("○ A00")));
+        assert!(!unscrolled.iter().any(|line| line.contains("○ A25")));
 
         app.fleet.scroll = 20;
-        let fleet_scrolled = body(&render(&app, 100, 30));
-        assert!(!fleet_scrolled.iter().any(|line| line.contains("A00")));
-        assert!(fleet_scrolled.iter().any(|line| line.contains("A20")));
+        let fleet_scrolled = body(&render(&app, 99, 40));
+        assert!(!fleet_scrolled.iter().any(|line| line.contains("○ A00")));
+        assert!(fleet_scrolled.iter().any(|line| line.contains("○ A25")));
         // Scrolling Fleet alone never moves Work: its own section headers stay exactly where
         // they were.
         assert_eq!(
@@ -1594,9 +2038,9 @@ mod tests {
 
         app.fleet.scroll = 0;
         app.work.scroll = 3;
-        let work_scrolled = body(&render(&app, 100, 30));
+        let work_scrolled = body(&render(&app, 99, 40));
         assert!(
-            work_scrolled.iter().any(|line| line.contains("A00")),
+            work_scrolled.iter().any(|line| line.contains("○ A00")),
             "Fleet is untouched while Work scrolls: {work_scrolled:?}"
         );
         assert_ne!(
@@ -1606,6 +2050,27 @@ mod tests {
                 .position(|line| line.contains("Claimed 1"))
                 .unwrap_or(usize::MAX),
             "Work's own body has moved under its own offset"
+        );
+
+        // And the Session pane's offset is its own third: moving it moves neither of the others.
+        let mut app = App::with_supervision(SupervisionMode::Supervising);
+        app.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        // Short enough that the session's own body is clipped and its offset has somewhere to go.
+        let flat = body(&render(&app, 99, 12));
+        assert!(flat.iter().any(|line| line.contains("No live session.")));
+        app.session.scroll = 2;
+        let scrolled = body(&render(&app, 99, 12));
+        assert!(
+            !scrolled.iter().any(|line| line.contains("No live session.")),
+            "the session body scrolled under its own offset: {scrolled:?}"
+        );
+        assert!(
+            scrolled.iter().any(|line| line.contains("Press s to start Storm.")),
+            "{scrolled:?}"
+        );
+        assert!(
+            scrolled.iter().any(|line| line.contains("AGENT")),
+            "Fleet's own body did not move: {scrolled:?}"
         );
     }
 
@@ -1655,7 +2120,7 @@ mod tests {
             paused: vec![bead("cb-9xy", Some(2), "Choose compact rows")],
             ..WorkBuckets::default()
         });
-        let rendered = body(&render(&app, 100, 40));
+        let rendered = body(&render(&app, 99, 80));
 
         // The order work moves in, read backwards - and the Work pane is below the Fleet one.
         let order = [
@@ -1698,7 +2163,7 @@ mod tests {
                 .collect(),
             ..WorkBuckets::default()
         });
-        let rendered = body(&render(&app, 100, 60));
+        let rendered = body(&render(&app, 99, 120));
 
         assert!(line_with(&rendered, "Unplanned").contains("Unplanned 31"), "the FULL count");
         let first = index_of(&rendered, "Unplanned 31");
@@ -1719,7 +2184,7 @@ mod tests {
                 .collect(),
             ..WorkBuckets::default()
         });
-        let rendered = body(&render(&app, 100, 60));
+        let rendered = body(&render(&app, 99, 120));
         assert!(!rendered.iter().any(|line| line.contains("more")), "{rendered:?}");
     }
 
@@ -1823,7 +2288,7 @@ mod tests {
             paused: vec![parked("cb-9xy", Some(123)), parked("cb-9zz", None)],
             ..WorkBuckets::default()
         });
-        let rendered = body(&render(&app, 100, 40));
+        let rendered = body(&render(&app, 99, 80));
 
         let back = line_with(&rendered, "cb-777");
         let ordinary = line_with(&rendered, "cb-888");
@@ -1852,7 +2317,7 @@ mod tests {
     #[test]
     fn loading_work_is_visible_below_fleet() {
         let app = App::new();
-        let rendered = body(&render(&app, 100, 20));
+        let rendered = body(&render(&app, 99, 40));
         assert_eq!(rendered[index_of(&rendered, "Loading work...")], "Loading work...");
         assert!(
             index_of(&rendered, "Loading work...") > index_of(&rendered, "Loading fleet..."),
@@ -1870,7 +2335,7 @@ mod tests {
         });
         app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
 
-        let rendered = body(&render(&app, 150, 40));
+        let rendered = body(&render(&app, 99, 80));
         assert!(rendered[0].contains("stale — refresh failed at 00:00:05"), "{:?}", rendered[0]);
         assert!(rendered[0].contains("g retry"), "{:?}", rendered[0]);
         assert!(line_with(&rendered, "Work — stale since 00:00:05").contains("Work"));
@@ -1895,7 +2360,7 @@ mod tests {
         let mut app = App::new();
         app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
 
-        let rendered = body(&render(&app, 150, 20));
+        let rendered = body(&render(&app, 99, 40));
         assert!(rendered[0].contains("refresh failed at 00:00:05"), "{:?}", rendered[0]);
         assert!(!rendered[0].contains("stale"), "there is nothing to be stale: {:?}", rendered[0]);
         assert!(rendered[0].contains("g retry"), "{:?}", rendered[0]);
@@ -1998,7 +2463,7 @@ mod tests {
         let mut app = populated();
         app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
 
-        let buffer = render(&app, 100, 30);
+        let buffer = render(&app, 99, 60);
         let rendered = lines(&buffer);
         assert_eq!(style_where(&buffer, "Work unavailable").fg, Some(RED));
         assert_eq!(
@@ -2058,9 +2523,12 @@ mod tests {
             assert!(!joined.contains("cb-123"), "{joined}");
         }
 
-        // 40x12 is the floor itself, and both panes are there.
+        // 40x12 is the floor itself, and all three panes are there rather than replaced. The
+        // fleet's own rows are below its one inner row at that size (cb-kcs.2.1's three-pane
+        // stack), so what is asserted here is that the screen is the fleet screen at all.
         let rendered = body(&render(&app, 40, 12));
-        assert!(line_with(&rendered, "Xavier").contains("● Xavier"));
+        assert!(line_with(&rendered, "AGENT").contains("AGENT"));
+        assert!(!rendered.join("\n").contains("Terminal too small"));
         let metrics = metrics(&app, now(), Rect::new(0, 0, 40, 12));
         assert!(
             metrics.work.content_lines > metrics.work.viewport_lines,

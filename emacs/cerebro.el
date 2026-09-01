@@ -2541,13 +2541,16 @@ work - and for a role that runs one pass at a time (cb-5yr) that is:
 `write-disarm' (a pass is running; write the flag, which
 `cerebro--supervise-action' reads when the pass ends, and the role is
 disarmed as it is retired), `standby' (there is no pass to finish, so say
-which key does what instead of writing a flag nothing would read) or, as
-before, `dead' and `external'.  `standby' is answered ahead of `dead'
+which key does what instead of writing a flag nothing would read - unless one
+is already on disk, and then `offer-clear', because the view will not start a
+flagged name at all since cb-sxf and this is the way back) or, as before,
+`dead' and `external'.  `standby' is answered ahead of `dead'
 because a standby row is not alive either.
 
 For an implementer, one of `standby' (its session died and the view means to
 start it again - there is nothing to finish, so say which key does what, the
-same answer a standby role gets, cb-hzs), `offer-clear' (flag already set -
+same answer a standby role gets, cb-hzs, and with a flag already on disk the
+same `offer-clear' a role gets), `offer-clear' (flag already set -
 ask before removing it, the cheap way back to \"actually, keep going\"; checked
 ahead of
 every state below, since a stale flag is worth offering to clear whatever

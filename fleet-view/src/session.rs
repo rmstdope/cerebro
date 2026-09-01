@@ -7,11 +7,13 @@
 //! the Work pane's lines, which is what keeps `ui::draw` pure while a child writes continuously
 //! into a parser on another thread.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use chrono::{DateTime, Utc};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -471,6 +473,124 @@ impl Drop for Session {
     }
 }
 
+
+/// What the Session pane shows, materialised before the frame so `ui` stays pure over `App`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SessionView {
+    /// No live session and no retained pass for the selection. `ui` draws its three existing
+    /// bodies from this, unchanged.
+    None,
+    /// Spawned, and the child has printed nothing yet.
+    Starting,
+    /// At most the pane's own height, rebuilt every frame - which costs nothing.
+    Live { lines: Vec<Line<'static>>, cursor: (u16, u16) },
+    /// Up to `SCROLLBACK_LINES` lines, built once when the child is reaped and shared by
+    /// reference from then on. **The `Arc` is load-bearing**: `sync` runs five times a second,
+    /// and cloning ten thousand `Line`s per frame would be the most expensive thing this program
+    /// does.
+    Ended { lines: Arc<Vec<Line<'static>>>, at: DateTime<Utc> },
+}
+
+impl Default for SessionView {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// A pass that has ended, kept until that agent starts again.
+#[derive(Clone, Debug)]
+pub struct Retained {
+    pub lines: Arc<Vec<Line<'static>>>,
+    pub at: DateTime<Utc>,
+}
+
+/// Every session this process is hosting, plus every pass it has retained, by agent name.
+///
+/// `main` owns it. `App` never does: `App` is what the renderer reads, and a struct holding
+/// process handles is not something `ui::draw` should be able to reach.
+#[derive(Default, Debug)]
+pub struct SessionHost {
+    live: HashMap<String, Session>,
+    retained: HashMap<String, Retained>,
+}
+
+impl SessionHost {
+    /// Start NAME. Replaces that agent's retained pass, which is what "retained until the next
+    /// start" means. Refuses when NAME already has a live session.
+    pub fn spawn(&mut self, name: &str, paths: &ReaderPaths) -> Result<(), ReadError> {
+        self.insert(name, Session::spawn(name, paths)?);
+        Ok(())
+    }
+
+    /// `spawn`, with the session already made - the seam the cases use, and the one `cb-kcs.2.3`
+    /// will put behind the `s` key.
+    pub fn insert(&mut self, name: &str, session: Session) {
+        self.retained.remove(name);
+        self.live.insert(name.to_string(), session);
+    }
+
+    /// How many children are alive. This is what `SupervisorController::hosted_sessions` reads.
+    pub fn live_count(&self) -> usize {
+        self.live.len()
+    }
+
+    /// Is NAME's session live and able to take a keystroke?
+    pub fn is_live(&self, name: &str) -> bool {
+        self.live.contains_key(name)
+    }
+
+    /// Forward BYTES to NAME's live session, if there is one.
+    pub fn send(&mut self, name: &str, bytes: &[u8]) {
+        if let Some(session) = self.live.get_mut(name) {
+            session.send(bytes);
+        }
+    }
+
+    /// Once per frame: reap any child that has exited into `retained`, resize the selected
+    /// agent's session to the pane it is drawn in, and return what the pane should show.
+    ///
+    /// ROWS and COLS are the Session pane's own inner geometry from `ui::metrics`, so the child
+    /// is always the size of the pane it is drawn in.
+    pub fn sync(
+        &mut self,
+        selected: Option<&str>,
+        rows: u16,
+        cols: u16,
+        now: DateTime<Utc>,
+    ) -> SessionView {
+        // Every child is reaped, not only the selected one: an unwatched pass that ended must
+        // still become a retained transcript, and its pty must still be released.
+        let ended: Vec<(String, Ended)> = self
+            .live
+            .iter_mut()
+            .filter_map(|(name, session)| session.poll_exit().map(|ended| (name.clone(), ended)))
+            .collect();
+        for (name, end) in ended {
+            let Some(session) = self.live.remove(&name) else { continue };
+            // The transcript is taken at the size the child was last drawn at, which is the size
+            // its own screen was written for.
+            let (child_rows, child_cols) = session.size;
+            let lines = session.into_transcript(child_rows, child_cols, end);
+            self.retained.insert(name, Retained { lines: Arc::new(lines), at: now });
+        }
+        let Some(name) = selected else { return SessionView::None };
+        if let Some(session) = self.live.get_mut(name) {
+            session.resize(rows, cols);
+            return match session.screen(rows, cols) {
+                Some(lines) => SessionView::Live { lines, cursor: session.cursor() },
+                // Spawned and silent: never `None`, which would read as "no session at all".
+                None => SessionView::Starting,
+            };
+        }
+        match self.retained.get(name) {
+            Some(retained) => {
+                SessionView::Ended { lines: Arc::clone(&retained.lines), at: retained.at }
+            }
+            None => SessionView::None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -724,6 +844,58 @@ mod tests {
         let content: Vec<&String> = lines.iter().take(lines.len() - 4).collect();
         assert_eq!(content.last().map(|line| line.as_str()), Some("line 200"));
         assert_eq!(lines.iter().filter(|line| *line == "line 137").count(), 1);
+    }
+
+
+    fn at(text: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(text).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn a_finished_session_becomes_a_retained_pass_and_starting_again_replaces_it() {
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", shell(r#"printf "first pass\r\n""#, 24, 80));
+        let mut view = SessionView::None;
+        for _ in 0..500 {
+            view = host.sync(Some("Cyclops"), 24, 80, at("2026-09-01T15:42:00Z"));
+            if matches!(view, SessionView::Ended { .. }) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let SessionView::Ended { lines, at: ended_at } = view else {
+            panic!("expected a retained pass, got {view:?}");
+        };
+        assert_eq!(ended_at, at("2026-09-01T15:42:00Z"));
+        assert!(text_of(&lines).iter().any(|line| line == "first pass"), "{:?}", text_of(&lines));
+        assert_eq!(host.live_count(), 0);
+
+        // Starting again throws the retained pass away: it is kept until the next start, and no
+        // longer.
+        host.insert("Cyclops", shell("sleep 5", 24, 80));
+        let view = host.sync(Some("Cyclops"), 24, 80, at("2026-09-01T15:45:00Z"));
+        assert_eq!(view, SessionView::Starting);
+        assert!(host.is_live("Cyclops"));
+    }
+
+    #[test]
+    fn sync_returns_none_for_an_agent_with_neither() {
+        let mut host = SessionHost::default();
+        assert_eq!(host.sync(Some("Moira"), 24, 80, at("2026-09-01T15:42:00Z")), SessionView::None);
+        assert_eq!(host.sync(None, 24, 80, at("2026-09-01T15:42:00Z")), SessionView::None);
+    }
+
+    #[test]
+    fn live_count_counts_only_live_children() {
+        let mut host = SessionHost::default();
+        assert_eq!(host.live_count(), 0);
+        host.insert("Cyclops", shell("sleep 5", 24, 80));
+        host.insert("Moira", shell("sleep 5", 24, 80));
+        assert_eq!(host.live_count(), 2);
+        // Two children are independently selectable, and neither answers for the other.
+        host.send("Cyclops", b"");
+        assert!(host.is_live("Moira"));
+        assert!(!host.is_live("Beast"));
     }
 
     #[test]

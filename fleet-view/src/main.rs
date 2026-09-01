@@ -140,12 +140,18 @@ impl SupervisorController {
         }
     }
 
-    /// Keep one diagnostic, and only when it changes: this runs every five seconds, and the same
-    /// sentence a thousand times over is not a report.
+    /// Keep the latest ownership fault, for the exit line.
+    ///
+    /// One slot, not a log: the screen exits once, and the parting line should be what was wrong
+    /// when it exited rather than the first thing that ever went wrong.
     fn note_diagnostic(&mut self, message: String) {
-        if self.diagnostic.as_deref() != Some(message.as_str()) {
-            self.diagnostic = Some(message);
-        }
+        self.diagnostic = Some(message);
+    }
+
+    /// Forget it. A fault that resolved must not be the parting line of an hour-long session -
+    /// Emacs re-arms on recovery the same way, and the two sides are meant to say the same thing.
+    fn clear_diagnostic(&mut self) {
+        self.diagnostic = None;
     }
 
     /// What to print on the way out, if anything.
@@ -169,8 +175,9 @@ impl SupervisorController {
 
     /// Apply one answer from the worker: decide, act on the lease, and return what to display.
     ///
-    /// A reader that could not run at all is a lock error rather than a guess. Rounding it to
-    /// `emacs` would be the fail-open this whole bead exists to refuse.
+    /// A reader that could not run at all gets `DeclarationUnreadable` - its own reason, which
+    /// says nothing about who holds the lease, because this process may well be holding it.
+    /// Rounding it to `emacs` would be the fail-open this whole bead exists to refuse.
     fn apply(&mut self, answer: Result<Result<SupervisorKind, String>, ReadError>) -> SupervisionMode {
         let configured = match answer {
             Ok(configured) => configured,
@@ -196,7 +203,12 @@ impl SupervisorController {
             self.hosted_sessions,
         );
         match action {
-            ReconcileAction::Keep => mode,
+            ReconcileAction::Keep => {
+                if mode == SupervisionMode::Supervising {
+                    self.clear_diagnostic();
+                }
+                mode
+            }
             ReconcileAction::Release => {
                 self.release();
                 mode
@@ -209,10 +221,11 @@ impl SupervisorController {
         let (Some(endpoint), Some(identity), Some(record)) =
             (self.endpoint, self.identity.as_ref(), self.record.as_ref())
         else {
-            self.note_diagnostic(
-                "cannot locate the supervision lease: scripts/fleet-supervisor did not answer"
-                    .to_string(),
-            );
+            // No diagnostic: this is the DOCUMENTED degrade path, not a fault. A consumer whose
+            // submodule predates `scripts/fleet-supervisor` has no lease for anybody to hold, and
+            // Emacs says nothing in exactly this case ("the behaviour every consumer had before
+            // ownership existed"). Printing here would make the new output channel loudest where
+            // nothing is wrong.
             return SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(
                 "cannot locate the supervision lease".to_string(),
             ));
@@ -220,6 +233,7 @@ impl SupervisorController {
         match SupervisorLease::try_acquire(endpoint, record, identity, SupervisorKind::Tui) {
             Ok(lease) => {
                 self.lease = Some(lease);
+                self.clear_diagnostic();
                 SupervisionMode::Supervising
             }
             // An honest live owner is the ordinary case and says everything on the header.
@@ -700,7 +714,7 @@ mod main_tests {
         );
         // ... and it must not claim somebody else holds what it is holding.
         assert_eq!(
-            cerebro_tui::ui::supervision_title_for(&mode),
+            cerebro_tui::ui::supervision_title(&mode),
             "Cerebro — read-only; fleet_supervisor could not be read",
             "a holder must never be told the lease is held by another process"
         );

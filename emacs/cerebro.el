@@ -4658,7 +4658,11 @@ consume a row of fleet data.  The wording is theirs, approved in cb-kcs.1."
     ;; The detail - which file, what was wrong with it - goes to `errors.jsonl' and the echo area,
     ;; never onto the mode line: an absolute path there is unreadable and pushes everything else
     ;; off the window.
-    (`(read-only lock-error ,_) "read-only: the lease is held by another process")
+    ;; True of every lock error, which "held by another process" was not: a record that could not
+    ;; be written, a bind refused for some other reason, and a reconciliation that signalled are
+    ;; all states in which nobody holds anything. The detail goes to `errors.jsonl' and the echo
+    ;; area; an absolute path on a mode line is unreadable and pushes everything else off.
+    (`(read-only lock-error ,_) "read-only: the supervision lease could not be taken")
     (`(read-only . ,_) "read-only")
     (`(draining nil ,_) "handoff pending: invalid fleet_supervisor")
     (`(draining ,_ ,_) "handoff pending")
@@ -4701,8 +4705,14 @@ resolution, about eighty milliseconds, on the thread that draws.
 
 An mtime rather than a plain cache, because the declaration must still be
 obeyed on the next tick after it changes: that is the whole point of
-reconciling every five seconds rather than once at startup.  A file that
-vanishes or cannot be stat-ed reads as a change, so absence is noticed too.")
+reconciling every five seconds rather than once at startup.  Absence is a key
+of its own, so a consumer that declares nothing costs a `stat\=' per tick too.
+
+The floor is the filesystem\='s timestamp granularity: two edits inside one tick
+of it are one change here, so the second waits for something else to touch the
+file.  Every filesystem the fleet runs on is finer than a second, and the
+alternative - hashing the file every five seconds - buys nothing against an
+editor that writes once.")
 
 (defvar-local cerebro--supervisor-identity-cache nil
   "The (REPO-ROOT . IDENTITY) this buffer resolved, or nil.
@@ -4725,8 +4735,9 @@ so it is worth one fork per buffer rather than one per tick.")
 The SHARED root's, not the enclosing one's: `project-conf\=' resolves
 `consumer-root --shared\=', so in a worktree the file this buffer would stat and
 the file the answer came from are two different files, and editing the second
-would never invalidate a cache keyed on the first.  `nil\=' when there is no such
-file, which reads as a change and is therefore noticed when one appears."
+would never invalidate a cache keyed on the first.  `absent\=' when there is no
+such file - a cached key of its own, so a consumer that declares nothing costs a
+`stat\=' per tick rather than a fork, and a file appearing changes the key."
   (let* ((root (or (cerebro--cached-supervisor-identity repo-root) repo-root))
          (attributes (file-attributes
                       (expand-file-name ".cerebro/project.conf" root))))
@@ -4954,12 +4965,16 @@ may no longer own."
   (condition-case error
       (cerebro--reconcile-supervision repo-root)
     (error
-     (cerebro--report-error "supervision"
-                            "supervision: could not reconcile ownership (%s)"
-                            (error-message-string error))
      (setq cerebro--supervision
-           (list 'read-only 'lock-error (error-message-string error)))
+           (list 'read-only 'lock-error
+                 (format "could not reconcile ownership (%s)"
+                         (error-message-string error))))
      (cerebro--apply-supervision-mode-line cerebro--supervision)
+     ;; Through the same once-per-distinct-message gate as every other lock error, and NOT a bare
+     ;; `cerebro--report-error': this branch exists for a condition that PERSISTS, so reporting it
+     ;; per tick would put seventeen thousand lines a day into the log CLAUDE.md calls the short
+     ;; one and the one to be pointed at, and blank the echo area every five seconds while it did.
+     (cerebro--report-supervision-error cerebro--supervision)
      cerebro--supervision)))
 
 (defun cerebro--apply-supervision-mode-line (mode)

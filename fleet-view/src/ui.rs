@@ -58,11 +58,7 @@ const TITLE: &str = "Cerebro — read-only";
 /// and told the navigator nothing they did not already know. The long spellings are spent where
 /// there is something to say: the lease is contested, or the declaration is wrong. That is the
 /// navigator's own call, taken when the measurement was put to them.
-pub fn supervision_title_for(mode: &SupervisionMode) -> String {
-    supervision_title(mode)
-}
-
-fn supervision_title(mode: &SupervisionMode) -> String {
+pub fn supervision_title(mode: &SupervisionMode) -> String {
     match mode {
         SupervisionMode::Supervising => "Cerebro — supervising".to_string(),
         SupervisionMode::Draining { .. } => "Cerebro — handoff pending".to_string(),
@@ -83,8 +79,12 @@ fn supervision_title(mode: &SupervisionMode) -> String {
         // The detail - which file, what was wrong with it - goes to stderr when the screen exits,
         // never into the header: an absolute path in a status line is unreadable at any width,
         // and the navigator asked for the short sentence here (cb-kcs.1).
+        // True of every lock error, which "held by another process" was not: a bind that
+        // succeeded and a record that then could not be written, and a bind refused for a reason
+        // that is not `AddrInUse`, are both states in which nobody holds anything. The detail -
+        // which endpoint, which other checkout - is printed on the way out.
         SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_)) => {
-            "Cerebro — read-only; the lease is held by another process".to_string()
+            "Cerebro — read-only; the supervision lease could not be taken".to_string()
         }
         // Says nothing about who holds the lease, because this process may well be holding it:
         // what failed is reading the declaration that says whose it is.
@@ -1356,7 +1356,7 @@ mod tests {
                     "the supervision lease is held, but /some/very/long/path.json is malformed"
                         .into(),
                 )),
-                "Cerebro — read-only; the lease is held by another process",
+                "Cerebro — read-only; the supervision lease could not be taken",
             ),
             (
                 SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui)),

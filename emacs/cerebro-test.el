@@ -8853,12 +8853,58 @@ project.conf. Before the cache the next tick recovered, and it still must."
               (should (eq (cerebro--configured-supervisor tmp) 'tui)))))
       (delete-directory tmp t))))
 
-(ert-deftest cerebro-test/a-lock-error-reaches-the-error-log ()
-  "The mode line says the short sentence; the detail has to reach somebody.
+(ert-deftest cerebro-test/reconciling-into-a-lock-error-reports-it ()
+  "The WIRING, not the helper: a reconciliation that ends in a lock error reports.
 
-An endpoint collision between two checkouts is what the two-checksum port design
-rests on being visible, and a message built and thrown away is a diagnostic that
-goes nowhere."
+The defect this guards was a message built and never reported - that is, a
+missing call site - so a case that calls the reporter directly would have passed
+against the broken code. This one drives `cerebro--reconcile-supervision\=' and
+fails if the reporting call is removed from it."
+  (let ((reported nil)
+        (tmp (cerebro-test--supervisor-consumer "emacs")))
+    (unwind-protect
+        (with-temp-buffer
+          (setq-local cerebro--supervision-process nil)
+          (setq-local cerebro--supervision-reported nil)
+          (cl-letf (((symbol-function 'cerebro--report-error)
+                     (lambda (_context format-string &rest args)
+                       (push (apply #'format format-string args) reported)))
+                    ;; The lease is held by somebody this Emacs cannot identify - the endpoint
+                    ;; collision the two-checksum port design rests on being visible.
+                    ((symbol-function 'cerebro--acquire-supervision)
+                     (lambda (&rest _)
+                       '(read-only lock-error
+                                    "the lease endpoint is bound by another checkout (/repos/x)"))))
+            (let ((mode (cerebro--reconcile-supervision tmp)))
+              (should (equal (car mode) 'read-only))
+              (should (equal (length reported) 1))
+              (should (string-match-p "another checkout" (car reported))))
+            ;; Every five seconds, and still one report.
+            (cerebro--reconcile-supervision tmp)
+            (should (equal (length reported) 1))))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/a-reconciliation-that-signals-reports-once-not-per-tick ()
+  "The fail-closed branch is throttled like every other lock error.
+
+It exists for a condition that persists, so reporting per tick would put
+seventeen thousand lines a day into `errors.jsonl\=' - the log CLAUDE.md calls
+the short one - and blank the echo area every five seconds while it did."
+  (let ((reported nil))
+    (cl-letf (((symbol-function 'cerebro--report-error)
+               (lambda (_context format-string &rest args)
+                 (push (apply #'format format-string args) reported)))
+              ((symbol-function 'cerebro--configured-supervisor)
+               (lambda (&rest _) (error "project.conf is on fire"))))
+      (with-temp-buffer
+        (setq-local cerebro--supervision '(supervising))
+        (setq-local cerebro--supervision-reported nil)
+        (dotimes (_ 10) (cerebro--reconcile-supervision-safely "/fake/repo"))
+        (should (equal (length reported) 1))
+        (should-not (cerebro--supervision-may-act-p cerebro--supervision))))))
+
+(ert-deftest cerebro-test/a-lock-error-reaches-the-error-log ()
+  "The reporter itself: once per distinct message, re-armed by a recovery."
   (let ((reported nil))
     (cl-letf (((symbol-function 'cerebro--report-error)
                (lambda (_context format-string &rest args)

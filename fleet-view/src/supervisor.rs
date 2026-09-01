@@ -71,6 +71,11 @@ pub enum ReadOnlyReason {
     InvalidDeclaration(String),
     /// The lease could not be read or bound, and we refuse to guess.
     LockError(String),
+    /// The declaration itself could not be read - the reader timed out, failed to spawn, or
+    /// answered in a way this build does not understand. Distinct from `LockError` because it
+    /// says nothing about who holds the lease: a process in this state may well be holding it
+    /// itself, and saying "the lease is held by another process" there would be false twice over.
+    DeclarationUnreadable(String),
     /// Configured for us, not holding it yet, and no attempt has failed. The provisional answer
     /// [`reconcile_supervision`] returns with [`ReconcileAction::Acquire`]; a caller replaces it
     /// within the same tick with `Supervising` or with the reason the bind failed.
@@ -552,7 +557,8 @@ mod tests {
         acquire_once_free(addr, &record, "/repos/x", SupervisorKind::Emacs);
     }
 
-    /// The one test that proves the two implementations share one lease (cb-kcs.1).
+    /// The one test that proves the two implementations share one lease, and that the lease dies
+    /// with its owner rather than with its owner's children (cb-kcs.1).
     ///
     /// Not two language-local approximations: a real Emacs binds the listener and writes the
     /// record, this Rust process is refused and told exactly who holds it, and then the Emacs is
@@ -574,7 +580,10 @@ mod tests {
             // test exists to rule out.
             assert!(
                 std::env::var_os("CI").is_none(),
-                "CI must install Emacs for the cross-implementation lease test"
+                "emacs is not on PATH and CI is set: the Rust job's setup-emacs step has broken, \
+                 and skipping here would turn the only cross-implementation lock proof into a \
+                 green no-op. (If you exported CI by hand on a machine without Emacs, that is \
+                 what this is telling you.)"
             );
             eprintln!("emacs is not on PATH: skipping the cross-implementation lease test");
             return;
@@ -588,15 +597,27 @@ mod tests {
         // Emacs's batch stdout is buffered, so a `princ` before a `sleep-for` arrives two minutes
         // late - which is exactly how long the first version of this test took to fail.
         let port_file = dir.path().join("port");
+        let session_file = dir.path().join("session-pid");
+        // The session is started BY the owner, AFTER it binds - the only arrangement that
+        // exercises the trap. Over a PIPE rather than Emacs's default pty: when the owner is
+        // killed the pty master closes and the child takes a SIGHUP with it, which would end the
+        // session this test needs to outlive its parent. `fork` duplicates every descriptor, so this child holds a copy of
+        // the listener until its own exec; a sibling spawned by THIS process would prove nothing,
+        // because this process never held that listener to begin with.
         let program = format!(
             "(let ((p (make-network-process :name \"held\" :family 'ipv4 :host \"127.0.0.1\" \
              :service 0 :server t :noquery t :reuseaddr nil))) \
              (with-temp-file {record} \
                (insert (format \"{{\\\"identity\\\":%S,\\\"owner\\\":\\\"emacs\\\",\\\"pid\\\":%d}}\" {identity} (emacs-pid)))) \
+             (let* ((process-connection-type nil) \
+                    (session (start-process \"session\" nil \"sleep\" \"120\"))) \
+               (set-process-query-on-exit-flag session nil) \
+               (with-temp-file {session_file} (insert (format \"%d\" (process-id session))))) \
              (with-temp-file {port_file} (insert (format \"%d\" (process-contact p :service)))) \
              (sleep-for 120))",
             record = format!("{:?}", record.display().to_string()),
             identity = format!("{identity:?}"),
+            session_file = format!("{:?}", session_file.display().to_string()),
             port_file = format!("{:?}", port_file.display().to_string()),
         );
 
@@ -639,19 +660,20 @@ mod tests {
         // lives, on a checkout with no supervisor at all. `TcpListener` is opened `O_CLOEXEC`, so
         // the child drops it at exec and the lease dies with its owner and not with its children.
         // This assertion is what keeps that true when cb-kcs.2 gives the view real sessions.
-        let mut grandchild = std::process::Command::new("/bin/sh")
-            .args(["-c", "sleep 60"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn a session behind the owner");
+        let session_pid: i32 = std::fs::read_to_string(&session_file)
+            .expect("the owner reported the session it started")
+            .trim()
+            .parse()
+            .expect("a pid");
 
-        // The owner dies without cleaning up. Its child does not.
+        // The owner dies without cleaning up. Its session does not: a SIGKILLed Emacs orphans its
+        // children rather than taking them with it.
         let _ = child.kill();
         let _ = child.wait();
         assert!(
-            grandchild.try_wait().expect("try_wait").is_none(),
-            "the child must still be running, or it proves nothing about inherited descriptors"
+            alive(session_pid),
+            "the owner's session must outlive it, or this proves nothing about inherited \
+             descriptors"
         );
 
         assert_eq!(outcome, Ok(SupervisorKind::Emacs), "Rust must see the Emacs owner");
@@ -661,13 +683,26 @@ mod tests {
         // The kernel closes the listener as the process is reaped; on a loaded runner that is
         // milliseconds after `wait` returns, not before it.
         let _taken = acquire_once_free(addr, &record, identity, SupervisorKind::Tui);
-        let _ = grandchild.kill();
-        let _ = grandchild.wait();
+        // Still running: the lease came back while a session the dead owner had forked was alive,
+        // which is exactly what close-on-exec buys and what cb-kcs.2 will depend on.
+        assert!(alive(session_pid), "the orphaned session was still supposed to be running");
+        let _ = std::process::Command::new("kill").arg(session_pid.to_string()).status();
         assert_eq!(
             read_record(&record).expect("record").owner,
             Some(SupervisorKind::Tui),
             "the successful bind overwrote the stale record"
         );
+    }
+
+    /// Is this pid still running? `kill -0`, which needs no crate and no unsafe block.
+    fn alive(pid: i32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
     }
 
     fn which_emacs() -> Option<std::path::PathBuf> {

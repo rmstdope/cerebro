@@ -8612,7 +8612,10 @@ every real one (cb-os4), so the reader's own output is what is fed in here."
               (identity (cerebro--supervisor-identity tmp))
               (record (cerebro--supervisor-record tmp)))
           (should (equal (car endpoint) "127.0.0.1"))
-          (should (and (>= (cdr endpoint) 20000) (<= (cdr endpoint) 39999)))
+          ;; Below 32768: Linux's ephemeral range starts there, and a lease port an outbound
+          ;; connection can borrow reads as a lock error. `tests/fleet-supervisor.sh' pins the
+          ;; same block against the script itself.
+          (should (and (>= (cdr endpoint) 20000) (<= (cdr endpoint) 32767)))
           ;; The script answers `pwd -P', so the comparison is against the
           ;; physical path too - on macOS a temp directory is reached through
           ;; /var and lives at /private/var, and an identity compared in the
@@ -8825,6 +8828,58 @@ plain cache is what keeps a changed declaration obeyed on the next tick."
               (should (eq (cerebro--configured-supervisor tmp) 'tui))
               (should (eq reads 2)))))
       (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/a-reader-that-did-not-run-is-never-cached ()
+  "A transient failure must not pin `emacs' for the life of the buffer.
+
+The fallback is right - a consumer whose submodule predates this script keeps
+supervising - but caching it turns one fork failure into this Emacs supervising
+a checkout the project declares for Ratatui, until somebody touches
+project.conf. Before the cache the next tick recovered, and it still must."
+  (let ((tmp (cerebro-test--supervisor-consumer "tui")))
+    (unwind-protect
+        (with-temp-buffer
+          (let ((fail t))
+            (cl-letf* ((real (symbol-function 'cerebro--supervisor-value))
+                       ((symbol-function 'cerebro--supervisor-value)
+                        (lambda (&rest args)
+                          (if (and fail (= (length args) 1))
+                              (error "the reader could not run")
+                            (apply real args)))))
+              ;; The transient failure falls back, and is NOT remembered.
+              (should (eq (cerebro--configured-supervisor tmp) 'emacs))
+              (setq fail nil)
+              ;; The very next call sees what the project actually declares.
+              (should (eq (cerebro--configured-supervisor tmp) 'tui)))))
+      (delete-directory tmp t))))
+
+(ert-deftest cerebro-test/a-lock-error-reaches-the-error-log ()
+  "The mode line says the short sentence; the detail has to reach somebody.
+
+An endpoint collision between two checkouts is what the two-checksum port design
+rests on being visible, and a message built and thrown away is a diagnostic that
+goes nowhere."
+  (let ((reported nil))
+    (cl-letf (((symbol-function 'cerebro--report-error)
+               (lambda (_context format-string &rest args)
+                 (push (apply #'format format-string args) reported))))
+      (with-temp-buffer
+        (setq-local cerebro--supervision-reported nil)
+        (cerebro--report-supervision-error
+         '(read-only lock-error "the lease endpoint is bound by another checkout (/repos/other)"))
+        (should (equal (length reported) 1))
+        (should (string-match-p "another checkout" (car reported)))
+        ;; Once per distinct message: this runs every five seconds.
+        (cerebro--report-supervision-error
+         '(read-only lock-error "the lease endpoint is bound by another checkout (/repos/other)"))
+        (should (equal (length reported) 1))
+        ;; A different failure is a different report.
+        (cerebro--report-supervision-error '(read-only lock-error "record is malformed"))
+        (should (equal (length reported) 2))
+        ;; And recovering re-arms it, so the same fault later is reported again.
+        (cerebro--report-supervision-error '(supervising))
+        (cerebro--report-supervision-error '(read-only lock-error "record is malformed"))
+        (should (equal (length reported) 3))))))
 
 (ert-deftest cerebro-test/a-reconciliation-that-signals-is-read-only ()
   "A failure leaves the mode fail-closed, never whatever it said last.

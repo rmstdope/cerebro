@@ -58,6 +58,10 @@ const TITLE: &str = "Cerebro — read-only";
 /// and told the navigator nothing they did not already know. The long spellings are spent where
 /// there is something to say: the lease is contested, or the declaration is wrong. That is the
 /// navigator's own call, taken when the measurement was put to them.
+pub fn supervision_title_for(mode: &SupervisionMode) -> String {
+    supervision_title(mode)
+}
+
 fn supervision_title(mode: &SupervisionMode) -> String {
     match mode {
         SupervisionMode::Supervising => "Cerebro — supervising".to_string(),
@@ -81,6 +85,11 @@ fn supervision_title(mode: &SupervisionMode) -> String {
         // and the navigator asked for the short sentence here (cb-kcs.1).
         SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_)) => {
             "Cerebro — read-only; the lease is held by another process".to_string()
+        }
+        // Says nothing about who holds the lease, because this process may well be holding it:
+        // what failed is reading the declaration that says whose it is.
+        SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(_)) => {
+            "Cerebro — read-only; fleet_supervisor could not be read".to_string()
         }
     }
 }
@@ -1374,12 +1383,6 @@ mod tests {
         }
     }
 
-    /// The hints give way before the state does.
-    ///
-    /// Ownership made the title up to twenty-eight cells longer, which pushed
-    /// `q/Esc/Ctrl-C quit` clean off a hundred-column screen. A hint the terminal has cut in half
-    /// is worse than a shorter hint that fits, so the scroll and pane hints go first and the two
-    /// keys a navigator cannot guess from the screen stay.
     /// The screen every consumer sees today keeps every hint it had before this bead.
     ///
     /// This is the assertion the navigator asked for by name: ownership must not cost the default
@@ -1395,6 +1398,12 @@ mod tests {
         }
     }
 
+    /// When there IS something to say, the hints give way before the state does.
+    ///
+    /// A contested lease makes the title long enough to push `q/Esc/Ctrl-C quit` off a
+    /// hundred-column screen. A hint the terminal has cut in half is worse than a shorter hint
+    /// that fits, so the scroll and pane hints go first and the two keys a navigator cannot guess
+    /// from the screen stay.
     #[test]
     fn a_long_ownership_title_shortens_the_hints_rather_than_losing_them() {
         let mut app = populated();

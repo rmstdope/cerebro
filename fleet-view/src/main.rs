@@ -115,6 +115,15 @@ struct SupervisorController {
     /// rule is written and tested now so that bead adds a number here rather than a rule.
     hosted_sessions: usize,
     last_request: Option<Instant>,
+    /// The last ownership diagnostic worth a navigator's attention, printed to stderr when the
+    /// screen exits.
+    ///
+    /// The header says the short sentence the navigator approved; the detail - which endpoint,
+    /// which other checkout, which record was malformed - has to go SOMEWHERE, or an endpoint
+    /// collision between two checkouts is undiagnosable by design. It cannot go on the screen
+    /// (an absolute path in a status line is unreadable) and it cannot be printed while the
+    /// alternate screen is up, so it is kept and printed on the way out.
+    diagnostic: Option<String>,
 }
 
 impl SupervisorController {
@@ -127,7 +136,21 @@ impl SupervisorController {
             record: readers::read_supervisor_record(paths).ok(),
             hosted_sessions: 0,
             last_request: None,
+            diagnostic: None,
         }
+    }
+
+    /// Keep one diagnostic, and only when it changes: this runs every five seconds, and the same
+    /// sentence a thousand times over is not a report.
+    fn note_diagnostic(&mut self, message: String) {
+        if self.diagnostic.as_deref() != Some(message.as_str()) {
+            self.diagnostic = Some(message);
+        }
+    }
+
+    /// What to print on the way out, if anything.
+    fn diagnostic(&self) -> Option<&str> {
+        self.diagnostic.as_deref()
     }
 
     /// Is a fresh reading of the declaration due? Five seconds, the fleet pane's own cadence: a
@@ -158,7 +181,12 @@ impl SupervisorController {
             // rule the table already states for a declaration that is not ours: never release out
             // from under something. Emacs does not release here either.
             Err(error) => {
-                return SupervisionMode::ReadOnly(ReadOnlyReason::LockError(error.to_string()));
+                // Its OWN reason, not a lock error: this process may be holding the lease while
+                // this happens, and "the lease is held by another process" would be false twice.
+                self.note_diagnostic(format!("cannot read fleet_supervisor: {error}"));
+                return SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(
+                    error.to_string(),
+                ));
             }
         };
         let (mode, action) = reconcile_supervision(
@@ -181,7 +209,11 @@ impl SupervisorController {
         let (Some(endpoint), Some(identity), Some(record)) =
             (self.endpoint, self.identity.as_ref(), self.record.as_ref())
         else {
-            return SupervisionMode::ReadOnly(ReadOnlyReason::LockError(
+            self.note_diagnostic(
+                "cannot locate the supervision lease: scripts/fleet-supervisor did not answer"
+                    .to_string(),
+            );
+            return SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(
                 "cannot locate the supervision lease".to_string(),
             ));
         };
@@ -190,10 +222,17 @@ impl SupervisorController {
                 self.lease = Some(lease);
                 SupervisionMode::Supervising
             }
+            // An honest live owner is the ordinary case and says everything on the header.
             Err(AcquireError::OwnedBy(kind)) => {
                 SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(kind))
             }
-            Err(other) => SupervisionMode::ReadOnly(ReadOnlyReason::LockError(other.to_string())),
+            // Everything else is a diagnosis the navigator cannot make from the header alone -
+            // an endpoint collision naming another checkout above all, which the whole
+            // two-checksum port design rests on being VISIBLE.
+            Err(other) => {
+                self.note_diagnostic(format!("supervision lease at {endpoint}: {other}"));
+                SupervisionMode::ReadOnly(ReadOnlyReason::LockError(other.to_string()))
+            }
         }
     }
 
@@ -241,6 +280,11 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         Utc::now,
     );
     guard.leave()?;
+    // After the alternate screen is gone, so it is readable: the header carries the short
+    // sentence, and this is where the detail behind it goes.
+    if let Some(diagnostic) = controller.diagnostic() {
+        eprintln!("cerebro-tui: {diagnostic}");
+    }
     result
 }
 
@@ -647,12 +691,22 @@ mod main_tests {
         let failure = ReadError::Timeout { source: "fleet-supervisor".into(), seconds: 5 };
         let mode = controller.apply(Err(failure));
         assert!(
-            matches!(mode, SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_))),
-            "a failed read is read-only: {mode:?}"
+            matches!(mode, SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(_))),
+            "a failed read is read-only for its own reason: {mode:?}"
         );
         assert!(
             controller.lease.is_some(),
             "and it keeps the lease: a subprocess hiccup must not hand the checkout away"
+        );
+        // ... and it must not claim somebody else holds what it is holding.
+        assert_eq!(
+            cerebro_tui::ui::supervision_title_for(&mode),
+            "Cerebro — read-only; fleet_supervisor could not be read",
+            "a holder must never be told the lease is held by another process"
+        );
+        assert!(
+            controller.diagnostic().is_some(),
+            "and the detail is kept for the exit line rather than thrown away"
         );
 
         // The next good answer takes it straight back to supervising, with no reacquisition.

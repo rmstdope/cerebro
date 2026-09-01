@@ -603,8 +603,11 @@ standalone read-only view:
 It draws the same fleet rows and the same six queues — Claimed, Planned unclaimed, Being planned,
 Unplanned, Waiting on you, Merged unverified — as two separately bordered widgets stacked one above
 the other, Fleet on top and Work below, each scrolling independently of the other. Its header says
-what it is allowed to do: `Cerebro — read-only; Emacs owns supervision` in a project that has not
-moved supervision, and `Cerebro — supervising` in one that declared `fleet_supervisor tui`. It
+what it is allowed to do, and says nothing in the ordinary case: `Cerebro — read-only` in a project
+that has not moved supervision — exactly what it has always said — and `Cerebro — supervising` in
+one that declared `fleet_supervisor tui`. The longer spellings are spent only where there is
+something to say, such as `Cerebro — read-only; another Ratatui process owns supervision` when a
+second one is already running. It
 still offers no lifecycle key either way; owning the lease and hosting sessions are separate
 steps, and the second is not built yet. Fleet refreshes
 every five seconds and Work every thirty. `Tab`/`Shift-Tab` swap which widget is focused; the

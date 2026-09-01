@@ -4704,11 +4704,33 @@ obeyed on the next tick after it changes: that is the whole point of
 reconciling every five seconds rather than once at startup.  A file that
 vanishes or cannot be stat-ed reads as a change, so absence is noticed too.")
 
+(defvar-local cerebro--supervisor-identity-cache nil
+  "The (REPO-ROOT . IDENTITY) this buffer resolved, or nil.
+
+The identity is the canonical SHARED root, and it cannot change for a checkout,
+so it is worth one fork per buffer rather than one per tick.")
+
+(defun cerebro--cached-supervisor-identity (repo-root)
+  "REPO-ROOT\='s shared root, resolved once per buffer."
+  (if (equal (car cerebro--supervisor-identity-cache) repo-root)
+      (cdr cerebro--supervisor-identity-cache)
+    (let ((identity (cerebro--supervisor-identity repo-root)))
+      (when identity
+        (setq cerebro--supervisor-identity-cache (cons repo-root identity)))
+      identity)))
+
 (defun cerebro--project-conf-mtime (repo-root)
-  "The modification time of REPO-ROOT\='s project.conf, or nil when there is none."
-  (let ((attributes (file-attributes
-                     (expand-file-name ".cerebro/project.conf" repo-root))))
-    (and attributes (file-attribute-modification-time attributes))))
+  "The modification time of the project.conf REPO-ROOT\='s answer comes from.
+
+The SHARED root's, not the enclosing one's: `project-conf\=' resolves
+`consumer-root --shared\=', so in a worktree the file this buffer would stat and
+the file the answer came from are two different files, and editing the second
+would never invalidate a cache keyed on the first.  `nil\=' when there is no such
+file, which reads as a change and is therefore noticed when one appears."
+  (let* ((root (or (cerebro--cached-supervisor-identity repo-root) repo-root))
+         (attributes (file-attributes
+                      (expand-file-name ".cerebro/project.conf" root))))
+    (if attributes (file-attribute-modification-time attributes) 'absent)))
 
 (defun cerebro--configured-supervisor (repo-root)
   "Which implementation REPO-ROOT declares: `emacs\=', `tui\=', or (invalid . RAW).
@@ -4720,21 +4742,27 @@ script that RAN and refused is never rounded that way - that is the fail-closed
 half, and it is the whole point of the typed reader."
   (let ((mtime (cerebro--project-conf-mtime repo-root)))
     (if (and cerebro--configured-supervisor-cache
-             mtime
              (equal (car cerebro--configured-supervisor-cache) mtime))
         (cdr cerebro--configured-supervisor-cache)
-      (let ((value (condition-case nil
-                       (pcase-let ((`(,status . ,output)
-                                    (cerebro--supervisor-value repo-root)))
-                         (cond ((and (eq status 0) (member output '("emacs" "tui")))
-                                (intern output))
-                               ((eq status 0) (cons 'invalid output))
-                               ((eq status 2) (cons 'invalid output))
-                               (t 'emacs)))
-                     (error 'emacs))))
-        ;; Only a readable declaration is cached. With no project.conf there is nothing to
-        ;; invalidate against, and a cached answer would outlive the file appearing.
-        (setq cerebro--configured-supervisor-cache (and mtime (cons mtime value)))
+      (let* ((answered t)
+             (value (condition-case nil
+                        (pcase-let ((`(,status . ,output)
+                                     (cerebro--supervisor-value repo-root)))
+                          (cond ((and (eq status 0) (member output '("emacs" "tui")))
+                                 (intern output))
+                                ((eq status 0) (cons 'invalid output))
+                                ((eq status 2) (cons 'invalid output))
+                                ;; A status that is neither: a signal, a shell that could not
+                                ;; run it. Not an answer about this project.
+                                (t (setq answered nil) 'emacs)))
+                      (error (setq answered nil) 'emacs))))
+        ;; ONLY A REAL ANSWER IS CACHED. The `emacs' above is a fallback for a reader that did
+        ;; not run, and caching it would pin one transient fork failure for the life of the
+        ;; buffer - which, on a project declaring `tui', is this Emacs supervising a checkout
+        ;; that belongs to Ratatui until somebody touches project.conf. Before the cache the next
+        ;; tick recovered, and it still must.
+        (when answered
+          (setq cerebro--configured-supervisor-cache (cons mtime value)))
         value))))
 
 (defun cerebro--supervisor-endpoint (repo-root)
@@ -4893,7 +4921,27 @@ arms nothing, because changing the owner must not itself launch processes."
       ('keep nil))
     (setq cerebro--supervision mode)
     (cerebro--apply-supervision-mode-line mode)
+    (cerebro--report-supervision-error mode)
     mode))
+
+(defvar-local cerebro--supervision-reported nil
+  "The last lock-error message this buffer reported, so it reports it once.")
+
+(defun cerebro--report-supervision-error (mode)
+  "Log MODE\='s lock error, if it has one and it is new.
+
+The mode line carries the short sentence the navigator approved; the DETAIL -
+which endpoint, which other checkout, which record was malformed - has to reach
+somebody, or an endpoint collision between two checkouts is undiagnosable by
+design.  It goes to `errors.jsonl\=' and the echo area, once per distinct
+message: this runs every five seconds, and the same sentence a thousand times
+over is not a report."
+  (pcase mode
+    (`(read-only lock-error ,message)
+     (unless (equal message cerebro--supervision-reported)
+       (setq cerebro--supervision-reported message)
+       (cerebro--report-error "supervision" "supervision: %s" message)))
+    (_ (setq cerebro--supervision-reported nil))))
 
 (defun cerebro--reconcile-supervision-safely (repo-root)
   "`cerebro--reconcile-supervision\=', with a failure that is fail-closed.

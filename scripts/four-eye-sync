@@ -67,8 +67,10 @@ fi
 
 # `$(<file)' strips trailing newlines but not leading blank lines, and the markers are surrounded by
 # blank lines on purpose: CommonMark ends an HTML block at a blank line, so a marker immediately
-# followed by prose swallows that prose into the comment. Both sides are stripped, so those
-# load-bearing blanks are never drift.
+# followed by prose swallows that prose into the comment. Both sides have their leading and trailing
+# EMPTY lines stripped, so those load-bearing blanks are never drift. A line of spaces is not an
+# empty line and is drift, deliberately: the comparison is otherwise byte-exact, and an invisible
+# difference that the checker forgives is one no reader can see either.
 strip_blanks() {
   local s="$1"
   while [[ $s == $'\n'* ]]; do s="${s#$'\n'}"; done

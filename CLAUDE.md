@@ -678,6 +678,21 @@ and the key hint stays `g retry` until both panes are fresh.
   and `scripts/fleet-cost`'s SQL/jq stay copies for the reasons above; what changed is that a copy
   can no longer exist *undeclared*. `tests/session-marker.sh` pins the four functions against
   literals on purpose — a test that re-derived the sentence from the library would prove nothing.
+- **`scripts/four-eye-sync` is the one place "do this repository's copies of the merge-review rule
+  agree" is answered** (cb-m7u). The Four Eye Principle is the implementer's whole standing approval
+  to merge, and it used to be written out twice — the *Four Eye Principle* section above, and
+  `templates/consumer-CLAUDE.md` — with nothing checking that the two agreed. They had already
+  drifted: the closing sentence above, *"That is the whole standing approval, and it covers a
+  planned bead only"*, had never been in the template. The rule now lives once, in
+  `templates/four-eye-principle.md`, and each carrier wraps its copy in `<!-- four-eye:begin -->` /
+  `<!-- four-eye:end -->`; the blank lines inside those markers are load-bearing, because CommonMark
+  ends an HTML block at a blank line and a marker followed straight by prose swallows the paragraph.
+  Findings on stdout, exit 1, in `tracked-links`'s house format — `drifted:`, `unmarked:`,
+  `missing:` — with `tests/four-eye-sync.sh` as its suite. The carrier list is a decision, literal
+  in the script: a **consumer's** own `CLAUDE.md` is theirs to edit and is never read. What the
+  block *says* is deliberately not asserted, for the reason *Development practices* gives about
+  grepping prose. Like `tracked-links` and `marker-readers` it is a gate predicate and must never
+  join `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start.
 - **`scripts/marker-readers` is the one place "is every reader of the session marker a subscriber"
   is answered** (cb-9su). `tests/lib/session-args.cases` is a test fixture, so it only ever caught
   drift between readers that opt in; a reader that never subscribed was not red but silently wrong,

@@ -122,6 +122,13 @@ come to nothing — `↻ retry now`, `↻ retry in 2m, 3 failed`. `k` leaves it 
 clears the count, and `f` says as much rather than writing a flag nothing would read. A stop flag
 written before it died still means *no further bead*: it is retired instead of retried.
 
+**A standby row under a stop flag reads `■ told to finish`** — an implementer or a role, since
+cb-sxf — and the view does not start it, whatever its trigger says; `RET` says so in as many
+words rather than promising a return. `s` clears the flag and starts it, saying
+`<Name>: cleared a stale stop flag`, and `f` offers to clear it instead of refusing, which is the
+cheap way back to *actually, keep going*. A name disarmed on a tick is not started on that same
+tick either.
+
 A dead row with a red `✗ …` in the Bead/Phase column is a session that died on its own — most often
 a launcher that refused, and the line is the reason it printed, an implementer included. The view
 does not start that name again, however it is armed, until you press `s`; `RET` shows the whole

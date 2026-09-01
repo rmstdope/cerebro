@@ -1341,16 +1341,21 @@ is derived can start a second session over one this Emacs holds (ah-u3i's
 ;; ah-kgc: a stop flag is cleared when it retires an implementer, and when
 ;; the name is started again
 
-(ert-deftest cerebro-test/start-clears-a-stale-flag-for-an-implementer ()
+(ert-deftest cerebro-test/start-clears-a-stale-flag-for-every-kind ()
   "Starting a name is a statement that it should run, so any flag for it is
-stale by definition."
+stale by definition - and since cb-sxf a role\='s flag is read by the start
+path too, so `s' has to clear that one as well or the next tick would refuse
+to start what the navigator just started."
   (should (eq (cerebro--start-clears-flag-p
                 (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) t)
               t))
   (should (null (cerebro--start-clears-flag-p
                   (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) nil)))
+  (should (eq (cerebro--start-clears-flag-p
+                (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) t)
+              t))
   (should (null (cerebro--start-clears-flag-p
-                  (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) t))))
+                  (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) nil))))
 
 (ert-deftest cerebro-test/kill-action-plain-kill-for-idle ()
   (should (eq (cerebro--kill-action
@@ -1489,6 +1494,24 @@ retry (cb-ccl)."
                      (cerebro-test--agent "Xavier" "planner" 'interactive 'up t))
                     (concat "Xavier is running outside Emacs - no live view. "
                             "Use the terminal that started it.")))))
+
+(ert-deftest cerebro-test/placeholder-for-a-flagged-standby-row ()
+  "`RET' on a row told to finish must not promise a return the view will not
+make (cb-sxf) - ahead of both existing standby branches, and for both kinds."
+  (let ((cerebro--last-exit nil)
+        (expected (lambda (name)
+                    (concat name " is not running.\n"
+                            "You told it to finish, so the view will not start it again.\n"
+                            "Press s to start it now, k to leave it down."))))
+    (should (equal (cerebro--placeholder
+                    (cerebro-test--interactive "Beast" "planner" 'standby)
+                    nil nil t "→ buffer < 4" t)
+                   (funcall expected "Beast")))
+    ;; The retry line loses to it too.
+    (should (equal (cerebro--placeholder
+                    (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)
+                    120 3 nil nil t)
+                   (funcall expected "Cyclops")))))
 
 (ert-deftest cerebro-test/placeholder-for-a-standby-implementer-says-what-happens-next ()
   "`RET' on a dead builder's row: a row that says `standby' and nothing else
@@ -2379,6 +2402,21 @@ does what instead of writing a flag - the same answer a standby role gets."
   (should (eq (cerebro--finish-action (cerebro-test--supervised 'standby) nil)
               'standby))
   (should (eq (cerebro--finish-action (cerebro-test--supervised 'standby) t)
+              'offer-clear)))
+
+(ert-deftest cerebro-test/finish-action-offers-to-clear-a-flagged-standby-row ()
+  "A standby row under a flag is one the view will not start (cb-sxf), so `f'
+on it is the way back rather than a refusal - and the same for a role, whose
+flag the start path now reads too."
+  (should (eq (cerebro--finish-action (cerebro-test--supervised 'standby) t)
+              'offer-clear))
+  (should (eq (cerebro--finish-action
+               (cerebro-test--interactive "Beast" "planner" 'standby) t)
+              'offer-clear))
+  (should (eq (cerebro--finish-action (cerebro-test--supervised 'standby) nil)
+              'standby))
+  (should (eq (cerebro--finish-action
+               (cerebro-test--interactive "Beast" "planner" 'standby) nil)
               'standby)))
 
 (ert-deftest cerebro-test/supervise-nudges-a-question-nobody-answered ()
@@ -7288,6 +7326,30 @@ that keeps failing; a floor would only delay the first one."
   (should (equal (cerebro--retry-figure 61) "2m"))
   (should (equal (cerebro--retry-figure 600) "10m")))
 
+(ert-deftest cerebro-test/standby-label-names-a-flag-ahead-of-everything-else ()
+  "A row told to finish is not coming back at all, so a retry clock or a
+buffer rule on it is as false as a countdown (cb-sxf).  Every kind, and
+ahead of the backoff branch."
+  (let ((cerebro-retry-backoff '(0 30 120 600))
+        (beast (cerebro-test--interactive "Beast" "planner" 'standby))
+        (cyclops (cerebro-test--agent "Cyclops" "implementer" 'implementer 'standby)))
+    (should (equal (cerebro--standby-label beast (cerebro-test--context) t)
+                   "■ told to finish"))
+    (should (equal (cerebro--standby-label cyclops (cerebro-test--context) t)
+                   "■ told to finish"))
+    ;; And ahead of the retry clock, which without the flag is what this
+    ;; context reads.
+    (let ((backing-off (cerebro-test--context '(failed-starts . 3)
+                                              '(started-at . 999925.0))))
+      (should (equal (cerebro--standby-label cyclops backing-off t)
+                     "■ told to finish"))
+      (should (equal (cerebro--standby-label cyclops backing-off)
+                     "↻ retry in 45s, 3 failed")))
+    ;; Unflagged, every line is what it was.
+    (should (equal (cerebro--standby-label cyclops (cerebro-test--context)) "→ planned bead"))
+    (should (equal (cerebro--standby-label beast (cerebro-test--context))
+                   (cerebro--standby-label beast (cerebro-test--context) nil)))))
+
 (ert-deftest cerebro-test/standby-label-for-an-implementer ()
   "The For column of a dead builder's row: when it comes back, and how many
 starts have come to nothing - a launcher refused all morning reads as
@@ -8189,6 +8251,29 @@ otherwise a trigger would start it again five seconds later."
             (should (equal said
                            '("Xavier is on standby - press k to disarm it, or s to start it now")))))
       (delete-directory root t))))
+
+(ert-deftest cerebro-test/revert-labels-a-flagged-standby-row ()
+  "The flag reaching the rendered row: still `standby\=' in STATE, and the
+Bead/Phase column says the view will not start it (cb-sxf)."
+  (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () "/tmp/nowhere"))
+            ((symbol-function 'cerebro--roster) (lambda (_) '("Rogue")))
+            ((symbol-function 'cerebro--interactive-agents)
+             (lambda (_) '(("Psylocke" . "verifier"))))
+            ((symbol-function 'cerebro--fleet)
+             (lambda (_) '(("Psylocke" "verifier" interactive) ("Rogue" "implementer" implementer))))
+            ((symbol-function 'cerebro--gather-states) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--cached-system-processes) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--owned) (lambda () nil))
+            ((symbol-function 'cerebro--stop-flag-p)
+             (lambda (_root name) (equal name "Psylocke")))
+            ((symbol-function 'cerebro--beads-panel-buffer) (lambda () nil))
+            ((symbol-function 'tabulated-list-init-header) #'ignore))
+    (with-temp-buffer
+      (setq cerebro--armed '("Psylocke"))
+      (cerebro--revert)
+      (let ((row (nth 1 (assoc "Psylocke" tabulated-list-entries))))
+        (should (equal (aref row 2) "standby"))
+        (should (equal (aref row 4) "■ told to finish"))))))
 
 (ert-deftest cerebro-test/revert-restates-armed-roles-and-labels-them ()
   "The two ends of the render meeting: `cerebro--apply-standby' after the

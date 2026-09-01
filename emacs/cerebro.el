@@ -2273,8 +2273,12 @@ reason not to start a session, not a reason to start one on everything."
   (and ended-at
        (seq-filter (lambda (entry) (> (nth 2 entry) ended-at)) linked)))
 
-(defun cerebro--standby-label (agent context)
+(defun cerebro--standby-label (agent context &optional flagged)
   "Pure.  The Bead/Phase column of AGENT\='s standby row: what it is waiting for.
+
+FLAGGED is whether a stop flag exists for AGENT, and it answers ahead of
+everything else (cb-sxf): a row told to finish is not coming back at all, so
+a retry clock or a condition on it would be a promise the view will not keep.
 
 CONTEXT is `cerebro--trigger\='s.  A role whose trigger is a condition names
 the condition, since there is no time at which it becomes true; a role on a
@@ -2286,6 +2290,9 @@ floor that has half a minute left to run is not worth a different word."
   (let* ((role (cerebro-agent-role agent))
          (cadence (cdr (assoc role cerebro-cadence-triggers))))
     (cond
+     ;; Told to finish, and the start path reads that flag for every kind
+     ;; (cb-sxf): nothing below this line is true of such a row.
+     (flagged "■ told to finish")
      ;; While a start is backing off, the clock and the count come before the
      ;; role's own condition - for every kind, since cb-ccl.  It was an
      ;; implementer's line only, and Psylocke at 32 failed starts read
@@ -2399,12 +2406,18 @@ derived can start a second session over one this Emacs holds (ah-u3i's
    ((not (cerebro--alive-p agent)) 'launch)
    (t 'external)))
 
-(defun cerebro--start-clears-flag-p (agent flag-set)
-  "Whether starting AGENT should first remove its stop flag.
+(defun cerebro--start-clears-flag-p (_agent flag-set)
+  "Whether starting an agent should first remove its stop flag.
 
-Only an implementer has one; a flag on a name being started is stale by
-definition (ah-kgc): the navigator is saying it should run."
-  (and flag-set (eq (cerebro-agent-kind agent) 'implementer)))
+A flag on a name being started is stale by definition (ah-kgc): the
+navigator is saying it should run.  Every kind since cb-sxf - the start path
+reads a role\='s flag too now, so leaving one in place would have the next
+tick refuse to start what `s' just started.
+
+The agent argument is unused, and kept because this is the caller\='s shape
+(`cerebro-start\='): a one-argument predicate would be a caller change for
+nothing."
+  (and flag-set t))
 
 (defun cerebro--autostart-action (agent owned flagged)
   "What autostart should do for AGENT, given OWNED session names and FLAGGED.
@@ -2547,14 +2560,16 @@ once that bead is done)."
   (cond
    ((cerebro--duplicated-p agent) 'duplicate)
    ((not (eq (cerebro-agent-kind agent) 'implementer))
-    (cond ((eq (cerebro-agent-state agent) 'standby) 'standby)
+    (cond ((eq (cerebro-agent-state agent) 'standby)
+           (if flag-set 'offer-clear 'standby))
           ((not (cerebro--alive-p agent)) 'dead)
           ((cerebro-agent-external agent) 'external)
           (flag-set 'offer-clear)
           (t 'write-disarm)))
    ;; Ahead of the flag, because a standby implementer has neither a pass to
    ;; finish nor a session to stop, whatever is already on disk for it.
-   ((eq (cerebro-agent-state agent) 'standby) 'standby)
+   ((eq (cerebro-agent-state agent) 'standby)
+    (if flag-set 'offer-clear 'standby))
    (flag-set 'offer-clear)
    ((not (cerebro--alive-p agent)) 'dead)
    ((and (eq (cerebro-agent-state agent) 'idle)
@@ -2578,7 +2593,7 @@ is built from whatever agent is being shown, not from any one buffer.
 Cleared for a name by `cerebro--launch' the moment a new session for it is
 started, so a stale line never survives past the run that produced it.")
 
-(defun cerebro--placeholder (agent &optional retry-left failures roster-armed trigger-label)
+(defun cerebro--placeholder (agent &optional retry-left failures roster-armed trigger-label flagged)
   "The detail-window text for AGENT when it has no live view.
 
 A dead agent with a recorded abnormal exit (`cerebro--last-exit') shows the
@@ -2603,7 +2618,11 @@ word (cb-98u).  There is no kept buffer to show and nothing went wrong, so
 the plain line would leave the navigator to work out why a row that has
 never run says standby.  TRIGGER-LABEL is the row's own For column; empty
 for a role this view has no trigger rule for, which is a different sentence
-because `s' is then the only thing that starts it."
+because `s' is then the only thing that starts it.
+
+FLAGGED is whether a stop flag exists for AGENT, and it is answered ahead of
+both standby branches (cb-sxf): the view will not start a flagged name, so
+neither the retry line nor the roster-armed one is true of it."
   (let* ((name (cerebro-agent-name agent))
          (last (alist-get name cerebro--last-exit nil nil #'equal)))
     (cond
@@ -2614,6 +2633,10 @@ because `s' is then the only thing that starts it."
               (cerebro-agent-unverified-pid agent) name name))
      ((cerebro-agent-external agent)
       (format "%s is running outside Emacs - no live view. Use the terminal that started it."
+              name))
+     ((and (eq (cerebro-agent-state agent) 'standby) flagged)
+      (format (concat "%s is not running.\nYou told it to finish, so the view will not"
+                      " start it again.\nPress s to start it now, k to leave it down.")
               name))
      ((and (eq (cerebro-agent-state agent) 'standby)
            (eq (cerebro-agent-kind agent) 'implementer))
@@ -3451,7 +3474,10 @@ the row itself is the live figure."
                (cerebro--standby-label
                 agent (cerebro--agent-context
                        agent (cerebro--trigger-context (cerebro--repo-root) (current-time))))))
-         (text (cerebro--placeholder agent left failures roster-armed trigger-label))
+         ;; One read per `RET', not per tick - the same shape as the panel
+         ;; read above it (cb-sxf).
+         (flagged (cerebro--stop-flag-p (cerebro--repo-root) name))
+         (text (cerebro--placeholder agent left failures roster-armed trigger-label flagged))
          (buffer (get-buffer-create (cerebro--placeholder-buffer-name agent))))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
@@ -6204,6 +6230,13 @@ is where that is said."
     ;; them per row would read the bead panel eighteen times a render.
     (let* ((context (and (seq-some (lambda (a) (eq (cerebro-agent-state a) 'standby)) agents)
                          (cerebro--trigger-context repo-root now)))
+           ;; One read per agent, for both the label and the row below: the
+           ;; entries mapcar already needed it, so this is the same number of
+           ;; `file-exists-p' calls as before rather than one more per row.
+           (flags (mapcar (lambda (a)
+                            (cons (cerebro-agent-name a)
+                                  (cerebro--stop-flag-p repo-root (cerebro-agent-name a))))
+                          agents))
            (for-texts
             (mapcar (lambda (a)
                       (cons (cerebro-agent-name a)
@@ -6211,7 +6244,9 @@ is where that is said."
                              ((eq (cerebro-agent-state a) 'standby)
                               (and context
                                    (cerebro--standby-label
-                                    a (cerebro--agent-context a context))))
+                                    a (cerebro--agent-context a context)
+                                    (alist-get (cerebro-agent-name a) flags
+                                               nil nil #'equal))))
                              ((eq (cerebro-agent-state a) 'dead)
                               (cerebro--exit-line
                                (alist-get (cerebro-agent-name a) cerebro--last-exit
@@ -6239,7 +6274,8 @@ is where that is said."
                                              nil nil #'equal))
                             (standby (eq (cerebro-agent-state a) 'standby)))
                         (cerebro--entry a now
-                                        (cerebro--stop-flag-p repo-root (cerebro-agent-name a))
+                                        (alist-get (cerebro-agent-name a) flags
+                                                   nil nil #'equal)
                                         (nth 3 widths)
                                         (and standby text)
                                         (and (not standby) text))))

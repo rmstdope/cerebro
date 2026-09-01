@@ -675,7 +675,8 @@ Once every finding is answered:
 
 and wait for CI as *Waiting, without ending your run* describes — after first checking the head can
 merge, per *Merging*'s merge-state check, if anything was pushed since the PR opened. *Red CI* below
-stays in this same `ci` phase — a fix-and-push does not change what you are waiting on.
+returns every fix-and-push through the review loop; only after that review is complete does it return
+to `ci` and wait for checks on the reviewed head.
 
 **If three attempts for one head are unusable**: leave the PR open, record the attempts, and escalate
 by the hand-back block, worktree included, and end the pass.

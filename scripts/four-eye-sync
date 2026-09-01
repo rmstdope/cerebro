@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+#
+# four-eye-sync - do this repository's copies of the merge-review rule agree?
+#
+# The Four Eye Principle is the implementer's whole standing approval to merge, and until cb-m7u it
+# was written out twice - in the root `CLAUDE.md' and in `templates/consumer-CLAUDE.md' - with
+# nothing checking that the two agreed. They had already drifted: the root ends the rule with "That
+# is the whole standing approval, and it covers a planned bead only." and the template had never
+# carried that sentence. The rule now lives once, in `templates/four-eye-principle.md', and each
+# carrier wraps its copy in `<!-- four-eye:begin -->' / `<!-- four-eye:end -->'.
+#
+#   no arguments.
+#   stdout   one line per finding, or nothing at all when the copies agree:
+#              drifted: <carrier> (block differs from templates/four-eye-principle.md)
+#              unmarked: <carrier> (no four-eye:begin/end pair)
+#              missing: <carrier> (carrier file not found)
+#              missing: templates/four-eye-principle.md (the canonical block)
+#            paths relative to the repository root.
+#   exit 0   they agree.
+#   exit 1   at least one finding.
+#   exit 2   any argument at all.
+#   exit 3   the repository root could not be resolved, with a line on stderr saying so - never
+#            silence, and never 2, which a caller reads as its own usage mistake.
+#
+# THE CARRIER LIST IS A DECISION, not a scan - the shape `scripts/ci-needed''s skip list uses. A
+# consumer's own `CLAUDE.md' is theirs to edit and is never read here.
+#
+# THE CONTENT OF THE BLOCK IS DELIBERATELY NOT ASSERTED. That the copies agree is a fact about
+# files; that the rule says the right thing is a decision, and a check on prose content fails on the
+# day somebody changes their mind rather than the day something breaks (root `CLAUDE.md',
+# *Development practices*).
+#
+# It is a GATE predicate and must never join `launch-preflight''s hot path: a check that refuses
+# there is a fleet that cannot start.
+#
+# NOT under `tests/': the gate's suite loop is `tests/*.sh', and a script whose exit status is an
+# answer must not be picked up as a suite. Its suite is `tests/four-eye-sync.sh'.
+
+# Not -e: the answer IS the exit status, and a failed comparison inside the carrier loop must print
+# its finding rather than end the script. (`.cerebro/traps.md', "An advisory step can eat the exit
+# status that follows it".)
+set -uo pipefail
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: four-eye-sync" >&2
+  exit 2
+fi
+
+# -P: a logical spelling compares two names for one directory. The subject is the checkout this
+# script lives in - for a fixture, that is the fixture.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# Exit 3, not 2: a caller reading the header takes 2 as "I passed a bad argument", and a checkout
+# that is not where this script thought is a different thing entirely. It says so on stderr.
+if [[ -z "$ROOT" ]] || ! cd "$ROOT"; then
+  echo "four-eye-sync: cannot resolve the repository root from ${BASH_SOURCE[0]}" >&2
+  exit 3
+fi
+
+CANONICAL="templates/four-eye-principle.md"
+
+# The two documents in THIS repository that must state the rule. A consumer's own CLAUDE.md is
+# theirs to edit and is never read here.
+CARRIERS=(
+  CLAUDE.md                      # this repository is a consumer of itself; this IS its Four Eye section
+  templates/consumer-CLAUDE.md   # what a new consumer copies
+)
+
+# Without the canonical block there is nothing to compare against, and every carrier would report
+# `drifted:' as well - burying the one real fault.
+if [[ ! -f "$CANONICAL" ]]; then
+  echo "missing: $CANONICAL (the canonical block)"
+  exit 1
+fi
+
+# `$(<file)' strips trailing newlines but not leading blank lines, and the markers are surrounded by
+# blank lines on purpose: CommonMark ends an HTML block at a blank line, so a marker immediately
+# followed by prose swallows that prose into the comment. Both sides have their leading and trailing
+# EMPTY lines stripped, so those load-bearing blanks are never drift. A line of spaces is not an
+# empty line and is drift, deliberately: the comparison is otherwise byte-exact, and an invisible
+# difference that the checker forgives is one no reader can see either.
+strip_blanks() {
+  local s="$1"
+  while [[ $s == $'\n'* ]]; do s="${s#$'\n'}"; done
+  while [[ $s == *$'\n' ]]; do s="${s%$'\n'}"; done
+  printf '%s' "$s"
+}
+
+canonical="$(strip_blanks "$(<"$CANONICAL")")"
+
+findings=0
+
+for carrier in "${CARRIERS[@]}"; do
+  # Its own line rather than `unmarked:': a carrier that is gone has no markers to have lost, and
+  # saying it does sends a reader to grep a file that is not there.
+  if [[ ! -f "$carrier" ]]; then
+    echo "missing: $carrier (carrier file not found)"
+    findings=1
+    continue
+  fi
+
+  # Markers are matched on the whole trimmed line, so a mention of one inside prose is not one.
+  # Zero of either, more than one of either, or an end before a begin: there is no block to compare.
+  block=""
+  inside=0
+  begins=0
+  ends=0
+  out_of_order=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    if [[ "$trimmed" == "<!-- four-eye:begin -->" ]]; then
+      begins=$((begins + 1))
+      inside=1
+      continue
+    fi
+    if [[ "$trimmed" == "<!-- four-eye:end -->" ]]; then
+      ends=$((ends + 1))
+      [[ $inside -eq 1 ]] || out_of_order=1   # an end before any begin: never a usable pair
+      inside=0
+      continue
+    fi
+    if [[ $inside -eq 1 ]]; then
+      block+="$line"$'\n'
+    fi
+  done <"$carrier"
+
+  if [[ $begins -ne 1 || $ends -ne 1 || $out_of_order -eq 1 ]]; then
+    echo "unmarked: $carrier (no four-eye:begin/end pair)"
+    findings=1
+    continue
+  fi
+
+  if [[ "$(strip_blanks "$block")" != "$canonical" ]]; then
+    echo "drifted: $carrier (block differs from $CANONICAL)"
+    findings=1
+  fi
+done
+
+exit "$findings"

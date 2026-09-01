@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-m7u — round 2: every string as it will ship</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 62rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.4rem 0 .2rem; }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: .7rem .9rem; overflow-x: auto; margin: .4rem 0; white-space: pre-wrap; }
+  .prose { background:#fff; border:1px solid var(--line); border-left:3px solid #c8d1da;
+           border-radius:4px; padding:.7rem .9rem; margin:.4rem 0; font-size:14px; }
+  .v1 { border-left-color:#2f6f9f; background:#f3f8fc; }
+  .v2 { border-left-color:#9f6f2f; background:#fcf8f3; }
+  .note { color: var(--dim); font-size: 13.5px; }
+  .settled { color: var(--good); font-size:13.5px; }
+</style>
+</head>
+<body>
+<h1>cb-m7u round 2 — every string as it will ship</h1>
+<p class="lede">Chosen so far: <b>C</b> (canonical block + checker, and the three derived surfaces stop
+restating), block width <b>paragraphs 1–2</b> with the template gaining the missing sentence, the
+guide bullet rewritten as cost + pointer, and <code>agents/reviewer.md</code> naming the file rather
+than a heading. Nothing here is committed.</p>
+
+<h2>1. The markers, which ride into every consumer</h2>
+<p>The checker needs to find the block in both carriers, so the template must carry markers — and a
+consumer copies the template, so the markers land in <em>their</em> <code>CLAUDE.md</code> too. They
+are invisible in rendered Markdown and inert to an agent reading it raw.</p>
+<h3>Wording 1 — terse</h3>
+<pre class="prose v1">&lt;!-- four-eye:begin --&gt;
+Nothing merges unreviewed and nothing merges red.
+…
+&lt;!-- four-eye:end --&gt;</pre>
+<h3>Wording 2 — says why it is there</h3>
+<pre class="prose v2">&lt;!-- four-eye:begin — cerebro's canonical wording; edit templates/four-eye-principle.md --&gt;
+Nothing merges unreviewed and nothing merges red.
+…
+&lt;!-- four-eye:end --&gt;</pre>
+<p class="note">Wording 2's second half is a lie in a consumer's checkout, where that path is
+<code>.claude/cerebro/templates/four-eye-principle.md</code> and editing it changes nothing about
+their own rule. Wording 1 says nothing and cannot be wrong.</p>
+
+<h2>2. <code>docs/agent-workflow.md</code> — the bullet, exactly</h2>
+<h3>Wording 1</h3>
+<div class="prose v1"><b>Usually one review per bead, sometimes more.</b> A review covers one head, so
+an unusable attempt or a later push buys another round; the rule itself is the <i>Four Eye
+Principle</i> section of the root <code>CLAUDE.md</code>, which is the only place it is stated. What
+it costs in practice is a second Opus call on the beads where CI went red or a retrospective was
+written.</div>
+<h3>Wording 2 — leads with the number</h3>
+<div class="prose v2"><b>One review on most beads, two or three on the rest.</b> A review covers the
+head it was given, so a red CI fix, a retrospective commit or a rebase buys another round. The rule
+lives in the root <code>CLAUDE.md</code>'s <i>Four Eye Principle</i> and nowhere else; what it costs
+here is one extra Opus call on the beads that needed a second push.</div>
+
+<h2>3. <code>skills/implement-bead/SKILL.md</code> — the authority sentence</h2>
+<h3>Wording 1</h3>
+<div class="prose v1">…the standing approval you merge on comes from the consumer's root
+<code>CLAUDE.md</code> and its <i>Four Eye Principle</i> section, which is where the rule is stated
+and the only place it is stated. Everything below is how you satisfy it, not what it says.</div>
+<h3>Wording 2 — keeps the existing register</h3>
+<div class="prose v2">…the standing approval you merge on rests on the consumer's root
+<code>CLAUDE.md</code> and its <i>Four Eye Principle</i>, because the rule is there and nowhere else.
+Everything below is how you satisfy it.</div>
+
+<h2>4. <code>agents/reviewer.md</code> — the cross-reference (settled shape, exact words)</h2>
+<div class="prose v1">…the review sub-agent every implementer spawns on its own pull request
+(<code>skills/implement-bead</code> is where that is described), which is given this file as its
+checklist.</div>
+
+<h2>5. The checker's output — every state</h2>
+<pre>$ scripts/four-eye-sync          <span class="note"># whole</span>
+$ echo $?
+0
+
+$ scripts/four-eye-sync          <span class="note"># a carrier's block has drifted</span>
+drifted: templates/consumer-CLAUDE.md (block differs from templates/four-eye-principle.md)
+$ echo $?
+1
+
+$ scripts/four-eye-sync          <span class="note"># a carrier lost a marker</span>
+unmarked: CLAUDE.md (no four-eye:begin/end pair)
+$ echo $?
+1
+
+$ scripts/four-eye-sync          <span class="note"># the source itself is gone</span>
+missing: templates/four-eye-principle.md (the canonical block)
+$ echo $?
+1
+
+$ scripts/four-eye-sync --help   <span class="note"># any argument at all</span>
+usage: four-eye-sync
+$ echo $?
+2</pre>
+<p class="settled">Same shape as <code>scripts/tracked-links</code>: no arguments, one line per
+finding on stdout, exit 1 when there is one, exit 2 for usage. Its suite
+<code>tests/four-eye-sync.sh</code> ends by asserting <b>this repository's own copies agree</b>, the
+way <code>tests/tracked-links.sh</code> does.</p>
+
+<h2>6. Deliberately unhandled</h2>
+<p class="note">An <b>empty</b> canonical file is not a finding: a carrier whose marked region is
+also empty matches it, and the gate would be asserting that the policy is non-empty — which is a
+grep for prose content, and this repository does not do that. A consumer's own
+<code>CLAUDE.md</code> is never read by this script; only the two files in this repository are.</p>
+</body></html>

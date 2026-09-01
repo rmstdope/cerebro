@@ -19,6 +19,8 @@
 #   exit 0   they agree.
 #   exit 1   at least one finding.
 #   exit 2   any argument at all.
+#   exit 3   the repository root could not be resolved, with a line on stderr saying so - never
+#            silence, and never 2, which a caller reads as its own usage mistake.
 #
 # THE CARRIER LIST IS A DECISION, not a scan - the shape `scripts/ci-needed''s skip list uses. A
 # consumer's own `CLAUDE.md' is theirs to edit and is never read here.
@@ -47,7 +49,12 @@ fi
 # -P: a logical spelling compares two names for one directory. The subject is the checkout this
 # script lives in - for a fixture, that is the fixture.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-cd "$ROOT" || exit 2
+# Exit 3, not 2: a caller reading the header takes 2 as "I passed a bad argument", and a checkout
+# that is not where this script thought is a different thing entirely. It says so on stderr.
+if [[ -z "$ROOT" ]] || ! cd "$ROOT"; then
+  echo "four-eye-sync: cannot resolve the repository root from ${BASH_SOURCE[0]}" >&2
+  exit 3
+fi
 
 CANONICAL="templates/four-eye-principle.md"
 

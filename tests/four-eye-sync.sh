@@ -113,6 +113,18 @@ run "$fix/scripts/four-eye-sync"
 [[ -z "$out" ]] || fail "extra blank lines beside the markers must print nothing, got: $out"
 pass "blank lines beside the markers are not drift"
 
+# ... and a line that only looks blank is drift, deliberately: the comparison is otherwise
+# byte-exact, and an invisible difference the checker forgives is one no reader can see either.
+# Pinned so a later simplification of `strip_blanks' cannot reverse the decision silently.
+
+fix="$(new_fixture)"
+perl -0pi -e 's/\n\n<!-- four-eye:end -->/\n \n<!-- four-eye:end -->/' "$fix/CLAUDE.md"
+run "$fix/scripts/four-eye-sync"
+[[ $status -eq 1 ]] || fail "a whitespace-only line must be drift, got $status: $out"
+[[ "$out" == "drifted: CLAUDE.md (block differs from templates/four-eye-principle.md)" ]] \
+  || fail "expected exactly the drifted: line, got: $out"
+pass "a line of spaces beside a marker is drift, not a blank line"
+
 # --- every malformed marker pair is one `unmarked:' line ------------------------------------------
 #
 # A carrier with no usable pair is not drift: there is no block to compare, and saying `drifted:'

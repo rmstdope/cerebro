@@ -4974,7 +4974,7 @@ may no longer own."
                  (format "could not reconcile ownership (%s)"
                          (error-message-string error))))
      (cerebro--apply-supervision-mode-line cerebro--supervision)
-     ;; Through the same once-per-distinct-message gate as every other lock error, and NOT a bare
+     ;; Through the same once-per-distinct-message gate a lock error goes through, and NOT a bare
      ;; `cerebro--report-error': this branch exists for a condition that PERSISTS, so reporting it
      ;; per tick would put seventeen thousand lines a day into the log CLAUDE.md calls the short
      ;; one and the one to be pointed at, and blank the echo area every five seconds while it did.

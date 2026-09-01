@@ -8798,6 +8798,7 @@ this, and that is what the reviewer looks for."
                   (read-only invalid "rat")
                   (read-only owned-by tui)
                   (read-only lock-error "bound elsewhere")
+                  (read-only reconcile-failed "could not reconcile ownership (x)")
                   (read-only not-owned)))
     (should-not (cerebro--supervision-may-act-p mode))
     (should-not (cerebro--supervision-may-end-p mode))
@@ -8940,7 +8941,7 @@ fails if the reporting call is removed from it."
       (delete-directory tmp t))))
 
 (ert-deftest cerebro-test/a-reconciliation-that-signals-reports-once-not-per-tick ()
-  "The fail-closed branch is throttled like every other lock error.
+  "The fail-closed branch is throttled the way a lock error is.
 
 It exists for a condition that persists, so reporting per tick would put
 seventeen thousand lines a day into `errors.jsonl\=' - the log CLAUDE.md calls

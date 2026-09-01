@@ -1,0 +1,134 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+</style>
+<meta charset="utf-8"><title>cb-kcs.4.1 — the agreed surface</title>
+
+<h1>cb-kcs.4.1 — the surface the navigator approved, 2026-09-01</h1>
+<p class="lede">Three rounds. This file is the specification for how the Ratatui fleet view shows an
+agent it will start again, and for every sentence it says while starting one. Where this file and the
+bead's plan disagree, this file is right. It follows <code>docs/ui/cb-kcs.3-lifecycle-from-state.html</code>,
+which specified the sessions this view <b>ends</b>; this one specifies the ones it <b>starts</b>.</p>
+
+<h2>1. A row the view will bring back says what it is waiting for</h2>
+<p class="lede">A standby row is an agent with no session that a trigger will start again. It has no
+bead and no verdict, so its BEAD column is free, and it spends it on the condition. Two alternatives
+were drawn and declined: the word <code>standby</code> alone with a whole sentence in the Session pane
+(a keystroke per agent to learn why any of them is asleep), and the condition in the STATE column
+instead of the word (STATE stops being a closed vocabulary of state words).</p>
+
+<div class="screen"><pre>Cerebro — supervising <span class="dim">| Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | g refresh | q quit</span>
+<span class="b">┌ Fleet ───────────────────────────────┐</span><span class="dim">┌ Xavier — standby ─────────────────────────────────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">  AGENT       STATE       BEAD        </span><span class="b">│</span><span class="dim">│</span>  … the last pass's screen …                                                   <span class="dim">│</span>
+<span class="b">│</span><span class="g">●</span> Beast       plan        cb-kcs.4.1  <span class="b">│</span><span class="dim">│</span>                                                                               <span class="dim">│</span>
+<span class="b">│</span><span class="sel"><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>  </span><span class="b">│</span><span class="dim">│</span> Xavier finished its pass; the view ended it.                                   <span class="dim">│</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-kcs.2.2  <span class="b">│</span><span class="dim">│</span>                                                                               <span class="dim">│</span>
+<span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">→ planned</span>   <span class="b">│</span><span class="dim">│</span> <span class="dim">End of retained scrollback. Up/Down scroll while focused.</span>                      <span class="dim">│</span>
+<span class="b">│</span><span class="b">◌</span> Psylocke    <span class="b">standby</span>     <span class="b">→ merged</span>    <span class="b">│</span><span class="dim">│</span>                                                                               <span class="dim">│</span>
+<span class="b">│</span><span class="b">◌</span> Cerebro     <span class="b">standby</span>     <span class="b">→ unranked</span>  <span class="b">│</span><span class="dim">│</span>                                                                               <span class="dim">│</span>
+<span class="b">│</span><span class="d">○</span> Storm       <span class="d">dead</span>        <span class="e">✗ refused</span>   <span class="b">│</span><span class="dim">│</span>                                                                               <span class="dim">│</span>
+<span class="b">└──────────────────────────────────────┘</span><span class="dim">└───────────────────────────────────────────────────────────────────────────────┘</span></pre></div>
+
+<h3>The whole vocabulary, and it is closed</h3>
+<div class="screen"><pre>  <span class="b">→ buffer&lt;N</span>    a planner: the planned, unclaimed buffer is below N
+  <span class="b">→ planned</span>     an implementer: a planned, unclaimed bead
+  <span class="b">→ merged</span>      the verifier: a bead merged and not yet verified
+  <span class="b">→ unranked</span>    the orchestrator: a bead nobody has ranked</pre></div>
+
+<p class="note"><b>The number stays in the planner's label.</b> <code>→ buffer&lt;4</code> is exactly ten
+cells, which is BEAD's floor; a ten-implementer fleet wants eleven, and the column takes them — it
+already sizes itself to its widest cell and only falls back to the floor when the pane cannot spare
+them. Dropping the number for a label that never grows was declined: the number is the part that
+changes.</p>
+
+<p class="note"><b>A verdict and a condition never appear on one row.</b> A name whose last session
+ended abnormally is not restated as standby at all — it stays <code>dead</code> and keeps the red
+verdict of <code>docs/ui/cb-kcs.3-lifecycle-from-state.html</code>. So a row carries a bead, or a
+verdict, or a condition, and never two of them.</p>
+
+<p class="note"><b>Only these four roles are armed.</b> The roles whose work arrives from outside the
+fleet — an issue, somebody else's pull request, a debt sweep — are judged by a reader this view does
+not have yet. Until it does, they are not armed and their rows read <code>dead</code>: nothing on
+screen promises a return the view cannot perform, which is the rule the previous bead set for
+itself.</p>
+
+<h2>2. The Session pane of a standby row says standby too</h2>
+<p class="lede">The pane keeps the retained screen of the last pass, exactly as before. Only its title
+changes, so the row and the pane use one word for one agent. A name this view has never run has no
+transcript and keeps the ordinary placeholder.</p>
+<div class="screen"><pre><span class="dim">┌ Xavier — standby ────────────────────────────────┐</span>
+<span class="dim">│</span>  … the last pass's screen …                      <span class="dim">│</span>
+<span class="dim">│</span>                                                  <span class="dim">│</span>
+<span class="dim">│</span> Xavier finished its pass; the view ended it.     <span class="dim">│</span>
+<span class="dim">│</span>                                                  <span class="dim">│</span>
+<span class="dim">│</span> <span class="dim">End of retained scrollback. Up/Down scroll …</span>      <span class="dim">│</span>
+<span class="dim">└──────────────────────────────────────────────────┘</span></pre></div>
+
+<h2>3. Every start is announced, and says why</h2>
+<p class="lede">A start is the fourth thing this view does unattended, after the end, the retire and
+the nudge the previous bead announced. It takes the same gold notice slot, cleared by the next
+keystroke like every notice, and two events in one tick means only the second is read — the same cost,
+accepted again. The reason is the trigger's own phrase, quoted from <code>M-x cerebro</code> so a
+navigator moving between the two views reads one vocabulary.</p>
+<div class="screen"><pre>Cerebro — supervising <span class="y">| Started Xavier — P0 cb-9zz unplanned.</span> <span class="dim">| g refresh | q quit</span>
+Cerebro — supervising <span class="y">| Started Beast — buffer 2 of 4.</span> <span class="dim">| g refresh | q quit</span>
+Cerebro — supervising <span class="y">| Started Rogue — 3 planned, unclaimed.</span> <span class="dim">| g refresh | q quit</span>
+Cerebro — supervising <span class="y">| Started Psylocke — 2 merged, unverified.</span> <span class="dim">| g refresh | q quit</span>
+Cerebro — supervising <span class="y">| Started Psylocke — 1 stale verdict.</span> <span class="dim">| g refresh | q quit</span>
+Cerebro — supervising <span class="y">| Started Cerebro — 4 unranked.</span> <span class="dim">| g refresh | q quit</span></pre></div>
+
+<h3>And as the view comes up, one line about both halves of the roster's declaration</h3>
+<div class="screen"><pre>Cerebro — supervising <span class="y">| Started Cyclops and Rogue; Xavier, Beast, Psylocke and Cerebro are on standby.</span> <span class="dim">| q quit</span></pre></div>
+<p class="note">Both halves, because the declaration did both and only one of them is otherwise
+audible. It is long, and on a narrow header it shortens the key hints the way any long notice does.
+Naming only the started agents, and saying nothing at all, were both declined: the second makes an
+autostart that was refused look like one that never happened.</p>
+
+<h2>4. Two rules hold a start back, and neither is visible</h2>
+<p class="lede">Role-start spacing keeps the second planner thirty seconds behind the first, and the
+unchanged-work guard refuses a trigger that names exactly what this role's own last pass was started
+for. Neither is a failure and neither shows: the row keeps its condition, and nothing is said. That is
+what <code>M-x cerebro</code> does, and the only trace either leaves is a log line this crate does not
+write yet. Marking a held row was drawn and declined — a fifth vocabulary entry and a countdown that
+redraws every tick, for a state that is normal.</p>
+<div class="screen"><pre><span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>  <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Beast       <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>  <span class="b">│</span>   <span class="dim">held 24s more by spacing — no sign of it</span></pre></div>
+
+<h2>5. <b class="k">k</b> on a standby row disarms it; <b class="k">f</b> means what it always means</h2>
+<p class="lede">There is nothing running to kill, so <b class="k">k</b> stops the view bringing the agent
+back. The prompt is the one approved with the previous bead, in the shape every kill prompt has, where
+the second sentence is the consequence the navigator might not have in mind.</p>
+<div class="screen"><pre>Cerebro — supervising <span class="y">| Disarm Xavier? The view will stop bringing it back.  y / n</span> <span class="dim">| q quit</span>
+Cerebro — supervising <span class="y">| Xavier is disarmed; the view will not bring it back.</span> <span class="dim">| g refresh | q quit</span></pre></div>
+<div class="screen"><pre><span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>  <span class="b">│</span>  <span class="dim">before</span>
+<span class="b">│</span><span class="d">○</span> Xavier      <span class="d">dead</span>                    <span class="b">│</span>  <span class="dim">after</span></pre></div>
+<p class="note"><b><b class="k">f</b> writes the stop flag, on a standby row as on any other</b>, and
+says <code>Xavier will finish after this pass.</code> The flag is what a start checks before it runs,
+so a flagged standby name is never started; pressing <b class="k">f</b> again clears the flag it set
+and says <code>Xavier will keep going.</code> One rule for one key at every state — refusing it here,
+or making it disarm as well, would give <b class="k">f</b> two meanings and take one from
+<b class="k">k</b>.</p>
+
+<h2>6. A start that fails parks the row, and only <b class="k">s</b> brings it back</h2>
+<p class="lede">Any abnormal exit — a launcher that refused, a session that crashed silently — takes the
+name out of the armed set, so the row goes grey and keeps its red verdict rather than returning to
+standby. Nothing retries it. That is deliberately stricter than <code>M-x cerebro</code>, which sends a
+silent crash back to standby and relies on a backoff to space the retries out; that backoff is the
+next bead, and without it a silently crashing agent would be relaunched every five seconds.</p>
+<div class="screen"><pre><span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>  <span class="b">│</span>  <span class="dim">before</span>
+<span class="b">│</span><span class="d">○</span> Xavier      <span class="d">dead</span>        <span class="e">✗ refused</span>   <span class="b">│</span>  <span class="dim">after: not armed, not retried</span></pre></div>
+
+<h2>7. A view handing supervision over disarms as it ends</h2>
+<p class="lede">A draining view keeps the sessions it already hosts and starts nothing new. When one of
+those passes ends, the name leaves the armed set with it, so the row goes grey rather than showing a
+blue dotted circle this view will never act on.</p>
+<div class="screen"><pre>Cerebro — draining <span class="dim">| 1 live agent</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-kcs.2.2  <span class="b">│</span>  <span class="dim">still hosted here</span>
+<span class="b">│</span><span class="d">○</span> Rogue       <span class="d">dead</span>                    <span class="b">│</span>  <span class="dim">its pass ended: disarmed, not standby</span></pre></div>

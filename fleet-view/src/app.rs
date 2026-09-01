@@ -693,6 +693,7 @@ impl Worker<WorkBuckets> {
     pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
         Self::spawn_reader(move || read_work(&paths, &programs))
     }
+
 }
 
 impl Worker<Result<SupervisorKind, String>> {

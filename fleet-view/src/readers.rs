@@ -25,6 +25,13 @@ use crate::model::{
 /// screen saying `refreshing...` forever: the request is in flight, so no later tick can replace
 /// it, and nothing on screen says anything is wrong. Five seconds is far longer than either
 /// program has ever taken and short enough that the next five-second tick is the recovery.
+/// The wall-clock bound every reader puts on its child.
+///
+/// Five seconds, and deliberately kept there: the measurement that produced
+/// `readers::tests::TEST_TIMEOUT` is also evidence that five seconds is thin on a loaded
+/// developer machine, so a fleet building in its worktrees will show `Unavailable`/`Stale` panes
+/// while it does. That is the designed recovery — the next tick retries — and a longer bound
+/// would trade a visible, self-healing pane for a screen that sits on `refreshing...` instead.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Roots this crate reads from, supplied by the launcher (`cb-vyp.2`); this child does not
@@ -180,7 +187,7 @@ pub fn read_roster(paths: &ReaderPaths) -> Result<Vec<RosterEntry>, ReadError> {
 /// already has, and for the mirror of its reason: a test proves the timeout path in milliseconds,
 /// and a test that wants the *reader* rather than the bound gives itself room the machine cannot
 /// take away. See the tests' `TEST_TIMEOUT`.
-pub(crate) fn read_roster_with_timeout(
+fn read_roster_with_timeout(
     paths: &ReaderPaths,
     timeout: Duration,
 ) -> Result<Vec<RosterEntry>, ReadError> {
@@ -212,7 +219,7 @@ pub fn read_configured_supervisor(
 
 /// `read_configured_supervisor`, with the wall-clock bound as a parameter. See
 /// `read_roster_with_timeout`.
-pub(crate) fn read_configured_supervisor_with_timeout(
+fn read_configured_supervisor_with_timeout(
     paths: &ReaderPaths,
     timeout: Duration,
 ) -> Result<Result<SupervisorKind, String>, ReadError> {
@@ -286,7 +293,7 @@ pub fn read_processes(programs: &Programs) -> Result<Vec<ProcessRow>, ReadError>
 }
 
 /// `read_processes`, with the wall-clock bound as a parameter. See `read_roster_with_timeout`.
-pub(crate) fn read_processes_with_timeout(
+fn read_processes_with_timeout(
     programs: &Programs,
     timeout: Duration,
 ) -> Result<Vec<ProcessRow>, ReadError> {
@@ -408,7 +415,7 @@ mod tests {
     /// test that is about the *bound* keeps passing its own tiny value. Production is untouched:
     /// `read_roster`, `read_processes`, `read_beads`, `read_work` and `read_fleet` still bound
     /// their children at `COMMAND_TIMEOUT`, which is the five seconds `CLAUDE.md` documents.
-    const TEST_TIMEOUT: Duration = Duration::from_secs(60);
+    pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(60);
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     fn repo_root() -> PathBuf {
@@ -434,9 +441,15 @@ mod tests {
     ///
     /// The retry is on the *error*, not on the operation: a genuine spawn failure still fails,
     /// and a test whose fixture sleeps is never re-run, because a timeout is not this error.
+    /// How long a *persistent* `ETXTBSY` is retried before it is reported. A different bound from
+    /// `TEST_TIMEOUT` — that one is how long a fixture may take, this is how long a transient may
+    /// last — and they are named apart so that tuning one cannot silently move the other. With
+    /// fifteen call sites, a genuinely stuck fixture costs this much each.
+    const TEXT_BUSY_RETRY_WINDOW: Duration = Duration::from_secs(10);
+
     fn retry_if_text_busy<T>(mut call: impl FnMut() -> Result<T, ReadError>) -> Result<T, ReadError> {
         const TEXT_FILE_BUSY: &str = "os error 26";
-        let deadline = std::time::Instant::now() + TEST_TIMEOUT;
+        let deadline = std::time::Instant::now() + TEXT_BUSY_RETRY_WINDOW;
         loop {
             match call() {
                 Err(ReadError::Spawn { message, .. })

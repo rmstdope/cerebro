@@ -17,7 +17,7 @@ use ratatui::text::{Line, Span};
 
 use crate::model::{AgentKind, FleetRow, RowState};
 use crate::readers::{ReadError, ReaderPaths};
-use crate::session::SessionHost;
+use crate::session::{Ended, SessionHost};
 use crate::supervisor::SupervisionMode;
 
 /// `<shared root>/.cerebro/state` - where both contract files live, in the checkout every
@@ -171,6 +171,49 @@ fn end_decision(agent: &Supervised<'_>) -> Option<Supervision> {
         return Some(Supervision::Retire);
     }
     matches!(agent.stood, Some(stood) if stood >= END_GRACE_SECONDS).then_some(Supervision::End)
+}
+
+/// What is known about a name's last abnormal exit. `None` for every name that has not had one.
+///
+/// The port of `cerebro--last-exit` (`emacs/cerebro.el:2565-2579`), less its `:line` and
+/// `:gave-up`: the sentence lives on the retained screen this crate already keeps, and giving up
+/// is cb-kcs.4's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LastExit {
+    /// The launcher refused - exit status 2, which is `scripts/launch-preflight`'s status on all
+    /// ten of its refusal paths and `scripts/launch`'s for a name already running. Everything
+    /// after that is an `exec` of the agent CLI, so no other status can be the launcher's.
+    Refused,
+    /// Any other non-zero status.
+    Code(u32),
+}
+
+/// The record an `Ended` leaves, or `None` when nothing went wrong.
+///
+/// A silent death still gets its code (the navigator's choice, Q2.1): there is no `standby` row
+/// in this view, so a blank would make a crashed agent read exactly like one nobody has ever
+/// started - which is the confusion the verdict column exists to end. So this never asks whether
+/// the child printed anything.
+pub fn classify_exit(ended: Ended) -> Option<LastExit> {
+    match ended {
+        Ended::Status(0) => None,
+        Ended::Status(2) => Some(LastExit::Refused),
+        Ended::Status(status) => Some(LastExit::Code(status)),
+        // Both are this view's own doing, and neither is a verdict about the agent.
+        Ended::Signal(_) | Ended::ByView => None,
+    }
+}
+
+/// The BEAD column's contents for a row that is not running, or nothing.
+///
+/// Ten cells at most, which is the column's floor and so its width at every terminal size:
+/// `✗ code 137` is exactly ten. `✗` is one char and one cell, so this is safe for the `char`-
+/// counting `pad` the column already uses, and a status above 999 truncates like any other cell.
+pub fn verdict(exit: LastExit) -> String {
+    match exit {
+        LastExit::Refused => "✗ refused".to_string(),
+        LastExit::Code(code) => format!("✗ code {code}"),
+    }
 }
 
 /// Everything the three decisions read, and nothing else.
@@ -387,6 +430,21 @@ pub fn start(
 mod tests {
     use super::*;
     use crate::supervisor::ReadOnlyReason;
+
+    #[test]
+    fn a_verdict_names_a_refusal_a_code_or_nothing() {
+        assert_eq!(classify_exit(Ended::Status(0)), None);
+        assert_eq!(classify_exit(Ended::Status(2)), Some(LastExit::Refused));
+        assert_eq!(classify_exit(Ended::Status(137)), Some(LastExit::Code(137)));
+        // This view's own doing, both of them, and neither is a verdict about the agent.
+        assert_eq!(classify_exit(Ended::Signal(9)), None);
+        assert_eq!(classify_exit(Ended::ByView), None);
+
+        assert_eq!(verdict(LastExit::Refused), "✗ refused");
+        assert_eq!(verdict(LastExit::Code(137)), "✗ code 137");
+        // Exactly the column's floor, in chars and in cells: it must never need truncating.
+        assert_eq!(verdict(LastExit::Code(137)).chars().count(), 10);
+    }
 
     // --- the shared supervision table -----------------------------------------------------------
 

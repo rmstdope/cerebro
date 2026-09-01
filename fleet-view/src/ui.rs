@@ -18,6 +18,7 @@
 //! reader's normalized model, and inventing one would show supervisor intent as observed fact.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use ratatui::layout::{Constraint, Layout, Position, Rect};
@@ -27,6 +28,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
+use crate::lifecycle::LastExit;
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::app::{App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, Prompt};
 use crate::lifecycle;
@@ -779,7 +781,7 @@ fn fleet_document(
     let columns = columns(rows, width);
     let inner_width = (width as usize).saturating_sub(2);
     body.iter()
-        .map(|entry| fleet_body_line(entry, rows, &columns, inner_width, now, selected))
+        .map(|entry| fleet_body_line(entry, rows, &columns, inner_width, now, selected, &app.exits))
         .collect()
 }
 
@@ -792,6 +794,7 @@ fn fleet_body_line(
     inner_width: usize,
     now: DateTime<Utc>,
     selected: Option<usize>,
+    exits: &BTreeMap<String, LastExit>,
 ) -> Line<'static> {
     match entry {
         FleetBodyLine::Loading => Line::from(Span::styled("Loading fleet...", dim())),
@@ -810,7 +813,8 @@ fn fleet_body_line(
         )),
         FleetBodyLine::Heading => heading(columns),
         FleetBodyLine::Row(index) => {
-            let mut line = row_line(&rows[*index], now, columns);
+            let row = &rows[*index];
+            let mut line = row_line(row, now, columns, exits.get(&row.name).copied());
             if selected == Some(*index) {
                 // Padded across the pane's whole inner width so the highlight is a band rather
                 // than a ragged one. A Line-level style sits BENEATH each span's own, so the row
@@ -1187,7 +1191,12 @@ fn emphasized(style: Style, attention: bool) -> Style {
     }
 }
 
-fn row_line(row: &FleetRow, now: DateTime<Utc>, columns: &Columns) -> Line<'static> {
+fn row_line(
+    row: &FleetRow,
+    now: DateTime<Utc>,
+    columns: &Columns,
+    exit: Option<LastExit>,
+) -> Line<'static> {
     // Bold is the row-level signal, and it is spent on exactly one state: an agent waiting for an
     // answer from the navigator (`cerebro--wants-attention-p`).
     let attention = row.state == RowState::Asking;
@@ -1210,10 +1219,20 @@ fn row_line(row: &FleetRow, now: DateTime<Utc>, columns: &Columns) -> Line<'stat
         ));
     }
     spans.extend(state_spans(row, columns, invalid, attention));
-    spans.push(Span::styled(
-        pad(row.bead.as_deref().unwrap_or(""), columns.bead),
-        emphasized(Style::default(), attention),
-    ));
+    // The BEAD column carries a bead id or a verdict and never both: an agent with a bead in
+    // flight is not one that has exited. The verdict is red on a row that is otherwise dim, and a
+    // span of its own, so the selection band sits beneath it and the colour survives being
+    // selected - the rule the state glyph already follows.
+    match exit {
+        Some(exit) => spans.push(Span::styled(
+            pad(&crate::lifecycle::verdict(exit), columns.bead),
+            emphasized(Style::default().fg(RED), attention),
+        )),
+        None => spans.push(Span::styled(
+            pad(row.bead.as_deref().unwrap_or(""), columns.bead),
+            emphasized(Style::default(), attention),
+        )),
+    }
     if columns.wide {
         spans.push(Span::styled(
             for_column(row, now),
@@ -1401,6 +1420,61 @@ mod tests {
             .unwrap_or_else(|| {
                 panic!("no line contains {needle:?}; screen was:\n{}", rendered.join("\n"))
             })
+    }
+
+    /// A row that is not running carries WHY in the BEAD column, in red - the navigator's choice
+    /// (Q1, variant C): one line per agent at every width, so a nineteen-name roster still fits
+    /// and a bad morning is a column you can read down, and a fleet where three things went wrong
+    /// never looks identical to a fleet nobody started.
+    #[test]
+    fn a_dead_row_carries_its_verdict_in_the_bead_column() {
+        for (width, height) in [(120u16, 24u16), (80, 30)] {
+            let mut app = App::default();
+            app.finish_refresh(
+                Ok(vec![
+                    row("Storm", "implementer", RowState::Dead),
+                    row("Rogue", "implementer", RowState::Dead),
+                    row("Gambit", "implementer", RowState::Dead),
+                ]),
+                now(),
+            );
+            app.set_exits(
+                [
+                    ("Storm".to_string(), LastExit::Refused),
+                    ("Rogue".to_string(), LastExit::Code(137)),
+                ]
+                .into_iter()
+                .collect(),
+            );
+            app.selected = Some("Storm".to_string());
+
+            let buffer = render(&app, width, height);
+            let rendered = body(&buffer);
+            assert!(
+                line_with(&rendered, "Storm").contains("✗ refused"),
+                "at {width}: {rendered:?}"
+            );
+            assert!(
+                line_with(&rendered, "Rogue").contains("✗ code 137"),
+                "at {width}: {rendered:?}"
+            );
+            // A name with no abnormal exit says nothing at all: a blank BEAD column is what
+            // "nobody has started it" looks like, and that is the truth for this one.
+            assert!(
+                !line_with(&rendered, "Gambit").contains('✗'),
+                "at {width}: {rendered:?}"
+            );
+
+            // Red, and its own span, so the selection band sits BENEATH it - the rule the state
+            // glyph already follows.
+            let verdict_cell = style_of(&buffer, "✗");
+            assert_eq!(verdict_cell.fg, Some(RED), "at {width}");
+            assert_eq!(
+                verdict_cell.bg,
+                Some(SELECTED_BG),
+                "the selected row's verdict keeps its red under the band, at {width}"
+            );
+        }
     }
 
     /// The style of the first cell whose symbol is NEEDLE.

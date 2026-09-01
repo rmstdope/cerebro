@@ -7,7 +7,7 @@
 //! the Work pane's lines, which is what keeps `ui::draw` pure while a child writes continuously
 //! into a parser on another thread.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
@@ -610,6 +610,10 @@ pub struct SessionHost {
     /// this over whatever the pty crate says the status was, because this view is the one that
     /// stopped the child - and 0.9 renders a terminating signal as a NAME rather than a number.
     ending: HashMap<String, Deliberate>,
+    /// Each name's last abnormal exit, kept by the host because the host is what reaps. Cleared
+    /// by a start, exactly as a retained pass is: a verdict that outlived the run that produced
+    /// it would sit on a row whose session is perfectly healthy.
+    exits: BTreeMap<String, crate::lifecycle::LastExit>,
 }
 
 impl SessionHost {
@@ -626,6 +630,7 @@ impl SessionHost {
         self.retained.remove(name);
         self.refused.remove(name);
         self.ending.remove(name);
+        self.exits.remove(name);
         self.live.insert(name.to_string(), session);
     }
 
@@ -664,6 +669,16 @@ impl SessionHost {
         self.ending.insert(name.to_string(), Deliberate::ByView);
         let _ = crate::lifecycle::delete_state_file(paths, name);
         true
+    }
+
+    /// NAME's last abnormal exit, if it had one.
+    pub fn last_exit(&self, name: &str) -> Option<crate::lifecycle::LastExit> {
+        self.exits.get(name).copied()
+    }
+
+    /// Every name's last abnormal exit, for `App::set_exits`. A small map cloned once per frame.
+    pub fn exits(&self) -> BTreeMap<String, crate::lifecycle::LastExit> {
+        self.exits.clone()
     }
 
     /// Is NAME a session this view may act on - live, and not one it has already stopped?
@@ -749,6 +764,14 @@ impl SessionHost {
                 Some(Deliberate::ByView) => Ended::ByView,
                 None => end,
             };
+            match crate::lifecycle::classify_exit(end) {
+                Some(exit) => {
+                    self.exits.insert(name.clone(), exit);
+                }
+                None => {
+                    self.exits.remove(&name);
+                }
+            }
             let (child_rows, child_cols) = session.size;
             // `scripts/launch-preflight` and `scripts/launch` refuse with exit 2 and one line on
             // stderr in every one of their refusal paths; `launch` then EXECS the agent CLI, so

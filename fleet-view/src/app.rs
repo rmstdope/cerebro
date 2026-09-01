@@ -12,6 +12,7 @@
 //!   hundred `ps` runs. `refreshing` is the whole of that rule, and `begin_refresh` is its only
 //!   door.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::model::{FleetRow, RowState, WorkBuckets};
+use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{read_configured_supervisor, read_fleet, read_work, Programs, ReaderPaths, ReadError};
 
@@ -335,6 +337,21 @@ pub struct App {
     /// cleared by the next key press. Today it has exactly one writer: a selection lost to a
     /// roster change.
     pub notice: Option<String>,
+    /// Each name's last abnormal exit, as of the last frame. Copied from `SessionHost` by the
+    /// event loop, never read from it here: `ui::draw` is pure over `App`, and a renderer that
+    /// could reach the host could reach a `vt100::Parser` and a child process with it.
+    ///
+    /// It is deliberately NOT written into `FleetRow::bead`: that field is what an agent's state
+    /// file said, and a renderer's convenience must not make it lie to anything else reading a
+    /// row.
+    pub exits: BTreeMap<String, LastExit>,
+    /// Names already nudged for the question they are asking now.
+    ///
+    /// The poll runs every five seconds; without this the line would be typed on every tick,
+    /// burying the agent's own output and resetting what it was told. A name leaves the set as
+    /// soon as it is no longer `asking`, so its NEXT question is nudgeable again
+    /// (`cerebro--nudged`, `emacs/cerebro.el:3879`).
+    pub nudged: BTreeSet<String>,
     /// Which widget the keyboard currently acts on. Fleet by default.
     pub focus: PaneFocus,
     /// What this process is allowed to do with the checkout it is drawing (cb-kcs.1).
@@ -398,6 +415,8 @@ impl App {
             session: SessionPane::default(),
             selected: None,
             notice: None,
+            exits: BTreeMap::new(),
+            nudged: BTreeSet::new(),
             focus: PaneFocus::default(),
             supervision,
             confirm: None,
@@ -423,6 +442,11 @@ impl App {
 
     /// Put TEXT in the notice slot. The one writer other than `reconcile_selection`; `on_key`
     /// remains the one place it is cleared.
+    /// Replace the verdicts. One call per loop iteration, beside `set_session_view`.
+    pub fn set_exits(&mut self, exits: BTreeMap<String, LastExit>) {
+        self.exits = exits;
+    }
+
     pub fn set_notice(&mut self, text: String) {
         self.notice = Some(text);
     }

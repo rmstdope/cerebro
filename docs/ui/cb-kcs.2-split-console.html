@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-kcs.2 chosen split console</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
+          --dim:#8b949e; --blue:#58a6ff; --green:#3fb950; --gold:#d29922; --red:#f85149; }
+  body { margin:0; padding:32px; color:#24292f; background:#f6f8fa;
+         font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  h2 { margin:30px 0 8px; font-size:17px; }
+  h3 { margin:20px 0 6px; font-size:15px; }
+  p { max-width:960px; color:#57606a; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .term { max-width:1000px; color:var(--text); background:var(--bg); border-radius:9px;
+          padding:10px; box-shadow:0 8px 28px #1f232833;
+          font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .bar { color:var(--dim); padding:2px 4px 8px; white-space:pre-wrap; }
+  .pane { border:1px solid var(--line); background:var(--panel); margin-bottom:8px; }
+  .pane.focus { border:2px solid var(--blue); }
+  .pane.bad { border-color:var(--red); }
+  .title { color:var(--dim); padding:2px 8px; }
+  .focus .title { color:var(--blue); font-weight:bold; }
+  .bad .title { color:var(--red); }
+  pre { margin:0; padding:2px 8px 8px; white-space:pre; overflow-x:auto; }
+  .green { color:var(--green); } .blue { color:var(--blue); }
+  .gold { color:var(--gold); } .red { color:var(--red); } .dim { color:var(--dim); }
+  .sel { background:#1f6feb44; }
+  .cols { display:flex; gap:8px; align-items:stretch; }
+  .cols > .col { display:flex; flex-direction:column; }
+  .left { width:40%; } .right { flex:1; }
+  .cols .pane { flex:1; }
+  .narrow { width:520px; }
+</style>
+</head>
+<body>
+<h1>The split console, as chosen</h1>
+<p>This is the screen <code>cb-kcs.2</code> builds, agreed with the navigator over three rounds on
+2026-09-01. It refines <code>docs/ui/cb-kcs-supervisor.html</code>, which settled the shape — a
+persistent split console, follow-selection, a stacked narrow layout, quit refused over live agents
+and 10 000 retained scrollback lines — and it settles what that mockup left open, all of which
+arrived with <code>cb-42k</code> giving Fleet and Work independent focus and scrolling.</p>
+<ul>
+  <li><code>Tab</code> visits <strong>Fleet → Work → Session</strong>; <code>Shift-Tab</code> reverses.</li>
+  <li>In Fleet, <code>↑</code>/<code>↓</code> <strong>move the selection</strong> and the pane scrolls to
+      keep it visible; <code>PgUp</code>/<code>PgDn</code> move it a page.</li>
+  <li>A <strong>fixed 40-cell left column</strong> holds Fleet over Work; the Session pane takes every
+      remaining cell. Below <strong>100 cells</strong> all three stack.</li>
+  <li>Only <code>k</code> asks before acting.</li>
+  <li>A focused session receives <strong>every</strong> key, <code>Esc</code> and <code>Ctrl-C</code>
+      included; <code>Shift-Tab</code> is held back and is the only way out.</li>
+</ul>
+
+<h2>Supervising, Cyclops selected and live — Fleet focused</h2>
+<div class="term">
+  <div class="bar">Cerebro — supervising | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="cols">
+    <div class="col left">
+      <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="green">● Xavier</span>     plan    cb-m7u
+<span class="green">● Beast</span>      plan    cb-kcs.2
+<span class="sel"><span class="green">● Cyclops</span>    build   cb-42k </span>
+<span class="gold">◐ Storm</span>      waiting
+<span class="dim">○ Rogue</span>      standby</pre></div>
+      <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-42k  P1 Fleet and Work…
+<strong>Planned, unclaimed 0</strong>
+  <span class="dim">(none)</span>
+<span class="dim">Rows 1–4 of 21</span></pre></div>
+    </div>
+    <div class="col right">
+      <div class="pane"><div class="title">Cyclops — build cb-42k <span class="dim">[Tab to focus · Shift-Tab to fleet]</span></div><pre>● I added the failing render case first.
+
+❯ cargo test --workspace --all-targets --locked
+   Compiling cerebro-tui v0.1.0
+    <span class="green">Finished</span> `test` profile in 12.44s
+
+◎ Working · esc interrupt                 GPT-5.6</pre></div>
+    </div>
+  </div>
+</div>
+
+<h2>Tab once — Work focused, still scrolling on its own</h2>
+<div class="term">
+  <div class="bar">Cerebro — supervising | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="cols">
+    <div class="col left">
+      <div class="pane"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Cyclops</span>    build   cb-42k </span>
+<span class="gold">◐ Storm</span>      waiting</pre></div>
+      <div class="pane focus"><div class="title">Work</div><pre><strong>Being planned 2</strong>
+  cb-m7u   P2 Cut the duplication…
+  cb-kcs.2 P1 Ratatui hosts fleet…
+<span class="dim">Rows 9–12 of 21</span></pre></div>
+    </div>
+    <div class="col right">
+      <div class="pane"><div class="title">Cyclops — build cb-42k <span class="dim">[Tab to focus · Shift-Tab to work]</span></div><pre>◎ Working · esc interrupt                 GPT-5.6</pre></div>
+    </div>
+  </div>
+</div>
+
+<h2>Tab again — the session has the keyboard</h2>
+<p>The header stops advertising keys that no longer reach this screen.</p>
+<div class="term">
+  <div class="bar">Cyclops has the keyboard | Shift-Tab leaves the session</div>
+  <div class="cols">
+    <div class="col left">
+      <div class="pane"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Cyclops</span>    build   cb-42k </span></pre></div>
+      <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-42k  P1 Fleet and Work…</pre></div>
+    </div>
+    <div class="col right">
+      <div class="pane focus"><div class="title">Cyclops — build cb-42k <span class="dim">[Shift-Tab to fleet]</span></div><pre>❯ run the gate again please█
+
+  @ files · # issues                       GPT-5.6</pre></div>
+    </div>
+  </div>
+</div>
+
+<h2>Below 100 cells — the three panes stack</h2>
+<div class="term narrow">
+  <div class="bar">Cerebro — supervising | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Cyclops</span>    build   cb-42k </span>
+<span class="dim">Rows 3–5 of 7</span></pre></div>
+  <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-42k  P1 Fleet and Work…</pre></div>
+  <div class="pane"><div class="title">Cyclops — build cb-42k</div><pre>◎ Working · esc interrupt</pre></div>
+</div>
+
+<h2>The states the happy path hides</h2>
+
+<h3>The selected agent has no session</h3>
+<div class="term">
+  <div class="cols"><div class="col left">
+    <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="dim">○ Psylocke</span>   standby       </span></pre></div>
+  </div><div class="col right">
+    <div class="pane"><div class="title">Psylocke</div><pre><span class="dim">No live session.
+
+Press s to start Psylocke.
+The last completed pass is not available.</span></pre></div>
+  </div></div>
+</div>
+
+<h3>The pass has ended — its output is kept until that agent starts again</h3>
+<div class="term">
+  <div class="cols"><div class="col left">
+    <div class="pane"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="dim">○ Cyclops</span>    standby       </span></pre></div>
+  </div><div class="col right">
+    <div class="pane focus"><div class="title">Cyclops — ended 15:42 <span class="dim">[retained until next start]</span></div><pre>● Gate passed and PR #241 merged.
+
+● Closed cb-123 and pushed the board.
+
+Cyclops finished with status 0.
+
+<span class="dim">End of retained scrollback. Up/Down scroll while focused.</span></pre></div>
+  </div></div>
+</div>
+
+<h3>This view does not supervise the checkout</h3>
+<div class="term">
+  <div class="bar">Cerebro — read-only | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="cols"><div class="col left">
+    <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Cyclops</span>    build   cb-42k </span></pre></div>
+  </div><div class="col right">
+    <div class="pane"><div class="title">Cyclops</div><pre><span class="dim">Sessions are hosted by the view that supervises this
+checkout. This one does not.</span></pre></div>
+  </div></div>
+</div>
+
+<h3>The selected agent left the roster</h3>
+<div class="term">
+  <div class="bar"><span class="gold">Rogue is no longer on the roster. Selected Cyclops.</span></div>
+  <div class="pane focus"><div class="title">Fleet 6</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Cyclops</span>    build   cb-42k </span></pre></div>
+</div>
+
+<h3>k asks first; s and f act and say what they did</h3>
+<div class="term"><div class="bar"><span class="gold">Kill Cyclops? Its bead cb-42k stays claimed.  y / n</span></div></div>
+<div class="term"><div class="bar"><span class="gold">Kill Cerebro?  y / n</span></div></div>
+<div class="term"><div class="bar"><span class="dim">Started Rogue.</span></div></div>
+<div class="term"><div class="bar"><span class="dim">Cyclops will finish after this pass.</span></div></div>
+
+<h3>A launch that was refused</h3>
+<div class="term">
+  <div class="cols"><div class="col left">
+    <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="red">○ Rogue</span>      dead          </span></pre></div>
+  </div><div class="col right">
+    <div class="pane bad"><div class="title">Rogue — launch refused 14:07</div><pre><span class="red">launch-preflight: agents/implementer.md is missing;
+run git submodule update --init --recursive</span>
+
+<span class="dim">Press s to try again.</span></pre></div>
+  </div></div>
+</div>
+
+<h3>Quit refused while agents are live</h3>
+<div class="term">
+  <div class="pane bad"><div class="title">3 live agents prevent exit</div><pre><span class="red">Cerebro is supervising Xavier, Beast, and Cyclops.</span>
+
+Finish or kill every live agent before quitting.
+  f  finish the selected agent after its pass
+  k  kill the selected agent now
+
+No agent was stopped.</pre></div>
+</div>
+</body>
+</html>

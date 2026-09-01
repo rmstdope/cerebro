@@ -20,6 +20,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::model::{FleetRow, RowState, WorkBuckets};
+use crate::session::SessionView;
 use crate::readers::{read_configured_supervisor, read_fleet, read_work, Programs, ReaderPaths, ReadError};
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
@@ -179,13 +180,18 @@ impl PaneFocus {
     }
 }
 
-/// The Session pane's own scroll offset. It has no reader and therefore no `PaneContent`: what it
-/// shows is derived from the selection and the supervision mode, not from a subprocess that can
-/// fail. cb-kcs.2.2 gives it a child's screen; until then it holds only an offset, so that the
-/// scroll rule is written once rather than acquired later.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The Session pane's own scroll offset, and the lines one frame draws it from. It has no reader
+/// and therefore no `PaneContent`: what it shows is a child's screen, materialised by
+/// `SessionHost::sync` BEFORE the frame, or one of the bodies derived from the selection and the
+/// supervision mode.
+///
+/// `App` holds no pty, no thread and no child - only the value the renderer reads. That is what
+/// keeps `ui::draw` pure while a reader thread writes into a parser continuously: the child's
+/// bytes reach the screen only through a view frozen before the frame began.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SessionPane {
     pub scroll: usize,
+    pub view: SessionView,
 }
 
 impl SessionPane {
@@ -285,6 +291,9 @@ pub fn clamp_scroll(scroll: &mut usize, content_lines: usize, viewport_lines: us
 pub struct PaneMetrics {
     pub content_lines: usize,
     pub viewport_lines: usize,
+    /// The pane's inner width in cells. Needed because a pty has to be told a width, and
+    /// `ui::metrics` is the one place a pane's geometry is computed.
+    pub inner_width: usize,
 }
 
 /// The geometry one draw of `App` at one `now` in one `Rect` would produce, one `PaneMetrics` per
@@ -562,6 +571,27 @@ impl App {
             PaneFocus::Work => metrics.work.viewport_lines.max(1),
             PaneFocus::Session => metrics.session.viewport_lines.max(1),
         }
+    }
+
+    /// Does the focused Session pane currently hold the keyboard?
+    ///
+    /// True only when the Session pane is focused AND its view is `Live`: an ended or absent
+    /// session leaves the arrows, `g` and `q` exactly as they are, which is what makes a retained
+    /// pass scrollable at all.
+    pub fn session_has_keyboard(&self) -> bool {
+        self.focus == PaneFocus::Session && matches!(self.session.view, SessionView::Live { .. })
+    }
+
+    /// Install the view `SessionHost::sync` materialised for this frame.
+    ///
+    /// A `Live` view is never scrolled - the child redraws itself into the pane, and there is
+    /// nothing above the top row to reach - so this forces the offset to 0 while a session is
+    /// live and leaves it alone otherwise.
+    pub fn set_session_view(&mut self, view: SessionView) {
+        if matches!(view, SessionView::Live { .. }) {
+            self.session.scroll = 0;
+        }
+        self.session.view = view;
     }
 
     /// Claim the fleet's one in-flight slot: true when this request may go to the worker, false
@@ -1448,9 +1478,9 @@ mod tests {
     fn focused_viewport_is_the_focused_panes_own_and_never_zero() {
         let mut app = App::new();
         let metrics = Metrics {
-            fleet: PaneMetrics { content_lines: 30, viewport_lines: 8 },
-            work: PaneMetrics { content_lines: 12, viewport_lines: 0 },
-            session: PaneMetrics { content_lines: 4, viewport_lines: 3 },
+            fleet: PaneMetrics { content_lines: 30, viewport_lines: 8, inner_width: 38 },
+            work: PaneMetrics { content_lines: 12, viewport_lines: 0, inner_width: 38 },
+            session: PaneMetrics { content_lines: 4, viewport_lines: 3, inner_width: 58 },
         };
         assert_eq!(app.focused_viewport(metrics), 8, "Fleet is focused by default");
 

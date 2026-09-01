@@ -1,0 +1,106 @@
+<!doctype html><meta charset="utf-8"><title>cb-sxf — a standby row the view will not bring back</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 6px}h2{font-size:14px;margin:24px 0 8px;color:#fff}
+h3{font-size:13px;margin:12px 0 4px;color:#eee;font-weight:normal}
+.row{display:flex;gap:20px;flex-wrap:wrap}
+.panel{padding:14px 18px;border:1px solid #333;min-width:62ch}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.5;white-space:pre}.hd{text-decoration:underline}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.s{color:#569cd6}.e{color:#f14c4c}.y{color:gold}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:14px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.echo{background:#000;color:#ddd;padding:4px 8px;margin-top:6px}
+</style>
+
+<h1>cb-sxf — the surface the navigator approved, 2026-09-01</h1>
+
+<p class="lede">Two rounds. This file is the specification for what <code>M-x cerebro</code> shows and
+says about a standby row that has been told to finish. Where this file and the bead's plan disagree,
+this file is right.</p>
+
+<p class="lede">The defect behind it: <code>cerebro--start-due</code> reads no stop flag at all, so a
+role whose flag was written while it was running, and whose session then died before the poll could
+retire it — a crash, a <code>k</code> in its own terminal, an Emacs restarted mid-pass — comes back on
+standby <b>armed and still flagged</b>, and the trigger starts it anyway. It runs a whole pass, and
+only when it writes <code>waiting</code> at the end of it is the flag finally read. The fix is that
+the start path skips a flagged name, which is what the Ratatui start path already does.</p>
+
+<h2>1. The row names what was done to it, in place of the condition</h2>
+
+<div class="row">
+<div class="panel dark"><h2>The fleet, one minute after Beast was told to finish and its session died</h2>
+<pre><span class="hd">Agent          Role          State      Bead       Bead/Phase</span>
+<span class="i">◆</span> Cerebro        orchestrator  idle                  4m
+<span class="g">●</span> Xavier         planner       plan       cb-sxf     58s 58s
+<span class="s">◌</span> Beast          planner       standby               ■ told to finish
+<span class="g">●</span> Cyclops        implementer   build      cb-kcs.2.2 6m 2m
+<span class="s">◌</span> Rogue          implementer   standby               → planned bead
+<span class="s">◌</span> Psylocke       verifier      standby               → merged, unverified</pre></div>
+</div>
+
+<p class="note"><b><code>■ told to finish</code>, plain text, in the Bead/Phase column.</b> Plain like
+every other label in that column — the <code>■</code> the STATE column already carries on a
+<code>working</code> row is plain too, so this adds no colour and no face. The <code>→</code> is
+dropped deliberately: it means <i>waiting for</i>, and this row is waiting for nothing. It says what
+the navigator did rather than what will happen, because that is the half still explicable a day
+later. <code>■ stays down</code> and <code>■ finish; s to resume</code> were both drawn and declined —
+the first for losing the "you did this", the second for putting a key hint in a column that has never
+carried one.</p>
+
+<p class="note"><b>It replaces the whole label, including the retry clock.</b> A flagged row is not
+coming back at all, so <code>↻ retry in 30s, 3 failed</code> would be as false as
+<code>→ buffer &lt; 4</code>. The flag is the first thing the label answers.</p>
+
+<p class="note"><b>Every kind, not roles only.</b> A standby <i>implementer</i> under a flag is
+retired by the fleet poll within about one tick, so its row lives roughly five seconds — but it does
+exist, and for those five seconds the line is true. One rule in one place beat a kind test for a row
+that lives five seconds.</p>
+
+<p class="note"><b>Three options were declined for this row.</b> Leaving it unchanged (the fix works
+and is invisible, and the row goes on promising <code>→ buffer &lt; 4</code> while nothing happens);
+a <code>■</code> suffix in the STATE column with the condition kept (no new word, but the For column
+still names a condition that will not fire); and retiring the row outright the way a flagged standby
+implementer already is, which needs no new vocabulary at all but diverges from the Ratatui rule.</p>
+
+<h2>2. <code>RET</code> on that row</h2>
+<div class="row"><div class="panel dark"><pre>Beast is not running.
+You told it to finish, so the view will not start it again.
+Press s to start it now, k to leave it down.</pre></div></div>
+
+<p class="note">The third line is verbatim the line every other standby placeholder already ends with.
+A variant naming the mechanism — <i>A stop flag is set for it … s clears the flag and starts it</i> —
+was declined: longer, and "stop flag" is a word from the implementation rather than from the
+keyboard.</p>
+
+<h2>3. <code>s</code> means "keep going" on every row</h2>
+
+<p class="note"><b><code>s</code> clears the stop flag for every kind, not implementers only.</b>
+Pressing <code>s</code> is a statement that this name should run, so a flag on it is stale — the same
+argument the navigator already accepted for autostart, which clears a flag for every declared name at
+<code>M-x cerebro</code>. Without this, <code>s</code> on a flagged role would launch it, it would run
+exactly one pass, and the flag would retire it again, which is the opposite of what the key was
+pressed for.</p>
+
+<p class="note">The echo line is unchanged and is the one that already exists:</p>
+<div class="echo">Beast: cleared a stale stop flag</div>
+
+<h2>4. <code>f</code> on a flagged standby row offers to take the flag off</h2>
+
+<p class="lede">Today <code>f</code> refuses on any standby row. On a <b>flagged</b> one it now does
+what <code>f</code> does on every other flagged row — the prompt and the confirmation are the ones
+that already exist:</p>
+
+<div class="row"><div class="panel dark">
+<div class="echo">Stop flag already set for Beast - clear it? (y or n)</div>
+<div class="echo" style="margin-top:2px">Beast will keep going</div></div></div>
+
+<p class="note">The row then reads <code>→ buffer &lt; 4</code> again and the trigger starts it. On an
+<b>unflagged</b> standby row <code>f</code> still refuses with the sentence it has today —
+<code>Beast is on standby - press k to disarm it, or s to start it now</code> — so <code>f</code>
+does two things on a standby row depending on the flag. That was accepted: the alternative left
+<code>f</code>, the key that put the row there, as the one key that could not take it back.</p>
+
+<h2>5. What does not change</h2>
+<p class="note">Nothing changes for a running agent, for <code>k</code>, or for autostart. A
+<code>working</code> or <code>asking</code> agent under a flag still finishes what it is on and is
+retired at the end of its pass, and the <code>■</code> in its STATE column is untouched.</p>

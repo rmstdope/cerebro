@@ -29,7 +29,8 @@
 //! pty, the terminal emulator behind it and the pure functions that turn a
 //! keystroke into bytes and a screen into lines. `main` owns the `SessionHost`;
 //! `App` only ever sees a `SessionView` materialised before the frame, which is
-//! what keeps `ui::draw` pure while a reader thread writes continuously. Nothing
+//! what keeps `ui::draw` pure while a reader thread writes continuously.
+//!
 //! Since cb-kcs.2.3 the navigator can press `s`, `f` and `k` - start the selected
 //! agent, toggle its stop flag, and kill a session this process hosts after a
 //! confirmation - each of them gated on `SupervisionMode` (`may_supervise` to

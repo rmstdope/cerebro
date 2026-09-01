@@ -370,16 +370,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     }
 }
 
-/// One widget: its border (focus only), its title (status colour, bold only while focused), its
-/// scrolled body, and - when its content outgrows its inner height - the reserved range-cue row.
+/// A pane that reports a FAILURE: red border, no focus, no scrolling.
 ///
-/// LINES is the pane's whole body, already built for this frame's width, and is BORROWED: the
-/// retained transcript is up to ten thousand lines and is handed to this function every frame.
-/// SCROLL is that pane's own offset. TITLE carries its own styling - two spans for the Session
-/// pane, the title in its own style and then the dim hint, and one for Fleet and Work. Borders carry focus alone: an unfocused pane is always the ordinary thin, dim border
-/// whatever its title reports, and a focused pane is always the thick, bright-blue one - status
-/// colour is the title's own signal, not the border's, so a focused stale/unavailable pane keeps
-/// its gold/red title behind a blue border rather than losing that colour to focus.
+/// Its two users are the quit refusal and a refused launch, and neither is focusable.
 fn render_alert_pane(
     frame: &mut Frame<'_>,
     outer: Rect,
@@ -389,6 +382,17 @@ fn render_alert_pane(
     render_bordered_pane(frame, outer, title, false, Some(RED), lines, 0);
 }
 
+/// One widget: its border (focus only), its title (status colour, bold only while focused), its
+/// scrolled body, and - when its content outgrows its inner height - the reserved range-cue row.
+///
+/// LINES is the pane's whole body, already built for this frame's width, and is BORROWED: the
+/// retained transcript is up to ten thousand lines and is handed to this function every frame.
+/// SCROLL is that pane's own offset. TITLE carries its own styling - two spans for the Session
+/// pane, the title in its own style and then the dim hint, and one for Fleet and Work. Borders
+/// carry focus alone: an unfocused pane is always the ordinary thin, dim border whatever its title
+/// reports, and a focused pane is always the thick, bright-blue one - status colour is the title's
+/// own signal, not the border's, so a focused stale/unavailable pane keeps its gold/red title
+/// behind a blue border rather than losing that colour to focus.
 fn render_pane(
     frame: &mut Frame<'_>,
     outer: Rect,
@@ -1930,11 +1934,6 @@ mod tests {
         }
     }
 
-    /// The screen every consumer sees today keeps every hint it had before this bead.
-    ///
-    /// This is the assertion the navigator asked for by name: ownership must not cost the default
-    /// hundred-column screen its pane and scroll hints, because that is the only place either is
-    /// discoverable.
     #[test]
     fn a_refused_launch_is_drawn_in_red() {
         let mut app = supervising();
@@ -2089,6 +2088,11 @@ mod tests {
         assert!(!rendered[0].contains("3 live agents"), "{:?}", rendered[0]);
     }
 
+    /// The screen every consumer sees today keeps every hint it had before this bead.
+    ///
+    /// This is the assertion the navigator asked for by name: ownership must not cost the default
+    /// hundred-column screen its pane and scroll hints, because that is the only place either is
+    /// discoverable.
     #[test]
     fn the_ordinary_screen_keeps_every_hint_at_a_hundred_columns() {
         let app = populated(); // App::new(): no declaration, so read-only because Emacs
@@ -2098,10 +2102,13 @@ mod tests {
             assert!(rendered[0].contains(hint), "the default screen keeps {hint}: {:?}", rendered[0]);
         }
 
-        // A supervising sibling: the lifecycle keys are added, and the shorter title leaves room
-        // for everything else at the same width.
+        // A supervising sibling at the same width. It does NOT keep every hint - the lifecycle
+        // keys cost more than the shorter title saves, and `the_lifecycle_keys_outlast_the_movement_hints`
+        // is where that trade is asserted. What matters here is that the two keys a navigator
+        // cannot guess from the screen survive it.
         let supervising = lines(&render(&supervising(), 100, 20));
         assert!(supervising[0].contains("s/f/k start·finish·kill"), "{:?}", supervising[0]);
+        assert!(supervising[0].contains("g refresh"), "{:?}", supervising[0]);
         assert!(supervising[0].contains("q/Esc/Ctrl-C quit"), "{:?}", supervising[0]);
     }
 

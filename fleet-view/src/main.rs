@@ -443,15 +443,6 @@ where
     Ok(())
 }
 
-/// The keystroke path when a live session is focused.
-///
-/// `Shift-Tab` is taken first and handed to `App::on_key` as the only way out (Q8) - which is the
-/// reason the child can never receive it. Everything else goes to `session::key_bytes`, and a
-/// `None` is dropped without a word (Q1): the pane is a window onto the child rather than a
-/// commentary on it.
-///
-/// So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or refresh while a live session is focused - they
-/// are the child's, which is exactly what the replaced header line says.
 /// The keystroke path, in this order, each branch returning:
 ///
 /// 1. the quit-refusal pane owns the screen: ANY key clears it and does nothing else (Q8);
@@ -462,6 +453,13 @@ where
 /// 3. a live session that holds the keyboard gets the bytes, as cb-kcs.2.2 left it;
 /// 4. `s`, `f` and `k`, unmodified, are the lifecycle;
 /// 5. everything else is `App::on_key` - and a `Quit` from it over a live session is refused.
+///
+/// In branch 3, `Shift-Tab` is held back and handed to `App::on_key` as the only way out (Q8),
+/// which is the reason the child can never receive it; everything else goes to
+/// `session::key_bytes`, and a `None` is dropped without a word (Q1), because the pane is a window
+/// onto the child rather than a commentary on it. So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or
+/// refresh while a live session is focused - they are the child's, which is exactly what the
+/// replaced header line says.
 fn route_key(
     key: KeyEvent,
     app: &mut App,
@@ -470,11 +468,16 @@ fn route_key(
     viewport_lines: usize,
     now: DateTime<Utc>,
 ) -> AppAction {
+    // A notice is transient by design: whatever the navigator presses is what clears it, and that
+    // has to be true of the keys these two panes consume as well - or a gold line outlives the
+    // keystroke that should have cleared it and reappears when the pane closes.
     if app.quit_refusal.is_some() {
+        app.notice = None;
         app.quit_refusal = None;
         return AppAction::None;
     }
     if let Some(app::Prompt::Kill { name, .. }) = app.confirm.take() {
+        app.notice = None;
         if key.code == KeyCode::Char('y') && key.modifiers.is_empty() {
             host.kill(paths, &name);
             // A killed agent must not wait up to five seconds to disappear from the fleet.
@@ -2018,6 +2021,33 @@ mod main_tests {
         let mut empty = SessionHost::default();
         drive_loop(&mut app, &mut empty, &paths, vec![ch('q')]);
         assert!(app.quit);
+    }
+
+    /// The one case the quit refusal exists for, and the one this bead first got wrong.
+    ///
+    /// `roster_order()` is empty until a fleet read has SUCCEEDED, so with a hosted child and a
+    /// fleet reader that has never answered - the ordinary state of the first few seconds, and the
+    /// permanent state of a broken `scripts/roster` - a refusal built from the roster alone would
+    /// name nobody, read as "nothing is live", and let `q` through. `Session::Drop` would then kill
+    /// the agents on the way out.
+    #[test]
+    fn a_quit_is_refused_even_before_the_fleet_has_been_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        // No `finish_refresh` at all: the fleet pane has never had a value.
+        let mut app = App::with_supervision(SupervisionMode::Supervising);
+        assert!(app.roster_order().is_empty(), "the fixture must have no roster, or this proves nothing");
+
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+        drive_loop(&mut app, &mut host, &paths, vec![ch('q')]);
+
+        assert!(!app.quit, "a hosted child the roster does not name still refuses the quit");
+        assert_eq!(
+            app.quit_refusal.as_deref(),
+            Some(&["Cyclops".to_string()][..]),
+            "and it is named, because a pane that named nobody would say nothing is live"
+        );
     }
 
     #[test]

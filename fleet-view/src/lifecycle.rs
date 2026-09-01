@@ -559,13 +559,33 @@ mod tests {
         assert!(!path.exists());
     }
 
+    /// `readers::read_states` must open the path THIS module builds, not a second spelling of it.
+    ///
+    /// Asserted by writing a file at `state_file_path` and checking the reader parsed it: a
+    /// re-inlined path in `readers.rs` would read nothing and answer `Missing`, which is what a
+    /// test that only re-derived the literal here could never see.
     #[test]
     fn the_state_file_path_is_the_one_the_readers_use() {
+        use crate::model::{RosterEntry, StateObservation};
+
         let dir = tempfile::tempdir().unwrap();
         let paths = paths(dir.path());
-        assert_eq!(
-            state_file_path(&paths, "Xavier"),
-            paths.shared_root.join(".cerebro/state").join("Xavier.state.json")
-        );
+        let path = state_file_path(&paths, "Xavier");
+        assert_eq!(path, paths.shared_root.join(".cerebro/state").join("Xavier.state.json"));
+
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"state":"working","bead":"cb-1","since":"2026-01-01T00:00:00Z","pid":1}"#).unwrap();
+
+        let roster = vec![RosterEntry {
+            name: "Xavier".to_string(),
+            role: "planner".to_string(),
+            kind: AgentKind::Interactive,
+        }];
+        match crate::readers::read_states(&paths, &roster).get("Xavier") {
+            Some(StateObservation::Parsed(record)) => {
+                assert_eq!(record.bead.as_deref(), Some("cb-1"));
+            }
+            other => panic!("the reader did not open the path this module builds: {other:?}"),
+        }
     }
 }

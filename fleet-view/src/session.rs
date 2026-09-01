@@ -201,14 +201,24 @@ pub fn materialise(screen: &vt100::Screen, rows: u16, cols: u16) -> Vec<Line<'st
 }
 
 
-/// The signal `portable_pty::Child::kill` actually sends on the platforms this fleet runs on.
+/// The signal `portable_pty::Child::kill` sends FIRST on the platforms this fleet runs on.
 ///
-/// **SIGHUP, not SIGKILL.** The plan for cb-kcs.2.3 allowed for either and asked for the crate to
-/// be read rather than assumed: `portable-pty` 0.9's `ChildKiller for std::process::Child` sends
-/// `libc::SIGHUP` on unix, with the comment that a process receiving it is killed unless it has
-/// installed a handler. So this view, which sent the signal, reports 1 - and it can report a
-/// number at all only because it sent it: `ended_from` cannot, since 0.9 renders a terminating
-/// signal as a NAME (`"Killed: 9"`) rather than as an integer.
+/// **SIGHUP, not SIGKILL, and it is only the first of two.** The plan for cb-kcs.2.3 allowed for
+/// either and asked for the crate to be read rather than assumed. `portable-pty` 0.9's
+/// `ChildKiller for std::process::Child` (`src/lib.rs:340-373`) sends `libc::SIGHUP`, then polls
+/// `try_wait` five times over about 200ms, and **falls through to `std::process::Child::kill` -
+/// SIGKILL - if the child is still alive at the end of that**. So a child that installs a SIGHUP
+/// handler and does not exit within the grace period dies by signal 9 while this constant says 1.
+///
+/// That is a known imprecision, and it is deliberately not papered over. This view can report a
+/// number at all only because it asked for the kill - `ended_from` cannot, since 0.9 renders a
+/// terminating signal as a NAME (`"Killed: 9"`) rather than as an integer - and the one number it
+/// can state without guessing is the signal it causes to be delivered first. Reporting the
+/// escalation honestly would need an exit status the crate does not expose; when it does, this is
+/// the one place to change.
+///
+/// The same grace loop is why `Session::signal` is not free: `child.kill()` can block its caller -
+/// the keystroke thread - for up to about 200ms.
 const KILL_SIGNAL: i32 = 1;
 
 /// How a child ended, in this crate's own vocabulary rather than the pty crate's.
@@ -294,17 +304,17 @@ pub fn transcript(
     lines
 }
 
-/// Every non-blank line of a refused launch's final screen, as one message.
+/// Every non-blank line of the child's own screen, as one message.
 ///
-/// The transcript's own closing lines - the blank, the exit line and the scrollback footer - are
-/// what the ordinary retained pass says, and the refusal pane says its own instead.
-fn last_message(lines: &[Line<'static>]) -> String {
+/// The SCREEN rather than a transcript, so nothing here has to recognise - and so nothing here can
+/// mistake - the closing lines a transcript appends.
+fn screen_message(session: &Session, rows: u16, cols: u16) -> String {
+    let Some(lines) = session.screen(rows, cols) else { return String::new() };
     let text: Vec<String> = lines
         .iter()
         .map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
         .map(|line| line.trim_end().to_string())
         .filter(|line| !line.trim().is_empty())
-        .take_while(|line| !line.contains("finished with status"))
         .collect();
     text.join("\n")
 }
@@ -504,10 +514,12 @@ impl Session {
     }
 
     /// Signal the child and leave it to be reaped by the next `sync`, so a killed pass becomes an
-    /// ordinary retained transcript rather than vanishing. Returns the signal that was sent.
+    /// ordinary retained transcript rather than vanishing. Returns the signal that is sent first -
+    /// see `KILL_SIGNAL`, including what the pty crate does when the child ignores it.
     ///
     /// The reader thread is NOT joined here: it ends at EOF on its own, and joining it would make
-    /// a keystroke wait for a child to die.
+    /// a keystroke wait for the child's whole output to drain. `child.kill()` itself is not
+    /// instant either - `KILL_SIGNAL` has the measurement - but it is bounded and short.
     fn signal(&mut self) -> i32 {
         let _ = self.child.kill();
         KILL_SIGNAL
@@ -614,10 +626,25 @@ impl SessionHost {
         true
     }
 
-    /// The names of every live session, in ROSTER order rather than map order: the quit-refusal
-    /// pane names them, and a set iteration order would reorder them between frames.
+    /// The names of EVERY live session, in ROSTER order first: the quit-refusal pane names them,
+    /// and a map's iteration order would reorder them between frames.
+    ///
+    /// A live session whose name the roster does not carry is still named, sorted, after the rest.
+    /// That is not tidiness: the quit refusal is built from this list, and a name missing from it
+    /// is an agent this view would kill on the way out - which is the one thing that pane exists
+    /// to prevent. The roster is empty until a fleet read has succeeded, so it happens.
     pub fn live_names(&self, roster_order: &[String]) -> Vec<String> {
-        roster_order.iter().filter(|name| self.live.contains_key(*name)).cloned().collect()
+        let mut named: Vec<String> =
+            roster_order.iter().filter(|name| self.live.contains_key(*name)).cloned().collect();
+        let mut rest: Vec<String> = self
+            .live
+            .keys()
+            .filter(|name| !roster_order.contains(name))
+            .cloned()
+            .collect();
+        rest.sort();
+        named.extend(rest);
+        named
     }
 
     /// Record that NAME's launch was refused, with the launcher's own words. Replaces that agent's
@@ -671,19 +698,24 @@ impl SessionHost {
                 Some(signal) => Ended::Signal(signal),
                 None => end,
             };
-            // The transcript is taken at the size the child was last drawn at, which is the size
-            // its own screen was written for.
             let (child_rows, child_cols) = session.size;
-            let lines = session.into_transcript(child_rows, child_cols, end);
             // `scripts/launch-preflight` and `scripts/launch` refuse with exit 2 and one line on
             // stderr in every one of their refusal paths; `launch` then EXECS the agent CLI, so
             // every other non-zero status belongs to the CLI rather than to the launcher.
+            //
+            // The refusal's words are taken from the CHILD'S OWN SCREEN, before the transcript is
+            // built: a transcript carries `exit_line`'s closing lines too, and recognising those
+            // by their wording would make the refusal pane quote the exit line back at the
+            // navigator the day that sentence changed.
             if end == Ended::Status(2) {
-                let message = last_message(&lines);
+                let message = screen_message(&session, child_rows, child_cols);
                 self.note_refusal(&name, &message, now);
-            } else {
-                self.retained.insert(name, Retained { lines: Arc::new(lines), at: now });
+                continue;
             }
+            // The transcript is taken at the size the child was last drawn at, which is the size
+            // its own screen was written for.
+            let lines = session.into_transcript(child_rows, child_cols, end);
+            self.retained.insert(name, Retained { lines: Arc::new(lines), at: now });
         }
         let Some(name) = selected else { return SessionView::None };
         if let Some(session) = self.live.get_mut(name) {

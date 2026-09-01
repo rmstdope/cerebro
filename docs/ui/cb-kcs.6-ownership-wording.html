@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>cb-kcs.6 chosen ownership wording</title>
+<style>
+ body{margin:0;padding:32px;color:#24292f;background:#f6f8fa;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+ h1{margin:0 0 4px;font-size:22px;} h2{margin:28px 0 8px;font-size:17px;} p{max-width:980px;color:#57606a;}
+ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+ .term{max-width:1020px;color:#e6edf3;background:#0d1117;border-radius:9px;padding:10px;margin:6px 0 14px;
+       box-shadow:0 8px 28px #1f232833;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;}
+ .hdr{color:#d29922;padding:2px 4px 8px;white-space:pre-wrap;}
+ .pane{border:1px solid #30363d;background:#161b22;padding:4px 8px;color:#8b949e;}
+ .frame{max-width:1004px;background:#fff;border:1px solid #d0d7de;border-radius:6px;margin:8px 0 14px;}
+ .body{padding:16px 10px;color:#8b949e;font:12.5px/1.5 ui-monospace,Menlo,monospace;}
+ .ml{background:#d0d7de;color:#24292f;padding:3px 8px;font:12.5px/1.5 ui-monospace,Menlo,monospace;}
+ .echo{padding:3px 8px;font:12.5px/1.5 ui-monospace,Menlo,monospace;color:#24292f;background:#fff;border-top:1px solid #d0d7de;}
+ table{border-collapse:collapse;max-width:1020px;margin:10px 0 16px;font-size:13.5px;}
+ th,td{border:1px solid #d0d7de;padding:5px 9px;text-align:left;vertical-align:top;}
+ th{background:#eaeef2;} td code{white-space:pre;} .new{background:#fff8c5;} .dim{color:#8b949e;}
+</style></head><body>
+<h1>The ownership wording, as chosen</h1>
+<p>What <code>cb-kcs.6</code> ships. Two decisions: the sentences the previous bead's implementer chose are
+ratified verbatim, and an Emacs reconciliation that <em>signalled</em> stops borrowing the lock-error sentence
+and gets its own reason word. It is the Emacs twin of Ratatui's
+<code>fleet_supervisor could not be read</code>, which exists for exactly the same reason — a view that failed
+to work out ownership may still be holding the lease, so it must not claim nobody holds it.</p>
+
+<h2>Every read-only sentence, both views</h2>
+<table>
+<tr><th>Situation</th><th>Ratatui header</th><th>Emacs mode line</th></tr>
+<tr><td>Configured for the other view</td><td><code>Cerebro — read-only</code></td><td><code>read-only: Ratatui supervises</code></td></tr>
+<tr><td>Another live owner holds it</td><td><code>Cerebro — read-only; Emacs owns supervision</code></td><td><code>read-only: another Emacs supervises this checkout</code></td></tr>
+<tr><td>Declaration is an invalid word</td><td><code>Cerebro — read-only; invalid fleet_supervisor "x"</code></td><td><code>read-only: invalid fleet_supervisor "x"</code></td></tr>
+<tr><td>Declaration could not be read</td><td><code>Cerebro — read-only; fleet_supervisor could not be read</code></td><td class="dim">— not an Emacs case</td></tr>
+<tr><td>Lease bind failed, or its record could not be written</td><td><code>Cerebro — read-only; the supervision lease could not be taken</code></td><td><code>read-only: the supervision lease could not be taken</code></td></tr>
+<tr class="new"><td><b>New:</b> the reconciliation itself signalled</td><td class="dim">— not a Ratatui case</td><td><code>read-only: ownership could not be worked out</code></td></tr>
+</table>
+
+<h2>The new state, in the mode line</h2>
+<div class="frame"><div class="body">the fleet list</div>
+<div class="ml">-U:%%-  *cerebro*   Cerebro[read-only: ownership could not be worked out]   (Fundamental)</div></div>
+
+<h2>Pressing <code>s</code>, <code>f</code> or <code>k</code> in it</h2>
+<p>Its own refusal, rather than the catch-all — which names a supervisor that, in this state, nobody knows to exist.</p>
+<div class="frame"><div class="body">the fleet list</div>
+<div class="ml">-U:%%-  *cerebro*   Cerebro[read-only: ownership could not be worked out]</div>
+<div class="echo">Ownership could not be worked out; this Emacs view is read-only</div></div>
+
+<h2>The detail still reaches somebody</h2>
+<p>Reported exactly as a lock error is: the echo area and one line in <code>errors.jsonl</code>, once per
+distinct message, because this condition persists and runs every five seconds.</p>
+<div class="frame"><div class="body">the fleet list</div>
+<div class="ml">-U:%%-  *cerebro*   Cerebro[read-only: ownership could not be worked out]</div>
+<div class="echo">supervision: could not reconcile ownership (Wrong type argument: stringp, nil)</div></div>
+
+<h2>Ratatui is unchanged by all of this</h2>
+<div class="term"><div class="hdr">Cerebro — read-only; the supervision lease could not be taken   |  g retry</div>
+<div class="pane">Fleet · Work · Session</div></div>
+</body></html>

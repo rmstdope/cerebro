@@ -7,9 +7,15 @@
 //! the Work pane's lines, which is what keeps `ui::draw` pure while a child writes continuously
 //! into a parser on another thread.
 
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+
+use crate::readers::{ReadError, ReaderPaths};
 
 /// How many lines of a finished pass are kept. The navigator's number, agreed in the parent
 /// epic's interview and unchanged here.
@@ -192,6 +198,279 @@ pub fn materialise(screen: &vt100::Screen, rows: u16, cols: u16) -> Vec<Line<'st
     (0..rows).map(|row| row_line(screen, row, cols)).collect()
 }
 
+
+/// How a child ended, in this crate's own vocabulary rather than the pty crate's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ended {
+    Status(u32),
+    Signal(i32),
+}
+
+/// The line the view writes under a finished pass, and whether it is a failure (red).
+///
+/// The three sentences are the navigator's own, verbatim (Q4): a failed pass is one red line and
+/// keeps its ordinary border, because a red border is this view's spelling for *a reader failed*
+/// and spending it here would make two different things look the same.
+pub fn exit_line(name: &str, ended: Ended) -> (String, bool) {
+    match ended {
+        Ended::Status(0) => (format!("{name} finished with status 0."), false),
+        Ended::Status(status) => (format!("{name} finished with status {status}."), true),
+        Ended::Signal(signal) => (format!("{name} was killed by signal {signal}."), true),
+    }
+}
+
+/// `portable_pty::ExitStatus` in this crate's vocabulary.
+///
+/// **Every non-success is `Status`, and `Signal` is never produced here.** The plan allowed for
+/// either, depending on what the vendored crate can report, and 0.9 reports a terminating signal
+/// as a NAME (`strsignal`: `"Killed: 9"`, `"Terminated"`) rather than as a number, while the
+/// sentence the navigator approved carries a number. Rendering `was killed by signal Killed: 9.`
+/// to keep the arm reachable would be worse than the documented degrade, so `Ended::Signal` is
+/// reached by `exit_line`'s own unit case alone. Nothing in the fleet signals a session until `k`
+/// lands in cb-kcs.2.3, and that is the bead where a number can be obtained honestly.
+fn ended_from(status: portable_pty::ExitStatus) -> Ended {
+    Ended::Status(status.exit_code())
+}
+
+/// How many lines have scrolled off PARSER's screen, at most `SCROLLBACK_LINES`.
+///
+/// `Parser::set_scrollback` clamps to what is actually available and `Screen::scrollback` reports
+/// where it landed, so this asks the parser rather than the documentation. The offset is restored
+/// to 0 before it returns: a parser left scrolled back would draw a live child's old screen.
+fn scrollback_depth(parser: &mut vt100::Parser) -> usize {
+    parser.screen_mut().set_scrollback(SCROLLBACK_LINES);
+    let depth = parser.screen().scrollback();
+    parser.screen_mut().set_scrollback(0);
+    depth
+}
+
+/// The whole of a finished pass: every line that scrolled off, oldest first, then the final
+/// screen, then the view's own closing lines.
+///
+/// Built once, when the child is reaped, and the parser and the pty are dropped immediately after
+/// - a retained pass is a document, not a live terminal. Trailing blank lines are trimmed before
+/// the closing lines are appended, or the exit line sits twenty rows below the last thing the
+/// agent said.
+pub fn transcript(
+    parser: &mut vt100::Parser,
+    rows: u16,
+    cols: u16,
+    ended: Ended,
+    name: &str,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    // Each window's TOP row is the one line that window brought into view, so walking the offset
+    // down from the deepest to one takes every scrolled-off line exactly once.
+    for offset in (1..=scrollback_depth(parser)).rev() {
+        parser.screen_mut().set_scrollback(offset);
+        lines.push(row_line(parser.screen(), 0, cols));
+    }
+    parser.screen_mut().set_scrollback(0);
+    lines.extend(materialise(parser.screen(), rows, cols));
+    while lines.last().is_some_and(|line| line.spans.is_empty()) {
+        lines.pop();
+    }
+    let (text, failed) = exit_line(name, ended);
+    let style = if failed { Style::default().fg(Color::Red) } else { Style::default() };
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(text, style)));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "End of retained scrollback. Up/Down scroll while focused.".to_string(),
+        Style::default().add_modifier(Modifier::DIM),
+    )));
+    lines
+}
+
+/// One agent CLI, in one pty, with one thread draining it.
+///
+/// The `Arc<RwLock<Parser>>` belongs to this struct rather than to the pty, which is the whole
+/// reason a killed child's screen is still drawable (S4): the reader thread ends at EOF and the
+/// parser it wrote into is untouched.
+pub struct Session {
+    name: String,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    parser: Arc<RwLock<vt100::Parser>>,
+    /// Bytes seen so far. Zero is what `SessionView::Starting` means.
+    seen: Arc<AtomicUsize>,
+    size: (u16, u16),
+    reader: Option<std::thread::JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session").field("name", &self.name).field("size", &self.size).finish()
+    }
+}
+
+fn spawn_error(name: &str, error: impl std::fmt::Display) -> ReadError {
+    ReadError::Spawn { source: format!("the session for {name}"), message: error.to_string() }
+}
+
+impl Session {
+    /// Spawn `<scripts_dir>/launch <name>` in a fresh pty, with the consumer root as its working
+    /// directory and this process's environment.
+    ///
+    /// The command is the launcher and the agent's name and nothing else - the same two tokens
+    /// `cerebro--launch-command` builds in Emacs. No model flag, no provider flag, no prompt:
+    /// every one of those is the launcher's own business, and a second opinion here is a second
+    /// answer.
+    pub fn spawn(name: &str, paths: &ReaderPaths) -> Result<Self, ReadError> {
+        let mut command = portable_pty::CommandBuilder::new(paths.scripts_dir.join("launch"));
+        command.arg(name);
+        command.cwd(&paths.consumer_root);
+        Self::spawn_command(name, command, INITIAL_ROWS, INITIAL_COLS)
+    }
+
+    /// `spawn`, with the command given rather than built: the seam every pty case runs through,
+    /// so no test ever starts a real agent - which would claim a bead.
+    pub fn spawn_command(
+        name: &str,
+        command: portable_pty::CommandBuilder,
+        rows: u16,
+        cols: u16,
+    ) -> Result<Self, ReadError> {
+        let rows = rows.max(1);
+        let cols = cols.max(1);
+        let pair = portable_pty::native_pty_system()
+            .openpty(portable_pty::PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+            .map_err(|error| spawn_error(name, error))?;
+        let child = pair.slave.spawn_command(command).map_err(|error| spawn_error(name, error))?;
+        // The slave is dropped here, with the child holding the only other reference to it: that
+        // is what makes the master read EOF when the child ends, and the reader thread finish.
+        drop(pair.slave);
+        let mut reader =
+            pair.master.try_clone_reader().map_err(|error| spawn_error(name, error))?;
+        let writer = pair.master.take_writer().map_err(|error| spawn_error(name, error))?;
+        let parser = Arc::new(RwLock::new(vt100::Parser::new(rows, cols, SCROLLBACK_LINES)));
+        let seen = Arc::new(AtomicUsize::new(0));
+        let thread_parser = Arc::clone(&parser);
+        let thread_seen = Arc::clone(&seen);
+        // Unconditional, whether or not the pane is visible or focused: a child that writes more
+        // than the pty buffer holds blocks for ever if nobody drains it.
+        let handle = std::thread::spawn(move || {
+            let mut buffer = [0u8; 8192];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => {
+                        if let Ok(mut parser) = thread_parser.write() {
+                            parser.process(&buffer[..count]);
+                        }
+                        thread_seen.fetch_add(count, Ordering::SeqCst);
+                    }
+                }
+            }
+        });
+        Ok(Self {
+            name: name.to_string(),
+            child,
+            master: pair.master,
+            writer,
+            parser,
+            seen,
+            size: (rows, cols),
+            reader: Some(handle),
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Tell the child the pane's size, if it has changed. The navigator chose the pane's real
+    /// size over a floor of 80x24 (Q6): a two-row pane means a two-row agent.
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        let (rows, cols) = (rows.max(1), cols.max(1));
+        if self.size == (rows, cols) {
+            return;
+        }
+        self.size = (rows, cols);
+        let _ = self
+            .master
+            .resize(portable_pty::PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+        if let Ok(mut parser) = self.parser.write() {
+            parser.screen_mut().set_size(rows, cols);
+        }
+    }
+
+    /// Send bytes to the child. A write that fails is dropped - the child is on its way out, and
+    /// the exit is what the pane will show.
+    pub fn send(&mut self, bytes: &[u8]) {
+        if self.writer.write_all(bytes).is_ok() {
+            let _ = self.writer.flush();
+        }
+    }
+
+    /// `Some(ended)` once the child has exited; never blocks.
+    pub fn poll_exit(&mut self) -> Option<Ended> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => Some(ended_from(status)),
+            // A child whose status cannot be read at all is gone as far as this view is concerned,
+            // and saying so is better than a pane that stays live for ever.
+            Err(_) => Some(Ended::Status(1)),
+            Ok(None) => None,
+        }
+    }
+
+    /// The child's current screen, materialised. `None` before the first byte, which is what
+    /// `SessionView::Starting` is derived from.
+    pub fn screen(&self, rows: u16, cols: u16) -> Option<Vec<Line<'static>>> {
+        if self.seen.load(Ordering::SeqCst) == 0 {
+            return None;
+        }
+        let parser = self.parser.read().ok()?;
+        Some(materialise(parser.screen(), rows, cols))
+    }
+
+    /// Where the child's cursor is, as (row, column) inside the pane's inner rect.
+    pub fn cursor(&self) -> (u16, u16) {
+        self.parser
+            .read()
+            .map(|parser| parser.screen().cursor_position())
+            .unwrap_or((0, 0))
+    }
+
+    /// Everything the pass left behind. Consumes the session: the pty and the parser go with it.
+    pub fn into_transcript(mut self, rows: u16, cols: u16, ended: Ended) -> Vec<Line<'static>> {
+        // The reader thread is joined first, so every byte the child wrote before it died is in
+        // the parser before the transcript is taken from it.
+        self.stop();
+        let name = self.name.clone();
+        match self.parser.write() {
+            Ok(mut parser) => transcript(&mut parser, rows, cols, ended, &name),
+            // A poisoned lock means the reader thread panicked mid-write; the pass still ended,
+            // and the line saying so is the one thing worth keeping.
+            Err(_) => {
+                let (text, failed) = exit_line(&name, ended);
+                let style =
+                    if failed { Style::default().fg(Color::Red) } else { Style::default() };
+                vec![Line::from(Span::styled(text, style))]
+            }
+        }
+    }
+
+    /// Kill the child and let the reader thread end at EOF. Idempotent: `into_transcript` calls
+    /// it, and so does `Drop`.
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(handle) = self.reader.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for Session {
+    /// A pane the navigator can no longer see must not leave an agent running against a bead
+    /// nobody is watching.
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,6 +569,161 @@ mod tests {
         for line in &lines {
             assert!(line.spans.is_empty(), "expected an empty line, got {line:?}");
         }
+    }
+
+
+    /// A `/bin/sh -c' session, at the given size. POSIX utilities only, and never
+    /// `scripts/launch': a case that started a real agent would claim a bead.
+    fn shell(script: &str, rows: u16, cols: u16) -> Session {
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.arg("-c");
+        command.arg(script);
+        // A child that inherited the developer's own TERM would emit whatever that terminal
+        // wants; `dumb' keeps the bytes a plain stream on every machine.
+        command.env("TERM", "dumb");
+        Session::spawn_command("Cyclops", command, rows, cols).expect("the session spawns")
+    }
+
+    /// Poll every 10ms for up to five seconds until PREDICATE holds; panic with what the screen
+    /// said if it never does. A bare `sleep' is either flaky or slow, and an unbounded loop is a
+    /// CI job that hangs until the runner kills it. Five seconds is the bound every other child
+    /// in this crate already gets (`readers.rs').
+    fn settle(session: &mut Session, what: &str, mut predicate: impl FnMut(&mut Session) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if predicate(session) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("never settled: {what}\nscreen was {:?}", session.screen(24, 80));
+    }
+
+    /// The screen's rows as plain text, blank rows and all.
+    fn screen_text(session: &Session, rows: u16, cols: u16) -> Vec<String> {
+        session
+            .screen(rows, cols)
+            .unwrap_or_default()
+            .iter()
+            .map(|line| texts(line).join(""))
+            .collect()
+    }
+
+    fn text_of(lines: &[Line<'static>]) -> Vec<String> {
+        lines.iter().map(|line| texts(line).join("")).collect()
+    }
+
+    #[test]
+    fn a_child_that_prints_appears_on_the_session_screen() {
+        let mut session = shell(r#"printf "hello from the pty\r\n""#, 24, 80);
+        settle(&mut session, "the greeting", |session| {
+            screen_text(session, 24, 80).first().is_some_and(|line| line == "hello from the pty")
+        });
+    }
+
+    #[test]
+    fn a_session_with_no_output_yet_has_no_screen() {
+        // A child that says nothing for a moment: the pane must be able to tell "spawned, nothing
+        // yet" from "no session", which is what `SessionView::Starting' is.
+        let session = shell("sleep 5", 24, 80);
+        assert!(session.screen(24, 80).is_none());
+    }
+
+    #[test]
+    fn bytes_written_to_a_session_come_back_as_output() {
+        let mut session = shell(r#"read line; printf "got:%s\r\n" "$line""#, 24, 80);
+        session.send(b"hi\r");
+        settle(&mut session, "the echoed line", |session| {
+            screen_text(session, 24, 80).iter().any(|line| line.contains("got:hi"))
+        });
+    }
+
+    #[test]
+    fn resizing_the_pane_resizes_the_child() {
+        let mut session = shell("stty size; read _; stty size", 24, 80);
+        settle(&mut session, "the first size", |session| {
+            screen_text(session, 24, 80).iter().any(|line| line.contains("24 80"))
+        });
+        session.resize(10, 40);
+        session.send(b"\r");
+        settle(&mut session, "the second size", |session| {
+            screen_text(session, 10, 40).iter().any(|line| line.contains("10 40"))
+        });
+    }
+
+    #[test]
+    fn exit_lines_read_as_agreed() {
+        assert_eq!(
+            exit_line("Cyclops", Ended::Status(0)),
+            ("Cyclops finished with status 0.".to_string(), false)
+        );
+        assert_eq!(
+            exit_line("Cyclops", Ended::Status(101)),
+            ("Cyclops finished with status 101.".to_string(), true)
+        );
+        assert_eq!(
+            exit_line("Cyclops", Ended::Signal(9)),
+            ("Cyclops was killed by signal 9.".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn a_finished_child_leaves_its_screen_and_a_status_line() {
+        let mut session = shell(r#"printf "done\r\n""#, 24, 80);
+        let mut ended = None;
+        settle(&mut session, "the exit", |session| {
+            ended = session.poll_exit();
+            ended.is_some()
+        });
+        assert_eq!(ended, Some(Ended::Status(0)));
+        let lines = text_of(&session.into_transcript(24, 80, Ended::Status(0)));
+        assert_eq!(
+            lines,
+            vec![
+                "done".to_string(),
+                String::new(),
+                "Cyclops finished with status 0.".to_string(),
+                String::new(),
+                "End of retained scrollback. Up/Down scroll while focused.".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failing_child_is_reported_with_its_status() {
+        let mut session = shell("exit 101", 24, 80);
+        let mut ended = None;
+        settle(&mut session, "the exit", |session| {
+            ended = session.poll_exit();
+            ended.is_some()
+        });
+        assert_eq!(ended, Some(Ended::Status(101)));
+        let (text, failed) = exit_line("Cyclops", ended.unwrap());
+        assert_eq!(text, "Cyclops finished with status 101.");
+        assert!(failed);
+        let lines = session.into_transcript(24, 80, ended.unwrap());
+        let status = lines.iter().find(|line| texts(line).join("").starts_with("Cyclops")).unwrap();
+        assert_eq!(status.spans[0].style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn the_retained_transcript_carries_every_line_that_scrolled_off() {
+        let mut session = shell(
+            r#"i=1; while [ $i -le 200 ]; do printf "line %s\r\n" $i; i=$((i+1)); done"#,
+            24,
+            80,
+        );
+        let mut ended = None;
+        settle(&mut session, "the exit", |session| {
+            ended = session.poll_exit();
+            ended.is_some()
+        });
+        let lines = text_of(&session.into_transcript(24, 80, ended.unwrap()));
+        assert_eq!(lines.first().map(String::as_str), Some("line 1"));
+        // The three closing lines the view adds sit under the last thing the agent said.
+        let content: Vec<&String> = lines.iter().take(lines.len() - 4).collect();
+        assert_eq!(content.last().map(|line| line.as_str()), Some("line 200"));
+        assert_eq!(lines.iter().filter(|line| *line == "line 137").count(), 1);
     }
 
     #[test]

@@ -63,10 +63,16 @@ M-x cerebro                       # in your own
 Everything below can be done from a terminal, and almost nobody does. The Emacs fleet view lists
 every agent on the roster with its state, the bead or PR it is on, and how long it has been there.
 
-**This is the view that operates the fleet**, and the only one: every key below, every trigger,
-every stop flag and every state file it deletes belongs to it. There is a second, read-only view
-for watching — `.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering* — which
-shows the same rows and the same queues and can do none of this.
+**This is the view that operates the fleet**: every key below, every trigger, every stop flag and
+every state file it deletes belongs to it. There is a second view for watching —
+`.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering* — which shows the same
+rows and the same queues.
+
+Which of the two may act is now the project's own declaration rather than a property of the
+programs: `fleet_supervisor emacs|tui` in `.cerebro/project.conf`, absent meaning `emacs`. Leave it
+out and everything below is exactly as it has always been. Whichever view is not the declared one
+reads and draws and does nothing else — it says so on its mode line or in its header — and only one
+process can hold the lease at a time even when two Emacsen are open on one checkout.
 
 | Key | Does |
 |---|---|
@@ -596,7 +602,14 @@ standalone read-only view:
 
 It draws the same fleet rows and the same six queues — Claimed, Planned unclaimed, Being planned,
 Unplanned, Waiting on you, Merged unverified — as two separately bordered widgets stacked one above
-the other, Fleet on top and Work below, each scrolling independently of the other. Fleet refreshes
+the other, Fleet on top and Work below, each scrolling independently of the other. Its header says
+what it is allowed to do, and says nothing in the ordinary case: `Cerebro — read-only` in a project
+that has not moved supervision — exactly what it has always said — and `Cerebro — supervising` in
+one that declared `fleet_supervisor tui`. The longer spellings are spent only where there is
+something to say, such as `Cerebro — read-only; another Ratatui process owns supervision` when a
+second one is already running. It
+still offers no lifecycle key either way; owning the lease and hosting sessions are separate
+steps, and the second is not built yet. Fleet refreshes
 every five seconds and Work every thirty. `Tab`/`Shift-Tab` swap which widget is focused; the
 focused one draws a bright-blue thick-line border and `↑`/`↓`/`PgUp`/`PgDn` scroll only it. `g`
 refreshes both panes regardless of focus, `q`/`Esc`/`Ctrl-C` quits. If one of the two readers fails,

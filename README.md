@@ -103,6 +103,16 @@ A role two or more agents hold has its starts spaced, so that a condition true f
 once does not start them in one breath; `role_start_spacing_<role> <seconds>` declares that gap for
 one role, `0` means never space that role, and an absent key leaves the fleet view's own built-in
 number in force.
+
+`fleet_supervisor emacs|tui` says which fleet view may act on the checkout — start a session, nudge
+one, prune a worktree. Absent means `emacs`, which is what every project has had until now, so
+leaving it out changes nothing. The other view stays open beside it and reads: both may draw the
+fleet at the same time, and only the declared one acts. Exclusion is a socket the owner binds
+rather than a file it writes, so an owner that crashes releases immediately instead of leaving a
+lock somebody has to judge stale. A value that is neither word takes **both** views read-only and
+says so on screen, rather than one of them quietly assuming the default. Changing the declaration
+while sessions are running is safe: the old owner starts nothing more, keeps those sessions usable,
+and hands over when the last one ends.
 This repository's own `.cerebro/project.conf` is a commented example, and
 the header of `scripts/project-conf` states the format.
 

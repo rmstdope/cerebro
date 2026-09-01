@@ -6,12 +6,14 @@
 //! Emacs remains the sole supervisor (cb-vyp.1's own scope).
 
 use std::io::Read;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use wait_timeout::ChildExt;
 
+use crate::supervisor::SupervisorKind;
 use crate::model::{
     self, Bead, FleetRow, ProcessRow, RosterEntry, StateInputs, StateObservation, StateRecord,
     WorkBuckets,
@@ -65,6 +67,11 @@ pub enum ReadError {
         source: String,
         status: Option<i32>,
         stderr: String,
+        /// What the program printed before it failed. Carried because one reader's refusal is
+        /// still an answer: `scripts/fleet-supervisor` exits 2 on an invalid declaration and
+        /// prints the raw offending value, which is what the header has to name. Everywhere else
+        /// this is simply empty.
+        stdout: String,
     },
     Invalid { source: String, message: String },
     Timeout { source: String, seconds: u64 },
@@ -74,7 +81,7 @@ impl std::fmt::Display for ReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Spawn { source, message } => write!(f, "could not run {source}: {message}"),
-            Self::Exit { source, status, stderr } =>
+            Self::Exit { source, status, stderr, .. } =>
                 write!(f, "{source} exited with status {status:?}: {stderr}"),
             Self::Invalid { source, message } =>
                 write!(f, "{source} produced invalid output: {message}"),
@@ -157,6 +164,7 @@ fn run_with_timeout(
             source: program_name,
             status: status.code(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
         });
     }
     Ok(stdout)
@@ -175,6 +183,54 @@ pub fn read_roster(paths: &ReaderPaths) -> Result<Vec<RosterEntry>, ReadError> {
         source: program.display().to_string(),
         message: e.to_string(),
     })
+}
+
+/// Which implementation this project declares may supervise, from `scripts/fleet-supervisor`
+/// (cb-kcs.1).
+///
+/// The refusal is an answer, not a failure to paper over: an invalid declaration exits 2 and
+/// prints the raw offending value, and this returns it as `Err(raw)` so the header can name it.
+/// A declaration this build cannot read is NEVER rounded to `emacs` - that fallback is the one
+/// thing fail-closed forbids, because a typo that read as the default would leave supervision
+/// where the navigator moved it away from.
+pub fn read_configured_supervisor(
+    paths: &ReaderPaths,
+) -> Result<Result<SupervisorKind, String>, ReadError> {
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    match run(&program, &[], Some(&paths.consumer_root)) {
+        Ok(stdout) => {
+            let word = String::from_utf8_lossy(&stdout).trim().to_string();
+            Ok(SupervisorKind::parse(&word).ok_or(word))
+        }
+        // Exit 2 with the raw value on stdout is the documented invalid-declaration answer.
+        Err(ReadError::Exit { status: Some(2), stdout, .. }) => Ok(Err(stdout.trim().to_string())),
+        Err(other) => Err(other),
+    }
+}
+
+/// The loopback address this checkout's supervision lease lives at.
+pub fn read_supervisor_endpoint(paths: &ReaderPaths) -> Result<SocketAddr, ReadError> {
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    let stdout = run(&program, &["--endpoint"], Some(&paths.consumer_root))?;
+    let text = String::from_utf8_lossy(&stdout).trim().to_string();
+    text.parse().map_err(|e: std::net::AddrParseError| ReadError::Invalid {
+        source: program.display().to_string(),
+        message: format!("{text:?} is not an address: {e}"),
+    })
+}
+
+/// The canonical shared root this checkout supervises - the identity the record round-trips.
+pub fn read_supervisor_identity(paths: &ReaderPaths) -> Result<String, ReadError> {
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    let stdout = run(&program, &["--identity"], Some(&paths.consumer_root))?;
+    Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+}
+
+/// Where the diagnostic record goes. Reading this creates nothing.
+pub fn read_supervisor_record(paths: &ReaderPaths) -> Result<PathBuf, ReadError> {
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    let stdout = run(&program, &["--record"], Some(&paths.consumer_root))?;
+    Ok(PathBuf::from(String::from_utf8_lossy(&stdout).trim().to_string()))
 }
 
 /// One `.cerebro/state/<name>.state.json` per ROSTER entry, under `paths.shared_root` - the
@@ -309,6 +365,37 @@ mod tests {
             .to_path_buf()
     }
 
+    /// Linux's ETXTBSY, and why every fixture spawn below goes through this.
+    ///
+    /// `exec` of a file fails with `ETXTBSY` while ANY process still holds a writable descriptor
+    /// for it. Cargo runs these tests as threads of one process, so the window is not this test's
+    /// own write - `write_executable` closes its handle before it returns - but any OTHER test
+    /// that forks during it: `fork` duplicates every descriptor, so a child sitting between fork
+    /// and exec is holding our write handle open on its behalf. It closes a moment later
+    /// (`O_CLOEXEC`), which is what makes this transient and worth retrying rather than a defect
+    /// in the code under test.
+    ///
+    /// Observed on main as a red `Rust tests` job on ubuntu-latest, 2026-09-01: `Spawn { source:
+    /// "/tmp/.tmpIsHhre/bd", message: "Text file busy (os error 26)" }`. macOS does not enforce
+    /// ETXTBSY the same way, which is why the whole local gate was green.
+    ///
+    /// The retry is on the *error*, not on the operation: a genuine spawn failure still fails,
+    /// and a test whose fixture sleeps is never re-run, because a timeout is not this error.
+    fn retry_if_text_busy<T>(mut call: impl FnMut() -> Result<T, ReadError>) -> Result<T, ReadError> {
+        const TEXT_FILE_BUSY: &str = "os error 26";
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match call() {
+                Err(ReadError::Spawn { message, .. })
+                    if message.contains(TEXT_FILE_BUSY) && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                other => return other,
+            }
+        }
+    }
+
     fn write_executable(dir: &Path, name: &str, script: &str) -> PathBuf {
         let path = dir.join(name);
         let mut file = std::fs::File::create(&path).unwrap();
@@ -327,7 +414,7 @@ mod tests {
             shared_root: root.clone(),
             scripts_dir: root.join("scripts"),
         };
-        let roster = read_roster(&paths).expect("this checkout's scripts/roster must run");
+        let roster = retry_if_text_busy(|| read_roster(&paths)).expect("this checkout's scripts/roster must run");
         assert!(!roster.is_empty(), "this repository's roster must declare at least one agent");
 
         // Pure consumption: feed the impure read straight into the pure deriver, with no state
@@ -395,7 +482,7 @@ mod tests {
             "#!/usr/bin/env bash\nprintf '%s\\n' '    1     0 /sbin/launchd' '  123     1 some prog --flag a  b'\n",
         );
         let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd") };
-        let rows = read_processes(&programs).unwrap();
+        let rows = retry_if_text_busy(|| read_processes(&programs)).unwrap();
         assert_eq!(
             rows,
             vec![
@@ -414,7 +501,7 @@ mod tests {
             "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
         );
         let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd") };
-        let err = read_processes(&programs).unwrap_err();
+        let err = retry_if_text_busy(|| read_processes(&programs)).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
                 assert_eq!(status, Some(3));
@@ -427,11 +514,80 @@ mod tests {
     #[test]
     fn readers_report_spawn_and_decode_failures() {
         let programs = Programs { ps: PathBuf::from("/does/not/exist/ps"), bd: PathBuf::from("bd") };
-        assert!(matches!(read_processes(&programs), Err(ReadError::Spawn { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_processes(&programs)), Err(ReadError::Spawn { .. })));
         let dir = tempfile::tempdir().unwrap();
         let bad_ps = write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf '\\377'\n");
         let programs = Programs { ps: bad_ps, bd: PathBuf::from("bd") };
-        assert!(matches!(read_processes(&programs), Err(ReadError::Invalid { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_processes(&programs)), Err(ReadError::Invalid { .. })));
+    }
+
+    /// The declaration reader, against the real script: default, both values, and the refusal
+    /// that is still an answer (cb-kcs.1).
+    #[test]
+    fn configured_supervisor_reader_preserves_default_invalid_and_shared_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+
+        // A stand-in for `scripts/fleet-supervisor` with its documented contract: the value on
+        // stdout, and exit 2 with the RAW value on stdout when it is neither word.
+        //
+        // The declaration's path is baked into the script rather than passed in the environment:
+        // cargo runs these tests as threads of one process, several siblings here spawn
+        // subprocesses concurrently, and `set_var` racing another thread's `getenv` or `fork` is
+        // a data race in `std` - and it would leak the variable on a panic besides.
+        let declaration = dir.path().join("declaration");
+        let fake = write_executable(
+            &scripts,
+            "fleet-supervisor",
+            &format!(
+                "#!/usr/bin/env bash\n\
+                 value=\"$(cat {declaration})\"\n\
+                 printf '%s\\n' \"$value\"\n\
+                 case \"$value\" in emacs|tui) exit 0 ;; *) echo 'invalid' >&2; exit 2 ;; esac\n",
+                declaration = declaration.display(),
+            ),
+        );
+        assert!(fake.exists());
+
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: scripts,
+        };
+
+        std::fs::write(&declaration, "emacs").unwrap();
+        assert_eq!(
+            retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
+            Ok(SupervisorKind::Emacs)
+        );
+
+        std::fs::write(&declaration, "tui").unwrap();
+        assert_eq!(
+            retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
+            Ok(SupervisorKind::Tui)
+        );
+
+        // The refusal is an answer: the raw word survives, and it is NOT rounded to the default.
+        std::fs::write(&declaration, "rat").unwrap();
+        assert_eq!(
+            retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
+            Err("rat".to_string())
+        );
+    }
+
+    /// A reader that cannot run at all is an error, never `emacs`. Fail-open here is the one
+    /// failure this whole bead exists to refuse.
+    #[test]
+    fn a_missing_supervisor_script_is_an_error_not_a_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        assert!(read_configured_supervisor(&paths).is_err());
+        assert!(read_supervisor_endpoint(&paths).is_err());
     }
 
     #[test]
@@ -459,7 +615,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        let beads = read_beads(&paths, &programs).unwrap();
+        let beads = retry_if_text_busy(|| read_beads(&paths, &programs)).unwrap();
         assert_eq!(beads.len(), 1);
         assert_eq!(beads[0].id, "cb-1");
         assert_eq!(partition_beads(beads).unplanned.len(), 1);
@@ -480,7 +636,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        assert!(matches!(read_beads(&paths, &programs), Err(ReadError::Invalid { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_beads(&paths, &programs)), Err(ReadError::Invalid { .. })));
     }
 
     #[test]
@@ -496,7 +652,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        let err = read_beads(&paths, &programs).unwrap_err();
+        let err = retry_if_text_busy(|| read_beads(&paths, &programs)).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
                 assert_eq!(status, Some(2));
@@ -546,7 +702,7 @@ mod tests {
             scripts_dir: scripts,
         };
         let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
-        let rows = read_fleet(&paths, &programs).unwrap();
+        let rows = retry_if_text_busy(|| read_fleet(&paths, &programs)).unwrap();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].name, "Xavier");
@@ -645,7 +801,7 @@ mod tests {
             "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
         );
         let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
-        match read_fleet(&paths, &programs) {
+        match retry_if_text_busy(|| read_fleet(&paths, &programs)) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(3));
                 assert!(stderr.contains("boom"));
@@ -660,7 +816,7 @@ mod tests {
             "#!/usr/bin/env bash\necho 'roster: refusing' >&2\nexit 2\n",
         );
         write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf ''\n");
-        match read_fleet(&paths, &programs) {
+        match retry_if_text_busy(|| read_fleet(&paths, &programs)) {
             Err(ReadError::Exit { status, source, .. }) => {
                 assert_eq!(status, Some(2));
                 assert!(source.ends_with("roster"), "expected the roster to be named: {source}");
@@ -711,7 +867,7 @@ mod tests {
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
 
-        let work = read_work(&paths, &programs).expect("the fixture bd answers the panel's argv");
+        let work = retry_if_text_busy(|| read_work(&paths, &programs)).expect("the fixture bd answers the panel's argv");
         assert_eq!(ids(&work.claimed), ["cb-claimed"]);
         assert_eq!(ids(&work.planned), ["cb-planned"]);
         assert_eq!(ids(&work.being_planned), ["cb-held"]);
@@ -758,7 +914,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        match read_work(&paths, &programs) {
+        match retry_if_text_busy(|| read_work(&paths, &programs)) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(1));
                 assert!(stderr.contains("database is locked"), "{stderr}");
@@ -781,7 +937,7 @@ mod tests {
             scripts_dir: dir.path().to_path_buf(),
         };
         let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
-        assert!(matches!(read_work(&paths, &programs), Err(ReadError::Invalid { .. })));
+        assert!(matches!(retry_if_text_busy(|| read_work(&paths, &programs)), Err(ReadError::Invalid { .. })));
     }
 
     /// A `bd` that never answers is killed, reaped and reported. Without the bound the Work pane

@@ -112,6 +112,19 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Emacs, in the RUST job (cb-kcs.1). One test here starts a real Emacs, has it take the
+      # supervision lease, proves this process is refused and told who holds it, then kills it and
+      # proves the lease is free at once. That is the only place the two implementations are
+      # proved to share one lock rather than two lookalike ones, and without Emacs on PATH it
+      # would quietly skip - which is the failure mode the test exists to rule out.
+      #
+      # Deliberately here and not the reverse: one Emacs setup in this job, rather than a Rust
+      # toolchain in both ERT jobs.
+      - uses: purcell/setup-emacs@master
+        with:
+          # The same current release the second ERT job runs.
+          version: '30.1'
+
       # Locked, same as tests/gate: never let CI resolve a dependency crates.io was not asked to
       # fix in place, and --all-targets so a test-only compile error cannot hide behind a green
       # `cargo build`.

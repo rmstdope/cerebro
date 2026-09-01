@@ -18,8 +18,9 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::model::{FleetRow, WorkBuckets};
-use crate::readers::{read_fleet, read_work, Programs, ReaderPaths, ReadError};
+use crate::readers::{read_configured_supervisor, read_fleet, read_work, Programs, ReaderPaths, ReadError};
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
 /// interview: fast enough that a claim appears while the navigator is still looking at the row,
@@ -207,6 +208,13 @@ pub struct App {
     pub work: Pane<WorkBuckets>,
     /// Which widget the keyboard currently acts on. Fleet by default.
     pub focus: PaneFocus,
+    /// What this process is allowed to do with the checkout it is drawing (cb-kcs.1).
+    ///
+    /// Display state only: the lease itself lives in `main.rs`, because binding a listener is not
+    /// something a struct the renderer reads should be able to do. The header line is the whole of
+    /// its surface - the navigator chose that over an Ownership pane, so that ownership never
+    /// takes a row or a Tab stop from Fleet and Work.
+    pub supervision: SupervisionMode,
     pub quit: bool,
     last_fleet_request: Option<Instant>,
     last_work_request: Option<Instant>,
@@ -220,14 +228,33 @@ impl Default for App {
 
 impl App {
     pub fn new() -> Self {
+        Self::with_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(
+            SupervisorKind::Emacs,
+        )))
+    }
+
+    /// An `App` whose ownership is known before the first frame.
+    ///
+    /// `new()` starts read-only-because-Emacs, which is what an absent declaration means and so
+    /// what almost every consumer is. Production reads the real answer before entering the
+    /// terminal and constructs through this, so a process configured for the TUI never flashes an
+    /// "Emacs owns supervision" frame on its way to owning the checkout.
+    pub fn with_supervision(supervision: SupervisionMode) -> Self {
         Self {
             fleet: Pane::default(),
             work: Pane::default(),
             focus: PaneFocus::default(),
+            supervision,
             quit: false,
             last_fleet_request: None,
             last_work_request: None,
         }
+    }
+
+    /// Replace the ownership this view reports. Display state, and nothing else: the lease is the
+    /// controller's, and this cannot bind, release or write anything.
+    pub fn set_supervision(&mut self, supervision: SupervisionMode) {
+        self.supervision = supervision;
     }
 
     /// The schedule: a request for each pane at once, then one no sooner than that pane's own
@@ -390,6 +417,14 @@ pub struct Worker<T> {
 pub type FleetWorker = Worker<Vec<FleetRow>>;
 /// The bead panel's worker: `read_work` on its own thread.
 pub type WorkWorker = Worker<WorkBuckets>;
+/// Ownership's worker: `read_configured_supervisor` on its own thread (cb-kcs.1).
+///
+/// A third worker rather than a question asked on the UI thread, for the reason the other two
+/// exist: `scripts/fleet-supervisor` is a subprocess with a five-second bound, and a declaration
+/// that takes five seconds to answer would freeze the screen - keys and all - for exactly as long
+/// as the thing that went wrong. The inner `Result` is the answer (`Err(raw)` for an invalid
+/// declaration); the outer one is whether the reader ran at all.
+pub type SupervisorWorker = Worker<Result<SupervisorKind, String>>;
 
 impl<T: Send + 'static> Worker<T> {
     fn spawn_reader(reader: impl Fn() -> Result<T, ReadError> + Send + 'static) -> Self {
@@ -438,6 +473,12 @@ impl Worker<WorkBuckets> {
     }
 }
 
+impl Worker<Result<SupervisorKind, String>> {
+    pub fn spawn(paths: ReaderPaths) -> Self {
+        Self::spawn_reader(move || read_configured_supervisor(&paths))
+    }
+}
+
 impl<T> Drop for Worker<T> {
     fn drop(&mut self) {
         // Dropping the sender asks the loop to end, but do not join: a reader may be inside its
@@ -479,6 +520,7 @@ mod tests {
             source: "ps".into(),
             status: Some(3),
             stderr: "ps: boom".into(),
+            stdout: String::new(),
         }
     }
 
@@ -487,6 +529,7 @@ mod tests {
             source: "bd".into(),
             status: Some(1),
             stderr: "bd list failed: database is locked".into(),
+            stdout: String::new(),
         }
     }
 

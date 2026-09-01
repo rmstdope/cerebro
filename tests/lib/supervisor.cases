@@ -1,0 +1,85 @@
+# The supervision transition table, run by BOTH implementations of the ownership rule:
+#
+#   supervisor::reconcile_supervision   (Rust, fleet-view/)  via fleet-view/src/supervisor.rs
+#   cerebro--supervision-decision       (emacs/cerebro.el)   via emacs/cerebro-test.el
+#
+# WHY IT IS ONE FILE. Emacs and Ratatui answer the same question about the same checkout, seconds
+# apart, from two languages: "given what this project declares, whether I hold the lease, and how
+# many sessions I am hosting - what am I, and what do I do next?". If those two answers ever differ
+# the fleet has either two supervisors or none, and both failures are invisible until a session is
+# started twice or never. So the rule is a table rather than prose, and a row added here is a row
+# both sides must answer before the gate is green (cb-kcs.1).
+#
+# THE COLUMNS, tab- or space-separated, in order:
+#
+#   local        this process's own kind: `emacs' or `tui'.
+#   configured   what the project declares: `emacs', `tui', or `invalid' for a value that is
+#                neither (`scripts/fleet-supervisor' exits 2 and hands back the raw word).
+#   holds        `yes' when this process currently holds the loopback lease, `no' when it does not.
+#   hosted       how many agent sessions this process is currently hosting. Always 0 in cb-kcs.1 -
+#                nothing hosts a session yet - but the drain rule is written and tested now, so
+#                cb-kcs.2 adds PTYs to a rule that already knows what to do with them.
+#   mode         the answer: `read-only', `supervising' or `draining'.
+#   action       what to do about the lease: `acquire', `keep' or `release'.
+#
+# THE RULE THE ROWS ENCODE, stated once so a new row can be checked against intent rather than
+# against the other rows:
+#
+#   * Configured for me and holding it       -> supervising, keep. The ordinary case.
+#   * Configured for me and not holding it   -> read-only, acquire. Read-only is the honest answer
+#     until the bind actually succeeds; the caller replaces it with `supervising' in the same tick,
+#     or with the reason the bind failed. A process that called itself supervising before it owned
+#     anything is exactly the double-supervisor this table exists to prevent.
+#   * Configured for somebody else, holding it, hosting nothing -> read-only, release. Hand over at
+#     once: there is nothing to drain.
+#   * Configured for somebody else, holding it, hosting sessions -> draining, keep. THE GRACEFUL
+#     DRAIN the navigator chose: keep the lease so the new owner cannot start duplicates, keep the
+#     sessions usable, start and nudge nothing, and release when the last one ends.
+#   * Configured for somebody else, not holding it -> read-only, keep. Nothing to do at all.
+#   * Invalid declaration -> exactly the same as "configured for somebody else". FAIL-CLOSED: a
+#     typo must never be a licence to supervise, and it must never silently release a lease out
+#     from under live sessions either.
+#
+# Note what is NOT a column: no pid, no timestamp, no lease age, no heartbeat. Ownership is the
+# bound listener and nothing else, and this table decides only what to ask of it.
+
+# --- Emacs, the default owner -----------------------------------------------------------------
+# local  configured  holds  hosted  mode         action
+emacs    emacs       no     0       read-only    acquire
+emacs    emacs       yes    0       supervising  keep
+emacs    emacs       yes    2       supervising  keep
+
+# The declaration moves to the TUI. With nothing hosted this is immediate; with sessions in flight
+# it is the drain, and the drain ends by itself when the last one goes.
+emacs    tui         no     0       read-only    keep
+emacs    tui         yes    0       read-only    release
+emacs    tui         yes    1       draining     keep
+emacs    tui         yes    3       draining     keep
+
+# A correction DURING the drain: the navigator puts it back to `emacs' while sessions are still
+# hosted. The lease was never released, so supervision simply resumes - no reacquisition, no gap.
+emacs    emacs       yes    3       supervising  keep
+
+# An invalid value behaves exactly like somebody else's declaration, never like the default.
+emacs    invalid     no     0       read-only    keep
+emacs    invalid     yes    0       read-only    release
+emacs    invalid     yes    1       draining     keep
+
+# --- Ratatui, once a project declares it ------------------------------------------------------
+tui      tui         no     0       read-only    acquire
+tui      tui         yes    0       supervising  keep
+tui      tui         yes    5       supervising  keep
+
+# A second Ratatui against a first: configured for `tui', but this one does not hold the lease. It
+# stays open as a read-only observer and retries on `g' (the navigator's choice), which is the
+# `acquire' below - a retry is the same decision as a first attempt.
+tui      tui         no     2       read-only    acquire
+
+# The declaration moves back to Emacs.
+tui      emacs       no     0       read-only    keep
+tui      emacs       yes    0       read-only    release
+tui      emacs       yes    2       draining     keep
+
+tui      invalid     no     0       read-only    keep
+tui      invalid     yes    0       read-only    release
+tui      invalid     yes    1       draining     keep

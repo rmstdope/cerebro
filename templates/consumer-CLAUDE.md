@@ -74,8 +74,10 @@ a bead is planned in one session and implemented in another.
 > `mv`.*
 
 - `.cerebro/project.conf` — how the project installs itself, what its fast and full gates are
-  called, which paths are the application, where retrospectives live, and — with
-  `verification none` — that nothing in it can be verified by looking.
+  called, which paths are the application, where retrospectives live, — with
+  `verification none` — that nothing in it can be verified by looking, and **which fleet view may
+  supervise** (`fleet_supervisor emacs|tui`; absent means `emacs`, and only the declared one starts,
+  nudges or prunes anything — the other reads beside it).
 - `.cerebro/roster.conf` — which agents this project runs, and in what order. Absent means the
   built-in fleet. An optional third word, one of two: `autostart` makes the fleet view start that
   agent as it comes up (cb-0r6), `standby` **arms** it without starting it (cb-98u) — its row reads

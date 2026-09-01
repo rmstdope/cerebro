@@ -217,7 +217,7 @@ pub enum FleetBodyLine {
     NoSnapshot,
     /// "Press g to retry."
     Retry,
-    /// A stale pane's closing line.
+    /// "The last successful fleet snapshot remains visible." - a stale pane's closing line.
     StaleTrailer,
     /// The table's column heading.
     Heading,

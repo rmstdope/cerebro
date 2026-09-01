@@ -1820,21 +1820,18 @@ mod tests {
         for app in [&fresh, &stale] {
             let document = fleet_document(app, now(), 99, app.selected_index());
             let body = crate::app::fleet_body(&app.fleet.content);
-            let flat = |document: &Vec<Line<'static>>| {
-                document
-                    .iter()
-                    .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
-                    .collect::<Vec<_>>()
-            };
-            assert_eq!(document.len(), body.len(), "one line per body entry: {:?}", flat(&document));
+            let flat: Vec<String> = document
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+                .collect();
+            assert_eq!(document.len(), body.len(), "one line per body entry: {flat:?}");
             for (index, expected) in rows.iter().enumerate() {
                 let line = crate::app::body_line_of_row(&body, index)
                     .expect("the body names every row of a table it drew");
                 assert!(
-                    flat(&document)[line].contains(&expected.name),
-                    "row {index} ({}) is drawn on the line the body names: {:?}",
-                    expected.name,
-                    flat(&document)
+                    flat[line].contains(&expected.name),
+                    "row {index} ({}) is drawn on the line the body names: {flat:?}",
+                    expected.name
                 );
             }
         }

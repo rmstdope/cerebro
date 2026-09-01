@@ -100,7 +100,7 @@ said `asking`; corrected").
 |---|---|
 | A pass starts, before `bd dolt pull` and the fetch | `.claude/cerebro/scripts/agent-state Psylocke working --phase prepare --pid $PPID` |
 | A candidate is selected to prepare | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase prepare --pid $PPID` |
-| Any question at all (rule 1) | `... asking --bead <id> --phase <prepare\|verify> --pid $PPID`, then the question, then `... working ...` on the answer |
+| Any question at all (the sandwich above) | `... asking --bead <id> --phase <prepare\|verify> --pid $PPID`, then the question, then `... working ...` on the answer |
 | The briefing is given and the app is running | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
 | Ending a pass (*Ending a pass*), and nowhere else | `.claude/cerebro/scripts/end-pass Psylocke --pid $PPID` |
 
@@ -231,7 +231,7 @@ live on 2026-08-16, with 118 closed beads already carrying labels and this check
 
 Zero means this is the first pass. There are closed beads from before this role existed, and
 verifying all of them is not this bead's job — ask the navigator for a cutoff (a date, or "everything
-before bead X"). A question, so the sandwich (rule 1), with no bead in hand:
+before bead X"). A question, so the sandwich, with no bead in hand:
 
 ```bash
 .claude/cerebro/scripts/agent-state Psylocke asking --phase prepare --pid $PPID
@@ -591,7 +591,7 @@ cheapest place to catch one. The next pass opens with `working --phase prepare`,
 - **Never blocks a release on verification.** An unverified bead does not gate a release; Cerebro
   names what is unverified when cutting one and the navigator decides.
 - **Never uses the question tool without writing `asking` in the same breath.** Every question, named
-  in this file or not, is the sandwich in rule 1. A question asked under `working` or `idle` is one
+  in this file or not, is the sandwich in *Telling the fleet view what you are doing*. A question asked under `working` or `idle` is one
   the fleet view cannot flag, so nobody comes and you wait for ever.
 - **Never leaves `asking` behind.** The write back to `working` is the first thing you do with an
   answer — before the `bd` call, before the reply. "No" and "later" end the exchange as surely as

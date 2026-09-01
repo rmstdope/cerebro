@@ -464,8 +464,14 @@ mod tests {
 
     // --- the lease itself -----------------------------------------------------------------------
 
-    /// A free loopback port, found by binding one and letting it go. The race this leaves is
-    /// harmless here: every test below binds the port it was given and asserts on the result.
+    /// A free loopback port, found by binding one and letting it go.
+    ///
+    /// Between the probe closing and the caller binding, anything on the machine may take the
+    /// port - so NOTHING below asserts on a bind that used this directly. Setting up a lease goes
+    /// through `acquire_on_a_free_port`, which retries, and a test that needs a foreign listener
+    /// binds it on port 0 and asks it what it got. Two of these cases were written the obvious
+    /// way first and failed about one run in ten, which is the kind of test this repository
+    /// refuses to ship.
     fn free_port() -> u16 {
         let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind probe");
         probe.local_addr().expect("probe addr").port()
@@ -475,14 +481,35 @@ mod tests {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
     }
 
+    /// A held lease, on whatever loopback port was actually free. A lost race here is setup
+    /// noise, never the thing under assertion, so it simply tries the next port.
+    fn acquire_on_a_free_port(
+        record: &Path,
+        identity: &str,
+        owner: SupervisorKind,
+    ) -> (SupervisorLease, SocketAddr) {
+        for _ in 0..64 {
+            let addr = endpoint(free_port());
+            if let Ok(lease) = SupervisorLease::try_acquire(addr, record, identity, owner) {
+                return (lease, addr);
+            }
+        }
+        panic!("no free loopback port for a test lease");
+    }
+
+    /// Somebody else's listener, and the address it actually got. Bound on port 0, so there is no
+    /// window between finding the port and holding it.
+    fn foreign_listener() -> (TcpListener, SocketAddr) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("foreign bind");
+        let addr = listener.local_addr().expect("foreign addr");
+        (listener, addr)
+    }
+
     #[test]
     fn one_owner_at_a_time_and_the_record_names_it() {
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("state/supervisor.json");
-        let addr = endpoint(free_port());
-
-        let held = SupervisorLease::try_acquire(addr, &record, "/repos/x", SupervisorKind::Tui)
-            .expect("the first acquisition");
+        let (held, addr) = acquire_on_a_free_port(&record, "/repos/x", SupervisorKind::Tui);
         let body = std::fs::read_to_string(&record).expect("the record exists");
         assert!(body.contains("\"owner\":\"tui\""), "record: {body}");
         assert!(body.contains("\"identity\":\"/repos/x\""), "record: {body}");
@@ -498,14 +525,119 @@ mod tests {
             .expect("the port is free once the lease drops");
     }
 
+    /// The one test that proves the two implementations share one lease (cb-kcs.1).
+    ///
+    /// Not two language-local approximations: a real Emacs binds the listener and writes the
+    /// record, this Rust process is refused and told exactly who holds it, and then the Emacs is
+    /// killed WITHOUT a chance to clean up and the lease is free on the next call. That last step
+    /// is the whole argument for a bound socket over a pid file: nobody had to decide the owner
+    /// had died, and there was no window in which a live owner looked dead.
+    ///
+    /// The child chooses its own port and reports it, so there is no gap between finding a free
+    /// port and holding it - the flake this file already paid for once.
+    ///
+    /// CI installs Emacs in the Rust job for exactly this test; a machine without Emacs cannot
+    /// run it, and the assertion is skipped there rather than failing for the wrong reason.
+    #[test]
+    fn emacs_and_tui_share_one_crash_released_lease() {
+        let Some(emacs) = which_emacs() else {
+            eprintln!("emacs is not on PATH: skipping the cross-implementation lease test");
+            return;
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record = dir.path().join("supervisor.json");
+        let identity = "/repos/shared-checkout";
+        let emacs_lisp = concat!(env!("CARGO_MANIFEST_DIR"), "/../emacs");
+
+        // Bind on port 0, then report the port through a FILE rather than through stdout:
+        // Emacs's batch stdout is buffered, so a `princ` before a `sleep-for` arrives two minutes
+        // late - which is exactly how long the first version of this test took to fail.
+        let port_file = dir.path().join("port");
+        let program = format!(
+            "(let ((p (make-network-process :name \"held\" :family 'ipv4 :host \"127.0.0.1\" \
+             :service 0 :server t :noquery t :reuseaddr nil))) \
+             (with-temp-file {record} \
+               (insert (format \"{{\\\"identity\\\":%S,\\\"owner\\\":\\\"emacs\\\",\\\"pid\\\":%d}}\" {identity} (emacs-pid)))) \
+             (with-temp-file {port_file} (insert (format \"%d\" (process-contact p :service)))) \
+             (sleep-for 120))",
+            record = format!("{:?}", record.display().to_string()),
+            identity = format!("{identity:?}"),
+            port_file = format!("{:?}", port_file.display().to_string()),
+        );
+
+        let mut child = std::process::Command::new(emacs)
+            .args(["--batch", "-L", emacs_lisp, "--eval", &program])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn the Emacs owner");
+
+        // The port file appears only once the listener is bound and the record written.
+        let mut port = None;
+        for _ in 0..400 {
+            if let Ok(text) = std::fs::read_to_string(&port_file) {
+                if let Ok(parsed) = text.trim().parse::<u16>() {
+                    port = Some(parsed);
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let Some(port) = port else {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the Emacs owner never reported a bound port");
+        };
+        let addr = endpoint(port);
+
+        // Refused, and told who holds it - across two languages, one record, one port.
+        let refused = SupervisorLease::try_acquire(addr, &record, identity, SupervisorKind::Tui);
+        let outcome = match refused {
+            Err(AcquireError::OwnedBy(kind)) => Ok(kind),
+            other => Err(format!("{other:?}")),
+        };
+
+        // The owner dies without cleaning up.
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(outcome, Ok(SupervisorKind::Emacs), "Rust must see the Emacs owner");
+
+        // And the lease is free at once, with the crashed owner's record still on disk.
+        assert!(record.exists(), "the crashed owner left its record behind");
+        let mut taken = None;
+        for _ in 0..100 {
+            match SupervisorLease::try_acquire(addr, &record, identity, SupervisorKind::Tui) {
+                Ok(lease) => {
+                    taken = Some(lease);
+                    break;
+                }
+                // The kernel closes the listener as the process is reaped; on a loaded runner that
+                // is milliseconds after `wait` returns, not before it.
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            }
+        }
+        assert!(taken.is_some(), "a killed owner must release the lease immediately");
+        assert_eq!(
+            read_record(&record).expect("record").owner,
+            Some(SupervisorKind::Tui),
+            "the successful bind overwrote the stale record"
+        );
+    }
+
+    fn which_emacs() -> Option<std::path::PathBuf> {
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("emacs"))
+            .find(|candidate| candidate.is_file())
+    }
+
     #[test]
     fn a_record_from_another_checkout_is_a_collision_not_a_takeover() {
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("supervisor.json");
-        let addr = endpoint(free_port());
-
-        let _held = SupervisorLease::try_acquire(addr, &record, "/repos/other", SupervisorKind::Emacs)
-            .expect("the first acquisition");
+        let (_held, addr) =
+            acquire_on_a_free_port(&record, "/repos/other", SupervisorKind::Emacs);
 
         match SupervisorLease::try_acquire(addr, &record, "/repos/mine", SupervisorKind::Tui) {
             Err(AcquireError::EndpointCollision { identity }) => {
@@ -519,10 +651,8 @@ mod tests {
     fn a_bound_port_with_no_record_is_a_lock_error_never_permission() {
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("supervisor.json");
-        let addr = endpoint(free_port());
-
         // Somebody else's listener, with nothing of ours behind it.
-        let _foreign = TcpListener::bind(addr).expect("foreign bind");
+        let (_foreign, addr) = foreign_listener();
 
         match SupervisorLease::try_acquire(addr, &record, "/repos/x", SupervisorKind::Tui) {
             Err(AcquireError::LockError(message)) => {
@@ -537,8 +667,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("supervisor.json");
         std::fs::write(&record, "{ this is not json").expect("write");
-        let addr = endpoint(free_port());
-        let _foreign = TcpListener::bind(addr).expect("foreign bind");
+        let (_foreign, addr) = foreign_listener();
 
         match SupervisorLease::try_acquire(addr, &record, "/repos/x", SupervisorKind::Tui) {
             Err(AcquireError::LockError(_)) => {}
@@ -554,9 +683,7 @@ mod tests {
         std::fs::write(&record, "{\"identity\":\"/repos/x\",\"owner\":\"emacs\",\"pid\":1}\n")
             .expect("write");
 
-        let addr = endpoint(free_port());
-        let _held = SupervisorLease::try_acquire(addr, &record, "/repos/x", SupervisorKind::Tui)
-            .expect("a stale record must not block acquisition");
+        let (_held, _addr) = acquire_on_a_free_port(&record, "/repos/x", SupervisorKind::Tui);
         let body = std::fs::read_to_string(&record).expect("record");
         assert!(body.contains("\"owner\":\"tui\""), "record: {body}");
     }
@@ -565,11 +692,8 @@ mod tests {
     fn an_identity_round_trips_through_the_record() {
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("supervisor.json");
-        let addr = endpoint(free_port());
         let weird = "/repos/with \"quotes\" and \\ backslash";
-
-        let _held = SupervisorLease::try_acquire(addr, &record, weird, SupervisorKind::Emacs)
-            .expect("acquire");
+        let (_held, _addr) = acquire_on_a_free_port(&record, weird, SupervisorKind::Emacs);
         let fields = read_record(&record).expect("record parses");
         assert_eq!(fields.identity, weird);
         assert_eq!(fields.owner, Some(SupervisorKind::Emacs));

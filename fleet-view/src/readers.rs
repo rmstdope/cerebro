@@ -6,12 +6,14 @@
 //! Emacs remains the sole supervisor (cb-vyp.1's own scope).
 
 use std::io::Read;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use wait_timeout::ChildExt;
 
+use crate::supervisor::SupervisorKind;
 use crate::model::{
     self, Bead, FleetRow, ProcessRow, RosterEntry, StateInputs, StateObservation, StateRecord,
     WorkBuckets,
@@ -65,6 +67,11 @@ pub enum ReadError {
         source: String,
         status: Option<i32>,
         stderr: String,
+        /// What the program printed before it failed. Carried because one reader's refusal is
+        /// still an answer: `scripts/fleet-supervisor` exits 2 on an invalid declaration and
+        /// prints the raw offending value, which is what the header has to name. Everywhere else
+        /// this is simply empty.
+        stdout: String,
     },
     Invalid { source: String, message: String },
     Timeout { source: String, seconds: u64 },
@@ -74,7 +81,7 @@ impl std::fmt::Display for ReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Spawn { source, message } => write!(f, "could not run {source}: {message}"),
-            Self::Exit { source, status, stderr } =>
+            Self::Exit { source, status, stderr, .. } =>
                 write!(f, "{source} exited with status {status:?}: {stderr}"),
             Self::Invalid { source, message } =>
                 write!(f, "{source} produced invalid output: {message}"),
@@ -157,6 +164,7 @@ fn run_with_timeout(
             source: program_name,
             status: status.code(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
         });
     }
     Ok(stdout)
@@ -175,6 +183,54 @@ pub fn read_roster(paths: &ReaderPaths) -> Result<Vec<RosterEntry>, ReadError> {
         source: program.display().to_string(),
         message: e.to_string(),
     })
+}
+
+/// Which implementation this project declares may supervise, from `scripts/fleet-supervisor`
+/// (cb-kcs.1).
+///
+/// The refusal is an answer, not a failure to paper over: an invalid declaration exits 2 and
+/// prints the raw offending value, and this returns it as `Err(raw)` so the header can name it.
+/// A declaration this build cannot read is NEVER rounded to `emacs` - that fallback is the one
+/// thing fail-closed forbids, because a typo that read as the default would leave supervision
+/// where the navigator moved it away from.
+pub fn read_configured_supervisor(
+    paths: &ReaderPaths,
+) -> Result<Result<SupervisorKind, String>, ReadError> {
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    match run(&program, &[], Some(&paths.consumer_root)) {
+        Ok(stdout) => {
+            let word = String::from_utf8_lossy(&stdout).trim().to_string();
+            Ok(SupervisorKind::parse(&word).ok_or(word))
+        }
+        // Exit 2 with the raw value on stdout is the documented invalid-declaration answer.
+        Err(ReadError::Exit { status: Some(2), stdout, .. }) => Ok(Err(stdout.trim().to_string())),
+        Err(other) => Err(other),
+    }
+}
+
+/// The loopback address this checkout's supervision lease lives at.
+pub fn read_supervisor_endpoint(paths: &ReaderPaths) -> Result<SocketAddr, ReadError> {
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    let stdout = run(&program, &["--endpoint"], Some(&paths.consumer_root))?;
+    let text = String::from_utf8_lossy(&stdout).trim().to_string();
+    text.parse().map_err(|e: std::net::AddrParseError| ReadError::Invalid {
+        source: program.display().to_string(),
+        message: format!("{text:?} is not an address: {e}"),
+    })
+}
+
+/// The canonical shared root this checkout supervises - the identity the record round-trips.
+pub fn read_supervisor_identity(paths: &ReaderPaths) -> Result<String, ReadError> {
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    let stdout = run(&program, &["--identity"], Some(&paths.consumer_root))?;
+    Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+}
+
+/// Where the diagnostic record goes. Reading this creates nothing.
+pub fn read_supervisor_record(paths: &ReaderPaths) -> Result<PathBuf, ReadError> {
+    let program = paths.scripts_dir.join("fleet-supervisor");
+    let stdout = run(&program, &["--record"], Some(&paths.consumer_root))?;
+    Ok(PathBuf::from(String::from_utf8_lossy(&stdout).trim().to_string()))
 }
 
 /// One `.cerebro/state/<name>.state.json` per ROSTER entry, under `paths.shared_root` - the
@@ -464,6 +520,70 @@ mod tests {
         let bad_ps = write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf '\\377'\n");
         let programs = Programs { ps: bad_ps, bd: PathBuf::from("bd") };
         assert!(matches!(retry_if_text_busy(|| read_processes(&programs)), Err(ReadError::Invalid { .. })));
+    }
+
+    /// The declaration reader, against the real script: default, both values, and the refusal
+    /// that is still an answer (cb-kcs.1).
+    #[test]
+    fn configured_supervisor_reader_preserves_default_invalid_and_shared_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+
+        // A stand-in for `scripts/fleet-supervisor` with its documented contract: the value on
+        // stdout, and exit 2 with the RAW value on stdout when it is neither word.
+        let fake = write_executable(
+            &scripts,
+            "fleet-supervisor",
+            "#!/usr/bin/env bash\n\
+             value=\"$(cat \"$CEREBRO_TEST_DECLARATION\")\"\n\
+             printf '%s\\n' \"$value\"\n\
+             case \"$value\" in emacs|tui) exit 0 ;; *) echo 'invalid' >&2; exit 2 ;; esac\n",
+        );
+        assert!(fake.exists());
+        let declaration = dir.path().join("declaration");
+        std::env::set_var("CEREBRO_TEST_DECLARATION", &declaration);
+
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: scripts,
+        };
+
+        std::fs::write(&declaration, "emacs").unwrap();
+        assert_eq!(
+            retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
+            Ok(SupervisorKind::Emacs)
+        );
+
+        std::fs::write(&declaration, "tui").unwrap();
+        assert_eq!(
+            retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
+            Ok(SupervisorKind::Tui)
+        );
+
+        // The refusal is an answer: the raw word survives, and it is NOT rounded to the default.
+        std::fs::write(&declaration, "rat").unwrap();
+        assert_eq!(
+            retry_if_text_busy(|| read_configured_supervisor(&paths)).unwrap(),
+            Err("rat".to_string())
+        );
+
+        std::env::remove_var("CEREBRO_TEST_DECLARATION");
+    }
+
+    /// A reader that cannot run at all is an error, never `emacs`. Fail-open here is the one
+    /// failure this whole bead exists to refuse.
+    #[test]
+    fn a_missing_supervisor_script_is_an_error_not_a_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        assert!(read_configured_supervisor(&paths).is_err());
+        assert!(read_supervisor_endpoint(&paths).is_err());
     }
 
     #[test]

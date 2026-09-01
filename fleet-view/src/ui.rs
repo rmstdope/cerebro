@@ -27,6 +27,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
+use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::app::{App, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics};
 use crate::model::{Bead, FleetRow, RowState, WorkBuckets};
 
@@ -39,8 +40,40 @@ pub const MIN_ROWS: u16 = 12;
 /// Bead survive, which is what the navigator chose over squeezing five columns into forty.
 pub const WIDE_COLUMNS: u16 = 64;
 
-/// The exact title agreed in the parent epic's interview, em dash and all.
+/// The exact title agreed in the parent epic's interview, em dash and all - now the read-only
+/// spelling of five, one per supervision state (`supervision_title`).
 const TITLE: &str = "Cerebro — read-only";
+
+/// The header's first span: what this process is allowed to do with the checkout (cb-kcs.1).
+///
+/// The navigator chose the header line as the WHOLE of the TUI's ownership surface, over a third
+/// bordered pane and over an unfocusable strip: ownership must not take a Tab stop or rows from
+/// Fleet and Work. So the remediation and no-action lines in `docs/ui/cb-kcs-supervisor.html`
+/// are not rendered here - they remain the approved wording for the Emacs mode line, which keeps
+/// them.
+fn supervision_title(mode: &SupervisionMode) -> String {
+    match mode {
+        SupervisionMode::Supervising => "Cerebro — supervising".to_string(),
+        SupervisionMode::Draining { .. } => "Cerebro — handoff pending".to_string(),
+        SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)) => {
+            "Cerebro — read-only; Emacs owns supervision".to_string()
+        }
+        SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Emacs)) => {
+            "Cerebro — read-only; Emacs owns supervision".to_string()
+        }
+        SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Tui))
+        | SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui)) => {
+            "Cerebro — read-only; another Ratatui process owns supervision".to_string()
+        }
+        SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration(raw)) => {
+            format!("Cerebro — read-only; invalid fleet_supervisor {raw:?}")
+        }
+        SupervisionMode::ReadOnly(ReadOnlyReason::LockError(message)) => {
+            format!("Cerebro — read-only; {message}")
+        }
+        SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned) => TITLE.to_string(),
+    }
+}
 
 /// How many beads each Work section shows before it says `+N more` - the panel's own
 /// `cerebro-beads-per-section`, and for the same reason: an unplanned backlog is unbounded, and
@@ -139,7 +172,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     }
     let fleet_lines = fleet_document(app, now, area.width);
     let (header, fleet_rect, work_rect) = split(area, fleet_lines.len());
-    frame.render_widget(Paragraph::new(header_line(app)), header);
+    frame.render_widget(Paragraph::new(header_line(app, header.width)), header);
 
     let fleet_count = app.fleet.content.value().map(|rows| rows.len());
     let fleet_title = pane_title(&app.fleet, "Fleet", failed(&app.work), fleet_count);
@@ -334,8 +367,8 @@ fn newest_failure(app: &App) -> Option<(DateTime<Utc>, bool)> {
 /// to know that recovery is already under way, and the pane's own title keeps saying it is
 /// stale. `g retry` rather than `g refresh` until BOTH panes are fresh - the key is the same, and
 /// what it is for has changed.
-fn header_line(app: &App) -> Line<'static> {
-    let mut spans = vec![Span::raw(TITLE)];
+fn header_line(app: &App, width: u16) -> Line<'static> {
+    let mut spans = vec![Span::raw(supervision_title(&app.supervision))];
     if app.fleet.refreshing || app.work.refreshing {
         spans.push(Span::styled(" | refreshing...", dim()));
     } else if let Some((failed_at, stale)) = newest_failure(app) {
@@ -351,10 +384,19 @@ fn header_line(app: &App) -> Line<'static> {
     } else {
         "g refresh"
     };
-    spans.push(Span::styled(
-        format!(" | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn scroll pane | {refresh_key} | q/Esc/Ctrl-C quit"),
-        dim(),
-    ));
+    // The hints give way before the state does. Ownership made the title up to twenty-eight cells
+    // longer (cb-kcs.1), which pushed `q/Esc/Ctrl-C quit` off a hundred-column screen entirely -
+    // and a hint the terminal has cut in half is worse than a shorter hint that fits. What is left
+    // when it shortens is the two keys a navigator cannot guess from the screen: refresh and quit.
+    let used: usize = spans.iter().map(|span| span.content.width()).sum();
+    let full =
+        format!(" | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn scroll pane | {refresh_key} | q/Esc/Ctrl-C quit");
+    let hints = if used + full.width() <= width as usize {
+        full
+    } else {
+        format!(" | {refresh_key} | q/Esc/Ctrl-C quit")
+    };
+    spans.push(Span::styled(hints, dim()));
     Line::from(spans)
 }
 
@@ -872,6 +914,7 @@ mod tests {
             source: "ps".into(),
             status: Some(3),
             stderr: "ps: boom".into(),
+            stdout: String::new(),
         }
     }
 
@@ -880,6 +923,7 @@ mod tests {
             source: "bd".into(),
             status: Some(1),
             stderr: "bd list failed: database is locked".into(),
+            stdout: String::new(),
         }
     }
 
@@ -1271,6 +1315,69 @@ mod tests {
         let rendered = lines(&render(&app, 40, 12));
         assert!(rendered[0].contains("Cerebro — read-only"));
         assert!(line_with(&rendered, "Xavier").contains("● Xavier"));
+    }
+
+    /// The five approved header spellings, and nothing else (cb-kcs.1).
+    ///
+    /// The navigator chose the header line as the whole of the TUI's ownership surface, so this
+    /// is where every ownership state has to be legible. A sixth spelling appearing here is a
+    /// design change, not a refactor.
+    #[test]
+    fn the_header_names_every_supervision_state() {
+        let cases = [
+            (SupervisionMode::Supervising, "Cerebro — supervising"),
+            (
+                SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
+                "Cerebro — read-only; Emacs owns supervision",
+            ),
+            (
+                SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui)),
+                "Cerebro — read-only; another Ratatui process owns supervision",
+            ),
+            (
+                SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration("rat".into())),
+                "Cerebro — read-only; invalid fleet_supervisor \"rat\"",
+            ),
+            (
+                SupervisionMode::Draining { configured_for: Some(SupervisorKind::Tui), live_sessions: 2 },
+                "Cerebro — handoff pending",
+            ),
+        ];
+        for (mode, expected) in cases {
+            let mut app = populated();
+            app.set_supervision(mode.clone());
+            let rendered = lines(&render(&app, 120, 20));
+            assert!(rendered[0].starts_with(expected), "{mode:?}: {:?}", rendered[0]);
+            // Ownership lives on the header and NOWHERE else: no pane, no strip, no Tab stop.
+            let below: String = rendered[1..].join("\n");
+            assert!(!below.contains("supervision"), "{mode:?} leaked below the header: {below}");
+            assert!(!below.contains("Ownership"), "{mode:?} added an Ownership pane: {below}");
+        }
+    }
+
+    /// The hints give way before the state does.
+    ///
+    /// Ownership made the title up to twenty-eight cells longer, which pushed
+    /// `q/Esc/Ctrl-C quit` clean off a hundred-column screen. A hint the terminal has cut in half
+    /// is worse than a shorter hint that fits, so the scroll and pane hints go first and the two
+    /// keys a navigator cannot guess from the screen stay.
+    #[test]
+    fn a_long_ownership_title_shortens_the_hints_rather_than_losing_them() {
+        let mut app = populated();
+        app.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(
+            SupervisorKind::Tui,
+        )));
+
+        let narrow = lines(&render(&app, 100, 20));
+        assert!(narrow[0].contains("another Ratatui process owns supervision"), "{:?}", narrow[0]);
+        assert!(narrow[0].contains("g refresh"), "the refresh key survives: {:?}", narrow[0]);
+        assert!(narrow[0].contains("q/Esc/Ctrl-C quit"), "the quit key survives: {:?}", narrow[0]);
+        assert!(!narrow[0].contains("Tab/Shift-Tab"), "the pane hint gave way: {:?}", narrow[0]);
+
+        // With room for everything, everything is shown.
+        let wide = lines(&render(&app, 160, 20));
+        assert!(wide[0].contains("Tab/Shift-Tab pane"), "{:?}", wide[0]);
+        assert!(wide[0].contains("↑/↓/PgUp/PgDn scroll pane"), "{:?}", wide[0]);
     }
 
     #[test]

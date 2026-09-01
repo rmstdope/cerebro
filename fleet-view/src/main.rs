@@ -1,15 +1,21 @@
 //! `cerebro-tui`: the standalone read-only fleet screen, started by
 //! `.claude/cerebro/scripts/cerebro-tui` and never by hand.
 //!
-//! It owns three things and nothing else: the terminal, the event loop, and the worker that keeps
-//! the readers off the drawing thread. It writes no state file, no stop flag and no bead - Emacs
-//! remains the sole supervisor, and this process is one more reader of the same files.
+//! It owns four things and nothing else: the terminal, the event loop, the workers that keep the
+//! readers off the drawing thread, and - since cb-kcs.1 - the supervision lease, through
+//! `SupervisorController`. It still writes no state file, no stop flag and no bead: holding the
+//! lease is a statement about which view a project declared, not a licence to act, and this child
+//! adds no lifecycle key at all. The controller owns the lease because ownership must end when
+//! the process does, and `TerminalGuard` beside it is the proof that a `Drop` is the only cleanup
+//! a `?`, an early return and a panic all respect.
 //!
 //! Everything it needs to find the fleet is handed to it by the launcher in the environment. It
 //! deliberately does not resolve a consumer root of its own: `scripts/consumer-root` is the one
 //! place that question is answered, and a second answer in Rust would be a second answer.
 
 use std::io::{self, Stdout, Write};
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -21,8 +27,12 @@ use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use cerebro_tui::app::{App, AppAction, FleetWorker, WorkWorker};
-use cerebro_tui::readers::{Programs, ReadError, ReaderPaths};
+use cerebro_tui::app::{App, AppAction, FleetWorker, SupervisorWorker, WorkWorker};
+use cerebro_tui::readers::{self, Programs, ReadError, ReaderPaths};
+use cerebro_tui::supervisor::{
+    reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
+    SupervisorKind, SupervisorLease,
+};
 use cerebro_tui::ui;
 
 /// How long the loop waits for a keystroke before drawing again. Short enough that an elapsed
@@ -85,6 +95,111 @@ fn reader_paths(read: impl Fn(&str) -> Option<String>) -> Result<ReaderPaths, St
     })
 }
 
+
+/// The lease, and the one place this binary decides what to do with it (cb-kcs.1).
+///
+/// It owns the `SupervisorLease` because ownership must end when the process does: dropping this
+/// releases the listener, and `TerminalGuard` already proves that a `Drop` is the only cleanup an
+/// early return, a `?` and a panic all respect.
+///
+/// The endpoint, identity and record are read ONCE, before the terminal is entered. They are
+/// facts about the checkout rather than about this run, and reading them here is what lets a
+/// process configured for the TUI own the checkout on its first frame instead of flashing
+/// "Emacs owns supervision" on its way there.
+struct SupervisorController {
+    lease: Option<SupervisorLease>,
+    endpoint: Option<SocketAddr>,
+    identity: Option<String>,
+    record: Option<PathBuf>,
+    /// This child hosts no agent sessions - `cb-kcs.2` is what gives it PTYs to count. The drain
+    /// rule is written and tested now so that bead adds a number here rather than a rule.
+    hosted_sessions: usize,
+    last_request: Option<Instant>,
+}
+
+impl SupervisorController {
+    /// Read what cannot change, and answer what this process is before the first frame.
+    fn new(paths: &ReaderPaths) -> Self {
+        Self {
+            lease: None,
+            endpoint: readers::read_supervisor_endpoint(paths).ok(),
+            identity: readers::read_supervisor_identity(paths).ok(),
+            record: readers::read_supervisor_record(paths).ok(),
+            hosted_sessions: 0,
+            last_request: None,
+        }
+    }
+
+    /// Is a fresh reading of the declaration due? Five seconds, the fleet pane's own cadence: a
+    /// declaration that moved supervision has to be obeyed about as fast as a state file that
+    /// moved an agent.
+    fn due(&self, now: Instant) -> bool {
+        match self.last_request {
+            None => true,
+            Some(last) => now.duration_since(last) >= SUPERVISION_INTERVAL,
+        }
+    }
+
+    fn requested(&mut self, now: Instant) {
+        self.last_request = Some(now);
+    }
+
+    /// Apply one answer from the worker: decide, act on the lease, and return what to display.
+    ///
+    /// A reader that could not run at all is a lock error rather than a guess. Rounding it to
+    /// `emacs` would be the fail-open this whole bead exists to refuse.
+    fn apply(&mut self, answer: Result<Result<SupervisorKind, String>, ReadError>) -> SupervisionMode {
+        let configured = match answer {
+            Ok(configured) => configured,
+            Err(error) => {
+                self.release();
+                return SupervisionMode::ReadOnly(ReadOnlyReason::LockError(error.to_string()));
+            }
+        };
+        let (mode, action) = reconcile_supervision(
+            SupervisorKind::Tui,
+            configured,
+            self.lease.is_some(),
+            self.hosted_sessions,
+        );
+        match action {
+            ReconcileAction::Keep => mode,
+            ReconcileAction::Release => {
+                self.release();
+                mode
+            }
+            ReconcileAction::Acquire => self.acquire(),
+        }
+    }
+
+    fn acquire(&mut self) -> SupervisionMode {
+        let (Some(endpoint), Some(identity), Some(record)) =
+            (self.endpoint, self.identity.as_ref(), self.record.as_ref())
+        else {
+            return SupervisionMode::ReadOnly(ReadOnlyReason::LockError(
+                "cannot locate the supervision lease".to_string(),
+            ));
+        };
+        match SupervisorLease::try_acquire(endpoint, record, identity, SupervisorKind::Tui) {
+            Ok(lease) => {
+                self.lease = Some(lease);
+                SupervisionMode::Supervising
+            }
+            Err(AcquireError::OwnedBy(kind)) => {
+                SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(kind))
+            }
+            Err(other) => SupervisionMode::ReadOnly(ReadOnlyReason::LockError(other.to_string())),
+        }
+    }
+
+    fn release(&mut self) {
+        self.lease = None;
+    }
+}
+
+/// How often the declaration is re-read. The fleet pane's cadence, for the same reason.
+const SUPERVISION_INTERVAL: Duration = Duration::from_secs(5);
+
 /// Anything that can end the loop: a terminal that stopped working, an event source that failed.
 /// Boxed because the terminal's own error type is the backend's, and the test backend's is
 /// `Infallible` - a concrete type here would make the loop untestable without a real terminal.
@@ -94,8 +209,13 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // One worker per pane: a thirty-second `bd` behind a five-second `ps` would make each wait
     // for the other, which is the one thing two independently refreshed panes must not do.
     let fleet_worker = FleetWorker::spawn(paths.clone(), Programs::default());
-    let work_worker = WorkWorker::spawn(paths, Programs::default());
-    let mut app = App::new();
+    let work_worker = WorkWorker::spawn(paths.clone(), Programs::default());
+    let supervisor_worker = SupervisorWorker::spawn(paths.clone());
+    // Ownership before the first frame: the one blocking read this binary allows itself, and the
+    // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
+    let mut controller = SupervisorController::new(&paths);
+    let initial = controller.apply(readers::read_configured_supervisor(&paths));
+    let mut app = App::with_supervision(initial);
 
     // Raw mode and the alternate screen are entered HERE and nowhere else, under a guard whose
     // `Drop` leaves them. A sequence of cleanup calls after the loop is skipped by `?`, by an
@@ -111,6 +231,8 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &mut app,
         &fleet_worker,
         &work_worker,
+        &supervisor_worker,
+        &mut controller,
         Utc::now,
     );
     guard.leave()?;
@@ -119,12 +241,15 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
 
 /// The whole loop, generic over its terminal and its event source so the cases below can drive it
 /// without taking over the developer's own terminal.
+#[allow(clippy::too_many_arguments)]
 fn run<B: Backend, E: Events>(
     terminal: &mut Terminal<B>,
     events: &mut E,
     app: &mut App,
     fleet_worker: &FleetWorker,
     work_worker: &WorkWorker,
+    supervisor_worker: &SupervisorWorker,
+    controller: &mut SupervisorController,
     clock: impl Fn() -> DateTime<Utc>,
 ) -> Result<(), Fatal>
 where
@@ -159,6 +284,15 @@ where
         if let Some(result) = work_worker.poll() {
             app.finish_work_refresh(result, clock());
         }
+        // Ownership is a third state, polled like the other two and failing apart from them: a
+        // declaration that cannot be read says nothing about the fleet or the board.
+        if let Some(answer) = supervisor_worker.poll() {
+            let mode = controller.apply(answer);
+            app.set_supervision(mode);
+        }
+        if controller.due(Instant::now()) && supervisor_worker.request() {
+            controller.requested(Instant::now());
+        }
 
         dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, &clock);
 
@@ -168,6 +302,13 @@ where
                     let action = app.on_key(key, viewport_lines);
                     if action == AppAction::Quit {
                         break;
+                    }
+                    // `g` retries ownership as well as data (the navigator's choice): a second
+                    // Ratatui stays open as a read-only observer and takes the checkout with `g`
+                    // once the owner closes. Its own request, so an in-flight ownership read can
+                    // never swallow the fleet/work retry the key was pressed for.
+                    if action == AppAction::RefreshBoth && supervisor_worker.request() {
+                        controller.requested(Instant::now());
                     }
                     dispatch(action, app, fleet_worker, work_worker, &clock);
                 }
@@ -458,6 +599,14 @@ mod main_tests {
         WorkWorker::spawn(paths, programs)
     }
 
+    /// The two ownership parameters, pointed at a directory with no `fleet-supervisor` in it.
+    /// Every reader fails, which is exactly the read-only-with-a-lock-error case: these cases are
+    /// about the terminal and the event source, and ownership must not be what decides them.
+    fn supervision() -> (SupervisorWorker, SupervisorController) {
+        let (paths, _) = nowhere();
+        (SupervisorWorker::spawn(paths.clone()), SupervisorController::new(&paths))
+    }
+
     #[test]
     fn terminal_is_restored_after_draw_and_event_errors() {
         // 1. A draw that fails: the loop returns the error and the guard has still left the
@@ -477,6 +626,8 @@ mod main_tests {
                 &mut app,
                 &worker(),
                 &work_worker(),
+                &supervision().0,
+                &mut supervision().1,
                 Utc::now,
             )
             .unwrap_err();
@@ -501,6 +652,8 @@ mod main_tests {
                 &mut app,
                 &worker(),
                 &work_worker(),
+                &supervision().0,
+                &mut supervision().1,
                 Utc::now,
             )
             .unwrap_err();
@@ -526,6 +679,8 @@ mod main_tests {
                 &mut app,
                 &worker(),
                 &work_worker(),
+                &supervision().0,
+                &mut supervision().1,
                 Utc::now,
             )
             .is_err());
@@ -562,6 +717,8 @@ mod main_tests {
                 &mut app,
                 &worker(),
                 &work_worker(),
+                &supervision().0,
+                &mut supervision().1,
                 Utc::now,
             )
             .unwrap();
@@ -603,7 +760,8 @@ mod main_tests {
         ]);
 
         let started = Instant::now();
-        run(&mut terminal, &mut events, &mut app, &worker(), &work, Utc::now).unwrap();
+        run(&mut terminal, &mut events, &mut app, &worker(), &work,
+            &supervision().0, &mut supervision().1, Utc::now).unwrap();
         let elapsed = started.elapsed();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
@@ -680,7 +838,8 @@ mod main_tests {
         let expected_work_page = ui::metrics(&app, Utc::now(), area).work.viewport_lines;
         assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), Utc::now).unwrap();
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
         assert_eq!(app.fleet.scroll, 1, "Down moved Fleet, which is focused by default");
@@ -725,7 +884,8 @@ mod main_tests {
             crossterm::event::KeyCode::Char('g'),
             crossterm::event::KeyCode::Char('q'),
         ]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), Utc::now).unwrap();
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");

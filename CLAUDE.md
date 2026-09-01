@@ -104,7 +104,9 @@ aside first.
 
 Not prose — files, each tracked so that every clone has it.
 
-- `.cerebro/project.conf` — this project's name, default branch, audience, which paths are
+- `.cerebro/project.conf` — this project's name, default branch, audience, **which fleet view may
+  supervise** (`fleet_supervisor emacs|tui`, absent means `emacs` — see *fleet-view/* below and
+  `scripts/fleet-supervisor`), which paths are
   the application, which agent CLI its sessions run on (`agent_cli`, answered by
   `scripts/agent-cli` — `claude` or, since cb-d59.6, `copilot`, both runnable rather than one
   planned; absent means `claude`), and the gate. Both gates name `tests/gate`, which runs exactly what
@@ -503,10 +505,39 @@ declaring itself.
 ## fleet-view/ — the standalone read-only view
 
 `.claude/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
-same fleet and the same six work queues as `M-x cerebro` **and touches nothing**. It runs no
-launcher, writes no state file, no stop flag and no bead, and evaluates no trigger. Both views may
-read the same consumer at the same time; the supervision half has not moved and is not planned to
-move here (`docs/fleet-view-alternatives.md`).
+same fleet and the same six work queues as `M-x cerebro`. It runs no launcher, writes no state
+file, no stop flag and no bead, and evaluates no trigger — **and since cb-kcs.1 that is a
+consequence of what the project declares rather than of what the program can do.**
+
+**Exactly one view supervises, and `.cerebro/project.conf` says which** (`fleet_supervisor
+emacs|tui`, absent means `emacs`, so every consumer that predates the key is untouched).
+`scripts/fleet-supervisor` is the one place either implementation reads it, and the one place the
+lease's address is computed — a port derived from the *shared* root, so every worktree of a
+checkout contends for one lease. An invalid value is fail-closed and loud: exit 2, the sentence on
+stderr, the raw word on stdout, and **both views go read-only** rather than one of them assuming
+the default.
+
+**The lease is a bound loopback listener and nothing else.** No pid file, no timestamp, no
+heartbeat, no lease duration, no stale-entry sweep: the kernel closes a listener when its holder
+dies, so a crashed owner releases immediately and nobody has to decide it had crashed. Every
+timeout scheme has a window in which a live owner looks dead; this one has none.
+`.cerebro/state/supervisor.json` beside it is **diagnosis only** — it names who to put on the
+header or the mode line, and a missing, malformed or foreign record on a bound port is a visible
+lock error, never permission to take over. `tests/lib/supervisor.cases` is the transition table
+both implementations answer, because Emacs and Ratatui disagreeing about ownership is a fleet with
+two supervisors or with none.
+
+A view that does not own the checkout starts, nudges, arms, triages and prunes nothing; one whose
+declaration moved *while it hosts sessions* **drains** — it keeps the lease so the new owner cannot
+start duplicates, keeps those sessions usable, and releases when the last one ends. Emacs shows
+this in its mode line (`Cerebro[read-only: Ratatui supervises]`); the TUI shows it in its header
+line and nowhere else, which is the navigator's choice: ownership takes neither a row nor a Tab
+stop from Fleet and Work.
+
+**cb-kcs.1 is the foundation only.** Ratatui can own the lease when a project declares it, and
+still hosts no sessions and offers no lifecycle key — `cb-kcs.2` adds the PTYs, `.3` retirement,
+`.4` triggers, and `.5` is what would set `fleet_supervisor tui` here. This repository keeps the
+key absent and stays Emacs-supervised.
 
 One screen, two independently bordered, independently scrolling widgets: Fleet above Work, each
 with its own title, focus and scroll offset rather than one shared document. Fleet takes its
@@ -524,6 +555,10 @@ The crate is split the way `cerebro.el` is, and for the same reason:
 - `model.rs` — pure parsing and derivation (roster, state files, the marker sentence, the process
   tree, `partition_beads`). It is the Rust copy of the elisp rules, held to the same
   `tests/lib/session-args.cases` table as every other reader of the marker sentence.
+- `supervisor.rs` — ownership: the pure `reconcile_supervision`, held to
+  `tests/lib/supervisor.cases` the way `model.rs` is held to its own table, and `SupervisorLease`,
+  the bound listener that IS the lock. One test starts a real Emacs, takes the lease from under it
+  and kills it, which is why CI installs Emacs in the Rust job.
 - `readers.rs` — every file and subprocess: `scripts/roster`, `ps -axo pid=,ppid=,args=`, and one
   `bd --readonly -C <shared root> list --status open,in_progress,blocked,deferred,closed --json
   --brief`. Each child has a five-second wall-clock bound, is killed **and reaped** on it, and has

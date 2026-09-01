@@ -28,7 +28,7 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::app::{App, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics};
+use crate::app::{App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics};
 use crate::model::{Bead, FleetRow, RowState, WorkBuckets};
 
 /// The floor the whole screen needs. Below it the screen says so and shows nothing else: half a
@@ -560,34 +560,79 @@ fn session_document(app: &App) -> Vec<Line<'static>> {
 
 /// The Fleet pane's body. SELECTED is the index of the highlighted row, when there is one and it
 /// is in these rows.
+///
+/// The shape is `app::fleet_body`'s and this function keeps none of its own: it maps that list
+/// one `Line` per element, so the renderer and `App::move_selection` cannot disagree about where
+/// a row sits.
 fn fleet_document(
     app: &App,
     now: DateTime<Utc>,
     width: u16,
     selected: Option<usize>,
 ) -> Vec<Line<'static>> {
-    match &app.fleet.content {
-        PaneContent::Loading => vec![Line::from(Span::styled("Loading fleet...", dim()))],
-        PaneContent::Fresh { value, .. } => fleet_lines(value, now, width, selected),
-        PaneContent::Stale { value, error, .. } => {
-            let mut lines = vec![
-                Line::from(Span::styled(error.clone(), Style::default().fg(GOLD))),
-                Line::from(""),
-            ];
-            lines.extend(fleet_lines(value, now, width, selected));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "The last successful fleet snapshot remains visible.",
-                dim(),
-            )));
-            lines
+    let body = crate::app::fleet_body(&app.fleet.content);
+    let empty: Vec<FleetRow> = Vec::new();
+    let rows = app.fleet.content.value().unwrap_or(&empty);
+    let columns = columns(rows, width);
+    let inner_width = (width as usize).saturating_sub(2);
+    body.iter()
+        .map(|entry| fleet_body_line(entry, rows, &columns, inner_width, now, selected))
+        .collect()
+}
+
+/// One body line, drawn. Every styling decision the Fleet pane makes lives here; every decision
+/// about WHICH lines there are lives in `app::fleet_body`.
+fn fleet_body_line(
+    entry: &FleetBodyLine,
+    rows: &[FleetRow],
+    columns: &Columns,
+    inner_width: usize,
+    now: DateTime<Utc>,
+    selected: Option<usize>,
+) -> Line<'static> {
+    match entry {
+        FleetBodyLine::Loading => Line::from(Span::styled("Loading fleet...", dim())),
+        FleetBodyLine::RetainedError(error) => {
+            Line::from(Span::styled(error.clone(), Style::default().fg(GOLD)))
         }
-        PaneContent::Unavailable { error, .. } => vec![
-            Line::from(Span::styled(error.clone(), Style::default().fg(RED))),
-            Line::from(""),
-            Line::from("No fleet snapshot is available."),
-            Line::from("Press g to retry."),
-        ],
+        FleetBodyLine::Failure(error) => {
+            Line::from(Span::styled(error.clone(), Style::default().fg(RED)))
+        }
+        FleetBodyLine::Blank => Line::from(""),
+        FleetBodyLine::NoSnapshot => Line::from("No fleet snapshot is available."),
+        FleetBodyLine::Retry => Line::from("Press g to retry."),
+        FleetBodyLine::StaleTrailer => Line::from(Span::styled(
+            "The last successful fleet snapshot remains visible.",
+            dim(),
+        )),
+        FleetBodyLine::Heading => heading(columns),
+        FleetBodyLine::Row(index) => {
+            let mut line = row_line(&rows[*index], now, columns);
+            if selected == Some(*index) {
+                // Padded across the pane's whole inner width so the highlight is a band rather
+                // than a ragged one. A Line-level style sits BENEATH each span's own, so the row
+                // keeps its green/gold/red - which reversed video would have taken away.
+                let used: usize = line.spans.iter().map(|span| span.content.width()).sum();
+                let gap = inner_width.saturating_sub(used);
+                if gap > 0 {
+                    line.spans.push(Span::raw(pad_cells("", gap)));
+                }
+                line = line.style(Style::default().bg(SELECTED_BG));
+            }
+            line
+        }
+        // A malformed state file gets its parser's own words, on its own line, rather than a
+        // pane-wide failure: one unreadable file must not hide eighteen readable rows.
+        FleetBodyLine::Diagnostic(index) => Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                rows[*index]
+                    .diagnostic
+                    .clone()
+                    .expect("a Diagnostic line is only emitted for a row that has one"),
+                Style::default().fg(RED),
+            ),
+        ]),
     }
 }
 
@@ -833,43 +878,6 @@ fn columns(rows: &[FleetRow], width: u16) -> Columns {
         bead,
         wide,
     }
-}
-
-fn fleet_lines(
-    rows: &[FleetRow],
-    now: DateTime<Utc>,
-    width: u16,
-    selected: Option<usize>,
-) -> Vec<Line<'static>> {
-    let columns = columns(rows, width);
-    let inner_width = (width as usize).saturating_sub(2);
-    let mut lines = vec![heading(&columns)];
-    for (index, row) in rows.iter().enumerate() {
-        let mut line = row_line(row, now, &columns);
-        if selected == Some(index) {
-            // Padded across the pane's whole inner width so the highlight is a band rather than a
-            // ragged one. A Line-level style sits BENEATH each span's own, so the row keeps its
-            // green/gold/red - which reversed video would have taken away.
-            let used: usize = line.spans.iter().map(|span| span.content.width()).sum();
-            let gap = inner_width.saturating_sub(used);
-            if gap > 0 {
-                line.spans.push(Span::raw(pad_cells("", gap)));
-            }
-            line = line.style(Style::default().bg(SELECTED_BG));
-        }
-        lines.push(line);
-        // A malformed state file gets its parser's own words, on its own line, rather than a
-        // pane-wide failure: one unreadable file must not hide eighteen readable rows.
-        if row.state == RowState::Invalid {
-            if let Some(diagnostic) = &row.diagnostic {
-                lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(diagnostic.clone(), Style::default().fg(RED)),
-                ]));
-            }
-        }
-    }
-    lines
 }
 
 fn heading(columns: &Columns) -> Line<'static> {
@@ -1756,10 +1764,10 @@ mod tests {
         assert_eq!(style_of(&buffer, "●").fg, Some(GREEN), "the glyph keeps its own colour");
     }
 
-    /// The highlight lands on the line `model::row_document_line` names - the test that keeps that
-    /// function and `fleet_lines` from drifting apart.
+    /// The highlight lands on the line `app::fleet_body` names - the test that keeps the shape
+    /// and the renderer from drifting apart.
     #[test]
-    fn the_highlight_lands_on_the_row_the_model_names() {
+    fn the_highlight_lands_on_the_line_the_body_names() {
         let rows = vec![
             row("Xavier", "planner", RowState::Idle),
             FleetRow {
@@ -1776,48 +1784,57 @@ mod tests {
         let rendered = lines(&buffer);
         // The fleet pane's body starts one row below its top border.
         let body_top = top_corners(&buffer)[0].0 + 1;
-        let expected = body_top + crate::model::row_document_line(&rows, 2) as u16;
+        let expected = body_top
+            + crate::app::body_line_of_row(&crate::app::fleet_body(&app.fleet.content), 2)
+                .expect("the body names row 2") as u16;
 
         assert_eq!(
             buffer.cell((1, expected)).map(|c| c.bg),
             Some(SELECTED_BG),
-            "the highlight is on the line the model names: {rendered:?}"
+            "the highlight is on the line the body names: {rendered:?}"
         );
         assert!(rendered[expected as usize].contains("Storm"), "{rendered:?}");
     }
 
-    /// `app::FLEET_STALE_PREFIX_LINES` is what `App::move_selection` adds to the table's own line
-    /// number under a stale pane. This is the case that keeps that constant and the document it
-    /// describes from drifting: it counts the lines this renderer actually puts above the table.
+    /// Every row `app::fleet_body` names is where this renderer actually draws it, fresh pane and
+    /// stale pane alike. This is the case that keeps the one owner of the body's shape honest: the
+    /// renderer maps that list, so a document of a different length or with a row elsewhere means
+    /// the two have parted company.
     #[test]
-    fn a_stale_fleet_document_opens_with_exactly_the_prefix_app_counts() {
-        let mut app = App::new();
-        app.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
-        app.finish_refresh(Err(failure()), at(5));
+    fn every_row_the_body_names_is_where_the_renderer_draws_it() {
+        let rows = vec![
+            row("Xavier", "planner", RowState::Idle),
+            FleetRow {
+                diagnostic: Some("bad json".into()),
+                ..row("Beast", "planner", RowState::Invalid)
+            },
+            row("Storm", "implementer", RowState::Idle),
+        ];
 
-        let document = fleet_document(&app, now(), 99, app.selected_index());
-        let heading = document
-            .iter()
-            .position(|line| line.spans.iter().any(|span| span.content.contains("AGENT")))
-            .expect("the fleet table's own heading");
-        assert_eq!(
-            heading,
-            crate::app::FLEET_STALE_PREFIX_LINES,
-            "the stale prefix is exactly what app.rs counts: {:?}",
-            document
+        let mut fresh = App::new();
+        fresh.finish_refresh(Ok(rows.clone()), at(0));
+        let mut stale = App::new();
+        stale.finish_refresh(Ok(rows.clone()), at(0));
+        stale.finish_refresh(Err(failure()), at(5));
+
+        for app in [&fresh, &stale] {
+            let document = fleet_document(app, now(), 99, app.selected_index());
+            let body = crate::app::fleet_body(&app.fleet.content);
+            let flat: Vec<String> = document
                 .iter()
                 .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
-                .collect::<Vec<_>>()
-        );
-
-        // And a fresh pane has no prefix at all, which is the other half of the same rule.
-        let mut fresh = App::new();
-        fresh.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
-        let document = fleet_document(&fresh, now(), 99, fresh.selected_index());
-        assert!(
-            document[0].spans.iter().any(|span| span.content.contains("AGENT")),
-            "a fresh document opens with the heading"
-        );
+                .collect();
+            assert_eq!(document.len(), body.len(), "one line per body entry: {flat:?}");
+            for (index, expected) in rows.iter().enumerate() {
+                let line = crate::app::body_line_of_row(&body, index)
+                    .expect("the body names every row of a table it drew");
+                assert!(
+                    flat[line].contains(&expected.name),
+                    "row {index} ({}) is drawn on the line the body names: {flat:?}",
+                    expected.name
+                );
+            }
+        }
     }
 
     /// The Session pane's three shapes, verbatim.

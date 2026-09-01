@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::model::{row_document_line, FleetRow, WorkBuckets};
+use crate::model::{FleetRow, RowState, WorkBuckets};
 use crate::readers::{read_configured_supervisor, read_fleet, read_work, Programs, ReaderPaths, ReadError};
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
@@ -195,15 +195,80 @@ impl SessionPane {
     }
 }
 
-/// How many lines `ui::fleet_document` puts ABOVE the fleet table when the pane is stale: the
-/// retained error and one blank line.
+/// One line of the Fleet pane's body, in order, saying what that line IS rather than how it
+/// looks.
 ///
-/// It lives here rather than in the renderer because `App::move_selection` needs it and `app`
-/// must not import `ui`. `ui::fleet_lines` is the code it mirrors, and
-/// `ui::tests::a_stale_fleet_document_opens_with_exactly_the_prefix_app_counts` is what keeps the
-/// two from drifting - a row index is not a document line, and under a stale pane a document line
-/// is not the table line either.
-pub const FLEET_STALE_PREFIX_LINES: usize = 2;
+/// This is the one owner of the body's shape. `ui::fleet_document` renders this list one `Line`
+/// per element, and `App::move_selection` finds a row's document line by looking for its
+/// `Row(index)` here; neither keeps arithmetic of its own. A line added above the table - by this
+/// pane's future lifecycle keys, or by anything else - is added here once and both readers follow
+/// it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FleetBodyLine {
+    /// "Loading fleet..." - a pane that has never had a snapshot.
+    Loading,
+    /// The retained error a stale pane opens with.
+    RetainedError(String),
+    /// The error an unavailable pane shows instead of a table.
+    Failure(String),
+    /// A spacer.
+    Blank,
+    /// "No fleet snapshot is available."
+    NoSnapshot,
+    /// "Press g to retry."
+    Retry,
+    /// "The last successful fleet snapshot remains visible." - a stale pane's closing line.
+    StaleTrailer,
+    /// The table's column heading.
+    Heading,
+    /// The fleet row at this index in the pane's own rows.
+    Row(usize),
+    /// The diagnostic line under the row at this index.
+    Diagnostic(usize),
+}
+
+/// The Fleet pane's body, line by line, from the pane's content alone.
+///
+/// It asks neither the clock nor the pane's width, which is what lets `App::move_selection` place
+/// a row on a keypress without building a frame: the fleet body's LINE COUNT does not depend on
+/// width, only its column layout does.
+pub fn fleet_body(content: &PaneContent<Vec<FleetRow>>) -> Vec<FleetBodyLine> {
+    fn table(rows: &[FleetRow], out: &mut Vec<FleetBodyLine>) {
+        out.push(FleetBodyLine::Heading);
+        for (index, row) in rows.iter().enumerate() {
+            out.push(FleetBodyLine::Row(index));
+            if row.state == RowState::Invalid && row.diagnostic.is_some() {
+                out.push(FleetBodyLine::Diagnostic(index));
+            }
+        }
+    }
+
+    let mut body = Vec::new();
+    match content {
+        PaneContent::Loading => body.push(FleetBodyLine::Loading),
+        PaneContent::Fresh { value, .. } => table(value, &mut body),
+        PaneContent::Stale { value, error, .. } => {
+            body.push(FleetBodyLine::RetainedError(error.clone()));
+            body.push(FleetBodyLine::Blank);
+            table(value, &mut body);
+            body.push(FleetBodyLine::Blank);
+            body.push(FleetBodyLine::StaleTrailer);
+        }
+        PaneContent::Unavailable { error, .. } => {
+            body.push(FleetBodyLine::Failure(error.clone()));
+            body.push(FleetBodyLine::Blank);
+            body.push(FleetBodyLine::NoSnapshot);
+            body.push(FleetBodyLine::Retry);
+        }
+    }
+    body
+}
+
+/// Which line of BODY the fleet row at INDEX occupies, or `None` when this body has no such row -
+/// a loading or unavailable pane has no table at all.
+pub fn body_line_of_row(body: &[FleetBodyLine], index: usize) -> Option<usize> {
+    body.iter().position(|entry| *entry == FleetBodyLine::Row(index))
+}
 
 /// Pull SCROLL back only when CONTENT_LINES no longer reaches it. The one owner of that rule,
 /// shared by `Pane<T>` and `SessionPane` so a third widget cannot acquire a fourth spelling.
@@ -433,16 +498,10 @@ impl App {
             .saturating_add(delta)
             .clamp(0, last as isize) as usize;
         self.selected = Some(rows[target].name.clone());
-        // A stale pane's body opens with its retained error and a blank line, so the table's own
-        // line number is not the document's. Following the wrong one puts the selected row below
-        // the fold by exactly that much.
-        let prefix = if matches!(self.fleet.content, PaneContent::Stale { .. }) {
-            FLEET_STALE_PREFIX_LINES
-        } else {
-            0
-        };
-        let line = prefix + row_document_line(rows, target);
-        self.follow_selection(line, viewport_lines);
+        let body = fleet_body(&self.fleet.content);
+        if let Some(line) = body_line_of_row(&body, target) {
+            self.follow_selection(line, viewport_lines);
+        }
     }
 
     /// Bring DOCUMENT_LINE into the Fleet pane's viewport, moving `scroll` by the least that does
@@ -450,8 +509,8 @@ impl App {
     ///
     /// DOCUMENT_LINE is where the row sits in what `ui::fleet_document` produced, which is NOT
     /// the row index: the document opens with a heading line, and a row whose state file failed
-    /// to parse contributes a second line of its own. `model::row_document_line` is the one place
-    /// that arithmetic lives.
+    /// to parse contributes a second line of its own. `fleet_body` is the one place that shape
+    /// lives.
     ///
     /// Two rules, and the second is the exception:
     ///
@@ -466,8 +525,8 @@ impl App {
     ///   the selection off it, which is exactly what the 40x12 floor gives Fleet in the stacked
     ///   layout.
     ///
-    /// The stale prefix is not a parameter: the caller adds it to DOCUMENT_LINE, which is the one
-    /// place that arithmetic belongs.
+    /// DOCUMENT_LINE comes from `body_line_of_row` over `fleet_body`, which is the one place the
+    /// body's shape is known.
     fn follow_selection(&mut self, document_line: usize, viewport_lines: usize) {
         let viewport = viewport_lines.max(1);
         if document_line < viewport {
@@ -699,7 +758,7 @@ impl<T> Drop for Worker<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AgentKind, RowState};
+    use crate::model::AgentKind;
 
     fn at(seconds: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(1_767_225_600 + seconds, 0).expect("a valid timestamp")
@@ -719,6 +778,75 @@ mod tests {
             sessions: 0,
             diagnostic: None,
         }
+    }
+
+    /// `fleet_body` is the one owner of the Fleet pane's body shape, and `body_line_of_row` is
+    /// how a row index becomes a document line. Every kind of line the body can carry is here.
+    #[test]
+    fn the_body_names_where_every_kind_of_line_lands() {
+        let invalid = |name: &str| FleetRow {
+            state: RowState::Invalid,
+            diagnostic: Some("bad json".into()),
+            ..row(name)
+        };
+
+        let body = fleet_body(&PaneContent::Loading);
+        assert_eq!(body, vec![FleetBodyLine::Loading]);
+        assert_eq!(body_line_of_row(&body, 0), None, "a loading pane has no table");
+
+        let body = fleet_body(&PaneContent::Unavailable {
+            failed_at: at(5),
+            error: "ps: boom".into(),
+        });
+        assert_eq!(
+            body,
+            vec![
+                FleetBodyLine::Failure("ps: boom".into()),
+                FleetBodyLine::Blank,
+                FleetBodyLine::NoSnapshot,
+                FleetBodyLine::Retry,
+            ]
+        );
+        assert_eq!(body_line_of_row(&body, 0), None, "an unavailable pane has no table");
+
+        let fresh = |rows: Vec<FleetRow>| PaneContent::Fresh { value: rows, read_at: at(0) };
+
+        let body = fleet_body(&fresh(vec![]));
+        assert_eq!(body, vec![FleetBodyLine::Heading], "an empty fleet still has its heading");
+        assert_eq!(body_line_of_row(&body, 0), None);
+
+        let body = fleet_body(&fresh(vec![row("A"), row("B"), row("C")]));
+        assert_eq!(body_line_of_row(&body, 0), Some(1));
+        assert_eq!(body_line_of_row(&body, 1), Some(2));
+        assert_eq!(body_line_of_row(&body, 2), Some(3));
+
+        // A diagnostic BEFORE the index costs a line; one AT it does not.
+        let body = fleet_body(&fresh(vec![row("A"), invalid("B"), row("C"), invalid("D")]));
+        assert_eq!(body_line_of_row(&body, 1), Some(2), "the invalid row's own line");
+        assert_eq!(body_line_of_row(&body, 2), Some(4), "one diagnostic line above it");
+        assert_eq!(body_line_of_row(&body, 3), Some(5));
+
+        // An invalid row carrying no diagnostic emits no extra line.
+        let body = fleet_body(&fresh(vec![
+            FleetRow { diagnostic: None, ..invalid("A") },
+            row("B"),
+        ]));
+        assert_eq!(body_line_of_row(&body, 1), Some(2));
+
+        let body = fleet_body(&PaneContent::Stale {
+            value: vec![row("A"), row("B"), row("C")],
+            read_at: at(0),
+            failed_at: at(5),
+            error: "ps: boom".into(),
+        });
+        assert_eq!(body[0], FleetBodyLine::RetainedError("ps: boom".into()));
+        assert_eq!(body[1], FleetBodyLine::Blank);
+        assert_eq!(body[2], FleetBodyLine::Heading);
+        assert_eq!(body[body.len() - 2], FleetBodyLine::Blank);
+        assert_eq!(body[body.len() - 1], FleetBodyLine::StaleTrailer);
+        assert_eq!(body_line_of_row(&body, 0), Some(3));
+        assert_eq!(body_line_of_row(&body, 1), Some(4));
+        assert_eq!(body_line_of_row(&body, 2), Some(5));
     }
 
     fn failure() -> ReadError {
@@ -1203,6 +1331,10 @@ mod tests {
         stale.finish_refresh(Ok(names.clone()), at(0));
         stale.finish_refresh(Err(failure()), at(5));
         assert_eq!(stale.selected.as_deref(), Some("A"), "the failure kept the selection");
+        // Read the two panes' first-row lines from the bodies themselves rather than from a
+        // literal: that is what the constant this replaced always meant.
+        let stale_first = body_line_of_row(&fleet_body(&stale.fleet.content), 0).unwrap();
+        let fresh_first = body_line_of_row(&fleet_body(&fresh.fleet.content), 0).unwrap();
 
         for _ in 0..5 {
             fresh.on_key(key(KeyCode::Down), 3);
@@ -1211,7 +1343,7 @@ mod tests {
         assert_eq!(fresh.selected.as_deref(), stale.selected.as_deref());
         assert_eq!(
             stale.fleet.scroll,
-            fresh.fleet.scroll + FLEET_STALE_PREFIX_LINES,
+            fresh.fleet.scroll + (stale_first - fresh_first),
             "the stale pane scrolls past its own error and blank line as well"
         );
 
@@ -1227,7 +1359,7 @@ mod tests {
         assert_eq!(stale.selected.as_deref(), Some("A"));
         assert_eq!(fresh.fleet.scroll, 0);
         assert_eq!(
-            stale.fleet.scroll, FLEET_STALE_PREFIX_LINES + 1,
+            stale.fleet.scroll, stale_first,
             "three visible lines cannot hold the error, the blank, the heading AND the row, so \
              the row is what they show"
         );

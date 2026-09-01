@@ -31,7 +31,7 @@ coming. A death is retried.</p>
 <span class="b">│</span><span class="hd">  AGENT       STATE       BEAD                  </span><span class="b">│</span>
 <span class="b">│</span><span class="g">●</span> Beast       plan        cb-kcs.4.2            <span class="b">│</span>
 <span class="b">│</span><span class="d">○</span> Storm       <span class="d">dead</span>        <span class="e">✗ refused</span>             <span class="b">│</span>  <span class="dim">said why — only s</span>
-<span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">↻ retry in 30s, 1 failed</span>  <span class="b">│</span>  <span class="dim">died — coming back</span>
+<span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">↻ retry in 30s, 2 failed</span>  <span class="b">│</span>  <span class="dim">died — coming back</span>
 <span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">→ planned</span>              <span class="b">│</span>  <span class="dim">nothing wrong</span>
 <span class="b">└────────────────────────────────────────────────┘</span></pre></div>
 
@@ -47,9 +47,20 @@ cost the fleet a pass every time anything went wrong once. What escalates is the
 every one after it. The wait is measured from the failed start itself, so the figure the row counts down
 and the wait the view enforces are one calculation.</p>
 
-<div class="screen"><pre><span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">↻ retry in 45s, 2 failed</span>  <span class="b">│</span>
+<div class="screen"><pre><span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">↻ retry in 30s, 2 failed</span>  <span class="b">│</span>
 <span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">↻ retry in 2m, 3 failed</span>   <span class="b">│</span>
 <span class="b">│</span><span class="b">◌</span> Beast       <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>                <span class="b">│</span></pre></div>
+
+<div class="screen"><pre>  <span class="dim">failed starts   the wait before the next one</span>
+  1               <span class="b">none — it comes straight back</span>
+  2               <span class="b">30s</span>
+  3               <span class="b">2m</span>
+  4 and after     <span class="b">10m</span></pre></div>
+
+<p class="note"><b>One failure shows no countdown at all</b>, and that is the schedule working: the wait
+is nothing, so the row keeps its condition and the next tick starts it. The <code>↻</code> cell first
+appears at two, and a name that keeps failing reaches the grey row about twelve minutes after the first
+failure.</p>
 
 <p class="note"><b>Blue, and in place of the condition</b> — not the red verdict plus a countdown, which
 was drawn and declined: it would break cb-kcs.4.1's rule that a row shows a bead, <i>or</i> a verdict,
@@ -59,7 +70,7 @@ Seconds below a minute, whole minutes above it, <b>rounded up</b>, so a row neve
 than the wait actually left.</p>
 
 <p class="note"><b>The countdown wins even when the role's own condition is false.</b> A planner backing
-off in front of a full buffer still reads <code>↻ retry in 2m, 2 failed</code> rather than
+off in front of a full buffer still reads <code>↻ retry in 2m, 3 failed</code> rather than
 <code>→ buffer&lt;4</code>. One rule and one source of truth: while a backoff is running the row says
 so, and a failure is never invisible. The accepted cost is a countdown that reaches zero and visibly
 does nothing, because nothing was due anyway. Showing the condition instead was declined — two failed

@@ -4940,10 +4940,10 @@ arms nothing, because changing the owner must not itself launch processes."
     mode))
 
 (defvar-local cerebro--supervision-reported nil
-  "The last lock-error message this buffer reported, so it reports it once.")
+  "The last supervision fault message this buffer reported, so it reports it once.")
 
 (defun cerebro--report-supervision-error (mode)
-  "Log MODE\='s lock error, if it has one and it is new.
+  "Log MODE\='s ownership fault - a lock error or a failed reconciliation - if it is new.
 
 The mode line carries the short sentence the navigator approved; the DETAIL -
 which endpoint, which other checkout, which record was malformed - has to reach

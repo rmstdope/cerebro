@@ -8592,18 +8592,19 @@ lease could not be taken' would be false twice over when the holder is us."
 
 (ert-deftest cerebro-test/a-failed-reconciliation-is-reported-once ()
   "The detail reaches the log, once per distinct message, re-arming on recovery."
-  (let ((cerebro--supervision-reported nil)
-        (reported nil))
-    (cl-letf (((symbol-function 'cerebro--report-error)
-               (lambda (_context format &rest args)
-                 (push (apply #'format format args) reported))))
-      (let ((mode '(read-only reconcile-failed "boom")))
-        (cerebro--report-supervision-error mode)
-        (cerebro--report-supervision-error mode)
-        (cerebro--report-supervision-error '(supervising))
-        (cerebro--report-supervision-error mode))
-      (should (= (length reported) 2))
-      (should (cl-every (lambda (line) (string-match-p "boom" line)) reported)))))
+  (with-temp-buffer
+    (setq-local cerebro--supervision-reported nil)
+    (let ((reported nil))
+      (cl-letf (((symbol-function 'cerebro--report-error)
+                 (lambda (_context format &rest args)
+                   (push (apply #'format format args) reported))))
+        (let ((mode '(read-only reconcile-failed "boom")))
+          (cerebro--report-supervision-error mode)
+          (cerebro--report-supervision-error mode)
+          (cerebro--report-supervision-error '(supervising))
+          (cerebro--report-supervision-error mode))
+        (should (= (length reported) 2))
+        (should (cl-every (lambda (line) (string-match-p "boom" line)) reported))))))
 
 ;; --- reader contracts: the real script, feeding the real decision -----------
 

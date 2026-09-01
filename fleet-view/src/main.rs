@@ -771,7 +771,9 @@ mod main_tests {
         let (paths, _) = nowhere();
         let mut controller = SupervisorController::new(&paths);
         assert!(
-            controller.endpoint.is_none() && controller.identity.is_none(),
+            controller.endpoint.is_none()
+                && controller.identity.is_none()
+                && controller.record.is_none(),
             "the setup must actually have no lease machinery"
         );
 

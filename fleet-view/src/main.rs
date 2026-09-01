@@ -202,19 +202,32 @@ impl SupervisorController {
             self.lease.is_some(),
             self.hosted_sessions,
         );
-        match action {
-            ReconcileAction::Keep => {
-                if mode == SupervisionMode::Supervising {
-                    self.clear_diagnostic();
-                }
-                mode
-            }
+        let mode = match action {
+            ReconcileAction::Keep => mode,
             ReconcileAction::Release => {
                 self.release();
                 mode
             }
             ReconcileAction::Acquire => self.acquire(),
+        };
+        if !Self::keeps_diagnostic(&mode) {
+            self.clear_diagnostic();
         }
+        mode
+    }
+
+    /// Is this mode one in which the exit diagnostic is still worth printing?
+    ///
+    /// Everything else is healthy - supervising, draining, an honest owner, a declaration that
+    /// names the other view - and a fault that resolved must not be the parting line of an
+    /// hour-long session. Emacs re-arms on exactly the same rule
+    /// (`cerebro--report-supervision-error`), and the two sides are meant to say the same thing.
+    fn keeps_diagnostic(mode: &SupervisionMode) -> bool {
+        matches!(
+            mode,
+            SupervisionMode::ReadOnly(ReadOnlyReason::LockError(_))
+                | SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(_))
+        )
     }
 
     fn acquire(&mut self) -> SupervisionMode {
@@ -233,7 +246,6 @@ impl SupervisorController {
         match SupervisorLease::try_acquire(endpoint, record, identity, SupervisorKind::Tui) {
             Ok(lease) => {
                 self.lease = Some(lease);
-                self.clear_diagnostic();
                 SupervisionMode::Supervising
             }
             // An honest live owner is the ordinary case and says everything on the header.
@@ -726,6 +738,54 @@ mod main_tests {
 
         // The next good answer takes it straight back to supervising, with no reacquisition.
         assert_eq!(controller.apply(Ok(Ok(SupervisorKind::Tui))), SupervisionMode::Supervising);
+        assert!(
+            controller.diagnostic().is_none(),
+            "a fault that resolved must not be the parting line of an hour-long session"
+        );
+    }
+
+    /// A collision that resolved into a healthy mode is not the parting line either - and
+    /// "healthy" is every mode but the two that ARE the fault, not `Supervising` alone.
+    #[test]
+    fn a_resolved_collision_does_not_become_the_parting_line() {
+        let (paths, _) = nowhere();
+        let mut controller = SupervisorController::new(&paths);
+        controller.note_diagnostic("supervision lease at 127.0.0.1:9: collided".to_string());
+
+        let mode = controller.apply(Ok(Ok(SupervisorKind::Emacs)));
+        assert_eq!(
+            mode,
+            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
+            "configured for the other view, holding nothing: healthy"
+        );
+        assert!(
+            controller.diagnostic().is_none(),
+            "a fault that resolved must not be printed on the way out"
+        );
+    }
+
+    /// The documented degrade - a consumer with no lease machinery at all - notes NOTHING, so the
+    /// new output channel is not loudest where nothing is wrong.
+    #[test]
+    fn a_consumer_with_no_lease_machinery_degrades_silently() {
+        let (paths, _) = nowhere();
+        let mut controller = SupervisorController::new(&paths);
+        assert!(
+            controller.endpoint.is_none() && controller.identity.is_none(),
+            "the setup must actually have no lease machinery"
+        );
+
+        let mode = controller.apply(Ok(Ok(SupervisorKind::Tui)));
+        match mode {
+            SupervisionMode::ReadOnly(ReadOnlyReason::DeclarationUnreadable(ref detail)) => {
+                assert_eq!(detail, "cannot locate the supervision lease")
+            }
+            other => panic!("the degrade path has its own reason: {other:?}"),
+        }
+        assert!(
+            controller.diagnostic().is_none(),
+            "the degrade is not a fault and must print nothing on the way out"
+        );
     }
 
     #[test]

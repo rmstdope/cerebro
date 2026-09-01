@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-kcs.2.3 chosen lifecycle keys</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
+          --dim:#8b949e; --blue:#58a6ff; --green:#3fb950; --gold:#d29922; --red:#f85149; }
+  body { margin:0; padding:32px; color:#24292f; background:#f6f8fa;
+         font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  h2 { margin:30px 0 8px; font-size:17px; }
+  h3 { margin:20px 0 6px; font-size:15px; }
+  p { max-width:980px; color:#57606a; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .term { max-width:1020px; color:var(--text); background:var(--bg); border-radius:9px;
+          padding:10px; box-shadow:0 8px 28px #1f232833; margin-bottom:6px;
+          font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .bar { color:var(--dim); padding:2px 4px 8px; white-space:pre-wrap; }
+  .pane { border:1px solid var(--line); background:var(--panel); margin-bottom:8px; }
+  .pane.focus { border:2px solid var(--blue); }
+  .pane.bad { border-color:var(--red); }
+  .title { color:var(--dim); padding:2px 8px; }
+  .focus .title { color:var(--blue); font-weight:bold; }
+  .bad .title { color:var(--red); }
+  pre { margin:0; padding:2px 8px 8px; white-space:pre; overflow-x:auto; }
+  .green { color:var(--green); } .gold { color:var(--gold); } .red { color:var(--red); }
+  .dim { color:var(--dim); }
+  .sel { background:#1f6feb44; }
+  .cols { display:flex; gap:8px; } .cols > .col { display:flex; flex-direction:column; }
+  .left { width:40%; } .right { flex:1; } .cols .pane { flex:1; }
+  table { border-collapse:collapse; max-width:1020px; margin:10px 0 16px; font-size:13.5px; }
+  th,td { border:1px solid #d0d7de; padding:5px 9px; text-align:left; vertical-align:top; }
+  th { background:#eaeef2; }
+  td code { white-space:pre; }
+</style>
+</head>
+<body>
+<h1>The lifecycle keys, as chosen</h1>
+<p>This is what <code>cb-kcs.2.3</code> builds — <code>s</code>, <code>f</code> and <code>k</code> in
+the Ratatui view — agreed with the navigator over three rounds on 2026-09-01. It refines
+<code>docs/ui/cb-kcs.2-split-console.html</code>, which settled the screen these keys act on and
+already fixed the kill prompt, the two acted-upon lines and the refused-launch pane; everything here
+either repeats one of those verbatim or settles something that mockup left open.</p>
+<ul>
+  <li>Only <code>k</code> asks before acting. <code>s</code> and <code>f</code> act and say what they did.</li>
+  <li><code>f</code> is a <strong>toggle</strong>: pressed again it clears the stop flag it set.</li>
+  <li>While <strong>handing over</strong>, <code>f</code> and <code>k</code> still act — that is how a
+      handoff ever finishes — and <code>s</code> does not.</li>
+  <li>A key that cannot act says why, in gold, in the header's notice slot, in the sentences the
+      Emacs view already uses.</li>
+  <li>This view acts on <strong>its own sessions only</strong>. An agent it did not start is refused.</li>
+  <li>Quitting with agents live is refused by a <strong>full-screen pane</strong>; any key returns.</li>
+</ul>
+
+<h2>The three keys, acting</h2>
+<p>Each line replaces the hints in the header, in the notice slot, and is cleared by the next
+keystroke.</p>
+<div class="term"><div class="bar">Cerebro — supervising<span class="dim"> | Started Rogue.</span></div></div>
+<div class="term"><div class="bar">Cerebro — supervising<span class="dim"> | Started Cyclops, and cleared a stale stop flag.</span></div></div>
+<div class="term"><div class="bar">Cerebro — supervising<span class="dim"> | Cyclops will finish after this pass.</span></div></div>
+<div class="term"><div class="bar">Cerebro — supervising<span class="dim"> | Cyclops will keep going.</span></div></div>
+<p>The second line is a start that also removed a stop flag somebody had left set — an implementer
+started with one would stop again at once, so the flag goes with the start, and the line says so
+rather than deleting a file silently. The fourth is a second <code>f</code>: the flag it set is
+cleared and the agent goes on.</p>
+
+<h3><code>k</code> asks, and the prompt names what a kill costs</h3>
+<div class="term"><div class="bar">Cerebro — supervising<span class="gold"> | Kill Cyclops? Its bead cb-42k stays claimed.  y / n</span></div></div>
+<div class="term"><div class="bar">Cerebro — supervising<span class="gold"> | Kill Cerebro?  y / n</span></div></div>
+<p><code>y</code> kills. <strong>Every other key cancels, silently</strong> — the header goes straight
+back to its hints and nothing is said, exactly as a notice is cleared by the next keystroke. The
+cancelling keystroke is <em>consumed</em>: <code>q</code> at this prompt cancels the kill and does not
+also quit.</p>
+
+<h2>A key that cannot act says why</h2>
+<p>Five sentences, in gold, in the notice slot. They are the sentences the Emacs view already says in
+its echo area, so one situation reads the same wherever you meet it.</p>
+<table>
+<tr><th>When</th><th>Line</th></tr>
+<tr><td><code>s</code>, <code>f</code> or <code>k</code>, read-only</td><td><code>Emacs owns supervision; this view is read-only</code></td></tr>
+<tr><td><code>s</code>, handing over</td><td><code>Handoff pending: 3 sessions still hosted; only f and k act now</code></td></tr>
+<tr><td><code>f</code> or <code>k</code>, agent not started by this view</td><td><code>Storm is running outside this view - stop it from its own terminal</code></td></tr>
+<tr><td><code>f</code> or <code>k</code>, agent not running</td><td><code>Storm is not running</code></td></tr>
+<tr><td><code>s</code>, agent already up</td><td><code>Storm is already up</code></td></tr>
+</table>
+<div class="term">
+  <div class="bar">Cerebro — read-only; Emacs owns supervision<span class="gold"> | Emacs owns supervision; this view is read-only</span></div>
+  <div class="cols"><div class="col left">
+    <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="dim">○ Rogue</span>     standby       </span></pre></div>
+  </div><div class="col right">
+    <div class="pane"><div class="title">Rogue</div><pre><span class="dim">Sessions are hosted by the view that supervises this
+checkout. This one does not.</span></pre></div>
+  </div></div>
+</div>
+
+<h3>An agent this view did not start</h3>
+<p>The Fleet pane shows every agent, including sessions another process launched. This view kills its
+own children and nothing else, so <code>f</code> and <code>k</code> refuse there and name where to go
+instead.</p>
+<div class="term">
+  <div class="bar">Cerebro — supervising<span class="gold"> | Storm is running outside this view - stop it from its own terminal</span></div>
+  <div class="cols"><div class="col left">
+    <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Storm</span>     gate    cb-9su </span></pre></div>
+  </div><div class="col right">
+    <div class="pane"><div class="title">Storm</div><pre><span class="dim">No live session.
+
+Press s to start Storm.
+The last completed pass is not available.</span></pre></div>
+  </div></div>
+</div>
+
+<h2>Handing over — <code>f</code> and <code>k</code> still act</h2>
+<p><code>project.conf</code> now names Emacs while this view still hosts live agents. It keeps the
+lease so nobody starts duplicates, and it starts nothing itself; the two keys that <em>end</em> a
+session go on working, because ending them is how the handoff completes. The gold count is the only
+number that matters here, and it sits in the notice slot — a notice takes its place for one
+keystroke.</p>
+<div class="term">
+  <div class="bar">Cerebro — handoff pending<span class="gold"> | 3 live agents</span><span class="dim"> | f finish | k kill | g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="cols"><div class="col left">
+    <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Cyclops</span>   build   cb-42k </span>
+<span class="green">● Storm</span>     gate    cb-9su
+<span class="green">● Xavier</span>    plan    cb-kcs </pre></div>
+  </div><div class="col right">
+    <div class="pane"><div class="title">Cyclops — build cb-42k <span class="dim">[Tab to focus]</span></div><pre><span class="dim">◎ Working · esc interrupt</span></pre></div>
+  </div></div>
+</div>
+
+<h2>The header, at both widths</h2>
+<p><code>s/f/k start·finish·kill</code> joins the hints while supervising, and it is what
+<em>survives</em> when the header runs out of room: the keys that change the fleet outlast the keys
+that move around it.</p>
+<div class="term"><div class="bar">Cerebro — supervising<span class="dim"> | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</span></div></div>
+<div class="term"><div class="bar">Cerebro — supervising<span class="dim"> | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</span></div></div>
+<p>A read-only header offers none of the three, and is unchanged from today.</p>
+<div class="term"><div class="bar">Cerebro — read-only; Emacs owns supervision<span class="dim"> | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | g refresh | q/Esc/Ctrl-C quit</span></div></div>
+
+<h2>A launch that was refused</h2>
+<p>Unchanged from <code>docs/ui/cb-kcs.2-split-console.html</code>: the fleet row reads
+<code>dead</code> in red, and the Session pane turns red and carries the launcher's own words, with
+the <code>cerebro: </code> prefix dropped. Nothing retries until <code>s</code>.</p>
+<div class="term">
+  <div class="bar">Cerebro — supervising<span class="dim"> | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</span></div>
+  <div class="cols"><div class="col left">
+    <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="red">○ Rogue</span>     dead          </span></pre></div>
+  </div><div class="col right">
+    <div class="pane bad"><div class="title">Rogue — launch refused 14:07</div><pre><span class="red">launch-preflight: agents/implementer.md is missing;
+run git submodule update --init --recursive</span>
+
+<span class="dim">Press s to try again.</span></pre></div>
+  </div></div>
+</div>
+
+<h2>Quit, while agents are live</h2>
+<p>A hosted child dies with its parent, so quitting over a live agent would strand a claim, a
+worktree and an open pull request. The refusal takes the whole screen, because it is the one thing on
+it that stops you leaving. <strong>Any key returns</strong>, and that key does nothing else — the two
+keys the pane recommends are pressed after it has gone.</p>
+<div class="term">
+  <div class="bar">Cerebro — supervising<span class="red"> | quit refused</span></div>
+  <div class="pane bad"><div class="title">3 live agents prevent exit</div><pre><span class="red">Cerebro is supervising Xavier, Beast and Cyclops.</span>
+
+Finish or kill every live agent before quitting.
+  f  finish the selected agent after its pass
+  k  kill the selected agent now
+
+<span class="dim">No agent was stopped. Any key returns.</span></pre></div>
+</div>
+<p>The names wrap rather than truncating; the pane is the screen's height.</p>
+</body>
+</html>

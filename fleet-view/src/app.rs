@@ -708,13 +708,10 @@ impl App {
             return;
         }
         let Some(index) = self.selected_index() else { return };
-        let Some(rows) = self.fleet.content.value() else { return };
-        let prefix = if matches!(self.fleet.content, PaneContent::Stale { .. }) {
-            FLEET_STALE_PREFIX_LINES
-        } else {
-            0
-        };
-        let line = prefix + row_document_line(rows, index);
+        // `fleet_body` already carries the stale prefix and every diagnostic line, so this asks
+        // it rather than re-deriving an offset that would then have two owners (cb-0ps).
+        let body = fleet_body(&self.fleet.content);
+        let Some(line) = body_line_of_row(&body, index) else { return };
         self.follow_selection(line, self.fleet_viewport);
     }
 

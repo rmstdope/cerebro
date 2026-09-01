@@ -565,10 +565,14 @@ second copy.
 
 Session hosts nothing yet: no PTY, no child process, and no `s`/`f`/`k` — the pane says why there is
 no session in it, and the header hint names no key that does not exist. `cb-kcs.2.2` adds the pty
-and the focused-session header, `.3` the lifecycle keys. The approved surface is
-`docs/ui/cb-kcs.2-split-console.html`, which refines `docs/ui/cb-kcs-supervisor.html` and
-superseded `docs/ui/cb-42k-independent-widgets.html` and the original single-document
-`docs/ui/cb-vyp-read-only-view.html`.
+and the focused-session header, `.3` the lifecycle keys. The surface the navigator approved for the
+whole `cb-kcs.2` family is the split console, interviewed over three rounds on 2026-09-01. It
+refines `docs/ui/cb-kcs-supervisor.html`, which the epic's own interview approved, and supersedes
+`docs/ui/cb-42k-independent-widgets.html` and the original single-document
+`docs/ui/cb-vyp-read-only-view.html`. **Its own mockup file arrives with its own docs-only pull
+request rather than with any of the three children**, so this paragraph deliberately names no path
+for it: a pointer that resolves on one merge order and not the other is worse than none, and
+nothing checks a path written in prose the way `scripts/tracked-links` checks a link.
 
 The crate is split the way `cerebro.el` is, and for the same reason:
 

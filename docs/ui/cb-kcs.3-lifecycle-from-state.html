@@ -1,0 +1,108 @@
+<meta charset="utf-8"><title>cb-kcs.3 — the agreed surface</title>
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:112ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:112ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+</style>
+
+<h1>cb-kcs.3 — the surface the navigator approved, 2026-09-01</h1>
+<p class="lede">Three rounds. What follows is the outcome of each, and nothing else: this file is the
+specification for how the Ratatui fleet view shows a session it ended, retired, nudged, or watched
+die. Two things it deliberately does <b>not</b> show are named at the bottom.</p>
+
+<h2>1. A row that is not running says why, in the BEAD column</h2>
+<p class="lede">In <code>M-x cerebro</code> the reason a session died goes on the row itself, because
+the fleet is the whole width of the frame. Here the Fleet pane is <b>40 columns</b> whenever the
+terminal is 100 or wider, so a sentence cannot fit. The row carries a <b>verdict</b> instead — a
+class, in about ten columns, in the column a dead agent is not using — and the sentence itself is in
+the Session pane. Two alternatives were drawn and declined: a second red line under the row (it
+doubles a failing fleet's height, and 31 characters still names no diagnosis), and nothing on the
+row at all (a fleet where three things went wrong then looks like a fleet nobody started).</p>
+
+<div class="screen"><pre>Cerebro — supervising <span class="dim">| Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | g refresh | q quit</span>
+<span class="b">┌ Fleet ───────────────────────────────┐</span><span class="dim">┌ Session ─────────────────────────────────────────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">  AGENT       STATE       BEAD        </span><span class="b">│</span><span class="dim">│</span> $ .claude/cerebro/scripts/launch Storm                                        <span class="dim">│</span>
+<span class="b">│</span><span class="g">●</span> Beast       plan        cb-kcs.3   <span class="b">│</span><span class="dim">│</span> <span class="e">cerebro: the checkout is 4 commits behind origin/main and has uncommitted</span>    <span class="dim">│</span>
+<span class="b">│</span><span class="d">○</span> Cypher      <span class="d">dead</span>                     <span class="b">│</span><span class="dim">│</span> <span class="e">changes - commit or stash them, then git merge --ff-only origin/main, before</span> <span class="dim">│</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-kcs.2.  <span class="b">│</span><span class="dim">│</span> <span class="e">starting Storm</span>                                                               <span class="dim">│</span>
+<span class="b">│</span><span class="sel"><span class="d">○</span> Storm       <span class="d">dead</span>        <span class="e">✗ refused</span> </span><span class="b">│</span><span class="dim">│</span>                                                                              <span class="dim">│</span>
+<span class="b">│</span><span class="d">○</span> Rogue       <span class="d">dead</span>        <span class="e">✗ code 137</span><span class="b">│</span><span class="dim">│</span> <span class="e">Storm's launch was refused (exit 2).</span>                                         <span class="dim">│</span>
+<span class="b">│</span><span class="d">○</span> Wolverine   <span class="d">dead</span>        <span class="e">✗ code 1</span>  <span class="b">│</span><span class="dim">│</span>                                                                              <span class="dim">│</span>
+<span class="b">│</span>                                      <span class="b">│</span><span class="dim">│</span> <span class="dim">End of retained scrollback. Up/Down scroll while focused.</span>                     <span class="dim">│</span>
+<span class="b">└──────────────────────────────────────┘</span><span class="dim">└──────────────────────────────────────────────────────────────────────────────┘</span></pre></div>
+
+<h3>The whole vocabulary, and it is closed</h3>
+<div class="screen"><pre>  <span class="e">✗ refused</span>     the launcher refused to start it — exit status 2
+  <span class="e">✗ code N</span>      any other non-zero status, <b class="k">whether or not it printed anything</b>
+  <span class="dim">(nothing)</span>     status 0; or you pressed <b class="k">k</b>; or the view ended it on purpose;
+                or nobody ever started it</pre></div>
+<p class="note"><b>A session that dies with nothing on its screen still gets its code.</b> That is
+the one place this parts company with <code>M-x cerebro</code>, and deliberately: Emacs shows such a
+row as <code>◌ standby ↻ retry in 2m</code> because it is about to try again, and this view has no
+standby row yet. A blank there would make a crashed agent read exactly like one nobody has ever
+started, which is the confusion the verdict column exists to end.</p>
+
+<h2>2. The Session pane shows the session's own screen, not a report</h2>
+<p class="lede">A dead agent's pane is the retained screen cb-kcs.2.2 already keeps — scrollable,
+closed by one verdict line and the existing dim footer. The alternative, a written placeholder in
+<code>M-x cerebro</code>'s words, was declined: it puts a second kind of thing in a pane that
+otherwise shows terminal output, and throws the rest of the screen away.</p>
+<div class="screen"><h3>Nothing was printed</h3><pre><span class="dim">┌ Wolverine — ended 04:52 ─────────────────────────┐</span>
+<span class="dim">│</span> <span class="dim">(the session printed nothing)</span>                    <span class="dim">│</span>
+<span class="dim">│</span>                                                  <span class="dim">│</span>
+<span class="dim">│</span> <span class="e">Wolverine finished with status 137.</span>              <span class="dim">│</span>
+<span class="dim">│</span>                                                  <span class="dim">│</span>
+<span class="dim">│</span> <span class="dim">End of retained scrollback. Up/Down scroll …</span>     <span class="dim">│</span>
+<span class="dim">└──────────────────────────────────────────────────┘</span></pre></div>
+<div class="screen"><h3>The view ended it on purpose</h3><pre><span class="dim">┌ Cyclops — ended 14:32 ───────────────────────────┐</span>
+<span class="dim">│</span>  … the agent's last screen …                     <span class="dim">│</span>
+<span class="dim">│</span>                                                  <span class="dim">│</span>
+<span class="dim">│</span> Cyclops finished its pass; the view ended it.    <span class="dim">│</span>
+<span class="dim">│</span>                                                  <span class="dim">│</span>
+<span class="dim">│</span> <span class="dim">End of retained scrollback. Up/Down scroll …</span>     <span class="dim">│</span>
+<span class="dim">└──────────────────────────────────────────────────┘</span></pre></div>
+<p class="note"><b>The fourth closing sentence.</b> cb-kcs.2.2 writes three — <code>finished with
+status 0.</code>, <code>finished with status N.</code> in red, and <code>was killed by signal 9.</code>
+in red, which is what <b>k</b> produces. Ending a session on purpose is technically a signal 9 too, so
+without a fourth sentence a finished pass would close in red saying it was killed. It gets
+<b><code>&lt;Name&gt; finished its pass; the view ended it.</code></b>, in the ordinary colour, and
+<b>the same sentence whether the grace expired or a stop flag retired it</b> — the header notice
+below already says which. The dim footer is unchanged: no <code>Press s</code> line is added, since
+the header's key hint already names the key.</p>
+
+<h2>3. The three things the view does unattended, it says in the header</h2>
+<p class="lede">Retirement is not a keystroke: an agent writes <code>waiting</code>, thirty seconds
+pass, and its session ends while the navigator is reading something else. <code>M-x cerebro</code>
+says nothing at all. This view says all three, in gold, in the notice slot, cleared by the next
+keystroke like every notice — two in one tick means only the second is read, and that is accepted.</p>
+<div class="screen"><pre>Cerebro — supervising <span class="y">| Cyclops finished its pass and was ended.</span> <span class="dim">| g refresh | q quit</span>
+Cerebro — supervising <span class="y">| Storm was retired; its stop flag is cleared.</span> <span class="dim">| g refresh | q quit</span>
+Cerebro — supervising <span class="y">| Cyclops was asked to hand its question back.</span> <span class="dim">| g refresh | q quit</span></pre></div>
+<p class="note">The third is the view typing words into a live agent after its question has gone
+fifteen minutes unanswered. That is the one of the three that changes what an agent does, so it is
+the one that most needs saying out loud.</p>
+
+<h2>4. A retired agent keeps its transcript — every time</h2>
+<p class="lede"><code>M-x cerebro</code> keeps a retired session's buffer as the record of its pass,
+except for an idle or between-beads implementer, whose buffer it kills on the grounds that there is
+nothing worth keeping. That exception is <b>not</b> carried over: every retired agent leaves its last
+screen in the Session pane, whatever state it was retired from. One rule instead of two, and a
+transcript thrown away is the one thing here that cannot be recovered.</p>
+
+<h2>Two things this deliberately does not show</h2>
+<div class="note"><b>No <code>◌ standby</code> row.</b> In Emacs that word means <i>the view ended
+this session and will start a fresh one when its trigger fires</i>. Nothing in this view starts
+anything on its own yet — that is the next bead — so a standby row would promise something it
+cannot do. The rows stay <code>dead</code>, and the word arrives with the thing that makes it true.
+<br><br><b>No retry, no backoff, no countdown.</b> Same reason: a retry is a start.
+<br><br>When the standby row does arrive, <b>k</b> on one means <i>disarm</i> rather than
+<i>kill</i> — nothing is running to kill — and the approved prompt for it is
+<code>Disarm Xavier? The view will stop bringing it back.  y / n</code>, in the shape the kill
+prompt already has, where the second sentence is the consequence the navigator might not have in
+mind.</div>

@@ -125,7 +125,7 @@ said `asking`; corrected").
 | *Red CI*, after each fix-and-push | back to `--phase review` for the new head, then `--phase ci` again |
 | *The retrospective* opening line onward | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase merge --pid $PPID` |
 | *The retrospective*, if you committed one | back to `--phase review` for the new head, then `--phase ci`, then `--phase merge` again |
-| *Merging*, on `BEHIND`: catch up on GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
+| *Merging*, when a `strict` protection asks for a catch-up: GitHub → CI | `.claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID`, then `... --phase ci ...` |
 | *Asking instead of handing back* | `.claude/cerebro/scripts/agent-state <name> asking --bead <id> --phase <current> --pid $PPID`; on resuming, `working` with the same bead and phase |
 | *Finishing, then going again*, after `bd close` and worktree removal, and the hand-back block | `.claude/cerebro/scripts/end-pass <name> --pid $PPID` |
 
@@ -466,7 +466,7 @@ asking is only the faster path when somebody is there.
 
 ## The review loop
 
-**Review the exact head being merged, and obtain it yourself.** No review is requested from GitHub,
+**Review the implementation being merged, and obtain it yourself.** No review is requested from GitHub,
 and none is waited for. The second pair of eyes is a `reviewer` sub-agent you spawn synchronously
 when the gate is green and the PR is open, and the standing approval you merge on rests on the
 consumer's root `CLAUDE.md` and its *Four Eye Principle*, because the rule is there and nowhere
@@ -492,28 +492,66 @@ which model you are about to review on, the way `scripts/launch` does, so a revi
 model is traceable to the file nobody remembers editing.
 
 Before each invocation, read and retain `reviewed_head` from
-`gh pr view <n> --json headRefOid`. Give the reviewer the diff, bead plan, and reviewer checklist,
-never your reasoning. A tool failure, empty response, or response lacking both findings and an
-explicit no-findings verdict is unusable; retry that head up to three attempts, heartbeating between
-attempts, then use the hand-back path and record the failed attempts. For a usable response, post
-the complete review with its `reviewed_head` in the heading and answer every finding. Re-read
-`headRefOid` after answers: any difference requires a fresh review, with the counter reset. Every
-later push or server-side head change (finding or CI fixes, retrospective, rebase, or update-branch)
-also returns here; do not decide whether a change is substantial enough.
+`gh pr view <n> --json headRefOid`. A tool failure, empty response, or response lacking both
+findings and an explicit no-findings verdict is unusable; retry that head up to three attempts,
+heartbeating between attempts, then use the hand-back path and record the failed attempts. For a
+usable response, post the complete review with its `reviewed_head` in the heading and answer every
+finding.
+
+**The first round is a cold read; the rounds after it are about the delta.** Give the first
+reviewer the whole diff, the bead's plan and the checklist, and never your reasoning. Push your
+answers, then give the next reviewer four things: the diff **since the head it last reviewed**
+(`git diff <reviewed_head>..<new head>`), the findings that round raised, the answers you posted,
+and the checklist. It asks two questions — were the findings addressed, and does the delta introduce
+anything new — and a round that returns nothing blocking is the end of the review.
+
+**This is where a bead's wall-clock goes, so the rule is worth knowing exactly.** A cold read of a
+whole PR takes an Opus sub-agent the better part of ten minutes, and a bead that answered seven
+rounds of findings paid that seven times: cb-kcs.2.1 was eighty-five minutes from open to merge and
+of which about sixty-three were the rounds themselves and most of the rest was answering them. A
+delta round asks a smaller question and answers it faster. What
+it does not do is skip the check: **every fix is still read by somebody who did not write it**, and
+that matters because a fix that answers a finding is exactly where the next defect goes — this
+repository has shipped an inert loop, a fail-open cache and a test that passed against the code it
+was meant to catch, each of them introduced by a commit answering a review and each caught by the
+round after it.
+
+**A change that goes beyond answering findings is a fresh cold read** — new behaviour, a different
+approach, work the reviewer has not seen — and so is the first round after a hand-back. A rebase, a
+conflict resolution or an `update-branch` is neither: those need no additional review at all (the
+Four Eye Principle says so). Do not weigh whether your own delta is "substantial": if it does
+something the findings did not ask for, it is new.
 
 ### Getting the review
 
 Spawn a sub-agent of type **`reviewer`**, on the model resolved above. Both layouts ship a
 discoverable `reviewer` agent, so this works on either CLI.
 
-Give it three things, and only these three:
+**A cold read gets three things, and only these three:**
 
 - the diff — `gh pr diff <n>`,
 - the bead's plan — `bd show <id> --json`,
 - `.claude/cerebro/agents/reviewer.md`, to read as its checklist.
 
-**Do not give it your reasoning.** Summarising your own approach into the prompt is the one thing
-that would make this a second reading of the same mind rather than a second pair of eyes.
+**A delta round gets five**, and the first three are the same:
+
+- **the two shas** — the `reviewed_head` of the round it follows, and the head now — so it takes
+  `git diff <reviewed_head>..<head>` **itself** rather than trusting a diff you pasted. That is not
+  ceremony: you are the one deciding which round it gets and supplying what it reads, and this is
+  the one line that makes an incomplete or misdescribed delta detectable by the agent it would
+  mislead;
+- the findings that round raised, and the answers you posted — **as claims for it to check against
+  the code**, which is what `agents/reviewer.md` tells it to do with them.
+
+**Do not give it your reasoning**, in either round. The findings and your answers to them are the
+record of an exchange it is auditing; summarising your own approach *to the change* into the prompt
+is the one thing that would make this a second reading of the same mind rather than a second pair of
+eyes.
+
+**Which round to spawn is decided by what you last pushed**, and the Four Eye Principle lists the
+four cases: answering findings or greening a red check is a delta round; a rebase, an
+`update-branch` or a documentation-only commit is no round at all; anything else is a cold read.
+Read that list rather than weighing whether your own delta feels substantial.
 
 `agents/reviewer.md` has a section saying which of it applies when it is loaded this way rather than
 as Cypher's own session — the sub-agent reads that for itself, and you do not need to repeat it into
@@ -530,10 +568,21 @@ findings, most important first, each naming the file and the case; when it found
 replaced by the italic line and nothing else:
 
 ```markdown
-**Review (`reviewed_head`: `<sha>`)** — this pull request was reviewed before merge under the Four Eye Principle, by an agent
-given the diff and the bead's plan, and not the implementer's reasoning.
+**Review (cold read, `reviewed_head`: `<sha>`)** — this pull request was reviewed before merge under
+the Four Eye Principle, by an agent given the diff and the bead's plan, and not the implementer's
+reasoning.
 
 1. <finding, naming the file and the case>
+```
+
+**A delta round says which it was, and what it measured from.** The Four Eye Principle asks that
+every round be posted in full and say which of the two it is, so that a reader — or a navigator
+auditing a bead that went wrong — can see which rounds read the whole change and which read a delta,
+and check the chain covers the implementation:
+
+```markdown
+**Review (delta since `<previous reviewed_head>`, now `<sha>`)** — the findings of the round before
+this one, checked against the code, and the diff since the head it reviewed.
 ```
 
 ```markdown
@@ -600,9 +649,9 @@ running the one suite directly, by whatever command the project runs it with, fo
 rather than everything. Without the cap, "it was a flake" is an unbounded loop that ends with a
 genuinely broken timing test merged.
 
-Every fix changes the head, so it returns through the review loop before CI, exactly as *The review
-loop* says — which makes this budget the only thing bounding how many review rounds one red bead
-costs. **It is deliberately scoped differently from the review budget**, which is three attempts
+Every fix changes the head, so it returns through the review loop before CI — as a **delta round**,
+which is what the Four Eye Principle calls a commit that only makes a red check green, not a fresh
+cold read — which makes this budget the only thing bounding how many rounds one red bead costs. **It is deliberately scoped differently from the review budget**, which is three attempts
 *per head* and resets on every new head: a review retried is a supplier that failed, while a fix
 retried is this bead failing, and the second is what has to be bounded for the bead as a whole. On
 exhaustion of either budget here, leave the PR open, hand the bead back by the hand-back block in
@@ -659,8 +708,10 @@ It lives under `docs/` rather than beside your state file because it is knowledg
 state — `.cerebro/state/` is gitignored, so a retrospective there would never leave the
 machine that wrote it.
 
-**Committing it costs a review round and a CI cycle, and that is the intended trade** — which is
-also why the bar for writing one is high. Adding the file moves the head past the green run:
+**Committing it costs a CI cycle, and that is the intended trade** — which is also why the bar for
+writing one is high. It costs no review round: a retrospective is a file under `docs/`, and the Four
+Eye Principle exempts a documentation-only commit outright. Adding the file moves the head past the
+green run:
 
 ```bash
 mkdir -p docs/retrospectives          # the first finding in a fresh checkout creates it
@@ -676,8 +727,8 @@ git push
 worktree, and a worktree is removed at the end of the pass: a copy that is never staged is a copy nobody ever sees,
 and the next bead finds the directory undocumented again.
 
-The commit changes the head, so it returns through the review loop and then CI before the merge, as
-every head change does. A bead with no retrospective adds no round at all.
+The commit changes the head, so it returns through CI before the merge — but not through the review
+loop, being documentation only. A bead with no retrospective adds neither.
 
 ### The format
 
@@ -726,10 +777,32 @@ belongs to the navigator, who reads these precisely so they can decide.
 ## Merging
 
 Expect `BEHIND` on most merges: with several agents, a PR that sat through one review round has
-usually been overtaken. **Catch the branch up on GitHub, and wait for CI again — no local re-gate.**
-It costs a full CI cycle each time and that is the accepted price — a green run on a stale tree is
-evidence about a tree that will never exist, and two agents changing the same function compatibly is
-exactly what this catches.
+usually been overtaken.
+
+**Whether a `BEHIND` branch may merge is the repository's answer, not yours.** Ask it:
+
+```bash
+gh api "repos/<owner>/<repo>/branches/$(.claude/cerebro/scripts/default-branch)/protection" \
+  --jq '.required_status_checks.strict'      # true: catch up first. false: BEHIND may merge.
+```
+
+- **`false`** — the ordinary case here — means the project does not require a branch to be current,
+  so a `MERGEABLE BEHIND` head with green checks **merges as it stands**. Do not catch it up, and do
+  not spend a CI cycle proving something the project did not ask for.
+- **`true`** means it does, and the catch-up below is how.
+- **A protection call that fails** — no permission, no protection configured — is read as `true`.
+  The cautious branch is the one that costs a CI cycle, not the one that merges something nobody
+  checked.
+
+That deference is the whole rule, and it is deliberate: the project's own configuration is where
+"must a branch be current" belongs, so a navigator who wants every merge re-tested flips `strict`
+and every implementer follows on its next merge without a word of this file changing. What the
+project gives up while it is `false` is the catch that two agents changed the same function
+compatibly-but-wrongly — a semantic conflict git merges cleanly and no green run on either branch
+alone can see. That is a real risk knowingly taken for the cycle it saves.
+
+When it does say `true`, catch the branch up **on GitHub, and wait for CI again — no local
+re-gate**: a green run on a stale tree is evidence about a tree that will never exist.
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase rebase --pid $PPID
@@ -782,7 +855,8 @@ cannot slip through as a false `MERGEABLE UNKNOWN`. Then:
   describes an older head or a run GitHub will not meaningfully finish. **Do not enter the CI wait.**
   Go to the local rebase above (`--phase rebase`), resolve, `git push --force-with-lease`, and run
   this check again.
-- `MERGEABLE BEHIND` — catch up with `update-branch` as above, and check again once it lands.
+- `MERGEABLE BEHIND` — merge it, unless the branch protection asks for `strict` (see the top of
+  this section); only then catch up with `update-branch` and check again once it lands.
 - anything else (`MERGEABLE CLEAN`, `MERGEABLE BLOCKED`, `MERGEABLE UNSTABLE`) — the head is worth
   waiting on: `--phase ci`, and wait per *Waiting, without ending your run*.
 

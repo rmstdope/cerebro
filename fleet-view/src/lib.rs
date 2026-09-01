@@ -24,6 +24,7 @@
 pub mod app;
 pub mod model;
 pub mod readers;
+pub mod session;
 pub mod supervisor;
 pub mod ui;
 

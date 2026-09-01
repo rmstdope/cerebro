@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 crossterm = "0.29.0"
+# One child per agent, in a real pty, on macOS and Linux alike. The versions the S1/S2/S4
+# prototype was measured with (docs/fleet-view-alternatives.md).
+portable-pty = "0.9.0"
 # `crossterm_0_29' so ratatui's backend writes through the same crossterm this crate reads
 # events with: the default pulls a second, older copy in beside it for no gain.
 ratatui = { version = "0.30.2", features = ["crossterm_0_29"] }
@@ -16,6 +19,12 @@ thiserror = "2"
 # overflow the pane and push its border off the row. A direct dependency rather than Ratatui's
 # transitive copy - a crate this one measures with is this crate's own contract.
 unicode-width = "0.2"
+# The terminal emulator behind the session pane: the child's bytes go in, a screen with colour,
+# attributes and a cursor comes out. `Parser' is ours, not the pty's, which is why a killed
+# child's screen is still drawable (S4). `tui-term' is deliberately NOT here: its widget paints
+# its own rect, and this pane needs the border, focus style, scrolled window and range cue
+# `ui::render_pane' gives every other pane.
+vt100 = "0.16.2"
 # A `roster' or `ps' that never returns must become a visible pane failure rather than an
 # eternal `refreshing...': this is what puts a wall-clock bound on a reader's child.
 wait-timeout = "0.2"

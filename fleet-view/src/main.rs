@@ -527,10 +527,21 @@ impl TerminalModes for CrosstermTerminal {
         let screen = out.execute(LeaveAlternateScreen).err();
         let raw = disable_raw_mode().err();
         let _ = out.flush();
-        match cursor.or(paste).or(screen).or(raw) {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+        first_error([cursor, paste, screen, raw])
+    }
+}
+
+/// The four undo steps' outcomes folded into one result: the first failure, or `Ok`.
+///
+/// A free function so the rule the comment above states - every step is attempted, and a failure
+/// in one does not shadow the rest - is assertable. `Recorder` substitutes for
+/// `CrosstermTerminal` entirely and so can never see its crossterm commands; this is the half of
+/// `leave` that can be tested without a real terminal, and it is the half that grew a fourth
+/// step when bracketed paste arrived.
+fn first_error(steps: [Option<io::Error>; 4]) -> io::Result<()> {
+    match steps.into_iter().flatten().next() {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 
@@ -1387,6 +1398,33 @@ mod main_tests {
         // And the drop that follows does not try again.
         drop(guard);
         assert_eq!(*events.borrow(), vec!["enter", "leave"]);
+    }
+
+    /// `leave` undoes four modes now that bracketed paste is one of them, and the rule that
+    /// every step runs even after one fails lives in this fold. `Recorder` replaces
+    /// `CrosstermTerminal` outright, so the crossterm calls themselves are not observable; the
+    /// fold is, and it is what the fourth step changed.
+    #[test]
+    fn a_failed_undo_step_neither_hides_the_others_nor_the_first_error() {
+        let err = |text: &str| Some(io::Error::other(text.to_string()));
+
+        assert!(first_error([None, None, None, None]).is_ok());
+
+        // The first failure is what is reported, whichever step it is - and a later failure
+        // never shadows it.
+        let reported = first_error([err("cursor"), err("paste"), None, err("raw")])
+            .expect_err("a failed undo is reported");
+        assert_eq!(reported.to_string(), "cursor");
+
+        // A failure in the FIRST step must not be the only thing this can report: the caller
+        // ran every step regardless, and the third one's error still surfaces on its own.
+        let reported =
+            first_error([None, None, err("screen"), None]).expect_err("a failed undo is reported");
+        assert_eq!(reported.to_string(), "screen");
+
+        let reported =
+            first_error([None, err("paste"), None, None]).expect_err("bracketed paste too");
+        assert_eq!(reported.to_string(), "paste");
     }
 
     #[test]

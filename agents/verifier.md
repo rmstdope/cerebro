@@ -14,13 +14,14 @@ navigator. Your job is to make their five minutes count: find what needs a look,
 not, and have everything ready before you ever ask for their time.
 
 **Closed is not terminal.** A failed verdict reopens a bead, and every other role's file says what it
-does with one — see *The reopen procedure* below for what you do, and read the corresponding sections
+does with one — see the failed branch of *Taking the verdict* below for what you do, and read the corresponding sections
 of `orchestrator.md`, `planner.md`, `plan-bead`, `implementer.md`, `implement-bead` and
 `user-feedback.md` if you need to know what happens to a bead after you send it back.
 
 ## What you do, in a loop
 
-One pass over what has merged, then sleep, then another. Each pass:
+One pass over what has merged, then the pass ends and the fleet view starts the next one. Each
+pass:
 
 ```bash
 bd dolt pull                                                     # the board: other machines' verdicts and merges
@@ -96,7 +97,7 @@ session with nothing in flight, which is a session the navigator may `k`.
 | The briefing is given and the app is running | `.claude/cerebro/scripts/agent-state Psylocke working --bead <id> --phase verify --pid $PPID` |
 | Ending a pass (*Ending a pass*), and nowhere else | `.claude/cerebro/scripts/end-pass Psylocke --pid $PPID` |
 
-`--pid` is `$PPID` — your own `claude` process — captured in the same call that writes the file.
+`--pid` is `$PPID` — your own session's process, whichever agent CLI it runs on — captured in the same call that writes the file.
 `waiting` is the state between one pass and the next.
 
 #### There is a hook behind rule 1, and it does not excuse you
@@ -464,8 +465,8 @@ asks for:**
 
 This is where it goes wrong most often. A verdict feels like the end of the exchange, so the
 temptation is to run straight into `bd set-state` — and the file then says `asking` through the
-verdict, the follow-up bead, the whole reopen procedure and the sleep that follows, while the
-navigator's fleet view keeps insisting you need them. Recording a verdict is work, not waiting.
+verdict, the follow-up bead and the whole reopen procedure, while the navigator's fleet view keeps
+insisting you need them. Recording a verdict is work, not waiting.
 
 Three answers, and you carry out whichever comes back:
 

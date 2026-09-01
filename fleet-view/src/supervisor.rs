@@ -110,6 +110,20 @@ impl SupervisionMode {
     pub fn may_supervise(&self) -> bool {
         matches!(self, SupervisionMode::Supervising)
     }
+
+    /// May this process END something it is already hosting? `Supervising`, and also `Draining` -
+    /// a view that has been told to hand over still has to be able to finish and kill the sessions
+    /// it holds, because ending them is what ends the drain (`emacs/cerebro.el:4635-4641`, the same
+    /// rule).
+    ///
+    /// Starting asks [`SupervisionMode::may_supervise`]; ending asks this. No caller matches the
+    /// enum itself.
+    pub fn may_end(&self) -> bool {
+        matches!(
+            self,
+            SupervisionMode::Supervising | SupervisionMode::Draining { .. }
+        )
+    }
 }
 
 /// What to do about the lease this tick.
@@ -379,6 +393,33 @@ mod tests {
     fn kind(word: &str) -> SupervisorKind {
         SupervisorKind::parse(word)
             .unwrap_or_else(|| panic!("supervisor.cases: unknown kind {word}"))
+    }
+
+    #[test]
+    fn a_draining_view_may_end_but_not_start() {
+        let supervising = SupervisionMode::Supervising;
+        assert!(supervising.may_supervise());
+        assert!(supervising.may_end());
+
+        let draining = SupervisionMode::Draining {
+            configured_for: Some(SupervisorKind::Emacs),
+            live_sessions: 2,
+        };
+        assert!(!draining.may_supervise());
+        assert!(draining.may_end());
+
+        for reason in [
+            ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs),
+            ReadOnlyReason::OwnedBy(SupervisorKind::Emacs),
+            ReadOnlyReason::InvalidDeclaration("rat".to_string()),
+            ReadOnlyReason::LockError("boom".to_string()),
+            ReadOnlyReason::DeclarationUnreadable("boom".to_string()),
+            ReadOnlyReason::NotOwned,
+        ] {
+            let mode = SupervisionMode::ReadOnly(reason.clone());
+            assert!(!mode.may_supervise(), "may_supervise for {reason:?}");
+            assert!(!mode.may_end(), "may_end for {reason:?}");
+        }
     }
 
     /// Every row of `tests/lib/supervisor.cases`, which `cerebro--supervision-decision` answers

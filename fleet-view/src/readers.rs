@@ -2,8 +2,13 @@
 //!
 //! Read-only by construction: every function here reads a file or runs a read-only external
 //! program (`scripts/roster`, `ps`, `bd --readonly`) and returns data for `crate::model` to
-//! parse. Nothing here writes a file, launches, stops, triggers, supervises, or cleans up state -
-//! Emacs remains the sole supervisor (cb-vyp.1's own scope).
+//! parse. Nothing here writes a file, launches, stops, triggers, supervises, or cleans up state.
+//!
+//! That sentence is still true of THIS file, and `crate::lifecycle` exists so that it stays so:
+//! since cb-kcs.2.3 the crate does write to the fleet's contracts - a stop flag, and the deletion
+//! of a state file - and every one of those writes lives there. The one thing this module shares
+//! with it is the state-file path, which it asks `lifecycle::state_file_path` for rather than
+//! spelling a second time.
 
 use std::io::Read;
 use std::net::SocketAddr;
@@ -269,10 +274,9 @@ pub fn read_supervisor_record(paths: &ReaderPaths) -> Result<PathBuf, ReadError>
 pub fn read_states(paths: &ReaderPaths, roster: &[RosterEntry]) -> StateInputs {
     let mut states = StateInputs::new();
     for entry in roster {
-        let path = paths
-            .shared_root
-            .join(".cerebro/state")
-            .join(format!("{}.state.json", entry.name));
+        // The path is spelled once, in `lifecycle`, which is also where it is deleted: two
+        // spellings of one contract path is drift this repository has already paid for.
+        let path = crate::lifecycle::state_file_path(paths, &entry.name);
         let observation = match std::fs::read_to_string(&path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => StateObservation::Missing,
             Err(e) => StateObservation::Invalid(format!("{}: {e}", path.display())),

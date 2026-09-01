@@ -28,7 +28,8 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::app::{App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics};
+use crate::app::{App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, Prompt};
+use crate::lifecycle;
 use crate::model::{Bead, FleetRow, RowState, WorkBuckets};
 use crate::session::SessionView;
 
@@ -284,6 +285,24 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
         draw_too_small(frame, area);
         return;
     }
+    // The quit refusal takes the whole screen, header included: it is the one thing here that
+    // stops the navigator leaving, and it must not look like the smallest confirmation on the
+    // screen (Q4). It does not scroll, and the three panes behind it keep their own offsets.
+    if let Some(live) = &app.quit_refusal {
+        let header = Rect { height: 1, ..area };
+        let body = Rect { y: area.y + 1, height: area.height - 1, ..area };
+        frame.render_widget(Paragraph::new(header_line(app, header.width)), header);
+        render_alert_pane(
+            frame,
+            body,
+            Line::from(Span::styled(
+                lifecycle::quit_refusal_title(live.len()),
+                Style::default().fg(RED).add_modifier(Modifier::BOLD),
+            )),
+            &lifecycle::quit_refusal_lines(live),
+        );
+        return;
+    }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
     let (header, fleet_rect, work_rect, session_rect) =
         split(area, fleet_lines.len(), work_content_lines(app, now, area));
@@ -317,11 +336,16 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
 
     let session_focused = app.focus == PaneFocus::Session;
     let session_lines = session_document(app);
-    render_pane(
+    // RED is this screen's spelling for a thing that went wrong, and a refused launch is the one
+    // Session state that is one.
+    let session_border =
+        matches!(app.session.view, SessionView::Refused { .. }).then_some(RED);
+    render_bordered_pane(
         frame,
         session_rect,
         session_title(app, session_focused),
         session_focused,
+        session_border,
         &session_lines,
         app.session.scroll,
     );
@@ -346,16 +370,29 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     }
 }
 
+/// A pane that reports a FAILURE: red border, no focus, no scrolling.
+///
+/// Its two users are the quit refusal and a refused launch, and neither is focusable.
+fn render_alert_pane(
+    frame: &mut Frame<'_>,
+    outer: Rect,
+    title: Line<'static>,
+    lines: &[Line<'static>],
+) {
+    render_bordered_pane(frame, outer, title, false, Some(RED), lines, 0);
+}
+
 /// One widget: its border (focus only), its title (status colour, bold only while focused), its
 /// scrolled body, and - when its content outgrows its inner height - the reserved range-cue row.
 ///
 /// LINES is the pane's whole body, already built for this frame's width, and is BORROWED: the
 /// retained transcript is up to ten thousand lines and is handed to this function every frame.
 /// SCROLL is that pane's own offset. TITLE carries its own styling - two spans for the Session
-/// pane, the title in its own style and then the dim hint, and one for Fleet and Work. Borders carry focus alone: an unfocused pane is always the ordinary thin, dim border
-/// whatever its title reports, and a focused pane is always the thick, bright-blue one - status
-/// colour is the title's own signal, not the border's, so a focused stale/unavailable pane keeps
-/// its gold/red title behind a blue border rather than losing that colour to focus.
+/// pane, the title in its own style and then the dim hint, and one for Fleet and Work. Borders
+/// carry focus alone: an unfocused pane is always the ordinary thin, dim border whatever its title
+/// reports, and a focused pane is always the thick, bright-blue one - status colour is the title's
+/// own signal, not the border's, so a focused stale/unavailable pane keeps its gold/red title
+/// behind a blue border rather than losing that colour to focus.
 fn render_pane(
     frame: &mut Frame<'_>,
     outer: Rect,
@@ -364,10 +401,26 @@ fn render_pane(
     lines: &[Line<'static>],
     scroll: usize,
 ) {
-    let (border_type, border_style) = if focused {
-        (BorderType::Thick, Style::default().fg(BLUE))
-    } else {
-        (BorderType::Plain, dim())
+    render_bordered_pane(frame, outer, title, focused, None, lines, scroll);
+}
+
+/// `render_pane`, with the border colour given rather than derived from focus. RED is this
+/// screen's one spelling for a thing that went wrong, and the two panes that use it - the quit
+/// refusal and a refused launch - are not focusable.
+#[allow(clippy::too_many_arguments)]
+fn render_bordered_pane(
+    frame: &mut Frame<'_>,
+    outer: Rect,
+    title: Line<'static>,
+    focused: bool,
+    border: Option<Color>,
+    lines: &[Line<'static>],
+    scroll: usize,
+) {
+    let (border_type, border_style) = match border {
+        Some(color) => (BorderType::Plain, Style::default().fg(color)),
+        None if focused => (BorderType::Thick, Style::default().fg(BLUE)),
+        None => (BorderType::Plain, dim()),
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -510,6 +563,19 @@ fn newest_failure(app: &App) -> Option<(DateTime<Utc>, bool)> {
     }
 }
 
+/// The lifecycle keys this mode offers, or `None` in read-only - where the header is exactly what
+/// it has always been.
+///
+/// One function so the two hint strings cannot disagree about what they are measuring.
+fn lifecycle_hint(mode: &SupervisionMode) -> Option<&'static str> {
+    match mode {
+        SupervisionMode::Supervising => Some("s/f/k start·finish·kill"),
+        // `s` is refused while draining, and `f` and `k` are how a drain ends.
+        SupervisionMode::Draining { .. } => Some("f finish | k kill"),
+        SupervisionMode::ReadOnly(_) => None,
+    }
+}
+
 /// The one status line: the title, what is happening right now, and the keys.
 ///
 /// `refreshing...` wins over a retained failure: a navigator looking at a stale pane most wants
@@ -528,8 +594,14 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     }
     let mut spans = vec![Span::raw(supervision_title(&app.supervision))];
     // A notice takes the place `refreshing...` or a failure would have had: it is transient, gone
-    // on the next keystroke, while a stale pane goes on saying so in its own title anyway.
-    if let Some(notice) = &app.notice {
+    // on the next keystroke, while a stale pane goes on saying so in its own title anyway. The
+    // quit refusal and the kill confirmation come first because both own the keyboard while they
+    // are up, and what the keyboard is doing outranks how fresh a pane is.
+    if app.quit_refusal.is_some() {
+        spans.push(Span::styled(" | quit refused", Style::default().fg(RED)));
+    } else if let Some(Prompt::Kill { text, .. }) = &app.confirm {
+        spans.push(Span::styled(format!(" | {text}"), Style::default().fg(GOLD)));
+    } else if let Some(notice) = &app.notice {
         spans.push(Span::styled(format!(" | {notice}"), Style::default().fg(GOLD)));
     } else if app.fleet.refreshing || app.work.refreshing {
         spans.push(Span::styled(" | refreshing...", dim()));
@@ -540,6 +612,16 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
             (format!(" | refresh failed at {}", clock(failed_at)), RED)
         };
         spans.push(Span::styled(text, Style::default().fg(color)));
+    } else if let SupervisionMode::Draining { live_sessions, .. } = &app.supervision {
+        // How far from done the handoff is - the one thing on screen that says so. A notice takes
+        // this slot for one keystroke, which is the cost the navigator accepted (Q6).
+        spans.push(Span::styled(
+            format!(
+                " | {live_sessions} live agent{}",
+                if *live_sessions == 1 { "" } else { "s" }
+            ),
+            Style::default().fg(GOLD),
+        ));
     }
     let refresh_key = if failed(&app.fleet) || failed(&app.work) {
         "g retry"
@@ -551,12 +633,17 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     // and a hint the terminal has cut in half is worse than a shorter hint that fits. What is left
     // when it shortens is the two keys a navigator cannot guess from the screen: refresh and quit.
     let used: usize = spans.iter().map(|span| span.content.width()).sum();
-    let full =
-        format!(" | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | {refresh_key} | q/Esc/Ctrl-C quit");
+    let keys = lifecycle_hint(&app.supervision).map(|k| format!(" | {k}")).unwrap_or_default();
+    let full = format!(
+        " | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move{keys} | {refresh_key} | q/Esc/Ctrl-C quit"
+    );
+    // Cells, not chars: `·` and the arrows are one cell each here, but the rule is the measure.
     let hints = if used + full.width() <= width as usize {
         full
     } else {
-        format!(" | {refresh_key} | q/Esc/Ctrl-C quit")
+        // The lifecycle keys survive the shortening and the movement hints do not (Q7): the keys
+        // that change the fleet outlast the keys that move around it.
+        format!("{keys} | {refresh_key} | q/Esc/Ctrl-C quit")
     };
     spans.push(Span::styled(hints, dim()));
     Line::from(spans)
@@ -600,6 +687,13 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
             format!("{name} — ended {}", at.format("%H:%M")),
             Some("[retained until next start]"),
         ),
+        // No hint: the body's own last line says what to press, and the red title is the report.
+        SessionView::Refused { at, .. } => {
+            return Line::from(Span::styled(
+                format!("{name} — launch refused {}", at.format("%H:%M")),
+                Style::default().fg(RED).add_modifier(Modifier::BOLD),
+            ));
+        }
     };
     let mut spans = vec![Span::styled(title, style)];
     if let Some(hint) = hint {
@@ -640,6 +734,8 @@ fn session_document(app: &App) -> std::borrow::Cow<'_, [Line<'static>]> {
     match &app.session.view {
         SessionView::Live { lines, .. } => return std::borrow::Cow::Borrowed(lines),
         SessionView::Ended { lines, .. } => return std::borrow::Cow::Borrowed(lines.as_slice()),
+        // Built when the refusal was recorded, prefix already dropped and closing line appended.
+        SessionView::Refused { lines, .. } => return std::borrow::Cow::Borrowed(lines.as_slice()),
         SessionView::Starting => {
             let name = app.selected.clone().unwrap_or_else(|| "the session".to_string());
             return std::borrow::Cow::Owned(vec![line(&format!("Starting {name}…"))]);
@@ -1163,6 +1259,7 @@ fn state_spans(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Prompt;
     use crate::model::AgentKind;
     use crate::readers::ReadError;
     use std::time::Instant;
@@ -1389,6 +1486,16 @@ mod tests {
         app
     }
 
+    /// A view told to hand over, still hosting SESSIONS - where `s` is refused and `f`/`k` are not.
+    fn handing_over(sessions: usize) -> App {
+        let mut app = populated();
+        app.set_supervision(SupervisionMode::Draining {
+            configured_for: Some(SupervisorKind::Emacs),
+            live_sessions: sessions,
+        });
+        app
+    }
+
     /// Both panes populated with enough rows that each needs to scroll on its own - the fixture
     /// the pane-independence and range-cue cases share.
     fn both_populated() -> App {
@@ -1447,7 +1554,10 @@ mod tests {
         app.set_session_view(SessionView::Starting);
         let buffer = render(&app, 120, 20);
         assert!(lines(&buffer).iter().any(|line| line.contains("Starting Xavier…")), "{:?}", lines(&buffer));
-        assert!(style_of(&buffer, "S").add_modifier.contains(Modifier::DIM));
+        // `style_where`, not `style_of`: the latter takes the first `S` anywhere on the buffer,
+        // which was the header's `Shift-Tab` until the supervising header's lifecycle keys pushed
+        // that hint off a 120-column screen. The assertion always meant this line.
+        assert!(style_where(&buffer, "Starting Xavier…").add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
@@ -1824,6 +1934,160 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_refused_launch_is_drawn_in_red() {
+        let mut app = supervising();
+        app.selected = Some("Rogue".to_string());
+        app.set_session_view(SessionView::Refused {
+            lines: std::sync::Arc::new(vec![
+                Line::from(Span::styled(
+                    "agents/implementer.md is missing".to_string(),
+                    Style::default().fg(RED),
+                )),
+                Line::from(""),
+                Line::from(Span::styled("Press s to try again.".to_string(), dim())),
+            ]),
+            at: at(50_820),
+        });
+        let buffer = render(&app, 200, 20);
+        let rendered = lines(&buffer);
+        assert!(
+            rendered.iter().any(|line| line.contains("Rogue — launch refused 14:07")),
+            "{rendered:?}"
+        );
+        assert!(
+            !rendered.iter().any(|line| line.contains("[Tab to focus]")),
+            "a refused launch carries no hint: {rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|line| line.contains("agents/implementer.md is missing")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|line| line.contains("Press s to try again.")),
+            "{rendered:?}"
+        );
+        assert_eq!(style_where(&buffer, "Rogue — launch refused").fg, Some(RED));
+    }
+
+    #[test]
+    fn a_kill_prompt_replaces_the_header_span_in_gold() {
+        let mut app = supervising();
+        app.confirm = Some(Prompt::Kill {
+            name: "Cyclops".to_string(),
+            text: "Kill Cyclops? Its bead cb-42k stays claimed.  y / n".to_string(),
+        });
+        let buffer = render(&app, 200, 20);
+        let rendered = lines(&buffer);
+        assert!(
+            rendered[0].contains("| Kill Cyclops? Its bead cb-42k stays claimed.  y / n"),
+            "{:?}",
+            rendered[0]
+        );
+        assert_eq!(style_where(&buffer, "Kill Cyclops?").fg, Some(GOLD));
+        assert!(!rendered[0].contains("refreshing"), "{:?}", rendered[0]);
+    }
+
+    #[test]
+    fn the_quit_refusal_takes_the_whole_screen() {
+        let mut app = supervising();
+        app.refuse_quit(vec![
+            "Xavier".to_string(),
+            "Beast".to_string(),
+            "Cyclops".to_string(),
+        ]);
+        let buffer = render(&app, 200, 20);
+        let rendered = lines(&buffer);
+        assert!(rendered[0].contains("| quit refused"), "{:?}", rendered[0]);
+        assert_eq!(style_where(&buffer, "quit refused").fg, Some(RED));
+        assert!(
+            rendered.iter().any(|line| line.contains("3 live agents prevent exit")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("Cerebro is supervising Xavier, Beast and Cyclops.")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|line| line.contains("No agent was stopped. Any key returns.")),
+            "{rendered:?}"
+        );
+        for pane in ["Fleet", "Work", "Session"] {
+            assert!(
+                !rendered.iter().any(|line| line.contains(pane)),
+                "no {pane} pane behind the refusal: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn one_live_agent_is_named_in_the_singular() {
+        let mut app = supervising();
+        app.refuse_quit(vec!["Cyclops".to_string()]);
+        let rendered = lines(&render(&app, 200, 20));
+        assert!(
+            rendered.iter().any(|line| line.contains("1 live agent prevents exit")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|line| line.contains("Cerebro is supervising Cyclops.")),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn the_supervising_header_offers_the_lifecycle_keys() {
+        let rendered = lines(&render(&supervising(), 200, 20));
+        assert!(
+            rendered[0].contains("s/f/k start·finish·kill"),
+            "a supervising view offers its lifecycle keys: {:?}",
+            rendered[0]
+        );
+    }
+
+    /// The keys that change the fleet outlast the keys that move around it (Q7).
+    #[test]
+    fn the_lifecycle_keys_outlast_the_movement_hints() {
+        let rendered = lines(&render(&supervising(), 100, 20));
+        assert!(rendered[0].contains("s/f/k start·finish·kill"), "{:?}", rendered[0]);
+        assert!(rendered[0].contains("g refresh"), "{:?}", rendered[0]);
+        assert!(rendered[0].contains("q/Esc/Ctrl-C quit"), "{:?}", rendered[0]);
+        assert!(!rendered[0].contains("Tab/Shift-Tab"), "the pane hint gave way: {:?}", rendered[0]);
+    }
+
+    /// The read-only screen is exactly what it was: this is what proves the increment stayed put.
+    #[test]
+    fn a_read_only_header_offers_no_lifecycle_key() {
+        let rendered = lines(&render(&populated(), 200, 20));
+        assert!(!rendered[0].contains("s/f/k"), "{:?}", rendered[0]);
+        assert!(!rendered[0].contains("finish"), "{:?}", rendered[0]);
+    }
+
+    #[test]
+    fn a_handing_over_header_offers_f_and_k_and_counts_the_agents() {
+        let three = render(&handing_over(3), 200, 20);
+        let rendered = lines(&three);
+        assert!(rendered[0].contains("| 3 live agents"), "{:?}", rendered[0]);
+        assert_eq!(style_where(&three, "3 live agents").fg, Some(GOLD));
+        assert!(rendered[0].contains("f finish | k kill"), "{:?}", rendered[0]);
+        assert!(!rendered[0].contains("s/f/k"), "s is refused while draining: {:?}", rendered[0]);
+
+        let one = lines(&render(&handing_over(1), 200, 20));
+        assert!(one[0].contains("| 1 live agent "), "{:?}", one[0]);
+    }
+
+    /// The cost the navigator accepted explicitly (Q6): a notice takes that slot for one keystroke.
+    #[test]
+    fn a_notice_hides_the_live_count_for_one_keystroke() {
+        let mut app = handing_over(3);
+        app.set_notice("Cyclops will finish after this pass.".to_string());
+        let rendered = lines(&render(&app, 200, 20));
+        assert!(rendered[0].contains("Cyclops will finish after this pass."), "{:?}", rendered[0]);
+        assert!(!rendered[0].contains("3 live agents"), "{:?}", rendered[0]);
+    }
+
     /// The screen every consumer sees today keeps every hint it had before this bead.
     ///
     /// This is the assertion the navigator asked for by name: ownership must not cost the default
@@ -1837,6 +2101,15 @@ mod tests {
         for hint in ["Tab/Shift-Tab pane", "↑/↓/PgUp/PgDn move", "g refresh", "q/Esc/Ctrl-C quit"] {
             assert!(rendered[0].contains(hint), "the default screen keeps {hint}: {:?}", rendered[0]);
         }
+
+        // A supervising sibling at the same width. It does NOT keep every hint - the lifecycle
+        // keys cost more than the shorter title saves, and `the_lifecycle_keys_outlast_the_movement_hints`
+        // is where that trade is asserted. What matters here is that the two keys a navigator
+        // cannot guess from the screen survive it.
+        let supervising = lines(&render(&supervising(), 100, 20));
+        assert!(supervising[0].contains("s/f/k start·finish·kill"), "{:?}", supervising[0]);
+        assert!(supervising[0].contains("g refresh"), "{:?}", supervising[0]);
+        assert!(supervising[0].contains("q/Esc/Ctrl-C quit"), "{:?}", supervising[0]);
     }
 
     /// When there IS something to say, the hints give way before the state does.
@@ -1862,6 +2135,16 @@ mod tests {
         let wide = lines(&render(&app, 160, 20));
         assert!(wide[0].contains("Tab/Shift-Tab pane"), "{:?}", wide[0]);
         assert!(wide[0].contains("↑/↓/PgUp/PgDn move"), "{:?}", wide[0]);
+
+        // A supervising sibling at the same two widths: the lifecycle keys survive both, and the
+        // movement hints are what give way when they must.
+        let supervising = supervising();
+        let narrow = lines(&render(&supervising, 60, 20));
+        assert!(narrow[0].contains("s/f/k start·finish·kill"), "{:?}", narrow[0]);
+        assert!(!narrow[0].contains("Tab/Shift-Tab"), "{:?}", narrow[0]);
+        let wide = lines(&render(&supervising, 200, 20));
+        assert!(wide[0].contains("Tab/Shift-Tab pane"), "{:?}", wide[0]);
+        assert!(wide[0].contains("s/f/k start·finish·kill"), "{:?}", wide[0]);
     }
 
     #[test]

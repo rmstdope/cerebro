@@ -1,12 +1,15 @@
-//! `cerebro-tui`: the standalone read-only fleet screen, started by
+//! `cerebro-tui`: the standalone fleet screen, started by
 //! `.claude/cerebro/scripts/cerebro-tui` and never by hand.
 //!
-//! It owns four things and nothing else: the terminal, the event loop, the workers that keep the
-//! readers off the drawing thread, and - since cb-kcs.1 - the supervision lease, through
-//! `SupervisorController`. It still writes no state file, no stop flag and no bead: holding the
-//! lease is a statement about which view a project declared, not a licence to act, and this child
-//! adds no lifecycle key at all. The controller owns the lease because ownership must end when
-//! the process does, and `TerminalGuard` beside it is the proof that a `Drop` is the only cleanup
+//! It owns five things and nothing else: the terminal, the event loop, the workers that keep the
+//! readers off the drawing thread, the sessions it hosts (cb-kcs.2.2), and - since cb-kcs.1 - the
+//! supervision lease, through `SupervisorController`. Since cb-kcs.2.3 `s`, `f` and `k` reach the
+//! fleet through `route_key` and `lifecycle_key`: it starts an agent, writes and clears a stop
+//! flag, and kills a session it hosts, each refused with a visible line unless the lease says it
+//! may. It writes no state file - `scripts/agent-state` is the one author of those, and this view
+//! only ever DELETES one whose session it is ending - and no bead. Holding the lease is what makes
+//! any of it legal; a view that does not hold it is exactly the reader it always was. The
+//! controller owns the lease because ownership must end when the process does, and `TerminalGuard` beside it is the proof that a `Drop` is the only cleanup
 //! a `?`, an early return and a panic all respect.
 //!
 //! Everything it needs to find the fleet is handed to it by the launcher in the environment. It
@@ -29,7 +32,8 @@ use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use cerebro_tui::app::{App, AppAction, FleetWorker, SupervisorWorker, WorkWorker};
+use cerebro_tui::app::{self, App, AppAction, FleetWorker, SupervisorWorker, WorkWorker};
+use cerebro_tui::lifecycle;
 use cerebro_tui::readers::{self, Programs, ReadError, ReaderPaths};
 use cerebro_tui::supervisor::{
     reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
@@ -311,6 +315,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &supervisor_worker,
         &mut controller,
         &mut host,
+        &paths,
         Utc::now,
     );
     guard.leave()?;
@@ -334,6 +339,7 @@ fn run<B: Backend, E: Events>(
     supervisor_worker: &SupervisorWorker,
     controller: &mut SupervisorController,
     host: &mut SessionHost,
+    paths: &ReaderPaths,
     clock: impl Fn() -> DateTime<Utc>,
 ) -> Result<(), Fatal>
 where
@@ -406,7 +412,7 @@ where
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    let action = route_key(key, app, host, viewport_lines);
+                    let action = route_key(key, app, host, paths, viewport_lines, clock());
                     if action == AppAction::Quit {
                         break;
                     }
@@ -437,28 +443,144 @@ where
     Ok(())
 }
 
-/// The keystroke path when a live session is focused.
+/// The keystroke path, in this order, each branch returning:
 ///
-/// `Shift-Tab` is taken first and handed to `App::on_key` as the only way out (Q8) - which is the
-/// reason the child can never receive it. Everything else goes to `session::key_bytes`, and a
-/// `None` is dropped without a word (Q1): the pane is a window onto the child rather than a
-/// commentary on it.
+/// 1. the quit-refusal pane owns the screen: ANY key clears it and does nothing else (Q8);
+/// 2. a kill confirmation owns the keyboard: `y` kills, anything else cancels silently (Q10), and
+///    the cancelling keystroke is consumed - `q` at the prompt does not also quit. Before the
+///    session branch because a confirmation can only exist if `k` was pressed, which requires the
+///    Session pane NOT to hold the keyboard;
+/// 3. a live session that holds the keyboard gets the bytes, as cb-kcs.2.2 left it;
+/// 4. `s`, `f` and `k`, unmodified, are the lifecycle;
+/// 5. everything else is `App::on_key` - and a `Quit` from it over a live session is refused.
 ///
-/// So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or refresh while a live session is focused - they
-/// are the child's, which is exactly what the replaced header line says.
+/// In branch 3, `Shift-Tab` is held back and handed to `App::on_key` as the only way out (Q8),
+/// which is the reason the child can never receive it; everything else goes to
+/// `session::key_bytes`, and a `None` is dropped without a word (Q1), because the pane is a window
+/// onto the child rather than a commentary on it. So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or
+/// refresh while a live session is focused - they are the child's, which is exactly what the
+/// replaced header line says.
 fn route_key(
     key: KeyEvent,
     app: &mut App,
     host: &mut SessionHost,
+    paths: &ReaderPaths,
     viewport_lines: usize,
+    now: DateTime<Utc>,
 ) -> AppAction {
-    if !app.session_has_keyboard() || key.code == KeyCode::BackTab {
-        return app.on_key(key, viewport_lines);
+    // A notice is transient by design: whatever the navigator presses is what clears it, and that
+    // has to be true of the keys these two panes consume as well - or a gold line outlives the
+    // keystroke that should have cleared it and reappears when the pane closes.
+    if app.quit_refusal.is_some() {
+        app.notice = None;
+        app.quit_refusal = None;
+        return AppAction::None;
     }
-    if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
-        host.send(&name, &bytes);
+    if let Some(app::Prompt::Kill { name, .. }) = app.confirm.take() {
+        app.notice = None;
+        if key.code == KeyCode::Char('y') && key.modifiers.is_empty() {
+            host.kill(paths, &name);
+            // A killed agent must not wait up to five seconds to disappear from the fleet.
+            return AppAction::RefreshFleet;
+        }
+        return AppAction::None;
     }
-    AppAction::None
+    if app.session_has_keyboard() && key.code != KeyCode::BackTab {
+        if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
+            host.send(&name, &bytes);
+        }
+        return AppAction::None;
+    }
+    if key.modifiers.is_empty() {
+        if let KeyCode::Char(c @ ('s' | 'f' | 'k')) = key.code {
+            // A notice is transient exactly as it is under `on_key`: the keystroke that reads it
+            // is the one that clears it, and this key may then write its own.
+            app.notice = None;
+            return lifecycle_key(c, app, host, paths, now);
+        }
+    }
+    let action = app.on_key(key, viewport_lines);
+    if action == AppAction::Quit {
+        let live = host.live_names(&app.roster_order());
+        if !live.is_empty() {
+            app.refuse_quit(live);
+            return AppAction::None;
+        }
+    }
+    action
+}
+
+/// Build the `Situation`, ask `lifecycle`, and carry out what it said.
+///
+/// Each of the three sets at most one notice, and each ends with `RefreshFleet` when it changed
+/// something - a started or killed agent must not wait up to five seconds to appear.
+fn lifecycle_key(
+    key: char,
+    app: &mut App,
+    host: &mut SessionHost,
+    paths: &ReaderPaths,
+    now: DateTime<Utc>,
+) -> AppAction {
+    let Some(name) = app.selected.clone() else { return AppAction::None };
+    let row = app.selected_row().cloned();
+    let situation = lifecycle::Situation {
+        mode: &app.supervision,
+        row: row.as_ref(),
+        hosted: host.is_live(&name),
+        stop_flag: lifecycle::stop_flag_set(paths, &name),
+    };
+    match key {
+        's' => match lifecycle::start_outcome(situation) {
+            lifecycle::StartOutcome::Launch { clears_flag } => {
+                match lifecycle::start(host, paths, &name, clears_flag) {
+                    Ok(line) => app.set_notice(line),
+                    // The red Session pane is the report; a gold line saying the same thing twice
+                    // is not.
+                    Err(error) => host.note_refusal(&name, &error.to_string(), now),
+                }
+                AppAction::RefreshFleet
+            }
+            lifecycle::StartOutcome::Refuse(text) => {
+                app.set_notice(text);
+                AppAction::None
+            }
+            lifecycle::StartOutcome::Ignore => AppAction::None,
+        },
+        'f' => {
+            let (result, line) = match lifecycle::finish_outcome(situation) {
+                lifecycle::FinishOutcome::Write => (
+                    Some(lifecycle::write_stop_flag(paths, &name)),
+                    format!("{name} will finish after this pass."),
+                ),
+                lifecycle::FinishOutcome::Clear => (
+                    Some(lifecycle::clear_stop_flag(paths, &name)),
+                    format!("{name} will keep going."),
+                ),
+                lifecycle::FinishOutcome::Refuse(text) => (None, text),
+                lifecycle::FinishOutcome::Ignore => return AppAction::None,
+            };
+            match result {
+                // A key that reported success over a file it did not write is the one failure `f`
+                // can have, so the io error is the notice.
+                Some(Err(error)) => app.set_notice(error.to_string()),
+                Some(Ok(())) => app.set_notice(line),
+                None => app.set_notice(line),
+            }
+            AppAction::None
+        }
+        'k' => match lifecycle::kill_outcome(situation) {
+            lifecycle::KillOutcome::Confirm { prompt } => {
+                app.confirm = Some(app::Prompt::Kill { name, text: prompt });
+                AppAction::None
+            }
+            lifecycle::KillOutcome::Refuse(text) => {
+                app.set_notice(text);
+                AppAction::None
+            }
+            lifecycle::KillOutcome::Ignore => AppAction::None,
+        },
+        _ => AppAction::None,
+    }
 }
 
 /// Turn one `AppAction` into requests. `RefreshBoth` asks each pane in turn and never as a pair:
@@ -698,13 +820,42 @@ mod main_tests {
     /// A fixed list of keystrokes, handed to the loop one per poll. `ScriptedEvents` above says
     /// only "always the same key"; this says what a navigator typed, in order.
     struct QueuedEvents {
-        keys: std::collections::VecDeque<crossterm::event::KeyCode>,
+        keys: std::collections::VecDeque<crossterm::event::KeyEvent>,
+        /// End the loop when the keys run out, rather than spinning until something quits.
+        ///
+        /// The cases that assert a REFUSED quit have no keystroke that ends `run` - refusing is
+        /// the whole point of them - so the event source stops the loop instead, by failing the
+        /// poll. `drive` expects that error and asserts on the state the loop left behind.
+        stop_when_empty: bool,
     }
 
     impl QueuedEvents {
+        /// Bare key codes, each with no modifier - what almost every case wants.
         fn new(keys: Vec<crossterm::event::KeyCode>) -> Self {
-            Self { keys: keys.into() }
+            Self::spinning(
+                keys.into_iter()
+                    .map(|code| {
+                        crossterm::event::KeyEvent::new(
+                            code,
+                            crossterm::event::KeyModifiers::NONE,
+                        )
+                    })
+                    .collect(),
+            )
         }
+
+        /// The original shape: an exhausted queue polls false for ever, and the case's own final
+        /// `q` is what ends the loop.
+        fn spinning(keys: Vec<crossterm::event::KeyEvent>) -> Self {
+            Self { keys: keys.into(), stop_when_empty: false }
+        }
+
+        /// Whole key events, for a case that needs `Ctrl-C` or another modifier - and which ends
+        /// the loop when its keys run out.
+        fn events(keys: Vec<crossterm::event::KeyEvent>) -> Self {
+            Self { keys: keys.into(), stop_when_empty: true }
+        }
+
         fn remaining(&self) -> usize {
             self.keys.len()
         }
@@ -712,17 +863,17 @@ mod main_tests {
 
     impl Events for QueuedEvents {
         fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+            if self.keys.is_empty() && self.stop_when_empty {
+                return Err(io::Error::other("the case's keystrokes are spent"));
+            }
             Ok(!self.keys.is_empty())
         }
         fn read(&mut self) -> io::Result<Event> {
-            let code = self
+            let key = self
                 .keys
                 .pop_front()
                 .ok_or_else(|| io::Error::other("no keystroke left"))?;
-            Ok(Event::Key(crossterm::event::KeyEvent::new(
-                code,
-                crossterm::event::KeyModifiers::NONE,
-            )))
+            Ok(Event::Key(key))
         }
     }
 
@@ -731,16 +882,27 @@ mod main_tests {
     /// modifiers and a paste, and neither fits `QueuedEvents`.
     struct ReplayedEvents {
         events: std::collections::VecDeque<Event>,
+        stop_when_empty: bool,
     }
 
     impl ReplayedEvents {
+        /// An exhausted queue polls false for ever, and the case's own quit ends the loop.
         fn new(events: Vec<Event>) -> Self {
-            Self { events: events.into() }
+            Self { events: events.into(), stop_when_empty: false }
+        }
+
+        /// An exhausted queue ENDS the loop instead: for a case whose last keystroke is REFUSED
+        /// (a quit over a live session, since cb-kcs.2.3), where nothing else would stop it.
+        fn stopping(events: Vec<Event>) -> Self {
+            Self { events: events.into(), stop_when_empty: true }
         }
     }
 
     impl Events for ReplayedEvents {
         fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+            if self.events.is_empty() && self.stop_when_empty {
+                return Err(io::Error::other("the case's events are spent"));
+            }
             Ok(!self.events.is_empty())
         }
         fn read(&mut self) -> io::Result<Event> {
@@ -854,18 +1016,22 @@ mod main_tests {
         let mut host = SessionHost::default();
         let mut app = hosting(&mut host);
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
-        let mut events = ReplayedEvents::new(vec![
+        let mut events = ReplayedEvents::stopping(vec![
             key(KeyCode::Char('x')),
             key(KeyCode::Esc),
             ctrl(KeyCode::Char('c')),
             key(KeyCode::BackTab),
-            // Focus is Work by then, so this one quits as it always did.
+            // Focus is Work by then, so this key reaches `App::on_key` rather than the child -
+            // and since cb-kcs.2.3 the live session it just left is what REFUSES the quit.
             key(KeyCode::Char('q')),
         ]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut host, Utc::now).unwrap();
+        // `Err` is the ordinary ending: the quit is refused, so nothing ends the loop but the
+        // event source running out.
+        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, &mut host, &nowhere().0, Utc::now);
 
-        assert!(app.quit, "q quit once the session no longer held the keyboard");
+        assert!(!app.quit, "the session this case hosts is what refuses the quit");
+        assert!(app.quit_refusal.is_some(), "and the refusal pane says so");
         assert_eq!(
             app.focus,
             cerebro_tui::app::PaneFocus::Work,
@@ -883,7 +1049,7 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![ctrl(KeyCode::Char('c'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -920,7 +1086,7 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![key(KeyCode::Down), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut host, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut host, &nowhere().0, Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
         assert!(app.quit, "and q still quits: a retained pass does not hold the keyboard");
@@ -931,13 +1097,15 @@ mod main_tests {
         let mut host = SessionHost::default();
         let mut app = hosting(&mut host);
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
-        let mut events = ReplayedEvents::new(vec![
+        // `stopping`, because the session this case hosts is what refuses the final quit since
+        // cb-kcs.2.3: the event source is then the only thing that ends the loop.
+        let mut events = ReplayedEvents::stopping(vec![
             Event::Paste("one\ntwo".to_string()),
             key(KeyCode::BackTab),
             key(KeyCode::Char('q')),
         ]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut host, Utc::now).unwrap();
+        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, &mut host, &nowhere().0, Utc::now);
         let text = echoed(&mut host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
         assert!(text.contains("^[[201~"), "and closed: {text:?}");
@@ -948,7 +1116,7 @@ mod main_tests {
         let mut events =
             ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -958,11 +1126,12 @@ mod main_tests {
         let mut host = SessionHost::default();
         let mut app = hosting(&mut host);
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        // Same as above: a hosted session refuses the quit, so the source ends the loop.
         let mut events =
-            ReplayedEvents::new(vec![key(KeyCode::BackTab), key(KeyCode::Char('q'))]);
+            ReplayedEvents::stopping(vec![key(KeyCode::BackTab), key(KeyCode::Char('q'))]);
         let (worker_handle, mut controller) = supervision();
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &worker_handle, &mut controller, &mut host, Utc::now).unwrap();
+        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &worker_handle, &mut controller, &mut host, &nowhere().0, Utc::now);
         assert_eq!(
             controller.hosted_sessions, 1,
             "the drain branch of `reconcile_supervision` is reachable for the first time"
@@ -1132,6 +1301,7 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
+                &nowhere().0,
                 Utc::now,
             )
             .unwrap_err();
@@ -1159,6 +1329,7 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
+                &nowhere().0,
                 Utc::now,
             )
             .unwrap_err();
@@ -1187,6 +1358,7 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
+                &nowhere().0,
                 Utc::now,
             )
             .is_err());
@@ -1226,6 +1398,7 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
+                &nowhere().0,
                 Utc::now,
             )
             .unwrap();
@@ -1270,7 +1443,7 @@ mod main_tests {
         ]);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work,
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
         assert!(app.quit, "and the last of them still quit");
@@ -1355,7 +1528,7 @@ mod main_tests {
         assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
         assert_eq!(
@@ -1406,7 +1579,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");
@@ -1443,7 +1616,7 @@ mod main_tests {
         let expected = m.session.content_lines.saturating_sub(m.session.viewport_lines);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
     }
@@ -1532,5 +1705,384 @@ mod main_tests {
         })
         .unwrap_err();
         assert!(message.contains("CEREBRO_SCRIPTS is missing"), "{message}");
+    }
+
+    // ---- cb-kcs.2.3: the lifecycle keys -------------------------------------------------
+
+    /// A scratch checkout with a `launch` that is a shell script rather than the real launcher: a
+    /// case that started an agent CLI would claim a bead. EXIT is what that script does.
+    fn scratch(dir: &std::path::Path, launch_body: &str) -> ReaderPaths {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir.join(".cerebro/state")).unwrap();
+        let launch = dir.join("launch");
+        std::fs::write(&launch, format!("#!/bin/sh\n{launch_body}\n")).unwrap();
+        let mut perms = std::fs::metadata(&launch).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&launch, perms).unwrap();
+        ReaderPaths {
+            consumer_root: dir.to_path_buf(),
+            shared_root: dir.to_path_buf(),
+            scripts_dir: dir.to_path_buf(),
+        }
+    }
+
+    fn fleet_row(name: &str, kind: cerebro_tui::model::AgentKind, state: cerebro_tui::model::RowState) -> cerebro_tui::model::FleetRow {
+        cerebro_tui::model::FleetRow {
+            name: name.into(),
+            role: "implementer".into(),
+            kind,
+            state,
+            phase: None,
+            bead: None,
+            since: None,
+            phase_since: None,
+            pid: None,
+            sessions: 0,
+            diagnostic: None,
+        }
+    }
+
+    /// An app with ROWS, the first selected, in the given supervision mode.
+    fn lifecycle_app(
+        mode: cerebro_tui::supervisor::SupervisionMode,
+        rows: Vec<cerebro_tui::model::FleetRow>,
+    ) -> App {
+        let mut app = App::with_supervision(mode);
+        let first = rows[0].name.clone();
+        app.finish_refresh(Ok(rows), Utc::now());
+        app.selected = Some(first);
+        app
+    }
+
+    /// Send KEYS through `route_key`, which is the whole keystroke path this bead adds.
+    ///
+    /// Deliberately NOT through `run` for the cases that depend on the supervision mode. `run`
+    /// polls the ownership worker before it reads a key, and this fixture's worker answers from a
+    /// directory with no `fleet-supervisor` in it - so it replaces `Supervising` with a read-only
+    /// lock error at a moment decided by how fast a thread ran, and a case asserting what `s` did
+    /// while supervising would pass or fail on that race. `route_key` is the same code the loop
+    /// calls, with the mode held still.
+    fn drive(
+        app: &mut App,
+        host: &mut SessionHost,
+        paths: &ReaderPaths,
+        keys: Vec<crossterm::event::KeyEvent>,
+    ) {
+        for key in keys {
+            route_key(key, app, host, paths, 10, Utc::now());
+        }
+    }
+
+    /// The same keys, through the whole loop - for the cases about quitting, which the supervision
+    /// mode has no part in.
+    fn drive_loop(
+        app: &mut App,
+        host: &mut SessionHost,
+        paths: &ReaderPaths,
+        keys: Vec<crossterm::event::KeyEvent>,
+    ) {
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        let mut events = QueuedEvents::events(keys);
+        // `Err` is the ordinary ending here: the source stops the loop when the keys are spent.
+        let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, host, paths, Utc::now);
+    }
+
+
+    /// `SessionHost::kill` signals the child and leaves it to be reaped by the next `sync`, so a
+    /// killed pass becomes an ordinary retained transcript. Poll until that has happened.
+    fn settle_gone(host: &mut SessionHost, name: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while host.is_live(name) {
+            host.sync(Some(name), 24, 80, Utc::now());
+            if std::time::Instant::now() >= deadline {
+                panic!("{name} was signalled and never reaped");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn ch(c: char) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(c),
+            crossterm::event::KeyModifiers::NONE,
+        )
+    }
+
+    use cerebro_tui::model::{AgentKind, RowState};
+    use cerebro_tui::supervisor::SupervisionMode;
+
+    #[test]
+    fn s_starts_the_selected_agent_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![fleet_row("Rogue", AgentKind::Interactive, RowState::Dead)],
+        );
+        let mut host = SessionHost::default();
+        drive(&mut app, &mut host, &paths, vec![ch('s')]);
+
+        assert!(host.is_live("Rogue"), "the host holds a session for the selected agent");
+        assert_eq!(app.notice.as_deref(), Some("Started Rogue."));
+    }
+
+    #[test]
+    fn s_on_an_implementer_with_a_stale_flag_clears_it_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        cerebro_tui::lifecycle::write_stop_flag(&paths, "Cyclops").unwrap();
+        // A state file a previous session left behind: a start deletes it, because one that
+        // outlives its session outlives its pid.
+        std::fs::write(cerebro_tui::lifecycle::state_file_path(&paths, "Cyclops"), "{}").unwrap();
+
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Dead)],
+        );
+        let mut host = SessionHost::default();
+        drive(&mut app, &mut host, &paths, vec![ch('s')]);
+
+        assert!(!cerebro_tui::lifecycle::stop_flag_set(&paths, "Cyclops"));
+        assert!(!cerebro_tui::lifecycle::state_file_path(&paths, "Cyclops").exists());
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Started Cyclops, and cleared a stale stop flag.")
+        );
+    }
+
+    #[test]
+    fn f_is_a_toggle() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+        );
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+
+        drive(&mut app, &mut host, &paths, vec![ch('f')]);
+        assert!(cerebro_tui::lifecycle::stop_flag_set(&paths, "Cyclops"));
+        assert_eq!(app.notice.as_deref(), Some("Cyclops will finish after this pass."));
+
+        drive(&mut app, &mut host, &paths, vec![ch('f')]);
+        assert!(!cerebro_tui::lifecycle::stop_flag_set(&paths, "Cyclops"));
+        assert_eq!(app.notice.as_deref(), Some("Cyclops will keep going."));
+    }
+
+    #[test]
+    fn k_asks_before_it_kills() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        cerebro_tui::lifecycle::write_stop_flag(&paths, "Cyclops").unwrap();
+        std::fs::write(cerebro_tui::lifecycle::state_file_path(&paths, "Cyclops"), "{}").unwrap();
+
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+        );
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+
+        // `k` alone asks, and kills nothing. `q` at the prompt cancels it rather than quitting,
+        // so a second `q` is what ends the loop.
+        drive(&mut app, &mut host, &paths, vec![ch('k')]);
+        assert!(
+            matches!(&app.confirm, Some(cerebro_tui::app::Prompt::Kill { name, .. }) if name == "Cyclops"),
+            "{:?}",
+            app.confirm
+        );
+        assert!(host.is_live("Cyclops"), "asking kills nothing");
+
+        drive(&mut app, &mut host, &paths, vec![ch('y')]);
+        assert_eq!(app.confirm, None);
+        settle_gone(&mut host, "Cyclops");
+        assert!(!host.is_live("Cyclops"), "y kills it");
+        assert!(
+            !cerebro_tui::lifecycle::state_file_path(&paths, "Cyclops").exists(),
+            "and the state file goes with the session"
+        );
+        assert!(
+            cerebro_tui::lifecycle::stop_flag_set(&paths, "Cyclops"),
+            "the stop flag is left alone: k is not a retire"
+        );
+    }
+
+    #[test]
+    fn any_key_but_y_cancels_a_kill_silently() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+        );
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+
+        drive(&mut app, &mut host, &paths, vec![ch('k'), ch('q')]);
+        assert!(host.is_live("Cyclops"), "nothing was killed");
+        assert_eq!(app.confirm, None, "the confirmation is gone");
+        assert_eq!(app.notice, None, "a line for a non-event is not written (Q10)");
+        assert!(!app.quit, "q at the prompt cancels the kill and does not also quit");
+    }
+
+    #[test]
+    fn a_read_only_view_refuses_every_lifecycle_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let read_only = SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                cerebro_tui::supervisor::SupervisorKind::Emacs,
+            ),
+        );
+        for key in ['s', 'f', 'k'] {
+            let mut app = lifecycle_app(
+                read_only.clone(),
+                vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Dead)],
+            );
+            let mut host = SessionHost::default();
+            drive(&mut app, &mut host, &paths, vec![ch(key)]);
+            assert_eq!(host.live_count(), 0, "{key} started nothing");
+            assert!(!cerebro_tui::lifecycle::stop_flag_set(&paths, "Cyclops"), "{key} wrote nothing");
+            assert_eq!(
+                app.notice.as_deref(),
+                Some("This view is read-only; it starts and stops nothing"),
+                "for {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_draining_view_refuses_s_and_allows_k() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let draining = SupervisionMode::Draining { configured_for: None, live_sessions: 1 };
+
+        let mut app = lifecycle_app(
+            draining.clone(),
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+        );
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+        drive(&mut app, &mut host, &paths, vec![ch('s')]);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Handoff pending: 1 session still hosted; only f and k act now")
+        );
+
+        drive(&mut app, &mut host, &paths, vec![ch('k'), ch('y')]);
+        settle_gone(&mut host, "Cyclops");
+        assert!(!host.is_live("Cyclops"), "ending a hosted session is what ends a drain");
+    }
+
+    #[test]
+    fn k_refuses_an_agent_this_view_did_not_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![fleet_row("Storm", AgentKind::Implementer, RowState::Working)],
+        );
+        let mut host = SessionHost::default();
+        drive(&mut app, &mut host, &paths, vec![ch('k')]);
+        assert_eq!(app.confirm, None, "nothing was even asked");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Storm is running outside this view - stop it from its own terminal")
+        );
+    }
+
+    #[test]
+    fn quitting_over_a_live_agent_is_refused_and_any_key_returns() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![
+                fleet_row("Xavier", AgentKind::Interactive, RowState::Working),
+                fleet_row("Cyclops", AgentKind::Implementer, RowState::Working),
+            ],
+        );
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+
+        drive_loop(&mut app, &mut host, &paths, vec![ch('q')]);
+        assert!(!app.quit, "a live agent stops the navigator leaving");
+        assert_eq!(app.quit_refusal.as_deref(), Some(&["Cyclops".to_string()][..]));
+
+        // Any key returns from the pane and does nothing else - `k` included, which must not kill.
+        drive_loop(&mut app, &mut host, &paths, vec![ch('k')]);
+        assert_eq!(app.quit_refusal, None);
+        assert_eq!(app.confirm, None, "the dismissing key did not also act");
+        assert!(host.is_live("Cyclops"));
+
+        // With no session hosted, `q` exits exactly as it always has.
+        let mut empty = SessionHost::default();
+        drive_loop(&mut app, &mut empty, &paths, vec![ch('q')]);
+        assert!(app.quit);
+    }
+
+    /// The one case the quit refusal exists for, and the one this bead first got wrong.
+    ///
+    /// `roster_order()` is empty until a fleet read has SUCCEEDED, so with a hosted child and a
+    /// fleet reader that has never answered - the ordinary state of the first few seconds, and the
+    /// permanent state of a broken `scripts/roster` - a refusal built from the roster alone would
+    /// name nobody, read as "nothing is live", and let `q` through. `Session::Drop` would then kill
+    /// the agents on the way out.
+    #[test]
+    fn a_quit_is_refused_even_before_the_fleet_has_been_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        // No `finish_refresh` at all: the fleet pane has never had a value.
+        let mut app = App::with_supervision(SupervisionMode::Supervising);
+        assert!(app.roster_order().is_empty(), "the fixture must have no roster, or this proves nothing");
+
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+        drive_loop(&mut app, &mut host, &paths, vec![ch('q')]);
+
+        assert!(!app.quit, "a hosted child the roster does not name still refuses the quit");
+        assert_eq!(
+            app.quit_refusal.as_deref(),
+            Some(&["Cyclops".to_string()][..]),
+            "and it is named, because a pane that named nobody would say nothing is live"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_and_esc_are_refused_the_same_way() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let ctrl_c = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('c'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        for key in [ctrl_c, esc] {
+            let mut app = lifecycle_app(
+                SupervisionMode::Supervising,
+                vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+            );
+            let mut host = SessionHost::default();
+            host.insert("Cyclops", forever());
+            drive_loop(&mut app, &mut host, &paths, vec![key]);
+            assert!(!app.quit, "{key:?} is refused too");
+            assert!(app.quit_refusal.is_some(), "{key:?}");
+        }
+    }
+
+    /// A child that stays up for the length of a case. `/bin/sh` and nothing else: a case that
+    /// started a real agent would claim a bead.
+    fn forever() -> cerebro_tui::session::Session {
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.arg("-c");
+        command.arg("while :; do sleep 1; done");
+        command.env("TERM", "dumb");
+        cerebro_tui::session::Session::spawn_command("child", command, 24, 80)
+            .expect("the session spawns")
     }
 }

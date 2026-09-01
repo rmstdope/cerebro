@@ -212,9 +212,11 @@ consumer:
 ```
 
 It shows the same fleet rows and the same six work queues (Claimed, Planned unclaimed, Being
-planned, Unplanned, Waiting on you, Merged unverified), refreshing the fleet every five seconds and
-the board every thirty. `↑`/`↓` scroll a line, `PgUp`/`PgDn` a viewport, `g` refreshes both panes,
-and `q`, `Esc` or `Ctrl-C` quits.
+planned, Unplanned, Waiting on you, Merged unverified) in two separately bordered, independently
+scrolling widgets stacked one above the other - Fleet on top, Work below - refreshing the fleet
+every five seconds and the board every thirty. `Tab`/`Shift-Tab` move focus between them; the
+focused widget has a bright-blue thick-line border and `↑`/`↓`/`PgUp`/`PgDn` scroll only it. `g`
+refreshes both panes, and `q`, `Esc` or `Ctrl-C` quits.
 
 **It observes and nothing else.** It starts no session, ends none, writes no state file, no stop
 flag and no bead. `.claude/cerebro/scripts/cerebro` / `M-x cerebro` remains the supervising view —

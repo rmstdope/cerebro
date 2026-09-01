@@ -137,13 +137,14 @@ where
         let size = terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
         let metrics = ui::metrics(app, now, area);
-        // A page is a page of the frame just drawn, so PageDown moves by what the navigator can
-        // actually see rather than by a number chosen in advance. It is the whole document's
-        // viewport, not either pane's own height: the two panes are one scrolling document.
-        let viewport_lines = metrics.viewport_lines.max(1);
-        // Clamped from the document that was just drawn, never before it: a refresh that returns
-        // the same rows must leave the navigator looking at the same line.
-        app.clamp_scroll(metrics.document_lines, metrics.viewport_lines);
+        // A page is a page of the FOCUSED pane's own viewport, not the other pane's and not the
+        // whole terminal: `App::focused_viewport` is the one place the at-least-one floor lives.
+        let viewport_lines = app.focused_viewport(metrics);
+        // Clamped from the frame that was just drawn, never before it, and each pane against its
+        // own geometry alone: a refresh that returns the same rows must leave the navigator
+        // looking at the same line in whichever pane they were reading.
+        app.fleet.clamp_scroll(metrics.fleet.content_lines, metrics.fleet.viewport_lines);
+        app.work.clamp_scroll(metrics.work.content_lines, metrics.work.viewport_lines);
 
         // Each answer updates only its own pane. Neither poll blocks.
         if let Some(result) = fleet_worker.poll() {
@@ -609,6 +610,76 @@ mod main_tests {
             elapsed < Duration::from_millis(500),
             "the loop waited for the reader: {elapsed:?}"
         );
+    }
+
+    /// Fleet is focused on startup, so `Down` moves only Fleet's own offset. `Tab` toggles focus
+    /// without touching either offset. `PageDown` then moves Work - now focused - by Work's own
+    /// visible body height, never Fleet's and never the whole terminal: this is what proves
+    /// `run` wires `App::focused_viewport` and each pane's own `clamp_scroll` into the loop,
+    /// rather than a page size chosen once for the whole frame the way the single-document
+    /// screen used to.
+    #[test]
+    fn keys_use_the_focused_pane_viewport() {
+        use cerebro_tui::model::{AgentKind, Bead, FleetRow, RowState, WorkBuckets};
+
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok((0..30)
+                .map(|i| FleetRow {
+                    name: format!("A{i:02}"),
+                    role: "implementer".into(),
+                    kind: AgentKind::Interactive,
+                    state: RowState::Dead,
+                    phase: None,
+                    bead: None,
+                    since: None,
+                    phase_since: None,
+                    pid: None,
+                    sessions: 0,
+                    diagnostic: None,
+                })
+                .collect()),
+            Utc::now(),
+        );
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                unplanned: (1..=20)
+                    .map(|n| Bead {
+                        id: format!("cb-{n:03}"),
+                        title: format!("item {n}"),
+                        status: "open".into(),
+                        issue_type: "feature".into(),
+                        labels: vec![],
+                        priority: Some(1),
+                        updated_at: None,
+                        assignee: None,
+                        metadata: serde_json::Value::Null,
+                    })
+                    .collect(),
+                ..WorkBuckets::default()
+            }),
+            Utc::now(),
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        let mut events = QueuedEvents::new(vec![
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyCode::PageDown,
+            crossterm::event::KeyCode::Char('q'),
+        ]);
+
+        // The exact viewport PageDown should move Work by, from the same layout `run` clamps by.
+        let area = Rect::new(0, 0, 100, 20);
+        let expected_work_page = ui::metrics(&app, Utc::now(), area).work.viewport_lines;
+        assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
+
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), Utc::now).unwrap();
+
+        assert!(app.quit, "q still quits once both panes have been exercised");
+        assert_eq!(app.fleet.scroll, 1, "Down moved Fleet, which is focused by default");
+        assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Work, "Tab moved focus to Work");
+        assert_eq!(app.work.scroll, expected_work_page, "PageDown moved Work by its own viewport");
     }
 
     #[test]

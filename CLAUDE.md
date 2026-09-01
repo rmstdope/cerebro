@@ -508,9 +508,15 @@ launcher, writes no state file, no stop flag and no bead, and evaluates no trigg
 read the same consumer at the same time; the supervision half has not moved and is not planned to
 move here (`docs/fleet-view-alternatives.md`).
 
-One screen, one vertically scrolling document: the Fleet pane above the Work pane, `↑`/`↓` by a
-line, `PgUp`/`PgDn` by a viewport, `g` to refresh, `q`/`Esc`/`Ctrl-C` to quit. There is no
+One screen, two independently bordered, independently scrolling widgets: Fleet above Work, each
+with its own title, focus and scroll offset rather than one shared document. Fleet takes its
+natural height up to half the area below the header; Work takes the rest. `Tab`/`Shift-Tab` toggle
+which widget is focused - the focused one draws a bright-blue thick-line border and a bold title;
+`↑`/`↓`/`PgUp`/`PgDn` move only it, stopping at its own boundary rather than transferring focus.
+`g` refreshes both panes regardless of focus, `q`/`Esc`/`Ctrl-C` quits. A pane whose content
+outgrows its inner height reserves its last row for a dim `Rows n–m of total` cue. There is no
 selection, no detail window and no lifecycle key, deliberately — the approved surface is
+`docs/ui/cb-42k-independent-widgets.html`, which superseded the original single-document
 `docs/ui/cb-vyp-read-only-view.html`.
 
 The crate is split the way `cerebro.el` is, and for the same reason:

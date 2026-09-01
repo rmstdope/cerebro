@@ -76,6 +76,103 @@ fn remove_if_present(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Seconds an agent must stand in a finished state before its session is ended.
+///
+/// `cerebro-end-grace`'s default (`emacs/cerebro.el:1569`), as a constant rather than a setting:
+/// this view has no customisation layer, and `tests/lib/supervise.cases` names this number in its
+/// header so both implementations answer one table. A navigator who has changed the defcustom
+/// gets one number from Emacs and this one from here; that is cb-kcs.5's to resolve at cutover.
+pub const END_GRACE_SECONDS: i64 = 30;
+
+/// Seconds an `asking` implementer may wait before it is nudged. `cerebro-answer-timeout`'s
+/// default (`emacs/cerebro.el:1509`), same reasoning.
+pub const ANSWER_TIMEOUT_SECONDS: i64 = 900;
+
+/// Everything the supervision decision reads, and nothing else.
+///
+/// It does NOT read the bead or the phase. `emacs/cerebro.el`'s own rule, stated in the root
+/// `CLAUDE.md`: supervision reads `state` alone, so a typo in the phase vocabulary can mislabel a
+/// column and can never break this loop.
+#[derive(Clone, Copy, Debug)]
+pub struct Supervised<'a> {
+    pub kind: AgentKind,
+    pub state: &'a RowState,
+    /// Does THIS process hold a live session for that agent, one it has not already ended?
+    /// `SessionHost::supervisable`. This is Emacs's `external` guard inverted, and it is the whole
+    /// of "mine to end": a pid is not an identity, and a view that reached outside its own process
+    /// tree would end somebody else's terminal.
+    pub ours: bool,
+    pub stop_flag: bool,
+    /// Is this row's role one whose `idle` means "my pass is over"?
+    /// `cerebro-idle-ends-pass-roles` (`emacs/cerebro.el:1593`) is nil by default and no role in
+    /// this fleet is on it, so this is `false` for every real row today. It is carried anyway
+    /// because the table has rows for it and dropping it would make those rows unanswerable.
+    pub idle_ends_pass: bool,
+    /// Seconds since the state file's `since`. `None` for a missing or unparseable timestamp, and
+    /// `None` is NOT zero: a torn file must never read as an expired grace.
+    pub stood: Option<i64>,
+}
+
+/// What the poll should do about one agent, or `None` for nothing at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Supervision {
+    /// A stop flag says do not start another. End the session now, and clear the flag with it.
+    Retire,
+    /// The pass is over and the grace has passed. End the session; leave the flag alone.
+    End,
+    /// A question has gone unanswered too long. Type one line into the session.
+    Nudge,
+}
+
+/// The port of `cerebro--supervise-action` (`emacs/cerebro.el:1624-1712`) and, folded into it,
+/// `cerebro--end-decision` (`:1610-1622`). Held to `tests/lib/supervise.cases`.
+pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
+    // The guard that wraps everything else: a session this view did not start is somebody else's
+    // to end, and a dead one stays dead.
+    if !agent.ours {
+        return None;
+    }
+    match agent.state {
+        RowState::Idle => match agent.kind {
+            AgentKind::Implementer => agent.stop_flag.then_some(Supervision::Retire),
+            AgentKind::Interactive => {
+                if agent.idle_ends_pass {
+                    end_decision(&agent)
+                } else {
+                    agent.stop_flag.then_some(Supervision::Retire)
+                }
+            }
+        },
+        // No kind guard: an implementer between beads has ended its pass in exactly this sense
+        // (cb-1or.1).
+        RowState::Waiting => end_decision(&agent),
+        // The stop flag makes no difference here: the bead is still in flight, so the question
+        // still needs an answer or a hand-back.
+        RowState::Asking => (agent.kind == AgentKind::Implementer
+            && matches!(agent.stood, Some(stood) if stood >= ANSWER_TIMEOUT_SECONDS))
+        .then_some(Supervision::Nudge),
+        RowState::Working
+        | RowState::Up
+        | RowState::Dead
+        | RowState::Unknown(_)
+        // No counterpart in Emacs - a malformed state file is a red diagnostic line here and a
+        // different shape there - so it is not in the table and has its own case: a row nobody
+        // can parse must never be acted on.
+        | RowState::Invalid => None,
+    }
+}
+
+/// `retire`, `end` or nothing for an agent whose pass is over.
+///
+/// The flag wins and lands at once: nothing is in flight, so there is nothing for the grace to
+/// protect. `>=`, not `>`, which would delay every end by one tick.
+fn end_decision(agent: &Supervised<'_>) -> Option<Supervision> {
+    if agent.stop_flag {
+        return Some(Supervision::Retire);
+    }
+    matches!(agent.stood, Some(stood) if stood >= END_GRACE_SECONDS).then_some(Supervision::End)
+}
+
 /// Everything the three decisions read, and nothing else.
 #[derive(Clone, Copy, Debug)]
 pub struct Situation<'a> {
@@ -290,6 +387,122 @@ pub fn start(
 mod tests {
     use super::*;
     use crate::supervisor::ReadOnlyReason;
+
+    // --- the shared supervision table -----------------------------------------------------------
+
+    fn table_kind(word: &str) -> AgentKind {
+        match word {
+            "implementer" => AgentKind::Implementer,
+            "interactive" => AgentKind::Interactive,
+            other => panic!("supervise.cases: unknown kind {other}"),
+        }
+    }
+
+    fn table_state(word: &str) -> RowState {
+        match word {
+            "working" => RowState::Working,
+            "idle" => RowState::Idle,
+            "waiting" => RowState::Waiting,
+            "asking" => RowState::Asking,
+            "dead" => RowState::Dead,
+            "up" => RowState::Up,
+            "unknown" => RowState::Unknown("something".to_string()),
+            other => panic!("supervise.cases: unknown state {other}"),
+        }
+    }
+
+    fn table_flag(word: &str) -> bool {
+        match word {
+            "yes" => true,
+            "no" => false,
+            other => panic!("supervise.cases: expected yes or no, got {other}"),
+        }
+    }
+
+    fn table_action(word: &str) -> Option<Supervision> {
+        match word {
+            "retire" => Some(Supervision::Retire),
+            "end" => Some(Supervision::End),
+            "nudge" => Some(Supervision::Nudge),
+            "none" => None,
+            other => panic!("supervise.cases: unknown action {other}"),
+        }
+    }
+
+    /// Every row of `tests/lib/supervise.cases`, which `cerebro--supervise-action` answers too.
+    /// A row the two answer differently is a session ended twice or never.
+    #[test]
+    fn the_supervision_table_is_answered_here() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/supervise.cases");
+        let text =
+            std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+        let mut rows = 0;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let fields: Vec<&str> = trimmed.split_whitespace().collect();
+            assert_eq!(fields.len(), 7, "supervise.cases: malformed row: {line}");
+            let state = table_state(fields[1]);
+            let stood = match fields[5] {
+                "none" => None,
+                number => Some(
+                    number
+                        .parse::<i64>()
+                        .unwrap_or_else(|_| panic!("supervise.cases: bad stood: {line}")),
+                ),
+            };
+            let agent = Supervised {
+                kind: table_kind(fields[0]),
+                state: &state,
+                ours: table_flag(fields[2]),
+                stop_flag: table_flag(fields[3]),
+                idle_ends_pass: table_flag(fields[4]),
+                stood,
+            };
+            assert_eq!(supervise_action(agent), table_action(fields[6]), "row: {line}");
+            rows += 1;
+        }
+        assert!(rows >= 30, "supervise.cases: only {rows} rows ran");
+    }
+
+    /// The two things the table cannot carry, both of which end a session that should be left
+    /// alone if they are got wrong.
+    #[test]
+    fn an_unparseable_state_file_is_never_acted_on() {
+        for (kind, state, idle_ends_pass) in [
+            (AgentKind::Implementer, RowState::Waiting, false),
+            (AgentKind::Interactive, RowState::Idle, true),
+            (AgentKind::Implementer, RowState::Asking, false),
+        ] {
+            let agent = Supervised {
+                kind,
+                state: &state,
+                ours: true,
+                stop_flag: false,
+                idle_ends_pass,
+                stood: None,
+            };
+            assert_eq!(supervise_action(agent), None, "for {state:?}");
+        }
+    }
+
+    #[test]
+    fn an_invalid_row_is_never_acted_on() {
+        let state = RowState::Invalid;
+        for stop_flag in [false, true] {
+            let agent = Supervised {
+                kind: AgentKind::Implementer,
+                state: &state,
+                ours: true,
+                stop_flag,
+                idle_ends_pass: false,
+                stood: Some(5_000),
+            };
+            assert_eq!(supervise_action(agent), None);
+        }
+    }
 
     fn paths(root: &Path) -> ReaderPaths {
         ReaderPaths {

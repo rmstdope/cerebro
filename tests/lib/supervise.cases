@@ -1,0 +1,110 @@
+# The supervision decision, run by BOTH implementations of the rule:
+#
+#   lifecycle::supervise_action     (Rust, fleet-view/)  via fleet-view/src/lifecycle.rs
+#   cerebro--supervise-action       (emacs/cerebro.el)   via emacs/cerebro-test.el
+#
+# WHY IT IS ONE FILE. It is `tests/lib/supervisor.cases`'s reason, one layer in: cb-kcs.5 is a
+# cutover, so for a while both implementations answer about the same checkout, and a row they
+# answer differently is a session ended twice or never. Read that file's header for the
+# conventions this one copies deliberately.
+#
+# WHAT BOTH READERS MUST BIND. The rows assume `cerebro-end-grace' 30 and
+# `cerebro-answer-timeout' 900, so a reader binds or passes exactly those numbers rather than
+# whatever the running fleet is customised to.
+#
+# THE COLUMNS, tab- or space-separated, in order:
+#
+#   kind            `interactive' or `implementer' - the roster kind.
+#   state           `working' `idle' `waiting' `asking' `dead' `up' `unknown' - the derived row
+#                   state. NOTE: `standby' is deliberately NOT a value here. The Rust `RowState'
+#                   has no such variant until cb-kcs.4 adds it with the row, so
+#                   `cerebro-test/supervise-retires-a-standby-implementer-under-a-stop-flag'
+#                   stays an Emacs-only case and cb-kcs.4 adds its rows here.
+#   ours            `yes' when THIS view holds a live session for the agent. This is Emacs's
+#                   `external' inverted (external = (not ours)): the two implementations answer
+#                   the same question with opposite polarity, and the table speaks the positive
+#                   one.
+#   stop_flag       `yes' when `.cerebro/state/<name>.stop' exists.
+#   idle_ends_pass  `yes' when this row's role is one whose `idle' means "my pass is over"
+#                   (`cerebro-idle-ends-pass-roles', empty in this fleet).
+#   stood           seconds since the state file's `since', or `none' for a missing or
+#                   unparseable timestamp. `none' is NOT zero: a torn file must never read as an
+#                   expired grace.
+#   action          `retire' `end' `nudge' or `none' - the answer.
+#
+# THE RULE THE ROWS ENCODE, stated once so a new row can be checked against intent:
+#
+#   * Not ours -> nothing at all, whatever the state and whatever the flag. A session this view
+#     did not start is somebody else's to end, and a dead one stays dead.
+#   * `idle', implementer -> retire under a flag, else nothing.
+#   * `idle', interactive, role not in `idle_ends_pass' -> retire under a flag, else nothing.
+#   * `idle', interactive, role in `idle_ends_pass' -> the end decision.
+#   * `waiting', either kind -> the end decision. No kind guard: an implementer between beads has
+#     ended its pass in exactly this sense (cb-1or.1).
+#   * THE END DECISION: a flag retires at once and whatever the grace - nothing is in flight, so
+#     there is nothing for a grace to protect. Otherwise `stood >= 30' ends it; otherwise nothing.
+#   * `asking', implementer -> nudge once `stood >= 900'. The stop flag makes NO difference: the
+#     bead is still in flight, so the question still needs an answer or a hand-back.
+#   * `asking', interactive -> nothing.
+#   * everything else -> nothing, whatever the flag.
+#
+# Comparisons are `>=' on purpose: `>' delays every end by one tick.
+
+# kind         state     ours stop idle_ends_pass stood  action
+
+# Not ours: the guard that wraps everything else.
+implementer   waiting   no   yes  no   100    none
+implementer   waiting   no   no   no   100    none
+implementer   asking    no   no   no   1000   none
+implementer   idle      no   yes  no   5      none
+implementer   working   no   yes  no   100    none
+interactive   waiting   no   yes  no   100    none
+interactive   idle      no   yes  yes  100    none
+
+# An implementer's idle: a flag retires it, nothing else acts.
+implementer   idle      yes  yes  no   0      retire
+implementer   idle      yes  no   no   5000   none
+implementer   idle      yes  no   no   none   none
+
+# An interactive role whose idle is just a live session with nothing in hand.
+interactive   idle      yes  yes  no   0      retire
+interactive   idle      yes  no   no   5000   none
+
+# An interactive role whose idle IS the end of a pass: the end decision.
+interactive   idle      yes  yes  yes  0      retire
+interactive   idle      yes  no   yes  30     end
+interactive   idle      yes  no   yes  31     end
+interactive   idle      yes  no   yes  29     none
+interactive   idle      yes  no   yes  none   none
+
+# Waiting: the end decision for both kinds.
+implementer   waiting   yes  yes  no   0      retire
+implementer   waiting   yes  yes  no   5000   retire
+implementer   waiting   yes  no   no   30     end
+implementer   waiting   yes  no   no   31     end
+implementer   waiting   yes  no   no   29     none
+implementer   waiting   yes  no   no   0      none
+implementer   waiting   yes  no   no   none   none
+interactive   waiting   yes  yes  no   0      retire
+interactive   waiting   yes  no   no   30     end
+interactive   waiting   yes  no   no   29     none
+interactive   waiting   yes  no   yes  30     end
+interactive   waiting   yes  no   no   none   none
+
+# Asking: an implementer alone, and the flag makes no difference.
+implementer   asking    yes  no   no   900    nudge
+implementer   asking    yes  no   no   901    nudge
+implementer   asking    yes  yes  no   900    nudge
+implementer   asking    yes  no   no   899    none
+implementer   asking    yes  no   no   none   none
+interactive   asking    yes  no   no   3000   none
+interactive   asking    yes  yes  no   3000   none
+
+# Every other state, whatever the flag.
+implementer   working   yes  yes  no   5000   none
+implementer   dead      yes  yes  no   5000   none
+implementer   up        yes  yes  no   5000   none
+implementer   unknown   yes  yes  no   5000   none
+interactive   working   yes  yes  no   5000   none
+interactive   dead      yes  no   no   5000   none
+interactive   up        yes  yes  no   5000   none

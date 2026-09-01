@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-kcs.2.2 hosted session</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
+          --dim:#8b949e; --blue:#58a6ff; --green:#3fb950; --gold:#d29922; --red:#f85149; }
+  body { margin:0; padding:32px; color:#24292f; background:#f6f8fa;
+         font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  h2 { margin:30px 0 8px; font-size:17px; }
+  h3 { margin:22px 0 6px; font-size:15px; }
+  p, ul { max-width:960px; color:#57606a; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  table { border-collapse:collapse; margin:10px 0; font-size:13.5px; max-width:960px; }
+  th,td { border:1px solid #d0d7de; padding:4px 10px; text-align:left; }
+  th { background:#eaeef2; }
+  .term { color:var(--text); background:var(--bg); border-radius:9px;
+          padding:10px; box-shadow:0 8px 28px #1f232833; max-width:1000px;
+          font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .bar { color:var(--dim); padding:2px 4px 8px; white-space:pre-wrap; }
+  .pane { border:1px solid var(--line); background:var(--panel); margin-bottom:8px; }
+  .pane.focus { border:2px solid var(--blue); }
+  .title { color:var(--dim); padding:2px 8px; }
+  .focus .title { color:var(--blue); font-weight:bold; }
+  pre { margin:0; padding:2px 8px 8px; white-space:pre; overflow-x:auto; }
+  .green { color:var(--green); } .gold { color:var(--gold); }
+  .red { color:var(--red); } .dim { color:var(--dim); }
+  .sel { background:#1f6feb44; }
+  .cur { background:var(--text); color:var(--bg); }
+  .cols { display:flex; gap:8px; align-items:stretch; }
+  .cols > .col { display:flex; flex-direction:column; }
+  .left { width:40%; } .right { flex:1; }
+  .cols .pane { flex:1; }
+  .half { display:flex; gap:14px; flex-wrap:wrap; }
+  .half > .term { max-width:470px; flex:1 1 430px; }
+  .narrow { max-width:520px; }
+</style>
+</head>
+<body>
+<h1>The hosted session, as chosen</h1>
+<p>This is what <code>cb-kcs.2.2</code> builds: a real agent CLI running in a pty, drawn in the
+Session pane, taking the navigator's keys. It refines <code>docs/ui/cb-kcs.2-split-console.html</code>,
+which settled the split, the three-stop focus cycle, <code>Shift-Tab</code> as the only way out of a
+session, ten thousand retained lines and the focused-session header. Agreed with the navigator over
+three rounds on 2026-09-01.</p>
+
+<p><strong>Two spellings in the earlier mockup are superseded here</strong>, and both were
+inconsistencies rather than choices:</p>
+<ul>
+  <li><code>Shift-Tab</code> from a focused session focuses <strong>Work</strong>, not Fleet — the
+      plain reverse of <code>Tab</code>, with no exception to remember.</li>
+  <li>The Session pane's dim title hint is <strong>fixed per session state</strong> and no longer
+      varies with which other pane happens to be focused.</li>
+</ul>
+
+<p><strong>Nothing a navigator can press starts a session in this increment.</strong> The screens
+below are reachable from test code alone; <code>s</code> arrives with <code>cb-kcs.2.3</code>.</p>
+
+<h2>Live, unfocused — the child draws, the keyboard is elsewhere</h2>
+<div class="term">
+  <div class="bar">Cerebro — supervising | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="cols">
+    <div class="col left">
+      <div class="pane focus"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Cyclops</span>    build   cb-42k </span>
+  <span class="dim">○ Psylocke</span>   standby       </pre></div>
+      <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-42k  P1 Fleet and Work…</pre></div>
+    </div>
+    <div class="col right">
+      <div class="pane"><div class="title">Cyclops — build cb-42k <span class="dim">[Tab to focus]</span></div><pre>● I added the failing render case first.
+
+❯ run the gate again please
+
+  @ files · # issues                       GPT-5.6</pre></div>
+    </div>
+  </div>
+</div>
+
+<h2>Live, focused — the session has the keyboard</h2>
+<p>The header is replaced entirely: a hint line advertising <code>q</code>, <code>g</code> and the
+arrows would be a line that lies, because none of them reach this screen. The child's cursor is
+drawn here and only here.</p>
+<div class="term">
+  <div class="bar">Cyclops has the keyboard | Shift-Tab leaves the session</div>
+  <div class="cols">
+    <div class="col left">
+      <div class="pane"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Cyclops</span>    build   cb-42k </span>
+  <span class="dim">○ Psylocke</span>   standby       </pre></div>
+      <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong>
+  cb-42k  P1 Fleet and Work…</pre></div>
+    </div>
+    <div class="col right">
+      <div class="pane focus"><div class="title">Cyclops — build cb-42k <span class="dim">[Shift-Tab leaves]</span></div><pre>● I added the failing render case first.
+
+❯ run the gate again please<span class="cur">&nbsp;</span>
+
+  @ files · # issues                       GPT-5.6</pre></div>
+    </div>
+  </div>
+</div>
+
+<h3>Keys, exactly</h3>
+<table>
+<tr><th>Key</th><th>What happens</th></tr>
+<tr><td>Every printable character, <code>Enter</code>, <code>Tab</code>, <code>Backspace</code>,
+    <code>Esc</code>, <code>Ctrl-C</code>, the arrows, <code>Home</code>/<code>End</code>,
+    <code>PgUp</code>/<code>PgDn</code>, <code>Insert</code>/<code>Delete</code>,
+    <code>F1</code>–<code>F4</code></td><td>sent to the child</td></tr>
+<tr><td><code>Shift-Tab</code></td><td>held back — leaves the session, focusing Work. The child can
+    never receive it.</td></tr>
+<tr><td>Anything with no mapping — <code>F5</code>–<code>F12</code>, keypad keys, exotic modifier
+    combinations</td><td><strong>dropped in silence.</strong> Nothing happens and nothing is said.</td></tr>
+<tr><td>A paste</td><td>forwarded as a paste, so an agent composer receives a multi-line prompt as
+    one block instead of submitting its first line</td></tr>
+</table>
+
+<h2>Spawned, before the first byte</h2>
+<div class="term narrow">
+  <div class="pane"><div class="title">Cyclops <span class="dim">[Tab to focus]</span></div><pre><span class="dim">Starting Cyclops…</span>
+
+</pre></div>
+</div>
+<p>One dim line, replaced the moment the child prints anything. An empty pane cannot be told from a
+child that spawned and died silently.</p>
+
+<h2>The pass has ended — kept until that agent starts again</h2>
+<div class="term narrow">
+  <div class="pane focus"><div class="title">Cyclops — ended 15:42 <span class="dim">[retained until next start]</span></div><pre>● Gate passed and PR #241 merged.
+
+● Closed cb-123 and pushed the board.
+
+Cyclops finished with status 0.
+
+<span class="dim">End of retained scrollback. Up/Down scroll while focused.</span></pre></div>
+</div>
+<p>The last two lines are the view's own; everything above them is the child's. An ended pass no
+longer holds the keyboard, so the arrows scroll it — through ten thousand retained lines, with the
+same <code>Rows n–m of total</code> cue Fleet and Work already use.</p>
+
+<div class="term narrow">
+  <div class="pane focus"><div class="title">Cyclops — ended 15:42 <span class="dim">[retained until next start]</span></div><pre>● Claimed cb-42k and opened a worktree.
+
+● Wrote the failing render case.
+
+● Gate: 41 passed.
+<span class="dim">Rows 1–4 of 2 918</span></pre></div>
+</div>
+
+<h3>The child failed, or was killed</h3>
+<p>One sentence, coloured when it is not a clean exit. The title stays <code>ended</code> and the
+border stays ordinary: a red border is this view's spelling for <em>a reader failed</em>, and
+spending it here would make two different things look the same.</p>
+<div class="half">
+<div class="term">
+  <div class="pane"><div class="title">Cyclops — ended 15:42 <span class="dim">[retained until next start]</span></div><pre>error: could not compile `cerebro-tui`
+
+<span class="red">Cyclops finished with status 101.</span>
+
+<span class="dim">End of retained scrollback. Up/Down scroll while focused.</span></pre></div>
+</div>
+<div class="term">
+  <div class="pane"><div class="title">Cyclops — ended 15:42 <span class="dim">[retained until next start]</span></div><pre>● Rebasing on main.
+
+<span class="red">Cyclops was killed by signal 9.</span>
+
+<span class="dim">End of retained scrollback. Up/Down scroll while focused.</span></pre></div>
+</div>
+</div>
+
+<h2>The child exits while the pane is focused</h2>
+<p>The keyboard has nowhere to go, so focus stays where it is and the ordinary header comes back.
+The arrows become scroll keys over the retained pass.</p>
+<div class="term">
+  <div class="bar">Cerebro — supervising | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="pane focus"><div class="title">Cyclops — ended 15:42 <span class="dim">[retained until next start]</span></div><pre>Cyclops finished with status 0.
+
+<span class="dim">End of retained scrollback. Up/Down scroll while focused.</span></pre></div>
+</div>
+
+<h2>The title, when the agent has no bead</h2>
+<p>The tail comes from the same fleet row the left column shows, so the two can never disagree.</p>
+<table>
+<tr><th>The row has</th><th>Title</th></tr>
+<tr><td>a phase and a bead</td><td><code>Cyclops — build cb-42k</code></td></tr>
+<tr><td>a phase and no bead</td><td><code>Cerebro — triage</code></td></tr>
+<tr><td>neither</td><td><code>Moira</code></td></tr>
+</table>
+
+<h2>A short pane means a short agent</h2>
+<p>The child is told the pane's real inner size — never a floor of 80×24 with the pane as a window
+onto it. A window would mean a live session that scrolls, which contradicts every key going to the
+child, and it would hide from the navigator that they have made the pane too small to work in.</p>
+<div class="term narrow">
+  <div class="bar">Cerebro — supervising | g refresh | q/Esc/Ctrl-C quit</div>
+  <div class="pane"><div class="title">Fleet 7</div><pre>  AGENT      STATE   BEAD
+<span class="sel"><span class="green">● Cyclops</span>    build   cb-42k </span></pre></div>
+  <div class="pane"><div class="title">Work</div><pre><strong>Claimed 1</strong></pre></div>
+  <div class="pane"><div class="title">Cyclops — build cb-42k</div><pre>run the gate a
+gain please</pre></div>
+</div>
+
+<h2>This view does not supervise the checkout</h2>
+<p>Unchanged from <code>cb-kcs.2.1</code>: a view that does not own the checkout hosts no sessions,
+so the pane says so and there is never a child behind it.</p>
+<div class="term narrow">
+  <div class="pane"><div class="title">Cyclops</div><pre><span class="dim">Sessions are hosted by the view that supervises this
+checkout. This one does not.</span></pre></div>
+</div>
+</body>
+</html>

@@ -195,6 +195,16 @@ impl SessionPane {
     }
 }
 
+/// How many lines `ui::fleet_document` puts ABOVE the fleet table when the pane is stale: the
+/// retained error and one blank line.
+///
+/// It lives here rather than in the renderer because `App::move_selection` needs it and `app`
+/// must not import `ui`. `ui::fleet_lines` is the code it mirrors, and
+/// `ui::tests::a_stale_fleet_document_opens_with_exactly_the_prefix_app_counts` is what keeps the
+/// two from drifting - a row index is not a document line, and under a stale pane a document line
+/// is not the table line either.
+pub const FLEET_STALE_PREFIX_LINES: usize = 2;
+
 /// Pull SCROLL back only when CONTENT_LINES no longer reaches it. The one owner of that rule,
 /// shared by `Pane<T>` and `SessionPane` so a third widget cannot acquire a fourth spelling.
 pub fn clamp_scroll(scroll: &mut usize, content_lines: usize, viewport_lines: usize) {
@@ -413,17 +423,25 @@ impl App {
     /// scroll the Fleet pane by the least that keeps the new row visible. With no rows, or no
     /// selection, it does nothing at all.
     fn move_selection(&mut self, delta: isize, viewport_lines: usize) {
+        let Some(current) = self.selected_index() else { return };
         let Some(rows) = self.fleet.content.value() else { return };
         if rows.is_empty() {
             return;
         }
-        let Some(current) = self.selected_index() else { return };
         let last = rows.len() - 1;
         let target = (current as isize)
             .saturating_add(delta)
             .clamp(0, last as isize) as usize;
         self.selected = Some(rows[target].name.clone());
-        let line = row_document_line(rows, target);
+        // A stale pane's body opens with its retained error and a blank line, so the table's own
+        // line number is not the document's. Following the wrong one puts the selected row below
+        // the fold by exactly that much.
+        let prefix = if matches!(self.fleet.content, PaneContent::Stale { .. }) {
+            FLEET_STALE_PREFIX_LINES
+        } else {
+            0
+        };
+        let line = prefix + row_document_line(rows, target);
         self.follow_selection(line, viewport_lines);
     }
 
@@ -500,22 +518,36 @@ impl App {
         rows.iter().position(|row| row.name == name)
     }
 
-    /// Reconcile the selection against ROWS after a successful fleet read.
+    /// Reconcile the selection against the rows a successful fleet read has just installed.
     ///
-    /// PREVIOUS_INDEX is the index the selection had before this read, which is why it is a
+    /// PREVIOUS_INDEX is the index the selection had BEFORE this read, which is why it is a
     /// parameter: by the time this runs, the old rows are gone.
-    fn reconcile_selection(&mut self, rows: &[FleetRow], previous_index: Option<usize>) {
+    ///
+    /// Called from the `Ok` arm of `finish_refresh` alone. A failed refresh must never move or
+    /// clear the selection - a five-second `ps` hiccup is not a roster change.
+    fn reconcile_selection(&mut self, previous_index: Option<usize>) {
+        // Read the rows in place rather than taking a copy: this runs every five seconds, and
+        // the pane already owns them.
+        let (first, still_there, replacement) = {
+            let Some(rows) = self.fleet.content.value() else { return };
+            let selected = self.selected.as_deref();
+            (
+                rows.first().map(|row| row.name.clone()),
+                selected.is_some_and(|name| rows.iter().any(|row| row.name == name)),
+                rows.get(previous_index.unwrap_or(0).min(rows.len().saturating_sub(1)))
+                    .map(|row| row.name.clone()),
+            )
+        };
         let Some(lost) = self.selected.clone() else {
             // No selection yet: the first successful read selects the first row, silently.
-            self.selected = rows.first().map(|row| row.name.clone());
+            self.selected = first;
             return;
         };
-        if rows.iter().any(|row| row.name == lost) {
+        if still_there {
             return;
         }
-        match rows.get(previous_index.unwrap_or(0).min(rows.len().saturating_sub(1))) {
-            Some(row) => {
-                let new = row.name.clone();
+        match replacement {
+            Some(new) => {
                 self.notice = Some(format!("{lost} is no longer on the roster. Selected {new}."));
                 self.selected = Some(new);
             }
@@ -532,13 +564,10 @@ impl App {
     /// failure does not: a five-second `ps` hiccup must never silently reselect an agent.
     pub fn finish_refresh(&mut self, result: Result<Vec<FleetRow>, ReadError>, at: DateTime<Utc>) {
         let previous_index = self.selected_index();
-        let rows = match &result {
-            Ok(rows) => Some(rows.clone()),
-            Err(_) => None,
-        };
+        let succeeded = result.is_ok();
         self.fleet.finish(result, at);
-        if let Some(rows) = rows {
-            self.reconcile_selection(&rows, previous_index);
+        if succeeded {
+            self.reconcile_selection(previous_index);
         }
     }
 
@@ -1117,6 +1146,81 @@ mod tests {
         assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
         assert_eq!(app.selected, None);
         assert_eq!(app.fleet.scroll, 0);
+    }
+
+    /// A stale pane's body opens with its retained error and a blank line, so following the
+    /// table's own line number would leave the selected row two rows below the fold.
+    #[test]
+    fn the_follow_scroll_counts_a_stale_panes_own_prefix() {
+        let names: Vec<FleetRow> = ["A", "B", "C", "D", "E", "F", "G", "H"]
+            .iter()
+            .map(|n| row(n))
+            .collect();
+
+        let mut fresh = App::new();
+        fresh.finish_refresh(Ok(names.clone()), at(0));
+        let mut stale = App::new();
+        stale.finish_refresh(Ok(names.clone()), at(0));
+        stale.finish_refresh(Err(failure()), at(5));
+        assert_eq!(stale.selected.as_deref(), Some("A"), "the failure kept the selection");
+
+        for _ in 0..5 {
+            fresh.on_key(key(KeyCode::Down), 3);
+            stale.on_key(key(KeyCode::Down), 3);
+        }
+        assert_eq!(fresh.selected.as_deref(), stale.selected.as_deref());
+        assert_eq!(
+            stale.fleet.scroll,
+            fresh.fleet.scroll + FLEET_STALE_PREFIX_LINES,
+            "the stale pane scrolls past its own error and blank line as well"
+        );
+    }
+
+    /// Each pane's offset survives a refresh that returns the same content, and each clamps
+    /// against its own geometry alone - what a third pane makes easiest to break.
+    #[test]
+    fn each_pane_preserves_and_clamps_its_own_scroll() {
+        let mut app = App::new();
+        app.finish_refresh(Ok((0..20).map(|i| row(&format!("A{i}"))).collect()), at(0));
+        app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(0));
+        app.fleet.scroll = 12;
+        app.work.scroll = 3;
+        app.session.scroll = 2;
+
+        // Same-sized content: every offset is exactly where it was.
+        app.fleet.clamp_scroll(24, 10);
+        app.work.clamp_scroll(10, 5);
+        app.session.clamp_scroll(6, 3);
+        assert_eq!(app.fleet.scroll, 12);
+        assert_eq!(app.work.scroll, 3);
+        assert_eq!(app.session.scroll, 2);
+
+        // A refresh of either pane that returns the same content does not touch any offset.
+        app.finish_refresh(Ok((0..20).map(|i| row(&format!("A{i}"))).collect()), at(5));
+        assert_eq!(app.fleet.scroll, 12);
+        app.finish_work_refresh(Ok(buckets(&["cb-1", "cb-2"])), at(5));
+        assert_eq!(app.work.scroll, 3);
+        assert_eq!(app.session.scroll, 2);
+
+        // Only a shorter pane's own content pulls its own offset back, and only as far as its own
+        // last full viewport - no other pane's offset moves with it.
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(10));
+        app.work.clamp_scroll(2, 10);
+        assert_eq!(app.work.scroll, 0);
+        assert_eq!(app.fleet.scroll, 12, "the fleet offset is untouched by the work pane shrinking");
+        assert_eq!(app.session.scroll, 2, "and so is the session's");
+
+        app.fleet.scroll = 40;
+        app.finish_refresh(Ok(vec![row("Xavier")]), at(10));
+        app.fleet.clamp_scroll(30, 10);
+        assert_eq!(app.fleet.scroll, 20);
+        assert_eq!(app.work.scroll, 0, "and the work offset is untouched by the fleet clamping");
+        assert_eq!(app.session.scroll, 2);
+
+        // The session's own clamp reaches nothing but the session.
+        app.session.clamp_scroll(1, 3);
+        assert_eq!(app.session.scroll, 0);
+        assert_eq!(app.fleet.scroll, 20);
     }
 
     #[test]

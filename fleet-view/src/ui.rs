@@ -148,9 +148,8 @@ pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
         };
     }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
-    let work_probe = work_document(app, now, (LEFT_COLUMN as usize).saturating_sub(2));
     let (_, fleet_rect, work_rect, session_rect) =
-        split(area, fleet_lines.len(), work_probe.len());
+        split(area, fleet_lines.len(), work_content_lines(app, now, area));
     let work_inner_width = (work_rect.width as usize).saturating_sub(2);
     let work_lines = work_document(app, now, work_inner_width);
     let session_lines = session_document(app);
@@ -211,6 +210,20 @@ fn split(
     (header, panes[0], panes[1], panes[2])
 }
 
+/// How many lines the Work pane's body will come to, for the one caller that needs it before
+/// `split` has said how wide that pane is.
+///
+/// Only the stacked layout reads it - the split layout gives Work every row Fleet does not want,
+/// whatever its body comes to - so this builds nothing at all on a wide screen. In the stacked
+/// layout the pane is the screen's own width, so there is no probe and no guess: the width passed
+/// here is the width the body will be built at.
+fn work_content_lines(app: &App, now: DateTime<Utc>, area: Rect) -> usize {
+    if area.width >= SPLIT_COLUMNS {
+        return 0;
+    }
+    work_document(app, now, (area.width as usize).saturating_sub(2)).len()
+}
+
 /// How wide the Fleet pane will be, before `split` runs - `LEFT_COLUMN` when AREA is at least
 /// `SPLIT_COLUMNS` wide, AREA's own width otherwise.
 ///
@@ -253,9 +266,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
         return;
     }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
-    let work_probe = work_document(app, now, (LEFT_COLUMN as usize).saturating_sub(2));
     let (header, fleet_rect, work_rect, session_rect) =
-        split(area, fleet_lines.len(), work_probe.len());
+        split(area, fleet_lines.len(), work_content_lines(app, now, area));
     frame.render_widget(Paragraph::new(header_line(app, header.width)), header);
 
     let fleet_count = app.fleet.content.value().map(|rows| rows.len());
@@ -1760,6 +1772,40 @@ mod tests {
             "the highlight is on the line the model names: {rendered:?}"
         );
         assert!(rendered[expected as usize].contains("Storm"), "{rendered:?}");
+    }
+
+    /// `app::FLEET_STALE_PREFIX_LINES` is what `App::move_selection` adds to the table's own line
+    /// number under a stale pane. This is the case that keeps that constant and the document it
+    /// describes from drifting: it counts the lines this renderer actually puts above the table.
+    #[test]
+    fn a_stale_fleet_document_opens_with_exactly_the_prefix_app_counts() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        app.finish_refresh(Err(failure()), at(5));
+
+        let document = fleet_document(&app, now(), 99, app.selected_index());
+        let heading = document
+            .iter()
+            .position(|line| line.spans.iter().any(|span| span.content.contains("AGENT")))
+            .expect("the fleet table's own heading");
+        assert_eq!(
+            heading,
+            crate::app::FLEET_STALE_PREFIX_LINES,
+            "the stale prefix is exactly what app.rs counts: {:?}",
+            document
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+                .collect::<Vec<_>>()
+        );
+
+        // And a fresh pane has no prefix at all, which is the other half of the same rule.
+        let mut fresh = App::new();
+        fresh.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        let document = fleet_document(&fresh, now(), 99, fresh.selected_index());
+        assert!(
+            document[0].spans.iter().any(|span| span.content.contains("AGENT")),
+            "a fresh document opens with the heading"
+        );
     }
 
     /// The Session pane's three shapes, verbatim.

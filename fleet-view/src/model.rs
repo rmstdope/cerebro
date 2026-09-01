@@ -359,18 +359,6 @@ fn row_state_for(raw: &str) -> RowState {
     }
 }
 
-/// Derive every roster entry's fleet row from its state observation and the process scan.
-///
-/// - `Invalid` state stays `RowState::Invalid` with its diagnostic kept, whether or not a live
-///   process exists — malformed input must never look healthy.
-/// - A `Parsed` record is trusted only while its own pid is `Proven` or `Unverified` (the latter
-///   noted in `diagnostic`); a record whose pid reads `Dead` is stale: `Up` (dropping the stale
-///   bead/phase) if a current same-name session exists, `Dead` otherwise.
-/// - `Missing` state falls back to the process scan alone: `Up` if a current marker process
-///   exists, `Dead` otherwise — for either `AgentKind`.
-///
-/// `sessions` is always the wrapper-collapsed leaf count for this name at this root, independent
-/// of which branch above produced the row's state.
 /// Which line of the Fleet pane's body the row at INDEX occupies.
 ///
 /// The body opens with one heading line, and every `RowState::Invalid` row *before* INDEX that
@@ -385,6 +373,18 @@ pub fn row_document_line(rows: &[FleetRow], index: usize) -> usize {
     1 + index + extra
 }
 
+/// Derive every roster entry's fleet row from its state observation and the process scan.
+///
+/// - `Invalid` state stays `RowState::Invalid` with its diagnostic kept, whether or not a live
+///   process exists — malformed input must never look healthy.
+/// - A `Parsed` record is trusted only while its own pid is `Proven` or `Unverified` (the latter
+///   noted in `diagnostic`); a record whose pid reads `Dead` is stale: `Up` (dropping the stale
+///   bead/phase) if a current same-name session exists, `Dead` otherwise.
+/// - `Missing` state falls back to the process scan alone: `Up` if a current marker process
+///   exists, `Dead` otherwise — for either `AgentKind`.
+///
+/// `sessions` is always the wrapper-collapsed leaf count for this name at this root, independent
+/// of which branch above produced the row's state.
 pub fn derive_fleet(
     roster: &[RosterEntry],
     states: &StateInputs,

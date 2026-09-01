@@ -571,10 +571,12 @@ what you printed as the record of the pass, and starts a **fresh session** under
 there is something for you to do — a trigger of its own for your role, not a clock you set.
 Nothing survives from this session into the next one: everything the next pass needs is in the
 bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
-You do not ask for a wake and there is no number to write. The floor between two starts of your
-role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
-measured from your last start. Cadence was never yours, and there is no longer anything in this
-file that pretends otherwise.
+You do not ask for a wake and there is no number to write. Any floor between two starts of your
+role belongs to the fleet view: `cerebro-wake-intervals`, keyed by role or by name and falling back
+to `cerebro-wake-interval-default`, both `defcustom`s the navigator can change while the fleet runs.
+The number is theirs to read and to set, not yours to reproduce here — some roles are held for
+minutes, and some, planners and implementers among them, sit at `0` so a session starts the moment
+its trigger is true. Cadence was never yours.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken

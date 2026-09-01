@@ -90,32 +90,22 @@ design, so two planners on two of its children is the most expensive collision t
 merely duplicating an interview, they are answering the *same* design questions separately and
 landing two halves of a family that do not agree with each other.
 
-A bead's parent is a `parent-child` edge in its own `dependencies`, pointing at the parent — there is
-no `parent` field to read:
+A bead's parent is its `parent` field, the same one `beads-workflow` and `implement-bead` walk up
+when they close a family:
 
 ```bash
-bd show <id> --json \
-  | jq -r '(if type=="array" then .[0] else . end) | (.dependencies // [])[]
-           | select(.dependency_type=="parent-child") | .id'
+bd show <id> --json | jq -r '(if type=="array" then .[0] else . end) | .parent // empty'
 ```
 
 Nothing printed means the candidate has no parent, and none of this applies — take it.
 
-Three things about that command, each of which makes it return nothing when it is wrong — which
-reads exactly like "no parent", so a mistake here disables the whole rule silently. **All three are
-about `bd show`; `bd list` answers differently, which is the trap.**
+**The `if type=="array"` guard is not optional**: `bd show --json` returns an array, and indexing it
+as an object fails with `Cannot index array with string "parent"` — which reads like a bead with no
+parent rather than like a broken command, and would disable this whole rule silently.
 
-- **`bd show`, never `bd list`.** The two return different shapes, so a filter written for one finds
-  nothing in the other — silently, for every bead.
-- **In `bd show`, the field is `dependency_type`.** In `bd list` it is `type`, and `dependency_type`
-  is null.
-- **In `bd show`, the parent's id is `.id`** — the dependency entry *is* the parent bead, embedded
-  whole. In `bd list` the entry is a plain edge and the parent is `depends_on_id`.
-
-**Cerebro's ranking queries (`agents/orchestrator.md`, *Ranking the backlog*) pipe `bd list` and
-select on `.type`**, which is the right shape for that command — not an oversight, and not a thing to "correct" to match the one above.
-
-Confirm it on a bead you know to be a child before trusting a run of empty answers.
+*(This skill used to dig the parent out of a `parent-child` edge in `.dependencies` and told you
+there was no `parent` field to read. There is. The three warnings that went with that query were
+about telling `bd show`'s dependency shape from `bd list`'s, and they went with it.)*
 
 Otherwise read the parent's labels for one starting `planner:`:
 
@@ -302,8 +292,10 @@ walks the unranked beads with the navigator and writes what they choose (`agents
 
 So **an unranked bead is not a planning candidate** (*Choosing what to plan*). A P4 carrying
 `triage:declined` is one Cerebro asked about and got no answer for, and it is parked exactly like a
-`human` bead — both are in `scripts/planner-buffer --print-excluded-labels`, and both stay out of
-every query in this skill.
+`human` bead: both are in `scripts/planner-buffer --print-excluded-labels`, so neither is counted as
+buffer. The queries below exclude `human` by name and `triage:declined` by its P4 — which is what it
+always is, since it is a label about a bead nobody ranked. Ask the script rather than this sentence
+if the list ever grows.
 
 A pass whose every candidate is unranked has nothing to plan. Report the beads waiting on a ranking
 and end the pass: **do not rank one yourself, and do not plan one to keep busy.**
@@ -536,10 +528,12 @@ what you printed as the record of the pass, and starts a **fresh session** under
 there is something for you to do — a trigger of its own for your role, not a clock you set.
 Nothing survives from this session into the next one: everything the next pass needs is in the
 bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
-You do not ask for a wake and there is no number to write. The floor between two starts of your
-role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
-measured from your last start. Cadence was never yours, and there is no longer anything in this
-file that pretends otherwise.
+You do not ask for a wake and there is no number to write. Any floor between two starts of your
+role belongs to the fleet view: `cerebro-wake-intervals`, keyed by role or by name and falling back
+to `cerebro-wake-interval-default`, both `defcustom`s the navigator can change while the fleet runs.
+The number is theirs to read and to set, not yours to reproduce here — some roles are held for
+minutes, and some, planners and implementers among them, sit at `0` so a session starts the moment
+its trigger is true. Cadence was never yours.
 
 Why the sleep loop is gone, since it was load-bearing for years: an agent inside `sleep` is
 indistinguishable from one that has hung, a stop flag has no gap to land in so you cannot be taken
@@ -637,6 +631,11 @@ Three details that decide whether this works:
   blocker.
 - **`bd show --json` returns an array**, hence the `if type=="array"` — indexing it as an object
   fails with `Cannot index array with string "dependencies"`.
+- **The field is `dependency_type` because this is `bd show`.** In `bd list` the same edge calls it
+  `type` and `dependency_type` is null, so a filter written for one command silently matches nothing
+  in the other — for every bead, which reads as "no blockers" rather than as a mistake.
+  `agents/orchestrator.md` pipes `bd list` and selects on `.type` for exactly that reason; neither
+  is wrong, and neither is portable to the other command.
 - **Closed counts as satisfied.** A delivered blocker needs no plan, and a closed bead keeps its
   `planned` label anyway, so both tests agree — but the status test is the one that means it.
 
@@ -738,10 +737,18 @@ Batch questions with the question tool — up to four at a time — rather than 
 message. A navigator answering four related questions in one pass is thinking about the whole
 surface; the same four spread over four messages is an interrogation.
 
+**And when you use that tool, the links go INSIDE it.** The question tool draws a dialog; anything
+you printed before calling it is behind that dialog and is not read before the answer. So put every
+`file://` link in the question's own text, and in each option's description — not in the message
+above it. The navigator has flagged this twice (`bd remember planner-mockup-links`), which is twice
+they were asked to choose between mockups they could not see from where they were standing.
+
 **Every time you write a mockup to the scratchpad, say where it is and ask them to open it before
 answering.** The navigator cannot see your scratchpad, and a mockup they have not looked at draws
 feedback on your description of it rather than on the thing itself — which is the one failure this
-whole step exists to prevent. So, in the same message as the question, never in an earlier one:
+whole step exists to prevent. So the link goes wherever the question goes — **inside the question
+tool's own text and option descriptions** when you use it, in the same message as the question when
+you ask in prose, and never in an earlier message either way:
 
 - **Always a `file://` URL, one per variant, and never a bare path.** Not "in the scratchpad", not
   `./mockup.html`, not `/Users/…/mockup.html` — a full `file:///absolute/path/to/mockup.html`, every

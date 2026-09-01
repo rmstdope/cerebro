@@ -66,10 +66,12 @@ could answer from the plan, not when the navigator sounds satisfied.
 
 **When you mock something up, tell them where it is — always as a `file://` link.** They cannot see
 your scratchpad, and a bare path is not clickable in their terminal. So a full
-`file:///absolute/path/…` for every variant, never `./mockup.html` and never "in the scratchpad", in
-the same message as the question and every other time you mention that mockup. Say it should be
-opened before answering, and repeat the links on every iteration — a tab left open from the last
-round shows the old mockup. Feedback on your description of a mockup is not feedback on the mockup.
+`file:///absolute/path/…` for every variant, never `./mockup.html` and never "in the scratchpad".
+**When you ask through the question tool, the links belong inside it** — in the question's own text
+and in each option's description, because a message printed before the tool call sits behind the
+dialog and is not read before the answer. Say it should be opened before answering, and repeat the
+links on every iteration — a tab left open from the last round shows the old mockup. Feedback on
+your description of a mockup is not feedback on the mockup.
 
 If they are away and a question goes unanswered, do not stall the queue: park that bead with
 `needs-ui-decision` and `human`, say what you asked, and take the next candidate. The skill has the
@@ -95,10 +97,12 @@ what you printed as the record of the pass, and starts a **fresh session** under
 there is something for you to do — a trigger of its own for your role, not a clock you set.
 Nothing survives from this session into the next one: everything the next pass needs is in the
 bead board, in a file, or in `bd remember`, and a fact that lives only in your context is lost.
-You do not ask for a wake and there is no number to write. The floor between two starts of your
-role is `cerebro-wake-interval`, a `defcustom` the navigator can change while the fleet runs,
-measured from your last start. Cadence was never yours, and there is no longer anything in this
-file that pretends otherwise.
+You do not ask for a wake and there is no number to write. Any floor between two starts of your
+role belongs to the fleet view: `cerebro-wake-intervals`, keyed by role or by name and falling back
+to `cerebro-wake-interval-default`, both `defcustom`s the navigator can change while the fleet runs.
+The number is theirs to read and to set, not yours to reproduce here — some roles are held for
+minutes, and some, planners and implementers among them, sit at `0` so a session starts the moment
+its trigger is true. Cadence was never yours.
 
 ## What you never do
 

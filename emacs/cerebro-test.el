@@ -4829,7 +4829,18 @@ panel render."
                  (cl-incf sweep-calls)
                  (funcall callback (list nil))
                  'started))
-              ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+              ;; Ownership is stubbed, and that is not a convenience (cb-kcs.1). Unstubbed,
+              ;; `cerebro--tick' reconciles for real: it resolves THIS checkout's shared root,
+              ;; runs `scripts/fleet-supervisor', and tries to BIND the machine's actual
+              ;; supervision lease. That makes this case answer differently depending on whether
+              ;; the navigator's own `M-x cerebro' happens to be running - it is refused, goes
+              ;; read-only and never calls `cerebro--supervise' - and, when the fleet view is NOT
+              ;; up, has a batch Emacs take the fleet's lease for the length of the suite. A test
+              ;; that reaches for a real port is a test about the machine.
+              ((symbol-function 'cerebro--reconcile-supervision-safely)
+               (lambda (&rest _) '(supervising)))
+              ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore))
       (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-list*"))
             (panel (generate-new-buffer cerebro-beads-buffer-name)))
         (unwind-protect
@@ -4870,7 +4881,13 @@ buffer's own cadence rather than the panel's."
               ((symbol-function 'cerebro--start-due) (lambda (&rest _) nil))
               ((symbol-function 'cerebro--refresh-gh-when-due)
                (lambda (buffer seconds) (push (cons buffer seconds) asked)))
-              ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+              ;; Ownership stubbed for the reason given in
+              ;; `tick-refreshes-the-panel-only-when-due': an unstubbed tick binds this machine's
+              ;; real supervision lease.
+              ((symbol-function 'cerebro--reconcile-supervision-safely)
+               (lambda (&rest _) '(supervising)))
+              ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore))
       (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-gh*")))
         (unwind-protect
             (progn
@@ -4883,6 +4900,11 @@ buffer's own cadence rather than the panel's."
   "The panel buffer may not exist yet, or may have been killed by hand; the
 list must still refresh and supervise without error."
   (cl-letf (((symbol-function 'cerebro--list-render) #'ignore)
+            ;; Ownership stubbed for the reason in `tick-refreshes-the-panel-only-when-due':
+            ;; an unstubbed tick binds this machine's real supervision lease.
+            ((symbol-function 'cerebro--reconcile-supervision-safely)
+             (lambda (&rest _) '(supervising)))
+            ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore)
             ((symbol-function 'cerebro--supervise) #'ignore)
             ((symbol-function 'cerebro--repo-root) (lambda () default-directory)))
     (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-no-panel*")))
@@ -4898,6 +4920,11 @@ list must still refresh and supervise without error."
   "A `g' or a priority change must not push the next timer refresh back, or a
 navigator who redraws by hand every twenty seconds would never see one."
   (cl-letf (((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+            ;; Ownership stubbed for the reason in `tick-refreshes-the-panel-only-when-due':
+            ;; an unstubbed tick binds this machine's real supervision lease.
+            ((symbol-function 'cerebro--reconcile-supervision-safely)
+             (lambda (&rest _) '(supervising)))
+            ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore)
             ((symbol-function 'cerebro--request-beads)
              (lambda (_root cb) (funcall cb (cerebro-test--buckets)) 'started))
             ((symbol-function 'cerebro--sweep) #'ignore)

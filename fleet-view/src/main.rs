@@ -20,7 +20,9 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
-use crossterm::event::{Event, KeyEventKind};
+use crossterm::event::{
+    DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, ExecutableCommand};
 use ratatui::backend::{Backend, CrosstermBackend};
@@ -33,6 +35,7 @@ use cerebro_tui::supervisor::{
     reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
     SupervisorKind, SupervisorLease,
 };
+use cerebro_tui::session::{self, SessionHost};
 use cerebro_tui::ui;
 
 /// How long the loop waits for a keystroke before drawing again. Short enough that an elapsed
@@ -275,6 +278,10 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     let initial = controller.apply(readers::read_configured_supervisor(&paths));
     let mut app = App::with_supervision(initial);
 
+    // BEFORE the terminal guard, so it is dropped AFTER it: a child killed on the way out must
+    // not be killed while the alternate screen is still up.
+    let mut host = SessionHost::default();
+
     // Raw mode and the alternate screen are entered HERE and nowhere else, under a guard whose
     // `Drop` leaves them. A sequence of cleanup calls after the loop is skipped by `?`, by an
     // early return and by a panic - each of which has left somebody's terminal in raw mode with
@@ -291,6 +298,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &work_worker,
         &supervisor_worker,
         &mut controller,
+        &mut host,
         Utc::now,
     );
     guard.leave()?;
@@ -313,6 +321,7 @@ fn run<B: Backend, E: Events>(
     work_worker: &WorkWorker,
     supervisor_worker: &SupervisorWorker,
     controller: &mut SupervisorController,
+    host: &mut SessionHost,
     clock: impl Fn() -> DateTime<Utc>,
 ) -> Result<(), Fatal>
 where
@@ -320,11 +329,30 @@ where
 {
     while !app.quit {
         let now = clock();
+        // The child's screen is materialised BEFORE the frame, from the geometry the last
+        // `metrics` gave the Session pane - which is what keeps `ui::draw` pure while a reader
+        // thread writes into a parser continuously, and what sizes the child to the pane it is
+        // drawn in.
+        {
+            let size = terminal.size()?;
+            let area = Rect::new(0, 0, size.width, size.height);
+            let session = ui::metrics(app, now, area).session;
+            let view = host.sync(
+                app.selected.as_deref(),
+                session.viewport_lines as u16,
+                session.inner_width as u16,
+                now,
+            );
+            app.set_session_view(view);
+        }
         terminal.draw(|frame| ui::draw(frame, app, now))?;
 
         let size = terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
         let metrics = ui::metrics(app, now, area);
+        // Kept for the refresh that moves the selected row with nothing pressed - the only place
+        // `App` learns any geometry, and always from a frame that was actually drawn.
+        app.note_metrics(metrics);
         // A page is a page of the FOCUSED pane's own viewport, not the other pane's and not the
         // whole terminal: `App::focused_viewport` is the one place the at-least-one floor lives.
         let viewport_lines = app.focused_viewport(metrics);
@@ -354,6 +382,9 @@ where
             let mode = controller.apply(answer);
             app.set_supervision(mode);
         }
+        // What makes `reconcile_supervision`'s drain branch reachable: a declaration that moved
+        // supervision while this process hosts children keeps the lease until the last one ends.
+        controller.hosted_sessions = host.live_count();
         if controller.due(Instant::now()) && supervisor_worker.request() {
             controller.requested(Instant::now());
         }
@@ -363,7 +394,7 @@ where
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    let action = app.on_key(key, viewport_lines);
+                    let action = route_key(key, app, host, viewport_lines);
                     if action == AppAction::Quit {
                         break;
                     }
@@ -376,12 +407,46 @@ where
                     }
                     dispatch(action, app, fleet_worker, work_worker, &clock);
                 }
+                // Forwarded as a PASTE (Q3), so an agent composer that treats a bare newline as
+                // submit receives four pasted lines as one block rather than submitting the
+                // first of them. With no live focused session there is nobody to give it to.
+                Event::Paste(text) => {
+                    if let Some(name) = app.selected.clone() {
+                        if app.session_has_keyboard() {
+                            host.send(&name, &session::paste_bytes(&text));
+                        }
+                    }
+                }
                 // A resize needs nothing but the redraw at the top of the loop.
                 _ => {}
             }
         }
     }
     Ok(())
+}
+
+/// The keystroke path when a live session is focused.
+///
+/// `Shift-Tab` is taken first and handed to `App::on_key` as the only way out (Q8) - which is the
+/// reason the child can never receive it. Everything else goes to `session::key_bytes`, and a
+/// `None` is dropped without a word (Q1): the pane is a window onto the child rather than a
+/// commentary on it.
+///
+/// So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or refresh while a live session is focused - they
+/// are the child's, which is exactly what the replaced header line says.
+fn route_key(
+    key: KeyEvent,
+    app: &mut App,
+    host: &mut SessionHost,
+    viewport_lines: usize,
+) -> AppAction {
+    if !app.session_has_keyboard() || key.code == KeyCode::BackTab {
+        return app.on_key(key, viewport_lines);
+    }
+    if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
+        host.send(&name, &bytes);
+    }
+    AppAction::None
 }
 
 /// Turn one `AppAction` into requests. `RefreshBoth` asks each pane in turn and never as a pair:
@@ -448,7 +513,7 @@ impl TerminalModes for CrosstermTerminal {
     fn enter(&mut self) -> io::Result<()> {
         enable_raw_mode()?;
         let mut out: Stdout = io::stdout();
-        execute!(out, EnterAlternateScreen, crossterm::cursor::Hide)?;
+        execute!(out, EnterAlternateScreen, EnableBracketedPaste, crossterm::cursor::Hide)?;
         out.flush()
     }
 
@@ -458,13 +523,25 @@ impl TerminalModes for CrosstermTerminal {
         // the rest.
         let mut out: Stdout = io::stdout();
         let cursor = out.execute(crossterm::cursor::Show).err();
+        let paste = out.execute(DisableBracketedPaste).err();
         let screen = out.execute(LeaveAlternateScreen).err();
         let raw = disable_raw_mode().err();
         let _ = out.flush();
-        match cursor.or(screen).or(raw) {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+        first_error([cursor, paste, screen, raw])
+    }
+}
+
+/// The four undo steps' outcomes folded into one result: the first failure, or `Ok`.
+///
+/// A free function so the rule the comment above states - every step is attempted, and a failure
+/// in one does not shadow the rest - is assertable. `Recorder` substitutes for
+/// `CrosstermTerminal` entirely and so can never see its crossterm commands; this is the half of
+/// `leave` that can be tested without a real terminal, and it is the half that grew a fourth
+/// step when bracketed paste arrived.
+fn first_error(steps: [Option<io::Error>; 4]) -> io::Result<()> {
+    match steps.into_iter().flatten().next() {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 
@@ -637,6 +714,249 @@ mod main_tests {
         }
     }
 
+
+    /// An event source that replays whole `Event`s, not only bare key codes: these cases need
+    /// modifiers and a paste, and neither fits `QueuedEvents`.
+    struct ReplayedEvents {
+        events: std::collections::VecDeque<Event>,
+    }
+
+    impl ReplayedEvents {
+        fn new(events: Vec<Event>) -> Self {
+            Self { events: events.into() }
+        }
+    }
+
+    impl Events for ReplayedEvents {
+        fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+            Ok(!self.events.is_empty())
+        }
+        fn read(&mut self) -> io::Result<Event> {
+            self.events.pop_front().ok_or_else(|| io::Error::other("no event left"))
+        }
+    }
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE))
+    }
+
+    fn ctrl(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, crossterm::event::KeyModifiers::CONTROL))
+    }
+
+    /// A child that echoes every byte back printably, so a case can read what the navigator's
+    /// keystrokes became. `cat -v` renders `ESC` as `^[` and `Ctrl-C` as `^C`, and `stty raw`
+    /// stops the line discipline from turning either into a signal.
+    fn echoing_session() -> cerebro_tui::session::Session {
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.arg("-c");
+        // The greeting comes AFTER `stty`, deliberately: the line discipline echoes what is
+        // written to the pty until `-echo` takes effect, so a case that settled on the first
+        // bytes could be reading its own input back before `cat` was ever running - and the next
+        // keystroke would then reach a shell that still had ISIG on and be killed by its own
+        // Ctrl-C.
+        command.arg("stty raw -echo; printf 'ready\r\n'; cat -v");
+        command.env("TERM", "dumb");
+        cerebro_tui::session::Session::spawn_command("Storm", command, 24, 80)
+            .expect("the session spawns")
+    }
+
+    /// An `App` whose Session pane is focused and holding a live child, with that child's first
+    /// bytes already seen - so the very first pass of the loop routes to it rather than to `App`.
+    fn hosting(host: &mut SessionHost) -> App {
+        use cerebro_tui::model::{AgentKind, RowState};
+        let mut app = App::with_supervision(SupervisionMode::Supervising);
+        app.finish_refresh(
+            Ok(vec![cerebro_tui::model::FleetRow {
+                name: "Storm".into(),
+                role: "implementer".into(),
+                kind: AgentKind::Interactive,
+                state: RowState::Working,
+                phase: None,
+                bead: None,
+                since: None,
+                phase_since: None,
+                pid: None,
+                sessions: 0,
+                diagnostic: None,
+            }]),
+            Utc::now(),
+        );
+        app.focus = cerebro_tui::app::PaneFocus::Session;
+        host.insert("Storm", echoing_session());
+        // Until the child has said `ready`, `stty` has not run and the view is `Starting`: the
+        // keyboard would still be the app's, and a keystroke would reach the wrong process.
+        settle_view(host, &mut app);
+        app
+    }
+
+    /// Poll `sync` until the child's view is `Live`, for at most five seconds - the bound every
+    /// other child in this crate gets.
+    fn settle_view(host: &mut SessionHost, app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let view = host.sync(app.selected.as_deref(), 20, 80, Utc::now());
+            let ready = match &view {
+                cerebro_tui::session::SessionView::Live { lines, .. } => {
+                    lines.iter().any(|line| {
+                        line.spans.iter().any(|span| span.content.contains("ready"))
+                    })
+                }
+                _ => false,
+            };
+            app.set_session_view(view);
+            if ready {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the child never announced itself");
+    }
+
+    /// What the child has echoed back, as one string.
+    fn echoed(host: &mut SessionHost, app: &App, wanted: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut text = String::new();
+        while Instant::now() < deadline {
+            if let cerebro_tui::session::SessionView::Live { lines, .. } =
+                host.sync(app.selected.as_deref(), 20, 80, Utc::now())
+            {
+                text = lines
+                    .iter()
+                    .map(|line| {
+                        line.spans.iter().map(|span| span.content.to_string()).collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                if text.contains(wanted) {
+                    return text;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        text
+    }
+
+    #[test]
+    fn a_focused_live_session_receives_every_key_but_shift_tab() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let mut events = ReplayedEvents::new(vec![
+            key(KeyCode::Char('x')),
+            key(KeyCode::Esc),
+            ctrl(KeyCode::Char('c')),
+            key(KeyCode::BackTab),
+            // Focus is Work by then, so this one quits as it always did.
+            key(KeyCode::Char('q')),
+        ]);
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, &mut host, Utc::now).unwrap();
+
+        assert!(app.quit, "q quit once the session no longer held the keyboard");
+        assert_eq!(
+            app.focus,
+            cerebro_tui::app::PaneFocus::Work,
+            "Shift-Tab is the way out, and it is the plain cycle"
+        );
+        let text = echoed(&mut host, &app, "^C");
+        assert!(text.contains('x'), "the plain char reached the child: {text:?}");
+        assert!(text.contains("^["), "and Escape did too: {text:?}");
+        assert!(text.contains("^C"), "and so did Ctrl-C: {text:?}");
+    }
+
+    #[test]
+    fn q_and_ctrl_c_still_quit_when_no_session_holds_the_keyboard() {
+        let mut app = App::new();
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let mut events = ReplayedEvents::new(vec![ctrl(KeyCode::Char('c'))]);
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now)
+            .unwrap();
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn an_ended_session_scrolls_instead_of_typing() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        // A child that prints forty lines and exits: the pass ends, and `sync` retains it as a
+        // document long enough to have somewhere to scroll.
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.arg("-c");
+        command.arg(r#"i=1; while [ $i -le 40 ]; do printf "line %s\r\n" $i; i=$((i+1)); done"#);
+        command.env("TERM", "dumb");
+        host.insert(
+            "Storm",
+            cerebro_tui::session::Session::spawn_command("Storm", command, 24, 80).unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let view = host.sync(app.selected.as_deref(), 20, 80, Utc::now());
+            let ended = matches!(view, cerebro_tui::session::SessionView::Ended { .. });
+            app.set_session_view(view);
+            if ended {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            matches!(app.session.view, cerebro_tui::session::SessionView::Ended { .. }),
+            "the pass ended and was retained"
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let mut events = ReplayedEvents::new(vec![key(KeyCode::Down), key(KeyCode::Char('q'))]);
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, &mut host, Utc::now).unwrap();
+
+        assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
+        assert!(app.quit, "and q still quits: a retained pass does not hold the keyboard");
+    }
+
+    #[test]
+    fn a_paste_reaches_the_child_as_one_block() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let mut events = ReplayedEvents::new(vec![
+            Event::Paste("one\ntwo".to_string()),
+            key(KeyCode::BackTab),
+            key(KeyCode::Char('q')),
+        ]);
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, &mut host, Utc::now).unwrap();
+        let text = echoed(&mut host, &app, "^[[201~");
+        assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
+        assert!(text.contains("^[[201~"), "and closed: {text:?}");
+
+        // With no live focused session there is nobody to give a paste to, and it is dropped.
+        let mut app = App::new();
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let mut events =
+            ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now)
+            .unwrap();
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn a_hosted_session_is_counted_for_supervision() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let mut events =
+            ReplayedEvents::new(vec![key(KeyCode::BackTab), key(KeyCode::Char('q'))]);
+        let (worker_handle, mut controller) = supervision();
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+            &worker_handle, &mut controller, &mut host, Utc::now).unwrap();
+        assert_eq!(
+            controller.hosted_sessions, 1,
+            "the drain branch of `reconcile_supervision` is reachable for the first time"
+        );
+    }
+
     fn nowhere() -> (ReaderPaths, Programs) {
         // Programs that do not exist: every read fails at once, which is the loop's ordinary
         // failure path and needs no fixture on disk.
@@ -749,6 +1069,7 @@ mod main_tests {
                 &work_worker(),
                 &supervision().0,
                 &mut supervision().1,
+                &mut SessionHost::default(),
                 Utc::now,
             )
             .unwrap_err();
@@ -775,6 +1096,7 @@ mod main_tests {
                 &work_worker(),
                 &supervision().0,
                 &mut supervision().1,
+                &mut SessionHost::default(),
                 Utc::now,
             )
             .unwrap_err();
@@ -802,6 +1124,7 @@ mod main_tests {
                 &work_worker(),
                 &supervision().0,
                 &mut supervision().1,
+                &mut SessionHost::default(),
                 Utc::now,
             )
             .is_err());
@@ -840,6 +1163,7 @@ mod main_tests {
                 &work_worker(),
                 &supervision().0,
                 &mut supervision().1,
+                &mut SessionHost::default(),
                 Utc::now,
             )
             .unwrap();
@@ -884,7 +1208,7 @@ mod main_tests {
         ]);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work,
-            &supervision().0, &mut supervision().1, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
         assert!(app.quit, "and the last of them still quit");
@@ -969,7 +1293,7 @@ mod main_tests {
         assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
         assert_eq!(
@@ -1020,7 +1344,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");
@@ -1057,7 +1381,7 @@ mod main_tests {
         let expected = m.session.content_lines.saturating_sub(m.session.viewport_lines);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
     }
@@ -1074,6 +1398,33 @@ mod main_tests {
         // And the drop that follows does not try again.
         drop(guard);
         assert_eq!(*events.borrow(), vec!["enter", "leave"]);
+    }
+
+    /// `leave` undoes four modes now that bracketed paste is one of them, and the rule that
+    /// every step runs even after one fails lives in this fold. `Recorder` replaces
+    /// `CrosstermTerminal` outright, so the crossterm calls themselves are not observable; the
+    /// fold is, and it is what the fourth step changed.
+    #[test]
+    fn a_failed_undo_step_neither_hides_the_others_nor_the_first_error() {
+        let err = |text: &str| Some(io::Error::other(text.to_string()));
+
+        assert!(first_error([None, None, None, None]).is_ok());
+
+        // The first failure is what is reported, whichever step it is - and a later failure
+        // never shadows it.
+        let reported = first_error([err("cursor"), err("paste"), None, err("raw")])
+            .expect_err("a failed undo is reported");
+        assert_eq!(reported.to_string(), "cursor");
+
+        // A failure in the FIRST step must not be the only thing this can report: the caller
+        // ran every step regardless, and the third one's error still surfaces on its own.
+        let reported =
+            first_error([None, None, err("screen"), None]).expect_err("a failed undo is reported");
+        assert_eq!(reported.to_string(), "screen");
+
+        let reported =
+            first_error([None, err("paste"), None, None]).expect_err("bracketed paste too");
+        assert_eq!(reported.to_string(), "paste");
     }
 
     #[test]

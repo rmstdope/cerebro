@@ -20,7 +20,7 @@
 use std::cmp::Ordering;
 
 use chrono::{DateTime, Utc};
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
@@ -30,6 +30,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::app::{App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics};
 use crate::model::{Bead, FleetRow, RowState, WorkBuckets};
+use crate::session::SessionView;
 
 /// The floor the whole screen needs. Below it the screen says so and shows nothing else: half a
 /// row of a fleet is worse than a sentence saying the window is too small.
@@ -142,9 +143,9 @@ pub fn too_small(area: Rect) -> bool {
 pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
     if too_small(area) {
         return Metrics {
-            fleet: PaneMetrics { content_lines: 0, viewport_lines: 0 },
-            work: PaneMetrics { content_lines: 0, viewport_lines: 0 },
-            session: PaneMetrics { content_lines: 0, viewport_lines: 0 },
+            fleet: PaneMetrics { content_lines: 0, viewport_lines: 0, inner_width: 0 },
+            work: PaneMetrics { content_lines: 0, viewport_lines: 0, inner_width: 0 },
+            session: PaneMetrics { content_lines: 0, viewport_lines: 0, inner_width: 0 },
         };
     }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
@@ -157,13 +158,27 @@ pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
     let (work_viewport, _) = pane_geometry(work_rect, work_lines.len());
     let (session_viewport, _) = pane_geometry(session_rect, session_lines.len());
     Metrics {
-        fleet: PaneMetrics { content_lines: fleet_lines.len(), viewport_lines: fleet_viewport },
-        work: PaneMetrics { content_lines: work_lines.len(), viewport_lines: work_viewport },
+        fleet: PaneMetrics {
+            content_lines: fleet_lines.len(),
+            viewport_lines: fleet_viewport,
+            inner_width: inner_width(fleet_rect),
+        },
+        work: PaneMetrics {
+            content_lines: work_lines.len(),
+            viewport_lines: work_viewport,
+            inner_width: work_inner_width,
+        },
         session: PaneMetrics {
             content_lines: session_lines.len(),
             viewport_lines: session_viewport,
+            inner_width: inner_width(session_rect),
         },
     }
+}
+
+/// A pane's inner width in cells: its own width less the two border columns.
+fn inner_width(outer: Rect) -> usize {
+    (outer.width as usize).saturating_sub(2)
 }
 
 /// Split AREA into the one-line header, the Fleet, Work and Session rects.
@@ -280,10 +295,12 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     render_pane(
         frame,
         fleet_rect,
-        fleet_title,
-        title_style(&app.fleet, app.focus == PaneFocus::Fleet),
+        Line::from(Span::styled(
+            fleet_title,
+            title_style(&app.fleet, app.focus == PaneFocus::Fleet),
+        )),
         app.focus == PaneFocus::Fleet,
-        fleet_lines,
+        &fleet_lines,
         app.fleet.scroll,
     );
 
@@ -293,39 +310,59 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     render_pane(
         frame,
         work_rect,
-        work_title,
-        title_style(&app.work, app.focus == PaneFocus::Work),
+        Line::from(Span::styled(work_title, title_style(&app.work, app.focus == PaneFocus::Work))),
         app.focus == PaneFocus::Work,
-        work_lines,
+        &work_lines,
         app.work.scroll,
     );
 
+    let session_focused = app.focus == PaneFocus::Session;
+    let session_lines = session_document(app);
     render_pane(
         frame,
         session_rect,
-        session_title(app),
-        plain_title_style(app.focus == PaneFocus::Session),
-        app.focus == PaneFocus::Session,
-        session_document(app),
+        session_title(app, session_focused),
+        session_focused,
+        &session_lines,
         app.session.scroll,
     );
+
+    // The child's cursor, and only while the pane has the keyboard - the navigator's choice (Q2)
+    // over painting a second, dim block into an unfocused pane. It stays deterministic: the
+    // position came from `App`, materialised before the frame.
+    if app.session_has_keyboard() {
+        if let SessionView::Live { cursor: (row, col), .. } = &app.session.view {
+            let inner = Rect {
+                x: session_rect.x + 1,
+                y: session_rect.y + 1,
+                width: session_rect.width.saturating_sub(2),
+                height: session_rect.height.saturating_sub(2),
+            };
+            // A child that has just been resized can report a position outside the pane for a
+            // moment, and a cursor drawn over somebody else's border is worse than none.
+            if *row < inner.height && *col < inner.width {
+                frame.set_cursor_position(Position { x: inner.x + col, y: inner.y + row });
+            }
+        }
+    }
 }
 
 /// One widget: its border (focus only), its title (status colour, bold only while focused), its
 /// scrolled body, and - when its content outgrows its inner height - the reserved range-cue row.
 ///
-/// LINES is the pane's whole body, already built for this frame's width; SCROLL is that pane's own
-/// offset. Borders carry focus alone: an unfocused pane is always the ordinary thin, dim border
+/// LINES is the pane's whole body, already built for this frame's width, and is BORROWED: the
+/// retained transcript is up to ten thousand lines and is handed to this function every frame.
+/// SCROLL is that pane's own offset. TITLE carries its own styling - two spans for the Session
+/// pane, the title in its own style and then the dim hint, and one for Fleet and Work. Borders carry focus alone: an unfocused pane is always the ordinary thin, dim border
 /// whatever its title reports, and a focused pane is always the thick, bright-blue one - status
 /// colour is the title's own signal, not the border's, so a focused stale/unavailable pane keeps
 /// its gold/red title behind a blue border rather than losing that colour to focus.
 fn render_pane(
     frame: &mut Frame<'_>,
     outer: Rect,
-    title: String,
-    title_style: Style,
+    title: Line<'static>,
     focused: bool,
-    lines: Vec<Line<'static>>,
+    lines: &[Line<'static>],
     scroll: usize,
 ) {
     let (border_type, border_style) = if focused {
@@ -337,7 +374,7 @@ fn render_pane(
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(border_style)
-        .title(Span::styled(title, title_style));
+        .title(title);
     let inner = block.inner(outer);
     frame.render_widget(block, outer);
     if inner.height == 0 || inner.width == 0 {
@@ -349,10 +386,12 @@ fn render_pane(
     let body_height = viewport_lines as u16;
     let clamped_scroll = scroll.min(total.saturating_sub(viewport_lines));
     let body_rect = Rect { height: body_height, ..inner };
-    frame.render_widget(
-        Paragraph::new(lines).scroll((u16::try_from(clamped_scroll).unwrap_or(u16::MAX), 0)),
-        body_rect,
-    );
+    // The visible window alone, rather than the whole document with `Paragraph::scroll`: nothing
+    // here sets `.wrap`, so a `Paragraph` neither reflows nor re-splits lines and the rendering is
+    // identical - but a pane now pays for its viewport rather than for its document, which is what
+    // makes a ten-thousand-line retained transcript free to draw.
+    let last = (clamped_scroll + viewport_lines).min(total);
+    frame.render_widget(Paragraph::new(lines[clamped_scroll..last].to_vec()), body_rect);
     if clipped {
         let first = clamped_scroll + 1;
         let last = (clamped_scroll + viewport_lines).min(total);
@@ -479,6 +518,15 @@ fn newest_failure(app: &App) -> Option<(DateTime<Utc>, bool)> {
 /// stale. `g retry` rather than `g refresh` until BOTH panes are fresh - the key is the same, and
 /// what it is for has changed.
 fn header_line(app: &App, width: u16) -> Line<'static> {
+    // A live session that holds the keyboard replaces the header entirely - the navigator's
+    // choice, over keeping a hint line that advertises `q`, `g` and the arrows while none of them
+    // reach this screen. Everything else the header carries applies whenever one does not.
+    if app.session_has_keyboard() {
+        let name = app.selected.clone().unwrap_or_else(|| "The session".to_string());
+        return Line::from(Span::raw(format!(
+            "{name} has the keyboard | Shift-Tab leaves the session"
+        )));
+    }
     let mut spans = vec![Span::raw(supervision_title(&app.supervision))];
     // A notice takes the place `refreshing...` or a failure would have had: it is transient, gone
     // on the next keystroke, while a stale pane goes on saying so in its own title anyway.
@@ -525,27 +573,87 @@ fn plain_title_style(focused: bool) -> Style {
     }
 }
 
-/// The Session pane's title: the selected agent's name, or `Session` when nothing is selected.
-fn session_title(app: &App) -> String {
-    app.selected.clone().unwrap_or_else(|| "Session".to_string())
+/// The Session pane's title, and the dim hint after it.
+///
+/// The hint is fixed per session state and never varies with which pane happens to be focused -
+/// the navigator's choice (Q9), over the approved mockup's own varying spelling:
+///
+/// | View                     | Title                     | Hint                          |
+/// |--------------------------|---------------------------|-------------------------------|
+/// | Live/Starting, unfocused | `<Name> — <phase> <bead>` | `[Tab to focus]`              |
+/// | Live/Starting, focused   | `<Name> — <phase> <bead>` | `[Shift-Tab leaves]`          |
+/// | Ended                    | `<Name> — ended HH:MM`    | `[retained until next start]` |
+/// | None                     | `<Name>`, or `Session`    | none                          |
+///
+/// The live title's tail comes from the selected fleet row and nothing else (Q7): phase and bead
+/// when the row has both, phase alone when it has no bead, and the bare name when it has neither
+/// - so the title and the row two panes away can never disagree.
+fn session_title(app: &App, focused: bool) -> Line<'static> {
+    let name = app.selected.clone().unwrap_or_else(|| "Session".to_string());
+    let style = plain_title_style(focused);
+    let (title, hint) = match &app.session.view {
+        SessionView::None => (name, None),
+        SessionView::Live { .. } | SessionView::Starting => (
+            live_title(app, &name),
+            Some(if focused { "[Shift-Tab leaves]" } else { "[Tab to focus]" }),
+        ),
+        SessionView::Ended { at, .. } => (
+            format!("{name} — ended {}", at.format("%H:%M")),
+            Some("[retained until next start]"),
+        ),
+    };
+    let mut spans = vec![Span::styled(title, style)];
+    if let Some(hint) = hint {
+        spans.push(Span::styled(format!(" {hint}"), dim()));
+    }
+    Line::from(spans)
 }
 
-/// The Session pane's body. Three shapes in this increment; cb-kcs.2.2 adds a child's screen and
-/// a retained-scrollback shape to it.
+/// `<Name> — <phase> <bead>`, `<Name> — <phase>`, or `<Name>`, from the selected fleet row.
+fn live_title(app: &App, name: &str) -> String {
+    let row = app
+        .fleet
+        .content
+        .value()
+        .and_then(|rows| rows.iter().find(|row| row.name == name));
+    match row.and_then(|row| row.phase.as_deref()) {
+        Some(phase) => match row.and_then(|row| row.bead.as_deref()) {
+            Some(bead) => format!("{name} — {phase} {bead}"),
+            None => format!("{name} — {phase}"),
+        },
+        None => name.to_string(),
+    }
+}
+
+/// The Session pane's body.
+///
+/// `Live` and `Ended` are BORROWED from the view `SessionHost::sync` already materialised - this
+/// module builds no terminal screen of its own, which is what keeps it pure, and it must not copy
+/// a ten-thousand-line transcript once a frame either. `Starting` is one dim line, and the three
+/// bodies below are what `SessionView::None` still produces; both are built here, hence the `Cow`.
 ///
 /// Read-only wins over everything else: a view that does not supervise cannot host a session
 /// whatever is selected, and offering `s` there would be a key that does nothing. The wording
 /// names nobody deliberately (the navigator's choice) - naming Emacs would need a second spelling
 /// for the case where another Ratatui process holds the lease.
-fn session_document(app: &App) -> Vec<Line<'static>> {
+fn session_document(app: &App) -> std::borrow::Cow<'_, [Line<'static>]> {
     let line = |text: &str| Line::from(Span::styled(text.to_string(), dim()));
+    match &app.session.view {
+        SessionView::Live { lines, .. } => return std::borrow::Cow::Borrowed(lines),
+        SessionView::Ended { lines, .. } => return std::borrow::Cow::Borrowed(lines.as_slice()),
+        SessionView::Starting => {
+            let name = app.selected.clone().unwrap_or_else(|| "the session".to_string());
+            return std::borrow::Cow::Owned(vec![line(&format!("Starting {name}…"))]);
+        }
+        SessionView::None => {}
+    }
     if !app.supervision.may_supervise() {
-        return vec![
+        return std::borrow::Cow::Owned(vec![
             line("Sessions are hosted by the view that supervises this"),
             line("checkout. This one does not."),
-        ];
+        ]);
     }
-    match &app.selected {
+    std::borrow::Cow::Owned(match &app.selected {
         Some(name) => vec![
             line("No live session."),
             line(""),
@@ -555,7 +663,7 @@ fn session_document(app: &App) -> Vec<Line<'static>> {
         // The fleet is empty, loading, or unavailable - and a failed read must keep saying so in
         // the Fleet pane rather than reading as "nothing is wrong" here.
         None => vec![line("No agent selected.")],
-    }
+    })
 }
 
 /// The Fleet pane's body. SELECTED is the index of the highlighted row, when there is one and it
@@ -1299,6 +1407,150 @@ mod tests {
         app
     }
 
+
+    /// A `Live` view of three lines, so no case has to build a parser.
+    fn live(app: &mut App, texts: &[&str]) {
+        app.set_session_view(SessionView::Live {
+            lines: texts.iter().map(|text| Line::from(text.to_string())).collect(),
+            cursor: (1, 3),
+        });
+    }
+
+    /// An `Ended` view long enough to need the range cue.
+    fn ended(app: &mut App, count: usize) {
+        app.set_session_view(SessionView::Ended {
+            lines: std::sync::Arc::new(
+                (1..=count).map(|n| Line::from(format!("retained {n}"))).collect(),
+            ),
+            at: at(56_520), // 15:42 UTC
+        });
+    }
+
+    #[test]
+    fn the_session_pane_draws_a_live_child() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        live(&mut app, &["$ bd ready", "cb-kcs.2.2 claimed", "building"]);
+        // `lines' rather than `body': in the split layout the Session pane's own border row is
+        // drawn beside the Fleet pane's, and `body' keeps only the leftmost title.
+        let rendered = lines(&render(&app, 120, 20));
+        assert!(rendered.iter().any(|line| line.contains("cb-kcs.2.2 claimed")), "{rendered:?}");
+        assert!(
+            rendered.iter().any(|line| line.contains("Xavier — plan cb-kcs [Tab to focus]")),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn a_starting_session_says_so() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        app.set_session_view(SessionView::Starting);
+        let buffer = render(&app, 120, 20);
+        assert!(lines(&buffer).iter().any(|line| line.contains("Starting Xavier…")), "{:?}", lines(&buffer));
+        assert!(style_of(&buffer, "S").add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn an_ended_pass_is_titled_by_its_time_and_scrolls() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        ended(&mut app, 60);
+        let rendered = lines(&render(&app, 120, 20));
+        assert!(
+            rendered.iter().any(|line| line.contains("Xavier — ended 15:42 [retained until next start]")),
+            "{rendered:?}"
+        );
+        // Long enough that `render_pane` treats it like any other clipped body.
+        assert!(rendered.iter().any(|line| line.contains("Rows 1–")), "{rendered:?}");
+    }
+
+    #[test]
+    fn a_live_session_title_falls_back_through_phase_and_name() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        live(&mut app, &["x"]);
+        assert!(session_title(&app, false).to_string().starts_with("Xavier — plan cb-kcs"));
+
+        // A phase and no bead.
+        app.finish_refresh(
+            Ok(vec![FleetRow { bead: None, ..working("Cerebro", "orchestrator", "triage", "cb-1") }]),
+            at(86_400),
+        );
+        app.selected = Some("Cerebro".to_string());
+        assert!(session_title(&app, false).to_string().starts_with("Cerebro — triage"));
+
+        // Neither.
+        app.finish_refresh(Ok(vec![row("Moira", "user-feedback", RowState::Working)]), at(86_400));
+        app.selected = Some("Moira".to_string());
+        assert!(session_title(&app, false).to_string().starts_with("Moira"));
+        assert!(!session_title(&app, false).to_string().contains('—'));
+    }
+
+    #[test]
+    fn the_session_pane_still_says_why_there_is_no_session() {
+        // Read-only, which is what every consumer sees today.
+        let rendered = lines(&render(&populated(), 120, 20));
+        assert!(
+            rendered.iter().any(|line| line.contains("Sessions are hosted by the view")),
+            "{rendered:?}"
+        );
+
+        // Supervising, with a selection.
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        let rendered = lines(&render(&app, 120, 20));
+        assert!(rendered.iter().any(|line| line.contains("Press s to start Xavier.")), "{rendered:?}");
+
+        // Supervising, with none.
+        let mut app = supervising();
+        app.selected = None;
+        let rendered = lines(&render(&app, 120, 20));
+        assert!(rendered.iter().any(|line| line.contains("No agent selected.")), "{rendered:?}");
+    }
+
+
+    #[test]
+    fn a_focused_live_session_replaces_the_header() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        app.focus = PaneFocus::Session;
+        live(&mut app, &["building"]);
+        let rendered = lines(&render(&app, 120, 20));
+        assert_eq!(rendered[0], "Xavier has the keyboard | Shift-Tab leaves the session");
+
+        // Unfocused, the ordinary header is back untouched - ownership span, hints and all.
+        app.focus = PaneFocus::Fleet;
+        let rendered = lines(&render(&app, 120, 20));
+        assert!(rendered[0].starts_with("Cerebro — supervising"), "{:?}", rendered[0]);
+        assert!(rendered[0].contains("q/Esc/Ctrl-C quit"), "{:?}", rendered[0]);
+    }
+
+    #[test]
+    fn the_cursor_is_placed_only_while_the_session_has_the_keyboard() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        live(&mut app, &["one", "two", "three"]);
+
+        app.focus = PaneFocus::Session;
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &app, now())).unwrap();
+        let focused = terminal.get_cursor_position().unwrap();
+        // The session pane starts at column LEFT_COLUMN in the split layout, one row under the
+        // header, and the view's cursor is (1, 3) inside it.
+        assert_eq!((focused.x, focused.y), (LEFT_COLUMN + 1 + 3, 1 + 1 + 1));
+
+        app.focus = PaneFocus::Fleet;
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &app, now())).unwrap();
+        let unfocused = terminal.get_cursor_position().unwrap();
+        assert_ne!(
+            (unfocused.x, unfocused.y),
+            (focused.x, focused.y),
+            "an unfocused pane must not move the terminal cursor into the child"
+        );
+    }
+
     #[test]
     fn renders_the_approved_wide_fleet_screen() {
         let app = populated();
@@ -2024,6 +2276,17 @@ mod tests {
         assert!(
             rendered.iter().any(|line| line.contains("Rows 1–2 of 4")),
             "the session body carries its own range cue: {rendered:?}"
+        );
+
+        // A retained pass is a document like any other, and gets the same cue from the same rule.
+        let mut app = App::with_supervision(SupervisionMode::Supervising);
+        app.finish_refresh(Ok(vec![row("Storm", "implementer", RowState::Idle)]), at(0));
+        app.selected = Some("Storm".to_string());
+        ended(&mut app, 40);
+        let rendered = lines(&render(&app, 99, 12));
+        assert!(
+            rendered.iter().any(|line| line.contains("Rows 1–") && line.contains(" of 40")),
+            "the retained pass carries its own range cue: {rendered:?}"
         );
     }
 

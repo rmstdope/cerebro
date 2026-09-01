@@ -20,6 +20,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::model::{FleetRow, RowState, WorkBuckets};
+use crate::session::SessionView;
 use crate::readers::{read_configured_supervisor, read_fleet, read_work, Programs, ReaderPaths, ReadError};
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
@@ -179,13 +180,18 @@ impl PaneFocus {
     }
 }
 
-/// The Session pane's own scroll offset. It has no reader and therefore no `PaneContent`: what it
-/// shows is derived from the selection and the supervision mode, not from a subprocess that can
-/// fail. cb-kcs.2.2 gives it a child's screen; until then it holds only an offset, so that the
-/// scroll rule is written once rather than acquired later.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The Session pane's own scroll offset, and the lines one frame draws it from. It has no reader
+/// and therefore no `PaneContent`: what it shows is a child's screen, materialised by
+/// `SessionHost::sync` BEFORE the frame, or one of the bodies derived from the selection and the
+/// supervision mode.
+///
+/// `App` holds no pty, no thread and no child - only the value the renderer reads. That is what
+/// keeps `ui::draw` pure while a reader thread writes into a parser continuously: the child's
+/// bytes reach the screen only through a view frozen before the frame began.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SessionPane {
     pub scroll: usize,
+    pub view: SessionView,
 }
 
 impl SessionPane {
@@ -285,6 +291,9 @@ pub fn clamp_scroll(scroll: &mut usize, content_lines: usize, viewport_lines: us
 pub struct PaneMetrics {
     pub content_lines: usize,
     pub viewport_lines: usize,
+    /// The pane's inner width in cells. Needed because a pty has to be told a width, and
+    /// `ui::metrics` is the one place a pane's geometry is computed.
+    pub inner_width: usize,
 }
 
 /// The geometry one draw of `App` at one `now` in one `Rect` would produce, one `PaneMetrics` per
@@ -336,6 +345,14 @@ pub struct App {
     /// takes a row or a Tab stop from Fleet and Work.
     pub supervision: SupervisionMode,
     pub quit: bool,
+    /// The Fleet pane's viewport height from the last frame that was actually drawn.
+    ///
+    /// A refresh can move the selected row's document line with nothing pressed - a Fresh -> Stale
+    /// transition shifts the whole table down by `FLEET_STALE_PREFIX_LINES`, and
+    /// `reconcile_selection` can land on a row that is off screen - and following it needs a
+    /// viewport. `App` has no geometry of its own, so the loop hands it the last one it drew
+    /// (`note_metrics`); before the first frame it is zero, which `follow_selection` floors at one.
+    fleet_viewport: usize,
     last_fleet_request: Option<Instant>,
     last_work_request: Option<Instant>,
 }
@@ -369,6 +386,7 @@ impl App {
             focus: PaneFocus::default(),
             supervision,
             quit: false,
+            fleet_viewport: 0,
             last_fleet_request: None,
             last_work_request: None,
         }
@@ -504,8 +522,8 @@ impl App {
         }
     }
 
-    /// Bring DOCUMENT_LINE into the Fleet pane's viewport, moving `scroll` by the least that does
-    /// so and leaving it alone when the line is already visible.
+    /// Bring DOCUMENT_LINE into the Fleet pane's viewport, by the two rules below: the least
+    /// movement that reveals it, except for the snap-to-top that follows.
     ///
     /// DOCUMENT_LINE is where the row sits in what `ui::fleet_document` produced, which is NOT
     /// the row index: the document opens with a heading line, and a row whose state file failed
@@ -562,6 +580,33 @@ impl App {
             PaneFocus::Work => metrics.work.viewport_lines.max(1),
             PaneFocus::Session => metrics.session.viewport_lines.max(1),
         }
+    }
+
+    /// Remember the geometry of the frame just drawn, so a refresh that moves the selected row
+    /// can scroll the Fleet pane to it without a keystroke.
+    pub fn note_metrics(&mut self, metrics: Metrics) {
+        self.fleet_viewport = metrics.fleet.viewport_lines;
+    }
+
+    /// Does the focused Session pane currently hold the keyboard?
+    ///
+    /// True only when the Session pane is focused AND its view is `Live`: an ended or absent
+    /// session leaves the arrows, `g` and `q` exactly as they are, which is what makes a retained
+    /// pass scrollable at all.
+    pub fn session_has_keyboard(&self) -> bool {
+        self.focus == PaneFocus::Session && matches!(self.session.view, SessionView::Live { .. })
+    }
+
+    /// Install the view `SessionHost::sync` materialised for this frame.
+    ///
+    /// A `Live` view is never scrolled - the child redraws itself into the pane, and there is
+    /// nothing above the top row to reach - so this forces the offset to 0 while a session is
+    /// live and leaves it alone otherwise.
+    pub fn set_session_view(&mut self, view: SessionView) {
+        if matches!(view, SessionView::Live { .. }) {
+            self.session.scroll = 0;
+        }
+        self.session.view = view;
     }
 
     /// Claim the fleet's one in-flight slot: true when this request may go to the worker, false
@@ -646,7 +691,28 @@ impl App {
         self.fleet.finish(result, at);
         if succeeded {
             self.reconcile_selection(previous_index);
+            // A refresh can move the selected row's document line with nothing pressed: the stale
+            // prefix appearing or going, and a reconciled selection landing on another row. Both
+            // used to self-correct only on the next arrow press, which left the selection below
+            // the fold in the meantime (cb-kcs.2.1's review, round 4).
+            self.follow_current_selection();
         }
+    }
+
+    /// Scroll the Fleet pane to wherever the selection now sits, using the last drawn frame's
+    /// viewport. Does nothing without rows or a selection.
+    fn follow_current_selection(&mut self) {
+        // Before the first frame there is no viewport to follow into, and guessing one would
+        // scroll the heading off a pane nobody has drawn yet.
+        if self.fleet_viewport == 0 {
+            return;
+        }
+        let Some(index) = self.selected_index() else { return };
+        // `fleet_body` already carries the stale prefix and every diagnostic line, so this asks
+        // it rather than re-deriving an offset that would then have two owners (cb-0ps).
+        let body = fleet_body(&self.fleet.content);
+        let Some(line) = body_line_of_row(&body, index) else { return };
+        self.follow_selection(line, self.fleet_viewport);
     }
 
     /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
@@ -864,6 +930,45 @@ mod tests {
         assert_eq!(body_line_of_row(&body, 0), Some(3));
         assert_eq!(body_line_of_row(&body, 1), Some(4));
         assert_eq!(body_line_of_row(&body, 2), Some(5));
+    }
+
+
+    /// Two paths move the selected row's document line with nothing pressed: the stale prefix
+    /// appearing (or going), and a reconciled selection landing on a row further down. Both used
+    /// to leave the selection below the fold until the next arrow press (cb-kcs.2.1's review).
+    #[test]
+    fn a_refresh_scrolls_the_fleet_back_to_the_selected_row() {
+        let rows: Vec<FleetRow> = (0..12)
+            .map(|i| row(&format!("A{i:02}")))
+            .collect();
+        let mut app = App::new();
+        app.note_metrics(Metrics {
+            fleet: PaneMetrics { content_lines: 13, viewport_lines: 4, inner_width: 38 },
+            work: PaneMetrics { content_lines: 0, viewport_lines: 4, inner_width: 38 },
+            session: PaneMetrics { content_lines: 0, viewport_lines: 4, inner_width: 58 },
+        });
+        app.finish_refresh(Ok(rows.clone()), Utc::now());
+        app.selected = Some("A08".to_string());
+        app.fleet.scroll = 6;
+
+        // A failed read makes the pane stale, which pushes the whole table down by the retained
+        // error and its blank line - and a failure must not move the selection at all.
+        app.finish_refresh(Err(failure()), Utc::now());
+        assert_eq!(app.selected.as_deref(), Some("A08"));
+        // The next successful read re-follows: A08 is document line 9, plus nothing (fresh again).
+        app.finish_refresh(Ok(rows.clone()), Utc::now());
+        assert!(
+            app.fleet.scroll <= 9 && 9 < app.fleet.scroll + 4,
+            "the selected row is inside the viewport again, scroll was {}",
+            app.fleet.scroll
+        );
+
+        // And a selection that leaves the roster: the replacement is scrolled to as well.
+        let shorter: Vec<FleetRow> = rows.iter().take(9).cloned().collect();
+        app.fleet.scroll = 0;
+        app.finish_refresh(Ok(shorter), Utc::now());
+        assert_eq!(app.selected.as_deref(), Some("A08"), "the row at the old index, clamped");
+        assert!(app.fleet.scroll > 0, "and the pane scrolled to it: {}", app.fleet.scroll);
     }
 
     fn failure() -> ReadError {
@@ -1448,9 +1553,9 @@ mod tests {
     fn focused_viewport_is_the_focused_panes_own_and_never_zero() {
         let mut app = App::new();
         let metrics = Metrics {
-            fleet: PaneMetrics { content_lines: 30, viewport_lines: 8 },
-            work: PaneMetrics { content_lines: 12, viewport_lines: 0 },
-            session: PaneMetrics { content_lines: 4, viewport_lines: 3 },
+            fleet: PaneMetrics { content_lines: 30, viewport_lines: 8, inner_width: 38 },
+            work: PaneMetrics { content_lines: 12, viewport_lines: 0, inner_width: 38 },
+            session: PaneMetrics { content_lines: 4, viewport_lines: 3, inner_width: 58 },
         };
         assert_eq!(app.focused_viewport(metrics), 8, "Fleet is focused by default");
 

@@ -578,9 +578,19 @@ per row (a heading, plus a diagnostic line per invalid row), so `model::row_docu
 one place a row index becomes a document line and the renderer calls it rather than keeping a
 second copy.
 
-Session hosts nothing yet: no PTY, no child process, and no `s`/`f`/`k` — the pane says why there is
-no session in it, and the header hint names no key that does not exist. `cb-kcs.2.2` adds the pty
-and the focused-session header, `.3` the lifecycle keys. The surface the navigator approved for the
+Session can hold a real child since cb-kcs.2.2: `scripts/launch <Name>` in a pty (`portable-pty`),
+its screen drawn from a `vt100::Parser` this crate owns — which is why a killed child's screen is
+still drawable — and every key of a focused live session forwarded to it, `Shift-Tab` alone held
+back as the way out. A pass that ends is kept as a scrollable transcript of at most ten thousand
+lines, until that agent starts again. **Nothing a navigator can press starts one**: `SessionHost::spawn`
+is reached by test code alone, and `s`/`f`/`k` are cb-kcs.2.3's, so the pane still says why there is
+no session in it and the header hint still names no key that does not exist. The rule that pays for
+all of it is that `SessionHost::sync` materialises the child's screen into a `SessionView` **before**
+the frame: `App` holds no pty, no thread and no child, and `ui::draw` stays pure over `App` while a
+reader thread writes into a parser continuously. That reader thread drains the master
+unconditionally, focused or not — a pipe nobody drains is a deadlock — and `Session`'s `Drop` kills
+its child, because a pane the navigator can no longer see must not leave an agent running against a
+bead nobody is watching. The surface the navigator approved for the
 whole `cb-kcs.2` family is the split console, interviewed over three rounds on 2026-09-01. It
 refines `docs/ui/cb-kcs-supervisor.html`, which the epic's own interview approved, and supersedes
 `docs/ui/cb-42k-independent-widgets.html` and the original single-document

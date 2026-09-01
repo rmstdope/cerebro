@@ -8,7 +8,7 @@
 # Read-only, like sweep-claims.sh: no `bd close` here. `bd epic status --eligible-only` has already
 # done the counting - every child of the epics this prints is closed - so there is no delivery
 # judgement to make the way there is for a claim; the only question left is whether the close is
-# stale enough to be safe (see "Epics left open under closed children" in `agents/orchestrator.md`):
+# stale enough to be safe (see "Epics left open under closed children" in `docs/cerebro-sweeps.md`):
 # an implementer closes its parent within seconds of its last child, so a fresh close means an agent
 # is still mid-cleanup, not that the epic was missed.
 #

@@ -94,7 +94,7 @@ in, and `cb-` from this repository's own board, since cb-i3l.1 made it a consume
 
 ## ah-kjfm — the assignee sweep, and why a stranded P0 shouts
 
-`agents/orchestrator.md`'s *Open beads carrying an assignee nobody backs up* comes from two P0s
+`docs/cerebro-sweeps.md`'s *Open beads carrying an assignee nobody backs up* comes from two P0s
 stranded on 2026-08-23, within half an hour of each other:
 
 | Bead | Assignee on file | What that session was actually doing |
@@ -116,7 +116,7 @@ is 10 — one sweep cycle, so a bead is seen twice before it is offered; 30 woul
 
 ## ah-e0kf — a verification verdict acted on after main has moved past it
 
-`agents/orchestrator.md`'s *Failed verdicts main has moved past* comes from three beads verified on
+`docs/cerebro-sweeps.md`'s *Failed verdicts main has moved past* comes from three beads verified on
 2026-08-23, each of which had been overtaken by main before its verdict reached anybody:
 
 | Bead | Verdict at | Merges since | What landed after | Cost |
@@ -153,3 +153,18 @@ the **full 40-character sha** (it is read by `git merge-base` and `git log`, and
 ambiguous in a large repository) while every prose mention keeps the short one; and a **missing
 `verified_at` yields no finding at all**, because unknown is not stale and every verdict recorded
 before this shipped is in that state.
+
+## ah-4ao — `ScheduleWakeup` does not pace a session from inside it
+
+Recorded when `agents/orchestrator.md`'s keepalive section was retired and then deleted, so the
+measurement is not lost with the procedure it justified.
+
+Tested 2026-08-14: a 90-second `ScheduleWakeup` fired several conversational turns late and
+unpredictably. The tool's own description ties it to `/loop`'s dynamic-pacing mode, and a fleet
+session is not run under `/loop`, which is the likely reason. A forked subagent blocking on
+`sleep 300` was reliable in the same test — `sleep 600` was rejected outright by the Bash tool's
+guard against long leading sleeps, so 600s is known-broken rather than untested.
+
+Neither is used any more: the fleet view runs the sweeps on its own timers whether or not a session
+is open, so nothing needs a session to pace itself. Kept because the next person to want a timer
+inside a session will otherwise re-run both experiments.

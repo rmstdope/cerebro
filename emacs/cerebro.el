@@ -1162,7 +1162,7 @@ unlike `cerebro--bead-section', which prints \"(none)\": those sections
 describe queues that are normally non-empty, so their being empty is worth
 a line saying so. An empty Sweeps section is the *ordinary* result of every
 render but one, and a panel that said \"Sweeps 0 / (none)\" every ten
-minutes would be exactly the noise `orchestrator.md' already warns against
+minutes would be exactly the noise `docs/cerebro-sweeps.md' already warns against
 for a sweep that found nothing."
   (when findings
     (cons (propertize "Sweeps" 'face 'bold)
@@ -1217,7 +1217,7 @@ is actually running, which is what the section claims to show.
 
 Nil - no header, nothing at all - when nothing is running, exactly as
 `cerebro--sweep-section' does and for the same reason: a section saying
-\"(none)\" every five minutes is the noise `orchestrator.md' warns against."
+\"(none)\" every five minutes is the noise `docs/cerebro-sweeps.md' warns against."
   (let ((lines (delq nil (mapcar #'cerebro--history-row-line rows))))
     (when lines
       (cons (propertize "History" 'face 'bold) lines))))
@@ -2655,7 +2655,7 @@ because `s' is then the only thing that starts it."
   "Minutes past which a claim's delivery, or an epic's last child close, is
 old enough to act on rather than mid-cleanup.
 
-Matches `agents/orchestrator.md's own claims and epics sweeps: an
+Matches `docs/cerebro-sweeps.md's own claims and epics sweeps: an
 implementer closes what it just finished within seconds, so anything
 fresher than this is an agent still tidying up, not one that is gone.
 
@@ -2684,7 +2684,7 @@ lease has not been expired long enough to call the claim dead.
 The last of those is not a detail: `assignee' not being in LIVE-NAMES means
 only that no roster session's pid is holding this claim - it is exactly as
 true of a claim the navigator is holding by hand as of one a crashed
-implementer left behind, and `agents/orchestrator.md's own rule for telling
+implementer left behind, and `docs/cerebro-sweeps.md's own rule for telling
 them apart is the lease, not the name. `lease_age_min' mirrors `bd reclaim
 --id <id> --older-than 10m's own window for that reason: a finding this
 function offers and the command it maps to must agree on what counts as
@@ -5552,7 +5552,7 @@ finish rather than joined by a second (`cerebro--run-async' says `busy')."
 (defvar cerebro-sweep-refresh-seconds 600
   "How often the Sweeps section re-runs the claims and epics sweep scripts.
 
-Ten minutes: Cerebro's own cadence for these sweeps (`agents/orchestrator.md'),
+Ten minutes: the cadence these sweeps were specified at (`docs/cerebro-sweeps.md'),
 and slower than the thirty-second bead timer on purpose - each sweep script
 fetches from origin and spawns a `bd' call per candidate, which is
 considerably more than the one `bd list' call `cerebro--request-beads' makes.")

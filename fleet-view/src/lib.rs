@@ -1,7 +1,7 @@
 //! The Rust data boundary for the standalone fleet view (cb-vyp.1).
 //!
-//! This crate reads files and runs `scripts/roster`, `ps`, `bd --readonly` and
-//! `scripts/fleet-supervisor`. Since cb-kcs.2.3 it also WRITES to two of the
+//! This crate reads files and runs `scripts/roster`, `ps`, `bd --readonly`,
+//! `gh` and `scripts/fleet-supervisor`. Since cb-kcs.2.3 it also WRITES to two of the
 //! fleet's contracts, and only through `lifecycle`: it creates and removes an
 //! agent's stop flag, and it deletes the state file of a session it is ending
 //! or replacing. It never writes a state file - `scripts/agent-state` is the
@@ -13,8 +13,12 @@
 //! Since cb-kcs.4.1 it also STARTS sessions on its own: it evaluates the
 //! board-backed triggers for the planner, implementer, verifier and
 //! orchestrator roles, honours the roster's own `autostart`/`standby`
-//! declaration, and disarms a name on `k` or on a retire. The retry backoff,
-//! the GitHub-backed roles and both JSONL logs remain cb-kcs.4.2, .3 and .4's.
+//! declaration, and disarms a name on `k` or on a retire. Since cb-kcs.4.3 it
+//! also starts the three roles whose work arrives from OUTSIDE the fleet -
+//! `user-feedback`, `reviewer` and `architect` - off a `gh` reader on its own
+//! ten-minute cadence, the beads linked to a GitHub issue, and an hourly floor
+//! per role. The retry backoff and both JSONL logs remain cb-kcs.4.2's
+//! and .4.4's.
 //!
 //! Since cb-kcs.1 it may hold ONE piece of state - the supervision lease
 //! (`supervisor`), a bound loopback listener that says which fleet view a

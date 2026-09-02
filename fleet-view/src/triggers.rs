@@ -9,7 +9,10 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::model::{AgentKind, RosterEntry, WorkBuckets};
+use crate::model::{AgentKind, GhSnapshot, LinkedBead, RosterEntry, WorkBuckets};
+
+#[cfg(test)]
+use crate::model::{GhAuthor, GhIssue, GhPull};
 
 /// `cerebro-wake-interval-default`: seconds a role is left alone between two STARTS of it, when
 /// nothing more specific is declared.
@@ -26,6 +29,143 @@ pub const PARKED_LABELS: [&str; 2] = ["human", "triage:declined"];
 
 /// The label that parks a bead in front of the verifier (`cerebro--stale-verdict-p`).
 pub const STALE_VERDICT_LABEL: &str = "verdict:stale";
+
+/// `cerebro-cadence-triggers` (`emacs/cerebro.el:1717`): seconds after which a role on standby is
+/// started again whatever else is true, or `None` for a role with no floor.
+///
+/// Moira and Cypher hourly, because what they watch moves outside this fleet and a floor covers
+/// what no timestamp this view reads can show - a RELEASED comment, which follows a git tag rather
+/// than an issue or a bead, and a `gh` reader that failed or has never answered. It is a floor and
+/// NOT the trigger: both of Moira's conditions answer within a tick. Forge hourly too: its
+/// watermark makes a sweep with nothing new in it nearly free, and an hourly floor keeps a day's
+/// debt from arriving in one lump.
+///
+/// The four roles cb-kcs.4.1 armed have no floor, deliberately: their conditions are true whenever
+/// there is work, so a floor would only start them with nothing to do.
+pub fn cadence(role: &str) -> Option<i64> {
+    match role {
+        "user-feedback" | "reviewer" | "architect" => Some(3600),
+        _ => None,
+    }
+}
+
+/// SECONDS as the figure a cadence reason names: `"60m"`, `"24h"`.
+///
+/// Minutes under a day and hours at or over one (`cerebro--cadence-figure`,
+/// `emacs/cerebro.el:1739`), which is what makes an hourly cadence read as "60m since its last
+/// pass" rather than "1h": the point of the line is how long the role has been down, and an hour
+/// of it is still counted in minutes by anyone reading the fleet.
+pub fn cadence_figure(seconds: i64) -> String {
+    if seconds < 86_400 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{}h", seconds / 3600)
+    }
+}
+
+/// What ROLE calls the thing it does once per cadence: `"sweep"` for `architect`, `"pass"` for
+/// everything else (`cerebro--cadence-noun`, `emacs/cerebro.el:1750`).
+pub fn cadence_noun(role: &str) -> &'static str {
+    if role == "architect" { "sweep" } else { "pass" }
+}
+
+/// LEFT seconds as the BEAD cell of a row counting down, verbatim from
+/// `docs/ui/cb-kcs.4.3-cadence-rows.html` section 1:
+///
+///     → 43m        under an hour
+///     → 21h04      an hour or more, as hours and zero-padded minutes
+///     → due        the moment has passed and the start has not happened yet
+///
+/// U+2192, **a space**, then the figure. That space is this view's own and is not
+/// `cerebro--countdown`'s (`emacs/cerebro.el:760`), which writes `→43m`: the navigator chose one
+/// spacing rule for the whole BEAD column, so this cell sits under `→ buffer<4` and reads as the
+/// same kind of thing. The two views deliberately differ here.
+///
+/// `→ due` rather than `→ 0m` for a deadline already past: between falling due and the next tick
+/// acting on it there is a real, visible moment, and counting downwards through zero would show a
+/// negative or a lie.
+pub fn countdown(left: i64) -> String {
+    if left <= 0 {
+        return "→ due".to_string();
+    }
+    let minutes = left / 60;
+    if minutes < 60 {
+        format!("→ {minutes}m")
+    } else {
+        format!("→ {}h{:02}", minutes / 60, minutes % 60)
+    }
+}
+
+/// What the `gh` reader has to say, as a trigger sees it.
+///
+/// Three answers and not two, because the row says something different for the middle one. It is
+/// built by `App::gh_answer` from `Pane<GhSnapshot>`, whose four content states map onto these
+/// exactly: `Loading` is `Unanswered`, `Fresh` is `Answered`, and BOTH `Stale` (a value, and a
+/// newer failure) and `Unavailable` (a failure and no value) are `Failed`. That mapping is the
+/// whole of `cerebro--gh-resolver`'s stamp comparison (`emacs/cerebro.el:5843-5862`) - "the last
+/// good answer stands until a newer one replaces it, and it is the ORDER of the two that says
+/// whether what the trigger has is current" - said by a type this crate already has.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GhAnswer {
+    Unanswered,
+    Failed,
+    Answered(GhSnapshot),
+}
+
+/// The open issues, and the open non-draft pull requests by an author other than `snapshot.me`,
+/// whose `updated_at` is after ENDED_AT. Numbers in the order `gh` listed them, so the reason
+/// `trigger` names is the first one `gh` would show the navigator.
+///
+/// The port of `cerebro--gh-moved` (`emacs/cerebro.el:2209`). Two `None`s, each excluding rather
+/// than including:
+///
+/// - **`ended_at` of `None`** - a role this view has no end for - counts nothing. There is no
+///   moment to compare against, and "I cannot tell what has changed" is a reason not to start a
+///   session rather than a reason to start one on everything. Read the other way round it started
+///   Moira every ten minutes for a day off one open issue (cb-b4m).
+/// - **`snapshot.me` of `None`** excludes every pull request. Authorship is the whole of what
+///   makes one Cypher's, and one that cannot be shown to be somebody else's must not start him on
+///   the navigator's own.
+///
+/// An item whose `updated_at` is `None` is left out: undateable is not moved.
+pub fn gh_moved(
+    snapshot: &GhSnapshot,
+    ended_at: Option<DateTime<Utc>>,
+) -> (Vec<u64>, Vec<u64>) {
+    let moved = |at: Option<DateTime<Utc>>| match (at, ended_at) {
+        (Some(at), Some(ended)) => at > ended,
+        _ => false,
+    };
+    let issues = snapshot
+        .issues
+        .iter()
+        .filter(|issue| moved(issue.updated_at))
+        .map(|issue| issue.number)
+        .collect();
+    let prs = snapshot
+        .prs
+        .iter()
+        .filter(|pr| {
+            let Some(me) = snapshot.me.as_deref() else { return false };
+            let author = pr.author.as_ref().and_then(|a| a.login.as_deref());
+            !pr.is_draft && author != Some(me) && moved(pr.updated_at)
+        })
+        .map(|pr| pr.number)
+        .collect();
+    (issues, prs)
+}
+
+/// The entries of LINKED whose `updated_at` is after ENDED_AT, in LINKED's order.
+///
+/// The port of `cerebro--linked-moved` (`emacs/cerebro.el:2266`). `None` ended_at is nothing
+/// moved, for the reason `gh_moved` gives.
+pub fn linked_moved<'a>(
+    linked: &'a [LinkedBead],
+    ended_at: Option<DateTime<Utc>>,
+) -> Vec<&'a LinkedBead> {
+    let Some(ended) = ended_at else { return Vec::new() };
+    linked.iter().filter(|entry| entry.updated_at > ended).collect()
+}
 
 /// `cerebro-wake-intervals`, keyed by ROLE.
 ///
@@ -55,7 +195,7 @@ pub fn default_spacing(role: &str) -> Option<u64> {
 /// Built from a `WorkBuckets` this view actually has. **There is no "the board has not answered"
 /// value**: Emacs sets `planned` to `most-positive-fixnum` so that no rule can fire, and refusing
 /// to build a `TriggerFacts` at all says the same thing without a sentinel.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TriggerFacts {
     /// Ids of unplanned, unparked beads at priority 0, in bucket order.
     pub p0_unplanned: Vec<String>,
@@ -78,6 +218,13 @@ pub struct TriggerFacts {
     /// read: a builder between beads has no session (cb-1or.1), so `standby`, `dead`, `idle` and
     /// `working` all count.
     pub implementers: usize,
+    /// What the `gh` reader has to say this tick, for the whole fleet. Per-role filtering happens
+    /// in `trigger`, because "what moved" is measured against the role's own last pass - which is
+    /// why `M-x cerebro` has to pass a closure here (`emacs/cerebro.el:5955`) and this does not.
+    pub gh: GhAnswer,
+    /// The linked beads as the work reader last saw them (`WorkBuckets::linked`). Filtered per
+    /// role by `linked_moved`, for the same reason.
+    pub linked: Vec<LinkedBead>,
 }
 
 fn parked(labels: &[String]) -> bool {
@@ -98,6 +245,7 @@ impl TriggerFacts {
         buckets: &WorkBuckets,
         roster: &[RosterEntry],
         flagged: impl Fn(&str) -> bool,
+        gh: GhAnswer,
     ) -> Self {
         let unplanned: Vec<_> = buckets
             .unplanned
@@ -143,6 +291,8 @@ impl TriggerFacts {
                 .iter()
                 .filter(|entry| entry.kind == AgentKind::Implementer && !flagged(&entry.name))
                 .count(),
+            gh,
+            linked: buckets.linked.clone(),
         }
     }
 
@@ -231,16 +381,34 @@ pub fn trigger(
             return None;
         }
     }
-    let reason = condition(facts, agent.role)?;
-    if unchanged(facts, &agent) {
-        return None;
+    if let Some(reason) = condition(facts, &agent) {
+        if !unchanged(facts, &agent) {
+            return Some(reason);
+        }
     }
-    Some(reason)
+    // The cadence floor is the `else` of the whole guarded expression above
+    // (`emacs/cerebro.el:2192-2195`), and its placement is load-bearing twice over. It is
+    // OUTSIDE `unchanged`: a clock is not evidence about the fleet, and holding it because
+    // nothing on the board changed would disable the floor entirely. It is INSIDE the wake
+    // interval, copied rather than reasoned about, because a role a consumer gives a longer wake
+    // interval than its cadence must obey the longer one. And it needs an `ended_at`: a role this
+    // view has no end for never starts on its floor, which `StartLedger::note_armed` makes a
+    // corner rather than the normal case.
+    if let (Some(cadence), Some(ended)) = (cadence(agent.role), agent.ended_at) {
+        if (now - ended).num_seconds() >= cadence {
+            return Some(format!(
+                "{} since its last {}",
+                cadence_figure(cadence),
+                cadence_noun(agent.role)
+            ));
+        }
+    }
+    None
 }
 
 /// The role's own condition, first arm true winning.
-fn condition(facts: &TriggerFacts, role: &str) -> Option<String> {
-    match role {
+fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
+    match agent.role {
         "planner" => {
             if let Some(first) = facts.p0_unplanned.first() {
                 return Some(format!("P0 {first} unplanned"));
@@ -268,8 +436,27 @@ fn condition(facts: &TriggerFacts, role: &str) -> Option<String> {
             .then(|| format!("{} planned, unclaimed", facts.planned_ids.len())),
         "orchestrator" => (!facts.unranked_ids.is_empty())
             .then(|| format!("{} unranked", facts.unranked_ids.len())),
-        // `user-feedback`, `reviewer` and `architect` fall here on purpose: they get their rules
-        // in cb-kcs.4.3 and are not armed at all until then.
+        // First true wins, and the order is who is waiting: an issue is a person, a linked bead
+        // is the fleet's own bookkeeping.
+        "user-feedback" => {
+            if let GhAnswer::Answered(snapshot) = &facts.gh {
+                if let Some(number) = gh_moved(snapshot, agent.ended_at).0.first() {
+                    return Some(format!("issue #{number} moved"));
+                }
+            }
+            linked_moved(&facts.linked, agent.ended_at)
+                .first()
+                .map(|entry| format!("bead {} moved (issue #{})", entry.id, entry.issue))
+        }
+        "reviewer" => {
+            let GhAnswer::Answered(snapshot) = &facts.gh else { return None };
+            gh_moved(snapshot, agent.ended_at)
+                .1
+                .first()
+                .map(|number| format!("PR #{number} moved"))
+        }
+        // `architect` has no condition at all: the cadence floor in `trigger` is its whole
+        // trigger.
         _ => None,
     }
 }
@@ -304,13 +491,41 @@ pub fn start_notice(name: &str, reason: &str) -> String {
 /// The arrow is U+2192, and there is no space around the `<` - that is what makes `→ buffer<4`
 /// exactly ten cells, which is `BEAD_FLOOR`. A ten-implementer fleet wants eleven and the column
 /// takes them: the number is the part that changes.
-pub fn standby_label(role: &str, facts: &TriggerFacts) -> Option<String> {
+///
+///     user-feedback | reviewer | architect
+///         -> `countdown(ended_at + cadence - now)`, or `→ hourly` when there is no `ended_at`
+///            to count from, plus ` gh?` for the two GitHub-backed roles when `facts.gh` is
+///            `GhAnswer::Failed`.
+///
+/// `→ hourly` is the fallback rather than an empty cell - `M-x cerebro` draws nothing there
+/// (`cerebro--countdown`'s nil arm), and the navigator rejected that: a standby row with a blank
+/// cell says nothing at all about why it is asleep. It names the floor instead of counting it.
+///
+/// ` gh?` in the cell's own blue, not red: nothing is broken - both roles still run hourly - so it
+/// is part of what the row is waiting for rather than a fault, and red is already this view's
+/// colour for a refused launch's verdict. It is absent for `GhAnswer::Unanswered`: a reader that
+/// has not answered YET is not a reader that failed. `architect` never carries it - its trigger
+/// reads no `gh` at all.
+pub fn standby_label(
+    role: &str,
+    facts: &TriggerFacts,
+    agent: AgentFacts<'_>,
+    now: DateTime<Utc>,
+) -> Option<String> {
     match role {
         "planner" => Some(format!("→ buffer<{}", facts.planner_want())),
         "implementer" => Some("→ planned".to_string()),
         "verifier" => Some("→ merged".to_string()),
         "orchestrator" => Some("→ unranked".to_string()),
-        _ => None,
+        _ => {
+            let cadence = cadence(role)?;
+            let cell = match agent.ended_at {
+                Some(ended) => countdown(cadence - (now - ended).num_seconds()),
+                None => "→ hourly".to_string(),
+            };
+            let blind = role != "architect" && facts.gh == GhAnswer::Failed;
+            Some(if blind { format!("{cell} gh?") } else { cell })
+        }
     }
 }
 
@@ -453,6 +668,7 @@ mod tests {
             updated_at: None,
             assignee: None,
             metadata: serde_json::Value::Null,
+            external_ref: None,
         }
     }
 
@@ -494,7 +710,7 @@ mod tests {
             ("Storm", "implementer"),
         ]);
         // Storm has been told to finish: it takes no further bead, so it is not counted.
-        let facts = TriggerFacts::derive(&buckets, &roster, |name| name == "Storm");
+        let facts = TriggerFacts::derive(&buckets, &roster, |name| name == "Storm", GhAnswer::Unanswered);
 
         assert_eq!(facts.p0_unplanned, vec!["cb-9zz".to_string()]);
         assert_eq!(facts.planned, 2);
@@ -534,6 +750,8 @@ mod tests {
             merged_unverified: 0,
             stale_verdicts: 0,
             implementers: 4,
+            gh: GhAnswer::Unanswered,
+            linked: Vec::new(),
         }
     }
 
@@ -686,17 +904,17 @@ mod tests {
     #[test]
     fn the_standby_label_is_a_closed_vocabulary() {
         let facts = empty_facts();
-        assert_eq!(standby_label("planner", &facts).as_deref(), Some("→ buffer<4"));
-        assert_eq!(standby_label("implementer", &facts).as_deref(), Some("→ planned"));
-        assert_eq!(standby_label("verifier", &facts).as_deref(), Some("→ merged"));
-        assert_eq!(standby_label("orchestrator", &facts).as_deref(), Some("→ unranked"));
-        for role in ["user-feedback", "reviewer", "architect"] {
-            assert_eq!(standby_label(role, &facts), None, "{role}");
-        }
+        assert_eq!(standby_label("planner", &facts, agent("planner"), at(0)).as_deref(), Some("→ buffer<4"));
+        assert_eq!(standby_label("implementer", &facts, agent("implementer"), at(0)).as_deref(), Some("→ planned"));
+        assert_eq!(standby_label("verifier", &facts, agent("verifier"), at(0)).as_deref(), Some("→ merged"));
+        assert_eq!(standby_label("orchestrator", &facts, agent("orchestrator"), at(0)).as_deref(), Some("→ unranked"));
+        // A role this view has no rule for - a consumer's own word - has no cell at all, and
+        // that arm is now the catch-all every role in existence falls through (review finding 4).
+        assert_eq!(standby_label("stargazer", &facts, agent("stargazer"), at(0)), None);
         // Exactly `BEAD_FLOOR` cells at a four-implementer fleet.
         assert_eq!(
             unicode_width::UnicodeWidthStr::width(
-                standby_label("planner", &facts).unwrap().as_str()
+                standby_label("planner", &facts, agent("planner"), at(0)).unwrap().as_str()
             ),
             10
         );
@@ -779,5 +997,272 @@ mod tests {
         assert_eq!(ledger.started_at("Rogue"), Some(at(10)));
         assert_eq!(ledger.fingerprint("Rogue"), fingerprint("implementer", &facts).as_ref());
         assert_eq!(ledger.started_at_map().get("Rogue"), Some(&at(10)));
+    }
+
+    // --- cb-kcs.4.3: the outside roles ---------------------------------------------------------
+
+    fn at_iso(iso: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(iso).unwrap().with_timezone(&Utc)
+    }
+
+    fn issue(number: u64, updated: Option<&str>) -> GhIssue {
+        GhIssue { number, updated_at: updated.map(at_iso) }
+    }
+
+    fn pull(number: u64, updated: Option<&str>, draft: bool, login: Option<&str>) -> GhPull {
+        GhPull {
+            number,
+            updated_at: updated.map(at_iso),
+            is_draft: draft,
+            author: Some(GhAuthor { login: login.map(str::to_string) }),
+        }
+    }
+
+    fn snapshot() -> GhSnapshot {
+        GhSnapshot {
+            issues: vec![
+                issue(212, Some("2026-09-01T11:00:00Z")),
+                issue(213, Some("2026-09-01T09:00:00Z")),
+                issue(214, None),
+            ],
+            prs: vec![
+                pull(244, Some("2026-09-01T11:00:00Z"), false, Some("someone")),
+                pull(245, Some("2026-09-01T11:00:00Z"), true, Some("someone")),
+                pull(246, Some("2026-09-01T11:00:00Z"), false, Some("navigator")),
+                pull(247, Some("2026-09-01T09:00:00Z"), false, Some("someone")),
+            ],
+            me: Some("navigator".into()),
+        }
+    }
+
+    #[test]
+    fn what_moved_is_measured_against_this_roles_own_pass() {
+        let snap = snapshot();
+        let ended = Some(at_iso("2026-09-01T10:00:00Z"));
+        assert_eq!(gh_moved(&snap, ended), (vec![212], vec![244]));
+        assert_eq!(
+            gh_moved(&snap, None),
+            (Vec::new(), Vec::new()),
+            "no end to measure against is nothing moved, in both lists (cb-b4m)"
+        );
+        let anonymous = GhSnapshot { me: None, ..snapshot() };
+        assert_eq!(
+            gh_moved(&anonymous, ended),
+            (vec![212], Vec::new()),
+            "an unknown login excludes every pull request and no issue"
+        );
+    }
+
+    #[test]
+    fn a_linked_bead_that_moved_is_moira_s_too() {
+        let linked = vec![
+            LinkedBead { id: "cb-3qh".into(), issue: 58, updated_at: at_iso("2026-09-01T11:00:00Z") },
+            LinkedBead { id: "cb-old".into(), issue: 59, updated_at: at_iso("2026-09-01T09:00:00Z") },
+        ];
+        let moved = linked_moved(&linked, Some(at_iso("2026-09-01T10:00:00Z")));
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].id, "cb-3qh");
+        assert!(linked_moved(&linked, None).is_empty());
+    }
+
+    #[test]
+    fn the_cadence_figure_counts_in_minutes_under_a_day() {
+        assert_eq!(cadence_figure(3600), "60m");
+        assert_eq!(cadence_figure(86399), "1439m");
+        assert_eq!(cadence_figure(86400), "24h");
+        assert_eq!(cadence("user-feedback"), Some(3600));
+        assert_eq!(cadence("reviewer"), Some(3600));
+        assert_eq!(cadence("architect"), Some(3600));
+        assert_eq!(cadence("planner"), None);
+        assert_eq!(cadence_noun("architect"), "sweep");
+        assert_eq!(cadence_noun("user-feedback"), "pass");
+    }
+
+    #[test]
+    fn the_countdown_is_spaced_like_the_conditions() {
+        assert_eq!(countdown(2580), "→ 43m");
+        assert_eq!(countdown(75840), "→ 21h04");
+        assert_eq!(countdown(0), "→ due");
+        assert_eq!(countdown(-5), "→ due");
+    }
+
+    fn cadence_facts(gh: GhAnswer) -> TriggerFacts {
+        let mut facts = TriggerFacts::derive(&WorkBuckets::default(), &[], |_| false, gh);
+        facts.linked = Vec::new();
+        facts
+    }
+
+    #[test]
+    fn a_cadence_row_counts_down_and_says_when_gh_is_down() {
+        let now = at_iso("2026-09-01T12:00:00Z");
+        let ended = at_iso("2026-09-01T11:43:00Z"); // 17 minutes ago: 43 to the hourly floor
+        for role in ["user-feedback", "reviewer", "architect"] {
+            let gh_role = role != "architect";
+            for (answer, suffix) in [
+                (GhAnswer::Answered(snapshot()), ""),
+                (GhAnswer::Unanswered, ""),
+                (GhAnswer::Failed, if gh_role { " gh?" } else { "" }),
+            ] {
+                let facts = cadence_facts(answer);
+                let agent = AgentFacts {
+                    role,
+                    ended_at: Some(ended),
+                    started_at: None,
+                    last_fingerprint: None,
+                };
+                assert_eq!(
+                    standby_label(role, &facts, agent, now).as_deref(),
+                    Some(format!("→ 43m{suffix}").as_str()),
+                    "{role} with an end counts down"
+                );
+                let unknown = AgentFacts { ended_at: None, ..agent };
+                assert_eq!(
+                    standby_label(role, &facts, unknown, now).as_deref(),
+                    Some(format!("→ hourly{suffix}").as_str()),
+                    "{role} with no end names its floor"
+                );
+            }
+        }
+    }
+
+    fn outside_facts(gh: GhAnswer, linked: Vec<LinkedBead>) -> TriggerFacts {
+        let mut facts = cadence_facts(gh);
+        facts.linked = linked;
+        facts
+    }
+
+    #[test]
+    fn the_widest_cadence_cell_is_wider_than_the_bead_floor() {
+        // The plan's one thing to check rather than assume: the widest cadence cell is wider
+        // than a `BEAD_FLOOR` of ten, and it is the COLUMN that grows (review finding 5). The
+        // plan and the review both said thirteen cells; it is twelve - `→`, a space, six, a
+        // space, three - which is why this is a measurement rather than a sentence.
+        let facts = cadence_facts(GhAnswer::Failed);
+        let agent = AgentFacts {
+            role: "user-feedback",
+            ended_at: None,
+            started_at: None,
+            last_fingerprint: None,
+        };
+        let cell = standby_label("user-feedback", &facts, agent, at_iso("2026-09-01T12:00:00Z"))
+            .expect("a cadence role always has a cell");
+        assert_eq!(cell, "→ hourly gh?");
+        assert_eq!(unicode_width::UnicodeWidthStr::width(cell.as_str()), 12);
+    }
+
+    #[test]
+    fn the_outside_roles_answer_their_own_condition() {
+        let now = at_iso("2026-09-01T12:00:00Z");
+        let ended = at_iso("2026-09-01T10:30:00Z");
+        let linked = vec![LinkedBead {
+            id: "cb-3qh".into(),
+            issue: 58,
+            updated_at: at_iso("2026-09-01T11:45:00Z"),
+        }];
+        let row = |role| AgentFacts {
+            role,
+            ended_at: Some(ended),
+            started_at: None,
+            last_fingerprint: None,
+        };
+
+        let facts = outside_facts(GhAnswer::Answered(snapshot()), linked.clone());
+        assert_eq!(
+            trigger(&facts, row("user-feedback"), now).as_deref(),
+            Some("issue #212 moved"),
+            "an issue is a person waiting, and comes first"
+        );
+        assert_eq!(
+            trigger(&facts, row("reviewer"), now).as_deref(),
+            Some("PR #244 moved")
+        );
+        let fresh_forge = AgentFacts {
+            role: "architect",
+            ended_at: Some(at_iso("2026-09-01T11:30:00Z")),
+            started_at: None,
+            last_fingerprint: None,
+        };
+        assert_eq!(
+            trigger(&facts, fresh_forge, now),
+            None,
+            "Forge has no condition: an issue and a pull request are nothing to it"
+        );
+
+        // gh down, so only the linked ledger is left of Moira's trigger.
+        let blind = outside_facts(GhAnswer::Failed, linked);
+        assert_eq!(
+            trigger(&blind, row("user-feedback"), now).as_deref(),
+            Some("bead cb-3qh moved (issue #58)")
+        );
+        let fresh_cypher = AgentFacts {
+            role: "reviewer",
+            ended_at: Some(at_iso("2026-09-01T11:30:00Z")),
+            started_at: None,
+            last_fingerprint: None,
+        };
+        assert_eq!(
+            trigger(&blind, fresh_cypher, now),
+            None,
+            "a gh that failed leaves Cypher nothing but his floor"
+        );
+
+        // Nothing moved at all, and the floor not yet due: no start.
+        let quiet = outside_facts(GhAnswer::Failed, Vec::new());
+        let recent = AgentFacts {
+            role: "user-feedback",
+            ended_at: Some(at_iso("2026-09-01T11:30:00Z")),
+            started_at: None,
+            last_fingerprint: None,
+        };
+        assert_eq!(trigger(&quiet, recent, now), None);
+        let due = |role| AgentFacts {
+            role,
+            ended_at: Some(at_iso("2026-09-01T11:00:00Z")),
+            started_at: None,
+            last_fingerprint: None,
+        };
+        assert_eq!(
+            trigger(&quiet, due("architect"), now).as_deref(),
+            Some("60m since its last sweep")
+        );
+        assert_eq!(
+            trigger(&quiet, due("user-feedback"), now).as_deref(),
+            Some("60m since its last pass")
+        );
+        assert_eq!(
+            trigger(&quiet, due("reviewer"), now).as_deref(),
+            Some("60m since its last pass")
+        );
+    }
+
+    #[test]
+    fn the_cadence_floor_is_not_held_by_the_unchanged_work_guard() {
+        let now = at_iso("2026-09-01T12:00:00Z");
+        let facts = outside_facts(GhAnswer::Failed, Vec::new());
+        assert_eq!(fingerprint("architect", &facts), None, "and stays None");
+        let agent = AgentFacts {
+            role: "architect",
+            ended_at: Some(at_iso("2026-09-01T11:00:00Z")),
+            started_at: Some(at_iso("2026-09-01T10:00:00Z")),
+            last_fingerprint: None,
+        };
+        assert_eq!(
+            trigger(&facts, agent, now).as_deref(),
+            Some("60m since its last sweep"),
+            "a clock is not evidence about the fleet, so nothing holds it"
+        );
+    }
+
+    #[test]
+    fn the_cadence_floor_still_obeys_the_wake_interval() {
+        let now = at_iso("2026-09-01T12:00:00Z");
+        let facts = outside_facts(GhAnswer::Failed, Vec::new());
+        let agent = AgentFacts {
+            role: "architect",
+            ended_at: Some(at_iso("2026-09-01T11:00:00Z")),
+            started_at: Some(at_iso("2026-09-01T11:59:50Z")),
+            last_fingerprint: None,
+        };
+        assert_eq!(trigger(&facts, agent, now), None, "started ten seconds ago");
     }
 }

@@ -33,7 +33,9 @@ use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use cerebro_tui::app::{self, App, AppAction, FleetWorker, SupervisorWorker, WorkWorker};
+use cerebro_tui::app::{
+    self, App, AppAction, FleetWorker, GhWorker, SupervisorWorker, WorkWorker,
+};
 use cerebro_tui::lifecycle;
 use cerebro_tui::model::{AgentKind, RosterEntry, RowState};
 use cerebro_tui::readers::{self, Programs, ReadError, ReaderPaths};
@@ -290,6 +292,9 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // for the other, which is the one thing two independently refreshed panes must not do.
     let fleet_worker = FleetWorker::spawn(paths.clone(), Programs::default());
     let work_worker = WorkWorker::spawn(paths.clone(), Programs::default());
+    // A fourth thread for `gh`, on its own ten-minute cadence: three network calls behind a
+    // rate limit would otherwise freeze the screen, keys and all (cb-kcs.4.3).
+    let gh_worker = GhWorker::spawn(paths.clone(), Programs::default());
     let supervisor_worker = SupervisorWorker::spawn(paths.clone());
     // Ownership before the first frame: the one blocking read this binary allows itself, and the
     // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
@@ -330,6 +335,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &mut app,
         &fleet_worker,
         &work_worker,
+        &gh_worker,
         &supervisor_worker,
         &mut controller,
         &mut host,
@@ -481,7 +487,12 @@ fn start_due(
     // No board, no starts. This is `most-positive-fixnum`'s whole job in elisp, said without a
     // sentinel: a `Stale` work pane still carries its last good buckets and is used.
     let Some(buckets) = app.work.content.value() else { return };
-    let facts = TriggerFacts::derive(buckets, roster, |name| lifecycle::stop_flag_set(paths, name));
+    let facts = TriggerFacts::derive(
+        buckets,
+        roster,
+        |name| lifecycle::stop_flag_set(paths, name),
+        app.gh_answer(),
+    );
 
     let standby: Vec<(String, String)> = app
         .fleet_rows()
@@ -489,11 +500,20 @@ fn start_due(
         .filter(|row| row.state == RowState::Standby)
         .map(|row| (row.name.clone(), row.role.clone()))
         .collect();
+    // The cadence roles' cell counts down to a moment, so the label needs the row's own
+    // `ended_at` and the clock as well as the fleet's facts (cb-kcs.4.3).
     app.set_standby_labels(
         standby
             .iter()
             .filter_map(|(name, role)| {
-                triggers::standby_label(role, &facts).map(|label| (name.clone(), label))
+                let agent = triggers::AgentFacts {
+                    role,
+                    ended_at: ledger.ended_at(name),
+                    started_at: ledger.started_at(name),
+                    last_fingerprint: ledger.fingerprint(name),
+                };
+                triggers::standby_label(role, &facts, agent, now)
+                    .map(|label| (name.clone(), label))
             })
             .collect(),
     );
@@ -645,6 +665,7 @@ fn run<B: Backend, E: Events>(
     app: &mut App,
     fleet_worker: &FleetWorker,
     work_worker: &WorkWorker,
+    gh_worker: &GhWorker,
     supervisor_worker: &SupervisorWorker,
     controller: &mut SupervisorController,
     host: &mut SessionHost,
@@ -727,6 +748,11 @@ where
         if let Some(result) = work_worker.poll() {
             app.finish_work_refresh(result, clock());
         }
+        // The `gh` answer draws nothing; it is polled for the same reason it is read at all, so
+        // that the two cadence triggers see a current one.
+        if let Some(result) = gh_worker.poll() {
+            app.finish_gh_refresh(result, clock());
+        }
         // Ownership is a third state, polled like the other two and failing apart from them: a
         // declaration that cannot be read says nothing about the fleet or the board.
         if let Some(answer) = supervisor_worker.poll() {
@@ -740,7 +766,7 @@ where
             controller.requested(Instant::now());
         }
 
-        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, &clock);
+        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, gh_worker, &clock);
 
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
@@ -756,7 +782,7 @@ where
                     if action == AppAction::RefreshBoth && supervisor_worker.request() {
                         controller.requested(Instant::now());
                     }
-                    dispatch(action, app, fleet_worker, work_worker, &clock);
+                    dispatch(action, app, fleet_worker, work_worker, gh_worker, &clock);
                 }
                 // Forwarded as a PASTE (Q3), so an agent composer that treats a bare newline as
                 // submit receives four pasted lines as one block rather than submitting the
@@ -942,6 +968,7 @@ fn dispatch(
     app: &mut App,
     fleet_worker: &FleetWorker,
     work_worker: &WorkWorker,
+    gh_worker: &GhWorker,
     clock: &impl Fn() -> DateTime<Utc>,
 ) {
     let now = Instant::now();
@@ -956,6 +983,16 @@ fn dispatch(
         && !work_worker.request()
     {
         app.finish_work_refresh(Err(worker_gone("work reader")), clock());
+    }
+    // `g` re-asks `gh` as well as the two panes, so a navigator who fixes their network sees the
+    // `gh?` suffix clear at once instead of waiting out the ten-minute clock. `begin_gh_refresh`
+    // is what stops a held-down `g` from asking more than once: a request in flight is not
+    // stacked, exactly as the two panes behave.
+    if (matches!(action, AppAction::RefreshBoth) || app.gh_due(now))
+        && app.begin_gh_refresh(now)
+        && !gh_worker.request()
+    {
+        app.finish_gh_refresh(Err(worker_gone("gh reader")), clock());
     }
 }
 
@@ -1380,6 +1417,7 @@ mod main_tests {
         // `Err` is the ordinary ending: the quit is refused, so nothing ends the loop but the
         // event source running out.
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+                &gh_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
 
         assert!(!app.quit, "the session this case hosts is what refuses the quit");
@@ -1401,6 +1439,7 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![ctrl(KeyCode::Char('c'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+                &gh_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
@@ -1438,6 +1477,7 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![key(KeyCode::Down), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+                &gh_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
@@ -1457,6 +1497,7 @@ mod main_tests {
             key(KeyCode::Char('q')),
         ]);
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+                &gh_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
         let text = echoed(&mut host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
@@ -1468,6 +1509,7 @@ mod main_tests {
         let mut events =
             ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+                &gh_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
@@ -1483,6 +1525,7 @@ mod main_tests {
             ReplayedEvents::stopping(vec![key(KeyCode::BackTab), key(KeyCode::Char('q'))]);
         let (worker_handle, mut controller) = supervision();
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+                &gh_worker(),
             &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
         assert_eq!(
             controller.hosted_sessions, 1,
@@ -1502,6 +1545,10 @@ mod main_tests {
             Programs {
                 bd: "/nonexistent/bd".into(),
                 ps: "/nonexistent/ps".into(),
+                // `gh` too, and not by accident: `dispatch`'s clause fires on the first loop
+                // iteration of every case here, so a default `gh` would keep these tests off the
+                // network only by the accident of an unspawnable cwd (review finding 1).
+                gh: "/nonexistent/gh".into(),
             },
         )
     }
@@ -1514,6 +1561,11 @@ mod main_tests {
     fn work_worker() -> WorkWorker {
         let (paths, programs) = nowhere();
         WorkWorker::spawn(paths, programs)
+    }
+
+    fn gh_worker() -> GhWorker {
+        let (paths, programs) = nowhere();
+        GhWorker::spawn(paths, programs)
     }
 
     /// The two ownership parameters, pointed at a directory with no `fleet-supervisor` in it.
@@ -1650,6 +1702,7 @@ mod main_tests {
                 &mut app,
                 &worker(),
                 &work_worker(),
+                &gh_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -1680,6 +1733,7 @@ mod main_tests {
                 &mut app,
                 &worker(),
                 &work_worker(),
+                &gh_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -1711,6 +1765,7 @@ mod main_tests {
                 &mut app,
                 &worker(),
                 &work_worker(),
+                &gh_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -1753,6 +1808,7 @@ mod main_tests {
                 &mut app,
                 &worker(),
                 &work_worker(),
+                &gh_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -1791,7 +1847,7 @@ mod main_tests {
                 shared_root: dir.path().to_path_buf(),
                 scripts_dir: dir.path().to_path_buf(),
             },
-            Programs { bd: slow_bd, ps: "/nonexistent/ps".into() },
+            Programs { bd: slow_bd, ps: "/nonexistent/ps".into(), ..Programs::default() },
         );
 
         let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
@@ -1802,7 +1858,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work,
+        run(&mut terminal, &mut events, &mut app, &worker(), &work, &gh_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
@@ -1867,6 +1923,7 @@ mod main_tests {
                         updated_at: None,
                         assignee: None,
                         metadata: serde_json::Value::Null,
+                        external_ref: None,
                     })
                     .collect(),
                 ..WorkBuckets::default()
@@ -1888,6 +1945,7 @@ mod main_tests {
         assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+                &gh_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
@@ -1939,6 +1997,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+                &gh_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
@@ -1976,6 +2035,7 @@ mod main_tests {
         let expected = m.session.content_lines.saturating_sub(m.session.viewport_lines);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+                &gh_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
@@ -2146,6 +2206,7 @@ mod main_tests {
         // `Err` is the ordinary ending here: the source stops the loop when the keys are spent.
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(),
+                &gh_worker(),
             &supervision().0, &mut supervision().1, host, &mut ledger, paths,
             &std::collections::BTreeMap::new(), Utc::now);
     }
@@ -2709,6 +2770,7 @@ mod main_tests {
             updated_at: None,
             assignee: None,
             metadata: serde_json::Value::Null,
+            external_ref: None,
         }])
     }
 
@@ -3093,5 +3155,135 @@ mod main_tests {
         let mut perms = std::fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).unwrap();
+    }
+
+    // --- cb-kcs.4.3: the roles whose work arrives from outside the fleet -----------------------
+
+    fn outside_row(name: &str, role: &str) -> cerebro_tui::model::FleetRow {
+        cerebro_tui::model::FleetRow {
+            role: role.into(),
+            ..fleet_row(name, cerebro_tui::model::AgentKind::Interactive, cerebro_tui::model::RowState::Dead)
+        }
+    }
+
+    fn outside_roster(name: &str, role: &str) -> Vec<cerebro_tui::model::RosterEntry> {
+        vec![cerebro_tui::model::RosterEntry {
+            name: name.to_string(),
+            role: role.to_string(),
+            kind: cerebro_tui::model::AgentKind::Interactive,
+        }]
+    }
+
+    #[test]
+    fn a_standby_moira_whose_issue_moved_is_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![outside_row("Moira", "user-feedback")],
+            Some(cerebro_tui::model::WorkBuckets::default()),
+            now,
+        );
+        // Her pass ended half an hour ago, and the issue moved a minute later.
+        ledger.note_ended("Moira", now - chrono::Duration::minutes(30));
+        app.finish_gh_refresh(
+            Ok(cerebro_tui::model::GhSnapshot {
+                issues: vec![cerebro_tui::model::GhIssue {
+                    number: 212,
+                    updated_at: Some(now - chrono::Duration::minutes(29)),
+                }],
+                prs: Vec::new(),
+                me: Some("navigator".into()),
+            }),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(),
+                  &outside_roster("Moira", "user-feedback"), now);
+
+        assert!(host.is_live("Moira"), "the standby row was started");
+        assert_eq!(app.notice.as_deref(), Some("Started Moira — issue #212 moved."));
+        host.kill(&paths, "Moira");
+        settle_gone(&mut host, "Moira");
+    }
+
+    #[test]
+    fn forge_starts_on_its_floor_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![outside_row("Forge", "architect")],
+            Some(cerebro_tui::model::WorkBuckets::default()),
+            now,
+        );
+        // No `gh` answer at all, and nothing on the board: the clock is its whole trigger.
+        ledger.note_ended("Forge", now - chrono::Duration::minutes(60));
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(),
+                  &outside_roster("Forge", "architect"), now);
+
+        assert!(host.is_live("Forge"));
+        assert_eq!(app.notice.as_deref(), Some("Started Forge — 60m since its last sweep."));
+        host.kill(&paths, "Forge");
+        settle_gone(&mut host, "Forge");
+    }
+
+    #[test]
+    fn a_cadence_row_that_is_not_due_counts_down_and_says_gh_is_down() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![outside_row("Moira", "user-feedback"), outside_row("Forge", "architect")],
+            Some(cerebro_tui::model::WorkBuckets::default()),
+            now,
+        );
+        ledger.note_ended("Moira", now - chrono::Duration::minutes(17));
+        ledger.note_ended("Forge", now - chrono::Duration::minutes(17));
+        app.finish_gh_refresh(Err(worker_gone("gh reader")), now);
+
+        let mut roster = outside_roster("Moira", "user-feedback");
+        roster.extend(outside_roster("Forge", "architect"));
+        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(),
+                  &roster, now);
+
+        assert!(!host.is_live("Moira"), "nothing moved and the floor is not due");
+        assert_eq!(app.standby_labels.get("Moira").map(String::as_str), Some("→ 43m gh?"));
+        assert_eq!(
+            app.standby_labels.get("Forge").map(String::as_str),
+            Some("→ 43m"),
+            "Forge reads no gh, so it never carries the suffix"
+        );
+    }
+
+    #[test]
+    fn g_re_asks_gh_and_a_held_key_asks_once() {
+        let mut app = App::default();
+        let clock = Utc::now;
+        let (fleet, work, gh) = (worker(), work_worker(), gh_worker());
+
+        dispatch(AppAction::RefreshBoth, &mut app, &fleet, &work, &gh, &clock);
+        // The slot is claimed, so the second press is not stacked: whatever the reader answers,
+        // only one request is in flight.
+        assert!(!app.begin_gh_refresh(Instant::now()), "a request is already in flight");
+        dispatch(AppAction::RefreshBoth, &mut app, &fleet, &work, &gh, &clock);
+
+        // A fleet-only refresh does not ask `gh` while its own ten-minute clock is unspent.
+        app.finish_gh_refresh(Ok(cerebro_tui::model::GhSnapshot::default()), clock());
+        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &gh, &clock);
+        assert!(
+            app.begin_gh_refresh(Instant::now()),
+            "the slot is free, so RefreshFleet asked nothing of gh"
+        );
     }
 }

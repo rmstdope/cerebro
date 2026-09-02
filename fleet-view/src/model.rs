@@ -519,6 +519,12 @@ pub struct Bead {
     pub assignee: Option<String>,
     #[serde(default)]
     pub metadata: serde_json::Value,
+    /// `gh-<n>` for a bead filed from a GitHub issue, absent otherwise. `bd list --brief --json`
+    /// OMITS the key rather than printing a null, so it defaults — without that, the whole work
+    /// read fails on the first unlinked bead, which is every board
+    /// (`emacs/cerebro.el:2253-2256`).
+    #[serde(default)]
+    pub external_ref: Option<String>,
 }
 
 impl Bead {
@@ -536,6 +542,113 @@ impl Bead {
     }
 }
 
+// --- GitHub, and the beads linked to it -------------------------------------------------------
+
+/// A `serde` deserializer for an instant that may be absent, null or unreadable, all of which
+/// are `None`.
+///
+/// Lenient on purpose: one undateable item must leave the other ninety-nine usable, which is what
+/// `cerebro--gh-instant` (`emacs/cerebro.el:2197`) achieves by returning nil per item. A plain
+/// `Option<DateTime<Utc>>` would fail the WHOLE parse on one bad string, which reads as a `gh`
+/// that is down.
+fn lenient_instant<'de, D>(d: D) -> Result<Option<DateTime<Utc>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Through `Value`, not through `Option<String>`: a failed `deserialize_string` has only
+    // PEEKED the offending token, so swallowing its error leaves the parser sitting on a `{` and
+    // the enclosing array fails - which is the whole-read failure this function exists to
+    // prevent. A `Value` consumes whatever is there, and anything that is not a readable instant
+    // is `None`.
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(value.as_str().and_then(|raw| {
+        DateTime::parse_from_rfc3339(raw)
+            .ok()
+            .map(|t| t.with_timezone(&Utc))
+    }))
+}
+
+/// One open GitHub issue, as `gh issue list --json number,updatedAt` prints it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct GhIssue {
+    pub number: u64,
+    #[serde(rename = "updatedAt", default, deserialize_with = "lenient_instant")]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// One open GitHub pull request, as `gh pr list --json number,author,isDraft,updatedAt` prints it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct GhPull {
+    pub number: u64,
+    #[serde(rename = "updatedAt", default, deserialize_with = "lenient_instant")]
+    pub updated_at: Option<DateTime<Utc>>,
+    /// `gh` prints `isDraft`. A draft is nobody's to review yet.
+    #[serde(rename = "isDraft", default)]
+    pub is_draft: bool,
+    /// `{"login": "..."}`, and `None` for a deleted account - `gh` prints the key with a null or
+    /// an empty login there. Authorship is the whole of what makes a pull request Cypher's, so an
+    /// author this crate cannot name is one it must not act on.
+    #[serde(default)]
+    pub author: Option<GhAuthor>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct GhAuthor {
+    #[serde(default)]
+    pub login: Option<String>,
+}
+
+/// One whole answer from `gh`: what is open, and who the navigator is.
+///
+/// The three `gh` calls are one snapshot rather than three, because every rule that reads it reads
+/// at least two of them: `me` is what makes a pull request somebody else's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GhSnapshot {
+    pub issues: Vec<GhIssue>,
+    pub prs: Vec<GhPull>,
+    /// The navigator's own login, or `None` while `gh api user` has never answered. `None`
+    /// excludes every pull request (see `triggers::gh_moved`), which is the safe direction.
+    pub me: Option<String>,
+}
+
+/// A bead filed from a GitHub issue, with the moment the bead itself last moved.
+///
+/// The port of `cerebro--linked-beads` (`emacs/cerebro.el:2240`). What Moira is started for
+/// besides an issue that moved: her other job is keeping each linked issue's status comments in
+/// step with its bead - CREATED, PLANNED, CLAIMED, MERGED, VERIFIED - and every one of those
+/// happens on the board, so the issue's own `updatedAt` does not move for it. Without this the
+/// hourly floor was the only thing covering them, an hour late (cb-b4m).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkedBead {
+    pub id: String,
+    pub issue: u64,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Every bead in BEADS carrying an `external_ref` of exactly `gh-<digits>` and a readable
+/// `updated_at`, in the order BEADS came.
+///
+/// A bead whose `updated_at` does not parse is left out rather than guessed at, the same way
+/// `gh_moved` leaves out an item it cannot date. The match is anchored at both ends
+/// (`emacs/cerebro.el:2260` uses `\`gh-\([0-9]+\)\'`): `gh-12` is linked, `gh-12b` and
+/// `jira-12` are not.
+pub fn linked_beads(beads: &[Bead]) -> Vec<LinkedBead> {
+    beads
+        .iter()
+        .filter_map(|bead| {
+            let digits = bead.external_ref.as_deref()?.strip_prefix("gh-")?;
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            Some(LinkedBead {
+                id: bead.id.clone(),
+                issue: digits.parse().ok()?,
+                updated_at: bead.updated_at?,
+            })
+        })
+        .collect()
+}
+
 /// The panel's six sections, in the order `emacs/cerebro.el:4652-4764`
 /// (`cerebro--partition-beads`) builds them; a bead's input order is preserved within its bucket.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -546,6 +659,13 @@ pub struct WorkBuckets {
     pub unplanned: Vec<Bead>,
     pub paused: Vec<Bead>,
     pub merged: Vec<Bead>,
+    /// The beads linked to a GitHub issue, off the RAW list rather than out of the partition.
+    ///
+    /// Deliberately not a seventh bucket - nothing renders it. It travels with the buckets because
+    /// it is derived from the same `bd` answer at the same moment, and Moira's trigger compares it
+    /// against her own last pass. It must come off the raw list: a bead whose verification has
+    /// settled appears in NO bucket, and a RELEASED comment is still owed on its issue.
+    pub linked: Vec<LinkedBead>,
 }
 
 const SKIPPED_ISSUE_TYPES: [&str; 2] = ["epic", "event"];
@@ -573,6 +693,7 @@ fn is_holding_label(labels: &[String]) -> bool {
 /// status (blocked, deferred, an unknown future status) appears in no bucket.
 pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
     let mut buckets = WorkBuckets::default();
+    buckets.linked = linked_beads(&beads);
     for bead in beads {
         if SKIPPED_ISSUE_TYPES.contains(&bead.issue_type.as_str()) {
             continue;
@@ -952,6 +1073,7 @@ mod tests {
             updated_at: None,
             assignee: None,
             metadata: serde_json::Value::Null,
+            external_ref: None,
         }
     }
 
@@ -1097,5 +1219,97 @@ mod tests {
             row_state_for("standby"),
             RowState::Unknown("standby".to_string())
         );
+    }
+
+    // --- linked beads and the `gh` shapes -------------------------------------------------------
+
+    fn linkable(id: &str, external_ref: Option<&str>, updated_at: Option<&str>) -> Bead {
+        Bead {
+            id: id.into(),
+            title: id.into(),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels: Vec::new(),
+            priority: Some(2),
+            updated_at: updated_at
+                .map(|raw| DateTime::parse_from_rfc3339(raw).unwrap().with_timezone(&Utc)),
+            assignee: None,
+            metadata: serde_json::Value::Null,
+            external_ref: external_ref.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_bead_filed_from_an_issue_carries_its_number() {
+        let beads = vec![
+            linkable("cb-3qh", Some("gh-58"), Some("2026-09-01T10:00:00Z")),
+            linkable("cb-und", Some("gh-58"), None),
+            linkable("cb-suf", Some("gh-12b"), Some("2026-09-01T10:00:00Z")),
+            linkable("cb-jra", Some("jira-9"), Some("2026-09-01T10:00:00Z")),
+            linkable("cb-non", None, Some("2026-09-01T10:00:00Z")),
+        ];
+        let linked = linked_beads(&beads);
+        assert_eq!(linked.len(), 1, "only an anchored gh-<digits> with a time counts");
+        assert_eq!(linked[0].id, "cb-3qh");
+        assert_eq!(linked[0].issue, 58);
+    }
+
+    #[test]
+    fn an_unlinked_bead_parses_without_the_key() {
+        let beads: Vec<Bead> = serde_json::from_str(
+            r#"[{"id":"cb-1","title":"t","status":"open","issue_type":"task",
+                 "priority":2,"updated_at":null,"assignee":null}]"#,
+        )
+        .expect("a null external_ref is omitted by bd, so the key must default");
+        assert_eq!(beads[0].external_ref, None);
+    }
+
+    #[test]
+    fn a_settled_bead_is_in_no_bucket_and_still_linked() {
+        let mut settled = linkable("cb-3qh", Some("gh-58"), Some("2026-09-01T10:00:00Z"));
+        settled.status = "closed".into();
+        settled.labels = vec!["verification:passed".into()];
+        let buckets = partition_beads(vec![settled]);
+        assert!(buckets.merged.is_empty(), "a settled bead is in no bucket");
+        assert_eq!(buckets.linked.len(), 1, "and a RELEASED comment is still owed on its issue");
+    }
+
+    #[test]
+    fn an_item_gh_cannot_date_is_dropped_and_the_rest_survive() {
+        let issues: Vec<GhIssue> = serde_json::from_str(
+            r#"[{"number":212,"updatedAt":"2026-09-01T10:00:00Z"},
+                {"number":213,"updatedAt":null},
+                {"number":214,"updatedAt":"tomorrow"}]"#,
+        )
+        .expect("one undateable item must not fail the whole parse");
+        assert_eq!(issues.len(), 3);
+        assert!(issues[0].updated_at.is_some());
+        assert_eq!(issues[1].updated_at, None);
+        assert_eq!(issues[2].updated_at, None);
+
+        // And a non-scalar, which is what a peeked-not-consumed token would have failed on.
+        let issues: Vec<GhIssue> = serde_json::from_str(
+            r#"[{"number":215,"updatedAt":{"at":"2026-09-01T10:00:00Z"}},
+                {"number":216,"updatedAt":"2026-09-01T10:00:00Z"}]"#,
+        )
+        .expect("an updatedAt that is an object leaves the rest of the list usable");
+        assert_eq!(issues[0].updated_at, None);
+        assert!(issues[1].updated_at.is_some());
+    }
+
+    #[test]
+    fn a_pull_request_by_a_deleted_account_has_no_login() {
+        let prs: Vec<GhPull> = serde_json::from_str(
+            r#"[{"number":244,"updatedAt":"2026-09-01T10:00:00Z","isDraft":false,
+                 "author":{"login":"navigator"}},
+                {"number":245,"updatedAt":"2026-09-01T10:00:00Z","isDraft":true,
+                 "author":{"login":null}},
+                {"number":246,"updatedAt":"2026-09-01T10:00:00Z","isDraft":false,"author":null}]"#,
+        )
+        .expect("a deleted account is a pull request gh still lists");
+        assert_eq!(prs[0].author.as_ref().unwrap().login.as_deref(), Some("navigator"));
+        assert!(prs[1].is_draft);
+        assert_eq!(prs[1].author.as_ref().unwrap().login, None);
+        assert_eq!(prs[2].author, None);
     }
 }

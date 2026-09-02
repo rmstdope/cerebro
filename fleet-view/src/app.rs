@@ -20,10 +20,13 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::model::{self, FleetRow, RowState, WorkBuckets};
+use crate::model::{self, FleetRow, GhSnapshot, RowState, WorkBuckets};
 use crate::lifecycle::LastExit;
 use crate::session::SessionView;
-use crate::readers::{read_configured_supervisor, read_fleet, read_work, Programs, ReaderPaths, ReadError};
+use crate::readers::{
+    read_configured_supervisor, read_fleet, read_gh, read_work, Programs, ReaderPaths, ReadError,
+};
+use crate::triggers::GhAnswer;
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
 /// interview: fast enough that a claim appears while the navigator is still looking at the row,
@@ -34,6 +37,12 @@ pub const FLEET_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 /// the same interview: work moves in the minutes a bead takes, not in the seconds a claim takes,
 /// and each read is a whole `bd` query against the shared board.
 pub const WORK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
+/// How often `gh` is asked what is open. Ten minutes, the elisp view's own number
+/// (`cerebro-gh-refresh-seconds`, `emacs/cerebro.el:5741`): each answer is three network calls,
+/// and the two roles it feeds are on an hourly floor anyway, so a ten-minute reader is already
+/// finer-grained than anything it can cause. Never on the five-second tick.
+pub const GH_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
 
 /// What a pane has to show, and how sure it is of it.
 ///
@@ -392,6 +401,13 @@ pub struct App {
     fleet_viewport: usize,
     last_fleet_request: Option<Instant>,
     last_work_request: Option<Instant>,
+    /// What `gh` last said. A third `Pane<T>` rather than a field of its own, because the four
+    /// content states ARE the staleness protocol the cadence triggers need - see
+    /// `triggers::GhAnswer`. It is never rendered: no widget draws it, and it takes no Tab stop.
+    /// `Pane` earns its place here for `finish`'s transitions and its own in-flight slot, not for
+    /// its scroll offset.
+    pub gh: Pane<GhSnapshot>,
+    last_gh_request: Option<Instant>,
 }
 
 /// A question the screen is waiting on. `k` is the only key that asks (the navigator's choice),
@@ -442,6 +458,8 @@ impl App {
             fleet_viewport: 0,
             last_fleet_request: None,
             last_work_request: None,
+            gh: Pane::default(),
+            last_gh_request: None,
         }
     }
 
@@ -740,6 +758,42 @@ impl App {
         }
     }
 
+    /// Whether a `gh` read is due at NOW. Kept off `on_tick`'s `AppAction` deliberately: that
+    /// enum is a closed vocabulary of what the navigator's two panes need, and a third
+    /// refreshable thing nobody draws would take it from five variants to eight.
+    pub fn gh_due(&self, now: Instant) -> bool {
+        match self.last_gh_request {
+            None => true,
+            Some(last) => now.duration_since(last) >= GH_REFRESH_INTERVAL,
+        }
+    }
+
+    /// Claim the `gh` pane's in-flight slot and stamp the request. The twin of
+    /// `begin_work_refresh`, on its own slot and its own clock.
+    pub fn begin_gh_refresh(&mut self, at: Instant) -> bool {
+        if self.gh.begin() {
+            self.last_gh_request = Some(at);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The `gh` pane's content transition. It touches that pane and nothing else.
+    pub fn finish_gh_refresh(&mut self, result: Result<GhSnapshot, ReadError>, at: DateTime<Utc>) {
+        self.gh.finish(result, at);
+    }
+
+    /// The pane's content as a trigger reads it. See `triggers::GhAnswer` for the mapping, and
+    /// why `Stale` - a value, and a newer failure - is `Failed` rather than `Answered`.
+    pub fn gh_answer(&self) -> GhAnswer {
+        match &self.gh.content {
+            PaneContent::Loading => GhAnswer::Unanswered,
+            PaneContent::Fresh { value, .. } => GhAnswer::Answered(value.clone()),
+            PaneContent::Stale { .. } | PaneContent::Unavailable { .. } => GhAnswer::Failed,
+        }
+    }
+
     /// The selected agent's index in the current fleet rows, if there is one and it is still
     /// there. Re-derived every time rather than stored: only the name is state.
     pub fn selected_index(&self) -> Option<usize> {
@@ -869,7 +923,10 @@ pub type WorkWorker = Worker<WorkBuckets>;
 pub type SupervisorWorker = Worker<Result<SupervisorKind, String>>;
 
 impl<T: Send + 'static> Worker<T> {
-    fn spawn_reader(reader: impl Fn() -> Result<T, ReadError> + Send + 'static) -> Self {
+    /// `FnMut`, not `Fn`: the `gh` reader keeps the login it has learnt between requests, and the
+    /// loop below calls it from one thread only. A `RefCell` in the closure instead would be
+    /// interior mutability bought to preserve a bound nothing needed.
+    fn spawn_reader(mut reader: impl FnMut() -> Result<T, ReadError> + Send + 'static) -> Self {
         let (request_tx, request_rx) = mpsc::channel::<()>();
         let (result_tx, result_rx) = mpsc::channel();
         let handle = std::thread::spawn(move || {
@@ -930,6 +987,22 @@ impl Worker<WorkBuckets> {
         Self::spawn_reader(move || read_work(&paths, &programs))
     }
 
+}
+
+/// The GitHub reader's worker: `read_gh` on its own thread (`readers::read_gh`).
+///
+/// A fourth thread rather than a call on the UI thread, for the reason the other three exist: it
+/// is three network calls, and a rate-limited `gh` would otherwise freeze the screen - keys and
+/// all - for as long as the thing that went wrong.
+pub type GhWorker = Worker<GhSnapshot>;
+
+impl Worker<GhSnapshot> {
+    /// The learnt login lives in the closure, so it survives between requests and is asked for
+    /// only until it answers - which is why the reader bound is `FnMut`.
+    pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
+        let mut me: Option<String> = None;
+        Self::spawn_reader(move || read_gh(&paths, &programs, &mut me))
+    }
 }
 
 impl Worker<Result<SupervisorKind, String>> {
@@ -1116,6 +1189,7 @@ mod tests {
                     updated_at: None,
                     assignee: None,
                     metadata: serde_json::Value::Null,
+                    external_ref: None,
                 })
                 .collect(),
             ..WorkBuckets::default()
@@ -1841,6 +1915,7 @@ mod tests {
             Programs {
                 ps: dir.path().join("ps"),
                 bd: "bd".into(),
+                ..Programs::default()
             },
             Duration::from_secs(60),
         );
@@ -1860,5 +1935,43 @@ mod tests {
         let rows = result.expect("the fixture roster and ps both succeed");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Xavier");
+    }
+
+    // --- the gh pane (cb-kcs.4.3) --------------------------------------------------------------
+
+    #[test]
+    fn a_gh_failure_is_stale_then_answers_again() {
+        let mut app = App::default();
+        assert_eq!(app.gh_answer(), GhAnswer::Unanswered, "before the first request");
+
+        let snapshot = GhSnapshot { me: Some("navigator".into()), ..GhSnapshot::default() };
+        app.finish_gh_refresh(Ok(snapshot.clone()), at(1));
+        assert_eq!(app.gh_answer(), GhAnswer::Answered(snapshot.clone()));
+
+        // A failure keeps the value worth reading and is still `Failed` to a trigger: the last
+        // good answer stands, and the ORDER of the two is what says it is not current.
+        app.finish_gh_refresh(Err(bd_failure()), at(2));
+        assert_eq!(app.gh_answer(), GhAnswer::Failed);
+        assert!(app.gh.content.value().is_some(), "and the value is kept");
+
+        app.finish_gh_refresh(Ok(snapshot.clone()), at(3));
+        assert_eq!(app.gh_answer(), GhAnswer::Answered(snapshot));
+
+        let mut fresh = App::default();
+        fresh.finish_gh_refresh(Err(bd_failure()), at(1));
+        assert_eq!(fresh.gh_answer(), GhAnswer::Failed, "a failure with nothing to keep");
+    }
+
+    #[test]
+    fn gh_has_its_own_ten_minute_clock() {
+        let mut app = App::default();
+        let start = Instant::now();
+        assert!(app.gh_due(start), "never asked");
+        assert!(app.begin_gh_refresh(start));
+        assert!(!app.begin_gh_refresh(start), "a request in flight is not stacked");
+        assert!(!app.gh_due(start + GH_REFRESH_INTERVAL - Duration::from_secs(1)));
+        assert!(app.gh_due(start + GH_REFRESH_INTERVAL));
+        // The five-second tick never carries it.
+        assert!(!app.gh_due(start + FLEET_REFRESH_INTERVAL));
     }
 }

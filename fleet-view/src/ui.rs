@@ -1608,6 +1608,7 @@ mod tests {
             updated_at: None,
             assignee: None,
             metadata: serde_json::Value::Null,
+            external_ref: None,
         }
     }
 

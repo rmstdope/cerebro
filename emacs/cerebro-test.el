@@ -3928,130 +3928,14 @@ Run as CI runs ERT, from the repository root."
     (docs_only . ,docs-only)
     (lease_age_min . ,lease-age)))
 
-(ert-deftest cerebro-test/claim-finding-leaves-verification-failed ()
-  "Psylocke's reopen puts the old commit back on main every time - that
-proves nothing about whether the rework has landed, so this bead is never
-sweep-closed regardless of what else is true of it."
-  (should (null (cerebro--claim-finding
-                 (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 30 t)
-                 nil (current-time)))))
-
-(ert-deftest cerebro-test/claim-finding-leaves-live-implementer ()
-  "A name that is still running keeps its bead, however old the merge looks."
-  (should (null (cerebro--claim-finding
-                 (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 30)
-                 '("Cyclops") (current-time)))))
-
-(ert-deftest cerebro-test/claim-finding-leaves-fresh-commit ()
-  "An implementer closes within seconds of merging; anything fresher than
-ten minutes is one still mid-cleanup, not a dead one."
-  (should (null (cerebro--claim-finding
-                 (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 3)
-                 nil (current-time)))))
-
-(ert-deftest cerebro-test/claim-finding-closes-delivered-dead-and-old ()
-  (should (equal (cerebro--claim-finding
-                  (cerebro-test--claim-candidate "ah-x1" "Cyclops" t 30)
-                  nil (current-time))
-                 '(close "ah-x1" "Delivered in PR; closed by the fleet view, Cyclops did not"))))
-
-(ert-deftest cerebro-test/claim-finding-reclaims-dead-not-on-main ()
-  (should (equal (cerebro--claim-finding
-                  (cerebro-test--claim-candidate "ah-x1" "Cyclops" nil nil nil nil 30)
-                  nil (current-time))
-                 '(reclaim "ah-x1"))))
-
-(ert-deftest cerebro-test/claim-finding-leaves-a-lease-not-yet-stale ()
-  "`assignee' not being on the roster is not evidence of anything by
-itself - a name that is not on `scripts/roster' is a live claim held by
-hand exactly as often as it is a crashed session, and only the lease tells
-the two apart. A bead
-this function has just claimed, whose own session sets no `BEADS_ACTOR',
-must not be offered for reclaim the moment its assignee reads as a human
-name - which is the bug this test was written to catch."
-  (should (null (cerebro--claim-finding
-                 (cerebro-test--claim-candidate "ah-x1" "A Human" nil nil nil nil 3)
-                 nil (current-time))))
-  (should (null (cerebro--claim-finding
-                 (cerebro-test--claim-candidate "ah-x1" "A Human" nil nil nil nil nil)
-                 nil (current-time)))))
-
 (defun cerebro-test--epic-candidate (id minutes)
   `((id . ,id) (title . "an epic") (minutes_since_last_child_closed . ,minutes)))
-
-(ert-deftest cerebro-test/epic-finding-waits-ten-minutes ()
-  "An implementer closes its parent within seconds of its last child; a
-close inside ten minutes is one still mid-cleanup."
-  (should (null (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" 3))))
-  (should (equal (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" 30))
-                 '(epic-close "ah-e1"))))
-
-(ert-deftest cerebro-test/epic-finding-nil-minutes-waits ()
-  "A close time the script could not parse is not evidence of anything -
-leave it rather than guess."
-  (should (null (cerebro--epic-finding (cerebro-test--epic-candidate "ah-e1" nil)))))
 
 (defun cerebro-test--stalled-candidate (id assignee age &optional source branch)
   `((id . ,id) (assignee . ,assignee) (title . "a bead")
     (branch . ,branch)
     (progress_age_min . ,age)
     (progress_source . ,(or source "commit"))))
-
-(ert-deftest cerebro-test/stalled-finding-leaves-a-bead-no-live-session-holds ()
-  "A claim whose session is gone is the claims sweep's case, not this one's -
-offering it here as well would put two lines in front of the navigator for
-one bead."
-  (should (null (cerebro--stalled-finding
-                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300)
-                 nil (current-time)))))
-
-(ert-deftest cerebro-test/stalled-finding-leaves-an-asking-session ()
-  "`asking' means blocked and said so; `cerebro--supervise-action' already
-nudges it, and two mechanisms firing on one session is noise."
-  (should (null (cerebro--stalled-finding
-                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300)
-                 '(("Cyclops" . asking)) (current-time)))))
-
-(ert-deftest cerebro-test/stalled-finding-leaves-a-bead-inside-the-threshold ()
-  "Forty minutes of silence is a bead sitting in CI, which is exactly what
-the threshold exists to tolerate."
-  (should (null (cerebro--stalled-finding
-                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 40)
-                 '(("Cyclops" . working)) (current-time)))))
-
-(ert-deftest cerebro-test/stalled-finding-leaves-a-bead-with-no-age ()
-  "No age is no evidence - leave it rather than guess."
-  (should (null (cerebro--stalled-finding
-                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" nil)
-                 '(("Cyclops" . working)) (current-time)))))
-
-(ert-deftest cerebro-test/stalled-finding-offers-a-live-session-past-the-threshold ()
-  (should (equal (cerebro--stalled-finding
-                  (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300)
-                  '(("Cyclops" . working)) (current-time))
-                 '(unclaim "ah-x1"))))
-
-(ert-deftest cerebro-test/stalled-finding-counts-an-unreadable-state-file-as-live ()
-  "A live session that reaches here with a nil state - its state file parsed
-but carries no `state\=' key, or one this version does not recognise - must
-still count as live. Testing the state rather than membership would turn a
-half-written file into a finding against a working implementer."
-  (should (equal (cerebro--stalled-finding
-                  (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300)
-                  '(("Cyclops" . nil)) (current-time))
-                 '(unclaim "ah-x1"))))
-
-(ert-deftest cerebro-test/stalled-label-names-which-measurement-it-used ()
-  "Commit and claim mean different things to a reader, so the line says
-which one the age came from."
-  (should (string-match-p
-           "no commit for 300m"
-           (cerebro--sweep-label '(unclaim "ah-x1")
-                                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300))))
-  (should (string-match-p
-           "no start for 300m"
-           (cerebro--sweep-label '(unclaim "ah-x1")
-                                 (cerebro-test--stalled-candidate "ah-x1" "Cyclops" 300 "claim")))))
 
 (ert-deftest cerebro-test/finding-command-covers-only-the-known-shapes ()
   "This function is the complete list of destructive commands the fleet
@@ -4079,71 +3963,6 @@ happy path."
     (priority . ,(or priority 0))
     (age_min . ,age)))
 
-(ert-deftest cerebro-test/assignee-finding-leaves-a-name-off-the-roster ()
-  "An assignee that is not a roster name was put there by hand, and undoing
-somebody else's deliberate assignment is not the fleet view's to do."
-  (should (null (cerebro--assignee-finding
-                 (cerebro-test--assignee-candidate "ah-fjty" "henrik" 300)
-                 '(("Cyclops" . "ah-gjq4")) '("Cyclops" "Storm") (current-time)))))
-
-(ert-deftest cerebro-test/assignee-finding-leaves-a-session-alive-on-this-bead ()
-  "A session whose state file says it is on this very bead is a moment from
-claiming it; clearing the assignee under it would achieve nothing and read
-as the fleet view fighting an implementer."
-  (should (null (cerebro--assignee-finding
-                 (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 300)
-                 '(("Cyclops" . "ah-fjty")) '("Cyclops" "Storm") (current-time)))))
-
-(ert-deftest cerebro-test/assignee-finding-leaves-a-bead-inside-the-grace-period ()
-  "A bead somebody touched two minutes ago is one somebody is attending to.
-The sweeps run ten-minutely, so this is seen again on the next pass."
-  (should (null (cerebro--assignee-finding
-                 (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 2)
-                 '(("Cyclops" . "ah-gjq4")) '("Cyclops" "Storm") (current-time)))))
-
-(ert-deftest cerebro-test/assignee-finding-leaves-a-bead-with-no-age ()
-  "No age is no evidence - leave it rather than guess."
-  (should (null (cerebro--assignee-finding
-                 (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" nil)
-                 '(("Cyclops" . "ah-gjq4")) '("Cyclops" "Storm") (current-time)))))
-
-(ert-deftest cerebro-test/assignee-finding-offers-a-session-alive-on-another-bead ()
-  "ah-fjty on 2026-08-23: open at P0, naming Cyclops, while Cyclops built
-ah-gjq4. It sat at the top of `bd ready' for 32 minutes."
-  (should (equal (cerebro--assignee-finding
-                  (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 32)
-                  '(("Cyclops" . "ah-gjq4")) '("Cyclops" "Storm") (current-time))
-                 '(unassign "ah-fjty" 0))))
-
-(ert-deftest cerebro-test/assignee-finding-offers-a-session-that-is-not-running ()
-  "There is deliberately no \"the session is not alive\" guard: a roster
-session that is not running cannot be about to claim anything, so that case
-falls through to the offer and should."
-  (should (equal (cerebro--assignee-finding
-                  (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 32)
-                  nil '("Cyclops" "Storm") (current-time))
-                 '(unassign "ah-fjty" 0))))
-
-(ert-deftest cerebro-test/assignee-finding-carries-the-priority-it-was-given ()
-  "The priority rides in the finding because `cerebro--sweep-line' needs it
-and is given nothing else - see the P0 face below."
-  (should (equal (cerebro--assignee-finding
-                  (cerebro-test--assignee-candidate "ah-zzz" "Cyclops" 32 2)
-                  nil '("Cyclops") (current-time))
-                 '(unassign "ah-zzz" 2))))
-
-(ert-deftest cerebro-test/assignee-label-names-what-the-assignee-is-doing ()
-  "Both lines ship verbatim; the navigator chose this wording."
-  (should (equal (cerebro--sweep-label
-                  '(unassign "ah-fjty" 0)
-                  (cons '(assignee_bead . "ah-gjq4")
-                        (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 32)))
-                 "unassign ah-fjty — Cyclops is on ah-gjq4"))
-  (should (equal (cerebro--sweep-label
-                  '(unassign "ah-fjty" 0)
-                  (cerebro-test--assignee-candidate "ah-fjty" "Cyclops" 32))
-                 "unassign ah-fjty — Cyclops is not running")))
-
 (ert-deftest cerebro-test/a-stranded-p0-line-shouts-and-others-do-not ()
   "The escalation is that a P0 line is visibly different from the rest of
 the section - the same `warning' face an `asking' session's marker uses -
@@ -4158,11 +3977,6 @@ and nothing more: no new face, no glyph, no popup."
   (should-not (get-text-property 0 'face
                                  (cerebro--sweep-line "unclaim ah-x1 — x"
                                                       '(unclaim "ah-x1")))))
-
-(ert-deftest cerebro-test/assignee-finding-command-clears-the-assignee ()
-  "The only place this write may live."
-  (should (equal (cerebro--finding-command '(unassign "ah-fjty" 0) "/repo")
-                 '("bd" "update" "ah-fjty" "--assignee" ""))))
 
 (ert-deftest cerebro-test/live-session-beads-reports-what-each-session-is-on ()
   "The third derivation of the one state-file read - and the one this sweep
@@ -5814,61 +5628,6 @@ in this list is a fact that wants a `defcustom'."
     (verified_at . ,verified-at)
     (merges_since . ,merges)))
 
-(ert-deftest cerebro-test/a-verdict-with-no-commit-is-left-alone ()
-  "Unknown is not stale. Every verdict recorded before ah-e0kf shipped has no
-`verified_at', and a sweep that read absence as staleness would flag the
-entire history on its first run."
-  (should (null (cerebro--verdict-finding
-                 (cerebro-test--verdict-candidate "ah-t2pn.3" nil nil)))))
-
-(ert-deftest cerebro-test/a-commit-not-on-the-branch-is-left-alone ()
-  "A distance that is not a number is not a small number. The script says
-nil when the commit is missing from the clone, or is not an ancestor of the
-default branch - a drifted worktree, a force-push."
-  (should (null (cerebro--verdict-finding
-                 (cerebro-test--verdict-candidate "ah-t2pn.3" "ce9d2817ab" nil)))))
-
-(ert-deftest cerebro-test/a-verdict-at-the-head-is-left-alone ()
-  "Nothing merged since the verdict, so there is nothing to say."
-  (should (null (cerebro--verdict-finding
-                 (cerebro-test--verdict-candidate "ah-t2pn.3" "ce9d2817ab" 0)))))
-
-(ert-deftest cerebro-test/a-verdict-one-merge-behind-is-offered ()
-  "The chosen threshold is one: anything landing on main since the verdict
-is enough to be worth a second look."
-  (should (equal (cerebro--verdict-finding
-                  (cerebro-test--verdict-candidate "ah-vocw" "0b444332cd" 1))
-                 '(recheck "ah-vocw" 0))))
-
-(ert-deftest cerebro-test/a-verdict-many-merges-behind-is-offered ()
-  "ah-fjty on 2026-08-23: six merges after the verdict, and the two causes a
-planner's audit named were both correct behaviour introduced after it."
-  (should (equal (cerebro--verdict-finding
-                  (cerebro-test--verdict-candidate "ah-fjty" "dd3f67bdef" 6))
-                 '(recheck "ah-fjty" 0))))
-
-(ert-deftest cerebro-test/verdict-finding-carries-the-priority-it-was-given ()
-  "As `cerebro--assignee-finding' does, and for the same reason:
-`cerebro--sweep-line' is given nothing but the finding and needs it."
-  (should (equal (cerebro--verdict-finding
-                  (cerebro-test--verdict-candidate "ah-zzz" "0b444332cd" 2 2))
-                 '(recheck "ah-zzz" 2))))
-
-(ert-deftest cerebro-test/verdict-label-names-the-commit-and-the-distance ()
-  "Both lines ship verbatim; the navigator chose this wording. The singular
-is not optional - the threshold is one, so `1 merge since' is the most
-common line this sweep will ever print."
-  (should (equal (cerebro--sweep-label
-                  '(recheck "ah-t2pn.3" 0)
-                  (cerebro-test--verdict-candidate
-                   "ah-t2pn.3" "ce9d2817ab7f3e0d1c2b" 4))
-                 "recheck ah-t2pn.3 — verdict at ce9d2817, 4 merges since"))
-  (should (equal (cerebro--sweep-label
-                  '(recheck "ah-fjty" 0)
-                  (cerebro-test--verdict-candidate
-                   "ah-fjty" "dd3f67bd1a2b3c4d5e6f" 1))
-                 "recheck ah-fjty — verdict at dd3f67bd, 1 merge since")))
-
 (ert-deftest cerebro-test/a-stale-p0-verdict-line-shouts-and-others-do-not ()
   "The same `warning' face ah-kjfm shipped for a stranded assignee, and
 nothing more."
@@ -5879,14 +5638,6 @@ nothing more."
   (should-not (get-text-property 0 'face
                                  (cerebro--sweep-line "recheck ah-zzz — x"
                                                       '(recheck "ah-zzz" 2)))))
-
-(ert-deftest cerebro-test/verdict-finding-command-flags-the-verdict-stale ()
-  "The one write this bead adds, and the only place it may live. A dimension
-of its own: `verification:' is a bd state dimension and `bd set-state'
-replaces it, so a `verification=stale' would erase the verdict itself."
-  (should (equal (cerebro--finding-command '(recheck "ah-vocw" 0) "/repo")
-                 '("bd" "set-state" "ah-vocw" "verdict=stale"
-                   "--reason" "verdict formed against a commit main has moved past"))))
 
 ;; ---------------------------------------------------------------------------
 ;; cb-5yr.1: the interactive roles are ended after a pass and started again on
@@ -8555,46 +8306,6 @@ will start it; the plain line is what a role the view started and ended keeps."
 (defun cerebro-test--blocker (id status &optional age)
   `((id . ,id) (status . ,status) (closed_age_min . ,age)))
 
-(ert-deftest cerebro-test/paused-finding-needs-closed-blockers ()
-  "The one case the board can judge alone: every blocker closed. Everything
-else is a pause only a person can end, and offering to unpause it would put
-the bead back in front of the wall that stopped it."
-  (should (equal (cerebro--paused-finding
-                  (cerebro-test--paused-candidate
-                   "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "closed" 120))))
-                 '(unpause "cb-aaa" 2)))
-  ;; A question is not a blocker, however closed the board looks.
-  (should (null (cerebro--paused-finding
-                 (cerebro-test--paused-candidate
-                  "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "closed" 120)) t))))
-  ;; No blockers at all: the pause is prose in the notes, which nothing here reads.
-  (should (null (cerebro--paused-finding (cerebro-test--paused-candidate "cb-aaa"))))
-  (should (null (cerebro--paused-finding
-                 (cerebro-test--paused-candidate
-                  "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "open"))))))
-  (should (null (cerebro--paused-finding
-                 (cerebro-test--paused-candidate
-                  "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "closed" 120)
-                                 (cerebro-test--blocker "cb-ccc" "in_progress")))))))
-
-(ert-deftest cerebro-test/paused-finding-carries-the-priority-it-was-given ()
-  (should (equal (cerebro--paused-finding
-                  (cerebro-test--paused-candidate
-                   "cb-zzz" (list (cerebro-test--blocker "cb-bbb" "closed" 30)) nil 0))
-                 '(unpause "cb-zzz" 0))))
-
-(ert-deftest cerebro-test/paused-sweep-labels-and-commands ()
-  "The line the navigator chose, verbatim, and the one write behind it -
-`--remove-label human' and nothing else, so the bead goes back to the
-planners for a re-read rather than in front of an implementer."
-  (should (equal (cerebro--sweep-label
-                  '(unpause "cb-aaa" 2)
-                  (cerebro-test--paused-candidate
-                   "cb-aaa" (list (cerebro-test--blocker "cb-bbb" "closed" 120))))
-                 "unpause cb-aaa — waiting on cb-bbb, closed 2h ago"))
-  (should (equal (cerebro--finding-command '(unpause "cb-aaa" 2) "/repo")
-                 (list cerebro-bd-program "update" "cb-aaa" "--remove-label" "human"))))
-
 (ert-deftest cerebro-test/finding-explanation-is-nil-for-the-existing-six ()
   "Today's six prompts stay byte-identical: an explanation line is what this
 bead adds, for the one command that does not say its own consequence."
@@ -9247,3 +8958,72 @@ it bumped to a submodule missing one script."
           (should (eq (cerebro--acquire-supervision tmp) 'unavailable))
           (should (equal (cerebro--reconcile-supervision tmp) '(supervising))))
       (delete-directory tmp t))))
+
+;; ---------------------------------------------------------------------------
+;; cb-kcs.5.1: the six sweeps' decisions, answered by both fleet views
+;;
+;; `tests/lib/sweep-findings.json' is the shared table, in the shape of
+;; `tests/lib/session-args.cases' and `tests/lib/supervisor.cases' and for the
+;; same reason: after the cutover both views still sweep - the bead panel's
+;; board writes are outside the supervision lease - so one decision has two
+;; implementations in two languages, and a threshold changed on one side would
+;; otherwise be found by a navigator watching two views disagree about whether
+;; a bead should be closed.  JSON rather than tab-separated because one sweep's
+;; candidate carries a nested list.
+
+(defconst cerebro-test--sweep-findings-file
+  (expand-file-name "tests/lib/sweep-findings.json" cerebro-test--repo-root)
+  "The findings table both implementations of the six sweeps run.
+`fleet-view/src/sweeps.rs' runs the same rows against `Sweep::judge',
+`sweeps::label' and `sweeps::finding_command'.")
+
+(defun cerebro-test--sweep-rows ()
+  "The rows of `cerebro-test--sweep-findings-file', comment elements dropped."
+  (let ((parsed (cerebro--parse-json
+                 (with-temp-buffer
+                   (insert-file-contents cerebro-test--sweep-findings-file)
+                   (buffer-string)))))
+    (unless parsed (error "sweep-findings.json: unreadable or empty"))
+    (seq-remove (lambda (row) (assq '_ row)) parsed)))
+
+(defun cerebro-test--sweep-snapshot (snapshot)
+  "SNAPSHOT as the plist `cerebro--fleet-snapshot' builds.
+`live' is a list of (NAME STATE BEAD); a null STATE stays nil, which is the
+live-with-no-state case `cerebro--stalled-finding' tests with `assoc'."
+  (let ((live (alist-get 'live snapshot)))
+    (list :live-names  (mapcar (lambda (x) (nth 0 x)) live)
+          :live-states (mapcar (lambda (x)
+                                 (cons (nth 0 x)
+                                       (and (nth 1 x) (intern (nth 1 x)))))
+                               live)
+          :live-beads  (mapcar (lambda (x) (cons (nth 0 x) (nth 2 x))) live)
+          :roster      (alist-get 'implementers snapshot)
+          :now         (current-time))))
+
+(defun cerebro-test--sweep-expected-finding (finding)
+  "The table's FINDING array as the list a finder returns, or nil."
+  (and finding (cons (intern (car finding)) (cdr finding))))
+
+(ert-deftest cerebro-test/the-sweep-table-is-answered-by-the-finders ()
+  "Every row of the shared table, judged by the sweep it names, then
+labelled and turned into a command.  The Ratatui view answers the same rows
+in `sweeps::tests::the_shared_table_is_answered'; its `prompt' field is the
+header's own wording and has no counterpart here, so this reader ignores it."
+  (let ((cerebro-bd-program "bd"))
+    (dolist (row (cerebro-test--sweep-rows))
+      (let* ((name (alist-get 'name row))
+             (key (intern (alist-get 'sweep row)))
+             (candidate (alist-get 'candidate row))
+             (snapshot (cerebro-test--sweep-snapshot (alist-get 'snapshot row)))
+             (expected (cerebro-test--sweep-expected-finding (alist-get 'finding row)))
+             ;; Exactly the walk `cerebro--findings-from-snapshot' makes, through
+             ;; the one table that says which arguments each finder is given -
+             ;; so a row added here needs no second copy of that dispatch.
+             (found (cerebro--findings-from-snapshot (list (cons key (list candidate)))
+                                                     snapshot)))
+        (if (null expected)
+            (should (equal (list name nil) (list name found)))
+          (should (equal (list name (list (cons (alist-get 'label row) expected)))
+                         (list name found)))
+          (should (equal (list name (alist-get 'command row))
+                         (list name (cerebro--finding-command expected "/repo")))))))))

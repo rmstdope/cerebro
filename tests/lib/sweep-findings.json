@@ -1,0 +1,1144 @@
+[
+  {
+    "_": "The six sweeps' decisions, and every word either fleet view says about a finding. Both implementations answer this file: cerebro-test/the-sweep-table-is-answered-by-the-finders in emacs/cerebro-test.el, and sweeps::tests::the_shared_table_is_answered in fleet-view/src/sweeps.rs. After the cutover both views still sweep - the bead panel's board writes are outside the supervision lease - so two implementations of one decision, in two languages, is exactly what this table exists for. JSON rather than a tab-separated table because one sweep's candidate carries a nested list. An element carrying this `_' key is a comment and is skipped by both readers. `prompt' is the Ratatui header's own wording and has no elisp counterpart: the ERT reader ignores that field and the Rust reader asserts it."
+  },
+  {
+    "name": "claims: delivered, its implementer gone, the commit settled",
+    "sweep": "sweep-claims",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "verification_failed": null,
+      "on_main": true,
+      "commit_age_min": 30,
+      "docs_only": null,
+      "lease_age_min": 40
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "close",
+      "ah-x1",
+      "Delivered in PR; closed by the fleet view, Cyclops did not"
+    ],
+    "label": "close ah-x1 — delivered by Cyclops, on main 30m",
+    "command": [
+      "bd",
+      "close",
+      "ah-x1",
+      "--reason",
+      "Delivered in PR; closed by the fleet view, Cyclops did not"
+    ],
+    "prompt": "run bd close ah-x1 --reason Delivered in PR; closed by the fleet view, Cyclops did not ?  y / n"
+  },
+  {
+    "name": "claims: nothing on main and the lease long expired",
+    "sweep": "sweep-claims",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "verification_failed": null,
+      "on_main": false,
+      "commit_age_min": null,
+      "docs_only": null,
+      "lease_age_min": 30
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "reclaim",
+      "ah-x1"
+    ],
+    "label": "reclaim ah-x1 — Cyclops gone, not on main",
+    "command": [
+      "bd",
+      "reclaim",
+      "--id",
+      "ah-x1",
+      "--older-than",
+      "10m"
+    ],
+    "prompt": "run bd reclaim --id ah-x1 --older-than 10m ?  y / n"
+  },
+  {
+    "name": "claims: a verification:failed bead is never sweep-closed",
+    "sweep": "sweep-claims",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "verification_failed": true,
+      "on_main": true,
+      "commit_age_min": 30,
+      "docs_only": null,
+      "lease_age_min": null
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "claims: a live implementer keeps its bead",
+    "sweep": "sweep-claims",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "verification_failed": null,
+      "on_main": true,
+      "commit_age_min": 30,
+      "docs_only": null,
+      "lease_age_min": null
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-x1"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "claims: a commit fresher than the threshold is mid-cleanup",
+    "sweep": "sweep-claims",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "verification_failed": null,
+      "on_main": true,
+      "commit_age_min": 3,
+      "docs_only": null,
+      "lease_age_min": null
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "claims: a lease not yet stale is not a dead claim",
+    "sweep": "sweep-claims",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "A Human",
+      "title": "a bead",
+      "verification_failed": null,
+      "on_main": false,
+      "commit_age_min": null,
+      "docs_only": null,
+      "lease_age_min": 3
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "claims: no lease age at all is no evidence",
+    "sweep": "sweep-claims",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "A Human",
+      "title": "a bead",
+      "verification_failed": null,
+      "on_main": false,
+      "commit_age_min": null,
+      "docs_only": null,
+      "lease_age_min": null
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "epics: every child closed, and long enough ago",
+    "sweep": "sweep-epics",
+    "candidate": {
+      "id": "ah-e1",
+      "title": "an epic",
+      "minutes_since_last_child_closed": 30
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "epic-close",
+      "ah-e1"
+    ],
+    "label": "close ah-e1 — all children closed 30m ago",
+    "command": [
+      "bd",
+      "close",
+      "ah-e1"
+    ],
+    "prompt": "run bd close ah-e1 ?  y / n"
+  },
+  {
+    "name": "epics: a close inside the threshold is an implementer still tidying up",
+    "sweep": "sweep-epics",
+    "candidate": {
+      "id": "ah-e1",
+      "title": "an epic",
+      "minutes_since_last_child_closed": 3
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "epics: a close time the script could not parse",
+    "sweep": "sweep-epics",
+    "candidate": {
+      "id": "ah-e1",
+      "title": "an epic",
+      "minutes_since_last_child_closed": null
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "stalled: a live session past the threshold",
+    "sweep": "sweep-stalled",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "branch": null,
+      "progress_age_min": 300,
+      "progress_source": "commit"
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-x1"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "unclaim",
+      "ah-x1"
+    ],
+    "label": "unclaim ah-x1 — Cyclops stalled, no commit for 300m",
+    "command": [
+      "bd",
+      "unclaim",
+      "ah-x1"
+    ],
+    "prompt": "run bd unclaim ah-x1 ?  y / n"
+  },
+  {
+    "name": "stalled: a live session with no state key is still live",
+    "sweep": "sweep-stalled",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "branch": null,
+      "progress_age_min": 300,
+      "progress_source": "commit"
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          null,
+          "ah-x1"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "unclaim",
+      "ah-x1"
+    ],
+    "label": "unclaim ah-x1 — Cyclops stalled, no commit for 300m",
+    "command": [
+      "bd",
+      "unclaim",
+      "ah-x1"
+    ],
+    "prompt": "run bd unclaim ah-x1 ?  y / n"
+  },
+  {
+    "name": "stalled: the label says which measurement it used",
+    "sweep": "sweep-stalled",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "branch": null,
+      "progress_age_min": 300,
+      "progress_source": "claim"
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-x1"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "unclaim",
+      "ah-x1"
+    ],
+    "label": "unclaim ah-x1 — Cyclops stalled, no start for 300m",
+    "command": [
+      "bd",
+      "unclaim",
+      "ah-x1"
+    ],
+    "prompt": "run bd unclaim ah-x1 ?  y / n"
+  },
+  {
+    "name": "stalled: nobody live holds it - that is the claims sweep's case",
+    "sweep": "sweep-stalled",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "branch": null,
+      "progress_age_min": 300,
+      "progress_source": "commit"
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "stalled: an asking session is blocked and has said so",
+    "sweep": "sweep-stalled",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "branch": null,
+      "progress_age_min": 300,
+      "progress_source": "commit"
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "asking",
+          "ah-x1"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "stalled: forty minutes is a bead sitting in CI",
+    "sweep": "sweep-stalled",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "branch": null,
+      "progress_age_min": 40,
+      "progress_source": "commit"
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-x1"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "stalled: no age is no evidence",
+    "sweep": "sweep-stalled",
+    "candidate": {
+      "id": "ah-x1",
+      "assignee": "Cyclops",
+      "title": "a bead",
+      "branch": null,
+      "progress_age_min": null,
+      "progress_source": "commit"
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-x1"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "assignees: a session alive on another bead",
+    "sweep": "sweep-assignees",
+    "candidate": {
+      "id": "ah-fjty",
+      "assignee": "Cyclops",
+      "title": "a stranded bead",
+      "priority": 0,
+      "age_min": 32
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-gjq4"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "unassign",
+      "ah-fjty",
+      0
+    ],
+    "label": "unassign ah-fjty — Cyclops is on ah-gjq4",
+    "command": [
+      "bd",
+      "update",
+      "ah-fjty",
+      "--assignee",
+      ""
+    ],
+    "prompt": "run bd update ah-fjty --assignee  ?  y / n"
+  },
+  {
+    "name": "assignees: a roster session that is not running at all",
+    "sweep": "sweep-assignees",
+    "candidate": {
+      "id": "ah-fjty",
+      "assignee": "Cyclops",
+      "title": "a stranded bead",
+      "priority": 0,
+      "age_min": 32
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "unassign",
+      "ah-fjty",
+      0
+    ],
+    "label": "unassign ah-fjty — Cyclops is not running",
+    "command": [
+      "bd",
+      "update",
+      "ah-fjty",
+      "--assignee",
+      ""
+    ],
+    "prompt": "run bd update ah-fjty --assignee  ?  y / n"
+  },
+  {
+    "name": "assignees: the priority rides in the finding",
+    "sweep": "sweep-assignees",
+    "candidate": {
+      "id": "ah-zzz",
+      "assignee": "Cyclops",
+      "title": "a stranded bead",
+      "priority": 2,
+      "age_min": 32
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "unassign",
+      "ah-zzz",
+      2
+    ],
+    "label": "unassign ah-zzz — Cyclops is not running",
+    "command": [
+      "bd",
+      "update",
+      "ah-zzz",
+      "--assignee",
+      ""
+    ],
+    "prompt": "run bd update ah-zzz --assignee  ?  y / n"
+  },
+  {
+    "name": "assignees: a name off the roster was assigned by hand",
+    "sweep": "sweep-assignees",
+    "candidate": {
+      "id": "ah-fjty",
+      "assignee": "henrik",
+      "title": "a stranded bead",
+      "priority": 0,
+      "age_min": 300
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-gjq4"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "assignees: a session alive on this very bead is about to claim it",
+    "sweep": "sweep-assignees",
+    "candidate": {
+      "id": "ah-fjty",
+      "assignee": "Cyclops",
+      "title": "a stranded bead",
+      "priority": 0,
+      "age_min": 300
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-fjty"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "assignees: a bead touched inside the grace period",
+    "sweep": "sweep-assignees",
+    "candidate": {
+      "id": "ah-fjty",
+      "assignee": "Cyclops",
+      "title": "a stranded bead",
+      "priority": 0,
+      "age_min": 2
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-gjq4"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "assignees: no age is no evidence",
+    "sweep": "sweep-assignees",
+    "candidate": {
+      "id": "ah-fjty",
+      "assignee": "Cyclops",
+      "title": "a stranded bead",
+      "priority": 0,
+      "age_min": null
+    },
+    "snapshot": {
+      "live": [
+        [
+          "Cyclops",
+          "working",
+          "ah-gjq4"
+        ]
+      ],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "verdicts: one merge past the verdict, and the singular",
+    "sweep": "sweep-verdicts",
+    "candidate": {
+      "id": "ah-fjty",
+      "title": "a reopened bead",
+      "priority": 0,
+      "verified_at": "dd3f67bd1a2b3c4d5e6f",
+      "merges_since": 1
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "recheck",
+      "ah-fjty",
+      0
+    ],
+    "label": "recheck ah-fjty — verdict at dd3f67bd, 1 merge since",
+    "command": [
+      "bd",
+      "set-state",
+      "ah-fjty",
+      "verdict=stale",
+      "--reason",
+      "verdict formed against a commit main has moved past"
+    ],
+    "prompt": "run bd set-state ah-fjty verdict=stale --reason verdict formed against a commit main has moved past ?  y / n"
+  },
+  {
+    "name": "verdicts: several merges past it",
+    "sweep": "sweep-verdicts",
+    "candidate": {
+      "id": "ah-t2pn.3",
+      "title": "a reopened bead",
+      "priority": 0,
+      "verified_at": "ce9d2817ab7f3e0d1c2b",
+      "merges_since": 4
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "recheck",
+      "ah-t2pn.3",
+      0
+    ],
+    "label": "recheck ah-t2pn.3 — verdict at ce9d2817, 4 merges since",
+    "command": [
+      "bd",
+      "set-state",
+      "ah-t2pn.3",
+      "verdict=stale",
+      "--reason",
+      "verdict formed against a commit main has moved past"
+    ],
+    "prompt": "run bd set-state ah-t2pn.3 verdict=stale --reason verdict formed against a commit main has moved past ?  y / n"
+  },
+  {
+    "name": "verdicts: the priority rides in the finding",
+    "sweep": "sweep-verdicts",
+    "candidate": {
+      "id": "ah-zzz",
+      "title": "a reopened bead",
+      "priority": 2,
+      "verified_at": "0b444332cd112233445566",
+      "merges_since": 2
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "recheck",
+      "ah-zzz",
+      2
+    ],
+    "label": "recheck ah-zzz — verdict at 0b444332, 2 merges since",
+    "command": [
+      "bd",
+      "set-state",
+      "ah-zzz",
+      "verdict=stale",
+      "--reason",
+      "verdict formed against a commit main has moved past"
+    ],
+    "prompt": "run bd set-state ah-zzz verdict=stale --reason verdict formed against a commit main has moved past ?  y / n"
+  },
+  {
+    "name": "verdicts: no verdict commit is known",
+    "sweep": "sweep-verdicts",
+    "candidate": {
+      "id": "ah-fjty",
+      "title": "a reopened bead",
+      "priority": 0,
+      "verified_at": null,
+      "merges_since": 4
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "verdicts: the commit is not on the default branch",
+    "sweep": "sweep-verdicts",
+    "candidate": {
+      "id": "ah-fjty",
+      "title": "a reopened bead",
+      "priority": 0,
+      "verified_at": "dd3f67bd1a2b3c4d5e6f",
+      "merges_since": null
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "verdicts: nothing has landed since the verdict",
+    "sweep": "sweep-verdicts",
+    "candidate": {
+      "id": "ah-fjty",
+      "title": "a reopened bead",
+      "priority": 0,
+      "verified_at": "dd3f67bd1a2b3c4d5e6f",
+      "merges_since": 0
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "paused: one blocker, and it has closed",
+    "sweep": "sweep-paused",
+    "candidate": {
+      "id": "cb-aaa",
+      "title": "a bead parked for the navigator",
+      "priority": 2,
+      "paused_at": "2026-08-30T20:00:00Z",
+      "ui_decision": false,
+      "blockers": [
+        {
+          "id": "cb-bbb",
+          "status": "closed",
+          "closed_age_min": 120
+        }
+      ]
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "unpause",
+      "cb-aaa",
+      2
+    ],
+    "label": "unpause cb-aaa — waiting on cb-bbb, closed 2h ago",
+    "command": [
+      "bd",
+      "update",
+      "cb-aaa",
+      "--remove-label",
+      "human"
+    ],
+    "prompt": "unpause cb-aaa — it goes back to the planners for a re-read.  y / n"
+  },
+  {
+    "name": "paused: several blockers, all closed, and the most recent close",
+    "sweep": "sweep-paused",
+    "candidate": {
+      "id": "cb-aaa",
+      "title": "a bead parked for the navigator",
+      "priority": 2,
+      "paused_at": "2026-08-30T20:00:00Z",
+      "ui_decision": false,
+      "blockers": [
+        {
+          "id": "cb-bbb",
+          "status": "closed",
+          "closed_age_min": 120
+        },
+        {
+          "id": "cb-ccc",
+          "status": "closed",
+          "closed_age_min": 45
+        }
+      ]
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "unpause",
+      "cb-aaa",
+      2
+    ],
+    "label": "unpause cb-aaa — waiting on 2 beads, all closed, last 45m ago",
+    "command": [
+      "bd",
+      "update",
+      "cb-aaa",
+      "--remove-label",
+      "human"
+    ],
+    "prompt": "unpause cb-aaa — it goes back to the planners for a re-read.  y / n"
+  },
+  {
+    "name": "paused: the priority rides in the finding",
+    "sweep": "sweep-paused",
+    "candidate": {
+      "id": "cb-zzz",
+      "title": "a bead parked for the navigator",
+      "priority": 0,
+      "paused_at": "2026-08-30T20:00:00Z",
+      "ui_decision": false,
+      "blockers": [
+        {
+          "id": "cb-bbb",
+          "status": "closed",
+          "closed_age_min": 30
+        }
+      ]
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": [
+      "unpause",
+      "cb-zzz",
+      0
+    ],
+    "label": "unpause cb-zzz — waiting on cb-bbb, closed 30m ago",
+    "command": [
+      "bd",
+      "update",
+      "cb-zzz",
+      "--remove-label",
+      "human"
+    ],
+    "prompt": "unpause cb-zzz — it goes back to the planners for a re-read.  y / n"
+  },
+  {
+    "name": "paused: a question is not a blocker",
+    "sweep": "sweep-paused",
+    "candidate": {
+      "id": "cb-aaa",
+      "title": "a bead parked for the navigator",
+      "priority": 2,
+      "paused_at": "2026-08-30T20:00:00Z",
+      "ui_decision": true,
+      "blockers": [
+        {
+          "id": "cb-bbb",
+          "status": "closed",
+          "closed_age_min": 120
+        }
+      ]
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "paused: no blockers at all - the reason is prose nothing here reads",
+    "sweep": "sweep-paused",
+    "candidate": {
+      "id": "cb-aaa",
+      "title": "a bead parked for the navigator",
+      "priority": 2,
+      "paused_at": "2026-08-30T20:00:00Z",
+      "ui_decision": false,
+      "blockers": []
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "paused: a blocker that is not closed is the pause still being true",
+    "sweep": "sweep-paused",
+    "candidate": {
+      "id": "cb-aaa",
+      "title": "a bead parked for the navigator",
+      "priority": 2,
+      "paused_at": "2026-08-30T20:00:00Z",
+      "ui_decision": false,
+      "blockers": [
+        {
+          "id": "cb-bbb",
+          "status": "open",
+          "closed_age_min": null
+        }
+      ]
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  },
+  {
+    "name": "paused: one closed and one still in progress",
+    "sweep": "sweep-paused",
+    "candidate": {
+      "id": "cb-aaa",
+      "title": "a bead parked for the navigator",
+      "priority": 2,
+      "paused_at": "2026-08-30T20:00:00Z",
+      "ui_decision": false,
+      "blockers": [
+        {
+          "id": "cb-bbb",
+          "status": "closed",
+          "closed_age_min": 120
+        },
+        {
+          "id": "cb-ccc",
+          "status": "in_progress",
+          "closed_age_min": null
+        }
+      ]
+    },
+    "snapshot": {
+      "live": [],
+      "implementers": [
+        "Cyclops",
+        "Storm"
+      ],
+      "now": "2026-09-02T10:00:00Z"
+    },
+    "finding": null,
+    "label": null,
+    "command": null,
+    "prompt": null
+  }
+]

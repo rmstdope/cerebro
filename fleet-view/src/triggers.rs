@@ -246,6 +246,23 @@ fn stale(labels: &[String]) -> bool {
     labels.iter().any(|l| l == STALE_VERDICT_LABEL)
 }
 
+/// The unplanned, unparked beads at priority 4, sorted.
+///
+/// Sorted so the same set in a different bucket order is the same set
+/// (`cerebro--trigger-context`'s own note). Extracted from `TriggerFacts::derive` in cb-kcs.5.2
+/// because the triage path needs exactly this set from exactly these buckets and nothing else -
+/// and a second copy of the rule is a set the two could disagree about.
+pub fn unranked_ids(buckets: &WorkBuckets) -> Vec<String> {
+    let mut ids: Vec<String> = buckets
+        .unplanned
+        .iter()
+        .filter(|bead| !parked(&bead.labels) && bead.priority == Some(4))
+        .map(|bead| bead.id.clone())
+        .collect();
+    ids.sort();
+    ids
+}
+
 impl TriggerFacts {
     /// Derive them. `flagged` answers "is this name's stop flag set" and is the only impure thing
     /// the caller supplies; everything else is the snapshot.
@@ -268,12 +285,7 @@ impl TriggerFacts {
             .iter()
             .filter(|bead| !parked(&bead.labels))
             .collect();
-        let mut unranked_ids: Vec<String> = unplanned
-            .iter()
-            .filter(|bead| bead.priority == Some(4))
-            .map(|bead| bead.id.clone())
-            .collect();
-        unranked_ids.sort();
+        let unranked_ids = unranked_ids(buckets);
         let stale_verdicts = [
             &buckets.claimed,
             &buckets.planned,
@@ -804,7 +816,7 @@ impl StartLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AgentKind, Bead, RosterEntry};
+    use crate::model::{partition_beads, AgentKind, Bead, RosterEntry};
 
     fn bead(id: &str, status: &str, labels: &[&str], priority: u8) -> Bead {
         Bead {
@@ -878,6 +890,21 @@ mod tests {
         assert_eq!(facts.stale_verdicts, 1);
         assert_eq!(facts.implementers, 2);
         assert_eq!(facts.planner_want(), 2);
+    }
+
+    /// The unranked rule, extracted so the triage path and `TriggerFacts::derive` cannot drift
+    /// (cb-kcs.5.2): one set, one sort, one definition of "parked".
+    #[test]
+    fn unranked_ids_are_the_unplanned_p4s_sorted() {
+        let buckets = partition_beads(vec![
+            bead("cb-z4", "open", &[], 4),
+            bead("cb-a4", "open", &[], 4),
+            bead("cb-parked", "open", &["triage:declined"], 4),
+            bead("cb-human", "open", &["human"], 4),
+            bead("cb-p1", "open", &[], 1),
+            bead("cb-planned4", "open", &["planned"], 4),
+        ]);
+        assert_eq!(unranked_ids(&buckets), vec!["cb-a4".to_string(), "cb-z4".to_string()]);
     }
 
     #[test]

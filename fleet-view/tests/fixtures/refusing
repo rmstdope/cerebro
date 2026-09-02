@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# A refusal that is still an answer: the raw value on stdout, the complaint on stderr, exit 2.
+# `scripts/fleet-supervisor`'s contract, which is why ReadError::Exit carries stdout as well.
+printf 'raw-value\n'
+echo 'refusing' >&2
+exit 2

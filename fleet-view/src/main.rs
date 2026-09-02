@@ -21,6 +21,7 @@ use std::io::{self, Stdout, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -38,7 +39,9 @@ use cerebro_tui::app::{
 };
 use cerebro_tui::lifecycle;
 use cerebro_tui::model::{AgentKind, RosterEntry, RowState};
-use cerebro_tui::readers::{self, Programs, ReadError, ReaderPaths};
+use cerebro_tui::readers::{
+    self, CommandRunner, Commands, Programs, ReadError, ReaderPaths, RealCommands,
+};
 use cerebro_tui::supervisor::{
     reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
     SupervisorKind, SupervisorLease,
@@ -140,12 +143,12 @@ struct SupervisorController {
 
 impl SupervisorController {
     /// Read what cannot change, and answer what this process is before the first frame.
-    fn new(paths: &ReaderPaths) -> Self {
+    fn new(paths: &ReaderPaths, commands: &dyn CommandRunner) -> Self {
         Self {
             lease: None,
-            endpoint: readers::read_supervisor_endpoint(paths).ok(),
-            identity: readers::read_supervisor_identity(paths).ok(),
-            record: readers::read_supervisor_record(paths).ok(),
+            endpoint: readers::read_supervisor_endpoint(paths, commands).ok(),
+            identity: readers::read_supervisor_identity(paths, commands).ok(),
+            record: readers::read_supervisor_record(paths, commands).ok(),
             hosted_sessions: 0,
             last_request: None,
             diagnostic: None,
@@ -290,16 +293,19 @@ type Fatal = Box<dyn std::error::Error>;
 fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // One worker per pane: a thirty-second `bd` behind a five-second `ps` would make each wait
     // for the other, which is the one thing two independently refreshed panes must not do.
-    let fleet_worker = FleetWorker::spawn(paths.clone(), Programs::default());
-    let work_worker = WorkWorker::spawn(paths.clone(), Programs::default());
+    // The one runner this process ever uses. Every reader takes it as a parameter (cb-x3u), so
+    // that a test about parsing answers from a table instead of starting a process.
+    let commands: Commands = Arc::new(RealCommands);
+    let fleet_worker = FleetWorker::spawn(paths.clone(), Programs::default(), commands.clone());
+    let work_worker = WorkWorker::spawn(paths.clone(), Programs::default(), commands.clone());
     // A fourth thread for `gh`, on its own ten-minute cadence: three network calls behind a
     // rate limit would otherwise freeze the screen, keys and all (cb-kcs.4.3).
-    let gh_worker = GhWorker::spawn(paths.clone(), Programs::default());
-    let supervisor_worker = SupervisorWorker::spawn(paths.clone());
+    let gh_worker = GhWorker::spawn(paths.clone(), Programs::default(), commands.clone());
+    let supervisor_worker = SupervisorWorker::spawn(paths.clone(), commands.clone());
     // Ownership before the first frame: the one blocking read this binary allows itself, and the
     // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
-    let mut controller = SupervisorController::new(&paths);
-    let initial = controller.apply(readers::read_configured_supervisor(&paths));
+    let mut controller = SupervisorController::new(&paths, commands.as_ref());
+    let initial = controller.apply(readers::read_configured_supervisor(&paths, commands.as_ref()));
     let mut app = App::with_supervision(initial);
     let mut ledger = StartLedger::default();
 
@@ -316,10 +322,19 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // when it will be used: a fork per role per five-second tick is not a thing this view may do.
     let mut spacing = BTreeMap::new();
     if app.supervision.may_supervise() {
-        let (declared, complaints) = readers::read_role_spacing(&paths, &SPACED_ROLES);
+        let (declared, complaints) =
+            readers::read_role_spacing(&paths, &SPACED_ROLES, commands.as_ref());
         spacing = declared;
         if let Some(notice) =
-            arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, &complaints, Utc::now())
+            arm_and_autostart(
+                &mut app,
+                &mut host,
+                &mut ledger,
+                &paths,
+                commands.as_ref(),
+                &complaints,
+                Utc::now(),
+            )
         {
             app.set_notice(notice);
         }
@@ -612,6 +627,7 @@ fn arm_and_autostart(
     host: &mut SessionHost,
     ledger: &mut StartLedger,
     paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
     complaints: &[String],
     now: DateTime<Utc>,
 ) -> Option<String> {
@@ -626,8 +642,8 @@ fn arm_and_autostart(
             Vec::new()
         }
     };
-    let autostart = names("--autostart", readers::read_autostart_names(paths));
-    let standby = names("--standby", readers::read_standby_names(paths));
+    let autostart = names("--autostart", readers::read_autostart_names(paths, commands));
+    let standby = names("--standby", readers::read_standby_names(paths, commands));
     drop(names);
     let mut started = Vec::new();
     for name in &autostart {
@@ -1603,17 +1619,17 @@ mod main_tests {
 
     fn worker() -> FleetWorker {
         let (paths, programs) = nowhere();
-        FleetWorker::spawn(paths, programs)
+        FleetWorker::spawn(paths, programs, Arc::new(RealCommands))
     }
 
     fn work_worker() -> WorkWorker {
         let (paths, programs) = nowhere();
-        WorkWorker::spawn(paths, programs)
+        WorkWorker::spawn(paths, programs, Arc::new(RealCommands))
     }
 
     fn gh_worker() -> GhWorker {
         let (paths, programs) = nowhere();
-        GhWorker::spawn(paths, programs)
+        GhWorker::spawn(paths, programs, Arc::new(RealCommands))
     }
 
     /// The two ownership parameters, pointed at a directory with no `fleet-supervisor` in it.
@@ -1621,7 +1637,10 @@ mod main_tests {
     /// about the terminal and the event source, and ownership must not be what decides them.
     fn supervision() -> (SupervisorWorker, SupervisorController) {
         let (paths, _) = nowhere();
-        (SupervisorWorker::spawn(paths.clone()), SupervisorController::new(&paths))
+        (
+            SupervisorWorker::spawn(paths.clone(), Arc::new(RealCommands)),
+            SupervisorController::new(&paths, &RealCommands),
+        )
     }
 
     /// A reader that could not answer must not cost this process a lease it holds.
@@ -1633,7 +1652,7 @@ mod main_tests {
     #[test]
     fn a_transient_reader_failure_goes_read_only_without_releasing() {
         let (paths, _) = nowhere();
-        let mut controller = SupervisorController::new(&paths);
+        let mut controller = SupervisorController::new(&paths, &RealCommands);
 
         // Hold a lease on a port this test owns for its whole life.
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1690,7 +1709,7 @@ mod main_tests {
     #[test]
     fn a_resolved_collision_does_not_become_the_parting_line() {
         let (paths, _) = nowhere();
-        let mut controller = SupervisorController::new(&paths);
+        let mut controller = SupervisorController::new(&paths, &RealCommands);
         controller.note_diagnostic("supervision lease at 127.0.0.1:9: collided".to_string());
 
         let mode = controller.apply(Ok(Ok(SupervisorKind::Emacs)));
@@ -1710,7 +1729,7 @@ mod main_tests {
     #[test]
     fn a_consumer_with_no_lease_machinery_degrades_silently() {
         let (paths, _) = nowhere();
-        let mut controller = SupervisorController::new(&paths);
+        let mut controller = SupervisorController::new(&paths, &RealCommands);
         assert!(
             controller.endpoint.is_none()
                 && controller.identity.is_none()
@@ -1877,25 +1896,23 @@ mod main_tests {
     /// handling every keystroke while it is still in flight.
     #[test]
     fn work_reader_never_blocks_terminal_events() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = tempfile::tempdir().unwrap();
-        let slow_bd = dir.path().join("bd");
         // Thirty seconds, not one: the window this test needs is "longer than the loop takes",
-        // and the loop's duration is the machine's business. Paired with the injected bound below,
-        // load cannot close it.
-        std::fs::write(&slow_bd, "#!/usr/bin/env bash\nsleep 30\nprintf '[]\\n'\n").unwrap();
-        let mut perms = std::fs::metadata(&slow_bd).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&slow_bd, perms).unwrap();
+        // and the loop's duration is the machine's business. Since cb-x3u the slowness is the
+        // FAKE's rather than a bash script's - this test is about the loop, and writing an
+        // executable to make it wait was scaffolding that broke four separate times.
+        let slow = cerebro_tui::readers::testing::FakeCommands::new(|_| {
+            std::thread::sleep(Duration::from_secs(30));
+            Ok(b"[]".to_vec())
+        });
 
         let work = WorkWorker::spawn(
             ReaderPaths {
-                consumer_root: dir.path().to_path_buf(),
-                shared_root: dir.path().to_path_buf(),
-                scripts_dir: dir.path().to_path_buf(),
+                consumer_root: PathBuf::from("/consumer"),
+                shared_root: PathBuf::from("/consumer"),
+                scripts_dir: PathBuf::from("/consumer/scripts"),
             },
-            Programs { bd: slow_bd, ps: "/nonexistent/ps".into(), ..Programs::default() },
+            Programs::default(),
+            Arc::new(slow),
         );
 
         let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
@@ -1920,9 +1937,11 @@ mod main_tests {
         // The stopwatch this replaces read `elapsed < 500ms`, and a machine that can add five
         // seconds to a `fork` can add half a second to three keystrokes — it would have failed as
         // an accusation about production code, which is the same defect the rest of this change
-        // removes, one crate over and ten times tighter. What is left has the reader's own bound
-        // as its margin: the fixture sleeps thirty seconds, so this loop has five to finish in,
-        // against the microseconds three queued keystrokes actually take.
+        // removes, one crate over and ten times tighter. What is left has the FAKE's sleep as its
+        // whole margin: nothing bounds a `FakeCommands`, so the worker sleeps all thirty seconds,
+        // against the microseconds three queued keystrokes actually take. (Before cb-x3u the
+        // margin was the reader's own five-second timeout, because the slowness was a real
+        // child's.)
         assert!(
             app.work.refreshing,
             "the loop waited for the reader: the work read had finished by the time it exited"
@@ -3096,13 +3115,26 @@ mod main_tests {
     fn a_roster_that_cannot_be_read_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        // No `roster` at all: nothing is armed, nothing is started, and the navigator is told
-        // why rather than shown a fleet indistinguishable from one that declared neither.
+        // A `roster` that cannot be read: nothing is armed, nothing is started, and the
+        // navigator is told why rather than shown a fleet indistinguishable from one that
+        // declared neither.
+        let unreadable = cerebro_tui::readers::testing::FakeCommands::failing(|| ReadError::Spawn {
+            source: "roster".into(),
+            message: "No such file or directory".into(),
+        });
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = App::with_supervision(supervising());
 
-        let notice = arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, &[], Utc::now())
+        let notice = arm_and_autostart(
+            &mut app,
+            &mut host,
+            &mut ledger,
+            &paths,
+            &unreadable,
+            &[],
+            Utc::now(),
+        )
             .expect("a read that failed is reported");
 
         assert!(notice.contains("--autostart could not be read"), "{notice}");
@@ -3132,13 +3164,23 @@ mod main_tests {
     fn the_roster_declaration_starts_one_half_and_arms_the_other() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        write_roster(dir.path(), "Cyclops", "Xavier\nBeast");
+        // The declaration answers from a fake; the SESSION it starts is still a real child of
+        // `scratch`'s `launch`, which is what this case is about.
+        let declaration = declaring("Cyclops", "Xavier\nBeast");
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = App::with_supervision(supervising());
 
-        let notice = arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, &[], now);
+        let notice = arm_and_autostart(
+            &mut app,
+            &mut host,
+            &mut ledger,
+            &paths,
+            &declaration,
+            &[],
+            now,
+        );
 
         assert!(host.is_live("Cyclops"), "the autostart half is started");
         assert!(app.armed.contains("Cyclops"), "and armed by the start");
@@ -3189,20 +3231,17 @@ mod main_tests {
         );
     }
 
-    /// A `roster` in the scratch checkout answering the two declaration flags.
-    fn write_roster(dir: &std::path::Path, autostart: &str, standby: &str) {
-        use std::os::unix::fs::PermissionsExt;
-        let path = dir.join("roster");
-        std::fs::write(
-            &path,
-            format!(
-                "#!/bin/sh\ncase \"$1\" in\n  --autostart) printf '{autostart}\\n' ;;\n  --standby) printf '{standby}\\n' ;;\n  *) : ;;\nesac\n"
-            ),
-        )
-        .unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).unwrap();
+    /// A runner answering the roster's two declaration flags, and nothing else.
+    fn declaring(autostart: &str, standby: &str) -> cerebro_tui::readers::testing::FakeCommands {
+        let autostart = format!("{autostart}\n");
+        let standby = format!("{standby}\n");
+        cerebro_tui::readers::testing::FakeCommands::new(move |call| {
+            match call.args.first().map(String::as_str) {
+                Some("--autostart") => Ok(autostart.clone().into_bytes()),
+                Some("--standby") => Ok(standby.clone().into_bytes()),
+                _ => Ok(Vec::new()),
+            }
+        })
     }
 
     // --- cb-kcs.4.3: the roles whose work arrives from outside the fleet -----------------------

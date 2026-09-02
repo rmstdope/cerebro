@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# A byte that is not valid UTF-8, so a runner that decoded its child's output could not return it.
+# Decoding is the READER's job — `readers_report_spawn_and_decode_failures` is where invalid UTF-8
+# becomes a `ReadError::Invalid`.
+printf '\377\376ok\n'

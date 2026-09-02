@@ -651,6 +651,12 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   the parent waits is a deadlock no timeout can see. `read_fleet` and `read_work` are the two
   aggregate reads, and **a failure is never an empty answer**: `Ok(vec![])` would draw a fleet in
   which every agent is dead, and `Ok(WorkBuckets::default())` a board with nothing on it. Since
+  cb-x3u the spawning itself is behind `CommandRunner`: production passes `RealCommands`, which is
+  the only implementation that starts a process, and a test about parsing passes
+  `readers::testing::FakeCommands`, which answers from a table and records the argv. Spawning is
+  proved once, in `fleet-view/tests/command_runner.rs`, against **tracked** fixture scripts under
+  `fleet-view/tests/fixtures/` — a file no test writes cannot be `ETXTBSY`, which is what four
+  patches in this module had been working around. Since
   cb-kcs.4.3 `read_gh` is a third reader — three `gh` calls on their own ten-minute cadence, each
   bounded at thirty seconds because these are network calls — and it is what starts the roles whose
   work arrives from outside the fleet. Its pane is never drawn: its four content states are exactly

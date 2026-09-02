@@ -24,7 +24,8 @@ use crate::model::{self, FleetRow, GhSnapshot, RowState, WorkBuckets};
 use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{
-    read_configured_supervisor, read_fleet, read_gh, read_work, Programs, ReaderPaths, ReadError,
+    read_configured_supervisor, read_fleet, read_gh, read_work, Commands, Programs, ReaderPaths,
+    ReadError,
 };
 use crate::triggers::GhAnswer;
 
@@ -1013,32 +1014,15 @@ impl<T: Send + 'static> Worker<T> {
 }
 
 impl Worker<Vec<FleetRow>> {
-    pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
-        Self::spawn_reader(move || read_fleet(&paths, &programs))
-    }
-
-    /// The same worker with the reader's wall-clock bound as a parameter, for the tests alone.
-    ///
-    /// A test that drives this worker over a fixture is asserting that the *worker* answers, not
-    /// that a two-line bash script beats production's five seconds on a loaded machine — see
-    /// `TEST_TIMEOUT` in `readers.rs` for what that cost before it was tracked down.
-    #[cfg(test)]
-    pub(crate) fn spawn_with_timeout(
-        paths: ReaderPaths,
-        programs: Programs,
-        timeout: std::time::Duration,
-    ) -> Self {
-        Self::spawn_reader(move || {
-            crate::readers::read_fleet_with_timeout(&paths, &programs, timeout)
-        })
+    pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
+        Self::spawn_reader(move || read_fleet(&paths, &programs, commands.as_ref()))
     }
 }
 
 impl Worker<WorkBuckets> {
-    pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
-        Self::spawn_reader(move || read_work(&paths, &programs))
+    pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
+        Self::spawn_reader(move || read_work(&paths, &programs, commands.as_ref()))
     }
-
 }
 
 /// The GitHub reader's worker: `read_gh` on its own thread (`readers::read_gh`).
@@ -1051,15 +1035,15 @@ pub type GhWorker = Worker<GhSnapshot>;
 impl Worker<GhSnapshot> {
     /// The learnt login lives in the closure, so it survives between requests and is asked for
     /// only until it answers - which is why the reader bound is `FnMut`.
-    pub fn spawn(paths: ReaderPaths, programs: Programs) -> Self {
+    pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
         let mut me: Option<String> = None;
-        Self::spawn_reader(move || read_gh(&paths, &programs, &mut me))
+        Self::spawn_reader(move || read_gh(&paths, &programs, &mut me, commands.as_ref()))
     }
 }
 
 impl Worker<Result<SupervisorKind, String>> {
-    pub fn spawn(paths: ReaderPaths) -> Self {
-        Self::spawn_reader(move || read_configured_supervisor(&paths))
+    pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
+        Self::spawn_reader(move || read_configured_supervisor(&paths, commands.as_ref()))
     }
 }
 
@@ -1941,41 +1925,31 @@ mod tests {
         assert!(app.begin_work_refresh(start), "and the idle one still starts");
     }
 
+    /// The worker answers off the UI thread. Since cb-x3u it answers from a `FakeCommands`
+    /// rather than from two executables this test wrote: the claim is about the WORKER - a read
+    /// asked for on the UI thread comes back from another one - and starting a process to make
+    /// it was scaffolding that broke four separate times.
     #[test]
     fn the_worker_answers_off_the_ui_thread() {
-        let dir = tempfile::tempdir().unwrap();
-        let scripts = dir.path().join("scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
-        std::fs::write(
-            scripts.join("roster"),
-            "#!/usr/bin/env bash\nprintf '%s\\n' 'Xavier\tplanner\tinteractive'\n",
-        )
-        .unwrap();
-        std::fs::write(dir.path().join("ps"), "#!/usr/bin/env bash\nprintf ''\n").unwrap();
-        for path in [scripts.join("roster"), dir.path().join("ps")] {
-            let mut perms = std::fs::metadata(&path).unwrap().permissions();
-            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-            std::fs::set_permissions(&path, perms).unwrap();
-        }
-
-        let worker = FleetWorker::spawn_with_timeout(
+        let fake = crate::readers::testing::FakeCommands::new(|call| {
+            if call.program.ends_with("roster") {
+                Ok(b"Xavier\tplanner\tinteractive\n".to_vec())
+            } else {
+                Ok(Vec::new())
+            }
+        });
+        let worker = FleetWorker::spawn(
             ReaderPaths {
-                consumer_root: dir.path().to_path_buf(),
-                shared_root: dir.path().to_path_buf(),
-                scripts_dir: scripts,
+                consumer_root: std::path::PathBuf::from("/consumer"),
+                shared_root: std::path::PathBuf::from("/consumer"),
+                scripts_dir: std::path::PathBuf::from("/consumer/scripts"),
             },
-            Programs {
-                ps: dir.path().join("ps"),
-                bd: "bd".into(),
-                ..Programs::default()
-            },
-            Duration::from_secs(60),
+            Programs::default(),
+            std::sync::Arc::new(fake),
         );
         assert!(worker.poll().is_none(), "nothing was asked for yet");
         assert!(worker.request());
 
-        // Generous on purpose: this asserts the worker answers off the UI thread, not that a
-        // fixture beats a stopwatch on a loaded machine.
         let deadline = Instant::now() + Duration::from_secs(60);
         let result = loop {
             if let Some(result) = worker.poll() {
@@ -1984,7 +1958,7 @@ mod tests {
             assert!(Instant::now() < deadline, "the worker never answered");
             std::thread::sleep(Duration::from_millis(10));
         };
-        let rows = result.expect("the fixture roster and ps both succeed");
+        let rows = result.expect("the fake answers both reads");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Xavier");
     }

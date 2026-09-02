@@ -33,10 +33,9 @@ use crate::model::{
 /// program has ever taken and short enough that the next five-second tick is the recovery.
 /// The wall-clock bound every reader puts on its child.
 ///
-/// Five seconds, and deliberately kept there: the measurement that produced
-/// `readers::tests::TEST_TIMEOUT` is also evidence that five seconds is thin on a loaded
-/// developer machine, so a fleet building in its worktrees will show `Unavailable`/`Stale` panes
-/// while it does. That is the designed recovery — the next tick retries — and a longer bound
+/// Five seconds, and deliberately kept there: it is measurably thin on a loaded developer
+/// machine — a two-line bash script has exceeded it beside three concurrent `cargo test` runs —
+/// so a fleet building in its worktrees will show `Unavailable`/`Stale` panes while it does. That is the designed recovery — the next tick retries — and a longer bound
 /// would trade a visible, self-healing pane for a screen that sits on `refreshing...` instead.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -112,23 +111,47 @@ impl std::fmt::Display for ReadError {
 
 impl std::error::Error for ReadError {}
 
-fn run(program: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Vec<u8>, ReadError> {
-    run_with_timeout(program, args, cwd, COMMAND_TIMEOUT)
+/// What a reader asks of the outside world: run this program, with these arguments, in this
+/// directory, bounded by this wall clock, and give me its stdout - or the failure as itself.
+///
+/// The seam exists so that a test about PARSING never starts a process. Four separate patches in
+/// this module - `c25701f`, `4e70768`, `dd3066d`, `fa52613` - were each a new wrapper around a
+/// fixture spawn (a widened timeout, an `ETXTBSY` retry, a zombie poll) rather than a way of not
+/// spawning at all, and every new reader test widened the window for the next one.
+///
+/// `RealCommands` is the only implementation production ever uses; `testing::FakeCommands`
+/// answers from a table and records the argv, and `tests/command_runner.rs` proves the real one
+/// against tracked fixture scripts, in its own process.
+pub trait CommandRunner: Send + Sync {
+    fn run(
+        &self,
+        program: &Path,
+        args: &[&str],
+        cwd: Option<&Path>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, ReadError>;
 }
 
-/// `run`, with the wall-clock bound as a parameter so a test can prove the kill-and-reap path in
-/// milliseconds rather than in the five production seconds.
+/// The runner that actually spawns - the only one that does.
 ///
 /// Both pipes are drained on their own threads *before* anything waits: a child that fills a pipe
 /// blocks writing while the parent blocks waiting, which is a deadlock no timeout can see, since
 /// the child is not idle - it is running, waiting on us. A timed-out child is killed and then
 /// waited for, so no zombie is left behind.
-fn run_with_timeout(
-    program: &Path,
-    args: &[&str],
-    cwd: Option<&Path>,
-    timeout: Duration,
-) -> Result<Vec<u8>, ReadError> {
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RealCommands;
+
+/// What a worker moves onto its own thread: a runner it does not own exclusively.
+pub type Commands = std::sync::Arc<dyn CommandRunner>;
+
+impl CommandRunner for RealCommands {
+    fn run(
+        &self,
+        program: &Path,
+        args: &[&str],
+        cwd: Option<&Path>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, ReadError> {
     let program_name = program.display().to_string();
     let spawn_failed = |e: std::io::Error| ReadError::Spawn {
         source: program_name.clone(),
@@ -187,24 +210,17 @@ fn run_with_timeout(
         });
     }
     Ok(stdout)
+    }
 }
 
 /// The roster, via `<scripts_dir>/roster` - the one place the fleet is declared
 /// (`emacs/cerebro.el:117-129`).
-pub fn read_roster(paths: &ReaderPaths) -> Result<Vec<RosterEntry>, ReadError> {
-    read_roster_with_timeout(paths, COMMAND_TIMEOUT)
-}
-
-/// `read_roster`, with the wall-clock bound as a parameter — the shape `read_beads_with_timeout`
-/// already has, and for the mirror of its reason: a test proves the timeout path in milliseconds,
-/// and a test that wants the *reader* rather than the bound gives itself room the machine cannot
-/// take away. See the tests' `TEST_TIMEOUT`.
-fn read_roster_with_timeout(
+pub fn read_roster(
     paths: &ReaderPaths,
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> Result<Vec<RosterEntry>, ReadError> {
     let program = paths.scripts_dir.join("roster");
-    let stdout = run_with_timeout(&program, &[], Some(&paths.consumer_root), timeout)?;
+    let stdout = commands.run(&program, &[], Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
     let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
         source: program.display().to_string(),
         message: e.to_string(),
@@ -215,31 +231,22 @@ fn read_roster_with_timeout(
     })
 }
 
-
 /// The names `scripts/roster --autostart` lists, in file order - the agents this project wants
 /// started as the view comes up.
-pub fn read_autostart_names(paths: &ReaderPaths) -> Result<Vec<String>, ReadError> {
-    read_autostart_names_with_timeout(paths, COMMAND_TIMEOUT)
-}
-
-fn read_autostart_names_with_timeout(
+pub fn read_autostart_names(
     paths: &ReaderPaths,
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> Result<Vec<String>, ReadError> {
-    read_roster_names(paths, "--autostart", timeout)
+    read_roster_names(paths, "--autostart", commands)
 }
 
 /// The names `scripts/roster --standby` lists, in file order - ARMED without being started
 /// (cb-98u). The other half of the same declaration.
-pub fn read_standby_names(paths: &ReaderPaths) -> Result<Vec<String>, ReadError> {
-    read_standby_names_with_timeout(paths, COMMAND_TIMEOUT)
-}
-
-fn read_standby_names_with_timeout(
+pub fn read_standby_names(
     paths: &ReaderPaths,
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> Result<Vec<String>, ReadError> {
-    read_roster_names(paths, "--standby", timeout)
+    read_roster_names(paths, "--standby", commands)
 }
 
 /// One name per line, blank lines dropped. A read that fails is an error the caller reports and
@@ -248,10 +255,10 @@ fn read_standby_names_with_timeout(
 fn read_roster_names(
     paths: &ReaderPaths,
     flag: &str,
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> Result<Vec<String>, ReadError> {
     let program = paths.scripts_dir.join("roster");
-    let stdout = run_with_timeout(&program, &[flag], Some(&paths.consumer_root), timeout)?;
+    let stdout = commands.run(&program, &[flag], Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
     let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
         source: program.display().to_string(),
         message: e.to_string(),
@@ -278,14 +285,7 @@ fn read_roster_names(
 pub fn read_role_spacing(
     paths: &ReaderPaths,
     roles: &[&str],
-) -> (BTreeMap<String, u64>, Vec<String>) {
-    read_role_spacing_with_timeout(paths, roles, COMMAND_TIMEOUT)
-}
-
-fn read_role_spacing_with_timeout(
-    paths: &ReaderPaths,
-    roles: &[&str],
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> (BTreeMap<String, u64>, Vec<String>) {
     let program = paths.scripts_dir.join("project-conf");
     let mut declared = BTreeMap::new();
@@ -296,7 +296,8 @@ fn read_role_spacing_with_timeout(
             continue;
         }
         let key = format!("role_start_spacing_{role}");
-        let Ok(stdout) = run_with_timeout(&program, &[&key], Some(&paths.consumer_root), timeout)
+        let Ok(stdout) =
+            commands.run(&program, &[&key], Some(&paths.consumer_root), COMMAND_TIMEOUT)
         else {
             continue;
         };
@@ -332,18 +333,10 @@ fn read_role_spacing_with_timeout(
 /// where the navigator moved it away from.
 pub fn read_configured_supervisor(
     paths: &ReaderPaths,
-) -> Result<Result<SupervisorKind, String>, ReadError> {
-    read_configured_supervisor_with_timeout(paths, COMMAND_TIMEOUT)
-}
-
-/// `read_configured_supervisor`, with the wall-clock bound as a parameter. See
-/// `read_roster_with_timeout`.
-fn read_configured_supervisor_with_timeout(
-    paths: &ReaderPaths,
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> Result<Result<SupervisorKind, String>, ReadError> {
     let program = paths.scripts_dir.join("fleet-supervisor");
-    match run_with_timeout(&program, &[], Some(&paths.consumer_root), timeout) {
+    match commands.run(&program, &[], Some(&paths.consumer_root), COMMAND_TIMEOUT) {
         Ok(stdout) => {
             let word = String::from_utf8_lossy(&stdout).trim().to_string();
             Ok(SupervisorKind::parse(&word).ok_or(word))
@@ -355,9 +348,12 @@ fn read_configured_supervisor_with_timeout(
 }
 
 /// The loopback address this checkout's supervision lease lives at.
-pub fn read_supervisor_endpoint(paths: &ReaderPaths) -> Result<SocketAddr, ReadError> {
+pub fn read_supervisor_endpoint(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> Result<SocketAddr, ReadError> {
     let program = paths.scripts_dir.join("fleet-supervisor");
-    let stdout = run(&program, &["--endpoint"], Some(&paths.consumer_root))?;
+    let stdout = commands.run(&program, &["--endpoint"], Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
     let text = String::from_utf8_lossy(&stdout).trim().to_string();
     text.parse().map_err(|e: std::net::AddrParseError| ReadError::Invalid {
         source: program.display().to_string(),
@@ -366,16 +362,22 @@ pub fn read_supervisor_endpoint(paths: &ReaderPaths) -> Result<SocketAddr, ReadE
 }
 
 /// The canonical shared root this checkout supervises - the identity the record round-trips.
-pub fn read_supervisor_identity(paths: &ReaderPaths) -> Result<String, ReadError> {
+pub fn read_supervisor_identity(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> Result<String, ReadError> {
     let program = paths.scripts_dir.join("fleet-supervisor");
-    let stdout = run(&program, &["--identity"], Some(&paths.consumer_root))?;
+    let stdout = commands.run(&program, &["--identity"], Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
     Ok(String::from_utf8_lossy(&stdout).trim().to_string())
 }
 
 /// Where the diagnostic record goes. Reading this creates nothing.
-pub fn read_supervisor_record(paths: &ReaderPaths) -> Result<PathBuf, ReadError> {
+pub fn read_supervisor_record(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> Result<PathBuf, ReadError> {
     let program = paths.scripts_dir.join("fleet-supervisor");
-    let stdout = run(&program, &["--record"], Some(&paths.consumer_root))?;
+    let stdout = commands.run(&program, &["--record"], Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
     Ok(PathBuf::from(String::from_utf8_lossy(&stdout).trim().to_string()))
 }
 
@@ -406,16 +408,12 @@ pub fn read_states(paths: &ReaderPaths, roster: &[RosterEntry]) -> StateInputs {
 
 /// Every system process, via `ps -axo pid=,ppid=,args=` - matching `cerebro--system-processes`'s
 /// contract (`emacs/cerebro.el:3255-3271`), fed to the pure `model::parse_processes`.
-pub fn read_processes(programs: &Programs) -> Result<Vec<ProcessRow>, ReadError> {
-    read_processes_with_timeout(programs, COMMAND_TIMEOUT)
-}
-
-/// `read_processes`, with the wall-clock bound as a parameter. See `read_roster_with_timeout`.
-fn read_processes_with_timeout(
+pub fn read_processes(
     programs: &Programs,
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> Result<Vec<ProcessRow>, ReadError> {
-    let stdout = run_with_timeout(&programs.ps, &["-axo", "pid=,ppid=,args="], None, timeout)?;
+    let stdout =
+        commands.run(&programs.ps, &["-axo", "pid=,ppid=,args="], None, COMMAND_TIMEOUT)?;
     let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
         source: programs.ps.display().to_string(),
         message: e.to_string(),
@@ -431,20 +429,13 @@ fn read_processes_with_timeout(
 /// (`emacs/cerebro.el:4564-4571`). `--readonly` and the explicit `-C` are mandatory: `bd` answers
 /// about whatever repository it runs in and defaults to open beads only
 /// (`scripts/work-beads:17-29`).
-pub fn read_beads(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<Bead>, ReadError> {
-    read_beads_with_timeout(paths, programs, COMMAND_TIMEOUT)
-}
-
-/// `read_beads`, with the wall-clock bound as a parameter. Crate-private: production reads go
-/// through the five-second boundary above, and only a test injects a shorter one so the
-/// kill-and-reap path costs a second rather than five.
-fn read_beads_with_timeout(
+pub fn read_beads(
     paths: &ReaderPaths,
     programs: &Programs,
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> Result<Vec<Bead>, ReadError> {
     let root = paths.shared_root.to_string_lossy().into_owned();
-    let stdout = run_with_timeout(
+    let stdout = commands.run(
         &programs.bd,
         &[
             "--readonly",
@@ -457,7 +448,7 @@ fn read_beads_with_timeout(
             "--brief",
         ],
         None,
-        timeout,
+        COMMAND_TIMEOUT,
     )?;
     serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
         source: programs.bd.display().to_string(),
@@ -471,18 +462,12 @@ fn read_beads_with_timeout(
 /// any kind - a non-zero `bd`, a timed-out one, output that is not the JSON list it promised - is
 /// returned as itself. `Ok(WorkBuckets::default())` would render as six empty queues, which is a
 /// fleet with nothing to do rather than a board nobody could read.
-pub fn read_work(paths: &ReaderPaths, programs: &Programs) -> Result<WorkBuckets, ReadError> {
-    read_work_with_timeout(paths, programs, COMMAND_TIMEOUT)
-}
-
-fn read_work_with_timeout(
+pub fn read_work(
     paths: &ReaderPaths,
     programs: &Programs,
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> Result<WorkBuckets, ReadError> {
-    Ok(model::partition_beads(read_beads_with_timeout(
-        paths, programs, timeout,
-    )?))
+    Ok(model::partition_beads(read_beads(paths, programs, commands)?))
 }
 
 /// How long each `gh` child may run. Thirty seconds, not `COMMAND_TIMEOUT`'s five: these are
@@ -522,6 +507,7 @@ pub fn read_gh(
     paths: &ReaderPaths,
     programs: &Programs,
     me: &mut Option<String>,
+    commands: &dyn CommandRunner,
 ) -> Result<GhSnapshot, ReadError> {
     let cwd = Some(paths.consumer_root.as_path());
     let invalid = |e: serde_json::Error| ReadError::Invalid {
@@ -529,13 +515,13 @@ pub fn read_gh(
         message: e.to_string(),
     };
     let issues: Vec<GhIssue> =
-        serde_json::from_slice(&run_with_timeout(&programs.gh, &GH_ISSUES_ARGV, cwd, GH_TIMEOUT)?)
+        serde_json::from_slice(&commands.run(&programs.gh, &GH_ISSUES_ARGV, cwd, GH_TIMEOUT)?)
             .map_err(invalid)?;
     let prs: Vec<GhPull> =
-        serde_json::from_slice(&run_with_timeout(&programs.gh, &GH_PRS_ARGV, cwd, GH_TIMEOUT)?)
+        serde_json::from_slice(&commands.run(&programs.gh, &GH_PRS_ARGV, cwd, GH_TIMEOUT)?)
             .map_err(invalid)?;
     if me.is_none() {
-        if let Ok(stdout) = run_with_timeout(&programs.gh, &GH_ME_ARGV, cwd, GH_TIMEOUT) {
+        if let Ok(stdout) = commands.run(&programs.gh, &GH_ME_ARGV, cwd, GH_TIMEOUT) {
             let login = String::from_utf8_lossy(&stdout).trim().to_string();
             if !login.is_empty() {
                 *me = Some(login);
@@ -553,19 +539,14 @@ pub fn read_gh(
 /// screen that can show a bead in a row whose process scan predates the claim. A failure in
 /// either subprocess is returned as itself: a fleet that could not be read is never an empty
 /// fleet, which would read as "every agent is dead".
-pub fn read_fleet(paths: &ReaderPaths, programs: &Programs) -> Result<Vec<FleetRow>, ReadError> {
-    read_fleet_with_timeout(paths, programs, COMMAND_TIMEOUT)
-}
-
-/// `read_fleet`, with the wall-clock bound as a parameter. See `read_roster_with_timeout`.
-pub(crate) fn read_fleet_with_timeout(
+pub fn read_fleet(
     paths: &ReaderPaths,
     programs: &Programs,
-    timeout: Duration,
+    commands: &dyn CommandRunner,
 ) -> Result<Vec<FleetRow>, ReadError> {
-    let roster = read_roster_with_timeout(paths, timeout)?;
+    let roster = read_roster(paths, commands)?;
     let states = read_states(paths, &roster);
-    let processes = read_processes_with_timeout(programs, timeout)?;
+    let processes = read_processes(programs, commands)?;
     Ok(model::derive_fleet(
         &roster,
         &states,
@@ -574,109 +555,139 @@ pub(crate) fn read_fleet_with_timeout(
     ))
 }
 
+/// Fixtures for this crate's own tests AND for the binary's: `main.rs` is a separate crate, so a
+/// `#[cfg(test)]` item here would be invisible to it.
+///
+/// Nothing in here starts a process. That is the point of cb-x3u: a test about PARSING answers
+/// from a table, and the real runner is proved once, in `tests/command_runner.rs`.
+pub mod testing {
+    use super::{CommandRunner, ReadError};
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    /// One call a reader made - what it ran, with what, where, and under which bound.
+    ///
+    /// The timeout is recorded rather than ignored: `GH_TIMEOUT`'s thirty seconds used to be
+    /// asserted by nothing at all, because a bash fixture cannot see the bound it was run under.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Call {
+        pub program: PathBuf,
+        pub args: Vec<String>,
+        pub cwd: Option<PathBuf>,
+        pub timeout: Duration,
+    }
+
+    /// A `CommandRunner` that runs nothing: it answers from a function the test supplied, and
+    /// records every call, so the argv assertions that used to live inside a bash fixture's
+    /// `want=`/`got=` comparison are made directly in Rust.
+    ///
+    /// `Mutex`, not `RefCell`: `CommandRunner` is `Send + Sync` because a worker moves it to
+    /// another thread.
+    pub struct FakeCommands {
+        answer: Box<dyn Fn(&Call) -> Result<Vec<u8>, ReadError> + Send + Sync>,
+        calls: Mutex<Vec<Call>>,
+    }
+
+    impl FakeCommands {
+        /// Answer every call with this function, which sees the whole `Call` and so can dispatch
+        /// on the program or the argv the way a fixture script's `case` used to.
+        pub fn new(
+            answer: impl Fn(&Call) -> Result<Vec<u8>, ReadError> + Send + Sync + 'static,
+        ) -> Self {
+            Self { answer: Box::new(answer), calls: Mutex::new(Vec::new()) }
+        }
+
+        /// Answer every call with the same stdout - the common case.
+        pub fn always(stdout: impl Into<Vec<u8>>) -> Self {
+            let stdout = stdout.into();
+            Self::new(move |_| Ok(stdout.clone()))
+        }
+
+        /// Fail every call the same way.
+        pub fn failing(error: impl Fn() -> ReadError + Send + Sync + 'static) -> Self {
+            Self::new(move |_| Err(error()))
+        }
+
+        /// What was run, in order.
+        pub fn calls(&self) -> Vec<Call> {
+            self.calls.lock().expect("no test panics while holding this").clone()
+        }
+    }
+
+    impl CommandRunner for FakeCommands {
+        fn run(
+            &self,
+            program: &Path,
+            args: &[&str],
+            cwd: Option<&Path>,
+            timeout: Duration,
+        ) -> Result<Vec<u8>, ReadError> {
+            let call = Call {
+                program: program.to_path_buf(),
+                args: args.iter().map(|a| (*a).to_string()).collect(),
+                cwd: cwd.map(Path::to_path_buf),
+                timeout,
+            };
+            self.calls.lock().expect("no test panics while holding this").push(call.clone());
+            (self.answer)(&call)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::testing::{Call, FakeCommands};
     use super::*;
     use crate::partition_beads;
 
-    /// The bound the tests give a fixture, and why it is not production's five seconds.
-    ///
-    /// Every reader here spawns a child under a wall-clock bound, and the tests below assert that
-    /// a *trivial* fixture succeeds. Five seconds is a statement about a healthy machine: measured
-    /// on this one, three concurrent `cargo test` runs beside a fleet building in its worktrees is
-    /// enough to make a two-line bash script exceed it, and the suite then fails with
-    /// `Timeout { source: ".../bd", seconds: 5 }` in whichever tests happened to be running — three
-    /// or four different ones each time, which reads as flakiness rather than as one cause. It went
-    /// red three times on this branch's own gate before it was tracked down.
-    ///
-    /// So a test that is about the reader gives itself room the machine cannot take away, and a
-    /// test that is about the *bound* keeps passing its own tiny value. Production is untouched:
-    /// `read_roster`, `read_processes`, `read_beads`, `read_work` and `read_fleet` still bound
-    /// their children at `COMMAND_TIMEOUT`, which is the five seconds `CLAUDE.md` documents.
-    pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(60);
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-    fn repo_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("fleet-view has a parent directory")
-            .to_path_buf()
-    }
+    /// Nothing in this module starts a process any more (cb-x3u). Every case below answers from
+    /// a `FakeCommands`, which is why there is no `TEST_TIMEOUT`, no `retry_if_text_busy` and no
+    /// `write_executable` here: those three were the accumulated cost of testing PARSING by
+    /// spawning. The real runner is proved in `tests/command_runner.rs`, and the one case that
+    /// must run this checkout's own `scripts/roster` is in `tests/reader_contracts.rs`.
 
-    /// Linux's ETXTBSY, and why every fixture spawn below goes through this.
-    ///
-    /// `exec` of a file fails with `ETXTBSY` while ANY process still holds a writable descriptor
-    /// for it. Cargo runs these tests as threads of one process, so the window is not this test's
-    /// own write - `write_executable` closes its handle before it returns - but any OTHER test
-    /// that forks during it: `fork` duplicates every descriptor, so a child sitting between fork
-    /// and exec is holding our write handle open on its behalf. It closes a moment later
-    /// (`O_CLOEXEC`), which is what makes this transient and worth retrying rather than a defect
-    /// in the code under test.
-    ///
-    /// Observed on main as a red `Rust tests` job on ubuntu-latest, 2026-09-01: `Spawn { source:
-    /// "/tmp/.tmpIsHhre/bd", message: "Text file busy (os error 26)" }`. macOS does not enforce
-    /// ETXTBSY the same way, which is why the whole local gate was green.
-    ///
-    /// The retry is on the *error*, not on the operation: a genuine spawn failure still fails,
-    /// and a test whose fixture sleeps is never re-run, because a timeout is not this error.
-    /// How long a *persistent* `ETXTBSY` is retried before it is reported. A different bound from
-    /// `TEST_TIMEOUT` — that one is how long a fixture may take, this is how long a transient may
-    /// last — and they are named apart so that tuning one cannot silently move the other. With
-    /// fifteen call sites, a genuinely stuck fixture costs this much each.
-    const TEXT_BUSY_RETRY_WINDOW: Duration = Duration::from_secs(10);
-
-    fn retry_if_text_busy<T>(mut call: impl FnMut() -> Result<T, ReadError>) -> Result<T, ReadError> {
-        const TEXT_FILE_BUSY: &str = "os error 26";
-        let deadline = std::time::Instant::now() + TEXT_BUSY_RETRY_WINDOW;
-        loop {
-            match call() {
-                Err(ReadError::Spawn { message, .. })
-                    if message.contains(TEXT_FILE_BUSY) && std::time::Instant::now() < deadline =>
-                {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                other => return other,
-            }
-        }
-    }
-
-    fn write_executable(dir: &Path, name: &str, script: &str) -> PathBuf {
-        let path = dir.join(name);
-        let mut file = std::fs::File::create(&path).unwrap();
-        file.write_all(script.as_bytes()).unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).unwrap();
-        path
-    }
-
-    #[test]
-    fn real_roster_output_feeds_fleet_derivation() {
-        let root = repo_root();
-        let paths = ReaderPaths {
-            consumer_root: root.clone(),
-            shared_root: root.clone(),
+    fn paths_at(root: &Path) -> ReaderPaths {
+        ReaderPaths {
+            consumer_root: root.to_path_buf(),
+            shared_root: root.join("shared"),
             scripts_dir: root.join("scripts"),
-        };
-        let roster = retry_if_text_busy(|| read_roster_with_timeout(&paths, TEST_TIMEOUT)).expect("this checkout's scripts/roster must run");
-        assert!(!roster.is_empty(), "this repository's roster must declare at least one agent");
-
-        // Pure consumption: feed the impure read straight into the pure deriver, with no state
-        // and no processes, and prove every row comes back Dead in roster order - the read
-        // produced data the model layer can actually consume, without touching a real process
-        // table or state file.
-        let rows = model::derive_fleet(
-            &roster,
-            &StateInputs::new(),
-            &[],
-            &root,
-        );
-        assert_eq!(rows.len(), roster.len());
-        for (row, entry) in rows.iter().zip(roster.iter()) {
-            assert_eq!(row.name, entry.name);
-            assert_eq!(row.state, model::RowState::Dead);
         }
     }
+
+    fn exit(status: i32, stderr: &str) -> ReadError {
+        ReadError::Exit {
+            source: "fake".into(),
+            status: Some(status),
+            stderr: stderr.into(),
+            stdout: String::new(),
+        }
+    }
+
+    fn ids(beads: &[Bead]) -> Vec<&str> {
+        beads.iter().map(|b| b.id.as_str()).collect()
+    }
+
+    /// The seam itself: a reader runs the program it is meant to, with the argv it is meant to,
+    /// in the directory it is meant to, under the bound it is meant to - and parses what came
+    /// back. Everything the bash fixtures used to check with `want=`/`got=`, checked in Rust.
+    #[test]
+    fn readers_run_through_the_injected_runner() {
+        let fake = FakeCommands::always("Xavier\tplanner\tinteractive\n");
+        let paths = paths_at(Path::new("/consumer"));
+
+        let roster = read_roster(&paths, &fake).unwrap();
+        assert_eq!(roster.len(), 1);
+        assert_eq!(roster[0].name, "Xavier");
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "one program, run once");
+        assert!(calls[0].program.ends_with("roster"), "{:?}", calls[0].program);
+        assert!(calls[0].args.is_empty());
+        assert_eq!(calls[0].cwd.as_deref(), Some(paths.consumer_root.as_path()));
+        assert_eq!(calls[0].timeout, Duration::from_secs(5));
+    }
+
 
     #[test]
     fn state_files_surface_missing_invalid_and_parsed_rows() {
@@ -719,14 +730,10 @@ mod tests {
 
     #[test]
     fn padded_ps_output_feeds_process_derivation() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake_ps = write_executable(
-            dir.path(),
-            "ps",
-            "#!/usr/bin/env bash\nprintf '%s\\n' '    1     0 /sbin/launchd' '  123     1 some prog --flag a  b'\n",
+        let fake = FakeCommands::always(
+            "    1     0 /sbin/launchd\n  123     1 some prog --flag a  b\n",
         );
-        let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd"), ..Programs::default() };
-        let rows = retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)).unwrap();
+        let rows = read_processes(&Programs::default(), &fake).unwrap();
         assert_eq!(
             rows,
             vec![
@@ -734,18 +741,19 @@ mod tests {
                 ProcessRow { pid: 123, ppid: Some(1), args: "some prog --flag a  b".into() },
             ]
         );
+
+        // `cerebro--system-processes`'s own argv, and no working directory: `ps` answers about
+        // the machine, not about a checkout.
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].args, vec!["-axo", "pid=,ppid=,args="]);
+        assert_eq!(calls[0].cwd, None);
     }
 
     #[test]
     fn ps_exit_failure_preserves_stderr() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake_ps = write_executable(
-            dir.path(),
-            "ps",
-            "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
-        );
-        let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd"), ..Programs::default() };
-        let err = retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)).unwrap_err();
+        let fake = FakeCommands::failing(|| exit(3, "ps: boom"));
+        let err = read_processes(&Programs::default(), &fake).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
                 assert_eq!(status, Some(3));
@@ -755,148 +763,123 @@ mod tests {
         }
     }
 
+    /// A spawn failure passes through as itself; invalid UTF-8 becomes the READER's own
+    /// `Invalid`, because decoding is the reader's job and not the runner's.
     #[test]
     fn readers_report_spawn_and_decode_failures() {
-        let programs = Programs { ps: PathBuf::from("/does/not/exist/ps"), bd: PathBuf::from("bd"), ..Programs::default() };
-        assert!(matches!(retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)), Err(ReadError::Spawn { .. })));
-        let dir = tempfile::tempdir().unwrap();
-        let bad_ps = write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf '\\377'\n");
-        let programs = Programs { ps: bad_ps, bd: PathBuf::from("bd"), ..Programs::default() };
-        assert!(matches!(retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)), Err(ReadError::Invalid { .. })));
+        let spawn_failed = FakeCommands::failing(|| ReadError::Spawn {
+            source: "/does/not/exist/ps".into(),
+            message: "No such file or directory".into(),
+        });
+        assert!(matches!(
+            read_processes(&Programs::default(), &spawn_failed),
+            Err(ReadError::Spawn { .. })
+        ));
+
+        let not_utf8 = FakeCommands::always(vec![0xff]);
+        assert!(matches!(
+            read_processes(&Programs::default(), &not_utf8),
+            Err(ReadError::Invalid { .. })
+        ));
     }
 
-    /// The declaration reader, against the real script: default, both values, and the refusal
-    /// that is still an answer (cb-kcs.1).
+    /// The declaration reader: both words, and the refusal that is still an answer (cb-kcs.1).
     #[test]
     fn configured_supervisor_reader_preserves_default_invalid_and_shared_root() {
-        let dir = tempfile::tempdir().unwrap();
-        let scripts = dir.path().join("scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
+        let paths = paths_at(Path::new("/consumer"));
 
-        // A stand-in for `scripts/fleet-supervisor` with its documented contract: the value on
-        // stdout, and exit 2 with the RAW value on stdout when it is neither word.
-        //
-        // The declaration's path is baked into the script rather than passed in the environment:
-        // cargo runs these tests as threads of one process, several siblings here spawn
-        // subprocesses concurrently, and `set_var` racing another thread's `getenv` or `fork` is
-        // a data race in `std` - and it would leak the variable on a panic besides.
-        let declaration = dir.path().join("declaration");
-        let fake = write_executable(
-            &scripts,
-            "fleet-supervisor",
-            &format!(
-                "#!/usr/bin/env bash\n\
-                 value=\"$(cat {declaration})\"\n\
-                 printf '%s\\n' \"$value\"\n\
-                 case \"$value\" in emacs|tui) exit 0 ;; *) echo 'invalid' >&2; exit 2 ;; esac\n",
-                declaration = declaration.display(),
-            ),
-        );
-        assert!(fake.exists());
-
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().to_path_buf(),
-            scripts_dir: scripts,
-        };
-
-        std::fs::write(&declaration, "emacs").unwrap();
         assert_eq!(
-            retry_if_text_busy(|| read_configured_supervisor_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
+            read_configured_supervisor(&paths, &FakeCommands::always("emacs\n")).unwrap(),
             Ok(SupervisorKind::Emacs)
         );
-
-        std::fs::write(&declaration, "tui").unwrap();
         assert_eq!(
-            retry_if_text_busy(|| read_configured_supervisor_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
+            read_configured_supervisor(&paths, &FakeCommands::always("tui\n")).unwrap(),
             Ok(SupervisorKind::Tui)
         );
 
-        // The refusal is an answer: the raw word survives, and it is NOT rounded to the default.
-        std::fs::write(&declaration, "rat").unwrap();
+        // The refusal is an answer: exit 2 with the RAW value on stdout, which survives and is
+        // NOT rounded to the default.
+        let refused = FakeCommands::failing(|| ReadError::Exit {
+            source: "fleet-supervisor".into(),
+            status: Some(2),
+            stderr: "invalid".into(),
+            stdout: "rat\n".into(),
+        });
         assert_eq!(
-            retry_if_text_busy(|| read_configured_supervisor_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
+            read_configured_supervisor(&paths, &refused).unwrap(),
             Err("rat".to_string())
         );
+
+        let calls = refused.calls();
+        assert!(calls[0].program.ends_with("fleet-supervisor"), "{:?}", calls[0].program);
+        assert_eq!(calls[0].cwd.as_deref(), Some(paths.consumer_root.as_path()));
     }
 
     /// A reader that cannot run at all is an error, never `emacs`. Fail-open here is the one
-    /// failure this whole bead exists to refuse.
+    /// failure cb-kcs.1 exists to refuse.
     #[test]
     fn a_missing_supervisor_script_is_an_error_not_a_default() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().to_path_buf(),
-            scripts_dir: dir.path().to_path_buf(),
-        };
-        assert!(read_configured_supervisor(&paths).is_err());
-        assert!(read_supervisor_endpoint(&paths).is_err());
+        let paths = paths_at(Path::new("/consumer"));
+        let missing = FakeCommands::failing(|| ReadError::Spawn {
+            source: "fleet-supervisor".into(),
+            message: "No such file or directory".into(),
+        });
+        assert!(read_configured_supervisor(&paths, &missing).is_err());
+        assert!(read_supervisor_endpoint(&paths, &missing).is_err());
+    }
+
+    /// The panel's whole `bd` argv, which `--readonly` and the explicit `-C <shared root>` are
+    /// mandatory parts of: `bd` answers about whatever repository it runs in and defaults to open
+    /// beads only (`scripts/work-beads:17-29`).
+    fn bd_argv(shared: &Path) -> Vec<String> {
+        [
+            "--readonly",
+            "-C",
+            shared.to_string_lossy().as_ref(),
+            "list",
+            "--status",
+            "open,in_progress,blocked,deferred,closed",
+            "--json",
+            "--brief",
+        ]
+        .iter()
+        .map(|a| (*a).to_string())
+        .collect()
     }
 
     #[test]
     fn bd_reader_uses_shared_root_all_statuses_and_readonly() {
-        let dir = tempfile::tempdir().unwrap();
-        let capture = dir.path().join("argv.txt");
-        let fake_bd = write_executable(
-            dir.path(),
-            "bd",
-            &format!(
-                "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > {}\n\
-                 want='--readonly -C {}/shared list --status open,in_progress,blocked,deferred,closed --json --brief'\n\
-                 got=\"$*\"\n\
-                 if [ \"$got\" != \"$want\" ]; then echo \"unexpected argv: $got\" >&2; exit 2; fi\n\
-                 cat <<'JSON'\n\
-                 [{{\"id\":\"cb-1\",\"title\":\"t\",\"status\":\"open\",\"issue_type\":\"feature\",\"labels\":[],\"priority\":1,\"updated_at\":null,\"assignee\":null}}]\n\
-                 JSON\n",
-                capture.display(),
-                dir.path().display(),
-            ),
+        let fake = FakeCommands::always(
+            r#"[{"id":"cb-1","title":"t","status":"open","issue_type":"feature","labels":[],"priority":1,"updated_at":null,"assignee":null}]"#,
         );
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().join("shared"),
-            scripts_dir: dir.path().to_path_buf(),
-        };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
-        let beads = retry_if_text_busy(|| read_beads_with_timeout(&paths, &programs, TEST_TIMEOUT)).unwrap();
+        let paths = paths_at(Path::new("/consumer"));
+        let beads = read_beads(&paths, &Programs::default(), &fake).unwrap();
         assert_eq!(beads.len(), 1);
         assert_eq!(beads[0].id, "cb-1");
         assert_eq!(partition_beads(beads).unplanned.len(), 1);
 
-        let recorded = std::fs::read_to_string(&capture).unwrap();
-        assert!(recorded.contains("--readonly"));
-        assert!(recorded.contains("--brief"));
-        assert!(recorded.contains("open,in_progress,blocked,deferred,closed"));
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].args, bd_argv(&paths.shared_root));
     }
 
     #[test]
     fn bd_reader_reports_invalid_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake_bd = write_executable(dir.path(), "bd", "#!/usr/bin/env bash\nexit 0\n");
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().join("shared"),
-            scripts_dir: dir.path().to_path_buf(),
-        };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
-        assert!(matches!(retry_if_text_busy(|| read_beads_with_timeout(&paths, &programs, TEST_TIMEOUT)), Err(ReadError::Invalid { .. })));
+        let paths = paths_at(Path::new("/consumer"));
+        assert!(matches!(
+            read_beads(&paths, &Programs::default(), &FakeCommands::always("")),
+            Err(ReadError::Invalid { .. })
+        ));
     }
 
+    /// A non-zero `bd` is preserved as itself. That the argv it refuses on is the panel's own is
+    /// `bd_reader_uses_shared_root_all_statuses_and_readonly`'s claim, and since cb-x3u it is
+    /// made against `fake.calls()` rather than inside a fixture's `want=`/`got=`.
     #[test]
-    fn bd_reader_refuses_without_the_expected_argv() {        let dir = tempfile::tempdir().unwrap();
-        let fake_bd = write_executable(
-            dir.path(),
-            "bd",
-            "#!/usr/bin/env bash\necho 'bd: refusing' >&2\nexit 2\n",
-        );
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().join("shared"),
-            scripts_dir: dir.path().to_path_buf(),
-        };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
-        let err = retry_if_text_busy(|| read_beads_with_timeout(&paths, &programs, TEST_TIMEOUT)).unwrap_err();
+    fn bd_reader_preserves_a_non_zero_exit() {
+        let paths = paths_at(Path::new("/consumer"));
+        let fake = FakeCommands::failing(|| exit(2, "bd: refusing"));
+        let err = read_beads(&paths, &Programs::default(), &fake).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
                 assert_eq!(status, Some(2));
@@ -906,11 +889,17 @@ mod tests {
         }
     }
 
-    // --- cb-vyp.2: the aggregate fleet read, and the wall-clock bound under it -------------------
+    // --- cb-vyp.2: the aggregate fleet read ------------------------------------------------------
 
-    /// A roster script, a state file and a `ps` table that agree, read in one call: the row for a
+    /// A roster, a REAL state file and a `ps` table that agree, read in one call: the row for a
     /// state file whose pid carries this consumer's marker is the state file's own, and the row
     /// for an agent with neither is dead.
+    ///
+    /// The state file stays a real file in a `TempDir`: `read_states` reads files and starts no
+    /// process, so no fake covers it and it was never part of the defect cb-x3u removed. The
+    /// marker is built by `model::marker_sentence`, never typed - which is also why this case
+    /// stays a UNIT test: that function is `pub(crate)`, and this crate spells the sentence in
+    /// one file, which `scripts/marker-readers` holds it to.
     #[test]
     fn fleet_reader_composes_roster_states_and_processes() {
         let dir = tempfile::tempdir().unwrap();
@@ -922,31 +911,22 @@ mod tests {
         )
         .unwrap();
 
-        let scripts = dir.path().join("scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
-        write_executable(
-            &scripts,
-            "roster",
-            "#!/usr/bin/env bash\nprintf '%s\\n' 'Xavier\tplanner\tinteractive' 'Storm\timplementer\timplementer'\n",
-        );
-        // Built by `model::marker_sentence`, never typed: this crate spells the marker sentence
-        // in one file, which is what `scripts/marker-readers` holds it to.
         let marker = format!("claude {}", model::marker_sentence("Xavier", &shared));
-        write_executable(
-            dir.path(),
-            "ps",
-            &format!(
-                "#!/usr/bin/env bash\nprintf '%s\\n' ' 4242     1 {marker}'\n"
-            ),
-        );
+        let ps_table = format!(" 4242     1 {marker}\n");
+        let fake = FakeCommands::new(move |call: &Call| {
+            if call.program.ends_with("roster") {
+                Ok(b"Xavier\tplanner\tinteractive\nStorm\timplementer\timplementer\n".to_vec())
+            } else {
+                Ok(ps_table.clone().into_bytes())
+            }
+        });
 
         let paths = ReaderPaths {
             consumer_root: dir.path().to_path_buf(),
-            shared_root: shared.clone(),
-            scripts_dir: scripts,
+            shared_root: shared,
+            scripts_dir: dir.path().join("scripts"),
         };
-        let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd"), ..Programs::default() };
-        let rows = retry_if_text_busy(|| read_fleet_with_timeout(&paths, &programs, TEST_TIMEOUT)).unwrap();
+        let rows = read_fleet(&paths, &Programs::default(), &fake).unwrap();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].name, "Xavier");
@@ -958,122 +938,28 @@ mod tests {
         assert_eq!(rows[1].state, model::RowState::Dead);
     }
 
-    /// A child that never returns is killed, reaped and reported - never waited on forever, and
-    /// never left behind as a zombie. The bound is injected so this costs a second rather than
-    /// the five the screen uses.
-    #[test]
-    fn command_timeout_kills_and_reaps_the_child() {
-        let dir = tempfile::tempdir().unwrap();
-        // `exec' so the process this crate spawns IS the sleeping one: a bash that forked `sleep'
-        // would be reaped here while its child lived on. It writes a pipe-buffer's worth first,
-        // so a runner that waited before draining would deadlock rather than time out.
-        let slow = write_executable(
-            dir.path(),
-            "slow",
-            "#!/usr/bin/env bash\nhead -c 200000 /dev/zero | tr '\\0' 'x'\nexec sleep 30\n",
-        );
-
-        let started = std::time::Instant::now();
-        let err = run_with_timeout(&slow, &[], None, Duration::from_secs(1)).unwrap_err();
-        let elapsed = started.elapsed();
-
-        match err {
-            ReadError::Timeout { seconds, source } => {
-                assert_eq!(seconds, 1);
-                assert!(source.ends_with("slow"), "the failure names the program: {source}");
-            }
-            other => panic!("expected Timeout, got {other:?}"),
-        }
-        assert!(elapsed < Duration::from_secs(10), "it waited for the child to finish: {elapsed:?}");
-
-        // Killed AND waited for: a kill without a wait leaves a zombie, and this process
-        // outlives every refresh it makes. Asked about THIS child's own pid - see
-        // `zombie_with_parent`.
-        assert_no_leaked_zombie("the timed-out child");
-    }
-
-    /// Every zombie child of this process, as pids.
-    fn zombie_children() -> Vec<String> {
-        let mine = std::process::id().to_string();
-        let table = Command::new("ps").args(["-axo", "pid=,stat=,ppid="]).output().unwrap();
-        String::from_utf8_lossy(&table.stdout)
-            .lines()
-            .filter_map(|line| {
-                let mut fields = line.split_whitespace();
-                let pid = fields.next().unwrap_or("");
-                let stat = fields.next().unwrap_or("");
-                let ppid = fields.next().unwrap_or("");
-                (stat.starts_with('Z') && ppid == mine).then(|| pid.to_string())
-            })
-            .collect()
-    }
-
-    /// Assert that no zombie child of this process OUTLIVES a short wait.
-    ///
-    /// A single snapshot was the fragile version, and it went red on this branch the moment two
-    /// more spawning cases joined the suite (cb-kcs.4.1): cargo runs these tests as threads of
-    /// one process, and EVERY `run_with_timeout` anywhere leaves its child a zombie for the
-    /// window between the child's exit and its own `wait_timeout` returning - so a snapshot taken
-    /// during somebody else's window fails a case that leaked nothing. Somebody else's zombie is
-    /// reaped within milliseconds; a leaked one never is. So this polls, and a moment with none
-    /// is the proof.
-    fn assert_no_leaked_zombie(what: &str) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            let zombies = zombie_children();
-            if zombies.is_empty() {
-                return;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{what} was left as a zombie: {zombies:?}"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    /// A child that writes more than one pipe buffer and then exits is read whole: both pipes are
-    /// drained while it runs, so a large roster or process table is not a deadlock.
-    #[test]
-    fn large_output_is_read_without_deadlocking() {
-        let dir = tempfile::tempdir().unwrap();
-        let loud = write_executable(
-            dir.path(),
-            "loud",
-            "#!/usr/bin/env bash\nhead -c 200000 /dev/zero | tr '\\0' 'x'\nhead -c 200000 /dev/zero | tr '\\0' 'e' >&2\n",
-        );
-        let stdout = run_with_timeout(&loud, &[], None, TEST_TIMEOUT).unwrap();
-        assert_eq!(stdout.len(), 200_000);
-    }
-
     /// Every way the aggregate read can fail comes back as a failure. `Ok(vec![])` would render
     /// as a fleet in which every agent is dead - the most alarming screen this view can draw, and
     /// a lie.
     #[test]
     fn fleet_reader_failure_is_not_an_empty_snapshot() {
-        let dir = tempfile::tempdir().unwrap();
-        let scripts = dir.path().join("scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
-        write_executable(
-            &scripts,
-            "roster",
-            "#!/usr/bin/env bash\nprintf '%s\\n' 'Xavier\tplanner\tinteractive'\n",
-        );
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().to_path_buf(),
-            scripts_dir: scripts.clone(),
-        };
+        let paths = paths_at(Path::new("/consumer"));
 
-        // `ps' fails: the roster read succeeded, and the fleet is still unavailable rather than
-        // a roster's worth of dead rows.
-        write_executable(
-            dir.path(),
-            "ps",
-            "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
-        );
-        let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd"), ..Programs::default() };
-        match retry_if_text_busy(|| read_fleet_with_timeout(&paths, &programs, TEST_TIMEOUT)) {
+        // `ps` fails: the roster read succeeded, and the fleet is still unavailable rather than a
+        // roster's worth of dead rows.
+        let ps_broken = FakeCommands::new(|call: &Call| {
+            if call.program.ends_with("roster") {
+                Ok(b"Xavier\tplanner\tinteractive\n".to_vec())
+            } else {
+                Err(ReadError::Exit {
+                    source: "ps".into(),
+                    status: Some(3),
+                    stderr: "ps: boom".into(),
+                    stdout: String::new(),
+                })
+            }
+        });
+        match read_fleet(&paths, &Programs::default(), &ps_broken) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(3));
                 assert!(stderr.contains("boom"));
@@ -1082,13 +968,19 @@ mod tests {
         }
 
         // The roster fails: the same, and the error still names the roster.
-        write_executable(
-            &scripts,
-            "roster",
-            "#!/usr/bin/env bash\necho 'roster: refusing' >&2\nexit 2\n",
-        );
-        write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf ''\n");
-        match retry_if_text_busy(|| read_fleet_with_timeout(&paths, &programs, TEST_TIMEOUT)) {
+        let roster_broken = FakeCommands::new(|call: &Call| {
+            if call.program.ends_with("roster") {
+                Err(ReadError::Exit {
+                    source: call.program.display().to_string(),
+                    status: Some(2),
+                    stderr: "roster: refusing".into(),
+                    stdout: String::new(),
+                })
+            } else {
+                Ok(Vec::new())
+            }
+        });
+        match read_fleet(&paths, &Programs::default(), &roster_broken) {
             Err(ReadError::Exit { status, source, .. }) => {
                 assert_eq!(status, Some(2));
                 assert!(source.ends_with("roster"), "expected the roster to be named: {source}");
@@ -1099,47 +991,22 @@ mod tests {
 
     // --- cb-vyp.3: the aggregate work read -------------------------------------------------------
 
-    /// A `bd` that refuses any argv but the panel's own, and answers with one bead per bucket.
-    /// The shape is deliberately exhaustive: the argv assertion and the partition assertion are
-    /// the whole contract of `read_work`.
-    fn bucketed_bd(dir: &Path, capture: &Path, shared: &Path) -> PathBuf {
-        write_executable(
-            dir,
-            "bd",
-            &format!(
-                "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > {}\n\
-                 want='--readonly -C {} list --status open,in_progress,blocked,deferred,closed --json --brief'\n\
-                 got=\"$*\"\n\
-                 if [ \"$got\" != \"$want\" ]; then echo \"unexpected argv: $got\" >&2; exit 2; fi\n\
-                 cat <<'JSON'\n\
-                 [{{\"id\":\"cb-claimed\",\"title\":\"being built\",\"status\":\"in_progress\",\"issue_type\":\"feature\",\"labels\":[],\"priority\":1,\"updated_at\":null,\"assignee\":\"Cyclops\"}},\n\
-                  {{\"id\":\"cb-planned\",\"title\":\"ready\",\"status\":\"open\",\"issue_type\":\"feature\",\"labels\":[\"planned\"],\"priority\":2,\"updated_at\":null,\"assignee\":null}},\n\
-                  {{\"id\":\"cb-held\",\"title\":\"mid-plan\",\"status\":\"open\",\"issue_type\":\"feature\",\"labels\":[\"planning:Xavier\"],\"priority\":2,\"updated_at\":null,\"assignee\":null}},\n\
-                  {{\"id\":\"cb-new\",\"title\":\"filed\",\"status\":\"open\",\"issue_type\":\"bug\",\"labels\":[],\"priority\":4,\"updated_at\":null,\"assignee\":null}},\n\
-                  {{\"id\":\"cb-human\",\"title\":\"parked\",\"status\":\"open\",\"issue_type\":\"feature\",\"labels\":[\"human\"],\"priority\":2,\"updated_at\":null,\"assignee\":null}},\n\
-                  {{\"id\":\"cb-merged\",\"title\":\"landed\",\"status\":\"closed\",\"issue_type\":\"feature\",\"labels\":[],\"priority\":1,\"updated_at\":\"2026-01-01T00:00:00Z\",\"assignee\":null}},\n\
-                  {{\"id\":\"cb-epic\",\"title\":\"a family\",\"status\":\"open\",\"issue_type\":\"epic\",\"labels\":[],\"priority\":1,\"updated_at\":null,\"assignee\":null}}]\n\
-                 JSON\n",
-                capture.display(),
-                shared.display(),
-            ),
-        )
-    }
+    /// One bead per bucket, from the one answer the panel gets.
+    const BUCKETED_BEADS: &str = r#"[
+      {"id":"cb-claimed","title":"being built","status":"in_progress","issue_type":"feature","labels":[],"priority":1,"updated_at":null,"assignee":"Cyclops"},
+      {"id":"cb-planned","title":"ready","status":"open","issue_type":"feature","labels":["planned"],"priority":2,"updated_at":null,"assignee":null},
+      {"id":"cb-held","title":"mid-plan","status":"open","issue_type":"feature","labels":["planning:Xavier"],"priority":2,"updated_at":null,"assignee":null},
+      {"id":"cb-new","title":"filed","status":"open","issue_type":"bug","labels":[],"priority":4,"updated_at":null,"assignee":null},
+      {"id":"cb-human","title":"parked","status":"open","issue_type":"feature","labels":["human"],"priority":2,"updated_at":null,"assignee":null},
+      {"id":"cb-merged","title":"landed","status":"closed","issue_type":"feature","labels":[],"priority":1,"updated_at":"2026-01-01T00:00:00Z","assignee":null},
+      {"id":"cb-epic","title":"a family","status":"open","issue_type":"epic","labels":[],"priority":1,"updated_at":null,"assignee":null}]"#;
 
     #[test]
     fn work_reader_returns_the_partitioned_single_bd_answer() {
-        let dir = tempfile::tempdir().unwrap();
-        let capture = dir.path().join("argv.txt");
-        let shared = dir.path().join("shared");
-        let fake_bd = bucketed_bd(dir.path(), &capture, &shared);
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: shared,
-            scripts_dir: dir.path().to_path_buf(),
-        };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
+        let fake = FakeCommands::always(BUCKETED_BEADS);
+        let paths = paths_at(Path::new("/consumer"));
 
-        let work = retry_if_text_busy(|| read_work_with_timeout(&paths, &programs, TEST_TIMEOUT)).expect("the fixture bd answers the panel's argv");
+        let work = read_work(&paths, &Programs::default(), &fake).unwrap();
         assert_eq!(ids(&work.claimed), ["cb-claimed"]);
         assert_eq!(ids(&work.planned), ["cb-planned"]);
         assert_eq!(ids(&work.being_planned), ["cb-held"]);
@@ -1148,45 +1015,19 @@ mod tests {
         assert_eq!(ids(&work.merged), ["cb-merged"]);
 
         // Exactly one `bd` run, with the panel's whole argv - the shared root, every status,
-        // `--readonly' and `--brief'.
-        let recorded = std::fs::read_to_string(&capture).unwrap();
-        let recorded: Vec<&str> = recorded.lines().collect();
-        assert_eq!(
-            recorded,
-            vec![
-                "--readonly",
-                "-C",
-                paths.shared_root.to_string_lossy().as_ref(),
-                "list",
-                "--status",
-                "open,in_progress,blocked,deferred,closed",
-                "--json",
-                "--brief",
-            ]
-        );
-    }
-
-    fn ids(beads: &[Bead]) -> Vec<&str> {
-        beads.iter().map(|b| b.id.as_str()).collect()
+        // `--readonly` and `--brief`.
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "one `bd` answer, not one per bucket");
+        assert_eq!(calls[0].args, bd_argv(&paths.shared_root));
     }
 
     /// A `bd` that exits non-zero is a failure, not six empty queues: an empty board and an
     /// unreadable one are opposite screens.
     #[test]
     fn work_reader_preserves_bd_failure() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake_bd = write_executable(
-            dir.path(),
-            "bd",
-            "#!/usr/bin/env bash\necho 'bd list failed: database is locked' >&2\nexit 1\n",
-        );
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().join("shared"),
-            scripts_dir: dir.path().to_path_buf(),
-        };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
-        match retry_if_text_busy(|| read_work_with_timeout(&paths, &programs, TEST_TIMEOUT)) {
+        let paths = paths_at(Path::new("/consumer"));
+        let fake = FakeCommands::failing(|| exit(1, "bd list failed: database is locked"));
+        match read_work(&paths, &Programs::default(), &fake) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(1));
                 assert!(stderr.contains("database is locked"), "{stderr}");
@@ -1197,117 +1038,79 @@ mod tests {
 
     #[test]
     fn work_reader_rejects_invalid_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake_bd = write_executable(
-            dir.path(),
-            "bd",
-            "#!/usr/bin/env bash\nprintf 'bd: nothing to list\\n'\n",
-        );
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().join("shared"),
-            scripts_dir: dir.path().to_path_buf(),
-        };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
-        assert!(matches!(retry_if_text_busy(|| read_work_with_timeout(&paths, &programs, TEST_TIMEOUT)), Err(ReadError::Invalid { .. })));
+        let paths = paths_at(Path::new("/consumer"));
+        assert!(matches!(
+            read_work(&paths, &Programs::default(), &FakeCommands::always("bd: nothing to list\n")),
+            Err(ReadError::Invalid { .. })
+        ));
     }
 
-    /// A `bd` that never answers is killed, reaped and reported. Without the bound the Work pane
-    /// would say `refreshing...` forever: the request is in flight, so no later tick replaces it.
+    /// A `bd` that never answers surfaces as the timeout it was, not as an empty board: without
+    /// the bound the Work pane would say `refreshing...` forever, since the request is in flight
+    /// and no later tick replaces it. That the timed-out child is also KILLED AND REAPED is the
+    /// runner's own contract, proved in `tests/command_runner.rs`.
     #[test]
     fn work_reader_timeout_kills_and_reaps_bd() {
-        let dir = tempfile::tempdir().unwrap();
-        let slow_bd = write_executable(
-            dir.path(),
-            "bd",
-            "#!/usr/bin/env bash\nexec sleep 30\n",
-        );
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().join("shared"),
-            scripts_dir: dir.path().to_path_buf(),
-        };
-        let programs = Programs { bd: slow_bd, ps: PathBuf::from("ps"), ..Programs::default() };
-
-        let started = std::time::Instant::now();
-        let err = read_work_with_timeout(&paths, &programs, Duration::from_secs(1)).unwrap_err();
-        let elapsed = started.elapsed();
-        match err {
-            ReadError::Timeout { seconds, source } => {
-                assert_eq!(seconds, 1);
+        let paths = paths_at(Path::new("/consumer"));
+        let fake = FakeCommands::failing(|| ReadError::Timeout {
+            source: "/somewhere/bd".into(),
+            seconds: 5,
+        });
+        match read_work(&paths, &Programs::default(), &fake) {
+            Err(ReadError::Timeout { seconds, source }) => {
+                assert_eq!(seconds, 5);
                 assert!(source.ends_with("bd"), "the failure names the program: {source}");
             }
             other => panic!("expected Timeout, got {other:?}"),
         }
-        assert!(elapsed < Duration::from_secs(10), "it waited for the child: {elapsed:?}");
-
-        assert_no_leaked_zombie("the timed-out bd");
     }
 
     // --- the roster's declaration and the project's spacing (cb-kcs.4.1) -----------------------
 
     #[test]
     fn the_roster_declares_what_to_start_and_what_to_arm() {
-        let dir = tempfile::tempdir().unwrap();
-        let scripts = dir.path().join("scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
-        write_executable(
-            &scripts,
-            "roster",
-            r#"#!/bin/sh
-case "$1" in
-  --autostart) printf 'Cyclops\nRogue\n' ;;
-  --standby)   printf 'Xavier\nBeast\n' ;;
-  *)           printf 'Cyclops\timplementer\timplementer\n' ;;
-esac
-"#,
-        );
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().to_path_buf(),
-            scripts_dir: scripts,
-        };
+        let paths = paths_at(Path::new("/consumer"));
+        let fake = FakeCommands::new(|call: &Call| match call.args.first().map(String::as_str) {
+            Some("--autostart") => Ok(b"Cyclops\nRogue\n".to_vec()),
+            Some("--standby") => Ok(b"Xavier\nBeast\n".to_vec()),
+            _ => Ok(b"Cyclops\timplementer\timplementer\n".to_vec()),
+        });
 
         assert_eq!(
-            retry_if_text_busy(|| read_autostart_names_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
+            read_autostart_names(&paths, &fake).unwrap(),
             vec!["Cyclops".to_string(), "Rogue".to_string()]
         );
         assert_eq!(
-            retry_if_text_busy(|| read_standby_names_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
+            read_standby_names(&paths, &fake).unwrap(),
             vec!["Xavier".to_string(), "Beast".to_string()]
         );
+
+        // One flag each, and nothing else: two reads of one declaration.
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args, vec!["--autostart"]);
+        assert_eq!(calls[1].args, vec!["--standby"]);
     }
 
     #[test]
     fn project_conf_declares_the_role_spacing_and_names_a_bad_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let scripts = dir.path().join("scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
-        // stderr on every call, which is what `project-conf` itself does: folding it into the
-        // value would make every key unparseable.
-        write_executable(
-            &scripts,
-            "project-conf",
-            r#"#!/bin/sh
-echo "read from .cerebro/project.conf" >&2
-case "$1" in
-  role_start_spacing_planner)     printf '45\n' ;;
-  role_start_spacing_implementer) printf '30s\n' ;;
-  role_start_spacing_verifier)    exit 1 ;;
-  *)                              printf '\n' ;;
-esac
-"#,
-        );
-        let paths = ReaderPaths {
-            consumer_root: dir.path().to_path_buf(),
-            shared_root: dir.path().to_path_buf(),
-            scripts_dir: scripts,
-        };
+        let paths = paths_at(Path::new("/consumer"));
+        let fake = FakeCommands::new(|call: &Call| match call.args.first().map(String::as_str) {
+            Some("role_start_spacing_planner") => Ok(b"45\n".to_vec()),
+            Some("role_start_spacing_implementer") => Ok(b"30s\n".to_vec()),
+            Some("role_start_spacing_verifier") => Err(ReadError::Exit {
+                source: "project-conf".into(),
+                status: Some(1),
+                stderr: String::new(),
+                stdout: String::new(),
+            }),
+            _ => Ok(b"\n".to_vec()),
+        });
 
-        let (declared, complaints) = read_role_spacing_with_timeout(
+        let (declared, complaints) = read_role_spacing(
             &paths,
             &["planner", "implementer", "verifier", "orchestrator"],
-            TEST_TIMEOUT,
+            &fake,
         );
         assert_eq!(declared.get("planner"), Some(&45));
         // A non-zero exit is "declared nothing", not an error.
@@ -1325,61 +1128,60 @@ esac
 
     // --- the gh reader (cb-kcs.4.3) ------------------------------------------------------------
 
-    /// A fake `gh` that records each invocation's argv under `$dir/argv.log` and prints canned
-    /// JSON per subcommand. Nothing here may reach the network, which `Programs::gh` guarantees.
-    fn fake_gh(dir: &Path, me_exit: u8) -> PathBuf {
-        write_executable(
-            dir,
-            "gh",
-            &format!(
-                r#"#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$(dirname "$0")/argv.log"
-case "$1 $2" in
-  "issue list") echo '[{{"number":212,"updatedAt":"2026-09-01T10:00:00Z"}}]' ;;
-  "pr list") echo '[{{"number":244,"updatedAt":"2026-09-01T10:00:00Z","isDraft":false,"author":{{"login":"someone"}}}}]' ;;
-  "api user") [ {me_exit} -ne 0 ] && exit {me_exit}; echo navigator ;;
-esac
-"#
-            ),
-        )
-    }
-
-    fn gh_paths(dir: &Path) -> ReaderPaths {
-        ReaderPaths {
-            consumer_root: dir.to_path_buf(),
-            shared_root: dir.to_path_buf(),
-            scripts_dir: dir.join("scripts"),
-        }
+    /// A fake `gh`, dispatching on the argv the reader passed. Nothing here may reach the
+    /// network, which nothing here could: no process is started at all.
+    fn fake_gh(me_fails: bool) -> FakeCommands {
+        FakeCommands::new(move |call: &Call| {
+            if call.args == GH_ISSUES_ARGV {
+                Ok(br#"[{"number":212,"updatedAt":"2026-09-01T10:00:00Z"}]"#.to_vec())
+            } else if call.args == GH_PRS_ARGV {
+                Ok(br#"[{"number":244,"updatedAt":"2026-09-01T10:00:00Z","isDraft":false,"author":{"login":"someone"}}]"#.to_vec())
+            } else if call.args == GH_ME_ARGV {
+                if me_fails {
+                    Err(ReadError::Exit {
+                        source: "gh".into(),
+                        status: Some(4),
+                        stderr: "gh: not logged in".into(),
+                        stdout: String::new(),
+                    })
+                } else {
+                    Ok(b"navigator\n".to_vec())
+                }
+            } else {
+                panic!("unexpected gh argv: {:?}", call.args)
+            }
+        })
     }
 
     #[test]
     fn gh_answers_with_what_is_open_and_who_you_are() {
-        let dir = tempfile::tempdir().unwrap();
-        let programs = Programs { gh: fake_gh(dir.path(), 0), ..Programs::default() };
-        let paths = gh_paths(dir.path());
+        let fake = fake_gh(false);
+        let paths = paths_at(Path::new("/consumer"));
         let mut me = None;
 
-        // `retry_if_text_busy`, like every other fixture-script case here: on Linux the kernel
-        // can still hold the write descriptor open when `execve` runs, and CI failed exactly
-        // there (ETXTBSY) while three local runs passed.
-        let snapshot = retry_if_text_busy(|| read_gh(&paths, &programs, &mut me))
-            .expect("a fixture gh answers");
+        let snapshot = read_gh(&paths, &Programs::default(), &mut me, &fake).unwrap();
         assert_eq!(snapshot.issues[0].number, 212);
         assert_eq!(snapshot.prs[0].number, 244);
         assert_eq!(snapshot.me.as_deref(), Some("navigator"));
 
-        let argv = std::fs::read_to_string(dir.path().join("argv.log")).unwrap();
-        let lines: Vec<&str> = argv.lines().collect();
-        assert_eq!(lines[0], GH_ISSUES_ARGV.join(" "));
-        assert_eq!(lines[1], GH_PRS_ARGV.join(" "));
-        assert_eq!(lines[2], GH_ME_ARGV.join(" "));
+        let calls = fake.calls();
+        assert_eq!(calls[0].args, GH_ISSUES_ARGV);
+        assert_eq!(calls[1].args, GH_PRS_ARGV);
+        assert_eq!(calls[2].args, GH_ME_ARGV);
+
+        // Thirty seconds, not `COMMAND_TIMEOUT`'s five: these are network calls, and a slow
+        // answer read as a failure would put `gh?` on two rows. A bash fixture cannot see the
+        // bound it was run under, so until cb-x3u this constant was asserted by nothing.
+        for call in &calls {
+            assert_eq!(call.timeout, Duration::from_secs(30), "{:?}", call.args);
+            assert_eq!(call.cwd.as_deref(), Some(paths.consumer_root.as_path()));
+        }
 
         // The login answers the same thing for the life of the process, so it is asked for until
         // it answers and then never again.
-        retry_if_text_busy(|| read_gh(&paths, &programs, &mut me)).expect("a second read");
-        let argv = std::fs::read_to_string(dir.path().join("argv.log")).unwrap();
+        read_gh(&paths, &Programs::default(), &mut me, &fake).unwrap();
         assert_eq!(
-            argv.lines().filter(|l| *l == GH_ME_ARGV.join(" ")).count(),
+            fake.calls().iter().filter(|c| c.args == GH_ME_ARGV).count(),
             1,
             "the learnt login is not asked for again"
         );
@@ -1387,19 +1189,10 @@ esac
 
     #[test]
     fn a_failed_issue_list_is_a_failed_read() {
-        let dir = tempfile::tempdir().unwrap();
-        let broken = write_executable(
-            dir.path(),
-            "gh",
-            "#!/usr/bin/env bash
-echo 'gh: rate limited' >&2
-exit 1
-",
-        );
-        let programs = Programs { gh: broken, ..Programs::default() };
+        let fake = FakeCommands::failing(|| exit(1, "gh: rate limited"));
+        let paths = paths_at(Path::new("/consumer"));
         let mut me = None;
-        let paths = gh_paths(dir.path());
-        let err = retry_if_text_busy(|| read_gh(&paths, &programs, &mut me)).unwrap_err();
+        let err = read_gh(&paths, &Programs::default(), &mut me, &fake).unwrap_err();
         match err {
             ReadError::Exit { stderr, .. } => assert!(stderr.contains("rate limited")),
             other => panic!("expected Exit, got {other:?}"),
@@ -1408,11 +1201,10 @@ exit 1
 
     #[test]
     fn a_failed_login_leaves_the_lists_answering() {
-        let dir = tempfile::tempdir().unwrap();
-        let programs = Programs { gh: fake_gh(dir.path(), 4), ..Programs::default() };
+        let fake = fake_gh(true);
+        let paths = paths_at(Path::new("/consumer"));
         let mut me = None;
-        let paths = gh_paths(dir.path());
-        let snapshot = retry_if_text_busy(|| read_gh(&paths, &programs, &mut me))
+        let snapshot = read_gh(&paths, &Programs::default(), &mut me, &fake)
             .expect("the two lists answered");
         assert_eq!(snapshot.issues.len(), 1);
         assert_eq!(snapshot.me, None, "and the login is still unknown");

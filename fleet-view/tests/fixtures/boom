@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# A non-zero exit with something on stderr.
+echo 'boom: it failed' >&2
+exit 3

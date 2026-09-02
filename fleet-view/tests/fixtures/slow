@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# A child that writes a pipe buffer's worth and then never returns.
+#
+# The write comes FIRST so a runner that waited before draining would deadlock rather than time
+# out, and `exec` so the process the runner spawned IS the sleeping one: a bash that forked
+# `sleep` would be reaped while its child lived on.
+head -c 200000 /dev/zero | tr '\0' 'x'
+exec sleep 30

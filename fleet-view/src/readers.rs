@@ -926,7 +926,6 @@ mod tests {
         assert_no_leaked_zombie("the timed-out child");
     }
 
-
     /// Every zombie child of this process, as pids.
     fn zombie_children() -> Vec<String> {
         let mine = std::process::id().to_string();

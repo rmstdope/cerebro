@@ -2968,8 +2968,18 @@ mod main_tests {
             now,
         );
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
-        assert!(!host.is_live("Xavier"), "and it is not started again");
+
+        // A second tick, a minute later. `is_live` would be false either way in a checkout with
+        // no launcher, so what is asserted is that no SECOND attempt was made: a retry would
+        // replace the refusal with one stamped `later`.
+        let later = now + chrono::Duration::seconds(60);
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, later);
+        match host.sync(Some("Xavier"), 24, 80, later) {
+            cerebro_tui::session::SessionView::Refused { at, .. } => {
+                assert_eq!(at, now, "the row was not started again");
+            }
+            other => panic!("expected the refusal to stand, got {other:?}"),
+        }
     }
 
     #[test]

@@ -95,7 +95,7 @@ pub use session::{
     SessionHost, SessionView, SCROLLBACK_LINES,
 };
 pub use app::{
-    work_body, work_line_of_finding, App, AppAction, FleetWorker, Metrics, Pane, PaneContent,
+    work_body, work_line_of_cursor, App, AppAction, FleetWorker, Metrics, Pane, PaneContent,
     PaneFocus, PaneMetrics, Prompt, SupervisorWorker, SweepWorker, WorkBodyLine, WorkWorker,
 };
 pub use sweeps::{

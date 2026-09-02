@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::model::{self, FleetRow, GhSnapshot, HistoryRow, RowState, WorkBuckets};
+use crate::model::{self, Bead, FleetRow, GhSnapshot, HistoryRow, RowState, WorkBuckets};
 use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{
@@ -302,67 +302,295 @@ pub fn body_line_of_row(body: &[FleetBodyLine], index: usize) -> Option<usize> {
     body.iter().position(|entry| *entry == FleetBodyLine::Row(index))
 }
 
-/// One line of the Work pane's body ABOVE the six queues, in order, saying what that line IS
-/// rather than how it looks.
+/// How many rows of one Work section are drawn before the rest become `+N more`.
 ///
-/// The Sweeps section is first on the screen (the navigator's choice: this pane shows about
-/// fourteen rows of a forty-one row document, and a section below the fold is one nobody
-/// presses), so a finding's document line depends on this list alone - which is what lets
-/// `App::move_work_cursor` place one without building a frame. `Queues` is everything
-/// `ui::work_document` already drew, kept as one element because that half has exactly one owner
-/// already and a second copy of it here is the drift `FleetBodyLine` was written to avoid.
-#[derive(Clone, Debug, PartialEq)]
-pub enum WorkBodyLine {
-    /// `Sweeps {n}`, and the failed script beside it when there is one.
-    SweepHeader { count: usize, error: Option<String> },
-    /// The finding at this index in `App::work_findings`.
-    Finding(usize),
-    /// A spacer.
-    Blank,
-    /// The six queues, in whatever shape the work pane's own content gives them.
-    Queues,
+/// Eight, so the sections worth reading are not pushed off the bottom by the third. The way past
+/// it is `Enter` on the `+N more` row, which opens that one section (cb-kcs.5.4).
+pub const WORK_ROWS_PER_SECTION: usize = 8;
+
+/// How a section orders its rows and what it puts at the far end of one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SectionKind {
+    /// Priority, then id: P0 reads first, and a tie does not shuffle between redraws.
+    Open,
+    /// `Open`'s order, plus how long the bead has been waiting for a person.
+    Paused,
+    /// Newest first. Priority says nothing about finished work - a merged P3 is no less done
+    /// than a merged P0 - so this section answers "what just landed" instead.
+    Merged,
 }
 
-/// The Work pane's body above the queues, from the sweeps pane's content alone.
+/// One of the Work pane's own failure states, as a line rather than as a colour: `app.rs` owns
+/// the order, `ui.rs` owns the colours and the words' styling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkNotice {
+    Loading,
+    /// The gold error line above a stale snapshot.
+    Stale(String),
+    /// `The last successful work snapshot remains visible.`
+    StaleFooter,
+    /// The red error line of a pane with nothing to keep.
+    Unavailable(String),
+    /// `No work snapshot is available.`
+    NoSnapshot,
+    /// `Press g to retry.`
+    Retry,
+}
+
+/// What the Work cursor stands on. Three kinds, because three kinds of row can be acted on.
 ///
-/// It asks neither the clock nor the pane's width: only `work_row`'s truncation depends on
-/// width, and a finding's LINE is what the cursor needs.
+/// A NAME in every case, never an index - `App::selected`'s rule: the findings are replaced
+/// wholesale every ten minutes and the beads every thirty seconds, and an index would silently
+/// come to mean a different bead or a different destructive command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkCursor {
+    /// A sweep finding, by `Finding::key()`.
+    Finding(String),
+    /// A bead, by id.
+    Bead(String),
+    /// The `+N more` / `all N shown` row of the named section.
+    More(&'static str),
+}
+
+/// One drawn line of the Work pane, saying what that line IS rather than how it looks.
 ///
-/// Nothing at all - not even a blank - when there are no findings and no error. That is
-/// deliberately unlike the six queues, which print `(none)`: an empty Sweeps section is the
-/// ORDINARY result of every render but one, and a header saying `Sweeps 0` every ten minutes
-/// would be exactly the noise `docs/cerebro-sweeps.md` warns against. A FAILED sweep with
-/// nothing to keep still draws its header, because a clean fleet and a fleet nobody could look
-/// at must not draw the same blank.
-pub fn work_body(content: &PaneContent<Vec<Judged>>) -> Vec<WorkBodyLine> {
-    let findings = content.value().map(Vec::as_slice).unwrap_or(&[]);
-    let error = match content {
+/// `work_body` is the ONE place the pane's structure is decided: the renderer turns each of these
+/// into a `Line` and computes no structure of its own, so the row the cursor is on and the row
+/// that is drawn cannot come from two pieces of arithmetic. Before cb-kcs.5.4 this covered only
+/// what lay above the six queues, and a cursor that walks bead rows cannot live with that.
+///
+/// `PartialEq` and never `Eq`: `HistoryRow`'s neighbours carry `f64`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkBodyLine<'a> {
+    /// `Sweeps {n}`, and the failed script beside it when there is one.
+    SweepHeader { count: usize, error: Option<String> },
+    /// The finding at this index in `App::work_findings`, and its key.
+    Finding { index: usize, key: String },
+    /// A spacer.
+    Blank,
+    /// A line of the work pane's own failure states. Never selectable.
+    Notice(WorkNotice),
+    SectionHeader { title: &'static str, count: usize },
+    Bead { bead: &'a Bead, suffix: Option<String> },
+    /// `  (none)`.
+    Empty,
+    /// The `+N more` row, or the `all N shown` row of an open section.
+    More { section: &'static str, hidden: usize, expanded: bool },
+    HistoryHeader { count: usize, failed: bool },
+    HistoryRow { text: String, long: bool },
+}
+
+impl WorkBodyLine<'_> {
+    /// What the cursor would be on this line, or `None` for a line no key acts on - a header, a
+    /// blank, `(none)`, a notice or a History row. A grey row therefore always means a key will
+    /// do something here.
+    pub fn cursor(&self) -> Option<WorkCursor> {
+        match self {
+            Self::Finding { key, .. } => Some(WorkCursor::Finding(key.clone())),
+            Self::Bead { bead, .. } => Some(WorkCursor::Bead(bead.id.clone())),
+            Self::More { section, .. } => Some(WorkCursor::More(section)),
+            _ => None,
+        }
+    }
+}
+
+/// The whole Work document, in order: the Sweeps section, the six queues, then History.
+///
+/// The Sweeps section is FIRST on the screen (the navigator's choice: this pane shows about
+/// fourteen rows of a forty-one row document, and a section below the fold is one nobody
+/// presses), and History is LAST - the `M-x cerebro` order, so the two views read alike.
+///
+/// Nothing at all for Sweeps - not even a blank - when there are no findings and no error. That
+/// is deliberately unlike the six queues, which print `(none)`: an empty Sweeps section is the
+/// ORDINARY result of every render but one. A FAILED sweep with nothing to keep still draws its
+/// header, because a clean fleet and a fleet nobody could look at must not draw the same blank.
+///
+/// History is the one section that does NOT follow that rule: a first failure draws no section at
+/// all, because a machine that has never run the fleet has no transitions log and the script
+/// exiting 1 there is the ordinary state rather than news.
+pub fn work_body(app: &App, now: DateTime<Utc>) -> Vec<WorkBodyLine<'_>> {
+    let mut body = Vec::new();
+    body.extend(sweeps_body(app));
+    body.extend(queues_body(app, now));
+    body.extend(history_body(app));
+    body
+}
+
+fn pane_error<T>(content: &PaneContent<T>) -> Option<String> {
+    match content {
         PaneContent::Stale { error, .. } | PaneContent::Unavailable { error, .. } => {
             Some(error.clone())
         }
         PaneContent::Loading | PaneContent::Fresh { .. } => None,
-    };
+    }
+}
+
+fn sweeps_body(app: &App) -> Vec<WorkBodyLine<'static>> {
+    let findings = app.work_findings();
+    let error = pane_error(&app.sweeps.content);
     if findings.is_empty() && error.is_none() {
-        return vec![WorkBodyLine::Queues];
+        return Vec::new();
     }
     let mut body = vec![WorkBodyLine::SweepHeader { count: findings.len(), error }];
-    for index in 0..findings.len() {
-        body.push(WorkBodyLine::Finding(index));
+    for (index, judged) in findings.iter().enumerate() {
+        body.push(WorkBodyLine::Finding { index, key: judged.finding.key() });
     }
     body.push(WorkBodyLine::Blank);
-    body.push(WorkBodyLine::Queues);
     body
 }
 
-/// Which line of BODY the finding with KEY occupies, or `None` when no finding on screen carries
-/// it.
-pub fn work_line_of_finding(
-    body: &[WorkBodyLine],
-    key: &str,
-    findings: &[Judged],
-) -> Option<usize> {
-    let index = findings.iter().position(|judged| judged.finding.key() == key)?;
-    body.iter().position(|entry| *entry == WorkBodyLine::Finding(index))
+fn queues_body(app: &App, now: DateTime<Utc>) -> Vec<WorkBodyLine<'_>> {
+    match &app.work.content {
+        PaneContent::Loading => vec![WorkBodyLine::Notice(WorkNotice::Loading)],
+        PaneContent::Fresh { value, .. } => sections_body(app, value, now),
+        PaneContent::Stale { value, error, .. } => {
+            let mut body = vec![
+                WorkBodyLine::Notice(WorkNotice::Stale(error.clone())),
+                WorkBodyLine::Blank,
+            ];
+            body.extend(sections_body(app, value, now));
+            body.push(WorkBodyLine::Blank);
+            body.push(WorkBodyLine::Notice(WorkNotice::StaleFooter));
+            body
+        }
+        PaneContent::Unavailable { error, .. } => vec![
+            WorkBodyLine::Notice(WorkNotice::Unavailable(error.clone())),
+            WorkBodyLine::Blank,
+            WorkBodyLine::Notice(WorkNotice::NoSnapshot),
+            WorkBodyLine::Notice(WorkNotice::Retry),
+        ],
+    }
+}
+
+/// The six queues, in the order work moves in read backwards, and in the panel's own spelling.
+fn sections_body<'a>(
+    app: &App,
+    buckets: &'a WorkBuckets,
+    now: DateTime<Utc>,
+) -> Vec<WorkBodyLine<'a>> {
+    let sections: [(&'static str, &'a Vec<Bead>, SectionKind); 6] = [
+        ("Claimed", &buckets.claimed, SectionKind::Open),
+        ("Planned, unclaimed", &buckets.planned, SectionKind::Open),
+        ("Being planned", &buckets.being_planned, SectionKind::Open),
+        ("Unplanned", &buckets.unplanned, SectionKind::Open),
+        ("Waiting on you", &buckets.paused, SectionKind::Paused),
+        ("Merged, unverified", &buckets.merged, SectionKind::Merged),
+    ];
+    let mut body = Vec::new();
+    for (index, (title, beads, kind)) in sections.into_iter().enumerate() {
+        if index > 0 {
+            body.push(WorkBodyLine::Blank);
+        }
+        body.extend(section_body(app, title, beads, kind, now));
+    }
+    body
+}
+
+/// One section: its title with the FULL count, then at most `WORK_ROWS_PER_SECTION` rows - or all
+/// of them when the navigator has opened it - then what is left.
+///
+/// A section with nothing hidden is never expandable, so `expanded` naming it changes nothing.
+fn section_body<'a>(
+    app: &App,
+    title: &'static str,
+    beads: &'a [Bead],
+    kind: SectionKind,
+    now: DateTime<Utc>,
+) -> Vec<WorkBodyLine<'a>> {
+    let sorted = match kind {
+        SectionKind::Merged => sorted_by_recency(beads),
+        SectionKind::Open | SectionKind::Paused => sorted_by_priority(beads),
+    };
+    let mut body = vec![WorkBodyLine::SectionHeader { title, count: sorted.len() }];
+    if sorted.is_empty() {
+        body.push(WorkBodyLine::Empty);
+        return body;
+    }
+    let hidden = sorted.len().saturating_sub(WORK_ROWS_PER_SECTION);
+    let expanded = hidden > 0 && app.expanded.contains(title);
+    let shown = if expanded { sorted.len() } else { WORK_ROWS_PER_SECTION };
+    for bead in sorted.iter().take(shown) {
+        let suffix = (kind == SectionKind::Paused).then(|| paused_age(bead, now));
+        body.push(WorkBodyLine::Bead { bead, suffix });
+    }
+    if hidden > 0 {
+        body.push(WorkBodyLine::More { section: title, hidden, expanded });
+    }
+    body
+}
+
+/// The History section: one line per agent that is running something right now.
+///
+/// Nothing at all - no header - when nothing is running, exactly as the Sweeps section does and
+/// for the same reason: a section saying `(none)` every five minutes is noise. A failed run keeps
+/// the rows it had and names the script in red beside the header; a first failure has nothing to
+/// keep and draws no section, which is the ordinary state of a machine that has never run the
+/// fleet.
+fn history_body(app: &App) -> Vec<WorkBodyLine<'static>> {
+    let lines: Vec<(String, bool)> = app
+        .history_rows()
+        .iter()
+        .filter_map(model::history_line)
+        .collect();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let failed = pane_error(&app.history.content).is_some();
+    let mut body = vec![
+        WorkBodyLine::Blank,
+        WorkBodyLine::HistoryHeader { count: lines.len(), failed },
+    ];
+    for (text, long) in lines {
+        body.push(WorkBodyLine::HistoryRow { text, long });
+    }
+    body
+}
+
+pub fn sorted_by_priority(beads: &[Bead]) -> Vec<&Bead> {
+    let mut sorted: Vec<&Bead> = beads.iter().collect();
+    // A missing priority sorts after P4 rather than before P0: an unranked bead is not urgent.
+    sorted.sort_by(|a, b| {
+        a.priority
+            .unwrap_or(9)
+            .cmp(&b.priority.unwrap_or(9))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    sorted
+}
+
+pub fn sorted_by_recency(beads: &[Bead]) -> Vec<&Bead> {
+    let mut sorted: Vec<&Bead> = beads.iter().collect();
+    // Undated last, and the id breaks every tie: this list is redrawn on a timer, and one that
+    // reorders under the navigator's eyes is unreadable.
+    sorted.sort_by(|a, b| {
+        match (a.updated_at, b.updated_at) {
+            (Some(a), Some(b)) => b.cmp(&a),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+        .then_with(|| a.id.cmp(&b.id))
+    });
+    sorted
+}
+
+/// How long this bead has been waiting for a person, or an em dash when it never said.
+///
+/// The one place the empty string `elapsed` returns becomes something the eye can find: a bead
+/// parked before the pause sites wrote `metadata.paused_at` has no age, and rendering it as a
+/// small number would read as "just now".
+pub fn paused_age(bead: &Bead, now: DateTime<Utc>) -> String {
+    let age = crate::ui::elapsed(bead.paused_at(), now);
+    if age.is_empty() {
+        "—".to_string()
+    } else {
+        age
+    }
+}
+
+/// Which line of BODY the cursor stands on, or `None` when nothing on screen carries it.
+pub fn work_line_of_cursor(body: &[WorkBodyLine], cursor: &WorkCursor) -> Option<usize> {
+    body.iter().position(|entry| entry.cursor().as_ref() == Some(cursor))
 }
 
 /// Pull SCROLL back only when CONTENT_LINES no longer reaches it. The one owner of that rule,
@@ -513,12 +741,22 @@ pub struct App {
     /// offset - and that is the price of one pane type rather than two.
     pub sweeps: Pane<Vec<Judged>>,
     last_sweep_request: Option<Instant>,
-    /// Which finding the Work pane's cursor stands on, as a `Finding::key`.
+    /// Which row of the Work pane the cursor stands on: a finding, a bead, or a `+N more` row.
     ///
-    /// A key, never an index, for `App::selected`'s reason: the findings are replaced wholesale
-    /// every ten minutes and after every `x`, and an index would silently come to mean a
-    /// different destructive command.
-    pub work_cursor: Option<String>,
+    /// A name, never an index, for `App::selected`'s reason: the findings are replaced wholesale
+    /// every ten minutes and the beads every thirty seconds, and an index would silently come to
+    /// mean a different bead or a different destructive command.
+    pub work_cursor: Option<WorkCursor>,
+    /// Sections the navigator has opened with `Enter`, by title. Survives a work refresh and `g`,
+    /// and lives only as long as the process: a rerank of fifteen beads must not be interrupted
+    /// by the section shutting under the cursor.
+    pub expanded: BTreeSet<&'static str>,
+    /// The last priority this view changed, as `(id, the priority it had)`.
+    ///
+    /// One step, because the case it exists for is a mis-keyed digit and the notice is the only
+    /// warning there was. `cerebro--last-priority-change`. Spent only by USING it: it survives a
+    /// refresh, a `g` and the bead scrolling out of view, and a later change overwrites it.
+    pub last_priority_change: Option<(String, Option<u8>)>,
     /// What `scripts/fleet-history --summary` last said, on its own five-minute cadence and its
     /// own in-flight slot. A `Pane<T>` for `finish`'s transitions above all: a failed run must not
     /// destroy rows still worth reading, and the header names the script in red while it holds
@@ -604,6 +842,8 @@ impl App {
             sweeps: Pane::default(),
             last_sweep_request: None,
             work_cursor: None,
+            expanded: BTreeSet::new(),
+            last_priority_change: None,
             history: Pane::default(),
             last_history_request: None,
         }
@@ -760,7 +1000,14 @@ impl App {
     /// height the last frame actually showed, so a page is a page of what the navigator is
     /// looking at in the widget they are looking at. `App::focused_viewport` is the one place the
     /// at-least-one floor on that number is applied; this method never applies its own.
-    pub fn on_key(&mut self, key: KeyEvent, viewport_lines: usize) -> AppAction {
+    /// NOW is threaded in rather than asked of the clock: `work_body` needs one for the `Paused`
+    /// suffix, and a key case that called `Utc::now()` would race the wall clock in every test.
+    pub fn on_key(
+        &mut self,
+        key: KeyEvent,
+        viewport_lines: usize,
+        now: DateTime<Utc>,
+    ) -> AppAction {
         // A terminal that reports key releases (Windows, and any terminal with the kitty
         // protocol on) would otherwise scroll twice per keystroke.
         if key.kind == KeyEventKind::Release {
@@ -812,22 +1059,35 @@ impl App {
             // Under Work these four move the CURSOR while there are findings to move over, and
             // that pane's own offset when there are none - which is the ordinary day, and the
             // whole reason `n`/`p` were not ported as keys of their own.
-            KeyCode::Up if self.focus == PaneFocus::Work && !self.work_findings().is_empty() => {
-                self.move_work_cursor(-1, viewport_lines);
+            KeyCode::Up if self.focus == PaneFocus::Work && !self.work_cursor_targets(now).is_empty() => {
+                self.move_work_cursor(-1, viewport_lines, now);
                 AppAction::None
             }
-            KeyCode::Down if self.focus == PaneFocus::Work && !self.work_findings().is_empty() => {
-                self.move_work_cursor(1, viewport_lines);
+            KeyCode::Down if self.focus == PaneFocus::Work && !self.work_cursor_targets(now).is_empty() => {
+                self.move_work_cursor(1, viewport_lines, now);
                 AppAction::None
             }
-            KeyCode::PageUp if self.focus == PaneFocus::Work && !self.work_findings().is_empty() => {
-                self.move_work_cursor(-(viewport_lines as isize), viewport_lines);
+            KeyCode::PageUp
+                if self.focus == PaneFocus::Work && !self.work_cursor_targets(now).is_empty() =>
+            {
+                self.move_work_cursor(-(viewport_lines as isize), viewport_lines, now);
                 AppAction::None
             }
             KeyCode::PageDown
-                if self.focus == PaneFocus::Work && !self.work_findings().is_empty() =>
+                if self.focus == PaneFocus::Work && !self.work_cursor_targets(now).is_empty() =>
             {
-                self.move_work_cursor(viewport_lines as isize, viewport_lines);
+                self.move_work_cursor(viewport_lines as isize, viewport_lines, now);
+                AppAction::None
+            }
+            // `Enter` opens the section under a `+N more` row, and closes it again. The one way
+            // past the eight-row cap, and the only reason a bead in the P4 backlog can be
+            // reranked at all.
+            KeyCode::Enter if self.focus == PaneFocus::Work => {
+                if let Some(WorkCursor::More(section)) = self.work_cursor.clone() {
+                    if !self.expanded.remove(section) {
+                        self.expanded.insert(section);
+                    }
+                }
                 AppAction::None
             }
             KeyCode::Up => {
@@ -1017,11 +1277,11 @@ impl App {
     /// The sweeps pane's content transition; see `Pane::finish` for the whole rule. It touches
     /// that pane and nothing else, and it reconciles the cursor against what came back.
     pub fn finish_sweep_refresh(&mut self, result: Result<Vec<Judged>, ReadError>, at: DateTime<Utc>) {
-        let previous_index = self.work_cursor_index();
+        let previous_index = self.work_cursor_index(at);
         let succeeded = result.is_ok();
         self.sweeps.finish(result, at);
         if succeeded {
-            self.reconcile_work_cursor(previous_index);
+            self.reconcile_work_cursor(previous_index, at);
         }
     }
 
@@ -1051,7 +1311,12 @@ impl App {
         result: Result<Vec<HistoryRow>, ReadError>,
         at: DateTime<Utc>,
     ) {
+        let previous_index = self.work_cursor_index(at);
+        let succeeded = result.is_ok();
         self.history.finish(result, at);
+        if succeeded {
+            self.reconcile_work_cursor(previous_index, at);
+        }
     }
 
     /// The History rows the Work pane is currently showing, `Fresh` and `Stale` alike; empty
@@ -1067,53 +1332,77 @@ impl App {
         self.sweeps.content.value().map(Vec::as_slice).unwrap_or(&[])
     }
 
-    /// The cursor's index among the findings on screen, if it is still one of them.
-    pub fn work_cursor_index(&self) -> Option<usize> {
-        let key = self.work_cursor.as_deref()?;
-        self.work_findings().iter().position(|judged| judged.finding.key() == key)
+    /// The document's selectable rows, in order: findings, bead rows and `+N more` rows.
+    fn work_cursor_targets(&self, now: DateTime<Utc>) -> Vec<WorkCursor> {
+        work_body(self, now)
+            .iter()
+            .filter_map(WorkBodyLine::cursor)
+            .collect()
     }
 
-    /// The finding under the cursor, if there is one. What `x` acts on.
+    /// Where the cursor is among the document's selectable rows, if it is still one of them.
+    pub fn work_cursor_index(&self, now: DateTime<Utc>) -> Option<usize> {
+        let cursor = self.work_cursor.as_ref()?;
+        self.work_cursor_targets(now).iter().position(|target| target == cursor)
+    }
+
+    /// The finding under the cursor, if the cursor is on one. What `x` acts on.
     pub fn selected_finding(&self) -> Option<&Judged> {
-        self.work_findings().get(self.work_cursor_index()?)
+        let WorkCursor::Finding(key) = self.work_cursor.as_ref()? else {
+            return None;
+        };
+        self.work_findings().iter().find(|judged| judged.finding.key() == *key)
     }
 
-    /// Put the cursor back on something after a successful sweep read.
+    /// The bead under the cursor, if the cursor is on one. What the priority keys act on.
+    pub fn selected_bead(&self, now: DateTime<Utc>) -> Option<&Bead> {
+        let WorkCursor::Bead(id) = self.work_cursor.as_ref()? else {
+            return None;
+        };
+        work_body(self, now).into_iter().find_map(|line| match line {
+            WorkBodyLine::Bead { bead, .. } if bead.id == *id => Some(bead),
+            _ => None,
+        })
+    }
+
+    /// Put the cursor back on something after a refresh that changed the document.
     ///
-    /// A cursor whose finding is gone takes the row at its old index, clamped, and `None` when
-    /// there are no findings at all. Unlike the fleet's selection it sets NO notice: a roster
-    /// shrinking under the navigator is news, whereas findings are replaced every ten minutes and
-    /// after every `x`, and a gold line saying so on every tenth minute is noise. What guards the
-    /// navigator from acting on the wrong thing is the confirmation, which always names the
-    /// command.
-    fn reconcile_work_cursor(&mut self, previous_index: Option<usize>) {
-        let findings = self.work_findings();
-        if findings.is_empty() {
+    /// A cursor whose row is gone takes the selectable row at its old index, clamped, and `None`
+    /// when there is nothing selectable at all - and the FIRST row when there was no cursor and
+    /// there now is one, which is what gives the navigator a grey row on the first frame with no
+    /// separate code path.
+    ///
+    /// Unlike the fleet's selection it sets NO notice: a roster shrinking under the navigator is
+    /// news, whereas this cursor is where they last happened to be. What guards them from acting
+    /// on the wrong thing is the confirmation, which always names the command.
+    fn reconcile_work_cursor(&mut self, previous_index: Option<usize>, now: DateTime<Utc>) {
+        let targets = self.work_cursor_targets(now);
+        if targets.is_empty() {
             self.work_cursor = None;
             return;
         }
-        if self.work_cursor_index().is_some() {
+        if self.work_cursor_index(now).is_some() {
             return;
         }
-        let index = previous_index.unwrap_or(0).min(findings.len() - 1);
-        self.work_cursor = Some(findings[index].finding.key());
+        let index = previous_index.unwrap_or(0).min(targets.len() - 1);
+        self.work_cursor = Some(targets[index].clone());
     }
 
-    /// Move the cursor by DELTA findings, saturating at both ends, and scroll the Work pane by
-    /// the least that keeps the new line visible. With no findings it does nothing - `on_key`
+    /// Move the cursor by DELTA rows, saturating at both ends, and scroll the Work pane by the
+    /// least that keeps the new line visible. With nothing selectable it does nothing - `on_key`
     /// scrolls instead.
-    fn move_work_cursor(&mut self, delta: isize, viewport_lines: usize) {
-        let findings = self.work_findings();
-        if findings.is_empty() {
+    fn move_work_cursor(&mut self, delta: isize, viewport_lines: usize, now: DateTime<Utc>) {
+        let targets = self.work_cursor_targets(now);
+        if targets.is_empty() {
             return;
         }
-        let last = findings.len() - 1;
-        let current = self.work_cursor_index().unwrap_or(0);
+        let last = targets.len() - 1;
+        let current = self.work_cursor_index(now).unwrap_or(0);
         let target = (current as isize).saturating_add(delta).clamp(0, last as isize) as usize;
-        let key = findings[target].finding.key();
-        self.work_cursor = Some(key.clone());
-        let body = work_body(&self.sweeps.content);
-        if let Some(line) = work_line_of_finding(&body, &key, self.work_findings()) {
+        let cursor = targets[target].clone();
+        self.work_cursor = Some(cursor.clone());
+        let line = work_line_of_cursor(&work_body(self, now), &cursor);
+        if let Some(line) = line {
             let viewport = viewport_lines.max(1);
             if line < viewport {
                 self.work.scroll = 0;
@@ -1267,7 +1556,14 @@ impl App {
             self.work_requested_at = self.work_request_pending;
         }
         self.work_request_pending = None;
+        let previous_index = self.work_cursor_index(at);
+        let succeeded = result.is_ok();
         self.work.finish(result, at);
+        // Every refresh that changes the document reconciles the cursor, not the sweeps alone:
+        // the beads are replaced every thirty seconds and the cursor now walks them.
+        if succeeded {
+            self.reconcile_work_cursor(previous_index, at);
+        }
     }
 
 }
@@ -1474,11 +1770,10 @@ mod tests {
         app.finish_sweep_refresh(Err(sweep_error()), at(0));
         assert!(app.work_findings().is_empty());
         assert_eq!(
-            work_body(&app.sweeps.content),
-            vec![
+            &work_body(&app, at(0))[..2],
+            &[
                 WorkBodyLine::SweepHeader { count: 0, error: Some("sweep-claims failed".into()) },
                 WorkBodyLine::Blank,
-                WorkBodyLine::Queues,
             ]
         );
     }
@@ -1490,7 +1785,11 @@ mod tests {
         let mut app = App::default();
         app.finish_sweep_refresh(Err(sweep_error()), at(0));
         app.finish_sweep_refresh(Ok(Vec::new()), at(5));
-        assert_eq!(work_body(&app.sweeps.content), vec![WorkBodyLine::Queues]);
+        // No Sweeps section at all: the document opens with the queues' own state.
+        assert_eq!(
+            work_body(&app, at(0)).first(),
+            Some(&WorkBodyLine::Notice(WorkNotice::Loading))
+        );
         assert_eq!(app.work_cursor, None);
     }
 
@@ -1521,15 +1820,15 @@ mod tests {
             at(0),
         );
         // The first successful read puts the cursor on the first finding, silently.
-        assert_eq!(app.work_cursor.as_deref(), Some("unclaim:cb-a"));
-        app.on_key(key(KeyCode::Down), 10);
-        assert_eq!(app.work_cursor.as_deref(), Some("reclaim:cb-b"));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        app.on_key(key(KeyCode::Down), 10, at(0));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("reclaim:cb-b".into())));
         assert_eq!(app.selected_finding().map(|j| j.finding.key()).as_deref(), Some("reclaim:cb-b"));
         // Saturating at both ends, exactly as the fleet selection is.
-        app.on_key(key(KeyCode::PageDown), 10);
-        assert_eq!(app.work_cursor.as_deref(), Some("epic-close:cb-c"));
-        app.on_key(key(KeyCode::PageUp), 10);
-        assert_eq!(app.work_cursor.as_deref(), Some("unclaim:cb-a"));
+        app.on_key(key(KeyCode::PageDown), 10, at(0));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("epic-close:cb-c".into())));
+        app.on_key(key(KeyCode::PageUp), 10, at(0));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
         // And nothing scrolled: three findings fit a ten-line viewport.
         assert_eq!(app.work.scroll, 0);
     }
@@ -1541,7 +1840,7 @@ mod tests {
         let mut app = App::default();
         app.focus = PaneFocus::Work;
         app.finish_sweep_refresh(Ok(Vec::new()), at(0));
-        app.on_key(key(KeyCode::Down), 10);
+        app.on_key(key(KeyCode::Down), 10, at(0));
         assert_eq!(app.work.scroll, 1);
         assert_eq!(app.work_cursor, None);
     }
@@ -1558,15 +1857,15 @@ mod tests {
             at(0),
         );
         app.focus = PaneFocus::Work;
-        app.on_key(key(KeyCode::Down), 10);
-        assert_eq!(app.work_cursor.as_deref(), Some("reclaim:cb-b"));
+        app.on_key(key(KeyCode::Down), 10, at(0));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("reclaim:cb-b".into())));
         // The middle finding is acted on and gone; index 1 is now the third.
         app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("epic")]), at(10));
-        assert_eq!(app.work_cursor.as_deref(), Some("epic-close:cb-c"));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("epic-close:cb-c".into())));
         assert_eq!(app.notice, None);
         // Past the end, it clamps to the last.
         app.finish_sweep_refresh(Ok(vec![judged("unclaim")]), at(20));
-        assert_eq!(app.work_cursor.as_deref(), Some("unclaim:cb-a"));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
         assert_eq!(app.notice, None);
     }
 
@@ -1577,31 +1876,33 @@ mod tests {
         let mut app = App::default();
         app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("reclaim")]), at(0));
         app.focus = PaneFocus::Work;
-        app.on_key(key(KeyCode::Down), 10);
+        app.on_key(key(KeyCode::Down), 10, at(0));
         app.finish_sweep_refresh(Err(sweep_error()), at(5));
-        assert_eq!(app.work_cursor.as_deref(), Some("reclaim:cb-b"));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("reclaim:cb-b".into())));
     }
 
     /// The findings are the first lines of the Work document, so a finding's line depends on the
     /// sweeps alone - which is what lets the cursor place one without building a frame.
     #[test]
     fn a_findings_line_is_known_without_a_frame() {
-        let findings = vec![judged("unclaim"), judged("reclaim")];
-        let content = PaneContent::Fresh { value: findings.clone(), read_at: at(0) };
-        let body = work_body(&content);
+        let mut app = App::default();
+        app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("reclaim")]), at(0));
+        let body = work_body(&app, at(0));
         assert_eq!(
-            body,
-            vec![
+            &body[..4],
+            &[
                 WorkBodyLine::SweepHeader { count: 2, error: None },
-                WorkBodyLine::Finding(0),
-                WorkBodyLine::Finding(1),
+                WorkBodyLine::Finding { index: 0, key: "unclaim:cb-a".into() },
+                WorkBodyLine::Finding { index: 1, key: "reclaim:cb-b".into() },
                 WorkBodyLine::Blank,
-                WorkBodyLine::Queues,
             ]
         );
-        assert_eq!(work_line_of_finding(&body, "unclaim:cb-a", &findings), Some(1));
-        assert_eq!(work_line_of_finding(&body, "reclaim:cb-b", &findings), Some(2));
-        assert_eq!(work_line_of_finding(&body, "epic-close:cb-z", &findings), None);
+        let line = |key: &str| {
+            work_line_of_cursor(&body, &WorkCursor::Finding(key.to_string()))
+        };
+        assert_eq!(line("unclaim:cb-a"), Some(1));
+        assert_eq!(line("reclaim:cb-b"), Some(2));
+        assert_eq!(line("epic-close:cb-z"), None);
     }
 
     /// A pane with many findings scrolls to follow the cursor down, by the least that reveals it.
@@ -1617,9 +1918,9 @@ mod tests {
         app.finish_sweep_refresh(Ok(many), at(0));
         app.focus = PaneFocus::Work;
         for _ in 0..10 {
-            app.on_key(key(KeyCode::Down), 5);
+            app.on_key(key(KeyCode::Down), 5, at(0));
         }
-        assert_eq!(app.work_cursor.as_deref(), Some("unclaim:cb-10"));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-10".into())));
         // Line 11 of the body (header, then ten findings above it), in a five-line viewport.
         assert_eq!(app.work.scroll, 7);
     }
@@ -2061,31 +2362,31 @@ mod tests {
     fn scroll_keys_move_by_line_or_viewport() {
         let mut app = App::new();
         app.focus = PaneFocus::Work;
-        assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
+        assert_eq!(app.on_key(key(KeyCode::Down), 10, at(0)), AppAction::None);
         assert_eq!(app.work.scroll, 1);
-        assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
+        assert_eq!(app.on_key(key(KeyCode::Down), 10, at(0)), AppAction::None);
         assert_eq!(app.work.scroll, 2);
-        app.on_key(key(KeyCode::Up), 10);
+        app.on_key(key(KeyCode::Up), 10, at(0));
         assert_eq!(app.work.scroll, 1);
 
         // The top is a floor, never a negative offset.
-        app.on_key(key(KeyCode::Up), 10);
-        app.on_key(key(KeyCode::Up), 10);
+        app.on_key(key(KeyCode::Up), 10, at(0));
+        app.on_key(key(KeyCode::Up), 10, at(0));
         assert_eq!(app.work.scroll, 0);
 
-        app.on_key(key(KeyCode::PageDown), 10);
+        app.on_key(key(KeyCode::PageDown), 10, at(0));
         assert_eq!(app.work.scroll, 10, "a page is the viewport the frame just showed");
-        app.on_key(key(KeyCode::PageDown), 7);
+        app.on_key(key(KeyCode::PageDown), 7, at(0));
         assert_eq!(app.work.scroll, 17);
-        app.on_key(key(KeyCode::PageUp), 7);
+        app.on_key(key(KeyCode::PageUp), 7, at(0));
         assert_eq!(app.work.scroll, 10);
-        app.on_key(key(KeyCode::PageUp), 100);
+        app.on_key(key(KeyCode::PageUp), 100, at(0));
         assert_eq!(app.work.scroll, 0);
 
         // A key release is the same keystroke reported twice; it moves nothing.
         let mut release = key(KeyCode::Down);
         release.kind = KeyEventKind::Release;
-        assert_eq!(app.on_key(release, 10), AppAction::None);
+        assert_eq!(app.on_key(release, 10, at(0)), AppAction::None);
         assert_eq!(app.work.scroll, 0);
     }
 
@@ -2095,14 +2396,14 @@ mod tests {
         assert_eq!(app.focus, PaneFocus::Fleet, "Fleet is focused on startup");
 
         for expected in [PaneFocus::Work, PaneFocus::Session, PaneFocus::Fleet, PaneFocus::Work] {
-            assert_eq!(app.on_key(key(KeyCode::Tab), 10), AppAction::None);
+            assert_eq!(app.on_key(key(KeyCode::Tab), 10, at(0)), AppAction::None);
             assert_eq!(app.focus, expected);
         }
 
         // Shift-Tab is the reverse of that cycle, not the same toggle.
         let mut app = App::new();
         for expected in [PaneFocus::Session, PaneFocus::Work, PaneFocus::Fleet, PaneFocus::Session] {
-            assert_eq!(app.on_key(key(KeyCode::BackTab), 10), AppAction::None);
+            assert_eq!(app.on_key(key(KeyCode::BackTab), 10, at(0)), AppAction::None);
             assert_eq!(app.focus, expected);
         }
     }
@@ -2112,22 +2413,22 @@ mod tests {
     #[test]
     fn scroll_keys_move_only_the_focused_pane() {
         let mut app = App::new();
-        app.on_key(key(KeyCode::Tab), 10);
+        app.on_key(key(KeyCode::Tab), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Work);
-        app.on_key(key(KeyCode::PageDown), 6);
+        app.on_key(key(KeyCode::PageDown), 6, at(0));
         assert_eq!(app.work.scroll, 6, "the page moves by the focused pane's own viewport");
         assert_eq!(app.fleet.scroll, 0, "the fleet offset is untouched while work is focused");
         assert_eq!(app.session.scroll, 0, "and so is the session's");
 
-        app.on_key(key(KeyCode::Up), 10);
+        app.on_key(key(KeyCode::Up), 10, at(0));
         assert_eq!(app.work.scroll, 5);
 
-        app.on_key(key(KeyCode::Tab), 10);
+        app.on_key(key(KeyCode::Tab), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Session);
-        app.on_key(key(KeyCode::PageDown), 4);
+        app.on_key(key(KeyCode::PageDown), 4, at(0));
         assert_eq!(app.session.scroll, 4, "the session pane has its own offset");
         assert_eq!(app.work.scroll, 5, "and work is untouched now that session is focused");
-        app.on_key(key(KeyCode::PageUp), 100);
+        app.on_key(key(KeyCode::PageUp), 100, at(0));
         assert_eq!(app.session.scroll, 0, "the top is a floor for the session pane too");
         assert_eq!(app.work.scroll, 5);
     }
@@ -2145,7 +2446,7 @@ mod tests {
         // Three lines of viewport: the heading plus rows A and B are visible at scroll 0, so the
         // selection can reach row B (document line 2) before anything has to move.
         for _ in 0..5 {
-            app.on_key(key(KeyCode::Down), 3);
+            app.on_key(key(KeyCode::Down), 3, at(0));
         }
         assert_eq!(app.selected.as_deref(), Some("F"), "five rows down from A");
         // F is at index 5, document line 6; the least scroll showing line 6 in a 3-line viewport
@@ -2154,19 +2455,19 @@ mod tests {
         assert_eq!(app.work.scroll, 0, "the work pane never moves for a fleet key");
 
         for _ in 0..5 {
-            app.on_key(key(KeyCode::Up), 3);
+            app.on_key(key(KeyCode::Up), 3, at(0));
         }
         assert_eq!(app.selected.as_deref(), Some("A"));
         assert_eq!(app.fleet.scroll, 0, "coming back to the top scrolls back to it");
 
         // The ends saturate rather than wrapping.
-        app.on_key(key(KeyCode::Up), 3);
+        app.on_key(key(KeyCode::Up), 3, at(0));
         assert_eq!(app.selected.as_deref(), Some("A"));
-        app.on_key(key(KeyCode::PageDown), 3);
+        app.on_key(key(KeyCode::PageDown), 3, at(0));
         assert_eq!(app.selected.as_deref(), Some("D"), "a page is a viewport of rows");
-        app.on_key(key(KeyCode::PageDown), 100);
+        app.on_key(key(KeyCode::PageDown), 100, at(0));
         assert_eq!(app.selected.as_deref(), Some("H"), "and it stops at the last row");
-        app.on_key(key(KeyCode::PageUp), 100);
+        app.on_key(key(KeyCode::PageUp), 100, at(0));
         assert_eq!(app.selected.as_deref(), Some("A"));
     }
 
@@ -2174,7 +2475,7 @@ mod tests {
     #[test]
     fn selection_keys_do_nothing_without_a_fleet() {
         let mut app = App::new();
-        assert_eq!(app.on_key(key(KeyCode::Down), 10), AppAction::None);
+        assert_eq!(app.on_key(key(KeyCode::Down), 10, at(0)), AppAction::None);
         assert_eq!(app.selected, None);
         assert_eq!(app.fleet.scroll, 0);
     }
@@ -2192,10 +2493,10 @@ mod tests {
 
         // Row A is document line 1, and one visible line can hold the heading or the row, not
         // both: it must be the row.
-        app.on_key(key(KeyCode::Down), 1);
+        app.on_key(key(KeyCode::Down), 1, at(0));
         assert_eq!(app.selected.as_deref(), Some("B"));
         assert_eq!(app.fleet.scroll, 2, "row B, alone, is what the one line shows");
-        app.on_key(key(KeyCode::Up), 1);
+        app.on_key(key(KeyCode::Up), 1, at(0));
         assert_eq!(app.selected.as_deref(), Some("A"));
         assert_eq!(app.fleet.scroll, 1, "and coming back shows row A rather than the heading");
     }
@@ -2221,8 +2522,8 @@ mod tests {
         let fresh_first = body_line_of_row(&fleet_body(&fresh.fleet.content), 0).unwrap();
 
         for _ in 0..5 {
-            fresh.on_key(key(KeyCode::Down), 3);
-            stale.on_key(key(KeyCode::Down), 3);
+            fresh.on_key(key(KeyCode::Down), 3, at(0));
+            stale.on_key(key(KeyCode::Down), 3, at(0));
         }
         assert_eq!(fresh.selected.as_deref(), stale.selected.as_deref());
         assert_eq!(
@@ -2236,8 +2537,8 @@ mod tests {
         // three lines cannot also hold the error, the blank and the heading - least movement puts
         // the row at the top and shows none of them, which is the right trade.
         for _ in 0..5 {
-            fresh.on_key(key(KeyCode::Up), 3);
-            stale.on_key(key(KeyCode::Up), 3);
+            fresh.on_key(key(KeyCode::Up), 3, at(0));
+            stale.on_key(key(KeyCode::Up), 3, at(0));
         }
         assert_eq!(fresh.selected.as_deref(), Some("A"));
         assert_eq!(stale.selected.as_deref(), Some("A"));
@@ -2300,14 +2601,14 @@ mod tests {
     fn a_key_press_clears_the_notice() {
         let mut app = App::new();
         app.notice = Some("Storm is no longer on the roster.".into());
-        app.on_key(key(KeyCode::Tab), 10);
+        app.on_key(key(KeyCode::Tab), 10, at(0));
         assert_eq!(app.notice, None);
 
         // A key RELEASE is not a key press, and clears nothing.
         app.notice = Some("Storm is no longer on the roster.".into());
         let mut release = key(KeyCode::Down);
         release.kind = KeyEventKind::Release;
-        app.on_key(release, 10);
+        app.on_key(release, 10, at(0));
         assert!(app.notice.is_some());
     }
 
@@ -2330,7 +2631,7 @@ mod tests {
     fn a_key_clears_the_colour_with_the_notice() {
         let mut app = App::new();
         app.set_error_notice("Worktree pruning stopped: exit status 2".into());
-        app.on_key(key(KeyCode::Tab), 10);
+        app.on_key(key(KeyCode::Tab), 10, at(0));
         assert_eq!(app.notice, None);
         assert!(!app.notice_urgent);
     }
@@ -2500,18 +2801,18 @@ mod tests {
     fn quit_keys_all_exit() {
         for code in [KeyCode::Char('q'), KeyCode::Esc] {
             let mut app = App::new();
-            assert_eq!(app.on_key(key(code), 10), AppAction::Quit);
+            assert_eq!(app.on_key(key(code), 10, at(0)), AppAction::Quit);
             assert!(app.quit, "{code:?} sets quit immediately");
         }
         let mut app = App::new();
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(app.on_key(ctrl_c, 10), AppAction::Quit);
+        assert_eq!(app.on_key(ctrl_c, 10, at(0)), AppAction::Quit);
         assert!(app.quit);
 
         // A plain `c' is not Ctrl-C, and nothing else quits.
         let mut app = App::new();
-        assert_eq!(app.on_key(key(KeyCode::Char('c')), 10), AppAction::None);
-        assert_eq!(app.on_key(key(KeyCode::Char('x')), 10), AppAction::None);
+        assert_eq!(app.on_key(key(KeyCode::Char('c')), 10, at(0)), AppAction::None);
+        assert_eq!(app.on_key(key(KeyCode::Char('x')), 10, at(0)), AppAction::None);
         assert!(!app.quit);
     }
 
@@ -2519,13 +2820,13 @@ mod tests {
     fn g_requests_both_readers() {
         let mut app = App::new();
         let start = Instant::now();
-        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshAll);
+        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10, at(0)), AppAction::RefreshAll);
         assert!(app.begin_refresh(start));
         assert!(app.begin_work_refresh(start, Utc::now()));
 
         // The request is only honoured once per pane: a second `g' while both reads run is
         // dropped at each pane's own door.
-        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshAll);
+        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10, at(0)), AppAction::RefreshAll);
         assert!(!app.begin_refresh(start + Duration::from_secs(1)));
         assert!(!app.begin_work_refresh(start + Duration::from_secs(1), Utc::now()));
 
@@ -2542,7 +2843,7 @@ mod tests {
         let start = Instant::now();
         assert!(app.begin_refresh(start), "the fleet is already reading");
 
-        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshAll);
+        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10, at(0)), AppAction::RefreshAll);
         assert!(!app.begin_refresh(start), "the busy pane refuses");
         assert!(app.begin_work_refresh(start, Utc::now()), "and the idle one still starts");
     }
@@ -2727,5 +3028,259 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    // --- the whole Work document, the widened cursor and `Enter` (cb-kcs.5.4) ----------------
+
+    fn test_bead(id: &str, priority: Option<u8>) -> Bead {
+        Bead {
+            id: id.to_string(),
+            title: format!("title of {id}"),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels: Vec::new(),
+            priority,
+            updated_at: None,
+            assignee: None,
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        }
+    }
+
+    fn history(agent: &str, open: f64, median: Option<f64>) -> HistoryRow {
+        HistoryRow {
+            agent: agent.to_string(),
+            state: "working".into(),
+            open_min: Some(open),
+            median_min: median,
+            ..HistoryRow::default()
+        }
+    }
+
+    /// Two findings, two claimed beads, five empty sections, a section of twelve, and three
+    /// History rows - and every drawn line named.
+    fn document_app() -> App {
+        let mut app = App::default();
+        app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("reclaim")]), at(0));
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                claimed: vec![test_bead("cb-a", Some(1)), test_bead("cb-b", Some(0))],
+                unplanned: (1..=12).map(|n| test_bead(&format!("cb-{n:02}"), Some(4))).collect(),
+                ..WorkBuckets::default()
+            }),
+            at(0),
+        );
+        app.finish_history_refresh(
+            Ok(vec![
+                history("Cyclops", 2.4, Some(21.9)),
+                history("Psylocke", 536.6, Some(2.2)),
+                // Not running: no line, and not counted.
+                HistoryRow { open_min: None, ..history("Beast", 0.0, Some(3.0)) },
+            ]),
+            at(0),
+        );
+        app
+    }
+
+    #[test]
+    fn the_body_names_every_line_of_the_work_pane() {
+        let app = document_app();
+        let body = work_body(&app, at(0));
+        let shape: Vec<String> = body
+            .iter()
+            .map(|line| match line {
+                WorkBodyLine::SweepHeader { count, .. } => format!("sweep-header {count}"),
+                WorkBodyLine::Finding { key, .. } => format!("finding {key}"),
+                WorkBodyLine::Blank => "blank".into(),
+                WorkBodyLine::Notice(n) => format!("notice {n:?}"),
+                WorkBodyLine::SectionHeader { title, count } => format!("header {title} {count}"),
+                WorkBodyLine::Bead { bead, .. } => format!("bead {}", bead.id),
+                WorkBodyLine::Empty => "(none)".into(),
+                WorkBodyLine::More { section, hidden, expanded } => {
+                    format!("more {section} {hidden} {expanded}")
+                }
+                WorkBodyLine::HistoryHeader { count, failed } => {
+                    format!("history-header {count} {failed}")
+                }
+                WorkBodyLine::HistoryRow { text, long } => format!("history {text} {long}"),
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                "sweep-header 2",
+                "finding unclaim:cb-a",
+                "finding reclaim:cb-b",
+                "blank",
+                // The six queues, in the order work moves in read backwards.
+                "header Claimed 2",
+                // P0 before P1: the section's own order, which the document owns now.
+                "bead cb-b",
+                "bead cb-a",
+                "blank",
+                "header Planned, unclaimed 0",
+                "(none)",
+                "blank",
+                "header Being planned 0",
+                "(none)",
+                "blank",
+                "header Unplanned 12",
+                "bead cb-01",
+                "bead cb-02",
+                "bead cb-03",
+                "bead cb-04",
+                "bead cb-05",
+                "bead cb-06",
+                "bead cb-07",
+                "bead cb-08",
+                "more Unplanned 4 false",
+                "blank",
+                "header Waiting on you 0",
+                "(none)",
+                "blank",
+                "header Merged, unverified 0",
+                "(none)",
+                // History last, after `Merged, unverified` - the `M-x cerebro` order.
+                "blank",
+                "history-header 2 false",
+                "history   Cyclops working 2m false",
+                "history   Psylocke working 537m - long, median 2m true",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+            "{shape:#?}"
+        );
+    }
+
+    /// A section with nothing hidden is never expandable, so no `More` row is drawn for it and
+    /// `expanded` naming it changes nothing.
+    #[test]
+    fn a_section_with_nothing_hidden_has_no_more_row() {
+        let mut app = App::default();
+        app.expanded.insert("Claimed");
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                claimed: (1..=8).map(|n| test_bead(&format!("cb-{n}"), Some(1))).collect(),
+                ..WorkBuckets::default()
+            }),
+            at(0),
+        );
+        assert!(
+            !work_body(&app, at(0))
+                .iter()
+                .any(|line| matches!(line, WorkBodyLine::More { .. })),
+            "eight rows are all of them"
+        );
+    }
+
+    #[test]
+    fn the_work_cursor_moves_over_findings_beads_and_more() {
+        let mut app = document_app();
+        app.focus = PaneFocus::Work;
+        // From the first frame it is on the first selectable row, with nothing pressed.
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+
+        let mut seen = vec![app.work_cursor.clone().unwrap()];
+        for _ in 0..13 {
+            app.on_key(key(KeyCode::Down), 10, at(0));
+            seen.push(app.work_cursor.clone().unwrap());
+        }
+        assert_eq!(
+            seen,
+            vec![
+                WorkCursor::Finding("unclaim:cb-a".into()),
+                WorkCursor::Finding("reclaim:cb-b".into()),
+                // Straight onto the bead rows: no header, blank or `(none)` in between.
+                WorkCursor::Bead("cb-b".into()),
+                WorkCursor::Bead("cb-a".into()),
+                WorkCursor::Bead("cb-01".into()),
+                WorkCursor::Bead("cb-02".into()),
+                WorkCursor::Bead("cb-03".into()),
+                WorkCursor::Bead("cb-04".into()),
+                WorkCursor::Bead("cb-05".into()),
+                WorkCursor::Bead("cb-06".into()),
+                WorkCursor::Bead("cb-07".into()),
+                WorkCursor::Bead("cb-08".into()),
+                WorkCursor::More("Unplanned"),
+                // Clamped: History rows are never selectable, so this is the last row there is.
+                WorkCursor::More("Unplanned"),
+            ]
+        );
+
+        // And clamped at the top, too.
+        for _ in 0..40 {
+            app.on_key(key(KeyCode::Up), 10, at(0));
+        }
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        // PgDn moves a viewport of selectable rows.
+        app.on_key(key(KeyCode::PageDown), 5, at(0));
+        assert_eq!(app.work_cursor_index(at(0)), Some(5));
+    }
+
+    /// A cursor whose row is gone takes the selectable row at its index, clamped - and says
+    /// nothing about it.
+    #[test]
+    fn a_cursor_whose_bead_is_gone_takes_the_row_at_its_index() {
+        let mut app = App::default();
+        app.focus = PaneFocus::Work;
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                claimed: vec![test_bead("cb-a", Some(1)), test_bead("cb-b", Some(2))],
+                ..WorkBuckets::default()
+            }),
+            at(0),
+        );
+        app.on_key(key(KeyCode::Down), 10, at(0));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Bead("cb-b".into())));
+
+        // cb-b is closed and gone; the row at index 1 is now cb-c.
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                claimed: vec![test_bead("cb-a", Some(1)), test_bead("cb-c", Some(3))],
+                ..WorkBuckets::default()
+            }),
+            at(30),
+        );
+        assert_eq!(app.work_cursor, Some(WorkCursor::Bead("cb-c".into())));
+        assert_eq!(app.notice, None, "a refresh is not news");
+    }
+
+    #[test]
+    fn enter_opens_and_closes_one_section() {
+        let mut app = document_app();
+        app.focus = PaneFocus::Work;
+        for _ in 0..12 {
+            app.on_key(key(KeyCode::Down), 10, at(0));
+        }
+        assert_eq!(app.work_cursor, Some(WorkCursor::More("Unplanned")));
+
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        let body = work_body(&app, at(0));
+        assert_eq!(
+            body.iter().filter(|l| matches!(l, WorkBodyLine::Bead { .. })).count(),
+            14,
+            "all twelve of the open section, plus the two claimed"
+        );
+        assert!(body.iter().any(|l| matches!(
+            l,
+            WorkBodyLine::More { section: "Unplanned", hidden: 4, expanded: true }
+        )));
+
+        // It survives a work refresh: a rerank of fifteen beads must not be interrupted by the
+        // section shutting under the cursor.
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                unplanned: (1..=12).map(|n| test_bead(&format!("cb-{n:02}"), Some(4))).collect(),
+                ..WorkBuckets::default()
+            }),
+            at(30),
+        );
+        assert!(app.expanded.contains("Unplanned"));
+
+        // And `Enter` again folds it.
+        app.work_cursor = Some(WorkCursor::More("Unplanned"));
+        app.on_key(key(KeyCode::Enter), 10, at(30));
+        assert!(!app.expanded.contains("Unplanned"));
     }
 }

@@ -1413,7 +1413,7 @@ fn route_key(
             return lifecycle_key(c, app, host, ledger, logger, paths, now);
         }
     }
-    let action = app.on_key(key, viewport_lines);
+    let action = app.on_key(key, viewport_lines, now);
     if action == AppAction::Quit {
         let live = host.live_names(&app.roster_order());
         if !live.is_empty() {
@@ -2549,7 +2549,10 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
 
-        // The exact viewport PageDown should move Work by, from the same layout `run` clamps by.
+        // The viewport PageDown moves Work by, from the same layout `run` clamps by. Since
+        // cb-kcs.5.4 it moves the Work CURSOR that many selectable rows rather than the pane's
+        // own offset, and the pane follows it - so a page bigger than this document's nine
+        // selectable rows lands on the last of them.
         let area = Rect::new(0, 0, 100, 20);
         let expected_work_page = ui::metrics(&app, Utc::now(), area).work.viewport_lines;
         assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
@@ -2566,7 +2569,12 @@ mod main_tests {
             "Down moved the SELECTION in Fleet, which is focused by default"
         );
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Work, "Tab moved focus to Work");
-        assert_eq!(app.work.scroll, expected_work_page, "PageDown moved Work by its own viewport");
+        assert_eq!(
+            app.work_cursor_index(Utc::now()),
+            Some(expected_work_page),
+            "PageDown moved the Work cursor by Work's own viewport, from the first row"
+        );
+        assert!(app.work.scroll > 0, "and the pane scrolled to follow it");
     }
 
     /// A terminal that dips below the 40x12 floor draws the "too small" replacement screen, whose

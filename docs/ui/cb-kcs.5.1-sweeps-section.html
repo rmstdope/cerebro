@@ -173,10 +173,15 @@ the six queues, which say <code>(none)</code>. Those describe queues that are no
 an empty Sweeps section is the ordinary result of almost every run, and a pane announcing it every
 ten minutes is the noise <code>docs/cerebro-sweeps.md</code> warns against.</p>
 
-<div class="screen"><pre><span class="hd">Cerebro — supervising</span>  <span class="d">| 3 live agents | ↑/↓ select | s start | f finish | k kill | x act | g retry</span></pre></div>
-<p class="note"><code>x act</code> sits between <code>k kill</code> and <code>g retry</code>, and is
-shown <b>only while there is a finding to act on</b> &mdash; so the ordinary day has exactly the
-hint line it has today.</p>
+<div class="screen"><pre><span class="hd">Cerebro — supervising</span><span class="d"> | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | x act | g refresh | q/Esc/Ctrl-C quit</span></pre></div>
+<p class="note"><code>x act</code> joins the hint line <b>after the lifecycle keys</b>, and is shown
+<b>only while there is a finding to act on</b> &mdash; so the ordinary day has exactly the hint line
+it has today. It belongs in the half that <b>survives the shortening</b> on a narrow terminal,
+beside <code>s/f/k</code>: the keys that change something outlast the keys that move around.</p>
+<p class="note"><b>And it is shown on a read-only view too</b>, where <code>s/f/k</code> are not.
+Acting on a finding writes to the shared board rather than to this checkout&rsquo;s sessions, so
+like every other bead-panel key it is deliberately outside the supervision lease &mdash; a view that
+may start nothing may still close a delivered bead.</p>
 
 <h2>7. Cadence</h2>
 <p class="note"><b>The sweeps run on their own ten-minute clock</b>, as they do in Emacs, and

@@ -1,0 +1,177 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0;overflow-x:auto;max-width:100%}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}
+table{border-collapse:collapse;background:#333;color:#eee;margin-top:10px}
+td,th{border:1px solid #555;padding:5px 9px;text-align:left;font-size:12px;vertical-align:top}
+th{background:#444;color:#fff}
+</style>
+<meta charset="utf-8"><title>cb-kcs.4.4 — the agreed surface</title>
+
+<h1>cb-kcs.4.4 — the surface the navigator approved, 2026-09-01/02</h1>
+<p class="lede">Three rounds. This file is the specification for the two append-only JSONL files the
+Ratatui fleet view writes — every path, every event, every field, every word inside a field, and
+what the screen says while they are written. <b>Where this file and the bead's plan disagree, this
+file is right.</b> It changes nothing any earlier file in this family specified: not one row, not one
+notice, not one key. <code>docs/ui/cb-kcs.4.1-standby-and-starts.html</code>,
+<code>cb-kcs.4.2-retry-and-give-up.html</code> and <code>cb-kcs.4.3-cadence-rows.html</code> stand
+exactly as they are.</p>
+
+<h2>1. Two files, and they are Emacs's own</h2>
+<div class="screen"><pre>&lt;shared root&gt;/.cerebro/state/decisions.jsonl     <span class="d">what the view did, and every trigger it evaluated</span>
+&lt;shared root&gt;/.cerebro/state/decisions.1.jsonl   <span class="d">.2, .3 - rotated at 25 MiB, three generations</span>
+&lt;shared root&gt;/.cerebro/state/errors.jsonl        <span class="d">a line per thing that went wrong</span>
+&lt;shared root&gt;/.cerebro/state/errors.1.jsonl      <span class="d">.2, .3 - the same policy, one setting for both</span></pre></div>
+<p class="note"><b>The same two files <code>M-x cerebro</code> writes</b>, so a navigator who switches
+supervisor keeps one continuous history and every reader of these files — <code>jq</code>,
+<code>scripts/fleet-history</code>, the eye — needs no new case. The lease guarantees exactly one
+supervisor, so the two views can never write at once; and one line is one <code>write(2)</code> on a
+file opened <code>O_APPEND</code>, which is already what makes this safe beside
+<code>scripts/agent-state</code>'s own writer in the same directory. <b>A separate
+<code>tui-decisions.jsonl</code>/<code>tui-errors.jsonl</code> pair was rejected</b>: it cannot confuse
+the two writers, but a cutover then splits one afternoon of one fleet across two files with no line
+joining them. <b>Nothing on a line says which program wrote it</b>, deliberately —
+<code>supervisor.json</code> beside them answers that.</p>
+
+<h2>2. The vocabulary, and it is closed</h2>
+<table>
+<tr><th>event</th><th>fields, in this order after <code>event</code> and <code>ts</code></th><th>file</th></tr>
+<tr><td><code>start</code></td><td><code>agent role reason by</code></td><td>decisions</td></tr>
+<tr><td><code>end</code></td><td><code>agent role state bead stop_flag</code></td><td>decisions</td></tr>
+<tr><td><code>retire</code></td><td><code>agent role state bead stop_flag</code></td><td>decisions</td></tr>
+<tr><td><code>nudge</code></td><td><code>agent role state bead stop_flag</code></td><td>decisions</td></tr>
+<tr><td><code>arm</code></td><td><code>agent role by</code> &mdash; <code>by</code> is always <code>"roster"</code></td><td>decisions</td></tr>
+<tr><td><code>exit</code></td><td><code>agent code abnormal last_line</code></td><td>decisions</td></tr>
+<tr><td><code>give-up</code></td><td><code>agent role failed_starts</code></td><td>decisions</td></tr>
+<tr><td><code>evaluate</code></td><td>the seventeen in section 4</td><td>decisions</td></tr>
+<tr><td><code>error</code></td><td><code>context message</code></td><td><b>errors</b></td></tr>
+</table>
+<p class="note"><b>Nine events, not twelve.</b> Emacs's <code>sweep</code> and <code>triage</code> are
+absent because the Ratatui view does neither: it runs no sweeps, and it types no line into an idle
+Cerebro. Emacs's own list also carries <code>standby</code> and <code>refused</code>, which no elisp
+call site emits either. <b>No event outside this table is written</b>, and in particular there is no
+<code>disarm</code> and no second <code>arm</code>: where a name left the armed set is already
+readable from the <code>retire</code> or <code>give-up</code> line that put it there. <b>An explicit
+<code>disarm</code> event, and <code>by</code>:<code>"start"</code> on a re-arm, were drawn and
+rejected</b> as vocabulary the elisp file never carries, in a file both views write.</p>
+
+<h2>3. Every word inside a field</h2>
+<h3><code>by</code>, on a start: two words, and only two</h3>
+<div class="screen"><pre>{"event":"start","ts":"2026-09-02T07:00:01Z","agent":"Cyclops","role":"implementer","reason":null,"by":<span class="y">"navigator"</span>}
+<span class="d">   ^ the roster autostarted it as the view came up; nobody pressed anything</span>
+{"event":"start","ts":"2026-09-02T07:10:22Z","agent":"Rogue","role":"implementer","reason":"3 planned, unclaimed","by":<span class="y">"trigger"</span>}
+{"event":"start","ts":"2026-09-02T07:31:40Z","agent":"Beast","role":"planner","reason":null,"by":<span class="y">"navigator"</span>}
+<span class="d">   ^ and this one really was `s'</span></pre></div>
+<p class="note"><b>Byte-parity with the file Emacs has written since May.</b> A third word
+(<code>"autostart"</code>) was drawn and <b>rejected</b>: it would make the same fleet say two
+different things about one event depending on which view was up, and an autostart is distinguishable
+anyway — it lands in the first second of a view's life, with an <code>arm</code> line beside it.</p>
+
+<h3><code>reason</code>: the trigger's own phrase, unchanged</h3>
+<div class="screen"><pre>"P0 cb-9zz unplanned"     "buffer 2 of 4"        "3 planned, unclaimed"
+"2 merged, unverified"    "1 stale verdict"      "4 unranked"</pre></div>
+<p class="note">The same six phrases the header notice carries after its em dash
+(<code>cb-kcs.4.1</code> section 3, and <code>cb-kcs.4.3</code>'s four for the cadence roles). One
+vocabulary for the screen and the file, so a start seen on screen is findable in the log by its own
+words.</p>
+
+<h3><code>exit</code>: only for an ending this view did not cause</h3>
+<div class="screen"><pre>{"event":"end","ts":"2026-09-02T07:12:11Z","agent":"Rogue","role":"implementer","state":"waiting","bead":null,"stop_flag":null}
+<span class="d">... and no `exit' line: this view killed that child itself, and `end' already said so.</span>
+
+{"event":"exit","ts":"2026-09-02T07:14:02Z","agent":"Storm","code":"137","abnormal":true,"last_line":null}
+<span class="d">... an exit this view did NOT cause: its own line, with its code.</span></pre></div>
+<p class="note"><code>exit</code> keeps meaning exactly what it means in Emacs's file: <b>something
+ended that this view did not end</b>. It is also what cb-kcs.3 already decided for the row's verdict
+column, where a kill this view performed is classified as nothing having gone wrong. <b>A line for
+every reaped child, with a <code>code</code> of <code>"by-view"</code>, was rejected</b>: it would
+make counting sessions easy at the price of a <code>code</code> value elisp has never written.</p>
+
+<h2>4. One <code>evaluate</code> line, in full</h2>
+<div class="screen"><pre>{"event":"evaluate","ts":"2026-09-02T07:10:17Z","agent":"Rogue","role":"implementer",
+ "reason":null,"planned":3,"planned_ids":["cb-kcs.4.3","cb-kcs.4.2","cb-kcs.4.1"],
+ "implementers":4,"p0_unplanned":null,"p4_unranked":0,"merged_unverified":2,
+ "stale_verdicts":0,"held_by_guard":true,"spaced_out":null,"spacing":30,
+ "backed_off":null,"stop_flag":null,"disarmed":null,"failed_starts":0}</pre></div>
+<p class="note">Wrapped here for the page; <b>on disk it is one line</b>. A guard that did not fire is
+<code>null</code>, <b>never <code>false</code></b> — that is the elisp shape and a reader depends on
+it. A nil field is written as <code>null</code> rather than dropped, because "evaluated, and there
+was no reason" is the answer half these lines carry and a missing key would read as "not evaluated".
+<code>"held_by_guard":true</code> beside <code>"reason":null</code> is the whole point of the file: it
+is the only trace of a decision <b>not</b> to start, which is otherwise indistinguishable from a bug.</p>
+
+<h2>5. How much of it is written: <code>evaluations</code>, compiled in</h2>
+<table>
+<tr><th>verbosity</th><th>lines/day</th><th>bytes/day</th><th>history in 4 files</th><th>a decision not to start</th></tr>
+<tr><td><b>evaluations</b> &mdash; chosen</td><td>~76,000</td><td>~25 MiB</td><td><b>~4 days</b></td><td>every tick, with what it read</td></tr>
+<tr><td>changes &mdash; rejected</td><td>~900</td><td>~0.3 MiB</td><td>~10 months</td><td>only when the answer changes</td></tr>
+<tr><td>decisions &mdash; rejected</td><td>~120</td><td>~0.02 MiB</td><td>years</td><td>not at all</td></tr>
+</table>
+<p class="note">Figures measured from this repository's live <code>decisions.jsonl</code>: 3.6 MB and
+10,910 lines in 3h26m of a partly-idle fleet, with the other two rows re-counted from that same
+corpus. <b>It is a constant in the source, with no way to change it</b> — cb-kcs.4.1, .2 and .3 each
+made every other number a constant for the same reason, and this view has no customisation layer at
+all. <b>An environment variable defaulting to <code>evaluations</code> was drawn and rejected</b>
+along with <code>changes</code>: at <code>changes</code> a view that has silently stopped evaluating
+anything looks exactly like a quiet fleet, where at <code>evaluations</code> the absence of lines is
+itself the alarm.</p>
+
+<h2>6. The error log, and what the screen says about it</h2>
+<h3>The contexts this view writes</h3>
+<div class="screen"><pre>{"event":"error","ts":"2026-09-02T07:15:04Z","context":<span class="y">"work"</span>,"message":"bd: database is locked"}
+{"event":"error","ts":"2026-09-02T07:15:09Z","context":<span class="y">"fleet"</span>,"message":"ps: timed out after 5s"}
+{"event":"error","ts":"2026-09-02T07:15:12Z","context":"roster","message":"roster: line 4: unknown word 'autostartt'"}
+{"event":"error","ts":"2026-09-02T07:20:00Z","context":"supervise Rogue","message":"Permission denied"}
+{"event":"error","ts":"2026-09-02T07:20:41Z","context":"session Storm","message":"exited with code 2: boom"}
+{"event":"error","ts":"2026-09-02T07:21:02Z","context":"start Storm","message":"launch: no such file or directory"}
+{"event":"error","ts":"2026-09-02T07:21:02Z","context":"supervision","message":"lock error: address in use"}</pre></div>
+<p class="note"><b>The two pane contexts are this view's own screen titles, lowercased</b>:
+<code>fleet</code> and <code>work</code>, so an error names the pane that went red. <b>Borrowing
+Emacs's <code>panel</code> and <code>beads</code> was rejected</b> — it would buy one
+<code>jq</code> over the shared file at the price of two words on screen and two different words in
+the file for the same two things. The four per-name contexts are already identical in both views, and
+<code>launch &lt;Name&gt;</code> is written by <code>scripts/launch-refused</code> rather than by
+either view.</p>
+
+<h3>A reader that keeps failing: one line per outage</h3>
+<div class="screen"><pre>{"event":"error","ts":"2026-09-02T07:15:04Z","context":"work","message":"bd: database is locked"}
+<span class="d">... an hour of identical failures, and nothing written for any of them ...</span>
+{"event":"error","ts":"2026-09-02T08:14:36Z","context":"work","message":"bd: no such file or directory"}
+<span class="d">   ^ a DIFFERENT message is a different fault, so it is written</span></pre></div>
+<p class="note">The work pane re-reads <code>bd</code> every 30 seconds and the fleet pane every 5, so
+a database locked for an hour is 120 failed reads and the screen shows one red pane throughout.
+<b>Emacs already does exactly this for a supervision fault</b> — once per distinct message rather
+than once per tick — for the reason that decides it here: the error log's whole purpose is being
+short enough to open, and one bad afternoon would bury every other error in it. <b>A line per failed
+read was rejected</b>, and so was <b>writing nothing at all</b>. The cost, named: the file does not
+say how long an outage lasted.</p>
+
+<h3>The screen is unchanged</h3>
+<div class="screen"><pre><span class="b">┌ Fleet ───────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">  AGENT       STATE       BEAD        </span><span class="b">│</span>
+<span class="b">│</span><span class="g">●</span> Beast       plan        cb-kcs.4.4  <span class="b">│</span>
+<span class="b">│</span><span class="sel"><span class="e">○</span> Storm       <span class="e">dead</span>        nowhere to </span><span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">→ planned</span>   <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>
+<span class="y">Storm could not be started — nowhere to write this.</span></pre></div>
+<p class="note"><b>This bead adds nothing to any screen.</b> Every error it can write is already
+visible where it happened — a refused launch is the row's own <code>dead</code> line, a failed read
+is the pane's failure line, a refused key is its gold notice — and the log is the record that
+outlives them, not a second announcement. <b>A gold line naming the file
+(<code>Storm could not be started — see .cerebro/state/errors.jsonl.</code>), once per session, was
+drawn and rejected</b>: the notice slot is where this view says what it just did, and a filename is
+not that.</p>
+
+<h2>7. While Emacs supervises, this view writes nothing at all</h2>
+<p class="note">Not a decision, not an error, not a byte. A read-only Ratatui view starts nothing,
+ends nothing and evaluates no trigger, so it has no decisions to record; and its own reader failures
+are the same fleet seen through a second window, which would put two accounts of one fleet in one
+file. It draws them on its own panes and keeps no file. <b>Recording its reader errors anyway was
+rejected</b> for that reason, and the reason is stronger given section 1: the file it would be
+writing into is the supervisor's.</p>

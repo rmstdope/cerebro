@@ -1914,7 +1914,9 @@ mod tests {
             },
             Programs {
                 ps: dir.path().join("ps"),
-                bd: "bd".into(), ..Programs::default() },
+                bd: "bd".into(),
+                ..Programs::default()
+            },
             Duration::from_secs(60),
         );
         assert!(worker.poll().is_none(), "nothing was asked for yet");

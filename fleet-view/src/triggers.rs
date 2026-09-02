@@ -908,6 +908,9 @@ mod tests {
         assert_eq!(standby_label("implementer", &facts, agent("implementer"), at(0)).as_deref(), Some("→ planned"));
         assert_eq!(standby_label("verifier", &facts, agent("verifier"), at(0)).as_deref(), Some("→ merged"));
         assert_eq!(standby_label("orchestrator", &facts, agent("orchestrator"), at(0)).as_deref(), Some("→ unranked"));
+        // A role this view has no rule for - a consumer's own word - has no cell at all, and
+        // that arm is now the catch-all every role in existence falls through (review finding 4).
+        assert_eq!(standby_label("stargazer", &facts, agent("stargazer"), at(0)), None);
         // Exactly `BEAD_FLOOR` cells at a four-implementer fleet.
         assert_eq!(
             unicode_width::UnicodeWidthStr::width(
@@ -1126,6 +1129,25 @@ mod tests {
         let mut facts = cadence_facts(gh);
         facts.linked = linked;
         facts
+    }
+
+    #[test]
+    fn the_widest_cadence_cell_is_wider_than_the_bead_floor() {
+        // The plan's one thing to check rather than assume: the widest cadence cell is wider
+        // than a `BEAD_FLOOR` of ten, and it is the COLUMN that grows (review finding 5). The
+        // plan and the review both said thirteen cells; it is twelve - `→`, a space, six, a
+        // space, three - which is why this is a measurement rather than a sentence.
+        let facts = cadence_facts(GhAnswer::Failed);
+        let agent = AgentFacts {
+            role: "user-feedback",
+            ended_at: None,
+            started_at: None,
+            last_fingerprint: None,
+        };
+        let cell = standby_label("user-feedback", &facts, agent, at_iso("2026-09-01T12:00:00Z"))
+            .expect("a cadence role always has a cell");
+        assert_eq!(cell, "→ hourly gh?");
+        assert_eq!(unicode_width::UnicodeWidthStr::width(cell.as_str()), 12);
     }
 
     #[test]

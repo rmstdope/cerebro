@@ -555,9 +555,14 @@ fn lenient_instant<'de, D>(d: D) -> Result<Option<DateTime<Utc>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let raw = Option::<String>::deserialize(d).unwrap_or(None);
-    Ok(raw.and_then(|raw| {
-        DateTime::parse_from_rfc3339(&raw)
+    // Through `Value`, not through `Option<String>`: a failed `deserialize_string` has only
+    // PEEKED the offending token, so swallowing its error leaves the parser sitting on a `{` and
+    // the enclosing array fails - which is the whole-read failure this function exists to
+    // prevent. A `Value` consumes whatever is there, and anything that is not a readable instant
+    // is `None`.
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(value.as_str().and_then(|raw| {
+        DateTime::parse_from_rfc3339(raw)
             .ok()
             .map(|t| t.with_timezone(&Utc))
     }))
@@ -1281,6 +1286,15 @@ mod tests {
         assert!(issues[0].updated_at.is_some());
         assert_eq!(issues[1].updated_at, None);
         assert_eq!(issues[2].updated_at, None);
+
+        // And a non-scalar, which is what a peeked-not-consumed token would have failed on.
+        let issues: Vec<GhIssue> = serde_json::from_str(
+            r#"[{"number":215,"updatedAt":{"at":"2026-09-01T10:00:00Z"}},
+                {"number":216,"updatedAt":"2026-09-01T10:00:00Z"}]"#,
+        )
+        .expect("an updatedAt that is an object leaves the rest of the list usable");
+        assert_eq!(issues[0].updated_at, None);
+        assert!(issues[1].updated_at.is_some());
     }
 
     #[test]

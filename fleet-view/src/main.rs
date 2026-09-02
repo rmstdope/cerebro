@@ -1544,7 +1544,12 @@ mod main_tests {
             },
             Programs {
                 bd: "/nonexistent/bd".into(),
-                ps: "/nonexistent/ps".into(), ..Programs::default() },
+                ps: "/nonexistent/ps".into(),
+                // `gh` too, and not by accident: `dispatch`'s clause fires on the first loop
+                // iteration of every case here, so a default `gh` would keep these tests off the
+                // network only by the accident of an unspawnable cwd (review finding 1).
+                gh: "/nonexistent/gh".into(),
+            },
         )
     }
 

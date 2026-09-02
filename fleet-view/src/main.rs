@@ -481,7 +481,12 @@ fn start_due(
     // No board, no starts. This is `most-positive-fixnum`'s whole job in elisp, said without a
     // sentinel: a `Stale` work pane still carries its last good buckets and is used.
     let Some(buckets) = app.work.content.value() else { return };
-    let facts = TriggerFacts::derive(buckets, roster, |name| lifecycle::stop_flag_set(paths, name));
+    let facts = TriggerFacts::derive(
+        buckets,
+        roster,
+        |name| lifecycle::stop_flag_set(paths, name),
+        app.gh_answer(),
+    );
 
     let standby: Vec<(String, String)> = app
         .fleet_rows()
@@ -489,11 +494,20 @@ fn start_due(
         .filter(|row| row.state == RowState::Standby)
         .map(|row| (row.name.clone(), row.role.clone()))
         .collect();
+    // The cadence roles' cell counts down to a moment, so the label needs the row's own
+    // `ended_at` and the clock as well as the fleet's facts (cb-kcs.4.3).
     app.set_standby_labels(
         standby
             .iter()
             .filter_map(|(name, role)| {
-                triggers::standby_label(role, &facts).map(|label| (name.clone(), label))
+                let agent = triggers::AgentFacts {
+                    role,
+                    ended_at: ledger.ended_at(name),
+                    started_at: ledger.started_at(name),
+                    last_fingerprint: ledger.fingerprint(name),
+                };
+                triggers::standby_label(role, &facts, agent, now)
+                    .map(|label| (name.clone(), label))
             })
             .collect(),
     );
@@ -1501,8 +1515,7 @@ mod main_tests {
             },
             Programs {
                 bd: "/nonexistent/bd".into(),
-                ps: "/nonexistent/ps".into(),
-            },
+                ps: "/nonexistent/ps".into(), ..Programs::default() },
         )
     }
 
@@ -1791,7 +1804,7 @@ mod main_tests {
                 shared_root: dir.path().to_path_buf(),
                 scripts_dir: dir.path().to_path_buf(),
             },
-            Programs { bd: slow_bd, ps: "/nonexistent/ps".into() },
+            Programs { bd: slow_bd, ps: "/nonexistent/ps".into(), ..Programs::default() },
         );
 
         let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();

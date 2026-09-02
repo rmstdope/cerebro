@@ -1,7 +1,7 @@
 //! Filesystem and subprocess I/O, kept apart from `crate::model`'s pure parsing/derivation.
 //!
 //! Read-only by construction: every function here reads a file or runs a read-only external
-//! program (`scripts/roster`, `ps`, `bd --readonly`) and returns data for `crate::model` to
+//! program (`scripts/roster`, `ps`, `bd --readonly`, `gh`) and returns data for `crate::model` to
 //! parse. Nothing here writes a file, launches, stops, triggers, supervises, or cleans up state.
 //!
 //! That sentence is still true of THIS file, and `crate::lifecycle` exists so that it stays so:
@@ -21,8 +21,8 @@ use wait_timeout::ChildExt;
 
 use crate::supervisor::SupervisorKind;
 use crate::model::{
-    self, Bead, FleetRow, ProcessRow, RosterEntry, StateInputs, StateObservation, StateRecord,
-    WorkBuckets,
+    self, Bead, FleetRow, GhIssue, GhPull, GhSnapshot, ProcessRow, RosterEntry, StateInputs,
+    StateObservation, StateRecord, WorkBuckets,
 };
 
 /// How long a reader's child may run before it is killed and reported as a failure.
@@ -60,6 +60,11 @@ pub struct ReaderPaths {
 pub struct Programs {
     pub bd: PathBuf,
     pub ps: PathBuf,
+    /// Injectable like the other two, and that is not decoration: it is the only thing that keeps
+    /// this crate's tests off the network. A test that used the default would assert about the
+    /// developer's own GitHub account, pass on their machine, and fail in CI - where `gh` is
+    /// present and authenticated as somebody else entirely.
+    pub gh: PathBuf,
 }
 
 impl Default for Programs {
@@ -67,6 +72,7 @@ impl Default for Programs {
         Self {
             bd: PathBuf::from("bd"),
             ps: PathBuf::from("ps"),
+            gh: PathBuf::from("gh"),
         }
     }
 }
@@ -479,6 +485,66 @@ fn read_work_with_timeout(
     )?))
 }
 
+/// How long each `gh` child may run. Thirty seconds, not `COMMAND_TIMEOUT`'s five: these are
+/// network calls, and a slow answer read as a failure would put `gh?` on two rows and drop both
+/// roles to their hourly floor for something that was merely slow. Three children at thirty
+/// seconds is ninety in the worst case, comfortably inside the ten-minute cadence, and the pane's
+/// own in-flight slot is what stops a slow read from stacking. `M-x cerebro` allows 120s for the
+/// same calls (`cerebro-subprocess-timeout-seconds`); this is shorter because it runs on a thread
+/// the navigator is not waiting on and the next request is ten minutes away either way.
+const GH_TIMEOUT: Duration = Duration::from_secs(30);
+
+const GH_ISSUES_ARGV: [&str; 8] = [
+    "issue", "list", "--state", "open", "--json", "number,updatedAt", "--limit", "100",
+];
+const GH_PRS_ARGV: [&str; 8] = [
+    "pr", "list", "--state", "open", "--json", "number,author,isDraft,updatedAt", "--limit", "100",
+];
+const GH_ME_ARGV: [&str; 4] = ["api", "user", "-q", ".login"];
+
+/// What is open on GitHub, and who the navigator is - one snapshot from three `gh` calls
+/// (`emacs/cerebro.el:5749-5761`).
+///
+/// ME is the login this reader has already learnt, and it is an in/out parameter for one reason:
+/// `gh api user` answers the same thing for the life of the process, so it is asked for until it
+/// answers and then never again (`emacs/cerebro.el:5825-5834`). A failure of THAT call is not a
+/// failure of the read - the two lists are what the triggers are made of - so it leaves ME where
+/// it was and the snapshot carries whatever is known. Folding it in would turn "we do not know who
+/// you are" into `gh?` on both rows when the issue half of Moira's trigger is perfectly
+/// answerable without it. A failure of either LIST is returned as itself:
+/// `Ok(GhSnapshot::default())` would say every issue is closed and nothing has moved, which is a
+/// lie a trigger would act on.
+///
+/// `cwd` is `paths.consumer_root`, matching `cerebro--refresh-gh-when-due`'s `(cerebro--repo-root)`:
+/// `gh` answers about the repository it is run in, and a worktree has the same remote as its main
+/// checkout.
+pub fn read_gh(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    me: &mut Option<String>,
+) -> Result<GhSnapshot, ReadError> {
+    let cwd = Some(paths.consumer_root.as_path());
+    let invalid = |e: serde_json::Error| ReadError::Invalid {
+        source: programs.gh.display().to_string(),
+        message: e.to_string(),
+    };
+    let issues: Vec<GhIssue> =
+        serde_json::from_slice(&run_with_timeout(&programs.gh, &GH_ISSUES_ARGV, cwd, GH_TIMEOUT)?)
+            .map_err(invalid)?;
+    let prs: Vec<GhPull> =
+        serde_json::from_slice(&run_with_timeout(&programs.gh, &GH_PRS_ARGV, cwd, GH_TIMEOUT)?)
+            .map_err(invalid)?;
+    if me.is_none() {
+        if let Ok(stdout) = run_with_timeout(&programs.gh, &GH_ME_ARGV, cwd, GH_TIMEOUT) {
+            let login = String::from_utf8_lossy(&stdout).trim().to_string();
+            if !login.is_empty() {
+                *me = Some(login);
+            }
+        }
+    }
+    Ok(GhSnapshot { issues, prs, me: me.clone() })
+}
+
 /// The whole fleet in one read: roster, every state file, the process table - fed to
 /// `model::derive_fleet` against the SHARED root, which is both where the state files live and
 /// what `scripts/launch` roots every session's marker sentence at (`scripts/agent-alive:61-107`).
@@ -659,7 +725,7 @@ mod tests {
             "ps",
             "#!/usr/bin/env bash\nprintf '%s\\n' '    1     0 /sbin/launchd' '  123     1 some prog --flag a  b'\n",
         );
-        let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd") };
+        let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd"), ..Programs::default() };
         let rows = retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)).unwrap();
         assert_eq!(
             rows,
@@ -678,7 +744,7 @@ mod tests {
             "ps",
             "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
         );
-        let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd") };
+        let programs = Programs { ps: fake_ps, bd: PathBuf::from("bd"), ..Programs::default() };
         let err = retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
@@ -691,11 +757,11 @@ mod tests {
 
     #[test]
     fn readers_report_spawn_and_decode_failures() {
-        let programs = Programs { ps: PathBuf::from("/does/not/exist/ps"), bd: PathBuf::from("bd") };
+        let programs = Programs { ps: PathBuf::from("/does/not/exist/ps"), bd: PathBuf::from("bd"), ..Programs::default() };
         assert!(matches!(retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)), Err(ReadError::Spawn { .. })));
         let dir = tempfile::tempdir().unwrap();
         let bad_ps = write_executable(dir.path(), "ps", "#!/usr/bin/env bash\nprintf '\\377'\n");
-        let programs = Programs { ps: bad_ps, bd: PathBuf::from("bd") };
+        let programs = Programs { ps: bad_ps, bd: PathBuf::from("bd"), ..Programs::default() };
         assert!(matches!(retry_if_text_busy(|| read_processes_with_timeout(&programs, TEST_TIMEOUT)), Err(ReadError::Invalid { .. })));
     }
 
@@ -792,7 +858,7 @@ mod tests {
             shared_root: dir.path().join("shared"),
             scripts_dir: dir.path().to_path_buf(),
         };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
         let beads = retry_if_text_busy(|| read_beads_with_timeout(&paths, &programs, TEST_TIMEOUT)).unwrap();
         assert_eq!(beads.len(), 1);
         assert_eq!(beads[0].id, "cb-1");
@@ -813,7 +879,7 @@ mod tests {
             shared_root: dir.path().join("shared"),
             scripts_dir: dir.path().to_path_buf(),
         };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
         assert!(matches!(retry_if_text_busy(|| read_beads_with_timeout(&paths, &programs, TEST_TIMEOUT)), Err(ReadError::Invalid { .. })));
     }
 
@@ -829,7 +895,7 @@ mod tests {
             shared_root: dir.path().join("shared"),
             scripts_dir: dir.path().to_path_buf(),
         };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
         let err = retry_if_text_busy(|| read_beads_with_timeout(&paths, &programs, TEST_TIMEOUT)).unwrap_err();
         match err {
             ReadError::Exit { status, stderr, .. } => {
@@ -879,7 +945,7 @@ mod tests {
             shared_root: shared.clone(),
             scripts_dir: scripts,
         };
-        let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
+        let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd"), ..Programs::default() };
         let rows = retry_if_text_busy(|| read_fleet_with_timeout(&paths, &programs, TEST_TIMEOUT)).unwrap();
 
         assert_eq!(rows.len(), 2);
@@ -1006,7 +1072,7 @@ mod tests {
             "ps",
             "#!/usr/bin/env bash\necho 'ps: boom' >&2\nexit 3\n",
         );
-        let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd") };
+        let programs = Programs { ps: dir.path().join("ps"), bd: PathBuf::from("bd"), ..Programs::default() };
         match retry_if_text_busy(|| read_fleet_with_timeout(&paths, &programs, TEST_TIMEOUT)) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(3));
@@ -1071,7 +1137,7 @@ mod tests {
             shared_root: shared,
             scripts_dir: dir.path().to_path_buf(),
         };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
 
         let work = retry_if_text_busy(|| read_work_with_timeout(&paths, &programs, TEST_TIMEOUT)).expect("the fixture bd answers the panel's argv");
         assert_eq!(ids(&work.claimed), ["cb-claimed"]);
@@ -1119,7 +1185,7 @@ mod tests {
             shared_root: dir.path().join("shared"),
             scripts_dir: dir.path().to_path_buf(),
         };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
         match retry_if_text_busy(|| read_work_with_timeout(&paths, &programs, TEST_TIMEOUT)) {
             Err(ReadError::Exit { status, stderr, .. }) => {
                 assert_eq!(status, Some(1));
@@ -1142,7 +1208,7 @@ mod tests {
             shared_root: dir.path().join("shared"),
             scripts_dir: dir.path().to_path_buf(),
         };
-        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps") };
+        let programs = Programs { bd: fake_bd, ps: PathBuf::from("ps"), ..Programs::default() };
         assert!(matches!(retry_if_text_busy(|| read_work_with_timeout(&paths, &programs, TEST_TIMEOUT)), Err(ReadError::Invalid { .. })));
     }
 
@@ -1161,7 +1227,7 @@ mod tests {
             shared_root: dir.path().join("shared"),
             scripts_dir: dir.path().to_path_buf(),
         };
-        let programs = Programs { bd: slow_bd, ps: PathBuf::from("ps") };
+        let programs = Programs { bd: slow_bd, ps: PathBuf::from("ps"), ..Programs::default() };
 
         let started = std::time::Instant::now();
         let err = read_work_with_timeout(&paths, &programs, Duration::from_secs(1)).unwrap_err();

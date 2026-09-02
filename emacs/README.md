@@ -5,11 +5,15 @@ buffer showing every agent on `scripts/roster` — with its
 state, and for one working a bead (an implementer, or one of the interactive agents
 mid-verification or mid-triage) the bead it is on and for how long.
 
-**This is the supervising view**, and the only one: it starts sessions, ends them, hosts them in
-`vterm`, writes stop flags and deletes state files. If all you want is to *watch* — the same rows
-and the same six work queues, with no Emacs and nothing written — there is a standalone read-only
-terminal program beside it, `.claude/cerebro/scripts/cerebro-tui` (see the repository README). The
-two may run at once against one repository; only this one supervises.
+**Whether this view operates the fleet is your project's declaration.** With
+`fleet_supervisor emacs`, or with no declaration at all — which is every project that has not
+moved — it starts sessions, ends them, hosts them in `vterm`, writes stop flags and deletes state
+files. With `fleet_supervisor tui` it draws all of the same rows and acts on none of them, and its
+mode line says `Cerebro[read-only: Ratatui supervises]`. The two may run at once against one
+repository; only one of them ever acts. The standalone terminal program beside it is
+`.claude/cerebro/scripts/cerebro-tui` (see the repository README), which draws the same rows and
+the same six work queues with no Emacs at all; `docs/cerebro-supervision.md` is how supervision
+moves either way.
 
 ## Getting the fleet view
 

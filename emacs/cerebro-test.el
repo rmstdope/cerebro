@@ -8743,6 +8743,43 @@ read-only until the bind succeeds and never asks for an autostart."
   (should (equal (cerebro--supervision-decision 'emacs 'emacs nil 0)
                  '((read-only not-owned) . acquire))))
 
+(ert-deftest cerebro-test/the-declaration-moves-the-lease-and-brings-it-back ()
+  "The cutover and the rollback, driven by the declaration file alone (cb-kcs.5.3).
+
+The pure decision is table-covered (`tests/lib/supervisor.cases\'), and the
+lease is covered against a hand-bound listener.  Neither proves the thing the
+cutover rests on: that rewriting `.cerebro/project.conf\' takes a real listener
+away from this Emacs and gives it back again, with no restart in between --
+which is what `docs/cerebro-supervision.md\' promises about rolling back."
+  (let ((tmp (cerebro-test--supervisor-consumer "emacs")))
+    (unwind-protect
+        (with-temp-buffer
+          (setq-local cerebro--supervision-process nil)
+          ;; Declared for this view: it acquires a real listener.
+          (should (equal (cerebro--reconcile-supervision tmp) '(supervising)))
+          (should (process-live-p cerebro--supervision-process))
+          ;; The declaration moves. The mtime must move with it, or the answer
+          ;; comes from `cerebro--configured-supervisor''s mtime-keyed cache
+          ;; and this test passes for the wrong reason.
+          (sleep-for 0.01)
+          (with-temp-file (expand-file-name ".cerebro/project.conf" tmp)
+            (insert "fleet_supervisor tui\n"))
+          (let ((mode (cerebro--reconcile-supervision tmp)))
+            (should (equal mode '(read-only configured-for tui)))
+            ;; The wording the navigator approved in cb-kcs.1, from the mode this
+            ;; reconciliation actually returned rather than from a literal.
+            (should (equal (cerebro--supervision-mode-line mode)
+                           "read-only: Ratatui supervises")))
+          (should-not (process-live-p cerebro--supervision-process))
+          ;; Rolling back: one line, and the lease comes back with no restart.
+          (sleep-for 0.01)
+          (with-temp-file (expand-file-name ".cerebro/project.conf" tmp)
+            (insert "fleet_supervisor emacs\n"))
+          (should (equal (cerebro--reconcile-supervision tmp) '(supervising)))
+          (should (process-live-p cerebro--supervision-process))
+          (cerebro--release-supervision tmp))
+      (delete-directory tmp t))))
+
 (ert-deftest cerebro-test/a-deleted-lease-process-is-not-a-held-lease ()
   "Holding a lease means holding a LIVE one.
 

@@ -1341,6 +1341,7 @@ fn write_priority(
     logger: &mut Logger,
     paths: &ReaderPaths,
     programs: &Programs,
+    commands: &dyn CommandRunner,
     now: DateTime<Utc>,
     id: &str,
     from: Option<u8>,
@@ -1356,7 +1357,7 @@ fn write_priority(
             ("to", serde_json::Value::from(to)),
         ],
     );
-    let outcome = lifecycle::set_priority(paths, programs, id, from, to, undo);
+    let outcome = lifecycle::set_priority(paths, programs, commands, id, from, to, undo);
     let wrote = !matches!(outcome, lifecycle::PriorityOutcome::Failed { .. });
     app.set_notice(match &outcome {
         lifecycle::PriorityOutcome::Ran { text }
@@ -1510,7 +1511,7 @@ fn route_key(
                     AppAction::None
                 }
                 lifecycle::PriorityAction::Write { to } => {
-                    write_priority(app, logger, paths, programs, now, &id, from, to, false)
+                    write_priority(app, logger, paths, programs, commands, now, &id, from, to, false)
                 }
             };
         }
@@ -1534,7 +1535,7 @@ fn route_key(
                 return AppAction::None;
             };
             let action =
-                write_priority(app, logger, paths, programs, now, &id, None, previous, true);
+                write_priority(app, logger, paths, programs, commands, now, &id, None, previous, true);
             // An undo that wrote leaves no entry of its own: `u` is one step back, not a toggle.
             if action == AppAction::RefreshWork {
                 app.last_priority_change = None;
@@ -5095,14 +5096,15 @@ mod main_tests {
     fn a_digit_writes_the_priority_and_pushes() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        let action = drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
+        let action = drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         // No confirmation: the write and the push ride the one keystroke.
         assert_eq!(
-            stub_calls(&paths),
+            argv(&fake),
             vec!["update cb-x --priority 0", "dolt push"],
             "the two argvs, in order"
         );
@@ -5121,11 +5123,12 @@ mod main_tests {
         ] {
             let dir = tempfile::tempdir().unwrap();
             let paths = scratch(dir.path(), "sleep 5");
-            let programs = stub_programs();
+            let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
             let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
             let mut host = SessionHost::default();
-            drive_with(&mut app, &mut host, &paths, &programs, vec![ch(key)]);
-            assert_eq!(stub_calls(&paths), vec![want.to_string(), "dolt push".to_string()]);
+            drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch(key)]);
+            assert_eq!(argv(&fake), vec![want.to_string(), "dolt push".to_string()]);
             assert_eq!(app.notice.as_deref(), Some(sentence));
         }
     }
@@ -5135,12 +5138,13 @@ mod main_tests {
     fn a_digit_on_a_bead_already_there_writes_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(0));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
-        assert!(stub_calls(&paths).is_empty(), "nothing ran");
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        assert!(fake.calls().is_empty(), "nothing ran");
         assert_eq!(app.notice.as_deref(), Some("cb-x is already P0"));
         assert_eq!(app.last_priority_change, None);
     }
@@ -5149,12 +5153,24 @@ mod main_tests {
     fn a_failed_push_says_the_other_machines_cannot_see_it() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        std::fs::write(paths.shared_root.join("push-exit"), "1").unwrap();
-        let programs = stub_programs();
+        let programs = Programs::default();
+        // A `bd` whose write succeeds and whose push does not.
+        let fake = cerebro_tui::readers::testing::FakeCommands::new(|call| {
+            if call.args.first().map(String::as_str) == Some("dolt") {
+                Err(cerebro_tui::readers::ReadError::Exit {
+                    source: "bd".into(),
+                    status: Some(1),
+                    stderr: "no remote".into(),
+                    stdout: String::new(),
+                })
+            } else {
+                Ok(Vec::new())
+            }
+        });
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         assert_eq!(
             app.notice.as_deref(),
             Some("cb-x: P1 → P0, but bd dolt push failed — other machines will not see this yet")
@@ -5167,13 +5183,21 @@ mod main_tests {
     fn a_refused_bd_says_so_and_leaves_nothing_to_undo() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        std::fs::write(paths.shared_root.join("exit-code"), "1").unwrap();
-        let programs = stub_programs();
+        let programs = Programs::default();
+        // A `bd` that refuses everything.
+        let fake = cerebro_tui::readers::testing::FakeCommands::failing(|| {
+            cerebro_tui::readers::ReadError::Exit {
+                source: "bd".into(),
+                status: Some(1),
+                stderr: "refused".into(),
+                stdout: String::new(),
+            }
+        });
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        let action = drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
-        assert_eq!(stub_calls(&paths), vec!["update cb-x --priority 0"], "and no push");
+        let action = drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        assert_eq!(argv(&fake), vec!["update cb-x --priority 0"], "and no push");
         assert_eq!(app.notice.as_deref(), Some("bd would not set cb-x to P0"));
         assert!(app.notice_urgent, "a refusal is red");
         assert_eq!(app.last_priority_change, None);
@@ -5185,13 +5209,14 @@ mod main_tests {
     fn a_digit_outside_work_focus_does_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         app.focus = cerebro_tui::app::PaneFocus::Fleet;
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
-        assert!(stub_calls(&paths).is_empty(), "nothing ran");
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        assert!(fake.calls().is_empty(), "nothing ran");
         assert_eq!(app.notice, None);
     }
 
@@ -5200,7 +5225,8 @@ mod main_tests {
     fn a_read_only_view_still_ranks_a_bead() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_bead(
             SupervisionMode::ReadOnly(cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
                 cerebro_tui::supervisor::SupervisorKind::Emacs,
@@ -5208,19 +5234,20 @@ mod main_tests {
             Some(1),
         );
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
-        assert_eq!(stub_calls(&paths), vec!["update cb-x --priority 0", "dolt push"]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        assert_eq!(argv(&fake), vec!["update cb-x --priority 0", "dolt push"]);
     }
 
     #[test]
     fn u_puts_the_last_priority_back_once() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         // A work refresh between the two does not spend the entry.
         app.finish_work_refresh(
             Ok(cerebro_tui::model::WorkBuckets {
@@ -5229,9 +5256,9 @@ mod main_tests {
             }),
             Utc::now(),
         );
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('u')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
         assert_eq!(
-            stub_calls(&paths),
+            argv(&fake),
             vec![
                 "update cb-x --priority 0",
                 "dolt push",
@@ -5242,8 +5269,8 @@ mod main_tests {
         assert_eq!(app.notice.as_deref(), Some("cb-x: back to P1"));
 
         // Spent: a second `u` has nothing to do rather than quietly redoing the change.
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('u')]);
-        assert_eq!(stub_calls(&paths).len(), 4, "no fifth call");
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        assert_eq!(fake.calls().len(), 4, "no fifth call");
         assert_eq!(app.notice.as_deref(), Some("nothing to undo"));
     }
 
@@ -5252,11 +5279,12 @@ mod main_tests {
     fn a_second_change_overwrites_the_undo_entry() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         app.finish_work_refresh(
             Ok(cerebro_tui::model::WorkBuckets {
                 claimed: vec![priority_bead("cb-x", Some(0))],
@@ -5264,9 +5292,9 @@ mod main_tests {
             }),
             Utc::now(),
         );
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('3')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('3')]);
         assert_eq!(app.last_priority_change, Some(("cb-x".to_string(), Some(0))));
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('u')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
         assert_eq!(app.notice.as_deref(), Some("cb-x: back to P0"));
     }
 
@@ -5276,8 +5304,16 @@ mod main_tests {
     fn a_priority_change_is_written_to_the_decisions_log() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        std::fs::write(paths.shared_root.join("exit-code"), "1").unwrap();
-        let programs = stub_programs();
+        let programs = Programs::default();
+        // A `bd` that refuses everything.
+        let fake = cerebro_tui::readers::testing::FakeCommands::failing(|| {
+            cerebro_tui::readers::ReadError::Exit {
+                source: "bd".into(),
+                status: Some(1),
+                stderr: "refused".into(),
+                stdout: String::new(),
+            }
+        });
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
@@ -5291,6 +5327,7 @@ mod main_tests {
             &mut logger,
             &paths,
             &programs,
+            &fake,
             10,
             Utc::now(),
         );
@@ -5315,7 +5352,8 @@ mod main_tests {
     fn a_shifted_plus_still_raises_the_priority() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
         let mut host = SessionHost::default();
 
@@ -5323,8 +5361,8 @@ mod main_tests {
             crossterm::event::KeyCode::Char('+'),
             crossterm::event::KeyModifiers::SHIFT,
         );
-        drive_with(&mut app, &mut host, &paths, &programs, vec![shifted]);
-        assert_eq!(stub_calls(&paths), vec!["update cb-x --priority 1", "dolt push"]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![shifted]);
+        assert_eq!(argv(&fake), vec!["update cb-x --priority 1", "dolt push"]);
     }
 
     /// An entry is spent by an undo that WROTE, not by one `bd` refused: a rescue a failed write
@@ -5333,14 +5371,31 @@ mod main_tests {
     fn a_refused_undo_can_be_tried_again() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        // A `bd` that refuses the first undo and takes the second: the flag is flipped by the
+        // test between the two keystrokes, which is what a navigator's transient failure looks
+        // like from here.
+        let refusing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = refusing.clone();
+        let fake = cerebro_tui::readers::testing::FakeCommands::new(move |_| {
+            if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                Err(cerebro_tui::readers::ReadError::Exit {
+                    source: "bd".into(),
+                    status: Some(1),
+                    stderr: "refused".into(),
+                    stdout: String::new(),
+                })
+            } else {
+                Ok(Vec::new())
+            }
+        });
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         // Now `bd` refuses everything.
-        std::fs::write(paths.shared_root.join("exit-code"), "1").unwrap();
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('u')]);
+        refusing.store(true, std::sync::atomic::Ordering::SeqCst);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
         assert_eq!(app.notice.as_deref(), Some("bd would not set cb-x to P1"));
         assert_eq!(
             app.last_priority_change,
@@ -5349,8 +5404,8 @@ mod main_tests {
         );
 
         // And it works once `bd` does.
-        std::fs::remove_file(paths.shared_root.join("exit-code")).unwrap();
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('u')]);
+        refusing.store(false, std::sync::atomic::Ordering::SeqCst);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
         assert_eq!(app.notice.as_deref(), Some("cb-x: back to P1"));
         assert_eq!(app.last_priority_change, None, "and is spent by the one that wrote");
     }

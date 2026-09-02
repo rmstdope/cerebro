@@ -683,11 +683,12 @@ pub enum PriorityOutcome {
     Failed { text: String },
 }
 
-/// Run `bd -C <shared root> update <id> --priority <to>`, then `bd dolt push` on the same
+/// Run `bd update <id> --priority <to>` in the shared root, then `bd dolt push` on the same
 /// keystroke - no confirmation, because reranking twenty beads would otherwise be forty
 /// keystrokes and `u` already covers the mis-key.
 ///
-/// **The second `bd` in this crate that does not pass `--readonly`**, and it lives here beside
+/// **One of the two `bd` calls in this crate that do not pass `--readonly`** - `run_finding`
+/// below is the other - and it lives here beside
 /// `run_finding` for that reason. Deliberately OUTSIDE the supervision lease, exactly as
 /// `run_finding` is: the board is shared, so a view that may start nothing may still rank a bead.
 ///
@@ -697,13 +698,23 @@ pub enum PriorityOutcome {
 pub fn set_priority(
     paths: &ReaderPaths,
     programs: &Programs,
+    commands: &dyn CommandRunner,
     id: &str,
     from: Option<u8>,
     to: u8,
     undo: bool,
 ) -> PriorityOutcome {
     let argv = priority_command(id, to, &programs.bd);
-    if !run_to_completion(&argv[0], &argv[1..], &paths.shared_root) {
+    // Through `readers::CommandRunner` like every other command this crate runs (cb-i1w): the
+    // draining, the bound and the kill-and-reap live there, and `run_finding` beside this is the
+    // only other board write.
+    let run = |args: &[String]| {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        commands
+            .run(&programs.bd, &args, Some(&paths.shared_root), WRITE_TIMEOUT)
+            .is_ok()
+    };
+    if !run(&argv[1..]) {
         return PriorityOutcome::Failed { text: format!("bd would not set {id} to P{to}") };
     }
     // `?` for a bead that carried no priority - `cerebro--set-priority`'s own spelling.
@@ -713,8 +724,7 @@ pub fn set_priority(
         let from = from.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string());
         format!("{id}: P{from} → P{to}")
     };
-    let push = [programs.bd.display().to_string(), "dolt".into(), "push".into()];
-    if run_to_completion(&push[0], &push[1..], &paths.shared_root) {
+    if run(&["dolt".to_string(), "push".to_string()]) {
         PriorityOutcome::Ran { text }
     } else {
         PriorityOutcome::Pushed {
@@ -754,8 +764,8 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// other machines cannot see is half done, and asking twice for one keystroke's worth of intent
 /// is its own kind of noise (`emacs/cerebro.el:1473-1479`).
 ///
-/// **This is the one `bd` in this crate that does not pass `--readonly`**, and the only place a
-/// board write may live. `readers::read_beads` passes it deliberately; copying that neighbouring
+/// **One of the two `bd` calls in this crate that do not pass `--readonly`** - `set_priority`
+/// above is the other - and this module is the only place a board write may live. `readers::read_beads` passes it deliberately; copying that neighbouring
 /// call here would produce a command that appears to succeed and changes nothing.
 ///
 /// Both commands go through `readers::CommandRunner`, like every other command this crate runs

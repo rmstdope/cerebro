@@ -573,9 +573,10 @@ header in red when one did not answer (`sweep-claims failed`), because three of 
 and a stale section that reads like a current one is what Emacs's own silence costs. The chain
 stops at the first script that did not answer, which is what lets the header name exactly one. Under
 Work the arrow and page keys move a **cursor over the findings** while there are any and scroll the
-pane when there are none — the ordinary day — and `x`, from any focus, shows the exact `bd` and runs
-it only on `y`, followed by `bd dolt push` on the same keystroke. That is **the one write in this
-crate that does not pass `--readonly`**, it lives in `lifecycle::run_finding` beside every other
+pane when there are none (widened to bead rows by cb-kcs.5.4, below) — and `x`, from any focus, shows the exact `bd` and runs
+it only on `y`, followed by `bd dolt push` on the same keystroke. That was **the one write in this
+crate that does not pass `--readonly`** until cb-kcs.5.4 added the priority keys beside it; it lives
+in `lifecycle::run_finding` beside every other
 write and spawns through `readers::CommandRunner` like every other command
 (cb-i1w), and it is deliberately **outside the lease**: the board is shared, so a view that may start
 nothing may still close a delivered bead. `tests/lib/sweep-findings.json` is the table both
@@ -610,7 +611,8 @@ are the navigator's own hands rather than the supervisor's. **The priority keys*
 with no confirmation and `bd dolt push` on the same keystroke, saying what they did in the header
 (`cb-x: P1 → P0`, `cb-x is already P0`, `cb-x: back to P1`, and the push failure in the same line);
 `u` is one step, spent only by using it, surviving a refresh and overwritten by the next change.
-They are the one key set in this view that is **not** "from any focus": Work focus only, because a
+They are the second write in this crate that does not pass `--readonly`, beside `x`, and the one key
+set in this view that is **not** "from any focus": Work focus only, because a
 digit is far more ordinary than `x` and from Fleet focus `3` would silently rerank a bead in a pane
 nobody was looking at. And **the History section**, last in the Work pane — the `M-x cerebro`
 order — one line per agent running something right now, gold when it has run past twice its own

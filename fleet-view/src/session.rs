@@ -733,6 +733,14 @@ impl SessionHost {
         self.exits.insert(name.to_string(), crate::lifecycle::LastExit::Refused);
     }
 
+    /// Record that the view has stopped retrying NAME. Overwrites whatever exit record it had -
+    /// the give-up is the more useful of the two, and the code it replaces is already on the
+    /// retained screen. `insert` removing NAME's entry is what makes `s` the way back.
+    pub fn note_gave_up(&mut self, name: &str, failures: u32) {
+        self.exits
+            .insert(name.to_string(), crate::lifecycle::LastExit::GaveUp { failures });
+    }
+
     /// How many children are alive. This is what `SupervisorController::hosted_sessions` reads.
     pub fn live_count(&self) -> usize {
         self.live.len()
@@ -1418,5 +1426,20 @@ mod tests {
             paste_bytes("a\x1b[201~rm -rf /"),
             b"\x1b[200~arm -rf /\x1b[201~".to_vec()
         );
+    }
+
+    #[test]
+    fn a_name_the_view_gave_up_on_carries_its_count() {
+        let mut host = SessionHost::default();
+        host.note_refusal("Xavier", "cerebro: nope", at("2026-01-01T00:00:00Z"));
+        host.note_gave_up("Xavier", 5);
+        assert_eq!(
+            host.last_exit("Xavier"),
+            Some(crate::lifecycle::LastExit::GaveUp { failures: 5 }),
+            "the give-up replaces whatever record the name had"
+        );
+        // `s` is the way back: a start clears it, as it clears every other kind.
+        host.insert("Xavier", shell("exit 0", 24, 80));
+        assert_eq!(host.last_exit("Xavier"), None);
     }
 }

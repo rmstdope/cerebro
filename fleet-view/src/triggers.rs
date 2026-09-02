@@ -166,6 +166,17 @@ pub fn linked_moved<'a>(
     let Some(ended) = ended_at else { return Vec::new() };
     linked.iter().filter(|entry| entry.updated_at > ended).collect()
 }
+/// `cerebro-retry-backoff` (`emacs/cerebro.el`): seconds to wait before starting a role again, by
+/// consecutive failed starts.
+///
+/// **The first entry is 0 on purpose.** A session that died once should come back immediately, and
+/// a clock there would cost the fleet a pass every time anything went wrong once. What escalates
+/// is the second failure and every one after it.
+pub const RETRY_BACKOFF: [i64; 4] = [0, 30, 120, 600];
+
+/// `cerebro-give-up-after`: consecutive starts that produced no pass before the view stops
+/// retrying a name.
+pub const GIVE_UP_AFTER: u32 = 5;
 
 /// `cerebro-wake-intervals`, keyed by ROLE.
 ///
@@ -486,6 +497,114 @@ pub fn start_notice(name: &str, reason: &str) -> String {
     format!("Started {name} — {reason}.")
 }
 
+/// Did the start at STARTED produce no pass by ENDED? The port of `cerebro--start-failed-p`.
+///
+/// A pass that ran leaves an end LATER than its start; a launch that never became a session leaves
+/// the previous pass's end, or nothing. `None` for STARTED is `false`: a name this view has never
+/// started has not failed to start it.
+pub fn start_failed(started: Option<DateTime<Utc>>, ended: Option<DateTime<Utc>>) -> bool {
+    let Some(started) = started else { return false };
+    !matches!(ended, Some(ended) if ended > started)
+}
+
+/// Seconds to wait after FAILURES consecutive failed starts (`cerebro--retry-delay`). The indexing
+/// is exact and easy to get wrong:
+///
+///     failures 0 or 1  -> RETRY_BACKOFF[0]     = 0    (comes straight back)
+///     failures 2       -> RETRY_BACKOFF[1]     = 30
+///     failures 3       -> RETRY_BACKOFF[2]     = 120
+///     failures >= 4    -> RETRY_BACKOFF[last]  = 600
+///
+/// i.e. `RETRY_BACKOFF[failures - 1]`, the first entry at or below 1 and the last at or above its
+/// length - a ceiling, so a launch refused all morning is retried at a steady interval rather than
+/// at an ever-growing one nobody would see end. **`failures` is the count BEFORE the start being
+/// decided**, everywhere in this module.
+pub fn retry_delay(failures: u32) -> i64 {
+    let index = (failures.max(1) as usize - 1).min(RETRY_BACKOFF.len() - 1);
+    RETRY_BACKOFF[index]
+}
+
+/// Seconds until a start after FAILURES failed starts is due at NOW, measured from STARTED - the
+/// failed start itself, so the wait a row counts down and the wait `start_due` enforces are one
+/// calculation (`cerebro--retry-wait`). Never negative; 0 for a `None` STARTED, which is a name
+/// this view has never started and so has nothing to wait out.
+pub fn retry_wait(failures: u32, started: Option<DateTime<Utc>>, now: DateTime<Utc>) -> i64 {
+    let Some(started) = started else { return 0 };
+    (retry_delay(failures) - (now - started).num_seconds()).max(0)
+}
+
+/// SECONDS as the figure a retry row names: `45s`, `2m` (`cerebro--retry-figure`). Below a minute,
+/// whole seconds rounded up; at a minute and above, whole minutes rounded up - so a row never
+/// names a smaller figure than the wait actually left. `1m` shown with 61 seconds to go would come
+/// due a minute after it said it would.
+pub fn retry_figure(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m", (seconds + 59) / 60)
+    }
+}
+
+/// Would the start being decided be one failed start too many (`cerebro--give-up-p`)? FAILED is
+/// whether the LAST start produced no pass, FAILURES the count behind it - so the start under
+/// consideration would be number `failures + 1`.
+pub fn give_up(failed: bool, failures: u32) -> bool {
+    failed && failures + 1 >= GIVE_UP_AFTER
+}
+
+/// The BEAD cell of a row that is backing off:
+///
+///     ↻ retry in 30s, 2 failed
+///
+/// U+21BB, a space, `retry in `, `retry_figure(left)`, then `, {failures} failed`. The count clause
+/// is dropped when FAILURES is 0, which cannot happen while `left > 0` under `retry_delay` but is
+/// the shape `cerebro--for-column` has and costs one branch. No plural: the noun is not there to
+/// need one.
+pub fn retry_label(failures: u32, left: i64) -> String {
+    let figure = retry_figure(left);
+    match failures {
+        0 => format!("\u{21bb} retry in {figure}"),
+        n => format!("\u{21bb} retry in {figure}, {n} failed"),
+    }
+}
+
+/// The BEAD cell of any standby row: the countdown if one is running, else the role's own
+/// condition.
+///
+/// **The countdown comes first for every kind, whether or not the role's trigger is currently
+/// true** (the navigator's choice, round 2): a planner backing off in front of a full buffer reads
+/// `↻ retry in 2m, 3 failed` and not `→ buffer<4`. While a backoff is running the row says so, and
+/// a failure is never invisible. The accepted cost is a countdown that reaches zero and visibly
+/// does nothing, because nothing was due anyway.
+///
+/// LEFT is `retry_wait(...)`. At `left <= 0` this is exactly `standby_label`.
+pub fn standby_cell(
+    role: &str,
+    facts: &TriggerFacts,
+    agent: AgentFacts<'_>,
+    now: DateTime<Utc>,
+    failures: u32,
+    left: i64,
+) -> Option<String> {
+    // A role with no cell of its own gets no countdown either: it is not armed at all, and a cell
+    // in a vocabulary its row never speaks would be this view inventing one. Since cb-kcs.4.3
+    // that is no role the roster can arm - every one of them has a cell - but the `None` is what
+    // says so rather than a comment claiming it.
+    let label = standby_label(role, facts, agent, now)?;
+    Some(if left > 0 { retry_label(failures, left) } else { label })
+}
+
+/// The gold header notice when the view stops retrying a name:
+///
+///     Xavier: 5 starts produced no pass; the view has stopped trying.
+///
+/// TOTAL is `failures + 1`, the start that was not made. Beside `start_notice` so the loop cannot
+/// spell either sentence twice.
+pub fn give_up_notice(name: &str, total: u32) -> String {
+    format!("{name}: {total} starts produced no pass; the view has stopped trying.")
+}
+
 /// The BEAD column of a standby row: what the agent is waiting for. The vocabulary is closed.
 ///
 /// The arrow is U+2192, and there is no space around the `<` - that is what makes `→ buffer<4`
@@ -594,6 +713,7 @@ pub struct StartLedger {
     parked_at: BTreeMap<String, DateTime<Utc>>,
     seen_up_at: BTreeMap<String, DateTime<Utc>>,
     fingerprints: BTreeMap<String, Fingerprint>,
+    failures: BTreeMap<String, u32>,
 }
 
 impl StartLedger {
@@ -649,6 +769,25 @@ impl StartLedger {
     /// park. No `started_at`: it has never started.
     pub fn note_armed(&mut self, name: &str, at: DateTime<Utc>) {
         self.parked_at.entry(name.to_string()).or_insert(at);
+    }
+
+    /// Consecutive starts of NAME that produced no pass, as counted BEFORE the start being
+    /// decided. 0 for a name with no entry (`cerebro--failed-starts`).
+    pub fn failures(&self, name: &str) -> u32 {
+        self.failures.get(name).copied().unwrap_or(0)
+    }
+
+    /// Write the count as `start_due` decided it: `failures + 1` when the last start failed, 0
+    /// when a pass has run since. Called immediately before the launch, from what the LAST start
+    /// did - not after, and not from this start's outcome, which is not known for five seconds.
+    pub fn set_failures(&mut self, name: &str, n: u32) {
+        self.failures.insert(name.to_string(), n);
+    }
+
+    /// A start with no trigger behind it - `s`, or the roster's `autostart` - clears the backoff.
+    /// The navigator asking for a session is what says the last five do not count.
+    pub fn clear_failures(&mut self, name: &str) {
+        self.failures.remove(name);
     }
 }
 
@@ -1035,6 +1174,16 @@ mod tests {
         }
     }
 
+    fn planner_facts(planned: usize, implementers: usize) -> TriggerFacts {
+        TriggerFacts {
+            planned,
+            actionable_ids: vec!["cb-1".to_string()],
+            planned_ids: vec!["cb-2".to_string()],
+            implementers,
+            ..empty_facts()
+        }
+    }
+
     #[test]
     fn what_moved_is_measured_against_this_roles_own_pass() {
         let snap = snapshot();
@@ -1236,6 +1385,105 @@ mod tests {
     }
 
     #[test]
+    fn the_backoff_schedule_indexes_by_failures_before_the_start() {
+        for (failures, wait) in [(0, 0), (1, 0), (2, 30), (3, 120), (4, 600), (9, 600)] {
+            assert_eq!(retry_delay(failures), wait, "failures {failures}");
+        }
+    }
+
+    #[test]
+    fn a_wait_is_measured_from_the_failed_start() {
+        // Never started: nothing to wait out.
+        assert_eq!(retry_wait(3, None, at(0)), 0);
+        // 120s owed from the start at 0, 30s gone.
+        assert_eq!(retry_wait(3, Some(at(0)), at(30)), 90);
+        // Already elapsed, and never negative.
+        assert_eq!(retry_wait(3, Some(at(0)), at(600)), 0);
+        // One failure waits nothing at all.
+        assert_eq!(retry_wait(1, Some(at(0)), at(0)), 0);
+    }
+
+    #[test]
+    fn a_retry_figure_never_names_a_smaller_wait_than_is_left() {
+        for (seconds, figure) in [
+            (0, "0s"),
+            (45, "45s"),
+            (59, "59s"),
+            (60, "1m"),
+            (61, "2m"),
+            (600, "10m"),
+        ] {
+            assert_eq!(retry_figure(seconds), figure, "{seconds} seconds");
+        }
+    }
+
+    #[test]
+    fn a_start_that_left_no_end_after_it_failed() {
+        // A pass that ran leaves an end later than its start.
+        assert!(!start_failed(Some(at(0)), Some(at(10))));
+        // An end at the same moment is the PREVIOUS pass's end: the start produced nothing.
+        assert!(start_failed(Some(at(10)), Some(at(10))));
+        assert!(start_failed(Some(at(10)), Some(at(5))));
+        assert!(start_failed(Some(at(10)), None));
+        // Never started here: not a failure of this view's.
+        assert!(!start_failed(None, Some(at(5))));
+        assert!(!start_failed(None, None));
+    }
+
+    #[test]
+    fn five_in_a_row_is_where_it_stops() {
+        assert!(!give_up(false, 9));
+        assert!(!give_up(true, 3));
+        assert!(give_up(true, 4));
+        assert!(give_up(true, 7));
+    }
+
+    #[test]
+    fn the_retry_cell_is_the_arrow_the_figure_and_the_count() {
+        assert_eq!(retry_label(2, 30), "\u{21bb} retry in 30s, 2 failed");
+        assert_eq!(retry_label(3, 120), "\u{21bb} retry in 2m, 3 failed");
+        assert_eq!(retry_label(0, 30), "\u{21bb} retry in 30s");
+    }
+
+    #[test]
+    fn a_backing_off_row_counts_down_ahead_of_its_condition() {
+        // A full buffer: the condition is false, and the countdown wins anyway.
+        let facts = planner_facts(4, 4);
+        assert_eq!(
+            standby_cell("planner", &facts, agent("planner"), at(0), 3, 120).as_deref(),
+            Some("\u{21bb} retry in 2m, 3 failed")
+        );
+        assert_eq!(
+            standby_cell("planner", &facts, agent("planner"), at(0), 0, 0).as_deref(),
+            standby_label("planner", &facts, agent("planner"), at(0)).as_deref()
+        );
+        assert_eq!(
+            standby_cell("implementer", &facts, agent("implementer"), at(0), 0, 0).as_deref(),
+            Some("\u{2192} planned")
+        );
+        // A cadence role backs off the same way, and its own cell is what the countdown replaces
+        // (cb-kcs.4.3 gave every armable role a cell; a role this view has no rule for still has
+        // none, and none is invented for it).
+        assert_eq!(
+            standby_cell("user-feedback", &facts, agent("user-feedback"), at(0), 3, 120).as_deref(),
+            Some("\u{21bb} retry in 2m, 3 failed")
+        );
+        assert_eq!(
+            standby_cell("user-feedback", &facts, agent("user-feedback"), at(0), 0, 0).as_deref(),
+            Some("\u{2192} hourly")
+        );
+        assert_eq!(standby_cell("stargazer", &facts, agent("stargazer"), at(0), 3, 120), None);
+    }
+
+    #[test]
+    fn the_give_up_notice_is_the_sentence_the_navigator_approved() {
+        assert_eq!(
+            give_up_notice("Xavier", 5),
+            "Xavier: 5 starts produced no pass; the view has stopped trying."
+        );
+    }
+
+    #[test]
     fn the_cadence_floor_is_not_held_by_the_unchanged_work_guard() {
         let now = at_iso("2026-09-01T12:00:00Z");
         let facts = outside_facts(GhAnswer::Failed, Vec::new());
@@ -1264,5 +1512,26 @@ mod tests {
             last_fingerprint: None,
         };
         assert_eq!(trigger(&facts, agent, now), None, "started ten seconds ago");
+    }
+
+    #[test]
+    fn the_ledger_counts_consecutive_failed_starts() {
+        let mut ledger = StartLedger::default();
+        assert_eq!(ledger.failures("Rogue"), 0);
+        ledger.set_failures("Rogue", 3);
+        assert_eq!(ledger.failures("Rogue"), 3);
+        ledger.clear_failures("Rogue");
+        assert_eq!(ledger.failures("Rogue"), 0);
+    }
+
+    #[test]
+    fn clearing_a_count_leaves_the_start_and_end_alone() {
+        let mut ledger = StartLedger::default();
+        ledger.note_started("Rogue", at(10), None);
+        ledger.note_ended("Rogue", at(20));
+        ledger.set_failures("Rogue", 2);
+        ledger.clear_failures("Rogue");
+        assert_eq!(ledger.started_at("Rogue"), Some(at(10)));
+        assert_eq!(ledger.ended_at("Rogue"), Some(at(20)));
     }
 }

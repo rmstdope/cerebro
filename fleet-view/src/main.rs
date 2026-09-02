@@ -512,8 +512,16 @@ fn start_due(
                     started_at: ledger.started_at(name),
                     last_fingerprint: ledger.fingerprint(name),
                 };
-                triggers::standby_label(role, &facts, agent, now)
-                    .map(|label| (name.clone(), label))
+                let failures = ledger.failures(name);
+                triggers::standby_cell(
+                    role,
+                    &facts,
+                    agent,
+                    now,
+                    failures,
+                    triggers::retry_wait(failures, ledger.started_at(name), now),
+                )
+                .map(|cell| (name.clone(), cell))
             })
             .collect(),
     );
@@ -543,6 +551,33 @@ fn start_due(
         ) {
             continue;
         }
+        let started = ledger.started_at(name);
+        let failures = ledger.failures(name);
+        let failed = triggers::start_failed(started, ledger.ended_at(name));
+
+        // Backed off: a launch that produced no session is retried, but not on every tick. This
+        // comes BEFORE the give-up, so a name at four failures counts its ten minutes down and
+        // gives up when the wait expires rather than when the fourth failure lands.
+        if failed && triggers::retry_wait(failures, started, now) > 0 {
+            continue;
+        }
+
+        if triggers::give_up(failed, failures) {
+            // The counter holds the failures BEFORE this start, and the one that brought us here
+            // is what the notice and the row name; left behind, they say different numbers about
+            // the same sessions.
+            let total = failures + 1;
+            ledger.set_failures(name, total);
+            host.note_gave_up(name, total);
+            // In this order, or the row is restated from an `exits` map that does not yet know.
+            app.set_exits(host.exits());
+            app.armed.remove(name);
+            app.reapply_standby();
+            app.set_notice(triggers::give_up_notice(name, total));
+            continue;
+        }
+
+        ledger.set_failures(name, if failed { failures + 1 } else { 0 });
         // `clears_flag` is `false` and can only be: a flagged name was skipped above.
         match lifecycle::start(host, paths, name, false) {
             Ok(_) => {
@@ -607,6 +642,9 @@ fn arm_and_autostart(
             Ok(_) => {
                 app.armed.insert(name.clone());
                 ledger.note_started(name, now, None);
+                // A declaration, not a trigger: it starts whatever the countdown said, and says
+                // the failures behind it do not count.
+                ledger.clear_failures(name);
                 started.push(name.clone());
             }
             // A start that fails is reported and does not stop the others.
@@ -771,7 +809,7 @@ where
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    let action = route_key(key, app, host, paths, viewport_lines, clock());
+                    let action = route_key(key, app, host, ledger, paths, viewport_lines, clock());
                     if action == AppAction::Quit {
                         break;
                     }
@@ -819,10 +857,12 @@ where
 /// onto the child rather than a commentary on it. So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or
 /// refresh while a live session is focused - they are the child's, which is exactly what the
 /// replaced header line says.
+#[allow(clippy::too_many_arguments)]
 fn route_key(
     key: KeyEvent,
     app: &mut App,
     host: &mut SessionHost,
+    ledger: &mut StartLedger,
     paths: &ReaderPaths,
     viewport_lines: usize,
     now: DateTime<Utc>,
@@ -867,7 +907,7 @@ fn route_key(
             // A notice is transient exactly as it is under `on_key`: the keystroke that reads it
             // is the one that clears it, and this key may then write its own.
             app.notice = None;
-            return lifecycle_key(c, app, host, paths, now);
+            return lifecycle_key(c, app, host, ledger, paths, now);
         }
     }
     let action = app.on_key(key, viewport_lines);
@@ -889,6 +929,7 @@ fn lifecycle_key(
     key: char,
     app: &mut App,
     host: &mut SessionHost,
+    ledger: &mut StartLedger,
     paths: &ReaderPaths,
     now: DateTime<Utc>,
 ) -> AppAction {
@@ -904,7 +945,14 @@ fn lifecycle_key(
         's' => match lifecycle::start_outcome(situation) {
             lifecycle::StartOutcome::Launch { clears_flag } => {
                 match lifecycle::start(host, paths, &name, clears_flag) {
-                    Ok(line) => app.set_notice(line),
+                    Ok(line) => {
+                        // The navigator asking for a session is what says the last failures do
+                        // not count - and without the start being recorded at all, the row would
+                        // count down against a start that never happened.
+                        ledger.note_started(&name, now, None);
+                        ledger.clear_failures(&name);
+                        app.set_notice(line);
+                    }
                     // The red Session pane is the report; a gold line saying the same thing twice
                     // is not.
                     Err(error) => host.note_refusal(&name, &error.to_string(), now),
@@ -2189,7 +2237,7 @@ mod main_tests {
         keys: Vec<crossterm::event::KeyEvent>,
     ) {
         for key in keys {
-            route_key(key, app, host, paths, 10, Utc::now());
+            route_key(key, app, host, &mut StartLedger::default(), paths, 10, Utc::now());
         }
     }
 
@@ -3266,6 +3314,68 @@ mod main_tests {
         );
     }
 
+    // --- the backoff and the give-up (cb-kcs.4.2) ---------------------------------------------
+
+    /// A board with nothing on it: every condition is false, which is what makes the countdown's
+    /// precedence over the condition observable.
+    fn empty_board() -> cerebro_tui::model::WorkBuckets {
+        cerebro_tui::model::partition_beads(Vec::new())
+    }
+
+    /// A standby planner primed with FAILURES consecutive failed starts, the last of them AGO
+    /// seconds before NOW.
+    fn backing_off(
+        failures: u32,
+        ago: i64,
+        work: cerebro_tui::model::WorkBuckets,
+        now: DateTime<Utc>,
+    ) -> (App, cerebro_tui::triggers::StartLedger) {
+        let app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(work),
+            now,
+        );
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        // No fingerprint: a start whose trigger is not compared against anything, so the
+        // unchanged-work guard cannot be what holds the retry.
+        ledger.note_started("Xavier", now - chrono::Duration::seconds(ago), None);
+        ledger.set_failures("Xavier", failures);
+        (app, ledger)
+    }
+
+    #[test]
+    fn a_failed_start_is_not_retried_on_the_next_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let roster = planner_roster(&["Xavier"]);
+        let mut host = SessionHost::default();
+        // One failed start behind it: the first entry of the schedule is 0, so it comes straight
+        // back.
+        let (mut app, mut ledger) = backing_off(1, 100, short_buffer(), now);
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        assert!(host.is_live("Xavier"), "one failure waits nothing at all");
+        assert_eq!(ledger.failures("Xavier"), 2, "counted before the launch");
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
+
+        // That start produced no pass either. Five seconds later, thirty are owed.
+        let later = now + chrono::Duration::seconds(5);
+        app.finish_refresh(
+            Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
+            later,
+        );
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, later);
+        assert!(!host.is_live("Xavier"), "the second failure is backed off");
+        assert_eq!(ledger.failures("Xavier"), 2, "and the count is not advanced by a skip");
+        assert_eq!(
+            app.standby_labels.get("Xavier").map(String::as_str),
+            Some("↻ retry in 25s, 2 failed")
+        );
+    }
+
     #[test]
     fn g_re_asks_gh_and_a_held_key_asks_once() {
         let mut app = App::default();
@@ -3285,5 +3395,130 @@ mod main_tests {
             app.begin_gh_refresh(Instant::now()),
             "the slot is free, so RefreshFleet asked nothing of gh"
         );
+    }
+
+    #[test]
+    fn a_row_backing_off_shows_its_countdown_and_not_its_condition() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let roster = planner_roster(&["Xavier"]);
+        let mut host = SessionHost::default();
+        // An empty board: the planner's condition is false, and the countdown wins anyway.
+        let (mut app, mut ledger) = backing_off(3, 60, empty_board(), now);
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+
+        assert_eq!(
+            app.standby_labels.get("Xavier").map(String::as_str),
+            Some("↻ retry in 1m, 3 failed"),
+            "while a backoff is running the row says so, and a failure is never invisible"
+        );
+        assert!(!host.is_live("Xavier"));
+    }
+
+    #[test]
+    fn the_view_stops_after_five_starts_that_produced_no_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let roster = planner_roster(&["Xavier"]);
+        let mut host = SessionHost::default();
+        // Four failures behind it and the fourth's ten minutes counted out.
+        let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+
+        assert!(!host.is_live("Xavier"), "no sixth start is attempted");
+        assert!(!app.armed.contains("Xavier"), "the name left the armed set");
+        assert_eq!(ledger.failures("Xavier"), 5, "brought up to what the notice says");
+        assert_eq!(
+            host.last_exit("Xavier"),
+            Some(cerebro_tui::lifecycle::LastExit::GaveUp { failures: 5 })
+        );
+        assert_eq!(
+            app.exits.get("Xavier"),
+            Some(&cerebro_tui::lifecycle::LastExit::GaveUp { failures: 5 }),
+            "and the renderer is told in the same frame"
+        );
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Xavier: 5 starts produced no pass; the view has stopped trying.")
+        );
+
+        // And it stays given up: a later tick starts nothing, the row being disarmed.
+        let later = now + chrono::Duration::seconds(600);
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, later);
+        assert!(!host.is_live("Xavier"));
+    }
+
+    #[test]
+    fn giving_up_takes_the_row_out_of_standby_in_the_same_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let roster = planner_roster(&["Xavier"]);
+        let mut host = SessionHost::default();
+        let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+
+        // No fleet read in between: a row promising a retry the view has just decided against is
+        // the one thing this must never leave on the screen.
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
+    }
+
+    #[test]
+    fn a_pass_that_ran_starts_the_count_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let roster = planner_roster(&["Xavier"]);
+        let mut host = SessionHost::default();
+        let (mut app, mut ledger) = backing_off(3, 100, short_buffer(), now);
+        // A pass ran and ended: the three before it do not count.
+        ledger.note_ended("Xavier", now - chrono::Duration::seconds(50));
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+
+        assert!(host.is_live("Xavier"), "nothing is owed after a pass that ran");
+        assert_eq!(ledger.failures("Xavier"), 0);
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
+    }
+
+    #[test]
+    fn pressing_s_clears_the_backoff() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            None,
+            now,
+        );
+        ledger.note_started("Xavier", now - chrono::Duration::seconds(10), None);
+        ledger.set_failures("Xavier", 3);
+        app.selected = Some("Xavier".to_string());
+
+        route_key(
+            crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('s')),
+            &mut app,
+            &mut host,
+            &mut ledger,
+            &paths,
+            10,
+            now,
+        );
+
+        assert!(host.is_live("Xavier"), "the navigator's start is never held: {:?}", app.notice);
+        assert_eq!(ledger.failures("Xavier"), 0, "and the last three do not count");
+        assert_eq!(ledger.started_at("Xavier"), Some(now), "the start is recorded");
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
     }
 }

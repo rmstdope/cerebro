@@ -486,6 +486,58 @@ impl App {
         self.fleet.content.value().map(Vec::as_slice).unwrap_or(&[])
     }
 
+    /// The names whose recorded exit keeps their row `Dead` rather than restating it as
+    /// `Standby` (`cerebro--failed-names`), which asks whether the record has anything to SAY
+    /// rather than whether one exists:
+    ///
+    ///     LastExit::Refused        -> parked. The launcher said why, and it will not say
+    ///                                anything different in thirty seconds.
+    ///     LastExit::GaveUp { .. }  -> parked. Nothing is coming; `s` is the way back.
+    ///     LastExit::Code(_)        -> NOT parked. A session that died - the machine slept, the
+    ///                                process was killed from outside, the agent crashed - is
+    ///                                promised a retry on the backoff, so its row stays `Standby`
+    ///                                (cb-ccl).
+    ///
+    /// cb-kcs.4.1 passed the whole key set of `exits` to `apply_standby`, which parked every
+    /// failure, because there was no backoff yet and a silently crashing agent would have been
+    /// relaunched every five seconds. This REPLACES that: two answers to one question is how a
+    /// row and a decision come to disagree.
+    pub fn parked_names(&self) -> BTreeSet<String> {
+        self.exits
+            .iter()
+            .filter(|(_, exit)| !matches!(exit, LastExit::Code(_)))
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// Re-run `model::apply_standby` over the rows the fleet pane already holds, with `armed` and
+    /// `parked_names` as they are NOW.
+    ///
+    /// `finish_refresh` applies standby when rows arrive, so a row that stops being armed between
+    /// two fleet reads would otherwise keep a blue dotted circle for up to five seconds - and the
+    /// one thing this must never draw is a row promising a retry the view has just decided
+    /// against. `route_key`'s confirmed disarm solves the same problem with `AppAction::
+    /// RefreshFleet`; giving up happens inside the loop, where no key is being routed and no
+    /// refresh can be asked for.
+    ///
+    /// It never changes freshness, `read_at` or the error - it is not a refresh and must not be
+    /// mistaken for one.
+    pub fn reapply_standby(&mut self) {
+        let parked = self.parked_names();
+        let armed = self.armed.clone();
+        let restate = |rows: Vec<FleetRow>| model::apply_standby(rows, &armed, &parked);
+        match std::mem::replace(&mut self.fleet.content, PaneContent::Loading) {
+            PaneContent::Fresh { value, read_at } => {
+                self.fleet.content = PaneContent::Fresh { value: restate(value), read_at };
+            }
+            PaneContent::Stale { value, read_at, failed_at, error } => {
+                self.fleet.content =
+                    PaneContent::Stale { value: restate(value), read_at, failed_at, error };
+            }
+            other => self.fleet.content = other,
+        }
+    }
+
     /// Replace the verdicts. One call per loop iteration, beside `set_session_view`.
     pub fn set_exits(&mut self, exits: BTreeMap<String, LastExit>) {
         self.exits = exits;
@@ -851,8 +903,8 @@ impl App {
         let succeeded = result.is_ok();
         // Applied on the way past, on success only, so the rows the pane holds are the rows any
         // reader inspects and a new caller cannot forget the transformation.
-        let failed: BTreeSet<String> = self.exits.keys().cloned().collect();
-        let result = result.map(|rows| model::apply_standby(rows, &self.armed, &failed));
+        let parked = self.parked_names();
+        let result = result.map(|rows| model::apply_standby(rows, &self.armed, &parked));
         self.fleet.finish(result, at);
         if succeeded {
             self.reconcile_selection(previous_index);
@@ -1973,5 +2025,66 @@ mod tests {
         assert!(app.gh_due(start + GH_REFRESH_INTERVAL));
         // The five-second tick never carries it.
         assert!(!app.gh_due(start + FLEET_REFRESH_INTERVAL));
+    }
+
+    fn dead(name: &str) -> FleetRow {
+        FleetRow { state: RowState::Dead, ..row(name) }
+    }
+
+    /// A session that DIED is promised a retry on the backoff, so its row stays `Standby`; a
+    /// launcher refusal and a give-up are not, and stay `Dead` (cb-ccl).
+    #[test]
+    fn a_crash_returns_to_standby_and_a_refusal_does_not() {
+        let mut app = App::new();
+        app.armed = ["Storm", "Rogue", "Xavier"].into_iter().map(String::from).collect();
+        app.set_exits(
+            [
+                ("Storm".to_string(), LastExit::Code(137)),
+                ("Rogue".to_string(), LastExit::Refused),
+                ("Xavier".to_string(), LastExit::GaveUp { failures: 5 }),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert_eq!(
+            app.parked_names(),
+            ["Rogue".to_string(), "Xavier".to_string()].into_iter().collect()
+        );
+
+        app.finish_refresh(Ok(vec![dead("Storm"), dead("Rogue"), dead("Xavier")]), at(0));
+        let states: Vec<RowState> = app.fleet_rows().iter().map(|r| r.state.clone()).collect();
+        assert_eq!(states, vec![RowState::Standby, RowState::Dead, RowState::Dead]);
+    }
+
+    #[test]
+    fn reapplying_standby_changes_neither_freshness_nor_read_at() {
+        let mut app = App::new();
+        app.armed = ["Storm"].into_iter().map(String::from).collect();
+        app.finish_refresh(Ok(vec![dead("Storm")]), at(0));
+        assert_eq!(app.fleet_rows()[0].state, RowState::Standby);
+
+        // The give-up happens inside the loop, where no refresh can be asked for: the row must
+        // stop promising a retry in the same frame.
+        app.set_exits(
+            [("Storm".to_string(), LastExit::GaveUp { failures: 5 })].into_iter().collect(),
+        );
+        app.armed.remove("Storm");
+        app.reapply_standby();
+        assert_eq!(app.fleet_rows()[0].state, RowState::Dead);
+        assert!(
+            matches!(app.fleet.content, PaneContent::Fresh { read_at, .. } if read_at == at(0)),
+            "not a refresh: neither freshness nor read_at moves"
+        );
+
+        // And it is not a read: a pane with nothing in it is left exactly as it was.
+        let mut empty = App::new();
+        empty.reapply_standby();
+        assert!(matches!(empty.fleet.content, PaneContent::Loading));
+        empty.finish_refresh(
+            Err(ReadError::Spawn { source: "ps".into(), message: "no".into() }),
+            at(5),
+        );
+        empty.reapply_standby();
+        assert!(matches!(empty.fleet.content, PaneContent::Unavailable { .. }));
     }
 }

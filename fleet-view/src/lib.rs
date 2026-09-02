@@ -13,12 +13,14 @@
 //! Since cb-kcs.4.1 it also STARTS sessions on its own: it evaluates the
 //! board-backed triggers for the planner, implementer, verifier and
 //! orchestrator roles, honours the roster's own `autostart`/`standby`
-//! declaration, and disarms a name on `k` or on a retire. Since cb-kcs.4.3 it
-//! also starts the three roles whose work arrives from OUTSIDE the fleet -
-//! `user-feedback`, `reviewer` and `architect` - off a `gh` reader on its own
-//! ten-minute cadence, the beads linked to a GitHub issue, and an hourly floor
-//! per role. The retry backoff and both JSONL logs remain cb-kcs.4.2's
-//! and .4.4's.
+//! declaration, and disarms a name on `k` or on a retire. Since cb-kcs.4.2 a
+//! start that keeps failing is not retried for ever: it backs off on
+//! `0/30s/2m/10m`, its row counts the wait down, and after five consecutive
+//! starts that produced no pass the name is disarmed and only `s` brings it
+//! back. Since cb-kcs.4.3 it also starts the three roles whose work arrives
+//! from OUTSIDE the fleet - `user-feedback`, `reviewer` and `architect` - off
+//! a `gh` reader on its own ten-minute cadence, the beads linked to a GitHub
+//! issue, and an hourly floor per role. Both JSONL logs remain cb-kcs.4.4's.
 //!
 //! Since cb-kcs.1 it may hold ONE piece of state - the supervision lease
 //! (`supervisor`), a bound loopback listener that says which fleet view a

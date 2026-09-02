@@ -1163,8 +1163,9 @@ without it the fixture\='s roster is cached wherever ERT happens to be."
               'launch)))
 
 (ert-deftest cerebro-test/autostart-action-clears-a-flag-for-every-kind ()
-  "Unlike `s' (`cerebro--start-clears-flag-p', implementers only), autostart
-clears a stop flag for every kind - the navigator's decision (cb-0r6)."
+  "`s', autostart and the trigger read one rule (`cerebro--flag-start-action');
+autostart and `s' are its clearing paths, for every kind - the navigator's
+decision (cb-0r6), widened to `s' by cb-sxf."
   (should (eq (cerebro--autostart-action
                 (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) nil t)
               'launch-clearing-flag))
@@ -1341,21 +1342,23 @@ is derived can start a second session over one this Emacs holds (ah-u3i's
 ;; ah-kgc: a stop flag is cleared when it retires an implementer, and when
 ;; the name is started again
 
-(ert-deftest cerebro-test/start-clears-a-stale-flag-for-every-kind ()
-  "Starting a name is a statement that it should run, so any flag for it is
-stale by definition - and since cb-sxf a role\='s flag is read by the start
-path too, so `s' has to clear that one as well or the next tick would refuse
-to start what the navigator just started."
-  (should (eq (cerebro--start-clears-flag-p
-                (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) t)
-              t))
-  (should (null (cerebro--start-clears-flag-p
-                  (cerebro-test--agent "Cyclops" "implementer" 'implementer 'dead) nil)))
-  (should (eq (cerebro--start-clears-flag-p
-                (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) t)
-              t))
-  (should (null (cerebro--start-clears-flag-p
-                  (cerebro-test--agent "Xavier" "planner" 'interactive 'dead) nil))))
+(ert-deftest cerebro-test/flag-start-action-answers-every-start-path ()
+  "One function answers the flag-and-start rule for all three start paths.
+
+`s\=' and autostart clear a stale flag; the trigger holds a flagged name
+instead of starting it (cb-sxf).  The rule is kind-independent, which is why
+the function takes no agent at all - a signature with one would compile and
+this table would still pass, so the absence is what is pinned here."
+  (should (eq (cerebro--flag-start-action t 'manual) 'launch-clearing-flag))
+  (should (eq (cerebro--flag-start-action nil 'manual) 'launch))
+  (should (eq (cerebro--flag-start-action t 'autostart) 'launch-clearing-flag))
+  (should (eq (cerebro--flag-start-action nil 'autostart) 'launch))
+  (should (eq (cerebro--flag-start-action t 'trigger) 'hold))
+  (should (eq (cerebro--flag-start-action nil 'trigger) 'launch))
+  (should (equal (func-arity 'cerebro--flag-start-action) '(2 . 2)))
+  ;; A `pcase\=' with no matching arm returns nil, and nil at the trigger call
+  ;; site reads as not-`hold\=' - so an unknown path signals instead.
+  (should-error (cerebro--flag-start-action t 'poke)))
 
 (ert-deftest cerebro-test/kill-action-plain-kill-for-idle ()
   (should (eq (cerebro--kill-action

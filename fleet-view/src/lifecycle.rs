@@ -254,9 +254,9 @@ pub struct Situation<'a> {
 /// What `s` does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartOutcome {
-    /// Spawn. `clears_flag` is true when a stale stop flag must be removed first, which is
-    /// implementers only (`cerebro--start-clears-flag-p`): an implementer started under its own
-    /// stop flag would be retired again at once.
+    /// Spawn. `clears_flag` is true whenever a stop flag exists, for EVERY kind - the rule
+    /// `cerebro--flag-start-action` answers in Emacs for `s`, autostart and the trigger alike.
+    /// A name started under its own stop flag would be held or retired again at once.
     Launch { clears_flag: bool },
     /// Do nothing, and put TEXT in the header's notice slot, in gold.
     Refuse(String),
@@ -302,7 +302,7 @@ pub fn start_outcome(situation: Situation<'_>) -> StartOutcome {
         return StartOutcome::Refuse(format!("{} is running outside this view", row.name));
     }
     StartOutcome::Launch {
-        clears_flag: situation.stop_flag && row.kind == AgentKind::Implementer,
+        clears_flag: situation.stop_flag,
     }
 }
 
@@ -689,7 +689,8 @@ mod tests {
         let alive = row("Storm", AgentKind::Implementer, RowState::Working);
         let interactive = row("Xavier", AgentKind::Interactive, RowState::Dead);
 
-        // s: a dead implementer starts, and clears a stale flag only for an implementer.
+        // s: a dead agent starts, and clears a stale flag for EVERY kind - the rule
+        // `cerebro--flag-start-action` answers in Emacs, widened to `s` by cb-sxf.
         assert_eq!(
             start_outcome(situation(&up, Some(&dead), false, false)),
             StartOutcome::Launch { clears_flag: false }
@@ -702,7 +703,7 @@ mod tests {
         );
         assert_eq!(
             start_outcome(situation(&up, Some(&interactive), false, true)),
-            StartOutcome::Launch { clears_flag: false }
+            StartOutcome::Launch { clears_flag: true }
         );
         assert_eq!(
             start_outcome(situation(&up, Some(&dead), true, false)),

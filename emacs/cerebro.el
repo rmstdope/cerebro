@@ -2406,18 +2406,34 @@ derived can start a second session over one this Emacs holds (ah-u3i's
    ((not (cerebro--alive-p agent)) 'launch)
    (t 'external)))
 
-(defun cerebro--start-clears-flag-p (_agent flag-set)
-  "Whether starting an agent should first remove its stop flag.
+(defun cerebro--flag-start-action (flagged path)
+  "Pure.  What a start of a flagged or unflagged name should do, on PATH.
 
-A flag on a name being started is stale by definition (ah-kgc): the
-navigator is saying it should run.  Every kind since cb-sxf - the start path
-reads a role\='s flag too now, so leaving one in place would have the next
-tick refuse to start what `s' just started.
+PATH is which path is asking: `manual\=' (`s\='), `autostart\=', or `trigger\='
+\(`cerebro--start-due\=').  FLAGGED is whether that name\='s stop flag exists.
+One of `launch\=', `launch-clearing-flag\=' or `hold\='.
 
-The agent argument is unused, and kept because this is the caller\='s shape
-(`cerebro-start\='): a one-argument predicate would be a caller change for
-nothing."
-  (and flag-set t))
+A flag on a name the navigator is starting by hand, or that the fleet view is
+autostarting, is stale by definition (ah-kgc, cb-0r6): both of those are
+statements that the name should run, so the flag is removed with the launch.
+A flag read by the trigger is the opposite - it is the navigator saying this
+name takes no further pass - so the trigger holds (cb-sxf).
+
+There is no AGENT argument, and that is the point.  The rule has been
+kind-independent since cb-sxf, and this replaces the per-path predicate it grew
+out of, which carried an unused agent argument kept only because that was the
+caller\='s shape and
+looked, for three beads, like a rule that might differ per kind.  `manual\=' and
+`autostart\=' share an arm rather than being one word: they agree today and have
+not always, so a future divergence is a line here rather than a call-site change.
+
+Signals on an unrecognised PATH: `pcase\=' with no matching arm returns nil, and
+nil at the trigger call site reads as not-`hold\=', which would start a flagged
+name silently - the exact defect cb-sxf cost four commits."
+  (pcase path
+    ((or 'manual 'autostart) (if flagged 'launch-clearing-flag 'launch))
+    ('trigger (if flagged 'hold 'launch))
+    (_ (error "cerebro--flag-start-action: unknown path %S" path))))
 
 (defun cerebro--autostart-action (agent owned flagged)
   "What autostart should do for AGENT, given OWNED session names and FLAGGED.
@@ -2431,14 +2447,15 @@ FLAGGED is whether a stop flag exists for AGENT.  Autostart clears it for
 EVERY kind: the navigator decided that opening the fleet view is a statement
 that everything the roster declares should be running, and a flag left on
 such a name is stale by the same argument ah-kgc made for `s\=' (cb-0r6).
-That was once the difference between the two - `cerebro--start-clears-flag-p\='
-tested the kind until cb-sxf, and clears a flag for every kind now, so `s\='
-and autostart agree about this.
+`s\=', autostart and the trigger read one rule
+(`cerebro--flag-start-action\='), which is where that history now lives.
 
 A flag on a name that is already up changes nothing - there is nothing to
 start, so there is nothing to clear."
   (let ((action (cerebro--start-action agent owned)))
-    (if (and flagged (eq action 'launch)) 'launch-clearing-flag action)))
+    (if (eq action 'launch)
+        (cerebro--flag-start-action flagged 'autostart)
+      action)))
 
 (defun cerebro--autostart-names-and-skipped (results)
   "RESULTS split into (STARTED . SKIPPED) label lists, in RESULTS order.
@@ -6109,6 +6126,10 @@ is where that is said."
                  ;; role's flag to this loop; before this it was read here by
                  ;; nobody, so the trigger started a whole pass under a flag.
                  (flagged (cerebro--stop-flag-p repo-root name))
+                 ;; The rule itself is `cerebro--flag-start-action', which
+                 ;; every start path reads; `flagged' stays bound because the
+                 ;; evaluation log carries it under that name.
+                 (held (eq (cerebro--flag-start-action flagged 'trigger) 'hold))
                  ;; And a name disarmed EARLIER IN THIS TICK is not started on
                  ;; it: `cerebro--supervise' removes it from `cerebro--armed'
                  ;; and clears its flag, but the struct in `cerebro--agents'
@@ -6126,7 +6147,7 @@ is where that is said."
                                         agent-context)))
             (cerebro--log-evaluation repo-root agent reason agent-context)
             (when (and reason (not too-soon) (not backed-off)
-                       (not flagged) (not disarmed))
+                       (not held) (not disarmed))
               (if (cerebro--give-up-p failed failures)
                   ;; Nothing is coming back on its own from here: the record
                   ;; says so on the row, and the name leaves `cerebro--armed',
@@ -6497,7 +6518,8 @@ seconds earlier would be a worse surprise than announcing it."
       (let* ((repo-root (cerebro--repo-root))
              (name (cerebro-agent-name agent))
              (flagged (cerebro--stop-flag-p repo-root name))
-             (clears-flag (cerebro--start-clears-flag-p agent flagged)))
+             (clears-flag (eq (cerebro--flag-start-action flagged 'manual)
+                              'launch-clearing-flag)))
         (pcase (cerebro--start-action agent (cerebro--owned))
           ('launch
            (when clears-flag

@@ -43,6 +43,7 @@ use cerebro_tui::app::{
 use cerebro_tui::lifecycle;
 use cerebro_tui::log::{self, Logger};
 use cerebro_tui::model::{AgentKind, RosterEntry, RowState};
+use cerebro_tui::pruner::{self, Pruner};
 use cerebro_tui::readers::{
     self, CommandRunner, Commands, Programs, ReadError, ReaderPaths, RealCommands,
 };
@@ -328,6 +329,10 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // Beside the host, and threaded into `run` with it: what each name was last told about the
     // unranked set, in memory only (cb-kcs.5.2).
     let mut told = lifecycle::TriageLedger::default();
+    // Created BEFORE the `TerminalGuard` below, so it drops AFTER it: the watcher's `Drop` is the
+    // one cleanup a `?`, an early return and a panic all respect, and it must run with the
+    // terminal already restored.
+    let mut pruner = Pruner::new();
 
     // Raw mode and the alternate screen are entered HERE and nowhere else, under a guard whose
     // `Drop` leaves them. A sequence of cleanup calls after the loop is skipped by `?`, by an
@@ -374,6 +379,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &mut host,
         &mut ledger,
         &mut told,
+        &mut pruner,
         &mut logger,
         &paths,
         &Programs::default(),
@@ -526,6 +532,52 @@ fn supervise(
     }
 }
 
+
+/// Keep the watcher in step with what this view may do, and say so when it cannot.
+///
+/// Its own five-second clock rather than the loop's ~200ms iteration, and outside the fleet poll:
+/// the watcher is nothing to do with what any agent wrote in a state file.
+///
+/// Gated on `may_supervise()` alone - `cerebro--tick`'s own rule (`emacs/cerebro.el:6446-6450`) -
+/// so a DRAINING view kills its watcher: the pruner is a writer, and a handover means starting
+/// nothing new.
+fn prune(
+    app: &mut App,
+    pruner: &mut Pruner,
+    logger: &mut Logger,
+    paths: &ReaderPaths,
+    now: DateTime<Utc>,
+    at: Instant,
+) {
+    if !pruner.due(at) {
+        return;
+    }
+    match pruner::prune_action(pruner.live(), app.supervision.may_supervise()) {
+        // A drain is not a failure, and neither is quitting: nothing is said.
+        pruner::PruneAction::Stop => pruner.stop(),
+        pruner::PruneAction::Leave => {}
+        pruner::PruneAction::Start => {
+            // The death `live` just observed, if there was one, and otherwise the spawn's own
+            // refusal. Neither on the first start as the view comes up, which is silent.
+            let died = pruner.take_exit();
+            let cause = match pruner.start(paths) {
+                Ok(()) => {
+                    logger.clear_error("prune");
+                    died
+                }
+                Err(refusal) => Some(refusal),
+            };
+            let Some(cause) = cause else { return };
+            // Unconditionally to the log, whose per-context dedupe keeps a permanently missing
+            // script to one line and still writes a line for every DIFFERENT fault - which is what
+            // keeps the record complete while the header is inside its ten-minute gate.
+            logger.error("prune", &cause, now);
+            if pruner.should_complain(at) {
+                app.set_error_notice(pruner::failure_notice(&cause));
+            }
+        }
+    }
+}
 
 /// Type the triage line into an idle orchestrator this view hosts, on the rows just applied.
 ///
@@ -1053,6 +1105,7 @@ fn run<B: Backend, E: Events>(
     host: &mut SessionHost,
     ledger: &mut StartLedger,
     told: &mut lifecycle::TriageLedger,
+    pruner: &mut Pruner,
     logger: &mut Logger,
     paths: &ReaderPaths,
     programs: &Programs,
@@ -1197,6 +1250,9 @@ where
         }
         // What makes `reconcile_supervision`'s drain branch reachable: a declaration that moved
         // supervision while this process hosts children keeps the lease until the last one ends.
+        // The watcher, on its own five-second clock and outside the fleet poll: it is nothing to
+        // do with what any agent wrote in a state file (cb-kcs.5.2).
+        prune(app, pruner, logger, paths, clock(), Instant::now());
         controller.hosted_sessions = host.live_count();
         if controller.due(Instant::now()) && supervisor_worker.request() {
             controller.requested(Instant::now());
@@ -1927,7 +1983,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
 
         assert!(!app.quit, "the session this case hosts is what refuses the quit");
         assert!(app.quit_refusal.is_some(), "and the refusal pane says so");
@@ -1950,7 +2006,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -1989,7 +2045,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
         assert!(app.quit, "and q still quits: a retained pass does not hold the keyboard");
@@ -2010,7 +2066,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
         let text = echoed(&mut host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
         assert!(text.contains("^[[201~"), "and closed: {text:?}");
@@ -2023,7 +2079,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -2040,7 +2096,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
+            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
         assert_eq!(
             controller.hosted_sessions, 1,
             "the drain branch of `reconcile_supervision` is reachable for the first time"
@@ -2242,7 +2298,7 @@ mod main_tests {
                 &mut supervision().1,
                 &mut SessionHost::default(),
                 &mut cerebro_tui::triggers::StartLedger::default(),
-                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(),
+                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
                 &std::collections::BTreeMap::new(),
@@ -2276,7 +2332,7 @@ mod main_tests {
                 &mut supervision().1,
                 &mut SessionHost::default(),
                 &mut cerebro_tui::triggers::StartLedger::default(),
-                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(),
+                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
                 &std::collections::BTreeMap::new(),
@@ -2311,7 +2367,7 @@ mod main_tests {
                 &mut supervision().1,
                 &mut SessionHost::default(),
                 &mut cerebro_tui::triggers::StartLedger::default(),
-                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(),
+                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
                 &std::collections::BTreeMap::new(),
@@ -2357,7 +2413,7 @@ mod main_tests {
                 &mut supervision().1,
                 &mut SessionHost::default(),
                 &mut cerebro_tui::triggers::StartLedger::default(),
-                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(),
+                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
                 &std::collections::BTreeMap::new(),
@@ -2403,7 +2459,7 @@ mod main_tests {
         ]);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work, &gh_worker(), &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
         assert!(app.quit, "and the last of them still quit");
@@ -2493,7 +2549,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
         assert_eq!(
@@ -2546,7 +2602,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");
@@ -2585,7 +2641,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
     }
@@ -2757,7 +2813,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, host, &mut ledger, &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut test_logger(), paths,
+            &supervision().0, &mut supervision().1, host, &mut ledger, &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), paths,
             &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
     }
 
@@ -4068,6 +4124,76 @@ mod main_tests {
             scripts_dir: dir.path().into(),
         }, "Cerebro");
         settle_gone(&mut host, "Cerebro");
+    }
+
+    // ---- cb-kcs.5.2: the prune watcher in the loop -------------------------------------------
+
+    /// Nothing is spawned in either case here, which is why both belong in this module rather
+    /// than in the integration target beside the fixtures.
+    #[test]
+    fn a_read_only_view_starts_no_watcher() {
+        for mode in [
+            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+                cerebro_tui::supervisor::ReadOnlyReason::NotOwned,
+            ),
+            cerebro_tui::supervisor::SupervisionMode::Draining {
+                configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
+                live_sessions: 1,
+            },
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = scratch(dir.path(), "sleep 5");
+            let mut logger = Logger::new(dir.path());
+            logger.set_enabled(true);
+            let mut pruner = Pruner::new();
+            let mut app = App::with_supervision(mode.clone());
+
+            prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(), Instant::now());
+
+            assert!(!pruner.live(), "no watcher for {mode:?}");
+            assert_eq!(app.notice, None, "and a drain is not a failure");
+            assert!(log_lines(dir.path(), "errors").is_empty(), "{mode:?}");
+        }
+    }
+
+    /// Emacs swallows this, and the cost is that worktrees quietly stop being pruned. Red, once,
+    /// and again only every ten minutes while it stays broken (the navigator's choice, round two).
+    #[test]
+    fn a_watcher_that_will_not_start_is_said_in_red_and_logged() {
+        let dir = tempfile::tempdir().unwrap();
+        // An empty scripts directory: there is no `prune-worktrees.sh` to spawn.
+        let empty = tempfile::tempdir().unwrap();
+        let paths = ReaderPaths {
+            consumer_root: dir.path().into(),
+            shared_root: dir.path().into(),
+            scripts_dir: empty.path().into(),
+        };
+        let mut logger = Logger::new(dir.path());
+        logger.set_enabled(true);
+        let mut pruner = Pruner::new();
+        let mut app = App::with_supervision(supervising());
+
+        let at = Instant::now();
+        prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(), at);
+
+        assert!(app.notice_urgent, "a fault, not news");
+        let notice = app.notice.clone().expect("a notice");
+        assert!(
+            notice.starts_with("Worktree pruning stopped: No such file or directory"),
+            "{notice}"
+        );
+        let errors = log_lines(dir.path(), "errors");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains(r#""context":"prune""#), "{}", errors[0]);
+
+        // Five seconds later it is retried and still fails - and says nothing more, on screen or
+        // in the log: the header is inside its ten-minute gate and the fault is the same one.
+        app.notice = None;
+        app.notice_urgent = false;
+        prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(),
+              at + std::time::Duration::from_secs(5));
+        assert_eq!(app.notice, None, "not a strobe");
+        assert_eq!(log_lines(dir.path(), "errors").len(), 1, "the same fault is one line");
     }
 
     /// A read-only view decides nothing, so it records nothing - not even a reader failure.

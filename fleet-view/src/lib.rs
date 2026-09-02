@@ -96,7 +96,8 @@ pub use session::{
 };
 pub use app::{
     work_body, work_line_of_cursor, App, AppAction, FleetWorker, Metrics, Pane, PaneContent,
-    PaneFocus, PaneMetrics, Prompt, SupervisorWorker, SweepWorker, WorkBodyLine, WorkWorker,
+    HistoryWorker, PaneFocus, PaneMetrics, Prompt, SupervisorWorker, SweepWorker,
+    WorkBodyLine, WorkWorker,
 };
 pub use sweeps::{
     finding_command, findings_from, label as sweep_label, prompt as sweep_prompt, Blocker,

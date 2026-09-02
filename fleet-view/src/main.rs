@@ -16,6 +16,7 @@
 //! deliberately does not resolve a consumer root of its own: `scripts/consumer-root` is the one
 //! place that question is answered, and a second answer in Rust would be a second answer.
 
+use std::collections::BTreeMap;
 use std::io::{self, Stdout, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -34,13 +35,14 @@ use ratatui::Terminal;
 
 use cerebro_tui::app::{self, App, AppAction, FleetWorker, SupervisorWorker, WorkWorker};
 use cerebro_tui::lifecycle;
-use cerebro_tui::model::{AgentKind, RowState};
+use cerebro_tui::model::{AgentKind, RosterEntry, RowState};
 use cerebro_tui::readers::{self, Programs, ReadError, ReaderPaths};
 use cerebro_tui::supervisor::{
     reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
     SupervisorKind, SupervisorLease,
 };
 use cerebro_tui::session::{self, SessionHost};
+use cerebro_tui::triggers::{self, StartLedger, TriggerFacts};
 use cerebro_tui::ui;
 
 /// How long the loop waits for a keystroke before drawing again. Short enough that an elapsed
@@ -294,6 +296,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     let mut controller = SupervisorController::new(&paths);
     let initial = controller.apply(readers::read_configured_supervisor(&paths));
     let mut app = App::with_supervision(initial);
+    let mut ledger = StartLedger::default();
 
     // BEFORE the terminal guard, so it is dropped AFTER it: a child killed on the way out must
     // not be killed while the alternate screen is still up.
@@ -303,6 +306,20 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // `Drop` leaves them. A sequence of cleanup calls after the loop is skipped by `?`, by an
     // early return and by a panic - each of which has left somebody's terminal in raw mode with
     // no echo and no prompt.
+    // The roster's own declaration, performed once as the view comes up, and only by a view that
+    // may act on this checkout. The spacing is read here too - once, in the one place, and only
+    // when it will be used: a fork per role per five-second tick is not a thing this view may do.
+    let mut spacing = BTreeMap::new();
+    if app.supervision.may_supervise() {
+        let (declared, complaints) = readers::read_role_spacing(&paths, &SPACED_ROLES);
+        spacing = declared;
+        if let Some(notice) =
+            arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, &complaints, Utc::now())
+        {
+            app.set_notice(notice);
+        }
+    }
+
     let mut guard = TerminalGuard::enter(CrosstermTerminal)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -316,7 +333,9 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &supervisor_worker,
         &mut controller,
         &mut host,
+        &mut ledger,
         &paths,
+        &spacing,
         Utc::now,
     );
     guard.leave()?;
@@ -346,10 +365,20 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
 fn supervise(
     app: &mut App,
     host: &mut SessionHost,
+    ledger: &mut StartLedger,
     paths: &ReaderPaths,
     now: DateTime<Utc>,
     at: Instant,
 ) {
+    // The whole of the drain behaviour: a draining view finishes the sessions it hosts and
+    // starts nothing, so every armed name is a promise it will not keep. Clearing the set turns
+    // each row grey on the next fleet read, and it is correct for `ReadOnly` too, where the set
+    // should never have held anything. A view that later re-acquires the lease comes back with an
+    // empty armed set - the roster's declaration is read once at startup - so the navigator
+    // presses `s` for the first session of each name, exactly as `M-x cerebro` behaves.
+    if !app.supervision.may_supervise() {
+        app.armed.clear();
+    }
     if !app.supervision.may_end() {
         return;
     }
@@ -389,6 +418,11 @@ fn supervise(
         let Some(action) = lifecycle::supervise_action(agent) else { continue };
         match action {
             lifecycle::Supervision::Retire => {
+                // Retiring disarms, which is what makes a stop flag on a standby implementer mean
+                // *disarmed* rather than *retried*. `End` deliberately does NOT: ending a pass is
+                // exactly the moment a name should stay armed, since the trigger that starts its
+                // next session is what the armed set exists to allow.
+                app.armed.remove(&name);
                 // The instruction before the record (`emacs/cerebro.el:4537-4540`'s own order):
                 // the flag is what the next session under that name would otherwise inherit, and
                 // ending is the step that can fail.
@@ -397,10 +431,14 @@ fn supervise(
                     continue;
                 }
                 host.end(paths, &name);
+                ledger.note_ended(&name, now);
                 app.set_notice(lifecycle::supervision_notice(action, &name));
             }
             lifecycle::Supervision::End => {
                 host.end(paths, &name);
+                // The authoritative `ended_at`: the moment this view ended the pass, which is
+                // what the unchanged-work guard measures a start against.
+                ledger.note_ended(&name, now);
                 app.set_notice(lifecycle::supervision_notice(action, &name));
             }
             lifecycle::Supervision::Nudge => {
@@ -415,6 +453,189 @@ fn supervise(
     }
 }
 
+
+/// Start every standby row whose trigger is true. The port of `cerebro--start-due`, less its
+/// retry and give-up branches, which are cb-kcs.4.2's.
+///
+/// After `supervise` and not before (`cerebro--tick`'s own order): a session ended on this tick
+/// must not also be started on it, and a row restated by the next read is what makes that true.
+///
+/// Gated on `mode.may_supervise()`, which is `Supervising` alone - NOT `may_end`. A draining view
+/// finishes what it hosts and starts nothing.
+///
+/// One agent's failure never stops the others: each row's work is fallible, and a failure is
+/// reported exactly as an `s` that could not launch is.
+#[allow(clippy::too_many_arguments)]
+fn start_due(
+    app: &mut App,
+    host: &mut SessionHost,
+    ledger: &mut StartLedger,
+    paths: &ReaderPaths,
+    spacing: &BTreeMap<String, u64>,
+    roster: &[RosterEntry],
+    now: DateTime<Utc>,
+) {
+    if !app.supervision.may_supervise() {
+        return;
+    }
+    // No board, no starts. This is `most-positive-fixnum`'s whole job in elisp, said without a
+    // sentinel: a `Stale` work pane still carries its last good buckets and is used.
+    let Some(buckets) = app.work.content.value() else { return };
+    let facts = TriggerFacts::derive(buckets, roster, |name| lifecycle::stop_flag_set(paths, name));
+
+    let standby: Vec<(String, String)> = app
+        .fleet_rows()
+        .iter()
+        .filter(|row| row.state == RowState::Standby)
+        .map(|row| (row.name.clone(), row.role.clone()))
+        .collect();
+    app.set_standby_labels(
+        standby
+            .iter()
+            .filter_map(|(name, role)| {
+                triggers::standby_label(role, &facts).map(|label| (name.clone(), label))
+            })
+            .collect(),
+    );
+
+    for (name, role) in &standby {
+        // A flagged name is never started, whatever its trigger says: that is what `f` means. A
+        // deliberate, named divergence from `cerebro--start-due`, which checks no flag at all
+        // even though `cerebro--supervise-action`'s own comment says a standby role's flag
+        // belongs there. Strictly fewer starts, and it makes `f` mean one thing.
+        if lifecycle::stop_flag_set(paths, name) {
+            continue;
+        }
+        let agent = triggers::AgentFacts {
+            role,
+            ended_at: ledger.ended_at(name),
+            started_at: ledger.started_at(name),
+            last_fingerprint: ledger.fingerprint(name),
+        };
+        let Some(reason) = triggers::trigger(&facts, agent, now) else { continue };
+        // Inside the loop, not before it, because `note_started` writes into the same map - so
+        // the second planner in this very pass already sees the first.
+        if triggers::role_start_too_soon(
+            &triggers::role_peers(name, role, roster),
+            ledger.started_at_map(),
+            triggers::spacing_for(role, spacing),
+            now,
+        ) {
+            continue;
+        }
+        // `clears_flag` is `false` and can only be: a flagged name was skipped above.
+        match lifecycle::start(host, paths, name, false) {
+            Ok(_) => {
+                app.armed.insert(name.clone());
+                ledger.note_started(name, now, triggers::fingerprint(role, &facts));
+                app.set_notice(triggers::start_notice(name, &reason));
+            }
+            // The red Session pane is the report, which is the rule `s` already follows.
+            Err(error) => host.note_refusal(name, &error.to_string(), now),
+        }
+    }
+
+    let seen: Vec<String> = app
+        .fleet_rows()
+        .iter()
+        .filter(|row| {
+            !matches!(row.state, RowState::Dead | RowState::Standby | RowState::Invalid)
+        })
+        .map(|row| row.name.clone())
+        .collect();
+    for name in seen {
+        ledger.note_seen_up(&name, now);
+    }
+}
+
+/// Perform the roster's `autostart` declaration and arm its `standby` one, once, as the view
+/// comes up. The port of `cerebro--autostart`, less its vterm check, which has no counterpart.
+///
+/// Returns the startup notice, or `None` when the roster declared neither.
+fn arm_and_autostart(
+    app: &mut App,
+    host: &mut SessionHost,
+    ledger: &mut StartLedger,
+    paths: &ReaderPaths,
+    complaints: &[String],
+    now: DateTime<Utc>,
+) -> Option<String> {
+    // A declaration this view cannot read is treated as an empty list AND said out loud: a fleet
+    // where nothing is armed and nothing is started must not be indistinguishable from a roster
+    // that declared neither.
+    let mut complaints = complaints.to_vec();
+    let mut names = |flag: &str, read: Result<Vec<String>, ReadError>| match read {
+        Ok(names) => names,
+        Err(error) => {
+            complaints.push(format!("roster {flag} could not be read: {error}"));
+            Vec::new()
+        }
+    };
+    let autostart = names("--autostart", readers::read_autostart_names(paths));
+    let standby = names("--standby", readers::read_standby_names(paths));
+    drop(names);
+    let mut started = Vec::new();
+    for name in &autostart {
+        if host.is_live(name) {
+            continue;
+        }
+        // For EVERY kind here, not implementers only, which is `cerebro--autostart-action`'s own
+        // widening: a name declared `autostart` under a stale flag would otherwise come up and be
+        // retired at once.
+        let clears_flag = lifecycle::stop_flag_set(paths, name);
+        match lifecycle::start(host, paths, name, clears_flag) {
+            Ok(_) => {
+                app.armed.insert(name.clone());
+                ledger.note_started(name, now, None);
+                started.push(name.clone());
+            }
+            // A start that fails is reported and does not stop the others.
+            Err(error) => host.note_refusal(name, &error.to_string(), now),
+        }
+    }
+    for name in &standby {
+        app.armed.insert(name.clone());
+        ledger.note_armed(name, now);
+    }
+    startup_notice(&started, &standby, &complaints)
+}
+
+/// The roles a spacing is asked about, once, at startup.
+const SPACED_ROLES: [&str; 4] = ["planner", "implementer", "verifier", "orchestrator"];
+
+/// The startup line, naming both halves of the roster's declaration - because the declaration did
+/// both and only one of them is otherwise audible. An empty half drops its clause along with the
+/// `; `. Each unparseable spacing is appended as its own sentence, `cerebro--project-spacing`'s
+/// own wording.
+fn startup_notice(started: &[String], standby: &[String], complaints: &[String]) -> Option<String> {
+    let mut clauses = Vec::new();
+    if !started.is_empty() {
+        clauses.push(format!("Started {}", lifecycle::join_names(started)));
+    }
+    if !standby.is_empty() {
+        clauses.push(format!(
+            "{} {} on standby",
+            lifecycle::join_names(standby),
+            if standby.len() == 1 { "is" } else { "are" }
+        ));
+    }
+    let mut notice = if clauses.is_empty() {
+        if complaints.is_empty() {
+            return None;
+        }
+        String::new()
+    } else {
+        format!("{}.", clauses.join("; "))
+    };
+    for complaint in complaints {
+        if !notice.is_empty() {
+            notice.push(' ');
+        }
+        notice.push_str(complaint);
+    }
+    Some(notice)
+}
+
 /// The whole loop, generic over its terminal and its event source so the cases below can drive it
 /// without taking over the developer's own terminal.
 #[allow(clippy::too_many_arguments)]
@@ -427,7 +648,9 @@ fn run<B: Backend, E: Events>(
     supervisor_worker: &SupervisorWorker,
     controller: &mut SupervisorController,
     host: &mut SessionHost,
+    ledger: &mut StartLedger,
     paths: &ReaderPaths,
+    spacing: &BTreeMap<String, u64>,
     clock: impl Fn() -> DateTime<Utc>,
 ) -> Result<(), Fatal>
 where
@@ -485,7 +708,20 @@ where
             // nothing about any agent, and acting on the last good one would end a session on
             // evidence five seconds stale.
             if succeeded {
-                supervise(app, host, paths, clock(), Instant::now());
+                let now = clock();
+                supervise(app, host, ledger, paths, now, Instant::now());
+                // After `supervise` and not before: a session ended on this tick must not also be
+                // started on it, and a row restated by the next read is what makes that true.
+                let roster: Vec<RosterEntry> = app
+                    .fleet_rows()
+                    .iter()
+                    .map(|row| RosterEntry {
+                        name: row.name.clone(),
+                        role: row.role.clone(),
+                        kind: row.kind,
+                    })
+                    .collect();
+                start_due(app, host, ledger, paths, spacing, &roster, now);
             }
         }
         if let Some(result) = work_worker.poll() {
@@ -573,14 +809,26 @@ fn route_key(
         app.quit_refusal = None;
         return AppAction::None;
     }
-    if let Some(app::Prompt::Kill { name, .. }) = app.confirm.take() {
+    if let Some(prompt) = app.confirm.take() {
         app.notice = None;
-        if key.code == KeyCode::Char('y') && key.modifiers.is_empty() {
-            host.kill(paths, &name);
-            // A killed agent must not wait up to five seconds to disappear from the fleet.
-            return AppAction::RefreshFleet;
+        let confirmed = key.code == KeyCode::Char('y') && key.modifiers.is_empty();
+        // Anything other than `y` cancels silently and does nothing else.
+        if !confirmed {
+            return AppAction::None;
         }
-        return AppAction::None;
+        return match prompt {
+            app::Prompt::Kill { name, .. } => {
+                host.kill(paths, &name);
+                // A killed agent must not wait up to five seconds to disappear from the fleet.
+                AppAction::RefreshFleet
+            }
+            app::Prompt::Disarm { name, .. } => {
+                app.armed.remove(&name);
+                app.set_notice(lifecycle::disarm_notice(&name));
+                // So the row goes grey at once rather than up to five seconds later.
+                AppAction::RefreshFleet
+            }
+        };
     }
     if app.session_has_keyboard() && key.code != KeyCode::BackTab {
         if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
@@ -666,8 +914,15 @@ fn lifecycle_key(
             AppAction::None
         }
         'k' => match lifecycle::kill_outcome(situation) {
-            lifecycle::KillOutcome::Confirm { prompt } => {
-                app.confirm = Some(app::Prompt::Kill { name, text: prompt });
+            lifecycle::KillOutcome::Confirm { prompt, disarm } => {
+                // `k` asks two different questions: a live session is killed, a standby row is
+                // disarmed. WHICH is `lifecycle`'s answer, beside the sentence it wrote, so the
+                // prompt and the action it confirms cannot part company.
+                app.confirm = Some(if disarm {
+                    app::Prompt::Disarm { name, text: prompt }
+                } else {
+                    app::Prompt::Kill { name, text: prompt }
+                });
                 AppAction::None
             }
             lifecycle::KillOutcome::Refuse(text) => {
@@ -1125,7 +1380,7 @@ mod main_tests {
         // `Err` is the ordinary ending: the quit is refused, so nothing ends the loop but the
         // event source running out.
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &nowhere().0, Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
 
         assert!(!app.quit, "the session this case hosts is what refuses the quit");
         assert!(app.quit_refusal.is_some(), "and the refusal pane says so");
@@ -1146,7 +1401,7 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![ctrl(KeyCode::Char('c'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -1183,7 +1438,7 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![key(KeyCode::Down), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &nowhere().0, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
         assert!(app.quit, "and q still quits: a retained pass does not hold the keyboard");
@@ -1202,7 +1457,7 @@ mod main_tests {
             key(KeyCode::Char('q')),
         ]);
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &nowhere().0, Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
         let text = echoed(&mut host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
         assert!(text.contains("^[[201~"), "and closed: {text:?}");
@@ -1213,7 +1468,7 @@ mod main_tests {
         let mut events =
             ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -1228,7 +1483,7 @@ mod main_tests {
             ReplayedEvents::stopping(vec![key(KeyCode::BackTab), key(KeyCode::Char('q'))]);
         let (worker_handle, mut controller) = supervision();
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &worker_handle, &mut controller, &mut host, &nowhere().0, Utc::now);
+            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
         assert_eq!(
             controller.hosted_sessions, 1,
             "the drain branch of `reconcile_supervision` is reachable for the first time"
@@ -1398,7 +1653,9 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
+                &mut cerebro_tui::triggers::StartLedger::default(),
                 &nowhere().0,
+                &std::collections::BTreeMap::new(),
                 Utc::now,
             )
             .unwrap_err();
@@ -1426,7 +1683,9 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
+                &mut cerebro_tui::triggers::StartLedger::default(),
                 &nowhere().0,
+                &std::collections::BTreeMap::new(),
                 Utc::now,
             )
             .unwrap_err();
@@ -1455,7 +1714,9 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
+                &mut cerebro_tui::triggers::StartLedger::default(),
                 &nowhere().0,
+                &std::collections::BTreeMap::new(),
                 Utc::now,
             )
             .is_err());
@@ -1495,7 +1756,9 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
+                &mut cerebro_tui::triggers::StartLedger::default(),
                 &nowhere().0,
+                &std::collections::BTreeMap::new(),
                 Utc::now,
             )
             .unwrap();
@@ -1540,7 +1803,7 @@ mod main_tests {
         ]);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work,
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
         assert!(app.quit, "and the last of them still quit");
@@ -1625,7 +1888,7 @@ mod main_tests {
         assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
         assert_eq!(
@@ -1676,7 +1939,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");
@@ -1713,7 +1976,7 @@ mod main_tests {
         let expected = m.session.content_lines.saturating_sub(m.session.viewport_lines);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &nowhere().0, Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
     }
@@ -1881,8 +2144,10 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
         let mut events = QueuedEvents::events(keys);
         // `Err` is the ordinary ending here: the source stops the loop when the keys are spent.
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(),
-            &supervision().0, &mut supervision().1, host, paths, Utc::now);
+            &supervision().0, &mut supervision().1, host, &mut ledger, paths,
+            &std::collections::BTreeMap::new(), Utc::now);
     }
 
 
@@ -1948,7 +2213,7 @@ mod main_tests {
             vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 31, now)],
         );
-        supervise(&mut app, &mut host, &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
 
         assert!(!host.supervisable("Cyclops"), "the session was ended");
         assert!(
@@ -1976,7 +2241,7 @@ mod main_tests {
             vec![stood_row("Storm", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 10, now)],
         );
-        supervise(&mut app, &mut host, &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
 
         assert!(!host.supervisable("Storm"));
         assert!(!flag.exists(), "the next session under that name must not inherit the flag");
@@ -1998,7 +2263,7 @@ mod main_tests {
             vec![stood_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 5_000, now)],
         );
-        supervise(&mut app, &mut host, &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
 
         assert!(state.exists(), "somebody else's session is theirs to end");
         assert_eq!(app.notice, None);
@@ -2019,7 +2284,7 @@ mod main_tests {
             vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 5_000, now)],
         );
-        supervise(&mut app, &mut host, &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
 
         assert!(host.supervisable("Cyclops"), "a read-only view ends nothing");
         assert!(cerebro_tui::lifecycle::state_file_path(&paths, "Cyclops").exists());
@@ -2048,7 +2313,7 @@ mod main_tests {
                     cerebro_tui::model::RowState::Waiting, 31, now),
             ],
         );
-        supervise(&mut app, &mut host, &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
 
         // Ending is what ends the drain, so it still happens.
         assert!(!host.supervisable("Cyclops"));
@@ -2080,14 +2345,14 @@ mod main_tests {
         };
         let mut app = lifecycle_app(supervising(), asking(16 * 60));
         let at = Instant::now();
-        supervise(&mut app, &mut host, &paths, now, at);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, at);
         assert!(app.nudged.contains("Cyclops"));
         assert_eq!(app.notice.as_deref(), Some("Cyclops was asked to hand its question back."));
 
         // The return is sent separately, and only once it is due.
         host.flush_returns(at);
         app.notice = None;
-        supervise(&mut app, &mut host, &paths, now, at);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, at);
         assert_eq!(app.notice, None, "one nudge per question, not one per tick");
         host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
 
@@ -2118,12 +2383,12 @@ mod main_tests {
                 cerebro_tui::model::RowState::Working, 1, now)]),
             now,
         );
-        supervise(&mut app, &mut host, &paths, now, at);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, at);
         assert!(app.nudged.is_empty(), "a name leaves the set as soon as it stops asking");
 
         app.finish_refresh(Ok(asking(16 * 60)), now);
         app.notice = None;
-        supervise(&mut app, &mut host, &paths, now, at);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, at);
         assert_eq!(app.notice.as_deref(), Some("Cyclops was asked to hand its question back."));
     }
 
@@ -2409,5 +2674,424 @@ mod main_tests {
         command.env("TERM", "dumb");
         cerebro_tui::session::Session::spawn_command("child", command, 24, 80)
             .expect("the session spawns")
+    }
+
+    // ---- cb-kcs.4.1: what the view starts by itself --------------------------------------
+
+    fn planner_row(name: &str, state: cerebro_tui::model::RowState) -> cerebro_tui::model::FleetRow {
+        cerebro_tui::model::FleetRow {
+            role: "planner".into(),
+            ..fleet_row(name, cerebro_tui::model::AgentKind::Interactive, state)
+        }
+    }
+
+    fn planner_roster(names: &[&str]) -> Vec<cerebro_tui::model::RosterEntry> {
+        names
+            .iter()
+            .map(|name| cerebro_tui::model::RosterEntry {
+                name: (*name).to_string(),
+                role: "planner".to_string(),
+                kind: cerebro_tui::model::AgentKind::Interactive,
+            })
+            .collect()
+    }
+
+    /// A board with one unplanned P4 bead and nothing planned: a short buffer with something to
+    /// plan, which is the planner's second arm.
+    fn short_buffer() -> cerebro_tui::model::WorkBuckets {
+        cerebro_tui::model::partition_beads(vec![cerebro_tui::model::Bead {
+            id: "cb-a".into(),
+            title: "cb-a".into(),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels: Vec::new(),
+            priority: Some(4),
+            updated_at: None,
+            assignee: None,
+            metadata: serde_json::Value::Null,
+        }])
+    }
+
+    /// An app on standby for NAMES, with the given work snapshot applied.
+    fn standby_app(
+        mode: cerebro_tui::supervisor::SupervisionMode,
+        rows: Vec<cerebro_tui::model::FleetRow>,
+        work: Option<cerebro_tui::model::WorkBuckets>,
+        now: DateTime<Utc>,
+    ) -> App {
+        let mut app = App::with_supervision(mode);
+        app.armed = rows.iter().map(|row| row.name.clone()).collect();
+        app.finish_refresh(Ok(rows), now);
+        if let Some(work) = work {
+            app.finish_work_refresh(Ok(work), now);
+        }
+        app
+    }
+
+    #[test]
+    fn a_standby_planner_whose_buffer_is_short_is_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(short_buffer()),
+            now,
+        );
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+
+        assert!(host.is_live("Xavier"), "the standby planner was started");
+        assert!(app.armed.contains("Xavier"), "and stays armed");
+        assert_eq!(ledger.started_at("Xavier"), Some(now));
+        assert!(ledger.fingerprint("Xavier").is_some(), "with what triggered it");
+        assert_eq!(app.notice.as_deref(), Some("Started Xavier — buffer 0 of 2."));
+        assert_eq!(
+            app.standby_labels.get("Xavier").map(String::as_str),
+            Some("→ buffer<2")
+        );
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
+    }
+
+    #[test]
+    fn two_planners_are_not_started_in_the_same_breath() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier", "Beast"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![
+                planner_row("Xavier", cerebro_tui::model::RowState::Dead),
+                planner_row("Beast", cerebro_tui::model::RowState::Dead),
+            ],
+            Some(short_buffer()),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+
+        // The spacing is read INSIDE the loop, so the second planner already sees the first.
+        assert!(host.is_live("Xavier"));
+        assert!(!host.is_live("Beast"), "the second is held by role-start spacing");
+        assert_eq!(ledger.started_at("Beast"), None);
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
+    }
+
+    #[test]
+    fn a_flagged_standby_name_is_never_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        cerebro_tui::lifecycle::write_stop_flag(&paths, "Xavier").unwrap();
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(short_buffer()),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+
+        assert!(!host.is_live("Xavier"), "a flagged name is never started, whatever its trigger");
+        assert!(
+            cerebro_tui::lifecycle::stop_flag_path(&paths, "Xavier").exists(),
+            "and its flag is left alone"
+        );
+    }
+
+    #[test]
+    fn no_work_snapshot_starts_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            None,
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+
+        assert!(!host.is_live("Xavier"), "no board, no starts");
+    }
+
+    #[test]
+    fn a_draining_view_starts_nothing_and_clears_the_armed_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
+            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
+            live_sessions: 1,
+        };
+        let mut app = standby_app(
+            draining,
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(short_buffer()),
+            now,
+        );
+
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
+        assert!(app.armed.is_empty(), "a drain keeps no promise it will not keep");
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+        assert!(!host.is_live("Xavier"));
+    }
+
+    #[test]
+    fn a_confirmed_disarm_greys_the_row_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut host = SessionHost::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            None,
+            Utc::now(),
+        );
+        app.selected = Some("Xavier".to_string());
+
+        drive(&mut app, &mut host, &paths, vec![ch('k')]);
+        assert!(
+            matches!(&app.confirm, Some(cerebro_tui::app::Prompt::Disarm { name, .. }) if name == "Xavier")
+        );
+        drive(&mut app, &mut host, &paths, vec![ch('y')]);
+
+        assert!(!app.armed.contains("Xavier"), "the name left the armed set");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Xavier is disarmed; the view will not bring it back.")
+        );
+        // And the row greys on the refresh the key asked for: `apply_standby` has nothing left to
+        // restate it from.
+        app.finish_refresh(
+            Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
+            Utc::now(),
+        );
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
+    }
+
+    #[test]
+    fn a_cancelled_disarm_leaves_the_name_armed() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut host = SessionHost::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            None,
+            Utc::now(),
+        );
+        app.selected = Some("Xavier".to_string());
+
+        drive(&mut app, &mut host, &paths, vec![ch('k'), ch('n')]);
+        assert!(app.confirm.is_none(), "anything but y cancels");
+        assert!(app.armed.contains("Xavier"));
+        assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn retiring_a_standby_implementer_disarms_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        cerebro_tui::lifecycle::write_stop_flag(&paths, "Cyclops").unwrap();
+        let mut app = standby_app(
+            supervising(),
+            vec![fleet_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Dead)],
+            None,
+            now,
+        );
+
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
+
+        assert!(!app.armed.contains("Cyclops"), "a retire disarms");
+        assert!(!cerebro_tui::lifecycle::stop_flag_path(&paths, "Cyclops").exists());
+    }
+
+    #[test]
+    fn a_start_that_could_not_spawn_parks_the_row_rather_than_retrying_for_ever() {
+        let dir = tempfile::tempdir().unwrap();
+        // No `launch` in this scratch checkout at all: `lifecycle::start` returns Err, which is
+        // the one refusal path that never becomes a process and so has no exit status to read.
+        std::fs::create_dir_all(dir.path().join(".cerebro/state")).unwrap();
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(short_buffer()),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        assert!(!host.is_live("Xavier"));
+        assert!(
+            host.exits().contains_key("Xavier"),
+            "a spawn that failed is a verdict, or nothing parks the row"
+        );
+
+        // The next fleet read parks it: no blue dotted circle, so no second launch on this or any
+        // later tick. Without a backoff (cb-kcs.4.2's), that is the whole of Q5.
+        app.set_exits(host.exits());
+        app.finish_refresh(
+            Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
+            now,
+        );
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
+
+        // A second tick, a minute later. `is_live` would be false either way in a checkout with
+        // no launcher, so what is asserted is that no SECOND attempt was made: a retry would
+        // replace the refusal with one stamped `later`.
+        let later = now + chrono::Duration::seconds(60);
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, later);
+        match host.sync(Some("Xavier"), 24, 80, later) {
+            cerebro_tui::session::SessionView::Refused { at, .. } => {
+                assert_eq!(at, now, "the row was not started again");
+            }
+            other => panic!("expected the refusal to stand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_roster_that_cannot_be_read_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        // No `roster` at all: nothing is armed, nothing is started, and the navigator is told
+        // why rather than shown a fleet indistinguishable from one that declared neither.
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = App::with_supervision(supervising());
+
+        let notice = arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, &[], Utc::now())
+            .expect("a read that failed is reported");
+
+        assert!(notice.contains("--autostart could not be read"), "{notice}");
+        assert!(notice.contains("--standby could not be read"), "{notice}");
+        assert!(app.armed.is_empty());
+    }
+
+    #[test]
+    fn a_refused_launch_is_never_standby_even_for_one_frame() {
+        let now = Utc::now();
+        let mut app = App::with_supervision(supervising());
+        app.armed = ["Rogue"].into_iter().map(String::from).collect();
+        app.set_exits(
+            [("Rogue".to_string(), cerebro_tui::lifecycle::LastExit::Refused)]
+                .into_iter()
+                .collect(),
+        );
+        app.finish_refresh(
+            Ok(vec![fleet_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Dead)]),
+            now,
+        );
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
+    }
+
+    #[test]
+    fn the_roster_declaration_starts_one_half_and_arms_the_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        write_roster(dir.path(), "Cyclops", "Xavier\nBeast");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = App::with_supervision(supervising());
+
+        let notice = arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, &[], now);
+
+        assert!(host.is_live("Cyclops"), "the autostart half is started");
+        assert!(app.armed.contains("Cyclops"), "and armed by the start");
+        assert!(app.armed.contains("Xavier") && app.armed.contains("Beast"));
+        assert!(!host.is_live("Xavier"), "the standby half is armed without being started");
+        assert_eq!(ledger.started_at("Xavier"), None);
+        assert_eq!(ledger.ended_at("Xavier"), Some(now), "with a moment to count from");
+        assert_eq!(
+            notice.as_deref(),
+            Some("Started Cyclops; Xavier and Beast are on standby.")
+        );
+        host.kill(&paths, "Cyclops");
+        settle_gone(&mut host, "Cyclops");
+    }
+
+    #[test]
+    fn the_startup_line_names_both_halves() {
+        assert_eq!(
+            startup_notice(
+                &["Cyclops".to_string(), "Rogue".to_string()],
+                &["Xavier".to_string(), "Beast".to_string(), "Psylocke".to_string(),
+                  "Cerebro".to_string()],
+                &[],
+            )
+            .as_deref(),
+            Some("Started Cyclops and Rogue; Xavier, Beast, Psylocke and Cerebro are on standby.")
+        );
+        // One half empty drops its clause along with the `; `.
+        assert_eq!(
+            startup_notice(&["Cyclops".to_string()], &[], &[]).as_deref(),
+            Some("Started Cyclops.")
+        );
+        assert_eq!(
+            startup_notice(&[], &["Xavier".to_string()], &[]).as_deref(),
+            Some("Xavier is on standby.")
+        );
+        // The roster declared neither.
+        assert_eq!(startup_notice(&[], &[], &[]), None);
+        // A spacing that could not be parsed is its own sentence.
+        assert_eq!(
+            startup_notice(
+                &[],
+                &["Xavier".to_string()],
+                &["project.conf: role_start_spacing_planner is not a whole number of seconds (\"30s\"); using 30.".to_string()],
+            )
+            .as_deref(),
+            Some("Xavier is on standby. project.conf: role_start_spacing_planner is not a whole number of seconds (\"30s\"); using 30.")
+        );
+    }
+
+    /// A `roster` in the scratch checkout answering the two declaration flags.
+    fn write_roster(dir: &std::path::Path, autostart: &str, standby: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("roster");
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\n  --autostart) printf '{autostart}\\n' ;;\n  --standby) printf '{standby}\\n' ;;\n  *) : ;;\nesac\n"
+            ),
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
     }
 }

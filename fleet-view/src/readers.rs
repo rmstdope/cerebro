@@ -10,6 +10,7 @@
 //! The one thing this module shares with it is the state-file path, which it asks
 //! `lifecycle::state_file_path` for rather than spelling a second time.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -206,6 +207,113 @@ fn read_roster_with_timeout(
         source: program.display().to_string(),
         message: e.to_string(),
     })
+}
+
+
+/// The names `scripts/roster --autostart` lists, in file order - the agents this project wants
+/// started as the view comes up.
+pub fn read_autostart_names(paths: &ReaderPaths) -> Result<Vec<String>, ReadError> {
+    read_autostart_names_with_timeout(paths, COMMAND_TIMEOUT)
+}
+
+fn read_autostart_names_with_timeout(
+    paths: &ReaderPaths,
+    timeout: Duration,
+) -> Result<Vec<String>, ReadError> {
+    read_roster_names(paths, "--autostart", timeout)
+}
+
+/// The names `scripts/roster --standby` lists, in file order - ARMED without being started
+/// (cb-98u). The other half of the same declaration.
+pub fn read_standby_names(paths: &ReaderPaths) -> Result<Vec<String>, ReadError> {
+    read_standby_names_with_timeout(paths, COMMAND_TIMEOUT)
+}
+
+fn read_standby_names_with_timeout(
+    paths: &ReaderPaths,
+    timeout: Duration,
+) -> Result<Vec<String>, ReadError> {
+    read_roster_names(paths, "--standby", timeout)
+}
+
+/// One name per line, blank lines dropped. A read that fails is an error the caller reports and
+/// treats as an empty list: a roster this view cannot read is a fleet it must not start guesses
+/// from.
+fn read_roster_names(
+    paths: &ReaderPaths,
+    flag: &str,
+    timeout: Duration,
+) -> Result<Vec<String>, ReadError> {
+    let program = paths.scripts_dir.join("roster");
+    let stdout = run_with_timeout(&program, &[flag], Some(&paths.consumer_root), timeout)?;
+    let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
+        source: program.display().to_string(),
+        message: e.to_string(),
+    })?;
+    Ok(text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// The `role_start_spacing_<role>` each of ROLES declares, one `scripts/project-conf` call per
+/// distinct role (`cerebro--project-spacing`).
+///
+/// Three things it copies, each already paid for: **stdout only**, because `project-conf` prints
+/// which branch it took to stderr on every call; **a non-zero exit is "declared nothing", not an
+/// error**, since it exits non-zero only for a caller's programming error or a declaration left
+/// at the retired `.claude/` path; and **a value that is not a whole number of seconds is a THIRD
+/// answer**, returned beside the map so the caller can say so out loud once rather than silently
+/// using a fallback.
+///
+/// Runs once, at startup, beside `read_configured_supervisor` - not per tick and not per row.
+pub fn read_role_spacing(
+    paths: &ReaderPaths,
+    roles: &[&str],
+) -> (BTreeMap<String, u64>, Vec<String>) {
+    read_role_spacing_with_timeout(paths, roles, COMMAND_TIMEOUT)
+}
+
+fn read_role_spacing_with_timeout(
+    paths: &ReaderPaths,
+    roles: &[&str],
+    timeout: Duration,
+) -> (BTreeMap<String, u64>, Vec<String>) {
+    let program = paths.scripts_dir.join("project-conf");
+    let mut declared = BTreeMap::new();
+    let mut complaints = Vec::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for role in roles {
+        if !seen.insert(role) {
+            continue;
+        }
+        let key = format!("role_start_spacing_{role}");
+        let Ok(stdout) = run_with_timeout(&program, &[&key], Some(&paths.consumer_root), timeout)
+        else {
+            continue;
+        };
+        let raw = String::from_utf8_lossy(&stdout).trim().to_string();
+        match crate::triggers::parse_spacing(&raw) {
+            Ok(Some(seconds)) => {
+                declared.insert((*role).to_string(), seconds);
+            }
+            Ok(None) => {}
+            Err(bad) => {
+                let fallback = crate::triggers::default_spacing(role);
+                complaints.push(match fallback {
+                    Some(seconds) => format!(
+                        "project.conf: {key} is not a whole number of seconds (\"{bad}\"); using {seconds}."
+                    ),
+                    None => format!(
+                        "project.conf: {key} is not a whole number of seconds (\"{bad}\"); using no spacing."
+                    ),
+                });
+            }
+        }
+    }
+    (declared, complaints)
 }
 
 /// Which implementation this project declares may supervise, from `scripts/fleet-supervisor`
@@ -812,22 +920,50 @@ mod tests {
         }
         assert!(elapsed < Duration::from_secs(10), "it waited for the child to finish: {elapsed:?}");
 
-        // Killed AND waited for: a kill without a wait leaves a zombie, and this process outlives
-        // every refresh it makes. Asked of the process table rather than of a recorded pid, so a
-        // loaded machine cannot make the assertion itself flaky.
+        // Killed AND waited for: a kill without a wait leaves a zombie, and this process
+        // outlives every refresh it makes. Asked about THIS child's own pid - see
+        // `zombie_with_parent`.
+        assert_no_leaked_zombie("the timed-out child");
+    }
+
+    /// Every zombie child of this process, as pids.
+    fn zombie_children() -> Vec<String> {
         let mine = std::process::id().to_string();
-        let table = Command::new("ps").args(["-axo", "stat=,ppid="]).output().unwrap();
-        let table = String::from_utf8_lossy(&table.stdout);
-        let zombies: Vec<&str> = table
+        let table = Command::new("ps").args(["-axo", "pid=,stat=,ppid="]).output().unwrap();
+        String::from_utf8_lossy(&table.stdout)
             .lines()
-            .filter(|line| {
+            .filter_map(|line| {
                 let mut fields = line.split_whitespace();
+                let pid = fields.next().unwrap_or("");
                 let stat = fields.next().unwrap_or("");
                 let ppid = fields.next().unwrap_or("");
-                stat.starts_with('Z') && ppid == mine
+                (stat.starts_with('Z') && ppid == mine).then(|| pid.to_string())
             })
-            .collect();
-        assert!(zombies.is_empty(), "the timed-out child was left as a zombie: {zombies:?}");
+            .collect()
+    }
+
+    /// Assert that no zombie child of this process OUTLIVES a short wait.
+    ///
+    /// A single snapshot was the fragile version, and it went red on this branch the moment two
+    /// more spawning cases joined the suite (cb-kcs.4.1): cargo runs these tests as threads of
+    /// one process, and EVERY `run_with_timeout` anywhere leaves its child a zombie for the
+    /// window between the child's exit and its own `wait_timeout` returning - so a snapshot taken
+    /// during somebody else's window fails a case that leaked nothing. Somebody else's zombie is
+    /// reaped within milliseconds; a leaked one never is. So this polls, and a moment with none
+    /// is the proof.
+    fn assert_no_leaked_zombie(what: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let zombies = zombie_children();
+            if zombies.is_empty() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what} was left as a zombie: {zombies:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// A child that writes more than one pipe buffer and then exits is read whole: both pipes are
@@ -1039,18 +1175,85 @@ mod tests {
         }
         assert!(elapsed < Duration::from_secs(10), "it waited for the child: {elapsed:?}");
 
-        let mine = std::process::id().to_string();
-        let table = Command::new("ps").args(["-axo", "stat=,ppid="]).output().unwrap();
-        let table = String::from_utf8_lossy(&table.stdout);
-        let zombies: Vec<&str> = table
-            .lines()
-            .filter(|line| {
-                let mut fields = line.split_whitespace();
-                let stat = fields.next().unwrap_or("");
-                let ppid = fields.next().unwrap_or("");
-                stat.starts_with('Z') && ppid == mine
-            })
-            .collect();
-        assert!(zombies.is_empty(), "the timed-out bd was left as a zombie: {zombies:?}");
+        assert_no_leaked_zombie("the timed-out bd");
+    }
+
+    // --- the roster's declaration and the project's spacing (cb-kcs.4.1) -----------------------
+
+    #[test]
+    fn the_roster_declares_what_to_start_and_what_to_arm() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        write_executable(
+            &scripts,
+            "roster",
+            r#"#!/bin/sh
+case "$1" in
+  --autostart) printf 'Cyclops\nRogue\n' ;;
+  --standby)   printf 'Xavier\nBeast\n' ;;
+  *)           printf 'Cyclops\timplementer\timplementer\n' ;;
+esac
+"#,
+        );
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: scripts,
+        };
+
+        assert_eq!(
+            retry_if_text_busy(|| read_autostart_names_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
+            vec!["Cyclops".to_string(), "Rogue".to_string()]
+        );
+        assert_eq!(
+            retry_if_text_busy(|| read_standby_names_with_timeout(&paths, TEST_TIMEOUT)).unwrap(),
+            vec!["Xavier".to_string(), "Beast".to_string()]
+        );
+    }
+
+    #[test]
+    fn project_conf_declares_the_role_spacing_and_names_a_bad_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        // stderr on every call, which is what `project-conf` itself does: folding it into the
+        // value would make every key unparseable.
+        write_executable(
+            &scripts,
+            "project-conf",
+            r#"#!/bin/sh
+echo "read from .cerebro/project.conf" >&2
+case "$1" in
+  role_start_spacing_planner)     printf '45\n' ;;
+  role_start_spacing_implementer) printf '30s\n' ;;
+  role_start_spacing_verifier)    exit 1 ;;
+  *)                              printf '\n' ;;
+esac
+"#,
+        );
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: scripts,
+        };
+
+        let (declared, complaints) = read_role_spacing_with_timeout(
+            &paths,
+            &["planner", "implementer", "verifier", "orchestrator"],
+            TEST_TIMEOUT,
+        );
+        assert_eq!(declared.get("planner"), Some(&45));
+        // A non-zero exit is "declared nothing", not an error.
+        assert_eq!(declared.get("verifier"), None);
+        assert_eq!(declared.get("orchestrator"), None);
+        // A value that is not a whole number of seconds is a third answer, said out loud once.
+        assert_eq!(declared.get("implementer"), None);
+        assert_eq!(
+            complaints,
+            vec![
+                "project.conf: role_start_spacing_implementer is not a whole number of seconds (\"30s\"); using 30.".to_string()
+            ]
+        );
     }
 }

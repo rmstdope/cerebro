@@ -13,7 +13,7 @@
 //! Marker parser contract: subscribed to `tests/lib/session-args.cases` via
 //! `scripts/marker-readers`, and pinned by the `session_marker_cases_match_all_rows` test below.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -325,8 +325,46 @@ pub enum RowState {
     Idle,
     Up,
     Dead,
+    /// No session, and a trigger will start one. Never a state file's word -
+    /// `scripts/agent-state` refuses `standby` like any unknown word, and `row_state_for` must
+    /// NOT learn it. The only producer is `apply_standby`, exactly as `cerebro--apply-standby`
+    /// (`emacs/cerebro.el`) is the only producer in elisp and `cerebro--derive` never is: the
+    /// state file was deleted when the view ended the session, so a name with no file and no
+    /// process is what a derivation calls `Dead`, and only the armed set can say otherwise.
+    Standby,
     Unknown(String),
     Invalid,
+}
+
+/// ROWS with every armed, dead row restated as `RowState::Standby`.
+///
+/// The port of `cerebro--apply-standby`. Pure, and run on the rows a successful fleet read
+/// produced, before they reach the pane.
+///
+/// `armed` is `App::armed`. `failed` is every name with a recorded abnormal exit: a launch that
+/// was refused died the moment it started, and a row promising a trigger was coming would say
+/// something untrue for as long as the refusal stood. **Any** abnormal exit keeps the row `Dead`
+/// with its verdict, where `M-x cerebro` sends a silent crash back to standby - because the
+/// backoff that makes retrying safe is cb-kcs.4.2's, and without it a silently crashing agent
+/// would be relaunched every five seconds.
+///
+/// Emacs additionally excludes an `external` agent here. There is no counterpart and none is
+/// needed: this only touches `RowState::Dead`, which already means no live process anywhere under
+/// any name, so nothing external can reach it.
+pub fn apply_standby(
+    rows: Vec<FleetRow>,
+    armed: &BTreeSet<String>,
+    failed: &BTreeSet<String>,
+) -> Vec<FleetRow> {
+    rows.into_iter()
+        .map(|mut row| {
+            if row.state == RowState::Dead && armed.contains(&row.name) && !failed.contains(&row.name)
+            {
+                row.state = RowState::Standby;
+            }
+            row
+        })
+        .collect()
 }
 
 /// One row of the fleet view.
@@ -1010,5 +1048,54 @@ mod tests {
             let bead = Bead { metadata, ..bead("odd", "open", "feature", &["human"]) };
             assert_eq!(bead.paused_at(), None, "an unusable value is no time at all");
         }
+    }
+
+    // --- standby -------------------------------------------------------------------------------
+
+    fn standby_row(name: &str, state: RowState) -> FleetRow {
+        FleetRow {
+            name: name.into(),
+            role: "planner".into(),
+            kind: AgentKind::Interactive,
+            state,
+            phase: None,
+            bead: None,
+            since: None,
+            phase_since: None,
+            pid: None,
+            sessions: 0,
+            diagnostic: None,
+        }
+    }
+
+    #[test]
+    fn an_armed_dead_row_is_restated_as_standby() {
+        let rows = vec![
+            standby_row("Xavier", RowState::Dead),
+            standby_row("Beast", RowState::Dead),
+            standby_row("Rogue", RowState::Working),
+            standby_row("Cerebro", RowState::Dead),
+        ];
+        let armed: BTreeSet<String> = ["Xavier", "Beast", "Rogue"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        // Beast's launch was refused: a row promising a trigger is coming would be untrue.
+        let failed: BTreeSet<String> = ["Beast"].into_iter().map(String::from).collect();
+
+        let out = apply_standby(rows, &armed, &failed);
+        assert_eq!(out[0].state, RowState::Standby);
+        assert_eq!(out[1].state, RowState::Dead);
+        assert_eq!(out[2].state, RowState::Working);
+        // Unarmed and dead stays dead.
+        assert_eq!(out[3].state, RowState::Dead);
+    }
+
+    #[test]
+    fn a_state_file_can_never_produce_standby() {
+        assert_eq!(
+            row_state_for("standby"),
+            RowState::Unknown("standby".to_string())
+        );
     }
 }

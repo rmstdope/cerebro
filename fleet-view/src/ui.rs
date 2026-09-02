@@ -686,7 +686,12 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
             Some(if focused { "[Shift-Tab leaves]" } else { "[Tab to focus]" }),
         ),
         SessionView::Ended { at, .. } => (
-            format!("{name} — ended {}", at.format("%H:%M")),
+            // A standby row and its pane use one word for one agent (Q1 of cb-kcs.4.1).
+            if standby_row(app, &name) {
+                format!("{name} — standby")
+            } else {
+                format!("{name} — ended {}", at.format("%H:%M"))
+            },
             Some("[retained until next start]"),
         ),
         // No hint: the body's own last line says what to press, and the red title is the report.
@@ -702,6 +707,15 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
         spans.push(Span::styled(format!(" {hint}"), dim()));
     }
     Line::from(spans)
+}
+
+/// Is NAME's fleet row on standby?
+fn standby_row(app: &App, name: &str) -> bool {
+    app.fleet
+        .content
+        .value()
+        .and_then(|rows| rows.iter().find(|row| row.name == name))
+        .is_some_and(|row| row.state == RowState::Standby)
 }
 
 /// `<Name> — <phase> <bead>`, `<Name> — <phase>`, or `<Name>`, from the selected fleet row.
@@ -778,10 +792,21 @@ fn fleet_document(
     let body = crate::app::fleet_body(&app.fleet.content);
     let empty: Vec<FleetRow> = Vec::new();
     let rows = app.fleet.content.value().unwrap_or(&empty);
-    let columns = columns(rows, width);
+    let columns = columns(rows, width, &app.standby_labels);
     let inner_width = (width as usize).saturating_sub(2);
     body.iter()
-        .map(|entry| fleet_body_line(entry, rows, &columns, inner_width, now, selected, &app.exits))
+        .map(|entry| {
+            fleet_body_line(
+                entry,
+                rows,
+                &columns,
+                inner_width,
+                now,
+                selected,
+                &app.exits,
+                &app.standby_labels,
+            )
+        })
         .collect()
 }
 
@@ -795,6 +820,7 @@ fn fleet_body_line(
     now: DateTime<Utc>,
     selected: Option<usize>,
     exits: &BTreeMap<String, LastExit>,
+    standby_labels: &BTreeMap<String, String>,
 ) -> Line<'static> {
     match entry {
         FleetBodyLine::Loading => Line::from(Span::styled("Loading fleet...", dim())),
@@ -814,7 +840,15 @@ fn fleet_body_line(
         FleetBodyLine::Heading => heading(columns),
         FleetBodyLine::Row(index) => {
             let row = &rows[*index];
-            let mut line = row_line(row, now, columns, exits.get(&row.name).copied());
+            let mut line = row_line(
+                row,
+                now,
+                columns,
+                exits.get(&row.name).copied(),
+                (row.state == RowState::Standby)
+                    .then(|| standby_labels.get(&row.name).map(String::as_str))
+                    .flatten(),
+            );
             if selected == Some(*index) {
                 // Padded across the pane's whole inner width so the highlight is a band rather
                 // than a ragged one. A Line-level style sits BENEATH each span's own, so the row
@@ -1062,14 +1096,33 @@ struct Columns {
 /// Column widths from the data, with this project's floors - the same rule
 /// `cerebro--column-widths` follows, and for the same reason: a width is a fact about the roster
 /// in front of the navigator, not a setting they should have to find.
-fn columns(rows: &[FleetRow], width: u16) -> Columns {
+/// The standby labels are passed in because they occupy the BEAD column too: `→ buffer<10` is
+/// eleven cells and the column takes them, since it sizes to its widest entry and only falls back
+/// to the floor when the pane cannot spare more.
+fn columns(
+    rows: &[FleetRow],
+    width: u16,
+    standby_labels: &BTreeMap<String, String>,
+) -> Columns {
     let longest = |values: Vec<usize>| values.into_iter().max().unwrap_or(0);
     let natural_agent = AGENT_FLOOR.max(2 + longest(rows.iter().map(|r| r.name.chars().count()).collect()));
     let natural_role = ROLE_FLOOR.max(1 + longest(rows.iter().map(|r| r.role.chars().count()).collect()));
     let natural_bead = BEAD_FLOOR.max(
         1 + longest(
             rows.iter()
-                .map(|r| r.bead.as_deref().unwrap_or("").chars().count())
+                .map(|r| {
+                    let bead = r.bead.as_deref().unwrap_or("").width();
+                    if r.state == RowState::Standby {
+                        bead.max(
+                            standby_labels
+                                .get(&r.name)
+                                .map(|label| label.width())
+                                .unwrap_or(0),
+                        )
+                    } else {
+                        bead
+                    }
+                })
                 .collect(),
         ),
     );
@@ -1136,6 +1189,10 @@ fn glyph(state: &RowState) -> Span<'static> {
         RowState::Unknown(_) => Span::styled("●", Style::default().fg(GOLD)),
         RowState::Invalid => Span::styled("!", Style::default().fg(RED)),
         RowState::Dead => Span::styled("○", dim()),
+        // Hollow rather than the filled diamond `Idle` gets, and blue rather than `Dead`'s grey:
+        // somebody IS coming back, so it is not grey's "nobody is there", and nothing is running
+        // here, where an idle agent has a session up with no bead.
+        RowState::Standby => Span::styled("◌", Style::default().fg(BLUE)),
     }
 }
 
@@ -1151,6 +1208,7 @@ fn state_label(row: &FleetRow) -> String {
         RowState::Idle => "idle".to_string(),
         RowState::Up => "up".to_string(),
         RowState::Dead => "dead".to_string(),
+        RowState::Standby => "standby".to_string(),
         RowState::Invalid => "invalid".to_string(),
     }
 }
@@ -1196,6 +1254,7 @@ fn row_line(
     now: DateTime<Utc>,
     columns: &Columns,
     exit: Option<LastExit>,
+    standby_label: Option<&str>,
 ) -> Line<'static> {
     // Bold is the row-level signal, and it is spent on exactly one state: an agent waiting for an
     // answer from the navigator (`cerebro--wants-attention-p`).
@@ -1223,12 +1282,18 @@ fn row_line(
     // flight is not one that has exited. The verdict is red on a row that is otherwise dim, and a
     // span of its own, so the selection band sits beneath it and the colour survives being
     // selected - the rule the state glyph already follows.
-    match exit {
-        Some(exit) => spans.push(Span::styled(
+    // A row shows a bead, or a verdict, or a standby condition, and never two: `apply_standby`
+    // refuses to restate a failed name, and a standby row has no bead.
+    match (exit, standby_label) {
+        (Some(exit), _) => spans.push(Span::styled(
             pad(&crate::lifecycle::verdict(exit), columns.bead),
             emphasized(Style::default().fg(RED), attention),
         )),
-        None => spans.push(Span::styled(
+        (None, Some(label)) => spans.push(Span::styled(
+            pad(label, columns.bead),
+            emphasized(Style::default().fg(BLUE), attention),
+        )),
+        (None, None) => spans.push(Span::styled(
             pad(row.bead.as_deref().unwrap_or(""), columns.bead),
             emphasized(Style::default(), attention),
         )),
@@ -3169,6 +3234,83 @@ mod tests {
         assert!(
             metrics.work.content_lines > metrics.work.viewport_lines,
             "the work sections are below the fold, and scrolling is what reaches them"
+        );
+    }
+
+    // --- the standby row (cb-kcs.4.1) -----------------------------------------------------------
+
+    #[test]
+    fn a_standby_row_is_a_blue_dotted_circle_and_its_condition() {
+        let mut app = App::new();
+        app.armed = ["Beast"].into_iter().map(String::from).collect();
+        app.finish_refresh(
+            Ok(vec![
+                row("Beast", "planner", RowState::Dead),
+                working("Xavier", "planner", "plan", "cb-kcs"),
+            ]),
+            at(86_400),
+        );
+        app.set_standby_labels(
+            [("Beast".to_string(), "→ buffer<4".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        app.selected = Some("Beast".to_string());
+
+        let buffer = render(&app, 120, 24);
+        let rendered = body(&buffer);
+        let line = line_with(&rendered, "Beast");
+        assert!(line.contains('◌'), "{rendered:?}");
+        assert!(line.contains("standby"), "{rendered:?}");
+        assert!(line.contains("→ buffer<4"), "{rendered:?}");
+
+        let glyph = style_of(&buffer, "◌");
+        assert_eq!(glyph.fg, Some(BLUE));
+        let condition = style_where(&buffer, "→ buffer<4");
+        assert_eq!(condition.fg, Some(BLUE));
+        // Its own span, so the selection band sits beneath it and the colour survives.
+        assert_eq!(condition.bg, Some(SELECTED_BG));
+        assert_eq!(glyph.bg, Some(SELECTED_BG));
+    }
+
+    #[test]
+    fn a_ten_implementer_fleet_still_reads_its_whole_condition() {
+        // `→ buffer<10` is eleven cells; the column takes them rather than truncating to the lie
+        // `→ buffer<1`.
+        let mut app = App::new();
+        app.armed = ["Beast"].into_iter().map(String::from).collect();
+        app.finish_refresh(Ok(vec![row("Beast", "planner", RowState::Dead)]), at(86_400));
+        app.set_standby_labels(
+            [("Beast".to_string(), "→ buffer<10".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let rendered = body(&render(&app, 120, 24));
+        assert!(line_with(&rendered, "Beast").contains("→ buffer<10"), "{rendered:?}");
+    }
+
+    #[test]
+    fn a_standby_session_pane_says_standby() {
+        let mut app = App::new();
+        app.armed = ["Beast"].into_iter().map(String::from).collect();
+        app.finish_refresh(Ok(vec![row("Beast", "planner", RowState::Dead)]), at(86_400));
+        app.selected = Some("Beast".to_string());
+        app.set_session_view(SessionView::Ended {
+            at: now(),
+            lines: std::sync::Arc::new(vec![Line::from("a retained pass")]),
+        });
+
+        // The Session pane's title sits in its own right-hand border row, which `body` folds
+        // into the Fleet pane's title line - so this reads the raw screen.
+        let rendered = lines(&render(&app, 120, 24));
+        assert!(
+            rendered.iter().any(|line| line.contains("Beast — standby")),
+            "{rendered:?}"
+        );
+        assert!(
+            !rendered.iter().any(|line| line.contains("Beast — ended")),
+            "{rendered:?}"
         );
     }
 }

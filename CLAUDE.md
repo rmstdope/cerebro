@@ -536,14 +536,19 @@ declaring itself.
 ## fleet-view/ — the standalone read-only view
 
 `.claude/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
-same fleet and the same six work queues as `M-x cerebro`. It writes no state file and no bead, and
-evaluates no trigger — **and since cb-kcs.1 what it may do at all is a consequence of what the
+same fleet and the same six work queues as `M-x cerebro`. It writes no state file and no bead — **and
+since cb-kcs.1 what it may do at all is a consequence of what the
 project declares rather than of what the program can do.** Since cb-kcs.3 it acts unattended on
 the sessions it hosts where a project declares it the supervisor: it ends one whose pass is over
 after `END_GRACE_SECONDS`, retires one under a stop flag and clears the flag with it, deletes the
 state file of every session it ends, and types one line into an implementer whose question nobody
-answered — held to `tests/lib/supervise.cases`, which `cerebro--supervise-action` answers too. It
-still starts nothing on its own, and triggers, arming and the `standby` row remain cb-kcs.4's.
+answered — held to `tests/lib/supervise.cases`, which `cerebro--supervise-action` answers too.
+Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart`/`standby`
+declaration is honoured as the view comes up, and the board-backed triggers for the planner,
+implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a
+per-role wake floor, the unchanged-work fingerprint and role-start spacing, and disarmed by `k` or
+by a retire. Retry backoff, the GitHub-backed roles and both JSONL logs remain cb-kcs.4.2, .3
+and .4's.
 
 **Exactly one view supervises, and `.cerebro/project.conf` says which** (`fleet_supervisor
 emacs|tui`, absent means `emacs`, so every consumer that predates the key is untouched).

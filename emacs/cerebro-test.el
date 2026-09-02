@@ -8752,7 +8752,7 @@ here rather than taken from whatever the running fleet is customised to."
         (now (current-time))
         (cerebro-end-grace 30)
         (cerebro-answer-timeout 900))
-    (should (>= (length rows) 30))
+    (should (>= (length rows) 34))
     (dolist (row rows)
       (pcase-let* ((`(,kind ,state ,ours ,stop ,ends-pass ,stood ,action) row)
                    (cerebro-idle-ends-pass-roles
@@ -8762,7 +8762,13 @@ here rather than taken from whatever the running fleet is customised to."
                            :role (if (equal ends-pass "yes") "ends-pass" "planner")
                            :kind (intern kind)
                            :state (intern state)
-                           :external (not (equal ours "yes"))
+                           ;; `ours' is Emacs's `external' inverted everywhere but on a
+                           ;; `standby' row, which hosts no session at all: `ours' is `no'
+                           ;; there and `external' is still nil, because external means "up
+                           ;; somewhere else" and a standby row is up nowhere.  The table's
+                           ;; header says so.
+                           :external (and (not (equal state "standby"))
+                                          (not (equal ours "yes")))
                            :since (unless (equal stood "none")
                                     (format-time-string
                                      "%Y-%m-%dT%H:%M:%SZ"

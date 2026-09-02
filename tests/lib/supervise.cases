@@ -15,15 +15,24 @@
 # THE COLUMNS, tab- or space-separated, in order:
 #
 #   kind            `interactive' or `implementer' - the roster kind.
-#   state           `working' `idle' `waiting' `asking' `dead' `up' `unknown' - the derived row
-#                   state. NOTE: `standby' is deliberately NOT a value here. The Rust `RowState'
-#                   has no such variant until cb-kcs.4 adds it with the row, so
-#                   `cerebro-test/supervise-retires-a-standby-implementer-under-a-stop-flag'
-#                   stays an Emacs-only case and cb-kcs.4 adds its rows here.
+#   state           `working' `idle' `waiting' `asking' `dead' `up' `unknown' `standby' - the
+#                   derived row state. `standby' arrived with cb-kcs.4.1, which gave the Rust
+#                   `RowState' the variant and the row its blue dotted circle.
 #   ours            `yes' when THIS view holds a live session for the agent. This is Emacs's
 #                   `external' inverted (external = (not ours)): the two implementations answer
 #                   the same question with opposite polarity, and the table speaks the positive
 #                   one.
+#
+#                   THE ONE EXCEPTION IS `standby', and a reader that assumes the guard wraps
+#                   everything will read those rows as a mistake. A standby row hosts no session,
+#                   so `ours' is `no' on every one of them - and the first still answers `retire'.
+#                   The two implementations agree because each guards on a different question:
+#                   Rust's `ours' is "do I host a session I have not already stopped", and its
+#                   standby arm sits AHEAD of that guard; Emacs's `external' is "up somewhere
+#                   else", which a standby row is not, so its own guard lets the arm through. The
+#                   question a standby row asks is neither - it is "is this name mine to disarm",
+#                   and it is, by construction: the only way a row becomes `standby' is by being
+#                   in this view's own armed set.
 #   stop_flag       `yes' when `.cerebro/state/<name>.stop' exists.
 #   idle_ends_pass  `yes' when this row's role is one whose `idle' means "my pass is over"
 #                   (`cerebro-idle-ends-pass-roles', empty in this fleet).
@@ -108,3 +117,11 @@ implementer   unknown   yes  yes  no   5000   none
 interactive   working   yes  yes  no   5000   none
 interactive   dead      yes  no   no   5000   none
 interactive   up        yes  yes  no   5000   none
+
+# Standby: no session hosted anywhere, so `ours' is `no' - and a flagged implementer is still
+# disarmed rather than retried, because a stop flag written before its session died still says
+# *no further bead* (cb-hzs). An interactive standby row's flag belongs to the start path.
+implementer   standby   no   yes  no   none   retire
+implementer   standby   no   no   no   none   none
+interactive   standby   no   yes  no   none   none
+interactive   standby   no   no   no   none   none

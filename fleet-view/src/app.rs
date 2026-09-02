@@ -1934,4 +1934,42 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Xavier");
     }
+
+    // --- the gh pane (cb-kcs.4.3) --------------------------------------------------------------
+
+    #[test]
+    fn a_gh_failure_is_stale_then_answers_again() {
+        let mut app = App::default();
+        assert_eq!(app.gh_answer(), GhAnswer::Unanswered, "before the first request");
+
+        let snapshot = GhSnapshot { me: Some("navigator".into()), ..GhSnapshot::default() };
+        app.finish_gh_refresh(Ok(snapshot.clone()), at(1));
+        assert_eq!(app.gh_answer(), GhAnswer::Answered(snapshot.clone()));
+
+        // A failure keeps the value worth reading and is still `Failed` to a trigger: the last
+        // good answer stands, and the ORDER of the two is what says it is not current.
+        app.finish_gh_refresh(Err(bd_failure()), at(2));
+        assert_eq!(app.gh_answer(), GhAnswer::Failed);
+        assert!(app.gh.content.value().is_some(), "and the value is kept");
+
+        app.finish_gh_refresh(Ok(snapshot.clone()), at(3));
+        assert_eq!(app.gh_answer(), GhAnswer::Answered(snapshot));
+
+        let mut fresh = App::default();
+        fresh.finish_gh_refresh(Err(bd_failure()), at(1));
+        assert_eq!(fresh.gh_answer(), GhAnswer::Failed, "a failure with nothing to keep");
+    }
+
+    #[test]
+    fn gh_has_its_own_ten_minute_clock() {
+        let mut app = App::default();
+        let start = Instant::now();
+        assert!(app.gh_due(start), "never asked");
+        assert!(app.begin_gh_refresh(start));
+        assert!(!app.begin_gh_refresh(start), "a request in flight is not stacked");
+        assert!(!app.gh_due(start + GH_REFRESH_INTERVAL - Duration::from_secs(1)));
+        assert!(app.gh_due(start + GH_REFRESH_INTERVAL));
+        // The five-second tick never carries it.
+        assert!(!app.gh_due(start + FLEET_REFRESH_INTERVAL));
+    }
 }

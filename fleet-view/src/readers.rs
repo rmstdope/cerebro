@@ -1322,4 +1322,93 @@ esac
             ]
         );
     }
+
+    // --- the gh reader (cb-kcs.4.3) ------------------------------------------------------------
+
+    /// A fake `gh` that records each invocation's argv under `$dir/argv.log` and prints canned
+    /// JSON per subcommand. Nothing here may reach the network, which `Programs::gh` guarantees.
+    fn fake_gh(dir: &Path, me_exit: u8) -> PathBuf {
+        write_executable(
+            dir,
+            "gh",
+            &format!(
+                r#"#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$(dirname "$0")/argv.log"
+case "$1 $2" in
+  "issue list") echo '[{{"number":212,"updatedAt":"2026-09-01T10:00:00Z"}}]' ;;
+  "pr list") echo '[{{"number":244,"updatedAt":"2026-09-01T10:00:00Z","isDraft":false,"author":{{"login":"someone"}}}}]' ;;
+  "api user") [ {me_exit} -ne 0 ] && exit {me_exit}; echo navigator ;;
+esac
+"#
+            ),
+        )
+    }
+
+    fn gh_paths(dir: &Path) -> ReaderPaths {
+        ReaderPaths {
+            consumer_root: dir.to_path_buf(),
+            shared_root: dir.to_path_buf(),
+            scripts_dir: dir.join("scripts"),
+        }
+    }
+
+    #[test]
+    fn gh_answers_with_what_is_open_and_who_you_are() {
+        let dir = tempfile::tempdir().unwrap();
+        let programs = Programs { gh: fake_gh(dir.path(), 0), ..Programs::default() };
+        let paths = gh_paths(dir.path());
+        let mut me = None;
+
+        let snapshot = read_gh(&paths, &programs, &mut me).expect("a fixture gh answers");
+        assert_eq!(snapshot.issues[0].number, 212);
+        assert_eq!(snapshot.prs[0].number, 244);
+        assert_eq!(snapshot.me.as_deref(), Some("navigator"));
+
+        let argv = std::fs::read_to_string(dir.path().join("argv.log")).unwrap();
+        let lines: Vec<&str> = argv.lines().collect();
+        assert_eq!(lines[0], GH_ISSUES_ARGV.join(" "));
+        assert_eq!(lines[1], GH_PRS_ARGV.join(" "));
+        assert_eq!(lines[2], GH_ME_ARGV.join(" "));
+
+        // The login answers the same thing for the life of the process, so it is asked for until
+        // it answers and then never again.
+        read_gh(&paths, &programs, &mut me).expect("a second read");
+        let argv = std::fs::read_to_string(dir.path().join("argv.log")).unwrap();
+        assert_eq!(
+            argv.lines().filter(|l| *l == GH_ME_ARGV.join(" ")).count(),
+            1,
+            "the learnt login is not asked for again"
+        );
+    }
+
+    #[test]
+    fn a_failed_issue_list_is_a_failed_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let broken = write_executable(
+            dir.path(),
+            "gh",
+            "#!/usr/bin/env bash
+echo 'gh: rate limited' >&2
+exit 1
+",
+        );
+        let programs = Programs { gh: broken, ..Programs::default() };
+        let mut me = None;
+        let err = read_gh(&gh_paths(dir.path()), &programs, &mut me).unwrap_err();
+        match err {
+            ReadError::Exit { stderr, .. } => assert!(stderr.contains("rate limited")),
+            other => panic!("expected Exit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_failed_login_leaves_the_lists_answering() {
+        let dir = tempfile::tempdir().unwrap();
+        let programs = Programs { gh: fake_gh(dir.path(), 4), ..Programs::default() };
+        let mut me = None;
+        let snapshot =
+            read_gh(&gh_paths(dir.path()), &programs, &mut me).expect("the two lists answered");
+        assert_eq!(snapshot.issues.len(), 1);
+        assert_eq!(snapshot.me, None, "and the login is still unknown");
+    }
 }

@@ -640,7 +640,12 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   both pipes drained on their own threads before anything waits — a child that fills a pipe while
   the parent waits is a deadlock no timeout can see. `read_fleet` and `read_work` are the two
   aggregate reads, and **a failure is never an empty answer**: `Ok(vec![])` would draw a fleet in
-  which every agent is dead, and `Ok(WorkBuckets::default())` a board with nothing on it.
+  which every agent is dead, and `Ok(WorkBuckets::default())` a board with nothing on it. Since
+  cb-kcs.4.3 `read_gh` is a third reader — three `gh` calls on their own ten-minute cadence, each
+  bounded at thirty seconds because these are network calls — and it is what starts the roles whose
+  work arrives from outside the fleet. Its pane is never drawn: its four content states are exactly
+  what tells a trigger "no answer yet" (no suffix) from "the last request failed" (`gh?` on Moira's
+  and Cypher's rows, and their hourly floor alone).
 - `app.rs` — the display state, the two independent cadences (fleet every 5s, work every 30s) and
   one worker thread per pane. The panes are independent all the way down: one in-flight slot each,
   one clock each, one `Pane<T>` state machine each. A global busy bit would let the five-second

@@ -4,8 +4,9 @@
 //! `gh` and `scripts/fleet-supervisor`. Since cb-kcs.2.3 it also WRITES to two of the
 //! fleet's contracts, and only through `lifecycle`: it creates and removes an
 //! agent's stop flag, and it deletes the state file of a session it is ending
-//! or replacing. It never writes a state file - `scripts/agent-state` is the
-//! one author of those. Since cb-kcs.3 it also acts UNATTENDED on the sessions
+//! or replacing, and it appends to the two JSONL logs beside them
+//! (`decisions.jsonl` and `errors.jsonl`, cb-kcs.4.4). It never writes a state
+//! file - `scripts/agent-state` is the one author of those. Since cb-kcs.3 it also acts UNATTENDED on the sessions
 //! it hosts: it ends one whose pass is over, retires one under a stop flag and
 //! clears the flag with it, and types one line into an implementer whose
 //! question nobody answered.
@@ -54,6 +55,7 @@
 
 pub mod app;
 pub mod lifecycle;
+pub mod log;
 pub mod model;
 pub mod readers;
 pub mod session;
@@ -85,5 +87,9 @@ pub use app::{
 pub use lifecycle::{
     finish_outcome, join_names, kill_outcome, quit_refusal_lines, quit_refusal_title,
     start, start_outcome, FinishOutcome, KillOutcome, Situation, StartOutcome,
+};
+pub use log::{
+    log_evaluation_p, log_event_p, log_file, log_line, log_rotate_p, reader_context, Event, Logger,
+    Verbosity, GENERATIONS, MAX_BYTES, VERBOSITY,
 };
 pub use ui::{draw, metrics};

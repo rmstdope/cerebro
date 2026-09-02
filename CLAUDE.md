@@ -558,7 +558,13 @@ counts the wait down in place of its condition — and is abandoned after five c
 that produced no pass, which disarms the name and leaves `s` as the only way back; a launcher
 refusal is parked from the first failure, where a silent crash is retried. Since cb-kcs.4.3 the
 three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own
-cadence and an hourly floor each. Both JSONL logs remain cb-kcs.4.4's.
+cadence and an hourly floor each. Since cb-kcs.4.4 all of it is written down, in the same two
+append-only files `M-x cerebro` writes: `decisions.jsonl` — a line per start (with the trigger that
+fired), end, retire, nudge, arm, exit and give-up, plus, at the verbosity this view compiles in, a
+line per trigger evaluation per armed row per tick carrying what the trigger read and which guard
+held it — and `errors.jsonl`, one line per outage rather than per failed read, naming the pane or
+the name it came from. One policy rotates both; the writer is silent and unable to fail; and a
+read-only view writes neither file, since it decides nothing.
 
 **Exactly one view supervises, and `.cerebro/project.conf` says which** (`fleet_supervisor
 emacs|tui`, absent means `emacs`, so every consumer that predates the key is untouched).
@@ -662,6 +668,12 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   work arrives from outside the fleet. Its pane is never drawn: its four content states are exactly
   what tells a trigger "no answer yet" (no suffix) from "the last request failed" (`gh?` on Moira's
   and Cypher's rows, and their hourly floor alone).
+- `log.rs` — the two JSONL files, split the same way: the pure half (`Event::basename`,
+  `log_event_p`, `log_evaluation_p`, `log_rotate_p`, `log_line`, `log_file`, `reader_context`) and
+  one impure `Logger` that owns them. It is the ONLY thing in the crate that writes either, its
+  root is a constructor parameter and never resolved — a logger that found its own root would make
+  every test append to the navigator's live log — and it starts disabled, so a view that comes up
+  read-only has written nothing by its first frame.
 - `app.rs` — the display state, the two independent cadences (fleet every 5s, work every 30s) and
   one worker thread per pane. The panes are independent all the way down: one in-flight slot each,
   one clock each, one `Pane<T>` state machine each. A global busy bit would let the five-second

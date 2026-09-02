@@ -336,6 +336,27 @@ pub enum RowState {
     Invalid,
 }
 
+impl RowState {
+    /// The state word itself. What the row shows, and what cb-kcs.4.4 logs.
+    ///
+    /// NOT `ui::state_label`, which substitutes an implementer's phase for `working`: this is the
+    /// STATE, and the phase is a different fact with a column of its own. An `Unknown` contributes
+    /// the raw word the file carried, which is the whole point of keeping it.
+    pub fn word(&self) -> &str {
+        match self {
+            Self::Working => "working",
+            Self::Asking => "asking",
+            Self::Waiting => "waiting",
+            Self::Idle => "idle",
+            Self::Up => "up",
+            Self::Dead => "dead",
+            Self::Standby => "standby",
+            Self::Invalid => "invalid",
+            Self::Unknown(raw) => raw,
+        }
+    }
+}
+
 /// ROWS with every armed, dead row restated as `RowState::Standby`.
 ///
 /// The port of `cerebro--apply-standby`. Pure, and run on the rows a successful fleet read

@@ -62,6 +62,7 @@ pub mod app;
 pub mod lifecycle;
 pub mod log;
 pub mod model;
+pub mod pruner;
 pub mod readers;
 pub mod session;
 pub mod supervisor;

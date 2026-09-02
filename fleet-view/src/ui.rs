@@ -652,6 +652,14 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     if !app.work_findings().is_empty() {
         keys.push_str(" | x act");
     }
+    // The two clauses of cb-kcs.5.4, by the same rule and for the same reason: both write to the
+    // shared board rather than to this checkout's sessions, so both are shown on a read-only
+    // view. Each only while the cursor is on a row that key acts on.
+    match &app.work_cursor {
+        Some(app::WorkCursor::Bead(_)) => keys.push_str(" | 0-4/+/-/u priority"),
+        Some(app::WorkCursor::More(_)) => keys.push_str(" | Enter show all"),
+        _ => {}
+    }
     let full = format!(
         " | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move{keys} | {refresh_key} | q/Esc/Ctrl-C quit"
     );
@@ -3617,4 +3625,168 @@ mod tests {
         }
     }
 
+
+    // --- History, the widened cursor and the two hint clauses (cb-kcs.5.4) --------------------
+
+    fn history_row(agent: &str, state: &str, open: Option<f64>, median: Option<f64>) -> crate::model::HistoryRow {
+        crate::model::HistoryRow {
+            agent: agent.into(),
+            state: state.into(),
+            open_min: open,
+            median_min: median,
+            ..crate::model::HistoryRow::default()
+        }
+    }
+
+    fn with_history(rows: Vec<crate::model::HistoryRow>) -> App {
+        let mut app = work_app(WorkBuckets::default());
+        app.finish_history_refresh(Ok(rows), at(86_400));
+        app
+    }
+
+    #[test]
+    fn history_is_the_last_section_of_the_work_pane() {
+        let app = with_history(vec![
+            history_row("Cyclops", "working", Some(2.4), Some(21.9)),
+            history_row("Psylocke", "asking", Some(536.6), Some(2.2)),
+            history_row("Beast", "plan", Some(9.0), None),
+            history_row("Xavier", "plan", Some(4.0), Some(3.0)),
+            // Not running: no line, and not counted.
+            history_row("Forge", "sweep", None, Some(3.0)),
+        ]);
+        let rendered = body(&render(&app, 90, 60));
+
+        assert!(line_with(&rendered, "History").starts_with("History 4"), "{rendered:#?}");
+        assert!(
+            index_of(&rendered, "History 4") > index_of(&rendered, "Merged, unverified"),
+            "History is last, the `M-x cerebro` order"
+        );
+        assert!(rendered.iter().any(|l| l.contains("Cyclops working 2m")), "{rendered:#?}");
+        assert!(
+            rendered.iter().any(|l| l.contains("Psylocke asking 537m - long, median 2m")),
+            "{rendered:#?}"
+        );
+        assert!(!rendered.iter().any(|l| l.contains("Forge")), "nothing is running there");
+
+        // The long one is gold, and the ordinary one is not.
+        let buffer = render(&app, 90, 60);
+        assert_eq!(style_where(&buffer, "Psylocke asking").fg, Some(GOLD));
+        assert_ne!(style_where(&buffer, "Cyclops working").fg, Some(GOLD));
+    }
+
+    #[test]
+    fn nothing_running_draws_no_history_section() {
+        let app = with_history(vec![history_row("Forge", "sweep", None, Some(3.0))]);
+        let rendered = body(&render(&app, 140, 40));
+        assert!(!rendered.iter().any(|l| l.contains("History")), "{rendered:#?}");
+    }
+
+    /// A failed run keeps the rows it had and names the script in red beside the header: rows
+    /// hours old would otherwise read as current.
+    #[test]
+    fn a_failed_history_run_names_the_script_beside_its_header() {
+        let mut app = with_history(vec![history_row("Cyclops", "working", Some(2.0), Some(9.0))]);
+        app.finish_history_refresh(
+            Err(ReadError::Invalid { source: "fleet-history".into(), message: "bad json".into() }),
+            at(86_700),
+        );
+        let rendered = body(&render(&app, 140, 40));
+        let line = line_with(&rendered, "History 1");
+        assert!(line.contains("fleet-history failed"), "{line:?}");
+        assert!(rendered.iter().any(|l| l.contains("Cyclops working 2m")), "the rows are kept");
+
+        let buffer = render(&app, 140, 40);
+        assert_eq!(style_where(&buffer, "fleet-history failed").fg, Some(RED));
+    }
+
+    /// And a first failure has nothing to keep and draws no section at all - the ordinary state
+    /// of a machine that has never run the fleet, whose transitions log does not exist.
+    #[test]
+    fn a_first_history_failure_draws_no_section() {
+        let mut app = work_app(WorkBuckets::default());
+        app.finish_history_refresh(
+            Err(ReadError::Exit {
+                source: "fleet-history".into(),
+                status: Some(1),
+                stderr: "no transitions log".into(),
+                stdout: String::new(),
+            }),
+            at(86_400),
+        );
+        let rendered = body(&render(&app, 140, 40));
+        assert!(!rendered.iter().any(|l| l.contains("History")), "{rendered:#?}");
+        assert!(
+            !rendered.iter().any(|l| l.contains("fleet-history failed")),
+            "and no word about it either"
+        );
+    }
+
+    fn beads_app(count: usize) -> App {
+        let mut app = work_app(WorkBuckets {
+            unplanned: (1..=count)
+                .map(|n| bead(&format!("cb-{n:03}"), Some(4), &format!("item {n}")))
+                .collect(),
+            ..WorkBuckets::default()
+        });
+        app.focus = app::PaneFocus::Work;
+        app
+    }
+
+    #[test]
+    fn the_cursor_highlights_a_bead_row() {
+        let mut app = beads_app(3);
+        app.work_cursor = Some(app::WorkCursor::Bead("cb-002".into()));
+        let buffer = render(&app, 140, 40);
+        assert_eq!(style_where(&buffer, "cb-002").bg, Some(SELECTED_BG));
+        assert_ne!(style_where(&buffer, "cb-001").bg, Some(SELECTED_BG));
+    }
+
+    /// `Enter` is advertised only under the cursor: always saying it is noise on every frame, and
+    /// never saying it means nobody finds it.
+    #[test]
+    fn the_more_row_names_enter_only_under_the_cursor() {
+        let mut app = beads_app(10);
+        let rendered = body(&render(&app, 90, 60));
+        assert!(
+            rendered.iter().any(|l| l.contains("+2 more") && !l.contains("Enter")),
+            "{rendered:#?}"
+        );
+
+        app.work_cursor = Some(app::WorkCursor::More("Unplanned"));
+        let rendered = body(&render(&app, 90, 60));
+        assert!(rendered.iter().any(|l| l.contains("+2 more — Enter")), "{rendered:#?}");
+
+        app.expanded.insert("Unplanned");
+        let rendered = body(&render(&app, 90, 60));
+        assert!(rendered.iter().any(|l| l.contains("all 10 shown — Enter")), "{rendered:#?}");
+        assert!(rendered.iter().any(|l| l.contains("cb-010")), "every row is drawn");
+    }
+
+    /// Both clauses are the navigator's own hands rather than the supervisor's, so both are shown
+    /// on a read-only view, where `s`/`f`/`k` are not.
+    #[test]
+    fn the_priority_hint_is_shown_only_over_a_bead() {
+        let mut app = beads_app(23);
+        app.work_cursor = Some(app::WorkCursor::Bead("cb-001".into()));
+        let header = lines(&render(&app, 140, 40))[0].clone();
+        assert!(header.contains("0-4/+/-/u priority"), "{header}");
+        assert!(!header.contains("Enter show all"), "{header}");
+        assert!(!header.contains(" s start"), "a read-only view offers no lifecycle key");
+
+        app.work_cursor = Some(app::WorkCursor::More("Unplanned"));
+        let header = lines(&render(&app, 140, 40))[0].clone();
+        assert!(!header.contains("priority"), "{header}");
+    }
+
+    #[test]
+    fn the_enter_hint_is_shown_only_over_a_more_row() {
+        let mut app = beads_app(23);
+        app.work_cursor = Some(app::WorkCursor::More("Unplanned"));
+        let header = lines(&render(&app, 140, 40))[0].clone();
+        assert!(header.contains("Enter show all"), "{header}");
+
+        app.work_cursor = Some(app::WorkCursor::Bead("cb-001".into()));
+        let header = lines(&render(&app, 140, 40))[0].clone();
+        assert!(!header.contains("Enter show all"), "{header}");
+    }
 }

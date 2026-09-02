@@ -34,6 +34,7 @@ use ratatui::Terminal;
 
 use cerebro_tui::app::{self, App, AppAction, FleetWorker, SupervisorWorker, WorkWorker};
 use cerebro_tui::lifecycle;
+use cerebro_tui::model::{AgentKind, RowState};
 use cerebro_tui::readers::{self, Programs, ReadError, ReaderPaths};
 use cerebro_tui::supervisor::{
     reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
@@ -330,6 +331,93 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
 /// The whole loop, generic over its terminal and its event source so the cases below can drive it
 /// without taking over the developer's own terminal.
 #[allow(clippy::too_many_arguments)]
+/// Act on what `lifecycle::supervise_action` says about each row of the fleet snapshot that was
+/// just applied - the three things this view does on its own, from what a hosted agent wrote in
+/// its state file.
+///
+/// After the refresh and not before, and on the snapshot just derived rather than on one read
+/// five seconds ago (`cerebro--tick`'s own order, `emacs/cerebro.el:6343-6353`): a row ended on
+/// this tick must be restated by the next read, not acted on twice.
+///
+/// Gated on `mode.may_end()`, which is `Supervising` or `Draining`: the sessions a draining view
+/// already hosts must be allowed to finish, since that is what ends the drain. The nudge alone
+/// additionally asks `may_supervise()` - a nudge is a NEW instruction, and a view handing
+/// supervision over issues none (`emacs/cerebro.el:4550`).
+///
+/// One agent's failure never stops the others: each row's work is fallible and a failure sets the
+/// notice, exactly as an `f` that could not write its flag does.
+fn supervise(
+    app: &mut App,
+    host: &mut SessionHost,
+    paths: &ReaderPaths,
+    now: DateTime<Utc>,
+    at: Instant,
+) {
+    if !app.supervision.may_end() {
+        return;
+    }
+    let rows: Vec<(String, AgentKind, RowState, Option<i64>)> = app
+        .fleet
+        .content
+        .value()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| {
+                    (
+                        row.name.clone(),
+                        row.kind,
+                        row.state.clone(),
+                        row.since.map(|since| (now - since).num_seconds()),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    for (name, kind, state, stood) in rows {
+        // Before any action is decided, and for every row: a name that asked, was nudged, was
+        // answered and asks again is nudgeable again.
+        if state != RowState::Asking {
+            app.nudged.remove(&name);
+        }
+        let agent = lifecycle::Supervised {
+            kind,
+            state: &state,
+            ours: host.supervisable(&name),
+            stop_flag: lifecycle::stop_flag_set(paths, &name),
+            // `cerebro-idle-ends-pass-roles` is empty in this fleet, and this crate has no place
+            // to declare one. Do not invent a declaration for it.
+            idle_ends_pass: false,
+            stood,
+        };
+        let Some(action) = lifecycle::supervise_action(agent) else { continue };
+        match action {
+            lifecycle::Supervision::Retire => {
+                // The instruction before the record (`emacs/cerebro.el:4537-4540`'s own order):
+                // the flag is what the next session under that name would otherwise inherit, and
+                // ending is the step that can fail.
+                if let Err(error) = lifecycle::clear_stop_flag(paths, &name) {
+                    app.set_notice(format!("Could not clear the stop flag for {name}: {error}"));
+                    continue;
+                }
+                host.end(paths, &name);
+                app.set_notice(lifecycle::supervision_notice(action, &name));
+            }
+            lifecycle::Supervision::End => {
+                host.end(paths, &name);
+                app.set_notice(lifecycle::supervision_notice(action, &name));
+            }
+            lifecycle::Supervision::Nudge => {
+                if !app.supervision.may_supervise() || app.nudged.contains(&name) {
+                    continue;
+                }
+                app.nudged.insert(name.clone());
+                host.type_line(&name, lifecycle::NUDGE_MESSAGE, at);
+                app.set_notice(lifecycle::supervision_notice(action, &name));
+            }
+        }
+    }
+}
+
 fn run<B: Backend, E: Events>(
     terminal: &mut Terminal<B>,
     events: &mut E,
@@ -362,6 +450,8 @@ where
                 now,
             );
             app.set_session_view(view);
+            host.flush_returns(Instant::now());
+            app.set_exits(host.exits());
         }
         terminal.draw(|frame| ui::draw(frame, app, now))?;
 
@@ -389,7 +479,14 @@ where
 
         // Each answer updates only its own pane. Neither poll blocks.
         if let Some(result) = fleet_worker.poll() {
+            let succeeded = result.is_ok();
             app.finish_refresh(result, clock());
+            // On the snapshot just applied, and only when the read succeeded: a failed read says
+            // nothing about any agent, and acting on the last good one would end a session on
+            // evidence five seconds stale.
+            if succeeded {
+                supervise(app, host, paths, clock(), Instant::now());
+            }
         }
         if let Some(result) = work_worker.poll() {
             app.finish_work_refresh(result, clock());
@@ -1800,6 +1897,234 @@ mod main_tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+    }
+
+    // ---- cb-kcs.3: what the view does unattended ----------------------------------------
+
+    /// A fleet row with a state file's `since` STOOD seconds ago.
+    fn stood_row(
+        name: &str,
+        kind: cerebro_tui::model::AgentKind,
+        state: cerebro_tui::model::RowState,
+        stood: i64,
+        now: DateTime<Utc>,
+    ) -> cerebro_tui::model::FleetRow {
+        cerebro_tui::model::FleetRow {
+            since: Some(now - chrono::Duration::seconds(stood)),
+            ..fleet_row(name, kind, state)
+        }
+    }
+
+    /// A hosted session under NAME that stays up until something ends it, and a state file for
+    /// it - the two things supervision acts on.
+    fn hosted(host: &mut SessionHost, paths: &ReaderPaths, name: &str) {
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.arg("-c");
+        command.arg("while :; do sleep 1; done");
+        host.insert(
+            name,
+            cerebro_tui::session::Session::spawn_command(name, command, 24, 80)
+                .expect("the session spawns"),
+        );
+        std::fs::write(cerebro_tui::lifecycle::state_file_path(paths, name), "{}")
+            .expect("a state file");
+    }
+
+    fn supervising() -> cerebro_tui::supervisor::SupervisionMode {
+        cerebro_tui::supervisor::SupervisionMode::Supervising
+    }
+
+    #[test]
+    fn a_finished_pass_is_ended_after_the_grace_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted(&mut host, &paths, "Cyclops");
+        let flag = cerebro_tui::lifecycle::stop_flag_path(&paths, "Cyclops");
+
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Waiting, 31, now)],
+        );
+        supervise(&mut app, &mut host, &paths, now, Instant::now());
+
+        assert!(!host.supervisable("Cyclops"), "the session was ended");
+        assert!(
+            !cerebro_tui::lifecycle::state_file_path(&paths, "Cyclops").exists(),
+            "a file naming an ended session names a pid that is gone"
+        );
+        assert!(!flag.exists(), "an end writes no flag");
+        assert_eq!(app.notice.as_deref(), Some("Cyclops finished its pass and was ended."));
+        settle_gone(&mut host, "Cyclops");
+    }
+
+    #[test]
+    fn a_stop_flag_retires_at_once_and_clears_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted(&mut host, &paths, "Storm");
+        let flag = cerebro_tui::lifecycle::stop_flag_path(&paths, "Storm");
+        std::fs::write(&flag, "").unwrap();
+
+        // Ten seconds old: nothing is in flight, so there is nothing for the grace to protect.
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![stood_row("Storm", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Waiting, 10, now)],
+        );
+        supervise(&mut app, &mut host, &paths, now, Instant::now());
+
+        assert!(!host.supervisable("Storm"));
+        assert!(!flag.exists(), "the next session under that name must not inherit the flag");
+        assert_eq!(app.notice.as_deref(), Some("Storm was retired; its stop flag is cleared."));
+        settle_gone(&mut host, "Storm");
+    }
+
+    #[test]
+    fn a_session_this_view_does_not_host_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let state = cerebro_tui::lifecycle::state_file_path(&paths, "Rogue");
+        std::fs::write(&state, "{}").unwrap();
+
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![stood_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Waiting, 5_000, now)],
+        );
+        supervise(&mut app, &mut host, &paths, now, Instant::now());
+
+        assert!(state.exists(), "somebody else's session is theirs to end");
+        assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn a_read_only_view_supervises_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted(&mut host, &paths, "Cyclops");
+
+        let mut app = lifecycle_app(
+            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+                cerebro_tui::supervisor::ReadOnlyReason::NotOwned,
+            ),
+            vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Waiting, 5_000, now)],
+        );
+        supervise(&mut app, &mut host, &paths, now, Instant::now());
+
+        assert!(host.supervisable("Cyclops"), "a read-only view ends nothing");
+        assert!(cerebro_tui::lifecycle::state_file_path(&paths, "Cyclops").exists());
+        assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn a_draining_view_still_ends_but_does_not_nudge() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted(&mut host, &paths, "Cyclops");
+        hosted(&mut host, &paths, "Storm");
+
+        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
+            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
+            live_sessions: 2,
+        };
+        let mut app = lifecycle_app(
+            draining,
+            vec![
+                stood_row("Storm", cerebro_tui::model::AgentKind::Implementer,
+                    cerebro_tui::model::RowState::Asking, 5_000, now),
+                stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
+                    cerebro_tui::model::RowState::Waiting, 31, now),
+            ],
+        );
+        supervise(&mut app, &mut host, &paths, now, Instant::now());
+
+        // Ending is what ends the drain, so it still happens.
+        assert!(!host.supervisable("Cyclops"));
+        // A nudge is a NEW instruction, and a view handing supervision over issues none.
+        assert!(app.nudged.is_empty(), "a draining view nudges nobody");
+        assert!(host.supervisable("Storm"));
+        settle_gone(&mut host, "Cyclops");
+    }
+
+    #[test]
+    fn a_question_nobody_answered_is_nudged_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        // A shell that echoes each line it is given, so the nudge is observable as output.
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.arg("-c");
+        command.arg("while read line; do printf 'got:%s\r\n' \"$line\"; done");
+        host.insert(
+            "Cyclops",
+            cerebro_tui::session::Session::spawn_command("Cyclops", command, 24, 200)
+                .expect("the session spawns"),
+        );
+
+        let asking = |stood| {
+            vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Asking, stood, now)]
+        };
+        let mut app = lifecycle_app(supervising(), asking(16 * 60));
+        let at = Instant::now();
+        supervise(&mut app, &mut host, &paths, now, at);
+        assert!(app.nudged.contains("Cyclops"));
+        assert_eq!(app.notice.as_deref(), Some("Cyclops was asked to hand its question back."));
+
+        // The return is sent separately, and only once it is due.
+        host.flush_returns(at);
+        app.notice = None;
+        supervise(&mut app, &mut host, &paths, now, at);
+        assert_eq!(app.notice, None, "one nudge per question, not one per tick");
+        host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let view = host.sync(Some("Cyclops"), 24, 200, Utc::now());
+            let text: Vec<String> = match &view {
+                cerebro_tui::session::SessionView::Live { lines, .. } => lines
+                    .iter()
+                    .map(|line| {
+                        line.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if text.iter().any(|line| line.contains("got:[cerebro] Nobody answered")) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("the nudge never reached the child: {text:?}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // Answered, and asking again: nudgeable again.
+        app.finish_refresh(
+            Ok(vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Working, 1, now)]),
+            now,
+        );
+        supervise(&mut app, &mut host, &paths, now, at);
+        assert!(app.nudged.is_empty(), "a name leaves the set as soon as it stops asking");
+
+        app.finish_refresh(Ok(asking(16 * 60)), now);
+        app.notice = None;
+        supervise(&mut app, &mut host, &paths, now, at);
+        assert_eq!(app.notice.as_deref(), Some("Cyclops was asked to hand its question back."));
     }
 
     fn ch(c: char) -> crossterm::event::KeyEvent {

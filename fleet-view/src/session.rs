@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use chrono::{DateTime, Utc};
@@ -579,6 +580,9 @@ impl Default for SessionView {
     }
 }
 
+/// `cerebro-return-delay`'s default (`emacs/cerebro.el:1976-1989`), 0.3 seconds.
+pub const RETURN_DELAY: Duration = Duration::from_millis(300);
+
 /// A pass that has ended, kept until that agent starts again.
 #[derive(Clone, Debug)]
 pub struct Retained {
@@ -614,6 +618,8 @@ pub struct SessionHost {
     /// by a start, exactly as a retained pass is: a verdict that outlived the run that produced
     /// it would sit on a row whose session is perfectly healthy.
     exits: BTreeMap<String, crate::lifecycle::LastExit>,
+    /// Carriage returns owed to sessions that have been typed a line, and when each is due.
+    pending: Vec<(String, Instant)>,
 }
 
 impl SessionHost {
@@ -734,6 +740,40 @@ impl SessionHost {
     pub fn send(&mut self, name: &str, bytes: &[u8]) {
         if let Some(session) = self.live.get_mut(name) {
             session.send(bytes);
+        }
+    }
+
+    /// Send TEXT to NAME's session now, and its carriage return `RETURN_DELAY` later.
+    ///
+    /// Two writes, not one, and this is not a nicety: sent together they arrive in one terminal
+    /// read, and a TUI that treats a burst ending in a return as a paste puts the newline in its
+    /// composer instead of submitting it - which leaves a nudged agent sitting on the message it
+    /// was nudged with.
+    ///
+    /// It goes through `send`, which does not care whether the pane is focused: a nudge is the
+    /// view typing into a session nobody is looking at.
+    pub fn type_line(&mut self, name: &str, text: &str, at: Instant) {
+        if !self.is_live(name) {
+            return;
+        }
+        self.send(name, text.as_bytes());
+        self.pending.push((name.to_string(), at + RETURN_DELAY));
+    }
+
+    /// Send any carriage return that has come due. Called once per loop iteration, beside `sync`.
+    ///
+    /// A name whose session has gone in the meantime is dropped silently, exactly as the elisp
+    /// timer re-checks buffer liveness before it sends.
+    pub fn flush_returns(&mut self, at: Instant) {
+        let due: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, when)| *when <= at)
+            .map(|(name, _)| name.clone())
+            .collect();
+        self.pending.retain(|(_, when)| *when > at);
+        for name in due {
+            self.send(&name, b"\r");
         }
     }
 
@@ -1085,6 +1125,42 @@ mod tests {
             text_of(&lines).iter().any(|line| line == "Cyclops finished its pass; the view ended it."),
             "the transcript is kept, and closes with the view's own sentence"
         );
+    }
+
+    #[test]
+    fn a_typed_line_sends_its_return_separately() {
+        let mut host = SessionHost::default();
+        host.insert(
+            "Cyclops",
+            shell(r#"while read line; do printf "got:%s\r\n" "$line"; done"#, 24, 80),
+        );
+        let at = std::time::Instant::now();
+        host.type_line("Cyclops", "hello", at);
+        // Before the delay, nothing more is sent: a burst ending in a return would be read as a
+        // paste, and the agent would sit on the line it was typed.
+        host.flush_returns(at);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !host_text(&mut host, "Cyclops").iter().any(|line| line.contains("got:hello")),
+            "the line was submitted before its return was due"
+        );
+
+        host.flush_returns(at + RETURN_DELAY);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !host_text(&mut host, "Cyclops").iter().any(|line| line.contains("got:hello")) {
+            if std::time::Instant::now() >= deadline {
+                panic!("the return never arrived");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// The live screen of NAME's session, as plain strings.
+    fn host_text(host: &mut SessionHost, name: &str) -> Vec<String> {
+        match host.sync(Some(name), 24, 80, at("2026-01-01T00:00:00Z")) {
+            SessionView::Live { lines, .. } => text_of(&lines),
+            _ => Vec::new(),
+        }
     }
 
     #[test]

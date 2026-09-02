@@ -216,6 +216,27 @@ pub fn verdict(exit: LastExit) -> String {
     }
 }
 
+/// The gold header notice for one carried-out action, verbatim from
+/// `docs/ui/cb-kcs.3-lifecycle-from-state.html` (the navigator's choice, Q2.3: the view says all
+/// three, and the third matters most, being the view putting words into a live agent).
+pub fn supervision_notice(action: Supervision, name: &str) -> String {
+    match action {
+        Supervision::Retire => format!("{name} was retired; its stop flag is cleared."),
+        Supervision::End => format!("{name} finished its pass and was ended."),
+        Supervision::Nudge => format!("{name} was asked to hand its question back."),
+    }
+}
+
+/// What the view types into a session whose question nobody answered.
+///
+/// Byte-identical to `cerebro--nudge-message` (`emacs/cerebro.el:3956-3960`), and it names neither
+/// a tracker label nor a skill for that constant's own reason: the words go into a live session,
+/// and how a work item is handed back is the agent's own instructions to state.
+pub const NUDGE_MESSAGE: &str =
+    "[cerebro] Nobody answered within the timeout. Do not keep waiting: put the question and \
+     everything you have found into the work item, hand it back for a person to decide, exactly \
+     as your own instructions describe, and finish the run.";
+
 /// Everything the three decisions read, and nothing else.
 #[derive(Clone, Copy, Debug)]
 pub struct Situation<'a> {
@@ -444,6 +465,31 @@ mod tests {
         assert_eq!(verdict(LastExit::Code(137)), "✗ code 137");
         // Exactly the column's floor, in chars and in cells: it must never need truncating.
         assert_eq!(verdict(LastExit::Code(137)).chars().count(), 10);
+    }
+
+    /// The three sentences the header says, and the one the view types into a live session.
+    /// The nudge is pinned against a literal on purpose: a test that rebuilt it from the constant
+    /// would prove nothing, and this one is byte-identical to `cerebro--nudge-message`.
+    #[test]
+    fn the_view_says_what_it_did_and_types_one_line() {
+        assert_eq!(
+            supervision_notice(Supervision::Retire, "Storm"),
+            "Storm was retired; its stop flag is cleared."
+        );
+        assert_eq!(
+            supervision_notice(Supervision::End, "Cyclops"),
+            "Cyclops finished its pass and was ended."
+        );
+        assert_eq!(
+            supervision_notice(Supervision::Nudge, "Cyclops"),
+            "Cyclops was asked to hand its question back."
+        );
+        assert_eq!(
+            NUDGE_MESSAGE,
+            "[cerebro] Nobody answered within the timeout. Do not keep waiting: put the question \
+             and everything you have found into the work item, hand it back for a person to \
+             decide, exactly as your own instructions describe, and finish the run."
+        );
     }
 
     // --- the shared supervision table -----------------------------------------------------------

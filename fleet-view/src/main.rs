@@ -1480,7 +1480,13 @@ fn route_key(
     //
     // Like `x`, these are board writes and are deliberately outside the supervision lease: a view
     // that may start nothing may still rank a bead.
-    if key.modifiers.is_empty() && app.focus == app::PaneFocus::Work {
+    // SHIFT is not disqualifying here, unlike everywhere else in this function: `+` is shift-`=`
+    // on a US layout, and crossterm reports `SHIFT` alongside `Char('+')` under the kitty
+    // keyboard protocol and on some Windows paths. A gate on `is_empty()` alone would leave `+`
+    // silently dead while `-` worked, which is the most confusing failure this key pair has.
+    if key.modifiers.difference(crossterm::event::KeyModifiers::SHIFT).is_empty()
+        && app.focus == app::PaneFocus::Work
+    {
         let requested = match key.code {
             KeyCode::Char(c @ '0'..='4') => {
                 Some(lifecycle::Requested::Exactly(c as u8 - b'0'))
@@ -1513,20 +1519,26 @@ fn route_key(
             app.notice_urgent = false;
             // Spent by USING it, and by nothing else: one step back rather than a stack, so a
             // second `u` has nothing to do rather than quietly redoing the change.
-            let Some((id, previous)) = app.last_priority_change.take() else {
+            // READ, never taken: an entry is spent by an undo that actually wrote, not by one
+            // `bd` refused. A rescue that a failed write throws away is not there when it is
+            // reached for a second time, which is the whole case `u` exists for.
+            let Some((id, previous)) = app.last_priority_change.clone() else {
                 app.set_notice("nothing to undo".to_string());
                 app.notice_urgent = true;
                 return AppAction::None;
             };
             let Some(previous) = previous else {
                 // A bead that carried no priority has nothing to be put back to. Unreachable in
-                // practice: the board always sets one.
+                // practice - the board always sets one - and the entry is left where it is
+                // rather than destroyed by a keystroke that did nothing.
                 return AppAction::None;
             };
             let action =
                 write_priority(app, logger, paths, programs, now, &id, None, previous, true);
-            // An undo leaves no entry of its own: `u` is a rescue, not a toggle.
-            app.last_priority_change = None;
+            // An undo that wrote leaves no entry of its own: `u` is one step back, not a toggle.
+            if action == AppAction::RefreshWork {
+                app.last_priority_change = None;
+            }
             return action;
         }
     }
@@ -5295,5 +5307,51 @@ mod main_tests {
         assert_eq!(line["bead"], "cb-x");
         assert_eq!(line["from"], 1);
         assert_eq!(line["to"], 0);
+    }
+
+    /// `+` is shift-`=` on a US layout, so a terminal that reports SHIFT with it must not leave
+    /// the key silently dead while `-` works.
+    #[test]
+    fn a_shifted_plus_still_raises_the_priority() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = stub_programs();
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
+        let mut host = SessionHost::default();
+
+        let shifted = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('+'),
+            crossterm::event::KeyModifiers::SHIFT,
+        );
+        drive_with(&mut app, &mut host, &paths, &programs, vec![shifted]);
+        assert_eq!(stub_calls(&paths), vec!["update cb-x --priority 1", "dolt push"]);
+    }
+
+    /// An entry is spent by an undo that WROTE, not by one `bd` refused: a rescue a failed write
+    /// throws away is not there when it is reached for a second time.
+    #[test]
+    fn a_refused_undo_can_be_tried_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = stub_programs();
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
+        let mut host = SessionHost::default();
+
+        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
+        // Now `bd` refuses everything.
+        std::fs::write(paths.shared_root.join("exit-code"), "1").unwrap();
+        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('u')]);
+        assert_eq!(app.notice.as_deref(), Some("bd would not set cb-x to P1"));
+        assert_eq!(
+            app.last_priority_change,
+            Some(("cb-x".to_string(), Some(1))),
+            "the entry survives a refusal"
+        );
+
+        // And it works once `bd` does.
+        std::fs::remove_file(paths.shared_root.join("exit-code")).unwrap();
+        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('u')]);
+        assert_eq!(app.notice.as_deref(), Some("cb-x: back to P1"));
+        assert_eq!(app.last_priority_change, None, "and is spent by the one that wrote");
     }
 }

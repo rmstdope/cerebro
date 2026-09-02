@@ -1059,24 +1059,32 @@ impl App {
             // Under Work these four move the CURSOR while there are findings to move over, and
             // that pane's own offset when there are none - which is the ordinary day, and the
             // whole reason `n`/`p` were not ported as keys of their own.
-            KeyCode::Up if self.focus == PaneFocus::Work && !self.work_cursor_targets(now).is_empty() => {
-                self.move_work_cursor(-1, viewport_lines, now);
+            KeyCode::Up if self.focus == PaneFocus::Work => {
+                if !self.move_work_cursor(-1, viewport_lines, now) {
+                    let scroll = self.focused_scroll_mut();
+                    *scroll = scroll.saturating_sub(1);
+                }
                 AppAction::None
             }
-            KeyCode::Down if self.focus == PaneFocus::Work && !self.work_cursor_targets(now).is_empty() => {
-                self.move_work_cursor(1, viewport_lines, now);
+            KeyCode::Down if self.focus == PaneFocus::Work => {
+                if !self.move_work_cursor(1, viewport_lines, now) {
+                    let scroll = self.focused_scroll_mut();
+                    *scroll = scroll.saturating_add(1);
+                }
                 AppAction::None
             }
-            KeyCode::PageUp
-                if self.focus == PaneFocus::Work && !self.work_cursor_targets(now).is_empty() =>
-            {
-                self.move_work_cursor(-(viewport_lines as isize), viewport_lines, now);
+            KeyCode::PageUp if self.focus == PaneFocus::Work => {
+                if !self.move_work_cursor(-(viewport_lines as isize), viewport_lines, now) {
+                    let scroll = self.focused_scroll_mut();
+                    *scroll = scroll.saturating_sub(viewport_lines);
+                }
                 AppAction::None
             }
-            KeyCode::PageDown
-                if self.focus == PaneFocus::Work && !self.work_cursor_targets(now).is_empty() =>
-            {
-                self.move_work_cursor(viewport_lines as isize, viewport_lines, now);
+            KeyCode::PageDown if self.focus == PaneFocus::Work => {
+                if !self.move_work_cursor(viewport_lines as isize, viewport_lines, now) {
+                    let scroll = self.focused_scroll_mut();
+                    *scroll = scroll.saturating_add(viewport_lines);
+                }
                 AppAction::None
             }
             // `Enter` opens the section under a `+N more` row, and closes it again. The one way
@@ -1389,29 +1397,40 @@ impl App {
     }
 
     /// Move the cursor by DELTA rows, saturating at both ends, and scroll the Work pane by the
-    /// least that keeps the new line visible. With nothing selectable it does nothing - `on_key`
-    /// scrolls instead.
-    fn move_work_cursor(&mut self, delta: isize, viewport_lines: usize, now: DateTime<Utc>) {
+    /// least that keeps the new line visible.
+    ///
+    /// Returns whether the cursor actually moved. FALSE means there was nothing selectable, or it
+    /// was already at that end - and in both cases `on_key` scrolls the pane instead, which is
+    /// what keeps the lines BELOW the last selectable row reachable at all: History and the stale
+    /// footer carry no cursor by the navigator's own choice, so a cursor clamped at the last bead
+    /// row would otherwise put the whole History section under a floor the pane could never
+    /// scroll past.
+    fn move_work_cursor(&mut self, delta: isize, viewport_lines: usize, now: DateTime<Utc>) -> bool {
         let targets = self.work_cursor_targets(now);
         if targets.is_empty() {
-            return;
+            return false;
         }
         let last = targets.len() - 1;
         let current = self.work_cursor_index(now).unwrap_or(0);
         let target = (current as isize).saturating_add(delta).clamp(0, last as isize) as usize;
+        if self.work_cursor.is_some() && target == current {
+            return false;
+        }
         let cursor = targets[target].clone();
         self.work_cursor = Some(cursor.clone());
         let line = work_line_of_cursor(&work_body(self, now), &cursor);
         if let Some(line) = line {
+            // The LEAST that keeps the new line visible, in both directions: a move onto a row
+            // that is already on screen leaves the pane exactly where it was, and one onto a row
+            // near the top of the document does not snap the pane to the very top.
             let viewport = viewport_lines.max(1);
-            if line < viewport {
-                self.work.scroll = 0;
-            } else if line < self.work.scroll {
+            if line < self.work.scroll {
                 self.work.scroll = line;
             } else if line >= self.work.scroll + viewport {
                 self.work.scroll = line + 1 - viewport;
             }
         }
+        true
     }
 
     /// Whether a `gh` read is due at NOW. Kept off `on_tick`'s `AppAction` deliberately: that
@@ -3282,5 +3301,51 @@ mod tests {
         app.work_cursor = Some(WorkCursor::More("Unplanned"));
         app.on_key(key(KeyCode::Enter), 10, at(30));
         assert!(!app.expanded.contains("Unplanned"));
+    }
+
+    /// History and the stale footer carry no cursor by the navigator's own choice, so a cursor
+    /// clamped at the last bead row would put every line below it under a floor the pane could
+    /// never scroll past - which is half of what this bead delivers, invisible on any real board.
+    /// At the end of the cursor's run the keys go back to scrolling the pane.
+    #[test]
+    fn the_pane_scrolls_past_the_last_selectable_row_to_reach_history() {
+        let mut app = document_app();
+        app.focus = PaneFocus::Work;
+        let lines = work_body(&app, at(0)).len();
+        let viewport = 6;
+
+        // Walk the cursor to the last selectable row, and past it.
+        for _ in 0..40 {
+            app.on_key(key(KeyCode::Down), viewport, at(0));
+        }
+        assert_eq!(app.work_cursor, Some(WorkCursor::More("Unplanned")));
+        assert!(
+            app.work.scroll + viewport >= lines,
+            "the last line of the document — a History row — is on screen: \
+             scroll {} + {viewport} of {lines}",
+            app.work.scroll
+        );
+
+        // And back up again: the pane follows the keys the whole way.
+        for _ in 0..40 {
+            app.on_key(key(KeyCode::Up), viewport, at(0));
+        }
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        assert_eq!(app.work.scroll, 0);
+    }
+
+    /// The least that keeps the new line visible, in both directions: a move onto a row already
+    /// on screen leaves the pane where it was.
+    #[test]
+    fn a_cursor_move_within_the_viewport_does_not_move_the_pane() {
+        let mut app = document_app();
+        app.focus = PaneFocus::Work;
+        for _ in 0..12 {
+            app.on_key(key(KeyCode::Down), 6, at(0));
+        }
+        let scrolled = app.work.scroll;
+        assert!(scrolled > 0, "the fixture must have scrolled, or this proves nothing");
+        app.on_key(key(KeyCode::Up), 6, at(0));
+        assert_eq!(app.work.scroll, scrolled, "the row above is already on screen");
     }
 }

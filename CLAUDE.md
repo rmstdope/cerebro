@@ -325,10 +325,16 @@ it documents the observed behaviour and costs the roles were tuned against.
 
 These are load-bearing; changing them changes how the fleet behaves in every consumer repo.
 
-- **Wait by blocking inside a tool call, never by ending a turn.** `Monitor` and background `Bash`
-  promise a re-invocation that nothing delivers; this stranded a claimed bead, an open PR and
-  unanswered review comments. Implementers are interactive now, so an ended turn no longer kills the
-  process — it just sits there until a human types something, which is not better.
+- **Wait by blocking inside a tool call, never by ending a turn** — with one measured exception,
+  below. `Monitor` and background `Bash` promise a re-invocation that nothing delivers; this
+  stranded a claimed bead, an open PR and unanswered review comments. Implementers are interactive
+  now, so an ended turn no longer kills the process — it just sits there until a human types
+  something, which is not better. The exception is **a `reviewer` sub-agent the session spawned
+  itself**, whose result *is* delivered and has been every time in this repository, including to a
+  parent whose turn had ended: that one is waited for by being told, never by a fixed `sleep`, which
+  cost cb-sxf ten of its twenty-two minutes. Ending a *turn* there is not ending a *pass* — the
+  state file stays `working --phase review`, and `waiting` with a review outstanding is still the
+  stranding this bullet is about.
 - **The state file is the contract, for every agent.** `.cerebro/state/<name>.state.json`
   carries `idle`/`working`/`asking`/`waiting`; every agent in the fleet writes it, and
   `cerebro.el` acts on it. Since ah-u3i it also carries `phase` (an implementer's `build`/`gate`/`review`/`ci`/`rebase`/

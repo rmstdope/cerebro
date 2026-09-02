@@ -34,12 +34,21 @@ nothing else: work outside one stops for the navigator at each phase, like any o
 
 ## Waiting, without ending your run
 
-A bead has one long wait in it — CI — and how you wait is the difference between finishing a bead
-and abandoning one. An implementer once armed a `Monitor` against a review, said "I'll wait now
-for the monitor's event", and ended its turn. The review landed two minutes later: two comments
-unanswered, the bead claimed, the PR open, and nothing to wake it.
+**A bead has two kinds of wait in it, and they are not waited on the same way.** Getting it wrong in
+either direction costs: one strands a bead, the other burns five minutes a round doing nothing.
 
-**Wait by blocking inside a tool call. Never by ending your turn.**
+- **CI, and everything else outside this session.** Nothing will tell you it finished, so **block
+  inside a tool call**, polling a condition a shell can actually test. That is the rest of this
+  section.
+- **A `reviewer` sub-agent you spawned yourself** — the review, and nothing else in this skill.
+  **Its result is delivered to you, so do not sleep on it** — but it does not release you from the
+  bead either: *Waiting for a sub-agent*, below, which is the only place this skill narrows anything.
+
+The first kind is where a bead gets abandoned. An implementer once armed a `Monitor` against a
+review, said "I'll wait now for the monitor's event", and ended its turn. The review landed two
+minutes later: two comments unanswered, the bead claimed, the PR open, and nothing to wake it.
+
+**So for the first kind: wait by blocking inside a tool call. Never by ending your turn.**
 
 ```bash
 until <the condition>; do bd heartbeat <id>; sleep 30; done
@@ -60,6 +69,43 @@ either here. Your process survives the end of a turn now, so this is no longer t
 disaster it was when it ran under `--print` — but nothing wakes you. A turn ended against a CI run
 sits until the navigator happens to look and type something, with the bead claimed, the PR open and
 the lease going stale the whole time. Block, and stay in the run.
+
+### Waiting for a sub-agent
+
+**Do not sleep on the review, and do not end your *pass* while it is out.** Two different things,
+both load-bearing, in that order.
+
+**Do not sleep on it.** A sub-agent's completion is not a condition a shell can test, so the loop
+above cannot be pointed at one — there is nothing for `until` to end on. An implementer that points
+it there anyway ends up writing a *fixed* wait, and on cb-sxf that is exactly what happened:
+`for i in $(seq 1 10); do bd heartbeat <id>; sleep 30; done`, five minutes flat, on each of two
+delta rounds. Those two rounds took **6m43s** and **5m31s** from the implementer's answer to the
+next review landing, while the reviews themselves ran **56s** and about a minute — so ten of that
+bead's twenty-two minutes were the two sleeps, with the findings in hand for most of both.
+
+**So: heartbeat, spawn, and take the findings when they arrive.** If there is nothing else to do
+meanwhile, letting the turn end is fine — the completion re-invokes you and the findings come with
+it. **Ending a turn is not ending your pass**, and only the second one is forbidden here: your state
+file still says `working --phase review`, so the fleet view keeps the session and the navigator sees
+exactly where you are. Never write `waiting` with a review outstanding — that is what *Never stop
+with a bead in flight* forbids, and it is the thing that strands a claimed bead and an open PR.
+
+**Why this one tool and not the two the section above distrusts.** Not because a sub-agent is
+"yours" — `Bash` with `run_in_background` is yours too, and is still not to be relied on here. The
+difference is what has actually been observed: those two promised a re-invocation and did not
+deliver, at the cost the incident above describes, while every `reviewer` sub-agent spawned in this
+repository's sessions has reported back, including to a parent whose turn had ended meanwhile. That
+is an empirical difference, not a principled one, and it is the whole of the reason to treat them
+differently. **If a review ever fails to arrive, the failure is visible rather than silent**: the
+row sits in `review` with its elapsed time climbing, the claims sweep does not reclaim a bead a live
+session holds (`cerebro--claim-finding`), and the stalled sweep raises it for the navigator.
+
+**The lease, honestly.** A lease is about five minutes. A delta round finishes well inside it; **a
+cold read does not** — this file measures one at the better part of ten minutes — so a heartbeat
+before the spawn and another when the findings land leaves a cold read's middle uncovered. That is
+survivable rather than fine, and it is survivable for one reason: an expired lease under a *live*
+session is not reclaimed. Heartbeat on both sides anyway, and do not read this paragraph as licence
+to let a lease go cold anywhere else.
 
 ## Telling the fleet view what you are doing
 
@@ -467,8 +513,8 @@ asking is only the faster path when somebody is there.
 ## The review loop
 
 **Review the implementation being merged, and obtain it yourself.** No review is requested from GitHub,
-and none is waited for. The second pair of eyes is a `reviewer` sub-agent you spawn synchronously
-when the gate is green and the PR is open, and the standing approval you merge on rests on the
+and none is waited for. The second pair of eyes is a `reviewer` sub-agent you spawn
+when the gate is green and the PR is open — and then wait for as *Waiting for a sub-agent* says, and the standing approval you merge on rests on the
 consumer's root `CLAUDE.md` and its *Four Eye Principle*, because the rule is there and nowhere
 else. Everything below is how you satisfy it.
 
@@ -557,8 +603,10 @@ Read that list rather than weighing whether your own delta feels substantial.
 as Cypher's own session — the sub-agent reads that for itself, and you do not need to repeat it into
 the prompt.
 
-The spawn is synchronous: wait for it inside the tool call, exactly as *Waiting, without ending your
-run* says, and heartbeat the bead across it.
+**Do not sleep waiting for it.** The findings arrive when the sub-agent is done and your turn goes
+on from there — see *Waiting for a sub-agent*. Heartbeat the bead before you spawn and again when
+they land; a fixed sleep loop around a spawn is five minutes a round for nothing, which is what
+cb-sxf paid three times.
 
 ### Posting it
 

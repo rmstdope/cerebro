@@ -1,0 +1,81 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:30px 0 8px;color:#fff}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:block;margin:0 0 10px 0;overflow-x:auto}
+.note{color:#eee;max-width:110ch;background:#333;padding:9px 13px;margin-top:10px;line-height:1.5}
+.lede{color:#fff;max-width:110ch;margin:0 0 14px;line-height:1.5}
+.y{color:gold}.e{color:#f14c4c}.dim{color:#888}
+.opt{color:#fff;font-weight:bold;margin:16px 0 6px}
+</style>
+<meta charset="utf-8"><title>cb-kcs.5.2 — the agreed surface</title>
+
+<h1>cb-kcs.5.2 &mdash; the surface the navigator approved, 2026-09-02</h1>
+<p class="lede">Three rounds. This file is the specification for what the Ratatui fleet view
+<b>says</b> about the two unattended jobs cb-kcs.5.2 moves into it: the
+<code>prune-worktrees.sh --watch</code> child it keeps running beside itself, and the one line it
+types into an idle Cerebro when unranked beads are waiting for a ranking. Where this file and the
+bead&rsquo;s plan disagree, this file is right.</p>
+<p class="lede">Neither job has a key and neither has a pane. The only place either can appear is
+<b>the header&rsquo;s middle slot</b> &mdash; the same slot a nudge, a kill confirmation and a start
+notice already use, cleared by the next keystroke. Nothing here adds a section, a row, a key or a
+Tab stop, and nothing here changes what any earlier file in the cb-kcs family decided.</p>
+
+<h2>1. The prune watcher, on an ordinary day: nothing at all</h2>
+<div class="screen"><pre><span class="dim">Cerebro — supervising | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</span></pre></div>
+<p class="note"><b>Silent, exactly as <code>M-x cerebro</code> is.</b> The watcher starts with the
+view and is never mentioned; the script&rsquo;s own account of what it kept and removed is for
+troubleshooting, not for the ordinary case. <b>A line at startup &mdash;
+<code>Worktree pruning started.</code> &mdash; was rejected</b>: it spends the header slot to
+announce a job that has run under every fleet view for months and needs nothing from the
+navigator.</p>
+
+<h2>2. The prune watcher, when it dies or cannot start</h2>
+<div class="screen"><pre>Cerebro — supervising<span class="e"> | Worktree pruning stopped: No such file or directory (os error 2)</span><span class="dim"> | Tab/Shift-Tab</span></pre></div>
+<div class="screen"><pre>Cerebro — supervising<span class="e"> | Worktree pruning stopped: exit status 2</span><span class="dim"> | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move</span></pre></div>
+<p class="note"><b>Red, and it names the cause.</b> A refused start gives the operating
+system&rsquo;s own words; a watcher that spawned and then exited gives its exit status. <b>The plain
+sentence <code>Worktree pruning stopped; retrying.</code> was rejected</b> &mdash; it is the same
+width class and says strictly less, and the cause is the thing that decides what the navigator does
+next (a missing script is a submodule that was never initialised, an exit status is something
+else entirely).</p>
+<p class="note"><b>Silence was rejected outright.</b> <code>M-x cerebro</code> swallows all of
+this, and the cost is that worktrees quietly stop being pruned and the navigator finds out from
+<code>git worktree list</code> weeks later.</p>
+<p class="note"><b>The line comes back every ten minutes while it stays broken</b>, and not more
+often. A watcher that cannot be started at all is retried on every five-second tick, so &ldquo;once
+per death&rdquo; taken literally is a red line every five seconds; and <b>saying it once and never
+again was rejected</b> too, because a navigator who was not looking during that one keystroke never
+learns pruning has stopped. Ten minutes is the watcher&rsquo;s own sweep interval, so the line comes
+back exactly as often as a sweep would have happened.</p>
+
+<h2>3. The triage line</h2>
+<p class="lede">What is typed into Cerebro is unchanged from what it reads today, and is not in
+question here:</p>
+<div class="screen"><pre>[cerebro] Unranked beads are waiting for a ranking: cb-a1, cb-b2, cb-c3. Triage them with the navigator.</pre></div>
+<p class="lede">What is new is that the view says so:</p>
+<div class="screen"><pre>Cerebro — supervising<span class="y"> | Cerebro was asked to rank 3 unranked beads.</span><span class="dim"> | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn</span></pre></div>
+<p class="note"><b>Gold, in the notice slot, beside the nudge&rsquo;s own
+<code>Cyclops was asked to hand its question back.</code></b> The name comes from the roster, so it
+is not always the word &ldquo;Cerebro&rdquo;. <b>Emacs&rsquo;s silence was rejected</b>: within this
+view a line typed into a session already announces itself, and a triage line is exactly as much an
+instruction as a nudge is.</p>
+<p class="note"><b><code>was told about 3 unranked beads</code> was rejected</b> as saying what
+happened without saying what it is for, and <b>naming the beads &mdash;
+<code>told about cb-a1, cb-b2 and 1 more</code> &mdash; was rejected</b> because the line&rsquo;s
+width would then depend on the board and be cut on a narrow terminal; the ids are in the line
+Cerebro received and in the log either way.</p>
+<p class="note"><b>The ten-minute repeats say it too.</b> The same set is re-typed while Cerebro
+stays <code>idle</code>, because a typed line can be swallowed and Cerebro writes nothing back to
+say it heard &mdash; so a Cerebro that cannot act shows as a row stuck on <code>idle</code> plus a
+gold line every ten minutes, which is the whole diagnosis, on screen rather than only in the log.
+<b>Saying it only when the set changes was rejected</b> for exactly that reason.</p>
+
+<h2>4. An idle Cerebro this view does not host</h2>
+<div class="screen"><pre><span class="dim">Cerebro is idle, unranked beads exist, but the session was started outside this view:</span>
+<span class="dim">Cerebro — supervising | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | g refresh | q/Esc/Ctrl-C quit</span></pre></div>
+<p class="note"><b>Nothing is said, nothing is recorded, and nothing is throttled</b> unless the
+line actually went into a session this view hosts. <b>This is a deliberate divergence from
+<code>cerebro--triage-tell</code></b>, which records &ldquo;told&rdquo; and writes its log entry
+even when no buffer took the string &mdash; so its ten-minute throttle then holds for a line that
+never left the building. The view must not claim something it did not do.</p>

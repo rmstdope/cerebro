@@ -139,8 +139,10 @@ The State column names the
 a planner; `prepare`/`verify` for Psylocke; `read`/`check`/`walk`/`report` for Cypher; `sweep` for
 Moira and Cerebro (`release` and `triage` too); `daily`/`weekly` for Forge. The Bead/Phase column shows both
 timers — time on the bead, time in this phase — so one in `ci` for an hour says something is
-stuck. `review` is short and synchronous now, the implementer waiting on a sub-agent it spawned
-itself, so an implementer sitting in it says that sub-agent is expensive or has hung.
+stuck. `review` is the implementer waiting on a sub-agent it spawned itself — delta rounds run about a
+minute, a cold read the better part of ten — so a row sitting in it much past that says the
+sub-agent is expensive, has hung, or never reported back. That last is the one failure mode the
+skill accepts: the session is alive and its claim is safe, but only you will notice.
 
 A yellow ` ×2` after the state means two sessions of that name are running in this fleet — one of
 them was started outside the view — and `s`, `k` and `f` on that row name both pids instead of

@@ -40,9 +40,9 @@ either direction costs: one strands a bead, the other burns five minutes a round
 - **CI, and everything else outside this session.** Nothing will tell you it finished, so **block
   inside a tool call**, polling a condition a shell can actually test. That is the rest of this
   section.
-- **A sub-agent you spawned yourself** — the review, and nothing else in this skill. **You are told
-  when it finishes, and the answer comes with the telling.** Do not poll it and do not sleep on it:
-  *Waiting for a sub-agent*, below.
+- **A `reviewer` sub-agent you spawned yourself** — the review, and nothing else in this skill.
+  **Its result is delivered to you, so do not sleep on it** — but it does not release you from the
+  bead either: *Waiting for a sub-agent*, below, which is the only place this skill narrows anything.
 
 The first kind is where a bead gets abandoned. An implementer once armed a `Monitor` against a
 review, said "I'll wait now for the monitor's event", and ended its turn. The review landed two
@@ -72,25 +72,40 @@ the lease going stale the whole time. Block, and stay in the run.
 
 ### Waiting for a sub-agent
 
-**The review is the one wait that is delivered, so do not sleep on it.** Spawning a `reviewer`
-sub-agent hands you its findings when it is done — the result arrives and your turn carries on from
-there. There is nothing to poll: a sub-agent's completion is not a condition a shell can test, which
-is exactly why the loop above cannot be pointed at one.
+**Do not sleep on the review, and do not end your *pass* while it is out.** Two different things,
+both load-bearing, in that order.
 
-**What happens when it is pointed at one anyway**, measured on cb-sxf: the implementer wrote
-`for i in $(seq 1 10); do bd heartbeat <id>; sleep 30; done` — a fixed five minutes, because with no
-condition to test there is nothing for `until` to end on. The delta round it was waiting for had
-finished in **fifty-six seconds**. Three rounds cost that bead twenty-two minutes, of which about
-fifteen were this sleep.
+**Do not sleep on it.** A sub-agent's completion is not a condition a shell can test, so the loop
+above cannot be pointed at one — there is nothing for `until` to end on. An implementer that points
+it there anyway ends up writing a *fixed* wait, and on cb-sxf that is exactly what happened:
+`for i in $(seq 1 10); do bd heartbeat <id>; sleep 30; done`, five minutes flat, on each of two
+delta rounds. Those two rounds took **6m43s** and **5m31s** from the implementer's answer to the
+next review landing, while the reviews themselves ran **56s** and about a minute — so ten of that
+bead's twenty-two minutes were the two sleeps, with the findings in hand for most of both.
 
-So: spawn it, take the findings when they arrive, and answer them. The lease is the one thing worth
-a thought — heartbeat the bead before you spawn and again when the findings land, which covers a
-round several times over.
+**So: heartbeat, spawn, and take the findings when they arrive.** If there is nothing else to do
+meanwhile, letting the turn end is fine — the completion re-invokes you and the findings come with
+it. **Ending a turn is not ending your pass**, and only the second one is forbidden here: your state
+file still says `working --phase review`, so the fleet view keeps the session and the navigator sees
+exactly where you are. Never write `waiting` with a review outstanding — that is what *Never stop
+with a bead in flight* forbids, and it is the thing that strands a claimed bead and an open PR.
 
-**This is a narrowing of the rule above, not an exception to it.** The line is which side of this
-session the thing you are waiting for lives on: a sub-agent is yours and reports back; CI,
-`gh pr checks`, a merge state and another agent's bead will tell you nothing, and every one of them
-gets the blocking loop.
+**Why this one tool and not the two the section above distrusts.** Not because a sub-agent is
+"yours" — `Bash` with `run_in_background` is yours too, and is still not to be relied on here. The
+difference is what has actually been observed: those two promised a re-invocation and did not
+deliver, at the cost the incident above describes, while every `reviewer` sub-agent spawned in this
+repository's sessions has reported back, including to a parent whose turn had ended meanwhile. That
+is an empirical difference, not a principled one, and it is the whole of the reason to treat them
+differently. **If a review ever fails to arrive, the failure is visible rather than silent**: the
+row sits in `review` with its elapsed time climbing, the claims sweep does not reclaim a bead a live
+session holds (`cerebro--claim-finding`), and the stalled sweep raises it for the navigator.
+
+**The lease, honestly.** A lease is about five minutes. A delta round finishes well inside it; **a
+cold read does not** — this file measures one at the better part of ten minutes — so a heartbeat
+before the spawn and another when the findings land leaves a cold read's middle uncovered. That is
+survivable rather than fine, and it is survivable for one reason: an expired lease under a *live*
+session is not reclaimed. Heartbeat on both sides anyway, and do not read this paragraph as licence
+to let a lease go cold anywhere else.
 
 ## Telling the fleet view what you are doing
 
@@ -498,8 +513,8 @@ asking is only the faster path when somebody is there.
 ## The review loop
 
 **Review the implementation being merged, and obtain it yourself.** No review is requested from GitHub,
-and none is waited for. The second pair of eyes is a `reviewer` sub-agent you spawn synchronously
-when the gate is green and the PR is open, and the standing approval you merge on rests on the
+and none is waited for. The second pair of eyes is a `reviewer` sub-agent you spawn
+when the gate is green and the PR is open — and then wait for as *Waiting for a sub-agent* says, and the standing approval you merge on rests on the
 consumer's root `CLAUDE.md` and its *Four Eye Principle*, because the rule is there and nowhere
 else. Everything below is how you satisfy it.
 

@@ -30,7 +30,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::lifecycle::LastExit;
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::app::{App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, Prompt};
+use crate::app::{
+    self, App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, Prompt,
+};
 use crate::lifecycle;
 use crate::model::{Bead, FleetRow, RowState, WorkBuckets};
 use crate::session::SessionView;
@@ -601,8 +603,12 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     // are up, and what the keyboard is doing outranks how fresh a pane is.
     if app.quit_refusal.is_some() {
         spans.push(Span::styled(" | quit refused", Style::default().fg(RED)));
-    } else if let Some(Prompt::Kill { text, .. }) = &app.confirm {
-        spans.push(Span::styled(format!(" | {text}"), Style::default().fg(GOLD)));
+    } else if let Some(prompt) = &app.confirm {
+        // WHICHEVER prompt is up, through the enum's own `text` - never one variant by name.
+        // `Prompt::Kill` was matched here by name until cb-kcs.5.1, so cb-kcs.4.1's disarm
+        // confirmation was built and never drawn: a destructive question the navigator could not
+        // see, answered by their next keystroke (cb-4cn).
+        spans.push(Span::styled(format!(" | {}", prompt.text()), Style::default().fg(GOLD)));
     } else if let Some(notice) = &app.notice {
         spans.push(Span::styled(format!(" | {notice}"), Style::default().fg(GOLD)));
     } else if app.fleet.refreshing || app.work.refreshing {
@@ -635,7 +641,13 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     // and a hint the terminal has cut in half is worse than a shorter hint that fits. What is left
     // when it shortens is the two keys a navigator cannot guess from the screen: refresh and quit.
     let used: usize = spans.iter().map(|span| span.content.width()).sum();
-    let keys = lifecycle_hint(&app.supervision).map(|k| format!(" | {k}")).unwrap_or_default();
+    let mut keys = lifecycle_hint(&app.supervision).map(|k| format!(" | {k}")).unwrap_or_default();
+    // Whatever `lifecycle_hint` returned, including `None` on a read-only view: acting on a sweep
+    // finding writes to the shared board, which is deliberately outside the supervision lease.
+    // Only while there IS a finding - on the ordinary day the hint is exactly what it was.
+    if !app.work_findings().is_empty() {
+        keys.push_str(" | x act");
+    }
     let full = format!(
         " | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move{keys} | {refresh_key} | q/Esc/Ctrl-C quit"
     );
@@ -877,9 +889,61 @@ fn fleet_body_line(
     }
 }
 
-/// The Work pane's body, in the same four shapes the Fleet pane has - and with the same rule
-/// under them: a failed refresh never destroys queues that are still worth reading.
+/// The Work pane's whole body: the Sweeps section, then the six queues.
+///
+/// The section is FIRST, above `Claimed` - the navigator's choice, and not the Emacs order
+/// (last, after `Merged`): Emacs draws its panel in a window the navigator scrolls to the end of,
+/// while this pane shows about fourteen rows of a forty-one row document, and a section below the
+/// fold is one nobody presses.
+///
+/// `app::work_body` is the one owner of what lies above the queues, so a finding's document line
+/// and the line drawn for it cannot come from two different pieces of arithmetic.
 fn work_document(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'static>> {
+    let findings = app.work_findings();
+    let cursor = app.work_cursor.as_deref();
+    let mut lines = Vec::new();
+    for entry in app::work_body(&app.sweeps.content) {
+        match entry {
+            app::WorkBodyLine::SweepHeader { count, error } => {
+                let mut spans = vec![Span::styled(
+                    format!("Sweeps {count}"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )];
+                // The count is on the header exactly as every other section's is - conspicuous
+                // directly above `Claimed 2`, where the bare word Emacs writes is not.
+                if let Some(error) = error {
+                    spans.push(Span::styled(format!("  {error}"), Style::default().fg(RED)));
+                }
+                lines.push(Line::from(spans));
+            }
+            app::WorkBodyLine::Finding(index) => {
+                let judged = &findings[index];
+                let mut style = Style::default();
+                // A stranded P0 is gold, and that is the whole of the escalation: no new colour,
+                // no glyph, no popup.
+                if judged.finding.urgent() {
+                    style = style.fg(GOLD);
+                }
+                if cursor == Some(judged.finding.key().as_str()) {
+                    style = style.bg(SELECTED_BG);
+                }
+                // Cells, not chars: a label carrying a wide glyph cut by `chars` would push the
+                // pane border off the row.
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", truncate_cells(&judged.label, width.saturating_sub(2))),
+                    style,
+                )));
+            }
+            app::WorkBodyLine::Blank => lines.push(Line::from("")),
+            app::WorkBodyLine::Queues => lines.extend(work_queues(app, now, width)),
+        }
+    }
+    lines
+}
+
+/// The six queues, in the same four shapes the Fleet pane has - and with the same rule under
+/// them: a failed refresh never destroys queues that are still worth reading.
+fn work_queues(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'static>> {
     match &app.work.content {
         PaneContent::Loading => vec![Line::from(Span::styled("Loading work...", dim()))],
         PaneContent::Fresh { value, .. } => work_lines(value, now, width),
@@ -3455,4 +3519,169 @@ mod tests {
             "{rendered:?}"
         );
     }
+    use crate::sweeps::Finding;
+
+    // --- the Sweeps section (cb-kcs.5.1) ----------------------------------------------------
+
+    fn judged(finding: Finding, label: &str) -> crate::readers::Judged {
+        crate::readers::Judged { finding, label: label.to_string() }
+    }
+
+    fn with_findings(findings: Vec<crate::readers::Judged>) -> App {
+        let mut app = populated();
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(86_400));
+        app.finish_sweep_refresh(Ok(findings), at(86_400));
+        app
+    }
+
+    /// First, above `Claimed`: this pane shows about fourteen rows of a forty-one row document,
+    /// and a section below the fold is one nobody presses.
+    #[test]
+    fn the_sweeps_section_is_first_in_work() {
+        let app = with_findings(vec![
+            judged(Finding::Unclaim { id: "cb-a".into() }, "unclaim cb-a — Storm stalled"),
+            judged(Finding::Reclaim { id: "cb-b".into() }, "reclaim cb-b — Storm gone"),
+        ]);
+        let rendered = body(&render(&app, 140, 30));
+        let header = rendered.iter().position(|l| l.contains("Sweeps 2")).expect("a header");
+        let claimed = rendered.iter().position(|l| l.contains("Claimed")).expect("the queues");
+        assert!(header < claimed, "{rendered:#?}");
+        assert!(rendered.iter().any(|l| l.contains("unclaim cb-a — Storm stalled")));
+    }
+
+    /// Nothing at all when there are no findings and no error - no header and no blank. That is
+    /// the ordinary day, and the Work pane must look exactly as it did before this bead.
+    #[test]
+    fn an_empty_successful_sweep_draws_no_section() {
+        let app = with_findings(Vec::new());
+        let rendered = body(&render(&app, 140, 30));
+        assert!(!rendered.iter().any(|l| l.contains("Sweeps")), "{rendered:#?}");
+        assert!(!rendered.iter().any(|l| l.contains("x act")), "and no hint for a key with nothing to act on");
+    }
+
+    /// A failed sweep with nothing to keep still draws its header: a clean fleet and a fleet
+    /// nobody could look at must not draw the same blank.
+    #[test]
+    fn a_failed_sweep_with_nothing_to_keep_draws_the_header_and_the_reason() {
+        let mut app = populated();
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(86_400));
+        app.finish_sweep_refresh(
+            Err(ReadError::Sweep { script: "sweep-claims".into() }),
+            at(86_400),
+        );
+        let rendered = body(&render(&app, 140, 30));
+        let line = line_with(&rendered, "Sweeps 0");
+        assert!(line.contains("sweep-claims failed"), "{line:?}");
+    }
+
+    /// And a stale one keeps its findings AND says which script failed - three of the six `git
+    /// fetch`, so this is ordinary rather than rare, and a stale section that read exactly like a
+    /// current one is what Emacs's own silence costs.
+    #[test]
+    fn a_failed_sweep_keeps_its_findings_and_names_the_script() {
+        let mut app = with_findings(vec![judged(
+            Finding::Unclaim { id: "cb-a".into() },
+            "unclaim cb-a — Storm stalled",
+        )]);
+        app.finish_sweep_refresh(
+            Err(ReadError::Sweep { script: "sweep-epics".into() }),
+            at(86_405),
+        );
+        let rendered = body(&render(&app, 140, 30));
+        let line = line_with(&rendered, "Sweeps 1");
+        assert!(line.contains("sweep-epics failed"), "{line:?}");
+        assert!(rendered.iter().any(|l| l.contains("unclaim cb-a")), "{rendered:#?}");
+    }
+
+    /// A stranded P0 is gold and the rest are not. The whole of the escalation.
+    #[test]
+    fn a_stranded_p0_finding_is_gold_and_the_others_are_not() {
+        let app = with_findings(vec![
+            judged(
+                Finding::Unassign { id: "cb-p0".into(), priority: Some(0) },
+                "unassign cb-p0 — Storm is not running",
+            ),
+            judged(
+                Finding::Unassign { id: "cb-p2".into(), priority: Some(2) },
+                "unassign cb-p2 — Storm is not running",
+            ),
+        ]);
+        let buffer = render(&app, 140, 30);
+        assert_eq!(style_where(&buffer, "unassign cb-p0").fg, Some(GOLD));
+        assert_ne!(style_where(&buffer, "unassign cb-p2").fg, Some(GOLD));
+    }
+
+    /// The cursor's line takes the selected background the Fleet pane's selected row uses.
+    #[test]
+    fn the_cursor_line_is_highlighted() {
+        let mut app = with_findings(vec![
+            judged(Finding::Unclaim { id: "cb-a".into() }, "unclaim cb-a — Storm stalled"),
+            judged(Finding::Reclaim { id: "cb-b".into() }, "reclaim cb-b — Storm gone"),
+        ]);
+        app.work_cursor = Some("reclaim:cb-b".into());
+        let buffer = render(&app, 140, 30);
+        assert_eq!(style_where(&buffer, "reclaim cb-b").bg, Some(SELECTED_BG));
+        assert_ne!(style_where(&buffer, "unclaim cb-a").bg, Some(SELECTED_BG));
+    }
+
+    /// Cells, not chars, and the pane's own width: a label carrying a wide glyph cut by `chars`
+    /// would push the border off the row.
+    #[test]
+    fn a_sweep_line_is_cut_at_the_pane_width() {
+        let long = format!("unclaim cb-a — {}", "覚".repeat(60));
+        let app = with_findings(vec![judged(Finding::Unclaim { id: "cb-a".into() }, &long)]);
+        let rendered = body(&render(&app, 140, 30));
+        let line = line_with(&rendered, "unclaim cb-a");
+        // The pane's own inner width, whatever the layout gave it - the assertion is that the
+        // label was cut in CELLS, not that the pane is a particular size.
+        assert!(
+            UnicodeWidthStr::width(line.as_str()) <= 140,
+            "the label was not cut: {line:?}"
+        );
+        assert!(line.contains('…'), "and it was cut by `truncate_cells`: {line:?}");
+    }
+
+    /// `x act` is hinted only while there is a finding - INCLUDING on a read-only view, where
+    /// `lifecycle_hint` is `None`: acting on a finding writes to the shared board, which is
+    /// deliberately outside the supervision lease.
+    #[test]
+    fn x_act_is_hinted_only_when_there_is_a_finding() {
+        let mut app = with_findings(vec![judged(
+            Finding::Unclaim { id: "cb-a".into() },
+            "unclaim cb-a — Storm stalled",
+        )]);
+        app.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(
+            SupervisorKind::Emacs,
+        )));
+        let header = lines(&render(&app, 160, 30))[0].clone();
+        assert!(header.contains("x act"), "{header:?}");
+        assert!(!header.contains("s/f/k"), "a read-only view offers no lifecycle key: {header:?}");
+        let empty = with_findings(Vec::new());
+        assert!(!lines(&render(&empty, 160, 30))[0].contains("x act"));
+    }
+
+    /// Every `Prompt` variant is drawn, through the enum's own `text`. cb-4cn is what a renderer
+    /// that matched one variant by name cost: a destructive question the navigator could not see.
+    #[test]
+    fn every_prompt_variant_is_drawn() {
+        let variants = [
+            Prompt::Kill { name: "Storm".into(), text: "Kill Storm?  y / n".into() },
+            Prompt::Disarm {
+                name: "Xavier".into(),
+                text: "Disarm Xavier? The view will stop bringing it back.  y / n".into(),
+            },
+            Prompt::Sweep {
+                finding: Finding::Unclaim { id: "cb-a".into() },
+                text: "run bd unclaim cb-a ?  y / n".into(),
+            },
+        ];
+        for prompt in variants {
+            let mut app = populated();
+            let expected = prompt.text().to_string();
+            app.confirm = Some(prompt);
+            let header = lines(&render(&app, 160, 20))[0].clone();
+            assert!(header.contains(&expected), "{expected:?} was not drawn: {header:?}");
+        }
+    }
+
 }

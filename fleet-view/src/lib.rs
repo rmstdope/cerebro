@@ -8,7 +8,8 @@
 //! one author of those. Since cb-kcs.3 it also acts UNATTENDED on the sessions
 //! it hosts: it ends one whose pass is over, retires one under a stop flag and
 //! clears the flag with it, and types one line into an implementer whose
-//! question nobody answered. It still evaluates no trigger, starts nothing on
+//! question nobody answered.
+//!
 //! Since cb-kcs.4.1 it also STARTS sessions on its own: it evaluates the
 //! board-backed triggers for the planner, implementer, verifier and
 //! orchestrator roles, honours the roster's own `autostart`/`standby`

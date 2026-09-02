@@ -920,22 +920,51 @@ mod tests {
         }
         assert!(elapsed < Duration::from_secs(10), "it waited for the child to finish: {elapsed:?}");
 
-        // Killed AND waited for: a kill without a wait leaves a zombie, and this process outlives
-        // every refresh it makes. Asked of the process table rather than of a recorded pid, so a
-        // loaded machine cannot make the assertion itself flaky.
+        // Killed AND waited for: a kill without a wait leaves a zombie, and this process
+        // outlives every refresh it makes. Asked about THIS child's own pid - see
+        // `zombie_with_parent`.
+        assert_no_leaked_zombie("the timed-out child");
+    }
+
+
+    /// Every zombie child of this process, as pids.
+    fn zombie_children() -> Vec<String> {
         let mine = std::process::id().to_string();
-        let table = Command::new("ps").args(["-axo", "stat=,ppid="]).output().unwrap();
-        let table = String::from_utf8_lossy(&table.stdout);
-        let zombies: Vec<&str> = table
+        let table = Command::new("ps").args(["-axo", "pid=,stat=,ppid="]).output().unwrap();
+        String::from_utf8_lossy(&table.stdout)
             .lines()
-            .filter(|line| {
+            .filter_map(|line| {
                 let mut fields = line.split_whitespace();
+                let pid = fields.next().unwrap_or("");
                 let stat = fields.next().unwrap_or("");
                 let ppid = fields.next().unwrap_or("");
-                stat.starts_with('Z') && ppid == mine
+                (stat.starts_with('Z') && ppid == mine).then(|| pid.to_string())
             })
-            .collect();
-        assert!(zombies.is_empty(), "the timed-out child was left as a zombie: {zombies:?}");
+            .collect()
+    }
+
+    /// Assert that no zombie child of this process OUTLIVES a short wait.
+    ///
+    /// A single snapshot was the fragile version, and it went red on this branch the moment two
+    /// more spawning cases joined the suite (cb-kcs.4.1): cargo runs these tests as threads of
+    /// one process, and EVERY `run_with_timeout` anywhere leaves its child a zombie for the
+    /// window between the child's exit and its own `wait_timeout` returning - so a snapshot taken
+    /// during somebody else's window fails a case that leaked nothing. Somebody else's zombie is
+    /// reaped within milliseconds; a leaked one never is. So this polls, and a moment with none
+    /// is the proof.
+    fn assert_no_leaked_zombie(what: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let zombies = zombie_children();
+            if zombies.is_empty() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what} was left as a zombie: {zombies:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// A child that writes more than one pipe buffer and then exits is read whole: both pipes are
@@ -1147,19 +1176,7 @@ mod tests {
         }
         assert!(elapsed < Duration::from_secs(10), "it waited for the child: {elapsed:?}");
 
-        let mine = std::process::id().to_string();
-        let table = Command::new("ps").args(["-axo", "stat=,ppid="]).output().unwrap();
-        let table = String::from_utf8_lossy(&table.stdout);
-        let zombies: Vec<&str> = table
-            .lines()
-            .filter(|line| {
-                let mut fields = line.split_whitespace();
-                let stat = fields.next().unwrap_or("");
-                let ppid = fields.next().unwrap_or("");
-                stat.starts_with('Z') && ppid == mine
-            })
-            .collect();
-        assert!(zombies.is_empty(), "the timed-out bd was left as a zombie: {zombies:?}");
+        assert_no_leaked_zombie("the timed-out bd");
     }
 
     // --- the roster's declaration and the project's spacing (cb-kcs.4.1) -----------------------

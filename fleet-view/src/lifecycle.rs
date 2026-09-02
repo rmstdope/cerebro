@@ -295,8 +295,10 @@ pub enum FinishOutcome {
 /// What `k` does. Killing is the one key that asks first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KillOutcome {
-    /// Put PROMPT in the notice slot in gold and wait for a keystroke.
-    Confirm { prompt: String },
+    /// Put PROMPT in the notice slot in gold and wait for a keystroke. `disarm` says WHICH
+    /// question was asked - a standby row is disarmed, anything else is killed - so the sentence
+    /// and the action it confirms are decided in one place and cannot drift apart.
+    Confirm { prompt: String, disarm: bool },
     Refuse(String),
     Ignore,
 }
@@ -355,12 +357,12 @@ pub fn kill_outcome(situation: Situation<'_>) -> KillOutcome {
     // Ahead of the two rules that refuse a name that is not running: a standby row hosts no
     // session by construction, and `k` on one means disarm rather than kill.
     if row.state == RowState::Standby {
-        return KillOutcome::Confirm { prompt: disarm_prompt(&row.name) };
+        return KillOutcome::Confirm { prompt: disarm_prompt(&row.name), disarm: true };
     }
     if !situation.hosted {
         return KillOutcome::Refuse(elsewhere_or_absent(row));
     }
-    KillOutcome::Confirm { prompt: kill_prompt(row) }
+    KillOutcome::Confirm { prompt: kill_prompt(row), disarm: false }
 }
 
 /// The two sentences `f` and `k` share for an agent this view is not hosting.
@@ -775,7 +777,7 @@ mod tests {
         // k: only a session this view hosts, and it asks first.
         assert_eq!(
             kill_outcome(situation(&up, Some(&dead), true, false)),
-            KillOutcome::Confirm { prompt: "Kill Cyclops?  y / n".to_string() }
+            KillOutcome::Confirm { prompt: "Kill Cyclops?  y / n".to_string(), disarm: false }
         );
         assert_eq!(
             kill_outcome(situation(&up, Some(&alive), false, false)),
@@ -790,7 +792,7 @@ mod tests {
         // A flag set does not turn a kill into a clear: only `f` reads it.
         assert_eq!(
             kill_outcome(situation(&up, Some(&dead), true, true)),
-            KillOutcome::Confirm { prompt: "Kill Cyclops?  y / n".to_string() }
+            KillOutcome::Confirm { prompt: "Kill Cyclops?  y / n".to_string(), disarm: false }
         );
         assert_eq!(kill_outcome(situation(&up, None, false, false)), KillOutcome::Ignore);
     }
@@ -828,7 +830,7 @@ mod tests {
         );
         assert_eq!(
             kill_outcome(situation(&draining, Some(&dead), true, false)),
-            KillOutcome::Confirm { prompt: "Kill Cyclops?  y / n".to_string() }
+            KillOutcome::Confirm { prompt: "Kill Cyclops?  y / n".to_string(), disarm: false }
         );
     }
 
@@ -959,7 +961,8 @@ mod tests {
         assert_eq!(
             kill_outcome(situation(&mode, Some(&row), false, false)),
             KillOutcome::Confirm {
-                prompt: "Disarm Xavier? The view will stop bringing it back.  y / n".to_string()
+                prompt: "Disarm Xavier? The view will stop bringing it back.  y / n".to_string(),
+                disarm: true,
             }
         );
         assert_eq!(

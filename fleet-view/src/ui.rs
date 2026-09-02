@@ -792,7 +792,7 @@ fn fleet_document(
     let body = crate::app::fleet_body(&app.fleet.content);
     let empty: Vec<FleetRow> = Vec::new();
     let rows = app.fleet.content.value().unwrap_or(&empty);
-    let columns = columns_with_standby(rows, width, &app.standby_labels);
+    let columns = columns(rows, width, &app.standby_labels);
     let inner_width = (width as usize).saturating_sub(2);
     body.iter()
         .map(|entry| {
@@ -1096,14 +1096,10 @@ struct Columns {
 /// Column widths from the data, with this project's floors - the same rule
 /// `cerebro--column-widths` follows, and for the same reason: a width is a fact about the roster
 /// in front of the navigator, not a setting they should have to find.
-fn columns(rows: &[FleetRow], width: u16) -> Columns {
-    columns_with_standby(rows, width, &BTreeMap::new())
-}
-
-/// `columns`, with the standby labels that also occupy the BEAD column. `→ buffer<10` is eleven
-/// cells and the column takes them: it sizes to its widest entry and only falls back to the floor
-/// when the pane cannot spare more.
-fn columns_with_standby(
+/// The standby labels are passed in because they occupy the BEAD column too: `→ buffer<10` is
+/// eleven cells and the column takes them, since it sizes to its widest entry and only falls back
+/// to the floor when the pane cannot spare more.
+fn columns(
     rows: &[FleetRow],
     width: u16,
     standby_labels: &BTreeMap<String, String>,

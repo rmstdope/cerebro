@@ -297,9 +297,6 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     let initial = controller.apply(readers::read_configured_supervisor(&paths));
     let mut app = App::with_supervision(initial);
     let mut ledger = StartLedger::default();
-    // Once, at startup, beside the ownership read - not per tick and not per row: a fork per role
-    // per five-second tick is not a thing this view may do.
-    let (spacing, _) = readers::read_role_spacing(&paths, &SPACED_ROLES);
 
     // BEFORE the terminal guard, so it is dropped AFTER it: a child killed on the way out must
     // not be killed while the alternate screen is still up.
@@ -310,10 +307,14 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // early return and by a panic - each of which has left somebody's terminal in raw mode with
     // no echo and no prompt.
     // The roster's own declaration, performed once as the view comes up, and only by a view that
-    // may act on this checkout.
+    // may act on this checkout. The spacing is read here too - once, in the one place, and only
+    // when it will be used: a fork per role per five-second tick is not a thing this view may do.
+    let mut spacing = BTreeMap::new();
     if app.supervision.may_supervise() {
+        let (declared, complaints) = readers::read_role_spacing(&paths, &SPACED_ROLES);
+        spacing = declared;
         if let Some(notice) =
-            arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, Utc::now())
+            arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, &complaints, Utc::now())
         {
             app.set_notice(notice);
         }
@@ -556,10 +557,23 @@ fn arm_and_autostart(
     host: &mut SessionHost,
     ledger: &mut StartLedger,
     paths: &ReaderPaths,
+    complaints: &[String],
     now: DateTime<Utc>,
 ) -> Option<String> {
-    let autostart = readers::read_autostart_names(paths).unwrap_or_default();
-    let standby = readers::read_standby_names(paths).unwrap_or_default();
+    // A declaration this view cannot read is treated as an empty list AND said out loud: a fleet
+    // where nothing is armed and nothing is started must not be indistinguishable from a roster
+    // that declared neither.
+    let mut complaints = complaints.to_vec();
+    let mut names = |flag: &str, read: Result<Vec<String>, ReadError>| match read {
+        Ok(names) => names,
+        Err(error) => {
+            complaints.push(format!("roster {flag} could not be read: {error}"));
+            Vec::new()
+        }
+    };
+    let autostart = names("--autostart", readers::read_autostart_names(paths));
+    let standby = names("--standby", readers::read_standby_names(paths));
+    drop(names);
     let mut started = Vec::new();
     for name in &autostart {
         if host.is_live(name) {
@@ -583,7 +597,6 @@ fn arm_and_autostart(
         app.armed.insert(name.clone());
         ledger.note_armed(name, now);
     }
-    let (_, complaints) = readers::read_role_spacing(paths, &SPACED_ROLES);
     startup_notice(&started, &standby, &complaints)
 }
 
@@ -901,11 +914,11 @@ fn lifecycle_key(
             AppAction::None
         }
         'k' => match lifecycle::kill_outcome(situation) {
-            lifecycle::KillOutcome::Confirm { prompt } => {
+            lifecycle::KillOutcome::Confirm { prompt, disarm } => {
                 // `k` asks two different questions: a live session is killed, a standby row is
-                // disarmed. Which one is the row's, and `lifecycle` already wrote the sentence.
-                let standby = row.as_ref().is_some_and(|row| row.state == RowState::Standby);
-                app.confirm = Some(if standby {
+                // disarmed. WHICH is `lifecycle`'s answer, beside the sentence it wrote, so the
+                // prompt and the action it confirms cannot part company.
+                app.confirm = Some(if disarm {
                     app::Prompt::Disarm { name, text: prompt }
                 } else {
                     app::Prompt::Kill { name, text: prompt }
@@ -1277,7 +1290,7 @@ mod main_tests {
     /// An `App` whose Session pane is focused and holding a live child, with that child's first
     /// bytes already seen - so the very first pass of the loop routes to it rather than to `App`.
     fn hosting(host: &mut SessionHost) -> App {
-        use cerebro_tui::model::{AgentKind, RosterEntry, RowState};
+        use cerebro_tui::model::{AgentKind, RowState};
         let mut app = App::with_supervision(SupervisionMode::Supervising);
         app.finish_refresh(
             Ok(vec![cerebro_tui::model::FleetRow {
@@ -1894,7 +1907,7 @@ mod main_tests {
     /// that both offsets survive resizing.
     #[test]
     fn a_too_small_terminal_does_not_clamp_either_offset() {
-        use cerebro_tui::model::{AgentKind, RosterEntry, RowState};
+        use cerebro_tui::model::{AgentKind, RowState};
 
         let mut app = App::new();
         app.finish_refresh(
@@ -2386,7 +2399,7 @@ mod main_tests {
         )
     }
 
-    use cerebro_tui::model::{AgentKind, RosterEntry, RowState};
+    use cerebro_tui::model::{AgentKind, RowState};
     use cerebro_tui::supervisor::SupervisionMode;
 
     #[test]
@@ -2869,6 +2882,13 @@ mod main_tests {
             app.notice.as_deref(),
             Some("Xavier is disarmed; the view will not bring it back.")
         );
+        // And the row greys on the refresh the key asked for: `apply_standby` has nothing left to
+        // restate it from.
+        app.finish_refresh(
+            Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
+            Utc::now(),
+        );
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
     }
 
     #[test]
@@ -2912,6 +2932,65 @@ mod main_tests {
     }
 
     #[test]
+    fn a_start_that_could_not_spawn_parks_the_row_rather_than_retrying_for_ever() {
+        let dir = tempfile::tempdir().unwrap();
+        // No `launch` in this scratch checkout at all: `lifecycle::start` returns Err, which is
+        // the one refusal path that never becomes a process and so has no exit status to read.
+        std::fs::create_dir_all(dir.path().join(".cerebro/state")).unwrap();
+        let paths = ReaderPaths {
+            consumer_root: dir.path().to_path_buf(),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: dir.path().to_path_buf(),
+        };
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(short_buffer()),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        assert!(!host.is_live("Xavier"));
+        assert!(
+            host.exits().contains_key("Xavier"),
+            "a spawn that failed is a verdict, or nothing parks the row"
+        );
+
+        // The next fleet read parks it: no blue dotted circle, so no second launch on this or any
+        // later tick. Without a backoff (cb-kcs.4.2's), that is the whole of Q5.
+        app.set_exits(host.exits());
+        app.finish_refresh(
+            Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
+            now,
+        );
+        assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Dead);
+        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        assert!(!host.is_live("Xavier"), "and it is not started again");
+    }
+
+    #[test]
+    fn a_roster_that_cannot_be_read_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        // No `roster` at all: nothing is armed, nothing is started, and the navigator is told
+        // why rather than shown a fleet indistinguishable from one that declared neither.
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = App::with_supervision(supervising());
+
+        let notice = arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, &[], Utc::now())
+            .expect("a read that failed is reported");
+
+        assert!(notice.contains("--autostart could not be read"), "{notice}");
+        assert!(notice.contains("--standby could not be read"), "{notice}");
+        assert!(app.armed.is_empty());
+    }
+
+    #[test]
     fn a_refused_launch_is_never_standby_even_for_one_frame() {
         let now = Utc::now();
         let mut app = App::with_supervision(supervising());
@@ -2939,7 +3018,7 @@ mod main_tests {
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = App::with_supervision(supervising());
 
-        let notice = arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, now);
+        let notice = arm_and_autostart(&mut app, &mut host, &mut ledger, &paths, &[], now);
 
         assert!(host.is_live("Cyclops"), "the autostart half is started");
         assert!(app.armed.contains("Cyclops"), "and armed by the start");

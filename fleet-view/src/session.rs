@@ -720,10 +720,17 @@ impl SessionHost {
 
     /// Record that NAME's launch was refused, with the launcher's own words. Replaces that agent's
     /// retained pass, the way a start does.
+    ///
+    /// It also records the refusal as that name's last exit. A launch that never became a process
+    /// has no status for `classify_exit` to read, and without this it would leave no verdict at
+    /// all - so `model::apply_standby` would restate the row as `Standby` and the trigger, having
+    /// no `started_at` to measure a floor against, would launch it again on the next fleet read,
+    /// for ever (cb-kcs.4.1's Q5, and the 135-launches shape it exists to prevent).
     pub fn note_refusal(&mut self, name: &str, message: &str, at: DateTime<Utc>) {
         self.retained.remove(name);
         let lines = refusal_lines(message);
         self.refused.insert(name.to_string(), Retained { lines: Arc::new(lines), at });
+        self.exits.insert(name.to_string(), crate::lifecycle::LastExit::Refused);
     }
 
     /// How many children are alive. This is what `SupervisorController::hosted_sessions` reads.

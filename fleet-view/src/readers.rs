@@ -1359,7 +1359,11 @@ esac
         let paths = gh_paths(dir.path());
         let mut me = None;
 
-        let snapshot = read_gh(&paths, &programs, &mut me).expect("a fixture gh answers");
+        // `retry_if_text_busy`, like every other fixture-script case here: on Linux the kernel
+        // can still hold the write descriptor open when `execve` runs, and CI failed exactly
+        // there (ETXTBSY) while three local runs passed.
+        let snapshot = retry_if_text_busy(|| read_gh(&paths, &programs, &mut me))
+            .expect("a fixture gh answers");
         assert_eq!(snapshot.issues[0].number, 212);
         assert_eq!(snapshot.prs[0].number, 244);
         assert_eq!(snapshot.me.as_deref(), Some("navigator"));
@@ -1372,7 +1376,7 @@ esac
 
         // The login answers the same thing for the life of the process, so it is asked for until
         // it answers and then never again.
-        read_gh(&paths, &programs, &mut me).expect("a second read");
+        retry_if_text_busy(|| read_gh(&paths, &programs, &mut me)).expect("a second read");
         let argv = std::fs::read_to_string(dir.path().join("argv.log")).unwrap();
         assert_eq!(
             argv.lines().filter(|l| *l == GH_ME_ARGV.join(" ")).count(),
@@ -1394,7 +1398,8 @@ exit 1
         );
         let programs = Programs { gh: broken, ..Programs::default() };
         let mut me = None;
-        let err = read_gh(&gh_paths(dir.path()), &programs, &mut me).unwrap_err();
+        let paths = gh_paths(dir.path());
+        let err = retry_if_text_busy(|| read_gh(&paths, &programs, &mut me)).unwrap_err();
         match err {
             ReadError::Exit { stderr, .. } => assert!(stderr.contains("rate limited")),
             other => panic!("expected Exit, got {other:?}"),
@@ -1406,8 +1411,9 @@ exit 1
         let dir = tempfile::tempdir().unwrap();
         let programs = Programs { gh: fake_gh(dir.path(), 4), ..Programs::default() };
         let mut me = None;
-        let snapshot =
-            read_gh(&gh_paths(dir.path()), &programs, &mut me).expect("the two lists answered");
+        let paths = gh_paths(dir.path());
+        let snapshot = retry_if_text_busy(|| read_gh(&paths, &programs, &mut me))
+            .expect("the two lists answered");
         assert_eq!(snapshot.issues.len(), 1);
         assert_eq!(snapshot.me, None, "and the login is still unknown");
     }

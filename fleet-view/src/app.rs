@@ -20,12 +20,12 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::model::{self, FleetRow, GhSnapshot, RowState, WorkBuckets};
+use crate::model::{self, FleetRow, GhSnapshot, HistoryRow, RowState, WorkBuckets};
 use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{
-    read_configured_supervisor, read_fleet, read_gh, read_sweeps, read_work, Commands, Judged,
-    Programs, ReaderPaths, ReadError,
+    read_configured_supervisor, read_fleet, read_gh, read_history, read_sweeps, read_work,
+    Commands, Judged, Programs, ReaderPaths, ReadError,
 };
 use crate::sweeps::Finding;
 use crate::triggers::GhAnswer;
@@ -50,6 +50,14 @@ pub const GH_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
 /// (`emacs/cerebro.el`): six scripts, three of which fetch from origin, against a thirty-second
 /// `bd list`. Never on the five-second tick.
 pub const SWEEP_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
+
+/// How often `scripts/fleet-history` is asked what the fleet has been doing.
+///
+/// Five minutes, `cerebro-history-refresh-seconds` (`emacs/cerebro.el`): it is a `jq` walk over a
+/// log that grows without limit, and what it feeds is a line saying how long an agent has been
+/// where it is - which does not change meaningfully inside five minutes. Never on the five-second
+/// tick.
+pub const HISTORY_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 
 /// What a pane has to show, and how sure it is of it.
 ///
@@ -511,6 +519,15 @@ pub struct App {
     /// every ten minutes and after every `x`, and an index would silently come to mean a
     /// different destructive command.
     pub work_cursor: Option<String>,
+    /// What `scripts/fleet-history --summary` last said, on its own five-minute cadence and its
+    /// own in-flight slot. A `Pane<T>` for `finish`'s transitions above all: a failed run must not
+    /// destroy rows still worth reading, and the header names the script in red while it holds
+    /// them.
+    ///
+    /// Its `scroll` is unused - History is drawn inside the Work pane, which owns the offset -
+    /// and that is the price of one pane type rather than two.
+    pub history: Pane<Vec<HistoryRow>>,
+    last_history_request: Option<Instant>,
 }
 
 /// A question the screen is waiting on. `k` is the only key that asks (the navigator's choice),
@@ -587,6 +604,8 @@ impl App {
             sweeps: Pane::default(),
             last_sweep_request: None,
             work_cursor: None,
+            history: Pane::default(),
+            last_history_request: None,
         }
     }
 
@@ -1006,6 +1025,41 @@ impl App {
         }
     }
 
+    /// Whether History is due at NOW. Its own clock, for `sweep_due`'s reason: a five-minute
+    /// reader that no keystroke schedules has no business on the five-second tick.
+    pub fn history_due(&self, now: Instant) -> bool {
+        match self.last_history_request {
+            None => true,
+            Some(last) => now.duration_since(last) >= HISTORY_REFRESH_INTERVAL,
+        }
+    }
+
+    /// Claim History's in-flight slot and stamp the request. Its own slot, deliberately.
+    pub fn begin_history_refresh(&mut self, at: Instant) -> bool {
+        if self.history.begin() {
+            self.last_history_request = Some(at);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// History's content transition; see `Pane::finish` for the whole rule. It touches that pane
+    /// and nothing else.
+    pub fn finish_history_refresh(
+        &mut self,
+        result: Result<Vec<HistoryRow>, ReadError>,
+        at: DateTime<Utc>,
+    ) {
+        self.history.finish(result, at);
+    }
+
+    /// The History rows the Work pane is currently showing, `Fresh` and `Stale` alike; empty
+    /// otherwise.
+    pub fn history_rows(&self) -> &[HistoryRow] {
+        self.history.content.value().map(Vec::as_slice).unwrap_or(&[])
+    }
+
     /// The findings the Work pane is currently showing, `Fresh` and `Stale` alike; empty
     /// otherwise. One accessor, so the cursor, the renderer and `x` cannot disagree about what is
     /// on screen.
@@ -1308,6 +1362,19 @@ pub type SweepWorker = Worker<Vec<Judged>>;
 impl Worker<Vec<Judged>> {
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
         Self::spawn_reader(move || read_sweeps(&paths, &programs, commands.as_ref()))
+    }
+}
+
+/// History's worker: `read_history` on its own thread.
+///
+/// A sixth thread rather than a call on the UI thread, for the reason the others exist: it is a
+/// `jq` walk over a log that grows without limit, and a slow one would otherwise freeze the
+/// screen - keys and all - for as long as it took.
+pub type HistoryWorker = Worker<Vec<HistoryRow>>;
+
+impl Worker<Vec<HistoryRow>> {
+    pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
+        Self::spawn_reader(move || read_history(&paths, commands.as_ref()))
     }
 }
 
@@ -2615,5 +2682,50 @@ mod tests {
         );
         empty.reapply_standby();
         assert!(matches!(empty.fleet.content, PaneContent::Unavailable { .. }));
+    }
+
+    /// History has its own five-minute clock and its own in-flight slot, exactly as the sweeps
+    /// and `gh` do: a thirty-second `jq` walk behind a five-second fleet read is the one thing
+    /// independent panes must not do.
+    #[test]
+    fn the_history_cadence_is_its_own() {
+        let mut app = App::default();
+        let start = Instant::now();
+        assert!(app.history_due(start), "nothing has been asked yet");
+        assert!(app.begin_history_refresh(start));
+        assert!(!app.begin_history_refresh(start), "one at a time");
+        // A work or fleet read in flight says nothing about History, and the reverse.
+        assert!(app.begin_work_refresh(start, Utc::now()));
+        assert!(app.begin_refresh(start));
+        app.finish_history_refresh(Ok(Vec::new()), at(0));
+        assert!(!app.history_due(start + Duration::from_secs(299)));
+        assert!(app.history_due(start + HISTORY_REFRESH_INTERVAL));
+    }
+
+    #[test]
+    fn a_failed_history_read_keeps_the_rows_it_had() {
+        let mut app = App::default();
+        let row = model::HistoryRow {
+            agent: "Cyclops".into(),
+            state: "working".into(),
+            open_min: Some(3.0),
+            ..model::HistoryRow::default()
+        };
+        app.begin_history_refresh(Instant::now());
+        app.finish_history_refresh(Ok(vec![row.clone()]), at(0));
+        assert!(matches!(app.history.content, PaneContent::Fresh { .. }));
+
+        app.begin_history_refresh(Instant::now());
+        app.finish_history_refresh(
+            Err(ReadError::Invalid { source: "fleet-history".into(), message: "nope".into() }),
+            at(60),
+        );
+        match &app.history.content {
+            PaneContent::Stale { value, read_at, .. } => {
+                assert_eq!(value, &vec![row]);
+                assert_eq!(*read_at, at(0), "as old as its read, not as old as the failure");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

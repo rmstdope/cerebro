@@ -757,6 +757,79 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
     buckets
 }
 
+// --- History ----------------------------------------------------------------------------------
+
+/// One `(agent, state)` row of `scripts/fleet-history --summary`. The four aggregates describe
+/// FINISHED intervals; `open_min` is the interval running right now, or `None` when this agent is
+/// not in this state at the moment.
+///
+/// Every numeric field is optional because the script emits `null` for a state nothing has
+/// finished in — `median_min` and `max_min` especially, which is why neither may be a plain
+/// `f64`. `PartialEq` and never `Eq`: `f64` is neither `Eq` nor `Ord`, so nothing here may be
+/// sorted or put in a `BTreeSet`.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct HistoryRow {
+    pub agent: String,
+    pub state: String,
+    #[serde(default)]
+    pub count: i64,
+    #[serde(default)]
+    pub total_min: Option<f64>,
+    #[serde(default)]
+    pub median_min: Option<f64>,
+    #[serde(default)]
+    pub max_min: Option<f64>,
+    #[serde(default)]
+    pub open_min: Option<f64>,
+}
+
+/// How many times its own median an open interval must reach to be called long.
+///
+/// `cerebro-history-long-multiple`, a `const` here for `lifecycle::END_GRACE_SECONDS`' reason:
+/// this crate has no place to declare a customisation and must not invent one.
+///
+/// Not one. An interval is past the median half the time by construction, so a mark that fired on
+/// the median would fire on half of every ordinary day and stop meaning anything.
+pub const HISTORY_LONG_MULTIPLE: f64 = 2.0;
+
+/// This row's History line, and whether it is long — or `None` when the agent is not in this state
+/// right now. The Rust `cerebro--history-row-line` (`emacs/cerebro.el:1181-1201`), and
+/// byte-identical to it:
+///
+/// ```text
+///   Cyclops working 2m
+///   Psylocke asking 537m - long, median 2m
+/// ```
+///
+/// A hyphen, not an em dash, and no leading `+`: the panel's own spelling.
+///
+/// A state nothing has finished in has no median and is never called long, however far it runs —
+/// there is nothing to judge it against, and a first interval judged against itself would be
+/// marked always or never depending on the arithmetic rather than on the fleet. A median of zero
+/// is the same case: it is not a scale anything can be twice of.
+///
+/// The text and the flag rather than a styled line, because `ui.rs` owns colour and `model.rs`
+/// owns words.
+pub fn history_line(row: &HistoryRow) -> Option<(String, bool)> {
+    let open = row.open_min?;
+    let median = row.median_min.filter(|m| *m > 0.0);
+    let long = median.is_some_and(|m| open >= HISTORY_LONG_MULTIPLE * m);
+    let tail = if long {
+        // `long` is only ever true when `median` is `Some`.
+        format!(" - long, median {}m", median.unwrap_or(0.0).round() as i64)
+    } else {
+        String::new()
+    };
+    let text = format!(
+        "  {} {} {}m{}",
+        row.agent,
+        row.state,
+        open.round() as i64,
+        tail
+    );
+    Some((text, long))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1360,5 +1433,108 @@ mod tests {
         assert!(prs[1].is_draft);
         assert_eq!(prs[1].author.as_ref().unwrap().login, None);
         assert_eq!(prs[2].author, None);
+    }
+
+    // --- history -------------------------------------------------------------------------------
+
+    fn history_row(agent: &str, state: &str) -> HistoryRow {
+        HistoryRow {
+            agent: agent.to_string(),
+            state: state.to_string(),
+            ..HistoryRow::default()
+        }
+    }
+
+    #[test]
+    fn a_history_row_renders_only_when_something_is_running() {
+        // Nothing running in this state: no line at all.
+        let idle = HistoryRow {
+            count: 4,
+            total_min: Some(88.0),
+            median_min: Some(21.9),
+            max_min: Some(40.0),
+            open_min: None,
+            ..history_row("Cyclops", "working")
+        };
+        assert_eq!(history_line(&idle), None);
+
+        // Running, and well inside its own median.
+        let running = HistoryRow {
+            median_min: Some(21.9),
+            open_min: Some(2.4),
+            ..history_row("Cyclops", "working")
+        };
+        assert_eq!(
+            history_line(&running),
+            Some(("  Cyclops working 2m".to_string(), false))
+        );
+
+        // Running far past twice its median: long, and the median is named.
+        let long = HistoryRow {
+            median_min: Some(2.2),
+            open_min: Some(536.6),
+            ..history_row("Psylocke", "asking")
+        };
+        assert_eq!(
+            history_line(&long),
+            Some((
+                "  Psylocke asking 537m - long, median 2m".to_string(),
+                true
+            ))
+        );
+
+        // Exactly twice the median is long: the boundary is inclusive, as elisp's `>=` is.
+        let boundary = HistoryRow {
+            median_min: Some(10.0),
+            open_min: Some(20.0),
+            ..history_row("Beast", "plan")
+        };
+        assert_eq!(
+            history_line(&boundary),
+            Some(("  Beast plan 20m - long, median 10m".to_string(), true))
+        );
+
+        // A state nothing has finished in has no median, and is never long however far it runs.
+        let no_median = HistoryRow {
+            median_min: None,
+            open_min: Some(9_000.0),
+            ..history_row("Forge", "sweep")
+        };
+        assert_eq!(
+            history_line(&no_median),
+            Some(("  Forge sweep 9000m".to_string(), false))
+        );
+
+        // A zero median is not a scale anything can be twice of, and is the same case.
+        let zero_median = HistoryRow {
+            median_min: Some(0.0),
+            open_min: Some(9_000.0),
+            ..history_row("Forge", "sweep")
+        };
+        assert_eq!(
+            history_line(&zero_median),
+            Some(("  Forge sweep 9000m".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn a_history_summary_row_parses_with_every_aggregate_null() {
+        let rows: Vec<HistoryRow> = serde_json::from_str(
+            r#"[{"agent":"Cyclops","state":"working","count":0,"total_min":null,
+                 "median_min":null,"max_min":null,"open_min":3.5}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![HistoryRow {
+                agent: "Cyclops".to_string(),
+                state: "working".to_string(),
+                count: 0,
+                total_min: None,
+                median_min: None,
+                max_min: None,
+                open_min: Some(3.5),
+            }]
+        );
     }
 }

@@ -602,6 +602,44 @@ pub struct Judged {
     pub label: String,
 }
 
+/// How long `scripts/fleet-history` may take. Thirty seconds: it reads two local JSONL files and
+/// answers in well under a second on a real log, so this is a bound on a hang rather than a
+/// budget - but it is not the five seconds the `bd` and `ps` reads get, because the log grows
+/// without limit and `jq` walks all of it.
+const HISTORY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `scripts/fleet-history --summary` - one row per (agent, state) over the default seven-day
+/// window, exactly the call `cerebro--request-history` makes (`emacs/cerebro.el:1447-1449`): no
+/// `--since` and no `--agent`.
+///
+/// Run from `paths.consumer_root`, like the sweep scripts: the script asks
+/// `consumer-root --shared` for itself, and giving it the enclosing tree is what every other
+/// script in this crate is given.
+///
+/// **A failure is never an empty answer.** `Ok(vec![])` is a fleet in which nothing is running,
+/// which is an ordinary and reassuring screen; the script failing must not draw it. That includes
+/// the ordinary failure on a machine that has never run the fleet, where the transitions log does
+/// not exist and the script exits 1 with a message on stderr.
+///
+/// No `ReadError::Sweep`: its one-word `Display` is a sweep's, and the header's own red word for
+/// this reader is written in `ui.rs`.
+pub fn read_history(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> Result<Vec<model::HistoryRow>, ReadError> {
+    let program = paths.scripts_dir.join("fleet-history");
+    let stdout = commands.run(
+        &program,
+        &["--summary"],
+        Some(&paths.consumer_root),
+        HISTORY_TIMEOUT,
+    )?;
+    serde_json::from_slice(&stdout).map_err(|error| ReadError::Invalid {
+        source: program.display().to_string(),
+        message: error.to_string(),
+    })
+}
+
 /// The six sweeps, run in `Sweep::ALL` order, and the findings they justify.
 ///
 /// The chain stops at the first script that does not answer and no later script is started -
@@ -1520,5 +1558,46 @@ mod tests {
         // And the label is the one the shared table pins, built from the candidate this finding
         // was judged from rather than from any other.
         assert_eq!(findings[0].label, "unassign cb-b — Cyclops is not running");
+    }
+
+    // --- history -------------------------------------------------------------------------------
+
+    #[test]
+    fn read_history_asks_fleet_history_for_a_summary() {
+        let fake = FakeCommands::always(
+            br#"[{"agent":"Cyclops","state":"working","count":3,"total_min":40.0,
+                  "median_min":12.0,"max_min":20.0,"open_min":2.4}]"#
+                .to_vec(),
+        );
+        let paths = paths_at(Path::new("/consumer"));
+
+        let rows = read_history(&paths, &fake).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].agent, "Cyclops");
+        assert_eq!(rows[0].open_min, Some(2.4));
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "one program, run once");
+        assert!(calls[0].program.ends_with("fleet-history"), "{:?}", calls[0].program);
+        assert_eq!(calls[0].args, vec!["--summary".to_string()]);
+        assert_eq!(calls[0].cwd.as_deref(), Some(paths.consumer_root.as_path()));
+        assert_eq!(calls[0].timeout, HISTORY_TIMEOUT);
+    }
+
+    /// `Ok(vec![])` is a fleet in which nothing is running, which is an ordinary and reassuring
+    /// screen; the script failing must not draw it.
+    #[test]
+    fn a_failed_history_read_is_never_an_empty_answer() {
+        let fake = FakeCommands::failing(|| exit(1, "no transitions log"));
+        let error = read_history(&paths_at(Path::new("/consumer")), &fake).unwrap_err();
+        assert!(matches!(error, ReadError::Exit { .. }), "{error:?}");
+
+        // Output that is not the JSON array it promised is `Invalid`, naming the script.
+        let garbage = FakeCommands::always("not json");
+        let error = read_history(&paths_at(Path::new("/consumer")), &garbage).unwrap_err();
+        match error {
+            ReadError::Invalid { source, .. } => assert!(source.ends_with("fleet-history"), "{source}"),
+            other => panic!("{other:?}"),
+        }
     }
 }

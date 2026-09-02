@@ -1102,27 +1102,17 @@ mod tests {
     }
     // --- the first board write (cb-kcs.5.1) --------------------------------------------------
 
-    /// A stub `bd` that records its argv, one line per call, and exits with the code the test
-    /// asked for. Written into a tempdir rather than into the source tree: a fixture no test
-    /// writes cannot be `ETXTBSY`, and this one is written once per case.
-    fn stub_bd(dir: &Path, log: &Path, script: &str) -> PathBuf {
-        let path = dir.join("bd");
-        std::fs::write(
-            &path,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n{script}\n", log.display()),
-        )
-        .expect("the stub is written");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-                .expect("the stub is executable");
-        }
-        path
+    /// The tracked `bd` that records rather than writes. NOT written by the test: a file a test
+    /// writes and then spawns races the writer on Linux and dies `ETXTBSY`, which is the trap
+    /// `readers.rs` says four patches in this crate had been working around - and which this
+    /// bead's first CI run walked straight into. What varies per case is DATA in the cwd
+    /// `run_finding` gives the child.
+    fn recording_bd() -> PathBuf {
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/recording-bd"))
     }
 
-    fn calls(log: &Path) -> Vec<String> {
-        std::fs::read_to_string(log)
+    fn calls(dir: &Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("calls"))
             .unwrap_or_default()
             .lines()
             .map(str::to_string)
@@ -1137,19 +1127,21 @@ mod tests {
         }
     }
 
+    fn recording_programs() -> Programs {
+        Programs { bd: recording_bd(), ..Programs::default() }
+    }
+
     /// The push rides the same keypress: a close the other machines cannot see is half done.
     #[test]
     fn running_a_finding_pushes_after_it_succeeds() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        let log = dir.path().join("calls");
-        let bd = stub_bd(dir.path(), &log, "exit 0");
-        let programs = Programs { bd, ..Programs::default() };
+        let programs = recording_programs();
         let outcome = run_finding(
             &paths_in(dir.path()),
             &programs,
             &Finding::Unclaim { id: "cb-a".into() },
         );
-        assert_eq!(calls(&log), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(calls(dir.path()), vec!["unclaim cb-a", "dolt push"]);
         assert_eq!(
             outcome,
             FindingOutcome::Ran { text: format!("ran {} unclaim cb-a", programs.bd.display()) }
@@ -1162,15 +1154,14 @@ mod tests {
     #[test]
     fn a_failed_push_is_said_and_the_write_is_not_undone() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        let log = dir.path().join("calls");
-        let bd = stub_bd(dir.path(), &log, r#"case "$1" in dolt) exit 1 ;; *) exit 0 ;; esac"#);
-        let programs = Programs { bd, ..Programs::default() };
+        std::fs::write(dir.path().join("push-exit"), "1").expect("the push fails");
+        let programs = recording_programs();
         let outcome = run_finding(
             &paths_in(dir.path()),
             &programs,
             &Finding::Reclaim { id: "cb-a".into() },
         );
-        assert_eq!(calls(&log), vec!["reclaim --id cb-a --older-than 10m", "dolt push"]);
+        assert_eq!(calls(dir.path()), vec!["reclaim --id cb-a --older-than 10m", "dolt push"]);
         assert_eq!(
             outcome,
             FindingOutcome::Pushed {
@@ -1184,15 +1175,14 @@ mod tests {
     #[test]
     fn a_failed_command_does_not_push() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        let log = dir.path().join("calls");
-        let bd = stub_bd(dir.path(), &log, "exit 1");
-        let programs = Programs { bd, ..Programs::default() };
+        std::fs::write(dir.path().join("exit-code"), "1").expect("the write fails");
+        let programs = recording_programs();
         let outcome = run_finding(
             &paths_in(dir.path()),
             &programs,
             &Finding::EpicClose { id: "cb-e".into() },
         );
-        assert_eq!(calls(&log), vec!["close cb-e"]);
+        assert_eq!(calls(dir.path()), vec!["close cb-e"]);
         assert_eq!(
             outcome,
             FindingOutcome::Failed {
@@ -1206,15 +1196,15 @@ mod tests {
     #[test]
     fn the_one_bd_that_writes_passes_no_readonly() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        let log = dir.path().join("calls");
-        let bd = stub_bd(dir.path(), &log, "exit 0");
-        let programs = Programs { bd, ..Programs::default() };
+        let programs = recording_programs();
         run_finding(
             &paths_in(dir.path()),
             &programs,
             &Finding::Unassign { id: "cb-a".into(), priority: Some(0) },
         );
-        for call in calls(&log) {
+        let calls = calls(dir.path());
+        assert_eq!(calls, vec!["update cb-a --assignee ", "dolt push"]);
+        for call in calls {
             assert!(!call.contains("--readonly"), "{call:?}");
         }
     }

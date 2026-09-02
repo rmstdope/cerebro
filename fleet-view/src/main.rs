@@ -4263,20 +4263,18 @@ mod main_tests {
     }
     // --- x: the first board write (cb-kcs.5.1) -----------------------------------------------
 
-    /// A `bd` stub that records its argv. The `x` path is the one `bd` in this crate that writes,
-    /// so no case here may reach the real one.
-    fn stub_programs(dir: &std::path::Path, log: &std::path::Path) -> Programs {
-        use std::os::unix::fs::PermissionsExt;
-        let bd = dir.join("bd-stub");
-        std::fs::write(
-            &bd,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexit 0\n", log.display()),
-        )
-        .unwrap();
-        let mut perms = std::fs::metadata(&bd).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&bd, perms).unwrap();
-        Programs { bd, ..Programs::default() }
+    /// The tracked `bd` that records rather than writes. The `x` path is the one `bd` in this
+    /// crate that WRITES, so no case here may reach the real one - and the recorder is tracked
+    /// rather than written here, because a file a test writes and then spawns races the writer on
+    /// Linux and dies `ETXTBSY`.
+    fn stub_programs() -> Programs {
+        Programs {
+            bd: std::path::PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/recording-bd"
+            )),
+            ..Programs::default()
+        }
     }
 
     fn app_with_finding(mode: SupervisionMode) -> App {
@@ -4318,8 +4316,14 @@ mod main_tests {
         action
     }
 
-    fn stub_calls(log: &std::path::Path) -> Vec<String> {
-        std::fs::read_to_string(log).unwrap_or_default().lines().map(str::to_string).collect()
+    /// The recorder writes into the cwd `run_finding` gives it - `paths.shared_root`, which
+    /// `scratch` points at this case's own tempdir.
+    fn stub_calls(paths: &ReaderPaths) -> Vec<String> {
+        std::fs::read_to_string(paths.shared_root.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     /// `x` asks, and nothing is written until `y`. The confirmation names the exact command.
@@ -4327,13 +4331,12 @@ mod main_tests {
     fn x_asks_before_it_writes() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let log = dir.path().join("calls");
-        let programs = stub_programs(dir.path(), &log);
+        let programs = stub_programs();
         let mut app = app_with_finding(SupervisionMode::Supervising);
         let mut host = SessionHost::default();
 
         drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x')]);
-        assert!(stub_calls(&log).is_empty(), "nothing ran on the question alone");
+        assert!(stub_calls(&paths).is_empty(), "nothing ran on the question alone");
         assert!(matches!(
             &app.confirm,
             Some(cerebro_tui::app::Prompt::Sweep { text, .. })
@@ -4341,7 +4344,7 @@ mod main_tests {
         ), "{:?}", app.confirm);
 
         let action = drive_with(&mut app, &mut host, &paths, &programs, vec![ch('y')]);
-        assert_eq!(stub_calls(&log), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(stub_calls(&paths), vec!["unclaim cb-a", "dolt push"]);
         assert_eq!(app.notice.as_deref().map(|n| n.contains("unclaim cb-a")), Some(true));
         // And the section is re-run at once rather than in up to ten minutes.
         assert_eq!(action, AppAction::RefreshSweeps);
@@ -4353,13 +4356,12 @@ mod main_tests {
     fn any_other_key_cancels_a_sweep_and_is_consumed() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let log = dir.path().join("calls");
-        let programs = stub_programs(dir.path(), &log);
+        let programs = stub_programs();
         let mut app = app_with_finding(SupervisionMode::Supervising);
         let mut host = SessionHost::default();
 
         drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x'), ch('q')]);
-        assert!(stub_calls(&log).is_empty(), "nothing ran");
+        assert!(stub_calls(&paths).is_empty(), "nothing ran");
         assert!(app.confirm.is_none(), "and the question is gone");
         assert!(!app.quit, "the cancel is not also a quit");
     }
@@ -4369,13 +4371,12 @@ mod main_tests {
     fn x_from_fleet_focus_acts_on_the_work_cursor() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let log = dir.path().join("calls");
-        let programs = stub_programs(dir.path(), &log);
+        let programs = stub_programs();
         let mut app = app_with_finding(SupervisionMode::Supervising);
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet);
         let mut host = SessionHost::default();
         drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x'), ch('y')]);
-        assert_eq!(stub_calls(&log), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(stub_calls(&paths), vec!["unclaim cb-a", "dolt push"]);
     }
 
     /// And a read-only view acts too: the board writes are deliberately outside the supervision
@@ -4384,8 +4385,7 @@ mod main_tests {
     fn a_read_only_view_still_acts_on_a_finding() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let log = dir.path().join("calls");
-        let programs = stub_programs(dir.path(), &log);
+        let programs = stub_programs();
         let mut app = app_with_finding(SupervisionMode::ReadOnly(
             cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
                 cerebro_tui::supervisor::SupervisorKind::Emacs,
@@ -4393,7 +4393,7 @@ mod main_tests {
         ));
         let mut host = SessionHost::default();
         drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x'), ch('y')]);
-        assert_eq!(stub_calls(&log), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(stub_calls(&paths), vec!["unclaim cb-a", "dolt push"]);
     }
 
     /// With no finding under the cursor `x` does nothing and says nothing - and it is consumed,
@@ -4402,8 +4402,7 @@ mod main_tests {
     fn x_with_no_finding_does_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let log = dir.path().join("calls");
-        let programs = stub_programs(dir.path(), &log);
+        let programs = stub_programs();
         let mut app = lifecycle_app(
             SupervisionMode::Supervising,
             vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
@@ -4412,7 +4411,7 @@ mod main_tests {
         drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x')]);
         assert!(app.confirm.is_none());
         assert_eq!(app.notice, None);
-        assert!(stub_calls(&log).is_empty());
+        assert!(stub_calls(&paths).is_empty());
     }
 
     /// A live session holding the keyboard still gets the byte: the `x` branch is after it.
@@ -4420,8 +4419,7 @@ mod main_tests {
     fn a_live_session_still_gets_the_x() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let log = dir.path().join("calls");
-        let programs = stub_programs(dir.path(), &log);
+        let programs = stub_programs();
         let mut app = app_with_finding(SupervisionMode::Supervising);
         app.focus = cerebro_tui::app::PaneFocus::Session;
         let mut host = SessionHost::default();

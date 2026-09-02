@@ -541,7 +541,7 @@ thousand credits that week (cb-d89). Since cb-9su that subscription is checked m
 than trusted: `scripts/marker-readers` fails the gate on any file that spells the sentence without
 declaring itself.
 
-## fleet-view/ — the standalone read-only view
+## fleet-view/ — the standalone terminal view
 
 `.claude/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
 same fleet and the same six work queues as `M-x cerebro`. It writes no state file and no bead — **and

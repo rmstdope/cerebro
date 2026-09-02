@@ -66,9 +66,9 @@ every agent on the roster with its state, the bead or PR it is on, and how long 
 **The view your project declares is the one that operates the fleet**: every key below, every
 trigger, every stop flag and every state file deleted belongs to whichever it is. Both views offer
 the same keys and answer the same tables; this repository declares `tui`, so here they are the
-terminal view's. `docs/cerebro-supervision.md` is how supervision moves either way. There is a second view for watching —
-`.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering* — which shows the same
-rows and the same queues.
+terminal view's. `docs/cerebro-supervision.md` is how supervision moves either way. The other view
+is `.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering* — which shows the
+same rows and the same queues, and which is the one this repository declares.
 
 Which of the two may act is now the project's own declaration rather than a property of the
 programs: `fleet_supervisor emacs|tui` in `.cerebro/project.conf`, absent meaning `emacs`. Leave it
@@ -606,7 +606,8 @@ bd update <id> --remove-label human                        # back to a planner
 The fleet view is the short answer — the agent list, the bead panel and the sweeps in one buffer.
 
 If you only want to watch, and especially from a machine or a terminal without Emacs, there is a
-standalone read-only view:
+standalone terminal view — which, where a project declares `fleet_supervisor tui` as this one does,
+is also the view that acts:
 
 ```bash
 .claude/cerebro/scripts/cerebro-tui     # needs cargo; anywhere inside the consumer

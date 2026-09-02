@@ -5672,11 +5672,21 @@ mod main_tests {
                 SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
                 "the declaration alone keeps this process read-only"
             );
-            let held = std::fs::read_to_string(&record)
-                .expect("the Emacs supervisor wrote its own record");
+            // POLLED, not read once. The readiness file is written after the FIRST
+            // reconciliation returns, and that first one may not be the one that acquires: a
+            // released listener is not instantly rebindable, so Emacs retries on its own loop.
+            // Reading the record on one attempt failed here roughly one run in four.
+            let mut held = String::new();
+            for _ in 0..100 {
+                held = std::fs::read_to_string(&record).unwrap_or_default();
+                if held.contains("\"owner\":\"emacs\"") {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
             assert!(
                 held.contains("\"owner\":\"emacs\""),
-                "the record names Emacs as the live owner, not {held}"
+                "the record names Emacs as the live owner, not {held:?}"
             );
 
             // The cutover: one line in one file, and nothing restarted.

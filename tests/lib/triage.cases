@@ -1,0 +1,83 @@
+# The triage decision, run by BOTH implementations of the rule:
+#
+#   lifecycle::triage_action        (Rust, fleet-view/)  via fleet-view/src/lifecycle.rs
+#   cerebro--triage-action          (emacs/cerebro.el)   via emacs/cerebro-test.el
+#
+# WHY IT IS ONE FILE. It is `tests/lib/supervise.cases`'s reason, one job along: cb-kcs.5 is a
+# cutover, and until the declaration moves BOTH views triage the same checkout. A row the two
+# answer differently is an idle Cerebro told twice about one unranked set, or never told at all -
+# and neither failure announces itself, because a typed line is fire-and-forget and Cerebro
+# writes nothing back to say it heard. Read `tests/lib/supervisor.cases`' header for the
+# conventions this one copies deliberately.
+#
+# WHAT BOTH READERS MUST BIND. The rows assume `cerebro-triage-repeat' / `TRIAGE_REPEAT_SECONDS'
+# is 600, so a reader binds or passes exactly that number rather than whatever the running fleet
+# is customised to.
+#
+# THE COLUMNS, tab- or space-separated, in order:
+#
+#   role            The roster role. Only `orchestrator' is ever told.
+#   kind            `interactive' or `implementer' - the roster kind.
+#   state           The derived row state: `idle' `working' `asking' `waiting' `up' `unknown'
+#                   `dead' `standby'. Only an exact `idle' is ever told.
+#   hosted          `yes' when THIS view holds a live session for the agent it could type into.
+#                   Rust's `SessionHost::supervisable'; Emacs's `external' INVERTED, exactly as
+#                   `supervise.cases' `ours' column is. The two implementations ask the same
+#                   question with opposite polarity and the table speaks the positive one.
+#   ids             The sorted unranked set, `,'-joined, or `-' for empty.
+#   told_ids        What this name was last told, `,'-joined, or `-' for never.
+#   told_age_s      Seconds before each reader's own `now' that it was told, or `-' when
+#                   `told_ids' is `-'. Relative, so no row carries an absolute instant.
+#   idle_for        Seconds since the row's `since', or `-' when the state file did not say.
+#                   `-' is NOT zero: a torn file must never read as a satisfied deadline.
+#   panel_age       Seconds since the work read was REQUESTED, or `-' before the board has
+#                   answered. Requested and not answered: arrival is later, and an arrival-based
+#                   age passes the guard below in cases the rule refuses.
+#   expect          `tell' `repeat' or `none'.
+#
+# THE GUARD IN THE MIDDLE. `panel_age < idle_for' is what proves the figures POSTDATE the
+# agent's transition, so the set was not measured before Cerebro ranked it. Strictly less: equal
+# ages prove nothing about the order.
+
+# role          kind         state    hosted ids         told_ids told_age_s idle_for panel_age expect
+
+# A set nobody has been told about, and a set that changed.
+orchestrator    interactive  idle     yes    cb-1        -        -          1800     10        tell
+orchestrator    interactive  idle     yes    cb-1,cb-2   cb-1     100        1800     10        tell
+orchestrator    interactive  idle     yes    cb-1        cb-1,cb-2 100       1800     10        tell
+
+# The same set, on the clock. `>=', so 600 exactly repeats.
+orchestrator    interactive  idle     yes    cb-1        cb-1     100        1800     10        none
+orchestrator    interactive  idle     yes    cb-1        cb-1     599        1800     10        none
+orchestrator    interactive  idle     yes    cb-1        cb-1     600        1800     10        repeat
+orchestrator    interactive  idle     yes    cb-1        cb-1     1200       1800     10        repeat
+
+# Never into a session this view does not host.
+orchestrator    interactive  idle     no     cb-1        -        -          1800     10        none
+
+# Never into a question dialog or over output; never where no state file says a line is safe;
+# never where the pass is over or there is no session at all.
+orchestrator    interactive  working  yes    cb-1        -        -          1800     10        none
+orchestrator    interactive  asking   yes    cb-1        -        -          1800     10        none
+orchestrator    interactive  waiting  yes    cb-1        -        -          1800     10        none
+orchestrator    interactive  up       yes    cb-1        -        -          1800     10        none
+orchestrator    interactive  unknown  yes    cb-1        -        -          1800     10        none
+orchestrator    interactive  dead     yes    cb-1        -        -          1800     10        none
+orchestrator    interactive  standby  yes    cb-1        -        -          1800     10        none
+
+# Never a role that is not the orchestrator, and never an implementer kind.
+planner         interactive  idle     yes    cb-1        -        -          1800     10        none
+implementer     interactive  idle     yes    cb-1        -        -          1800     10        none
+orchestrator    implementer  idle     yes    cb-1        -        -          1800     10        none
+
+# Nothing to rank is nothing to say.
+orchestrator    interactive  idle     yes    -           -        -          1800     10        none
+
+# Figures older than the idle they judge: the board was read before Cerebro went idle, so the set
+# names beads it may have just ranked. Equal ages prove nothing either.
+orchestrator    interactive  idle     yes    cb-1        -        -          20       40        none
+orchestrator    interactive  idle     yes    cb-1        -        -          30       30        none
+
+# No panel yet, and a torn state file.
+orchestrator    interactive  idle     yes    cb-1        -        -          1800     -         none
+orchestrator    interactive  idle     yes    cb-1        -        -          -        10        none

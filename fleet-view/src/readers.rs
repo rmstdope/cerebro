@@ -112,23 +112,47 @@ impl std::fmt::Display for ReadError {
 
 impl std::error::Error for ReadError {}
 
-fn run(program: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Vec<u8>, ReadError> {
-    run_with_timeout(program, args, cwd, COMMAND_TIMEOUT)
+/// What a reader asks of the outside world: run this program, with these arguments, in this
+/// directory, bounded by this wall clock, and give me its stdout - or the failure as itself.
+///
+/// The seam exists so that a test about PARSING never starts a process. Four separate patches in
+/// this module - `c25701f`, `4e70768`, `dd3066d`, `fa52613` - were each a new wrapper around a
+/// fixture spawn (a widened timeout, an `ETXTBSY` retry, a zombie poll) rather than a way of not
+/// spawning at all, and every new reader test widened the window for the next one.
+///
+/// `RealCommands` is the only implementation production ever uses; `testing::FakeCommands`
+/// answers from a table and records the argv, and `tests/command_runner.rs` proves the real one
+/// against tracked fixture scripts, in its own process.
+pub trait CommandRunner: Send + Sync {
+    fn run(
+        &self,
+        program: &Path,
+        args: &[&str],
+        cwd: Option<&Path>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, ReadError>;
 }
 
-/// `run`, with the wall-clock bound as a parameter so a test can prove the kill-and-reap path in
-/// milliseconds rather than in the five production seconds.
+/// The runner that actually spawns - the only one that does.
 ///
 /// Both pipes are drained on their own threads *before* anything waits: a child that fills a pipe
 /// blocks writing while the parent blocks waiting, which is a deadlock no timeout can see, since
 /// the child is not idle - it is running, waiting on us. A timed-out child is killed and then
 /// waited for, so no zombie is left behind.
-fn run_with_timeout(
-    program: &Path,
-    args: &[&str],
-    cwd: Option<&Path>,
-    timeout: Duration,
-) -> Result<Vec<u8>, ReadError> {
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RealCommands;
+
+/// What a worker moves onto its own thread: a runner it does not own exclusively.
+pub type Commands = std::sync::Arc<dyn CommandRunner>;
+
+impl CommandRunner for RealCommands {
+    fn run(
+        &self,
+        program: &Path,
+        args: &[&str],
+        cwd: Option<&Path>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, ReadError> {
     let program_name = program.display().to_string();
     let spawn_failed = |e: std::io::Error| ReadError::Spawn {
         source: program_name.clone(),
@@ -187,6 +211,22 @@ fn run_with_timeout(
         });
     }
     Ok(stdout)
+    }
+}
+
+/// Today's private helpers, now thin calls onto the real runner. Increment 2 of cb-x3u replaces
+/// them with an injected `&dyn CommandRunner` at every reader.
+fn run(program: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Vec<u8>, ReadError> {
+    RealCommands.run(program, args, cwd, COMMAND_TIMEOUT)
+}
+
+fn run_with_timeout(
+    program: &Path,
+    args: &[&str],
+    cwd: Option<&Path>,
+    timeout: Duration,
+) -> Result<Vec<u8>, ReadError> {
+    RealCommands.run(program, args, cwd, timeout)
 }
 
 /// The roster, via `<scripts_dir>/roster` - the one place the fleet is declared
@@ -958,94 +998,6 @@ mod tests {
         assert_eq!(rows[1].state, model::RowState::Dead);
     }
 
-    /// A child that never returns is killed, reaped and reported - never waited on forever, and
-    /// never left behind as a zombie. The bound is injected so this costs a second rather than
-    /// the five the screen uses.
-    #[test]
-    fn command_timeout_kills_and_reaps_the_child() {
-        let dir = tempfile::tempdir().unwrap();
-        // `exec' so the process this crate spawns IS the sleeping one: a bash that forked `sleep'
-        // would be reaped here while its child lived on. It writes a pipe-buffer's worth first,
-        // so a runner that waited before draining would deadlock rather than time out.
-        let slow = write_executable(
-            dir.path(),
-            "slow",
-            "#!/usr/bin/env bash\nhead -c 200000 /dev/zero | tr '\\0' 'x'\nexec sleep 30\n",
-        );
-
-        let started = std::time::Instant::now();
-        let err = run_with_timeout(&slow, &[], None, Duration::from_secs(1)).unwrap_err();
-        let elapsed = started.elapsed();
-
-        match err {
-            ReadError::Timeout { seconds, source } => {
-                assert_eq!(seconds, 1);
-                assert!(source.ends_with("slow"), "the failure names the program: {source}");
-            }
-            other => panic!("expected Timeout, got {other:?}"),
-        }
-        assert!(elapsed < Duration::from_secs(10), "it waited for the child to finish: {elapsed:?}");
-
-        // Killed AND waited for: a kill without a wait leaves a zombie, and this process
-        // outlives every refresh it makes. Asked about THIS child's own pid - see
-        // `zombie_with_parent`.
-        assert_no_leaked_zombie("the timed-out child");
-    }
-
-    /// Every zombie child of this process, as pids.
-    fn zombie_children() -> Vec<String> {
-        let mine = std::process::id().to_string();
-        let table = Command::new("ps").args(["-axo", "pid=,stat=,ppid="]).output().unwrap();
-        String::from_utf8_lossy(&table.stdout)
-            .lines()
-            .filter_map(|line| {
-                let mut fields = line.split_whitespace();
-                let pid = fields.next().unwrap_or("");
-                let stat = fields.next().unwrap_or("");
-                let ppid = fields.next().unwrap_or("");
-                (stat.starts_with('Z') && ppid == mine).then(|| pid.to_string())
-            })
-            .collect()
-    }
-
-    /// Assert that no zombie child of this process OUTLIVES a short wait.
-    ///
-    /// A single snapshot was the fragile version, and it went red on this branch the moment two
-    /// more spawning cases joined the suite (cb-kcs.4.1): cargo runs these tests as threads of
-    /// one process, and EVERY `run_with_timeout` anywhere leaves its child a zombie for the
-    /// window between the child's exit and its own `wait_timeout` returning - so a snapshot taken
-    /// during somebody else's window fails a case that leaked nothing. Somebody else's zombie is
-    /// reaped within milliseconds; a leaked one never is. So this polls, and a moment with none
-    /// is the proof.
-    fn assert_no_leaked_zombie(what: &str) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            let zombies = zombie_children();
-            if zombies.is_empty() {
-                return;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{what} was left as a zombie: {zombies:?}"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    /// A child that writes more than one pipe buffer and then exits is read whole: both pipes are
-    /// drained while it runs, so a large roster or process table is not a deadlock.
-    #[test]
-    fn large_output_is_read_without_deadlocking() {
-        let dir = tempfile::tempdir().unwrap();
-        let loud = write_executable(
-            dir.path(),
-            "loud",
-            "#!/usr/bin/env bash\nhead -c 200000 /dev/zero | tr '\\0' 'x'\nhead -c 200000 /dev/zero | tr '\\0' 'e' >&2\n",
-        );
-        let stdout = run_with_timeout(&loud, &[], None, TEST_TIMEOUT).unwrap();
-        assert_eq!(stdout.len(), 200_000);
-    }
-
     /// Every way the aggregate read can fail comes back as a failure. `Ok(vec![])` would render
     /// as a fleet in which every agent is dead - the most alarming screen this view can draw, and
     /// a lie.
@@ -1240,8 +1192,6 @@ mod tests {
             other => panic!("expected Timeout, got {other:?}"),
         }
         assert!(elapsed < Duration::from_secs(10), "it waited for the child: {elapsed:?}");
-
-        assert_no_leaked_zombie("the timed-out bd");
     }
 
     // --- the roster's declaration and the project's spacing (cb-kcs.4.1) -----------------------

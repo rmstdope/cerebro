@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# More than one pipe buffer on each stream, then exit 0: both pipes must be drained while the
+# child runs, or this is a deadlock no timeout can see.
+head -c 200000 /dev/zero | tr '\0' 'x'
+head -c 200000 /dev/zero | tr '\0' 'e' >&2

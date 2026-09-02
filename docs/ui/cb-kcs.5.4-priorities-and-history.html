@@ -1,0 +1,248 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}
+</style>
+<meta charset="utf-8"><title>cb-kcs.5.4 — the agreed surface</title>
+
+<h1>cb-kcs.5.4 &mdash; the surface the navigator approved, 2026-09-02</h1>
+<p class="lede">Three rounds. This file is the specification for the <b>priority keys</b> the Ratatui
+Work pane gains, for the <b>cursor</b> that makes every bead reachable, for the <b>History
+section</b>, and for every sentence the pane says while doing any of it. Where this file and the
+bead&rsquo;s plan disagree, this file is right. It refines
+<code>docs/ui/cb-kcs.5.1-sweeps-section.html</code> in exactly one place &mdash; the cursor rule
+&mdash; and changes nothing else any earlier file in the cb-kcs family decided: not a fleet row, not
+a lifecycle key, not the header&rsquo;s own title, not the Sweeps section.</p>
+
+<h2>1. The cursor: one cursor, over findings and beads alike</h2>
+<p class="lede"><b>&uarr;/&darr;/PgUp/PgDn always move a cursor</b> when Work has focus, over every
+sweep finding and every bead row, and the pane scrolls to follow it exactly as Fleet does.
+<b>They no longer scroll the pane.</b></p>
+
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 2                              </span><span class="b">│</span>
+<span class="b">│</span><span class="sel">  close cb-9su — delivered by Cyclo…  </span><span class="b">│</span>
+<span class="b">│</span>  reclaim cb-mqa — Rogue gone, not …  <span class="b">│</span>
+<span class="b">│</span>                                      <span class="b">│</span>
+<span class="b">│</span><span class="hd">Claimed 2                             </span><span class="b">│</span>
+<span class="b">│</span>  cb-kcs.4.1  P1 The Ratatui view s…  <span class="b">│</span>
+<span class="b">│</span>  cb-mqa      P2 One place answers …  <span class="b">│</span>
+<span class="b">│</span><span class="dim">Rows 1–13 of 43                       </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Planned, unclaimed 3                  </span><span class="b">│</span>
+<span class="b">│</span><span class="sel">  cb-kcs.4.2  P1 A start that keeps…  </span><span class="b">│</span>
+<span class="b">│</span>  cb-x3u      P2 Reader tests stop …  <span class="b">│</span>
+<span class="b">│</span>  cb-9su      P3 Every reader of th…  <span class="b">│</span>
+<span class="b">│</span><span class="dim">Rows 5–17 of 43                       </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>This supersedes cb-kcs.5.1&rsquo;s &ldquo;findings are the only rows that can hold
+a cursor&rdquo;</b>, and nothing else in that file. The priority keys have to point at a bead, and a
+second cursor moved by <code>n</code>/<code>p</code> was <b>rejected</b>: it would put two grey rows
+on screen at once and two ways to move in one pane, and which one a key acted on would be decided by
+the key rather than by where the eye was.</p>
+
+<p class="note"><b>The cost is accepted:</b> &uarr;/&darr; stop being a scroll, so reaching the
+bottom of a forty-three row document is a row at a time. <code>PgUp</code>/<code>PgDn</code> still
+move a viewport&rsquo;s worth, as a page-jump of the cursor.</p>
+
+<h3>What the cursor may sit on</h3>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 1                              </span><span class="b">│</span>  <span class="d">header — skipped</span>
+<span class="b">│</span>  close cb-9su — delivered by Cyclo…  <span class="b">│</span>  <span class="d">finding — x</span>
+<span class="b">│</span>                                      <span class="b">│</span>  <span class="d">blank — skipped</span>
+<span class="b">│</span><span class="hd">Claimed 1                             </span><span class="b">│</span>  <span class="d">header — skipped</span>
+<span class="b">│</span>  cb-kcs.4.1  P1 The Ratatui view s…  <span class="b">│</span>  <span class="d">bead — 0-4 / + / - / u</span>
+<span class="b">│</span><span class="dim">  (none)                              </span><span class="b">│</span>  <span class="d">empty section — skipped</span>
+<span class="b">│</span><span class="dim">  +15 more                            </span><span class="b">│</span>  <span class="d">Enter</span>
+<span class="b">│</span><span class="hd">History 4                             </span><span class="b">│</span>  <span class="d">header — skipped</span>
+<span class="b">│</span>  Beast working 1m                    <span class="b">│</span>  <span class="d">history row — skipped</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+<p class="note"><b>The cursor never lands on a row no key can act on</b>, so a grey row always means
+a key will do something here. History rows are skipped for that reason, even though they are content
+rather than furniture &mdash; nothing acts on one.</p>
+
+<h3>Where it starts</h3>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Claimed 2                             </span><span class="b">│</span>
+<span class="b">│</span><span class="sel">  cb-kcs.4.1  P1 The Ratatui view s…  </span><span class="b">│</span>
+<span class="b">│</span>  cb-mqa      P2 One place answers …  <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+<p class="note"><b>A grey row from the first frame</b> &mdash; the first selectable row of the
+document, as soon as the pane has content, the way the Fleet pane always shows a selection. Waiting
+for the first &uarr;/&darr; was <b>rejected</b>: a digit pressed before any arrow key would then do
+nothing, silently, which is the worst answer a key that writes to the board can give.</p>
+
+<h2>2. The priority keys</h2>
+<p class="lede"><code>0</code>&ndash;<code>4</code> set a priority outright, <code>+</code> and
+<code>-</code> move it one step, <code>u</code> puts the last change back. <b>Only while the Work
+pane has focus.</b></p>
+
+<div class="screen"><pre><span class="hd">Cerebro — supervising</span>  <span class="y">cb-kcs.4.2: P1 → P0</span>
+<span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Planned, unclaimed 3                  </span><span class="b">│</span>
+<span class="b">│</span><span class="sel">  cb-kcs.4.2  P0 A start that keeps…  </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>Work focus only</b>, and this is the one key set in the view that is not
+&ldquo;from any focus&rdquo;. <code>x</code>, <code>s</code>, <code>f</code> and <code>k</code> all
+act from anywhere; a digit is a far more ordinary keystroke than those, and from Fleet focus
+<code>3</code> would silently rerank a bead in a pane nobody was looking at. Acting from any focus
+was <b>rejected</b> for that alone. A live session holding the keyboard still wins and gets the
+byte, exactly as it does for <code>x</code>.</p>
+
+<p class="note"><b>No confirmation</b>, and this is deliberately unlike <code>x</code>. The keystroke
+is the intent: a mis-keyed digit is undone rather than prevented, which is what
+<code>M-x cerebro</code> does and why <code>u</code> exists. A <code>y</code>/<code>n</code>
+prompt was <b>rejected</b> because reranking a backlog of twenty beads would become forty
+keystrokes.</p>
+
+<p class="note"><b><code>bd dolt push</code> rides the same keypress</b>, which is unlike
+<code>M-x cerebro</code> &mdash; the Emacs panel never pushes a priority change, so it stays on that
+machine until something else pushes. A ranking other machines cannot see is half done: that is the
+argument <code>x</code> already won here, and the two board writes in this view now behave alike.
+Exact parity with Emacs was <b>rejected</b> for that reason.</p>
+
+<p class="note"><b>Clamped, never wrapped:</b> <code>+</code> on a P0 and <code>-</code> on a P4 say
+<code>is already P0</code> / <code>is already P4</code> and write nothing &mdash; and a keystroke
+that did nothing must not leave an undo entry claiming it did.</p>
+
+<h3>Every line they can put in the header</h3>
+<div class="screen"><pre><span class="y">cb-kcs.4.2: P1 → P0</span>
+<span class="y">cb-kcs.4.2 is already P0</span>
+<span class="y">cb-kcs.4.2: back to P1</span>
+<span class="y">cb-kcs.4.2: P1 → P0, but bd dolt push failed — other machines will not see this yet</span>
+<span class="e">bd would not set cb-kcs.4.2 to P0</span>
+<span class="e">nothing to undo</span></pre></div>
+<p class="note">Gold for the four that changed something or found nothing to change, red for the two
+failures &mdash; the split <code>x</code> already uses. Each is cleared by the next keystroke, like
+every other notice. <b>The success line says where the bead came from</b>; echoing the command
+(<code>ran bd update cb-kcs.4.2 --priority 0</code>), which is what <code>x</code> does, was
+<b>rejected</b> here because the previous number is what makes <code>u</code> legible.</p>
+
+<h3><code>u</code></h3>
+<p class="note"><b>One step, and only using it spends it.</b> The entry survives a refresh,
+a <code>g</code>, and the bead scrolling out of view; a second <code>u</code> says
+<code>nothing to undo</code>. A later priority change overwrites it, so it always describes the most
+recent one. Clearing it on a refresh or when the bead leaves the pane was <b>rejected</b>: it is a
+one-step rescue for a mis-keyed digit, and a rescue that expires on a timer is one that is not there
+when it is reached for.</p>
+
+<h2>3. Reaching the beads behind <code>+N more</code></h2>
+<p class="lede">Every section stops at eight rows. The P4 backlog is the one queue reranking is
+really for, and it is always longer than eight &mdash; so <b>the <code>+N more</code> line takes the
+cursor, and <code>Enter</code> shows the rest of that section</b>.</p>
+
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Unplanned 23                          </span><span class="b">│</span>
+<span class="b">│</span>  cb-hzs      P4 A stale state file…  <span class="b">│</span>
+<span class="b">│</span><span class="dim">  +15 more                            </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>  <span class="d">not under the cursor</span></pre></div>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Unplanned 23                          </span><span class="b">│</span>
+<span class="b">│</span>  cb-hzs      P4 A stale state file…  <span class="b">│</span>
+<span class="b">│</span><span class="sel">  +15 more — Enter                    </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>  <span class="d">under the cursor</span></pre></div>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Unplanned 23                          </span><span class="b">│</span>
+<span class="b">│</span>  cb-4cn      P2 The header renders…  <span class="b">│</span>
+<span class="b">│</span>  … all 23 rows …                     <span class="b">│</span>
+<span class="b">│</span>  cb-wxr      P4 A red gate names i…  <span class="b">│</span>
+<span class="b">│</span><span class="sel">  all 23 shown — Enter                </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>  <span class="d">open</span></pre></div>
+
+<p class="note"><b>The key is named only under the cursor.</b> Saying it on every frame was
+<b>rejected</b> as eight cells of noise on every section that hides anything; never saying it was
+<b>rejected</b> because nobody would find it.</p>
+<p class="note"><b>The last row of an open section is the way back</b>, in the same place the
+<code>+N more</code> line was, and a section with nothing hidden never has such a row, open or shut.
+<b>An expanded section stays expanded until <code>Enter</code> closes it or the view exits</b> —
+it survives the thirty-second work refresh and <code>g</code>. Closing itself on the next refresh
+was <b>rejected</b>: a rerank of fifteen beads would be interrupted by the section shutting under
+the cursor.</p>
+<p class="note">Removing the cap altogether was <b>rejected</b>: it exists so that the two sections
+worth reading are not pushed off the bottom by the third, and a twenty-three bead Unplanned queue
+would do exactly that on every render rather than on the one where it was asked for.</p>
+
+<h2>4. History</h2>
+<p class="lede"><code>scripts/fleet-history --summary</code> answers one question: what is each
+agent doing right now, how long has it been doing it, and is that long by its own standards. One
+line per <b>open</b> interval, gold when it has run past twice its own median.</p>
+
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Waiting on you 1                      </span><span class="b">│</span>
+<span class="b">│</span>  cb-wfb      P2 Parked beads say h…  <span class="b">│</span>
+<span class="b">│</span>                                      <span class="b">│</span>
+<span class="b">│</span><span class="hd">Merged, unverified 2                  </span><span class="b">│</span>
+<span class="b">│</span>  cb-kcs.5.1  P1 The Ratatui view r…  <span class="b">│</span>
+<span class="b">│</span>  cb-4cn      P2 The header renders…  <span class="b">│</span>
+<span class="b">│</span>                                      <span class="b">│</span>
+<span class="b">│</span><span class="hd">History 4                             </span><span class="b">│</span>
+<span class="b">│</span>  Beast working 1m                    <span class="b">│</span>
+<span class="b">│</span><span class="y">  Cerebro asking 4m - long, median 1m </span><span class="b">│</span>
+<span class="b">│</span>  Cyclops working 2m                  <span class="b">│</span>
+<span class="b">│</span><span class="y">  Psylocke asking 537m - long, media… </span><span class="b">│</span>
+<span class="b">│</span><span class="dim">Rows 30–43 of 43                      </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>Last, after <code>Merged, unverified</code></b> &mdash; the
+<code>M-x cerebro</code> order, so the two views read alike. Putting it first, above Sweeps, was
+<b>rejected</b>: it would be on screen every day whether or not anything was unusual, and up to ten
+lines of reassurance would push the two sections that are about work you can act on off the top of
+the pane. Replacing the section with a gold <code>long</code> on the Fleet row was <b>rejected</b>
+too &mdash; the median would then never be shown, so the judgement could not be checked on screen,
+and the two views would stop having the same shape.</p>
+
+<p class="note"><b><code>History 4</code>, with the count</b>, following every other header in this
+pane; <code>M-x cerebro</code> writes the bare word. The number is how many agents are running
+something right now.</p>
+
+<p class="note"><b>One line per open interval, and nothing else.</b> The aggregates are what say
+whether it is unusual, not what the navigator is being told, so a row whose <code>open_min</code> is
+null has no line. An agent between passes has none either &mdash; the script treats
+<code>waiting</code> as terminal and drops an interval open beyond a day.</p>
+
+<h3>Nothing running, and a run that did not answer</h3>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Merged, unverified 2                  </span><span class="b">│</span>
+<span class="b">│</span>  cb-4cn      P2 The header renders…  <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>  <span class="d">nothing running: no header, no line</span></pre></div>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">History 4</span>  <span class="e">fleet-history failed</span>       <span class="b">│</span>
+<span class="b">│</span>  Beast working 1m                    <span class="b">│</span>
+<span class="b">│</span><span class="y">  Psylocke asking 537m - long, media… </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>  <span class="d">the rows it had stay; the header says so</span></pre></div>
+
+<p class="note"><b>Nothing running draws nothing at all</b> &mdash; no header, no
+<code>(none)</code> &mdash; exactly as Sweeps does and as Emacs does.</p>
+<p class="note"><b>A failed run keeps the rows it had</b> and names the script in red beside the
+header, the shape cb-kcs.5.1 approved for a sweep that did not answer: the word is
+<code>failed</code>, and it covers a non-zero exit, a timeout and output that is not the JSON it
+promised. <b>A failure with nothing yet to keep draws no section at all</b>, and this is the one
+place History differs from Sweeps: Sweeps draws its header on an empty failed run because a clean
+fleet and an unreadable one would otherwise draw the same blank, and History has no such confusion
+&mdash; nothing running and no answer both mean this section is telling you nothing. Keeping the
+rows silently, as <code>M-x cerebro</code> does, was <b>rejected</b>: rows minutes or hours old
+would read as current.</p>
+
+<p class="note"><b>Its own five-minute clock</b>, the cadence Emacs uses, and <code>g</code> forces
+a run along with everything else.</p>
+
+<h2>5. The hint line</h2>
+<div class="screen"><pre><span class="hd">Cerebro — supervising</span><span class="d"> | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k start·finish·kill | x act | 0-4/+/-/u priority | g refresh | q/Esc/Ctrl-C quit</span></pre></div>
+<div class="screen"><pre><span class="hd">Cerebro — supervising</span><span class="d"> | … | x act | Enter show all | g refresh | …</span></pre></div>
+<p class="note"><code>0-4/+/-/u priority</code> is shown only while the cursor is on a bead;
+<code>Enter show all</code> only while it is on a <code>+N more</code> or
+<code>all N shown</code> row. Both come after <code>x act</code>, and both live in the half that
+<b>survives the shortening</b> on a narrow terminal, beside the keys that change something.</p>
+<p class="note"><b>Both are shown on a read-only view too</b>, where <code>s</code>/<code>f</code>/
+<code>k</code> are not. A priority is a write to the shared board rather than to this
+checkout&rsquo;s sessions, so like every other bead-panel key it is deliberately outside the
+supervision lease &mdash; a view that may start nothing may still rerank a bead.</p>

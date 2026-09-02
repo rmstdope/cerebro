@@ -1410,19 +1410,35 @@ impl App {
         if targets.is_empty() {
             return false;
         }
+        // No cursor, or one naming a row that has gone - a section collapsed under it, a finding
+        // acted on: seat it on the first row rather than treating it as index 0, which would make
+        // an `Up` on a stale cursor look like a cursor already at the top and leave it stale for
+        // ever.
+        let Some(current) = self.work_cursor_index(now) else {
+            self.place_work_cursor(targets[0].clone(), viewport_lines, now);
+            return true;
+        };
         let last = targets.len() - 1;
-        let current = self.work_cursor_index(now).unwrap_or(0);
         let target = (current as isize).saturating_add(delta).clamp(0, last as isize) as usize;
-        if self.work_cursor.is_some() && target == current {
+        if target == current {
             return false;
         }
-        let cursor = targets[target].clone();
+        self.place_work_cursor(targets[target].clone(), viewport_lines, now);
+        true
+    }
+
+    /// Put the cursor on CURSOR and scroll the Work pane by the least that keeps its line visible,
+    /// in both directions: a move onto a row already on screen leaves the pane exactly where it
+    /// was, and one onto a row near the top of the document does not snap the pane to the top.
+    fn place_work_cursor(
+        &mut self,
+        cursor: WorkCursor,
+        viewport_lines: usize,
+        now: DateTime<Utc>,
+    ) {
         self.work_cursor = Some(cursor.clone());
         let line = work_line_of_cursor(&work_body(self, now), &cursor);
         if let Some(line) = line {
-            // The LEAST that keeps the new line visible, in both directions: a move onto a row
-            // that is already on screen leaves the pane exactly where it was, and one onto a row
-            // near the top of the document does not snap the pane to the very top.
             let viewport = viewport_lines.max(1);
             if line < self.work.scroll {
                 self.work.scroll = line;
@@ -1430,7 +1446,6 @@ impl App {
                 self.work.scroll = line + 1 - viewport;
             }
         }
-        true
     }
 
     /// Whether a `gh` read is due at NOW. Kept off `on_tick`'s `AppAction` deliberately: that
@@ -3347,5 +3362,28 @@ mod tests {
         assert!(scrolled > 0, "the fixture must have scrolled, or this proves nothing");
         app.on_key(key(KeyCode::Up), 6, at(0));
         assert_eq!(app.work.scroll, scrolled, "the row above is already on screen");
+    }
+
+    /// A cursor naming a row that has gone is not a cursor at index 0: `Up` must re-seat it
+    /// rather than reading as "already at the top" and leaving it stale for ever. Reachable from
+    /// the keyboard with no refresh at all — collapse the section the cursor is standing in.
+    #[test]
+    fn up_reseats_a_cursor_whose_row_has_gone() {
+        let mut app = document_app();
+        app.focus = PaneFocus::Work;
+        app.expanded.insert("Unplanned");
+        // A bead only the OPEN section shows.
+        app.work_cursor = Some(WorkCursor::Bead("cb-12".into()));
+        assert!(app.work_cursor_index(at(0)).is_some(), "it is a target while the section is open");
+
+        app.expanded.remove("Unplanned");
+        assert_eq!(app.work_cursor_index(at(0)), None, "and gone once it is folded");
+
+        app.on_key(key(KeyCode::Up), 10, at(0));
+        assert_eq!(
+            app.work_cursor,
+            Some(WorkCursor::Finding("unclaim:cb-a".into())),
+            "Up put it back on a real row"
+        );
     }
 }

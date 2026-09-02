@@ -5,8 +5,11 @@
 //! fleet's contracts, and only through `lifecycle`: it creates and removes an
 //! agent's stop flag, and it deletes the state file of a session it is ending
 //! or replacing, and it appends to the two JSONL logs beside them
-//! (`decisions.jsonl` and `errors.jsonl`, cb-kcs.4.4). It never writes a state
-//! file - `scripts/agent-state` is the one author of those. Since cb-kcs.3 it also acts UNATTENDED on the sessions
+//! (`decisions.jsonl` and `errors.jsonl`, cb-kcs.4.4). Since cb-kcs.5.1 it also
+//! writes to the BOARD, in one place and only on a confirmed keystroke:
+//! `lifecycle::run_finding` runs the `bd` a sweep finding names and then `bd
+//! dolt push`. It never writes a state file - `scripts/agent-state` is the one
+//! author of those. Since cb-kcs.3 it also acts UNATTENDED on the sessions
 //! it hosts: it ends one whose pass is over, retires one under a stop flag and
 //! clears the flag with it, and types one line into an implementer whose
 //! question nobody answered.
@@ -18,7 +21,9 @@
 //! start that keeps failing is not retried for ever: it backs off on
 //! `0/30s/2m/10m`, its row counts the wait down, and after five consecutive
 //! starts that produced no pass the name is disarmed and only `s` brings it
-//! back. Since cb-kcs.4.3 it also starts the three roles whose work arrives
+//! back. Since cb-kcs.5.1 it also runs the six sweep scripts on their own
+//! ten-minute cadence, draws what they found as the Work pane's first section,
+//! and acts on one with `x` after showing the exact command. Since cb-kcs.4.3 it also starts the three roles whose work arrives
 //! from OUTSIDE the fleet - `user-feedback`, `reviewer` and `architect` - off
 //! a `gh` reader on its own ten-minute cadence, the beads linked to a GitHub
 //! issue, and an hourly floor per role. Both JSONL logs remain cb-kcs.4.4's.
@@ -60,6 +65,7 @@ pub mod model;
 pub mod readers;
 pub mod session;
 pub mod supervisor;
+pub mod sweeps;
 pub mod triggers;
 pub mod ui;
 
@@ -69,7 +75,8 @@ pub use model::{
     StateObservation, StateRecord, WorkBuckets,
 };
 pub use readers::{
-    read_beads, read_fleet, read_processes, read_roster, read_states, read_work, CommandRunner,
+    read_beads, read_fleet, read_processes, read_roster, read_states, read_sweeps, read_work,
+    Judged, CommandRunner,
     Commands, Programs, ReadError, ReaderPaths, RealCommands,
 };
 pub use supervisor::{
@@ -81,8 +88,12 @@ pub use session::{
     SessionHost, SessionView, SCROLLBACK_LINES,
 };
 pub use app::{
-    App, AppAction, FleetWorker, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, Prompt,
-    SupervisorWorker, WorkWorker,
+    work_body, work_line_of_finding, App, AppAction, FleetWorker, Metrics, Pane, PaneContent,
+    PaneFocus, PaneMetrics, Prompt, SupervisorWorker, SweepWorker, WorkBodyLine, WorkWorker,
+};
+pub use sweeps::{
+    finding_command, findings_from, label as sweep_label, prompt as sweep_prompt, Blocker,
+    Candidate, Finding, LiveSession, Snapshot, Sweep,
 };
 pub use lifecycle::{
     finish_outcome, join_names, kill_outcome, quit_refusal_lines, quit_refusal_title,

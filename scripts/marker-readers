@@ -113,6 +113,12 @@ tests/session-marker.sh         -
 # table itself, in its own #[cfg(test)] module, so it is both a reader and its own pin - the same
 # shape as emacs/cerebro-test.el above.
 fleet-view/src/model.rs         fleet-view/src/model.rs
+# Its own #[cfg(test)] module fabricates one process-table line carrying the marker, so that a case
+# about the sweeps' snapshot has a live implementer to judge against. A fixture, not a parser - the
+# parsing is model.rs's, above, and this file spells the sentence only to feed it - which is the
+# same standing tests/marker-readers.sh has. No backticks in this comment: READERS is a
+# double-quoted string, so one would be a command substitution run at parse time.
+fleet-view/src/readers.rs       -
 "
 
 declared_paths=()

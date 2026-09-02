@@ -15,8 +15,14 @@ use std::path::{Path, PathBuf};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use wait_timeout::ChildExt;
+
 use crate::model::{AgentKind, FleetRow, RowState};
-use crate::readers::{ReadError, ReaderPaths};
+use crate::readers::{Programs, ReadError, ReaderPaths};
+use crate::sweeps::{finding_command, Finding};
 use crate::session::{Ended, SessionHost};
 use crate::supervisor::SupervisionMode;
 
@@ -472,6 +478,89 @@ pub fn quit_refusal_lines(live: &[String]) -> Vec<Line<'static>> {
             Style::default().add_modifier(Modifier::DIM),
         )),
     ]
+}
+
+/// What `x` did, in the three lines the header shows for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FindingOutcome {
+    /// `ran <command>`, in gold.
+    Ran { text: String },
+    /// `ran, but bd dolt push failed — other machines will not see this yet`, in gold.
+    ///
+    /// The command is deliberately NOT repeated: it has just been on screen in the confirmation,
+    /// and the news in this line is the push. With it the line runs to 106 cells, which is cut on
+    /// every terminal this view is used on (approved 2026-09-02).
+    Pushed { text: String },
+    /// `<command> failed`, in red.
+    Failed { text: String },
+}
+
+/// How long a board write may take. Thirty seconds, chosen for the PUSH rather than inherited:
+/// the `bd` itself is a local write and answers in well under a second, while `bd dolt push`
+/// talks to the Dolt remote with the navigator's finger still on the key. `readers::GH_TIMEOUT`
+/// is the same number for the same reason - a network call somebody is waiting on - and it is far
+/// short of a sweep's two minutes, where nobody is.
+///
+/// A push that outruns it is killed and reported as `ran, but bd dolt push failed`, which is
+/// honest: the write happened and the other machines cannot see it yet. The recovery is the next
+/// `bd dolt push` anybody makes, so erring short costs a line the navigator can ignore, where
+/// erring long costs a frozen screen.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Run FINDING's command, then `bd dolt push`, and say which of the three happened.
+///
+/// The push rides the same keypress and is not confirmed separately: a close or a reclaim the
+/// other machines cannot see is half done, and asking twice for one keystroke's worth of intent
+/// is its own kind of noise (`emacs/cerebro.el:1473-1479`).
+///
+/// **This is the one `bd` in this crate that does not pass `--readonly`**, and the only place a
+/// board write may live. `readers::read_beads` passes it deliberately; copying that neighbouring
+/// call here would produce a command that appears to succeed and changes nothing.
+///
+/// Both children run in `paths.shared_root`, where every `bd` this crate runs already points, and
+/// both are killed and reaped on the bound rather than left to hang the screen.
+pub fn run_finding(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    finding: &Finding,
+) -> FindingOutcome {
+    let argv = finding_command(finding, &programs.bd);
+    let text = argv.join(" ");
+    if !run_to_completion(&argv[0], &argv[1..], &paths.shared_root) {
+        return FindingOutcome::Failed { text: format!("{text} failed") };
+    }
+    let push = [programs.bd.display().to_string(), "dolt".into(), "push".into()];
+    if run_to_completion(&push[0], &push[1..], &paths.shared_root) {
+        FindingOutcome::Ran { text: format!("ran {text}") }
+    } else {
+        FindingOutcome::Pushed {
+            text: "ran, but bd dolt push failed — other machines will not see this yet".into(),
+        }
+    }
+}
+
+/// True when PROGRAM with ARGS exited zero in DIR inside the bound. A timed-out child is killed
+/// and then waited for, so no zombie outlives the keypress.
+fn run_to_completion(program: &str, args: &[String], dir: &Path) -> bool {
+    let Ok(mut child) = Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    match child.wait_timeout(WRITE_TIMEOUT) {
+        Ok(Some(status)) => status.success(),
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            false
+        }
+        Err(_) => false,
+    }
 }
 
 /// Everything `s` does once `start_outcome` said `Launch`, in this order:
@@ -1018,4 +1107,113 @@ mod tests {
             FinishOutcome::Clear
         );
     }
+    // --- the first board write (cb-kcs.5.1) --------------------------------------------------
+
+    /// The tracked `bd` that records rather than writes. NOT written by the test: a file a test
+    /// writes and then spawns races the writer on Linux and dies `ETXTBSY`, which is the trap
+    /// `readers.rs` says four patches in this crate had been working around - and which this
+    /// bead's first CI run walked straight into. What varies per case is DATA in the cwd
+    /// `run_finding` gives the child.
+    fn recording_bd() -> PathBuf {
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/recording-bd"))
+    }
+
+    fn calls(dir: &Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn paths_in(root: &Path) -> ReaderPaths {
+        ReaderPaths {
+            consumer_root: root.to_path_buf(),
+            shared_root: root.to_path_buf(),
+            scripts_dir: root.join("scripts"),
+        }
+    }
+
+    fn recording_programs() -> Programs {
+        Programs { bd: recording_bd(), ..Programs::default() }
+    }
+
+    /// The push rides the same keypress: a close the other machines cannot see is half done.
+    #[test]
+    fn running_a_finding_pushes_after_it_succeeds() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let programs = recording_programs();
+        let outcome = run_finding(
+            &paths_in(dir.path()),
+            &programs,
+            &Finding::Unclaim { id: "cb-a".into() },
+        );
+        assert_eq!(calls(dir.path()), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(
+            outcome,
+            FindingOutcome::Ran { text: format!("ran {} unclaim cb-a", programs.bd.display()) }
+        );
+    }
+
+    /// The write succeeded and only the push failed, so this is not "nothing happened" - and the
+    /// command is deliberately not repeated in the line: it has just been on screen in the
+    /// confirmation, and with it the line runs to 106 cells.
+    #[test]
+    fn a_failed_push_is_said_and_the_write_is_not_undone() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::write(dir.path().join("push-exit"), "1").expect("the push fails");
+        let programs = recording_programs();
+        let outcome = run_finding(
+            &paths_in(dir.path()),
+            &programs,
+            &Finding::Reclaim { id: "cb-a".into() },
+        );
+        assert_eq!(calls(dir.path()), vec!["reclaim --id cb-a --older-than 10m", "dolt push"]);
+        assert_eq!(
+            outcome,
+            FindingOutcome::Pushed {
+                text: "ran, but bd dolt push failed — other machines will not see this yet".into()
+            }
+        );
+    }
+
+    /// A command that failed is not pushed: there is nothing to publish, and a push would say the
+    /// write happened.
+    #[test]
+    fn a_failed_command_does_not_push() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::write(dir.path().join("exit-code"), "1").expect("the write fails");
+        let programs = recording_programs();
+        let outcome = run_finding(
+            &paths_in(dir.path()),
+            &programs,
+            &Finding::EpicClose { id: "cb-e".into() },
+        );
+        assert_eq!(calls(dir.path()), vec!["close cb-e"]);
+        assert_eq!(
+            outcome,
+            FindingOutcome::Failed {
+                text: format!("{} close cb-e failed", programs.bd.display())
+            }
+        );
+    }
+
+    /// `--readonly` is on every other `bd` this crate runs and must not be on this one: copying
+    /// the neighbouring call would produce a command that appears to succeed and changes nothing.
+    #[test]
+    fn the_one_bd_that_writes_passes_no_readonly() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let programs = recording_programs();
+        run_finding(
+            &paths_in(dir.path()),
+            &programs,
+            &Finding::Unassign { id: "cb-a".into(), priority: Some(0) },
+        );
+        let calls = calls(dir.path());
+        assert_eq!(calls, vec!["update cb-a --assignee ", "dolt push"]);
+        for call in calls {
+            assert!(!call.contains("--readonly"), "{call:?}");
+        }
+    }
+
 }

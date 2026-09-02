@@ -8,7 +8,10 @@
 //! since cb-kcs.2.3 the crate does write to the fleet's contracts - a stop flag, and the deletion
 //! of a state file, which cb-kcs.3 made unattended - and every one of those writes lives there.
 //! The one thing this module shares with it is the state-file path, which it asks
-//! `lifecycle::state_file_path` for rather than spelling a second time.
+//! `lifecycle::state_file_path` for rather than spelling a second time. Since cb-kcs.5.1 the
+//! same division holds for the sweeps: `read_sweeps` below runs the six read-only scripts and
+//! takes the fleet snapshot they are judged against, `crate::sweeps` judges, and the one `bd`
+//! that WRITES - the command behind a confirmed finding - is `lifecycle::run_finding`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -19,7 +22,10 @@ use std::time::Duration;
 
 use wait_timeout::ChildExt;
 
+use chrono::{DateTime, Utc};
+
 use crate::supervisor::SupervisorKind;
+use crate::sweeps::{self, Candidate, Finding, LiveSession, Snapshot, Sweep};
 use crate::model::{
     self, Bead, FleetRow, GhIssue, GhPull, GhSnapshot, ProcessRow, RosterEntry, StateInputs,
     StateObservation, StateRecord, WorkBuckets,
@@ -93,6 +99,14 @@ pub enum ReadError {
     },
     Invalid { source: String, message: String },
     Timeout { source: String, seconds: u64 },
+    /// A sweep script that did not answer, in the words the header shows: `sweep-claims failed`.
+    ///
+    /// Its `Display` is deliberately shorter than every other variant's. The navigator chose one
+    /// word for all three causes - a non-zero exit, the timeout, and output that is not the JSON
+    /// array it promised - because the next move is the same for all three. The cause is not lost
+    /// with it: `cause` carries the underlying failure's own words, and `main` writes THAT to
+    /// `errors.jsonl` while the header shows the one word.
+    Sweep { script: String, cause: String },
 }
 
 impl std::fmt::Display for ReadError {
@@ -105,6 +119,20 @@ impl std::fmt::Display for ReadError {
                 write!(f, "{source} produced invalid output: {message}"),
             Self::Timeout { source, seconds } =>
                 write!(f, "{source} did not answer within {seconds}s"),
+            Self::Sweep { script, .. } => write!(f, "{script} failed"),
+        }
+    }
+}
+
+impl ReadError {
+    /// The underlying failure's own words, for the log - the one thing `Display` does not say.
+    ///
+    /// `None` for every variant but `Sweep`, whose `Display` is one word by the navigator's own
+    /// choice: everywhere else the message the header shows IS the cause.
+    pub fn cause(&self) -> Option<&str> {
+        match self {
+            Self::Sweep { cause, .. } => Some(cause),
+            _ => None,
         }
     }
 }
@@ -553,6 +581,125 @@ pub fn read_fleet(
         &processes,
         &paths.shared_root,
     ))
+}
+
+/// How long a sweep script may run. Twenty times `COMMAND_TIMEOUT`, and the same number
+/// `cerebro-subprocess-timeout-seconds` (`emacs/cerebro.el:1285-1288`) uses: three of the six
+/// `git fetch` from origin, so the thing being bounded here is a hang, not a slow answer. The
+/// five-second bound would fail every sweep on a slow network, which reads as a broken script.
+const SWEEP_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// A finding and the line the Sweeps section shows for it.
+///
+/// It carries the already-formatted label rather than the candidate it was judged from: the
+/// candidate is needed for nothing else, and keeping it would put one in `App`'s state for the
+/// lifetime of a pane. The label is computed on the worker thread, where the snapshot is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Judged {
+    pub finding: Finding,
+    pub label: String,
+}
+
+/// The six sweeps, run in `Sweep::ALL` order, and the findings they justify.
+///
+/// The chain stops at the first script that does not answer and no later script is started -
+/// `cerebro--request-sweeps-1`'s own rule (`emacs/cerebro.el:1419-1437`) - so at most one script
+/// name is ever knowable, which is what lets the header name exactly one.
+///
+/// "Does not answer" is three things and they are one outcome: a non-zero exit, the timeout, and
+/// output that is not the JSON array it promised. An empty `[]` is a real answer and not a
+/// failure - `serde_json` tells the two apart for free, provided this never "helpfully" falls
+/// back to an empty vector on a parse error.
+///
+/// The snapshot is taken AFTER the last script answers, never before the first: the fleet moves
+/// while six scripts run, and a candidate judged against a fleet six scripts old is a finding
+/// about a session that has since started.
+pub fn read_sweeps(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    commands: &dyn CommandRunner,
+) -> Result<Vec<Judged>, ReadError> {
+    let mut outputs: Vec<(Sweep, Vec<Candidate>)> = Vec::new();
+    for sweep in Sweep::ALL {
+        let program = paths.scripts_dir.join(sweep.script());
+        let failed = |cause: String| ReadError::Sweep { script: sweep.key().to_string(), cause };
+        let stdout = commands
+            .run(&program, &["--json"], Some(&paths.consumer_root), SWEEP_TIMEOUT)
+            .map_err(|error| failed(error.to_string()))?;
+        let candidates: Vec<Candidate> = serde_json::from_slice(&stdout)
+            .map_err(|error| failed(format!("{program}: {error}", program = program.display())))?;
+        outputs.push((sweep, candidates));
+    }
+    let snapshot = read_sweep_snapshot(paths, programs, commands, Utc::now())?;
+    // The candidate comes back WITH the finding rather than being looked up by id afterwards:
+    // `sweep-claims` and `sweep-stalled` both emit one object per `in_progress` bead, so a lookup
+    // across the six answers the wrong sweep's candidate as often as the right one - and the
+    // evidence four of the seven labels print then comes out `nil`.
+    Ok(sweeps::findings_from(&outputs, &snapshot)
+        .into_iter()
+        .map(|(finding, candidate)| {
+            let label = sweeps::label(&finding, candidate, &snapshot);
+            Judged { finding, label }
+        })
+        .collect())
+}
+
+/// The fleet as `sweeps::Snapshot` wants it: every roster IMPLEMENTER whose state file parses and
+/// whose pid is that agent's own session, plus the implementer names and the clock.
+///
+/// Liveness is `model::session_liveness` through `derive_fleet`, never a bare pid check - a
+/// recycled pid would suppress a real finding here, which is the failure the marker sentence
+/// exists to prevent.
+///
+/// It re-reads the roster and the process table the fleet pane read seconds ago, and that is
+/// deliberate rather than an oversight: the snapshot must be taken AFTER the last script answers,
+/// because the fleet moves while six scripts run and a candidate judged against a fleet six
+/// scripts old is a finding about a session that has since started. Once per ten minutes, against
+/// six subprocesses that ran first.
+///
+/// The names are the roster's IMPLEMENTERS alone, which is what `cerebro--roster` returns:
+/// widening it to every agent would make `unassign` refuse to fire on any bead assigned to an
+/// interactive agent's name - a silent nil, indistinguishable from a clean board.
+fn read_sweep_snapshot(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    commands: &dyn CommandRunner,
+    now: DateTime<Utc>,
+) -> Result<Snapshot, ReadError> {
+    let roster = read_roster(paths, commands)?;
+    let states = read_states(paths, &roster);
+    let processes = read_processes(programs, commands)?;
+    let rows = model::derive_fleet(&roster, &states, &processes, &paths.shared_root);
+    let implementers: Vec<String> = roster
+        .iter()
+        .filter(|entry| entry.kind == model::AgentKind::Implementer)
+        .map(|entry| entry.name.clone())
+        .collect();
+    let live = rows
+        .iter()
+        .filter(|row| row.kind == model::AgentKind::Implementer)
+        .filter_map(|row| {
+            // A pid on the row means the state file parsed AND that pid is this agent's own
+            // session - `cerebro--live-sessions`' rule, whatever the file then says.
+            if row.pid.is_some() {
+                return Some(LiveSession {
+                    name: row.name.clone(),
+                    state: Some(row.state.word().to_string()),
+                    bead: row.bead.clone(),
+                });
+            }
+            // A file that did not parse leaves `derive_fleet` no pid to report, and a running
+            // session behind it. It is LIVE with no state, which is what the stalled sweep's
+            // membership test needs: a half-written file must never become a finding against a
+            // working implementer.
+            model::any_live(&row.name, &paths.shared_root, &processes).then(|| LiveSession {
+                name: row.name.clone(),
+                state: None,
+                bead: None,
+            })
+        })
+        .collect();
+    Ok(Snapshot { live, implementers, now })
 }
 
 /// Fixtures for this crate's own tests AND for the binary's: `main.rs` is a separate crate, so a
@@ -1208,5 +1355,168 @@ mod tests {
             .expect("the two lists answered");
         assert_eq!(snapshot.issues.len(), 1);
         assert_eq!(snapshot.me, None, "and the login is still unknown");
+    }
+    // --- the six sweeps ------------------------------------------------------------------
+
+    /// Every sweep answers `[]`, the roster and `ps` answer nothing interesting. The scripts are
+    /// run in `Sweep::ALL` order, with `--json`, from the consumer root, under `SWEEP_TIMEOUT`.
+    #[test]
+    fn an_empty_sweep_is_an_answer() {
+        let paths = paths_at(Path::new("/repo"));
+        let commands = FakeCommands::new(|call: &Call| {
+            let program = call.program.file_name().unwrap().to_string_lossy().into_owned();
+            match program.as_str() {
+                "roster" => Ok(b"Cyclops\timplementer\timplementer\n".to_vec()),
+                "ps" => Ok(Vec::new()),
+                _ => Ok(b"[]".to_vec()),
+            }
+        });
+        assert_eq!(read_sweeps(&paths, &Programs::default(), &commands).unwrap(), Vec::new());
+        let sweeps: Vec<(String, Vec<String>, Duration)> = commands
+            .calls()
+            .into_iter()
+            .filter(|call| call.program.to_string_lossy().contains("sweep-"))
+            .map(|call| {
+                (
+                    call.program.file_name().unwrap().to_string_lossy().into_owned(),
+                    call.args.clone(),
+                    call.timeout,
+                )
+            })
+            .collect();
+        assert_eq!(
+            sweeps.iter().map(|(name, ..)| name.as_str()).collect::<Vec<_>>(),
+            vec![
+                "sweep-claims.sh",
+                "sweep-epics.sh",
+                "sweep-stalled.sh",
+                "sweep-assignees.sh",
+                "sweep-verdicts.sh",
+                "sweep-paused.sh",
+            ]
+        );
+        for (name, args, timeout) in &sweeps {
+            assert_eq!(args, &vec!["--json".to_string()], "{name}");
+            // Not `COMMAND_TIMEOUT`: three of the six `git fetch`, and five seconds would print
+            // `sweep-claims failed` on any slow network.
+            assert_eq!(*timeout, Duration::from_secs(120), "{name}");
+        }
+    }
+
+    /// The chain stops at the first script that does not answer, names it in the one word the
+    /// header shows, and starts no later script - which is what lets the header name exactly one.
+    #[test]
+    fn a_sweep_that_does_not_answer_stops_the_chain_and_names_itself() {
+        let paths = paths_at(Path::new("/repo"));
+        let commands = FakeCommands::new(|call: &Call| {
+            let program = call.program.file_name().unwrap().to_string_lossy().into_owned();
+            match program.as_str() {
+                "sweep-stalled.sh" => Err(exit(1, "bd is not on PATH")),
+                "roster" => Ok(b"Cyclops\timplementer\timplementer\n".to_vec()),
+                "ps" => Ok(Vec::new()),
+                _ => Ok(b"[]".to_vec()),
+            }
+        });
+        let error = read_sweeps(&paths, &Programs::default(), &commands).unwrap_err();
+        assert!(matches!(&error, ReadError::Sweep { script, .. } if script == "sweep-stalled"));
+        assert_eq!(error.to_string(), "sweep-stalled failed");
+        // One word on the header, the whole failure in the log: the navigator chose the first,
+        // and the second is what makes a red section diagnosable at all.
+        let cause = error.cause().expect("a sweep failure carries its cause");
+        assert!(cause.contains("bd is not on PATH"), "{cause:?}");
+        let ran: Vec<String> = commands
+            .calls()
+            .into_iter()
+            .map(|call| call.program.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(!ran.iter().any(|name| name == "sweep-assignees.sh"), "{ran:?}");
+        // And no snapshot was taken either: a chain that stopped has nothing to judge.
+        assert!(!ran.iter().any(|name| name == "roster"), "{ran:?}");
+    }
+
+    /// Exit zero and a body that is not the JSON array it promised. Falling back to an empty
+    /// vector here would draw a clean fleet for a script nobody could read.
+    #[test]
+    fn a_sweep_that_prints_garbage_is_a_failure_not_an_empty_answer() {
+        let paths = paths_at(Path::new("/repo"));
+        let commands = FakeCommands::new(|call: &Call| {
+            let program = call.program.file_name().unwrap().to_string_lossy().into_owned();
+            match program.as_str() {
+                "sweep-claims.sh" => Ok(b"not json".to_vec()),
+                _ => Ok(b"[]".to_vec()),
+            }
+        });
+        let error = read_sweeps(&paths, &Programs::default(), &commands).unwrap_err();
+        assert_eq!(error.to_string(), "sweep-claims failed");
+        // And the parse error is kept too, which is the one cause a re-run cannot show you.
+        let cause = error.cause().expect("a sweep failure carries its cause");
+        assert!(cause.contains("sweep-claims.sh"), "{cause:?}");
+    }
+
+    /// Two sweeps list the same bead - `sweep-claims` and `sweep-stalled` both emit one object per
+    /// `in_progress` bead - so a candidate looked up by id after the judging is the wrong sweep's
+    /// as often as the right one, and the evidence the label prints comes out `nil`
+    /// (`no start for nilm`). The shared table cannot catch this: every row of it feeds exactly
+    /// one sweep.
+    #[test]
+    fn a_finding_is_labelled_from_its_own_sweeps_candidate() {
+        let paths = ReaderPaths {
+            shared_root: PathBuf::from("/repo/shared"),
+            ..paths_at(Path::new("/repo"))
+        };
+        let commands = FakeCommands::new(|call: &Call| {
+            let program = call.program.file_name().unwrap().to_string_lossy().into_owned();
+            match program.as_str() {
+                "roster" => Ok(b"Storm\timplementer\timplementer\n".to_vec()),
+                // Storm is running, which is what makes the stalled sweep the one with something
+                // to say about this bead and the claims sweep the one with nothing.
+                "ps" => Ok(format!(
+                    "{pid} 1 claude This session is Storm of the cerebro fleet rooted at /repo/shared/.\n",
+                    pid = std::process::id()
+                )
+                .into_bytes()),
+                // The same bead, from both sweeps, exactly as the two scripts emit it.
+                "sweep-claims.sh" => Ok(br#"[{"id":"cb-x","assignee":"Storm","on_main":false,
+                    "lease_age_min":300}]"#
+                    .to_vec()),
+                "sweep-stalled.sh" => Ok(br#"[{"id":"cb-x","assignee":"Storm",
+                    "progress_age_min":300,"progress_source":"commit"}]"#
+                    .to_vec()),
+                _ => Ok(b"[]".to_vec()),
+            }
+        });
+        let findings = read_sweeps(&paths, &Programs::default(), &commands).unwrap();
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert_eq!(
+            findings[0].label,
+            "unclaim cb-x — Storm stalled, no commit for 300m",
+            "the claims candidate carries neither the age nor the source"
+        );
+    }
+
+    /// The snapshot's names are the roster's IMPLEMENTERS alone. An interactive agent's name on a
+    /// bead was put there by hand, and undoing that is not this view's to do.
+    #[test]
+    fn the_snapshot_counts_only_implementers() {
+        let paths = paths_at(Path::new("/repo"));
+        let commands = FakeCommands::new(|call: &Call| {
+            let program = call.program.file_name().unwrap().to_string_lossy().into_owned();
+            match program.as_str() {
+                "roster" => Ok(b"Xavier\tplanner\tinteractive\nCyclops\timplementer\timplementer\n".to_vec()),
+                "ps" => Ok(Vec::new()),
+                "sweep-assignees.sh" => Ok(br#"[{"id":"cb-a","assignee":"Xavier","age_min":300,
+                    "priority":0},{"id":"cb-b","assignee":"Cyclops","age_min":300,"priority":0}]"#
+                    .to_vec()),
+                _ => Ok(b"[]".to_vec()),
+            }
+        });
+        let findings = read_sweeps(&paths, &Programs::default(), &commands).unwrap();
+        assert_eq!(
+            findings.iter().map(|j| j.finding.id()).collect::<Vec<_>>(),
+            vec!["cb-b"]
+        );
+        // And the label is the one the shared table pins, built from the candidate this finding
+        // was judged from rather than from any other.
+        assert_eq!(findings[0].label, "unassign cb-b — Cyclops is not running");
     }
 }

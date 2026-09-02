@@ -136,6 +136,11 @@ pub fn log_evaluation_p(
     seen: &BTreeMap<String, Option<String>>,
     verbosity: Verbosity,
 ) -> bool {
+    // `None` silences everything, exactly as `log_event_p` does: this is `pub` and re-exported,
+    // and a caller reading it on its own must not be told to write a line the writer would refuse.
+    if verbosity == Verbosity::None {
+        return false;
+    }
     if verbosity == Verbosity::Evaluations {
         return true;
     }
@@ -344,6 +349,9 @@ impl Logger {
     /// wrong.
     pub fn evaluation(&mut self, now: DateTime<Utc>, fields: &[(&str, serde_json::Value)]) {
         let field = |key: &str| fields.iter().find(|(k, _)| *k == key).map(|(_, v)| v);
+        // Every call site writes `agent` first; without it every row would share one `seen` key
+        // and `Changes` would compare one role's answer against another's.
+        debug_assert!(field("agent").is_some(), "an evaluation line always carries its agent");
         let name = field("agent").and_then(|v| v.as_str()).unwrap_or_default().to_string();
         let reason = field("reason").and_then(|v| v.as_str()).map(str::to_string);
         if log_evaluation_p(&name, reason.as_deref(), &self.seen, self.verbosity) {
@@ -361,11 +369,18 @@ impl Logger {
     /// even if it says the same thing - otherwise one flap at breakfast would silence that context
     /// all day.
     pub fn error(&mut self, context: &str, message: &str, now: DateTime<Utc>) {
+        // BEFORE the memory, not after it: a disabled logger has written no line, so it has
+        // recorded no outage, and remembering one would drop the first error this view writes
+        // after it takes the lease. A view that comes up read-only behind Emacs and takes the
+        // checkout when Emacs exits is exactly that sequence.
+        if !self.enabled {
+            return;
+        }
         if self.last_error.get(context).is_some_and(|last| last == message) {
             return;
         }
-        // Remembered whether or not the write reached disk, and whether or not this view is
-        // enabled: the dedupe is about the fault, not about the file.
+        // Remembered whether or not the write reached disk: the dedupe is about the fault, and a
+        // full disk is not evidence that the fault went away.
         self.last_error.insert(context.to_string(), message.to_string());
         self.write(
             Event::Error,
@@ -502,6 +517,9 @@ mod tests {
             log_evaluation_p("Xavier", Some("buffer 0 of 2"), &seen, Verbosity::Evaluations),
             "every tick, at evaluations"
         );
+        // `None` silences an evaluation like everything else. This function is `pub` and
+        // re-exported, so it answers for itself rather than leaning on the writer's own gate.
+        assert!(!log_evaluation_p("Beast", Some("anything"), &seen, Verbosity::None));
     }
 
     /// Every disk case builds its own root. NO test may call `Logger::new` on a path it did not
@@ -644,6 +662,28 @@ mod tests {
         logger.error("fleet", "ps: timed out", Utc::now());
         assert_eq!(lines(root, "decisions").len(), 1, "read-only writes nothing further");
         assert!(!log_file(root, "errors", None).exists(), "not even an error");
+    }
+
+    /// A logger that wrote nothing has recorded no outage, so the first error it writes after it
+    /// takes the lease must not be dropped as a repeat of one nobody ever saw.
+    #[test]
+    fn an_error_suppressed_while_read_only_is_written_when_the_view_takes_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut logger = Logger::with_policy(root, Verbosity::Evaluations, MAX_BYTES, GENERATIONS);
+
+        // Read-only behind Emacs: `bd` is failing and nothing is written.
+        logger.error("work", "bd: database is locked", Utc::now());
+        assert!(!log_file(root, "errors", None).exists());
+
+        // Emacs exits and this view takes the checkout; `bd` is still failing.
+        logger.set_enabled(true);
+        logger.error("work", "bd: database is locked", Utc::now());
+        assert_eq!(lines(root, "errors").len(), 1, "the outage reaches the file it is meant to");
+
+        // And the dedupe still holds from there.
+        logger.error("work", "bd: database is locked", Utc::now());
+        assert_eq!(lines(root, "errors").len(), 1);
     }
 
     #[test]

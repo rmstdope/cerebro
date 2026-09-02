@@ -691,6 +691,11 @@ impl SessionHost {
     /// of an ending having happened at all - which is what cb-kcs.4.4's `exit` line is. Drained
     /// once per frame; nothing here writes a file, and this module keeps its own contract of
     /// knowing nothing about the log.
+    ///
+    /// **This call is the only thing that bounds the queue** - `main::log_exits` is its one caller
+    /// and runs once per frame, so a host nobody drains keeps one entry per session it ever
+    /// reaped. That is every bare `SessionHost` in the tests, where it is a handful of entries and
+    /// the host is dropped with the case.
     pub fn take_reaped(&mut self) -> Vec<(String, Ended)> {
         std::mem::take(&mut self.reaped)
     }

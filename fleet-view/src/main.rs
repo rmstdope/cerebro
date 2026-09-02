@@ -802,8 +802,11 @@ fn log_start(
     );
 }
 
-/// NAME's role as the last fleet read saw it, or the empty string - the log says what it knows
-/// rather than guessing, and a fleet read that has not answered yet is the only way here.
+/// NAME's role as the last fleet read saw it, or the empty string.
+///
+/// For `s` alone, which has a selected row and therefore a fleet read behind it. `arm_and_autostart`
+/// runs BEFORE the fleet worker has been polled even once and must never use this: it reads the
+/// roster, which is where a name's role comes from at that moment.
 fn role_of(app: &App, name: &str) -> String {
     app.fleet_rows()
         .iter()
@@ -840,7 +843,19 @@ fn arm_and_autostart(
     };
     let autostart = names("--autostart", readers::read_autostart_names(paths, commands));
     let standby = names("--standby", readers::read_standby_names(paths, commands));
+    // The roles, from the same declaration the names came from. The fleet pane has NOT been read
+    // yet - this runs before the first poll - so `role_of` would answer the empty string for every
+    // name here, and both views write into one file.
+    //
+    // This is a THIRD read of the roster and fails on its own: the two complaints above are about
+    // `--autostart` and `--standby`, so a bare `roster` that refuses or parses badly is silent
+    // here and costs one empty `role` field. That is the right price - a startup that refused to
+    // arm anything because a log field could not be filled would be a fleet that cannot start.
+    let roles: BTreeMap<String, String> = readers::read_roster(paths, commands)
+        .map(|entries| entries.into_iter().map(|e| (e.name, e.role)).collect())
+        .unwrap_or_default();
     drop(names);
+    let role_of_name = |name: &String| roles.get(name).cloned().unwrap_or_default();
     let mut started = Vec::new();
     for name in &autostart {
         if host.is_live(name) {
@@ -859,7 +874,7 @@ fn arm_and_autostart(
                 ledger.clear_failures(name);
                 // A declaration is the navigator's own act, which is what `by` says: two words
                 // and only two, byte-parity with the file Emacs has written since May.
-                log_start(logger, name, &role_of(app, name), None, now);
+                log_start(logger, name, &role_of_name(name), None, now);
                 started.push(name.clone());
             }
             // A start that fails is reported and does not stop the others.
@@ -879,7 +894,7 @@ fn arm_and_autostart(
             now,
             &[
                 ("agent", serde_json::Value::from(name.as_str())),
-                ("role", serde_json::Value::from(role_of(app, name))),
+                ("role", serde_json::Value::from(role_of_name(name))),
                 ("by", serde_json::Value::from("roster")),
             ],
         );
@@ -3457,25 +3472,47 @@ mod main_tests {
     fn the_roster_arms_the_standby_half_and_logs_nothing_for_the_other() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        write_roster(dir.path(), "Cyclops", "Xavier\nBeast");
+        let declaration = declaring_with_table(
+            "Cyclops",
+            "Xavier\nBeast",
+            "Cyclops\timplementer\timplementer\nXavier\tplanner\tinteractive\nBeast\tplanner\tinteractive\n",
+        );
         let mut logger = logging(dir.path());
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = App::with_supervision(supervising());
 
-        arm_and_autostart(&mut app, &mut host, &mut ledger, &mut logger, &paths, &[], now);
+        arm_and_autostart(
+            &mut app,
+            &mut host,
+            &mut ledger,
+            &mut logger,
+            &paths,
+            &declaration,
+            &[],
+            now,
+        );
 
         let arms: Vec<String> = log_lines(dir.path(), "decisions")
             .into_iter()
             .filter(|line| line.starts_with(r#"{"event":"arm","#))
             .collect();
         assert_eq!(arms.len(), 2, "one per standby name, and none for the autostart one: {arms:#?}");
-        assert!(arms[0].contains(r#""agent":"Xavier""#) && arms[0].contains(r#""by":"roster""#));
-        assert!(arms[1].contains(r#""agent":"Beast""#));
+        // The ROLE too, and it is the whole of review finding 1: this runs before the fleet worker
+        // has been polled once, so a role taken from the fleet pane is the empty string here
+        // ALWAYS rather than rarely - and Emacs writes the real one into the same file.
+        assert!(
+            arms[0].contains(r#""agent":"Xavier","role":"planner","by":"roster""#),
+            "{}", arms[0]
+        );
+        assert!(arms[1].contains(r#""agent":"Beast","role":"planner","by":"roster""#), "{}", arms[1]);
         // And the autostarted name got a `start` line instead, as the navigator's own act.
         let start = one_line(dir.path(), "decisions", "start");
-        assert!(start.contains(r#""agent":"Cyclops""#) && start.contains(r#""by":"navigator""#), "{start}");
+        assert!(
+            start.contains(r#""agent":"Cyclops","role":"implementer","reason":null,"by":"navigator""#),
+            "{start}"
+        );
         host.kill(&paths, "Cyclops");
         settle_gone(&mut host, "Cyclops");
     }
@@ -3784,13 +3821,25 @@ mod main_tests {
 
     /// A runner answering the roster's two declaration flags, and nothing else.
     fn declaring(autostart: &str, standby: &str) -> cerebro_tui::readers::testing::FakeCommands {
+        declaring_with_table(autostart, standby, "")
+    }
+
+    /// The same, plus what a BARE `roster` answers - `NAME<TAB>ROLE<TAB>KIND` per line, which is
+    /// what `read_roster` parses. `arm_and_autostart` reads it for the roles it logs, so a case
+    /// about those lines has to declare one.
+    fn declaring_with_table(
+        autostart: &str,
+        standby: &str,
+        table: &str,
+    ) -> cerebro_tui::readers::testing::FakeCommands {
         let autostart = format!("{autostart}\n");
         let standby = format!("{standby}\n");
+        let table = table.to_string();
         cerebro_tui::readers::testing::FakeCommands::new(move |call| {
             match call.args.first().map(String::as_str) {
                 Some("--autostart") => Ok(autostart.clone().into_bytes()),
                 Some("--standby") => Ok(standby.clone().into_bytes()),
-                _ => Ok(Vec::new()),
+                _ => Ok(table.clone().into_bytes()),
             }
         })
     }

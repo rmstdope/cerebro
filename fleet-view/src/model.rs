@@ -280,7 +280,11 @@ fn live_leaf_pids(name: &str, root: &Path, processes: &[ProcessRow]) -> Vec<u32>
         .collect()
 }
 
-fn any_live(name: &str, root: &Path, processes: &[ProcessRow]) -> bool {
+/// `pub` for `readers::read_sweep_snapshot`, which needs the answer for a row whose state file
+/// did NOT parse: `derive_fleet` reports such a row as `Invalid` with no pid, and a sweep that
+/// read that as "not running" would offer an `unclaim` against a working implementer - the exact
+/// failure `cerebro--stalled-finding`'s membership test exists to prevent.
+pub fn any_live(name: &str, root: &Path, processes: &[ProcessRow]) -> bool {
     processes
         .iter()
         .any(|p| session_liveness(&p.args, name, root) == SessionLiveness::Proven)

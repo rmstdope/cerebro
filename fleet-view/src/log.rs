@@ -212,6 +212,10 @@ pub fn reader_context(pane: &str, error: &ReadError) -> String {
         | ReadError::Exit { source, .. }
         | ReadError::Invalid { source, .. }
         | ReadError::Timeout { source, .. } => source.as_str(),
+        // The sweeps have a context of their own (`"sweep"`), written where the underlying cause
+        // is still in hand; a `Sweep` reaching here at all would be a pane read, so it names the
+        // pane like any other.
+        ReadError::Sweep { .. } => return pane.to_string(),
     };
     // The path `readers::read_roster` builds - `<scripts_dir>/roster` - and nothing else. A bare
     // `contains` would blame the roster for any path with the word in it.

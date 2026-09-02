@@ -1,0 +1,185 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+</style>
+<meta charset="utf-8"><title>cb-kcs.5.1 — the agreed surface</title>
+
+<h1>cb-kcs.5.1 — the surface the navigator approved, 2026-09-02</h1>
+<p class="lede">Four rounds. This file is the specification for the <b>Sweeps section</b> the
+Ratatui fleet view gains, for the cursor that makes it actionable, and for every sentence it says
+while acting on a finding. Where this file and the bead&rsquo;s plan disagree, this file is right.
+It adds a section to the Work pane <code>docs/ui/cb-kcs.2-split-console.html</code> specified and
+changes nothing any earlier file in the cb-kcs family decided &mdash; not a fleet row, not a
+lifecycle key, not the header&rsquo;s own title.</p>
+
+<h2>1. Where the section sits, and what its header says</h2>
+<p class="lede">Sweeps is drawn <b>first</b>, above <code>Claimed</code>, and its header carries a
+count like every other section in the pane.</p>
+
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 6                              </span><span class="b">│</span>
+<span class="b">│</span>  close cb-9su — delivered by Cyclo…  <span class="b">│</span>
+<span class="b">│</span><span class="sel">  reclaim cb-mqa — Rogue gone, not …  </span><span class="b">│</span>
+<span class="b">│</span>  close cb-kcs.2 — all children clo…  <span class="b">│</span>
+<span class="b">│</span>  unclaim cb-akt — Storm stalled, n…  <span class="b">│</span>
+<span class="b">│</span><span class="y">  unassign cb-d89 — Rogue is not ru…  </span><span class="b">│</span>
+<span class="b">│</span>  recheck cb-1h8 — verdict at 4e707…  <span class="b">│</span>
+<span class="b">│</span>                                      <span class="b">│</span>
+<span class="b">│</span><span class="hd">Claimed 2                             </span><span class="b">│</span>
+<span class="b">│</span>  cb-kcs.4.1  P1 The Ratatui view s…  <span class="b">│</span>
+<span class="b">│</span>  cb-mqa      P2 One place answers …  <span class="b">│</span>
+<span class="b">│</span>                                      <span class="b">│</span>
+<span class="b">│</span><span class="hd">Planned, unclaimed 3                  </span><span class="b">│</span>
+<span class="b">│</span>  cb-kcs.4.2  P1 A start that keeps…  <span class="b">│</span>
+<span class="b">│</span><span class="dim">Rows 1–14 of 41                       </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>First, not last.</b> <code>M-x cerebro</code> draws Sweeps after all six queues,
+in a window the navigator scrolls to the end of. This pane shows fourteen rows of a forty-one row
+document, and a section below the fold is one nobody presses. <b>The Emacs order was rejected for
+that reason alone</b>; nothing else about the panel moves.</p>
+
+<p class="note"><b><code>Sweeps 6</code>, with the count.</b> <code>M-x cerebro</code> writes the
+bare word <code>Sweeps</code>, and that spelling was <b>rejected</b>: it is invisible at the bottom
+of an Emacs window and conspicuous directly above <code>Claimed 2</code>. Every header in this pane
+carries a number, and the two views deliberately differ here.</p>
+
+<p class="note"><b>One line per finding, cut at the pane width</b>, exactly as a bead row is cut.
+Two lines per finding &mdash; the action on one row, the evidence dimmed beneath &mdash; was
+<b>rejected</b>: six findings would then fill the whole pane and push every queue below the fold, so
+the Work pane would stop being about the work on a day that already went wrong. A summary line
+opening a full-width modal list was <b>rejected</b> too: it hides the findings behind a keystroke,
+and the one that matters most is the one nobody would open the list to find.</p>
+
+<p class="note"><b>The gold line is a stranded P0</b> &mdash; an <code>unassign</code> or a
+<code>recheck</code> whose bead is P0 &mdash; and it is the whole of the escalation, the same rule
+<code>cerebro--sweep-line</code> already follows: the same gold an <code>asking</code> marker uses,
+no new glyph, no popup, no sound.</p>
+
+<h2>2. The cursor</h2>
+<p class="lede">Findings are the only rows that can hold a cursor. The six queues cannot.</p>
+
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 6                              </span><span class="b">│</span>
+<span class="b">│</span><span class="sel">  close cb-9su — delivered by Cyclo…  </span><span class="b">│</span>
+<span class="b">│</span>  reclaim cb-mqa — Rogue gone, not …  <span class="b">│</span>
+<span class="b">│</span><span class="dim">Rows 1–13 of 43                       </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>  <span class="d">findings: ↑/↓ move the cursor</span></pre></div>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Claimed 2                             </span><span class="b">│</span>
+<span class="b">│</span>  cb-kcs.4.1  P1 The Ratatui view s…  <span class="b">│</span>
+<span class="b">│</span>  cb-mqa      P2 One place answers …  <span class="b">│</span>
+<span class="b">│</span><span class="dim">Rows 1–13 of 36                       </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span>  <span class="d">none: ↑/↓ scroll, as they do today</span></pre></div>
+
+<p class="note"><b>&uarr;/&darr;/PgUp/PgDn move the cursor when there is at least one finding, and
+scroll otherwise</b>, and the pane scrolls to follow the cursor exactly as Fleet already does.
+A separate pair of keys for the findings (<code>n</code>/<code>p</code>, which
+<code>M-x cerebro</code> uses) was <b>rejected</b>: on the ordinary day there are no findings at all,
+and the pane should then behave exactly as it does today rather than carry two keys that do nothing.</p>
+
+<h2>3. <code>x</code>, and the confirmation</h2>
+<p class="lede"><code>x</code> acts on the finding under the Work cursor, <b>from any focus</b>
+&mdash; the rule <code>s</code>, <code>f</code> and <code>k</code> already follow for the Fleet
+selection. A live session holding the keyboard still wins, and gets the byte.</p>
+
+<div class="screen"><pre><span class="hd">Cerebro — supervising</span>  <span class="y">run bd reclaim --id cb-mqa --older-than 10m ?  y / n</span>
+<span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 6                              </span><span class="b">│</span>
+<span class="b">│</span><span class="sel">  reclaim cb-mqa — Rogue gone, not …  </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>In the header, in gold, and the next key answers it</b> &mdash; byte for byte the
+shape <code>k</code> already has: <code>y</code> runs it, <b>any other key cancels silently</b> and
+is consumed, so <code>q</code> at this prompt cancels and does not also quit. A block drawn over the
+Work pane was <b>rejected</b>: one view should have one way of asking a question, and it already has
+this one.</p>
+
+<h3>The seven prompts, verbatim</h3>
+<div class="screen"><pre><span class="y">run bd close &lt;id&gt; --reason &lt;reason&gt; ?  y / n</span>
+<span class="y">run bd reclaim --id &lt;id&gt; --older-than 10m ?  y / n</span>
+<span class="y">run bd close &lt;id&gt; ?  y / n</span>
+<span class="y">run bd unclaim &lt;id&gt; ?  y / n</span>
+<span class="y">run bd update &lt;id&gt; --assignee  ?  y / n</span>
+<span class="y">run bd set-state &lt;id&gt; verdict=stale --reason verdict formed against a commit main has moved past ?  y / n</span>
+<span class="y">unpause &lt;id&gt; — it goes back to the planners for a re-read.  y / n</span></pre></div>
+
+<p class="note"><b>Six of the seven are the command, and the seventh is not.</b>
+<code>bd update &lt;id&gt; --remove-label human</code> is the only one that does not say its own
+consequence &mdash; a label coming off does not read as &ldquo;this bead leaves your queue for the
+fleet&rsquo;s&rdquo; &mdash; and the header has one line, so it says the consequence
+<b>instead of</b> the command. Appending the sentence to the command was <b>rejected</b> (it is cut
+first, on exactly the terminal where it is needed) and dropping it was <b>rejected</b> (it is the
+one thing the Emacs view added on purpose).</p>
+
+<h2>4. What it says afterwards</h2>
+<div class="screen"><pre><span class="y">ran bd reclaim --id cb-mqa --older-than 10m</span>
+<span class="y">ran, but bd dolt push failed — other machines will not see this yet</span>
+<span class="e">bd reclaim --id cb-mqa --older-than 10m failed</span></pre></div>
+
+<p class="note">One gold line in the header, where the confirmation was. <b>The success line echoes
+the command</b>, as <code>M-x cerebro</code> does: naming the bead and the effect
+(<code>cb-mqa reclaimed</code>) was <b>rejected</b> because the command is the thing that actually
+ran and the only thing that can be checked against the board.</p>
+
+<p class="note"><b>The push line does not repeat it</b>, and that is deliberate: the command has
+just been on screen twice, in the confirmation and in nothing else that matters, and the news in
+this line is the push. Repeating it took the line to 106 cells, which is cut on every terminal this
+view is used on.</p>
+
+<p class="note"><b><code>bd dolt push</code> rides the same keypress</b> and is not confirmed
+separately: a close or a reclaim the other machines cannot see is half done, and asking twice for
+one keystroke&rsquo;s worth of intent is its own kind of noise.</p>
+
+<h2>5. When a sweep does not answer</h2>
+<p class="lede">Three of the six sweep scripts <code>git fetch</code>, so a sweep failing is
+ordinary rather than exceptional. The findings already on screen stay; the header says which script
+stopped the run.</p>
+
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 6</span>  <span class="e">sweep-claims failed</span>          <span class="b">│</span>
+<span class="b">│</span>  close cb-9su — delivered by Cyclo…  <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Sweeps 0</span>  <span class="e">sweep-claims failed</span>          <span class="b">│</span>
+<span class="b">│</span>                                      <span class="b">│</span>
+<span class="b">│</span><span class="hd">Claimed 2                             </span><span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+
+<p class="note"><b>Exactly one script name is ever shown</b>, never a count and never a list: the
+run stops at the first script that does not answer, so no later one has been asked. The word is
+<code>failed</code> &mdash; it covers a non-zero exit, a timeout and output that is not the JSON it
+promised, and the navigator&rsquo;s next move is the same for all three.</p>
+
+<p class="note"><b>A failed run with nothing to keep still draws the header</b> (the second screen
+above), and that is the one place this differs from &ldquo;no findings means no section&rdquo;.
+Hiding it was <b>rejected</b>: a clean fleet and a fleet nobody could look at would then draw the
+same blank, which is the exact confusion this line exists to end.</p>
+
+<h2>6. Nothing found, and the hint line</h2>
+<div class="screen"><pre><span class="b">┌ Work ────────────────────────────────┐</span>
+<span class="b">│</span><span class="hd">Claimed 2                             </span><span class="b">│</span>
+<span class="b">│</span>  cb-kcs.4.1  P1 The Ratatui view s…  <span class="b">│</span>
+<span class="b">└──────────────────────────────────────┘</span></pre></div>
+<p class="note"><b>A successful sweep that found nothing draws no header and no line</b>, unlike
+the six queues, which say <code>(none)</code>. Those describe queues that are normally not empty;
+an empty Sweeps section is the ordinary result of almost every run, and a pane announcing it every
+ten minutes is the noise <code>docs/cerebro-sweeps.md</code> warns against.</p>
+
+<div class="screen"><pre><span class="hd">Cerebro — supervising</span>  <span class="d">| 3 live agents | ↑/↓ select | s start | f finish | k kill | x act | g retry</span></pre></div>
+<p class="note"><code>x act</code> sits between <code>k kill</code> and <code>g retry</code>, and is
+shown <b>only while there is a finding to act on</b> &mdash; so the ordinary day has exactly the
+hint line it has today.</p>
+
+<h2>7. Cadence</h2>
+<p class="note"><b>The sweeps run on their own ten-minute clock</b>, as they do in Emacs, and
+<b><code>g</code> forces a run</b> along with the fleet and work reads. <code>g</code> not touching
+the sweeps was <b>rejected</b>: after closing a bead by hand, waiting ten minutes to watch a finding
+disappear is the moment the navigator actually presses <code>g</code>.</p>

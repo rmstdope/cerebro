@@ -63,6 +63,10 @@ pub enum Event {
     /// write, as `cerebro-sweep-act` writes it - the decision is worth keeping whether or not the
     /// command then succeeded.
     Sweep,
+    /// One priority keystroke: the bead, what it was, and what it is being set to. Written
+    /// BEFORE the write, exactly as `Sweep` is - a decision this view made is worth keeping
+    /// whether or not the write then succeeded.
+    Priority,
     /// One triage line typed into an idle orchestrator. Written only when the line actually went
     /// into a session this view hosts (the navigator's choice, round three): the view must not
     /// record something it did not do.
@@ -83,6 +87,7 @@ impl Event {
             Self::GiveUp => "give-up",
             Self::Evaluate => "evaluate",
             Self::Sweep => "sweep",
+            Self::Priority => "priority",
             Self::Triage => "triage",
             Self::Error => "error",
         }

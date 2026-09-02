@@ -17,7 +17,6 @@
 //! guessed - there is no `standby` row here and no stop-flag mark, because neither is in this
 //! reader's normalized model, and inventing one would show supervisor intent as observed fact.
 
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -34,7 +33,9 @@ use crate::app::{
     self, App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics,
 };
 use crate::lifecycle;
-use crate::model::{Bead, FleetRow, RowState, WorkBuckets};
+use crate::model::{Bead, FleetRow, RowState};
+#[cfg(test)]
+use crate::model::WorkBuckets;
 use crate::session::SessionView;
 
 /// The floor the whole screen needs. Below it the screen says so and shows nothing else: half a
@@ -651,6 +652,14 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     if !app.work_findings().is_empty() {
         keys.push_str(" | x act");
     }
+    // The two clauses of cb-kcs.5.4, by the same rule and for the same reason: both write to the
+    // shared board rather than to this checkout's sessions, so both are shown on a read-only
+    // view. Each only while the cursor is on a row that key acts on.
+    match &app.work_cursor {
+        Some(app::WorkCursor::Bead(_)) => keys.push_str(" | 0-4/+/-/u priority"),
+        Some(app::WorkCursor::More(_)) => keys.push_str(" | Enter show all"),
+        _ => {}
+    }
     let full = format!(
         " | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move{keys} | {refresh_key} | q/Esc/Ctrl-C quit"
     );
@@ -892,21 +901,18 @@ fn fleet_body_line(
     }
 }
 
-/// The Work pane's whole body: the Sweeps section, then the six queues.
+/// The Work pane's whole body: the Sweeps section, the six queues, then History.
 ///
-/// The section is FIRST, above `Claimed` - the navigator's choice, and not the Emacs order
-/// (last, after `Merged`): Emacs draws its panel in a window the navigator scrolls to the end of,
-/// while this pane shows about fourteen rows of a forty-one row document, and a section below the
-/// fold is one nobody presses.
-///
-/// `app::work_body` is the one owner of what lies above the queues, so a finding's document line
-/// and the line drawn for it cannot come from two different pieces of arithmetic.
+/// One arm per `app::WorkBodyLine`, and no structure of its own: `app::work_body` is the one
+/// owner of what this pane contains, so the row the cursor is on and the row that is drawn cannot
+/// come from two different pieces of arithmetic.
 fn work_document(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'static>> {
     let findings = app.work_findings();
-    let cursor = app.work_cursor.as_deref();
+    let body = app::work_body(app, now);
     let mut lines = Vec::new();
-    for entry in app::work_body(&app.sweeps.content) {
-        match entry {
+    for entry in &body {
+        let selected = app.work_cursor.is_some() && entry.cursor() == app.work_cursor;
+        lines.push(match entry {
             app::WorkBodyLine::SweepHeader { count, error } => {
                 let mut spans = vec![Span::styled(
                     format!("Sweeps {count}"),
@@ -917,172 +923,88 @@ fn work_document(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'stati
                 if let Some(error) = error {
                     spans.push(Span::styled(format!("  {error}"), Style::default().fg(RED)));
                 }
-                lines.push(Line::from(spans));
+                Line::from(spans)
             }
-            app::WorkBodyLine::Finding(index) => {
-                let judged = &findings[index];
+            app::WorkBodyLine::Finding { index, .. } => {
+                let judged = &findings[*index];
                 let mut style = Style::default();
                 // A stranded P0 is gold, and that is the whole of the escalation: no new colour,
                 // no glyph, no popup.
                 if judged.finding.urgent() {
                     style = style.fg(GOLD);
                 }
-                if cursor == Some(judged.finding.key().as_str()) {
+                if selected {
                     style = style.bg(SELECTED_BG);
                 }
                 // Cells, not chars: a label carrying a wide glyph cut by `chars` would push the
                 // pane border off the row.
-                lines.push(Line::from(Span::styled(
+                Line::from(Span::styled(
                     format!("  {}", truncate_cells(&judged.label, width.saturating_sub(2))),
                     style,
-                )));
+                ))
             }
-            app::WorkBodyLine::Blank => lines.push(Line::from("")),
-            app::WorkBodyLine::Queues => lines.extend(work_queues(app, now, width)),
-        }
+            app::WorkBodyLine::Blank => Line::from(""),
+            app::WorkBodyLine::Notice(notice) => match notice {
+                app::WorkNotice::Loading => Line::from(Span::styled("Loading work...", dim())),
+                app::WorkNotice::Stale(error) => {
+                    Line::from(Span::styled(error.clone(), Style::default().fg(GOLD)))
+                }
+                app::WorkNotice::StaleFooter => Line::from(Span::styled(
+                    "The last successful work snapshot remains visible.",
+                    dim(),
+                )),
+                app::WorkNotice::Unavailable(error) => {
+                    Line::from(Span::styled(error.clone(), Style::default().fg(RED)))
+                }
+                app::WorkNotice::NoSnapshot => Line::from("No work snapshot is available."),
+                app::WorkNotice::Retry => Line::from("Press g to retry."),
+            },
+            app::WorkBodyLine::SectionHeader { title, count } => Line::from(Span::styled(
+                format!("{title} {count}"),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            app::WorkBodyLine::Bead { bead, suffix } => {
+                let line = work_row(bead, width, suffix.as_deref());
+                if selected {
+                    line.style(Style::default().bg(SELECTED_BG))
+                } else {
+                    line
+                }
+            }
+            app::WorkBodyLine::Empty => Line::from(Span::styled("  (none)", dim())),
+            app::WorkBodyLine::More { hidden, expanded, .. } => {
+                // `Enter` is advertised only under the cursor: always saying it is eight cells of
+                // noise on every frame, and never saying it means nobody finds it.
+                let text = match (expanded, selected) {
+                    (true, _) => format!("  all {} shown — Enter", hidden + app::WORK_ROWS_PER_SECTION),
+                    (false, true) => format!("  +{hidden} more — Enter"),
+                    (false, false) => format!("  +{hidden} more"),
+                };
+                let mut style = dim();
+                if selected {
+                    style = style.bg(SELECTED_BG);
+                }
+                Line::from(Span::styled(text, style))
+            }
+            app::WorkBodyLine::HistoryHeader { count, failed } => {
+                let mut spans = vec![Span::styled(
+                    format!("History {count}"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )];
+                // The one place History differs from Sweeps: rows hours old would read as
+                // current, so the script is named in red beside the header while they are kept.
+                if *failed {
+                    spans.push(Span::styled("  fleet-history failed", Style::default().fg(RED)));
+                }
+                Line::from(spans)
+            }
+            app::WorkBodyLine::HistoryRow { text, long } => {
+                let style = if *long { Style::default().fg(GOLD) } else { Style::default() };
+                Line::from(Span::styled(truncate_cells(text, width), style))
+            }
+        });
     }
     lines
-}
-
-/// The six queues, in the same four shapes the Fleet pane has - and with the same rule under
-/// them: a failed refresh never destroys queues that are still worth reading.
-fn work_queues(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'static>> {
-    match &app.work.content {
-        PaneContent::Loading => vec![Line::from(Span::styled("Loading work...", dim()))],
-        PaneContent::Fresh { value, .. } => work_lines(value, now, width),
-        PaneContent::Stale { value, error, .. } => {
-            let mut lines = vec![
-                Line::from(Span::styled(error.clone(), Style::default().fg(GOLD))),
-                Line::from(""),
-            ];
-            lines.extend(work_lines(value, now, width));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "The last successful work snapshot remains visible.",
-                dim(),
-            )));
-            lines
-        }
-        PaneContent::Unavailable { error, .. } => vec![
-            Line::from(Span::styled(error.clone(), Style::default().fg(RED))),
-            Line::from(""),
-            Line::from("No work snapshot is available."),
-            Line::from("Press g to retry."),
-        ],
-    }
-}
-
-/// How a section orders its rows and what it puts at the far end of one.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SectionKind {
-    /// Priority, then id: P0 reads first, and a tie does not shuffle between redraws.
-    Open,
-    /// `Open`'s order, plus how long the bead has been waiting for a person.
-    Paused,
-    /// Newest first. Priority says nothing about finished work - a merged P3 is no less done
-    /// than a merged P0 - so this section answers "what just landed" instead.
-    Merged,
-}
-
-/// The six queues, in the order work moves in read backwards, and in the panel's own spelling.
-///
-/// Exactly the sections `cerebro--bead-panel` shows, minus History, which is Emacs's alone until
-/// cb-kcs.5.4. The Sweeps section is drawn by `work_document` above and comes FIRST here, where
-/// the panel puts it last.
-fn work_lines(buckets: &WorkBuckets, now: DateTime<Utc>, width: usize) -> Vec<Line<'static>> {
-    let sections: [(&str, &Vec<Bead>, SectionKind); 6] = [
-        ("Claimed", &buckets.claimed, SectionKind::Open),
-        ("Planned, unclaimed", &buckets.planned, SectionKind::Open),
-        ("Being planned", &buckets.being_planned, SectionKind::Open),
-        ("Unplanned", &buckets.unplanned, SectionKind::Open),
-        ("Waiting on you", &buckets.paused, SectionKind::Paused),
-        ("Merged, unverified", &buckets.merged, SectionKind::Merged),
-    ];
-    let mut lines = Vec::new();
-    for (index, (title, beads, kind)) in sections.into_iter().enumerate() {
-        if index > 0 {
-            lines.push(Line::from(""));
-        }
-        lines.extend(work_section(title, beads, kind, now, width));
-    }
-    lines
-}
-
-/// One section: its title with the FULL count, then at most eight rows, then what is left.
-///
-/// The count is on the header rather than implied by the rows, because the rows are the part
-/// that gets capped - and a section whose remainder is hidden still has to say how much work is
-/// really in it.
-fn work_section(
-    title: &str,
-    beads: &[Bead],
-    kind: SectionKind,
-    now: DateTime<Utc>,
-    width: usize,
-) -> Vec<Line<'static>> {
-    let sorted = match kind {
-        SectionKind::Merged => sorted_by_recency(beads),
-        SectionKind::Open | SectionKind::Paused => sorted_by_priority(beads),
-    };
-    let mut lines = vec![Line::from(Span::styled(
-        format!("{title} {}", sorted.len()),
-        Style::default().add_modifier(Modifier::BOLD),
-    ))];
-    if sorted.is_empty() {
-        lines.push(Line::from(Span::styled("  (none)", dim())));
-        return lines;
-    }
-    for bead in sorted.iter().take(WORK_ROWS_PER_SECTION) {
-        let suffix = (kind == SectionKind::Paused).then(|| paused_age(bead, now));
-        lines.push(work_row(bead, width, suffix.as_deref()));
-    }
-    let hidden = sorted.len().saturating_sub(WORK_ROWS_PER_SECTION);
-    if hidden > 0 {
-        lines.push(Line::from(Span::styled(format!("  +{hidden} more"), dim())));
-    }
-    lines
-}
-
-fn sorted_by_priority(beads: &[Bead]) -> Vec<&Bead> {
-    let mut sorted: Vec<&Bead> = beads.iter().collect();
-    // A missing priority sorts after P4 rather than before P0: an unranked bead is not urgent.
-    sorted.sort_by(|a, b| {
-        a.priority
-            .unwrap_or(9)
-            .cmp(&b.priority.unwrap_or(9))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    sorted
-}
-
-fn sorted_by_recency(beads: &[Bead]) -> Vec<&Bead> {
-    let mut sorted: Vec<&Bead> = beads.iter().collect();
-    // Undated last, and the id breaks every tie: this list is redrawn on a timer, and one that
-    // reorders under the navigator's eyes is unreadable.
-    sorted.sort_by(|a, b| {
-        match (a.updated_at, b.updated_at) {
-            (Some(a), Some(b)) => b.cmp(&a),
-            (Some(_), None) => Ordering::Less,
-            (None, Some(_)) => Ordering::Greater,
-            (None, None) => Ordering::Equal,
-        }
-        .then_with(|| a.id.cmp(&b.id))
-    });
-    sorted
-}
-
-/// How long this bead has been waiting for a person, or an em dash when it never said.
-///
-/// The one place the empty string `elapsed` returns becomes something the eye can find: a bead
-/// parked before the pause sites wrote `metadata.paused_at` has no age, and rendering it as a
-/// small number would read as "just now".
-fn paused_age(bead: &Bead, now: DateTime<Utc>) -> String {
-    let age = elapsed(bead.paused_at(), now);
-    if age.is_empty() {
-        "—".to_string()
-    } else {
-        age
-    }
 }
 
 /// One bead row, fitted to WIDTH terminal cells.
@@ -1283,7 +1205,7 @@ fn state_label(row: &FleetRow) -> String {
 
 /// `12m`, `1h03` or `2d` - `cerebro--elapsed`, to the character, including the empty string for a
 /// time the state file did not give.
-fn elapsed(since: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
+pub(crate) fn elapsed(since: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
     let Some(since) = since else {
         return String::new();
     };
@@ -3637,7 +3559,7 @@ mod tests {
             judged(Finding::Unclaim { id: "cb-a".into() }, "unclaim cb-a — Storm stalled"),
             judged(Finding::Reclaim { id: "cb-b".into() }, "reclaim cb-b — Storm gone"),
         ]);
-        app.work_cursor = Some("reclaim:cb-b".into());
+        app.work_cursor = Some(app::WorkCursor::Finding("reclaim:cb-b".into()));
         let buffer = render(&app, 140, 30);
         assert_eq!(style_where(&buffer, "reclaim cb-b").bg, Some(SELECTED_BG));
         assert_ne!(style_where(&buffer, "unclaim cb-a").bg, Some(SELECTED_BG));
@@ -3703,4 +3625,168 @@ mod tests {
         }
     }
 
+
+    // --- History, the widened cursor and the two hint clauses (cb-kcs.5.4) --------------------
+
+    fn history_row(agent: &str, state: &str, open: Option<f64>, median: Option<f64>) -> crate::model::HistoryRow {
+        crate::model::HistoryRow {
+            agent: agent.into(),
+            state: state.into(),
+            open_min: open,
+            median_min: median,
+            ..crate::model::HistoryRow::default()
+        }
+    }
+
+    fn with_history(rows: Vec<crate::model::HistoryRow>) -> App {
+        let mut app = work_app(WorkBuckets::default());
+        app.finish_history_refresh(Ok(rows), at(86_400));
+        app
+    }
+
+    #[test]
+    fn history_is_the_last_section_of_the_work_pane() {
+        let app = with_history(vec![
+            history_row("Cyclops", "working", Some(2.4), Some(21.9)),
+            history_row("Psylocke", "asking", Some(536.6), Some(2.2)),
+            history_row("Beast", "plan", Some(9.0), None),
+            history_row("Xavier", "plan", Some(4.0), Some(3.0)),
+            // Not running: no line, and not counted.
+            history_row("Forge", "sweep", None, Some(3.0)),
+        ]);
+        let rendered = body(&render(&app, 90, 60));
+
+        assert!(line_with(&rendered, "History").starts_with("History 4"), "{rendered:#?}");
+        assert!(
+            index_of(&rendered, "History 4") > index_of(&rendered, "Merged, unverified"),
+            "History is last, the `M-x cerebro` order"
+        );
+        assert!(rendered.iter().any(|l| l.contains("Cyclops working 2m")), "{rendered:#?}");
+        assert!(
+            rendered.iter().any(|l| l.contains("Psylocke asking 537m - long, median 2m")),
+            "{rendered:#?}"
+        );
+        assert!(!rendered.iter().any(|l| l.contains("Forge")), "nothing is running there");
+
+        // The long one is gold, and the ordinary one is not.
+        let buffer = render(&app, 90, 60);
+        assert_eq!(style_where(&buffer, "Psylocke asking").fg, Some(GOLD));
+        assert_ne!(style_where(&buffer, "Cyclops working").fg, Some(GOLD));
+    }
+
+    #[test]
+    fn nothing_running_draws_no_history_section() {
+        let app = with_history(vec![history_row("Forge", "sweep", None, Some(3.0))]);
+        let rendered = body(&render(&app, 140, 40));
+        assert!(!rendered.iter().any(|l| l.contains("History")), "{rendered:#?}");
+    }
+
+    /// A failed run keeps the rows it had and names the script in red beside the header: rows
+    /// hours old would otherwise read as current.
+    #[test]
+    fn a_failed_history_run_names_the_script_beside_its_header() {
+        let mut app = with_history(vec![history_row("Cyclops", "working", Some(2.0), Some(9.0))]);
+        app.finish_history_refresh(
+            Err(ReadError::Invalid { source: "fleet-history".into(), message: "bad json".into() }),
+            at(86_700),
+        );
+        let rendered = body(&render(&app, 140, 40));
+        let line = line_with(&rendered, "History 1");
+        assert!(line.contains("fleet-history failed"), "{line:?}");
+        assert!(rendered.iter().any(|l| l.contains("Cyclops working 2m")), "the rows are kept");
+
+        let buffer = render(&app, 140, 40);
+        assert_eq!(style_where(&buffer, "fleet-history failed").fg, Some(RED));
+    }
+
+    /// And a first failure has nothing to keep and draws no section at all - the ordinary state
+    /// of a machine that has never run the fleet, whose transitions log does not exist.
+    #[test]
+    fn a_first_history_failure_draws_no_section() {
+        let mut app = work_app(WorkBuckets::default());
+        app.finish_history_refresh(
+            Err(ReadError::Exit {
+                source: "fleet-history".into(),
+                status: Some(1),
+                stderr: "no transitions log".into(),
+                stdout: String::new(),
+            }),
+            at(86_400),
+        );
+        let rendered = body(&render(&app, 140, 40));
+        assert!(!rendered.iter().any(|l| l.contains("History")), "{rendered:#?}");
+        assert!(
+            !rendered.iter().any(|l| l.contains("fleet-history failed")),
+            "and no word about it either"
+        );
+    }
+
+    fn beads_app(count: usize) -> App {
+        let mut app = work_app(WorkBuckets {
+            unplanned: (1..=count)
+                .map(|n| bead(&format!("cb-{n:03}"), Some(4), &format!("item {n}")))
+                .collect(),
+            ..WorkBuckets::default()
+        });
+        app.focus = app::PaneFocus::Work;
+        app
+    }
+
+    #[test]
+    fn the_cursor_highlights_a_bead_row() {
+        let mut app = beads_app(3);
+        app.work_cursor = Some(app::WorkCursor::Bead("cb-002".into()));
+        let buffer = render(&app, 140, 40);
+        assert_eq!(style_where(&buffer, "cb-002").bg, Some(SELECTED_BG));
+        assert_ne!(style_where(&buffer, "cb-001").bg, Some(SELECTED_BG));
+    }
+
+    /// `Enter` is advertised only under the cursor: always saying it is noise on every frame, and
+    /// never saying it means nobody finds it.
+    #[test]
+    fn the_more_row_names_enter_only_under_the_cursor() {
+        let mut app = beads_app(10);
+        let rendered = body(&render(&app, 90, 60));
+        assert!(
+            rendered.iter().any(|l| l.contains("+2 more") && !l.contains("Enter")),
+            "{rendered:#?}"
+        );
+
+        app.work_cursor = Some(app::WorkCursor::More("Unplanned"));
+        let rendered = body(&render(&app, 90, 60));
+        assert!(rendered.iter().any(|l| l.contains("+2 more — Enter")), "{rendered:#?}");
+
+        app.expanded.insert("Unplanned");
+        let rendered = body(&render(&app, 90, 60));
+        assert!(rendered.iter().any(|l| l.contains("all 10 shown — Enter")), "{rendered:#?}");
+        assert!(rendered.iter().any(|l| l.contains("cb-010")), "every row is drawn");
+    }
+
+    /// Both clauses are the navigator's own hands rather than the supervisor's, so both are shown
+    /// on a read-only view, where `s`/`f`/`k` are not.
+    #[test]
+    fn the_priority_hint_is_shown_only_over_a_bead() {
+        let mut app = beads_app(23);
+        app.work_cursor = Some(app::WorkCursor::Bead("cb-001".into()));
+        let header = lines(&render(&app, 140, 40))[0].clone();
+        assert!(header.contains("0-4/+/-/u priority"), "{header}");
+        assert!(!header.contains("Enter show all"), "{header}");
+        assert!(!header.contains(" s start"), "a read-only view offers no lifecycle key");
+
+        app.work_cursor = Some(app::WorkCursor::More("Unplanned"));
+        let header = lines(&render(&app, 140, 40))[0].clone();
+        assert!(!header.contains("priority"), "{header}");
+    }
+
+    #[test]
+    fn the_enter_hint_is_shown_only_over_a_more_row() {
+        let mut app = beads_app(23);
+        app.work_cursor = Some(app::WorkCursor::More("Unplanned"));
+        let header = lines(&render(&app, 140, 40))[0].clone();
+        assert!(header.contains("Enter show all"), "{header}");
+
+        app.work_cursor = Some(app::WorkCursor::Bead("cb-001".into()));
+        let header = lines(&render(&app, 140, 40))[0].clone();
+        assert!(!header.contains("Enter show all"), "{header}");
+    }
 }

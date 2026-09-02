@@ -39,7 +39,8 @@ use ratatui::layout::Rect;
 use ratatui::Terminal;
 
 use cerebro_tui::app::{
-    self, App, AppAction, FleetWorker, GhWorker, SupervisorWorker, SweepWorker, WorkWorker,
+    self, App, AppAction, FleetWorker, GhWorker, HistoryWorker, SupervisorWorker, SweepWorker,
+    WorkWorker,
 };
 use cerebro_tui::lifecycle;
 use cerebro_tui::log::{self, Logger};
@@ -310,6 +311,9 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // A fifth thread for the six sweep scripts, on their own ten-minute cadence: three of them
     // fetch from origin (cb-kcs.5.1).
     let sweep_worker = SweepWorker::spawn(paths.clone(), Programs::default(), commands.clone());
+    // A sixth thread for `scripts/fleet-history`, on its own five-minute cadence: a `jq` walk
+    // over a log that grows without limit (cb-kcs.5.4).
+    let history_worker = HistoryWorker::spawn(paths.clone(), commands.clone());
     let supervisor_worker = SupervisorWorker::spawn(paths.clone(), commands.clone());
     // Ownership before the first frame: the one blocking read this binary allows itself, and the
     // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
@@ -375,6 +379,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &work_worker,
         &gh_worker,
         &sweep_worker,
+        &history_worker,
         &supervisor_worker,
         &mut controller,
         &mut host,
@@ -1102,6 +1107,7 @@ fn run<B: Backend, E: Events>(
     work_worker: &WorkWorker,
     gh_worker: &GhWorker,
     sweep_worker: &SweepWorker,
+    history_worker: &HistoryWorker,
     supervisor_worker: &SupervisorWorker,
     controller: &mut SupervisorController,
     host: &mut SessionHost,
@@ -1233,6 +1239,21 @@ where
             }
             app.finish_sweep_refresh(result, clock());
         }
+        // History fails apart from the two panes as well: a script that would not run says
+        // nothing about the fleet or the board, and its only sign on screen is the red word
+        // beside its own header. The `Display` already carries the cause, so this is `work`'s
+        // shape rather than the sweeps'.
+        if let Some(result) = history_worker.poll() {
+            match &result {
+                Ok(_) => logger.clear_error("history"),
+                Err(error) => logger.error(
+                    &log::reader_context("history", error),
+                    &error.to_string(),
+                    clock(),
+                ),
+            }
+            app.finish_history_refresh(result, clock());
+        }
         // Ownership is a third state, polled like the other two and failing apart from them: a
         // declaration that cannot be read says nothing about the fleet or the board.
         if let Some(answer) = supervisor_worker.poll() {
@@ -1261,7 +1282,7 @@ where
             controller.requested(Instant::now());
         }
 
-        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, gh_worker, sweep_worker, &clock);
+        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, gh_worker, sweep_worker, history_worker, &clock);
 
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
@@ -1278,7 +1299,7 @@ where
                     if action == AppAction::RefreshAll && supervisor_worker.request() {
                         controller.requested(Instant::now());
                     }
-                    dispatch(action, app, fleet_worker, work_worker, gh_worker, sweep_worker, &clock);
+                    dispatch(action, app, fleet_worker, work_worker, gh_worker, sweep_worker, history_worker, &clock);
                 }
                 // Forwarded as a PASTE (Q3), so an agent composer that treats a bare newline as
                 // submit receives four pasted lines as one block rather than submitting the
@@ -1309,6 +1330,54 @@ where
 /// 4. `s`, `f` and `k`, unmodified, are the lifecycle;
 /// 5. everything else is `App::on_key` - and a `Quit` from it over a live session is refused.
 ///
+/// One priority write: the log line, the `bd`, the notice and the undo entry.
+///
+/// The `priority` line is written BEFORE the command runs, the rule `Event::Sweep` follows: a
+/// decision this view made is worth keeping whether or not the write then succeeded. On a
+/// read-only view the logger is disabled and no line is written, exactly as none is for `x`.
+#[allow(clippy::too_many_arguments)]
+fn write_priority(
+    app: &mut App,
+    logger: &mut Logger,
+    paths: &ReaderPaths,
+    programs: &Programs,
+    commands: &dyn CommandRunner,
+    now: DateTime<Utc>,
+    id: &str,
+    from: Option<u8>,
+    to: u8,
+    undo: bool,
+) -> AppAction {
+    logger.write(
+        log::Event::Priority,
+        now,
+        &[
+            ("bead", serde_json::Value::from(id)),
+            ("from", from.map(serde_json::Value::from).unwrap_or(serde_json::Value::Null)),
+            ("to", serde_json::Value::from(to)),
+        ],
+    );
+    let outcome = lifecycle::set_priority(paths, programs, commands, id, from, to, undo);
+    let wrote = !matches!(outcome, lifecycle::PriorityOutcome::Failed { .. });
+    app.set_notice(match &outcome {
+        lifecycle::PriorityOutcome::Ran { text }
+        | lifecycle::PriorityOutcome::Pushed { text }
+        | lifecycle::PriorityOutcome::Failed { text } => text.clone(),
+    });
+    if let lifecycle::PriorityOutcome::Failed { .. } = outcome {
+        app.notice_urgent = true;
+    }
+    if wrote && !undo {
+        app.last_priority_change = Some((id.to_string(), from));
+    }
+    if wrote {
+        // So the row's `P1` becomes `P0` at once rather than up to thirty seconds later.
+        AppAction::RefreshWork
+    } else {
+        AppAction::None
+    }
+}
+
 /// In branch 3, `Shift-Tab` is held back and handed to `App::on_key` as the only way out (Q8),
 /// which is the reason the child can never receive it; everything else goes to
 /// `session::key_bytes`, and a `None` is dropped without a word (Q1), because the pane is a window
@@ -1405,6 +1474,75 @@ fn route_key(
         }
         return AppAction::None;
     }
+    // The priority keys, and the one key set in this view that is NOT "from any focus": a digit
+    // is far more ordinary than `x`, and from Fleet focus `3` would silently rerank a bead in a
+    // pane nobody was looking at (the navigator's choice, round one). AFTER the live-session
+    // branch above, so a focused session still gets the byte.
+    //
+    // Like `x`, these are board writes and are deliberately outside the supervision lease: a view
+    // that may start nothing may still rank a bead.
+    // SHIFT is not disqualifying here, unlike everywhere else in this function: `+` is shift-`=`
+    // on a US layout, and crossterm reports `SHIFT` alongside `Char('+')` under the kitty
+    // keyboard protocol and on some Windows paths. A gate on `is_empty()` alone would leave `+`
+    // silently dead while `-` worked, which is the most confusing failure this key pair has.
+    if key.modifiers.difference(crossterm::event::KeyModifiers::SHIFT).is_empty()
+        && app.focus == app::PaneFocus::Work
+    {
+        let requested = match key.code {
+            KeyCode::Char(c @ '0'..='4') => {
+                Some(lifecycle::Requested::Exactly(c as u8 - b'0'))
+            }
+            // `+` is more urgent, which LOWERS the number (`cerebro-beads-raise`).
+            KeyCode::Char('+') => Some(lifecycle::Requested::Nudge(-1)),
+            KeyCode::Char('-') => Some(lifecycle::Requested::Nudge(1)),
+            _ => None,
+        };
+        if let Some(requested) = requested {
+            app.notice = None;
+            app.notice_urgent = false;
+            let Some(bead) = app.selected_bead(now) else {
+                return AppAction::None;
+            };
+            let (id, from) = (bead.id.clone(), bead.priority);
+            return match lifecycle::priority_action(&id, from, requested) {
+                lifecycle::PriorityAction::Nothing => AppAction::None,
+                lifecycle::PriorityAction::AlreadyThere { text } => {
+                    app.set_notice(text);
+                    AppAction::None
+                }
+                lifecycle::PriorityAction::Write { to } => {
+                    write_priority(app, logger, paths, programs, commands, now, &id, from, to, false)
+                }
+            };
+        }
+        if key.code == KeyCode::Char('u') {
+            app.notice = None;
+            app.notice_urgent = false;
+            // Spent by USING it, and by nothing else: one step back rather than a stack, so a
+            // second `u` has nothing to do rather than quietly redoing the change.
+            // READ, never taken: an entry is spent by an undo that actually wrote, not by one
+            // `bd` refused. A rescue that a failed write throws away is not there when it is
+            // reached for a second time, which is the whole case `u` exists for.
+            let Some((id, previous)) = app.last_priority_change.clone() else {
+                app.set_notice("nothing to undo".to_string());
+                app.notice_urgent = true;
+                return AppAction::None;
+            };
+            let Some(previous) = previous else {
+                // A bead that carried no priority has nothing to be put back to. Unreachable in
+                // practice - the board always sets one - and the entry is left where it is
+                // rather than destroyed by a keystroke that did nothing.
+                return AppAction::None;
+            };
+            let action =
+                write_priority(app, logger, paths, programs, commands, now, &id, None, previous, true);
+            // An undo that wrote leaves no entry of its own: `u` is one step back, not a toggle.
+            if action == AppAction::RefreshWork {
+                app.last_priority_change = None;
+            }
+            return action;
+        }
+    }
     if key.modifiers.is_empty() {
         if let KeyCode::Char(c @ ('s' | 'f' | 'k')) = key.code {
             // A notice is transient exactly as it is under `on_key`: the keystroke that reads it
@@ -1413,7 +1551,7 @@ fn route_key(
             return lifecycle_key(c, app, host, ledger, logger, paths, now);
         }
     }
-    let action = app.on_key(key, viewport_lines);
+    let action = app.on_key(key, viewport_lines, now);
     if action == AppAction::Quit {
         let live = host.live_names(&app.roster_order());
         if !live.is_empty() {
@@ -1519,8 +1657,12 @@ fn lifecycle_key(
     }
 }
 
-/// Turn one `AppAction` into requests. `RefreshAll` asks each pane in turn and never as a set:
+/// Turn one `AppAction` into requests.
+///
+/// Seven workers and a clock: the crate's own precedent for this is `lifecycle_key`'s allow, and a
+/// parameter struct invented here would be a shape nothing else in the loop uses. `RefreshAll` asks each pane in turn and never as a set:
 /// a fleet read already in flight must not swallow the work retry the navigator pressed `g` for.
+#[allow(clippy::too_many_arguments)]
 fn dispatch(
     action: AppAction,
     app: &mut App,
@@ -1528,6 +1670,7 @@ fn dispatch(
     work_worker: &WorkWorker,
     gh_worker: &GhWorker,
     sweep_worker: &SweepWorker,
+    history_worker: &HistoryWorker,
     clock: &impl Fn() -> DateTime<Utc>,
 ) {
     let now = Instant::now();
@@ -1561,6 +1704,14 @@ fn dispatch(
         && !sweep_worker.request()
     {
         app.finish_sweep_refresh(Err(worker_gone("sweep reader")), clock());
+    }
+    // `g` re-asks History too, the `gh` line's shape exactly: nothing forces one out of band, so
+    // there is no `AppAction` of its own.
+    if (matches!(action, AppAction::RefreshAll) || app.history_due(now))
+        && app.begin_history_refresh(now)
+        && !history_worker.request()
+    {
+        app.finish_history_refresh(Err(worker_gone("history reader")), clock());
     }
 }
 
@@ -1986,7 +2137,7 @@ mod main_tests {
         // event source running out.
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
 
         assert!(!app.quit, "the session this case hosts is what refuses the quit");
@@ -2009,7 +2160,7 @@ mod main_tests {
         let mut events = ReplayedEvents::new(vec![ctrl(KeyCode::Char('c'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
@@ -2048,7 +2199,7 @@ mod main_tests {
         let mut events = ReplayedEvents::new(vec![key(KeyCode::Down), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
@@ -2069,7 +2220,7 @@ mod main_tests {
         ]);
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
         let text = echoed(&mut host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
@@ -2082,7 +2233,7 @@ mod main_tests {
             ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
@@ -2099,7 +2250,7 @@ mod main_tests {
         let (worker_handle, mut controller) = supervision();
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
         assert_eq!(
             controller.hosted_sessions, 1,
@@ -2154,6 +2305,10 @@ mod main_tests {
 
     /// The sweeps' worker, pointed at a directory with no sweep scripts in it - so every request
     /// answers `sweep-claims failed` and the section is never drawn.
+    fn history_worker() -> cerebro_tui::app::HistoryWorker {
+        cerebro_tui::app::HistoryWorker::spawn(nowhere().0, std::sync::Arc::new(RealCommands))
+    }
+
     fn sweep_worker() -> SweepWorker {
         let (paths, programs) = nowhere();
         SweepWorker::spawn(paths, programs, Arc::new(RealCommands))
@@ -2297,7 +2452,7 @@ mod main_tests {
                 &worker(),
                 &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -2332,7 +2487,7 @@ mod main_tests {
                 &worker(),
                 &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -2368,7 +2523,7 @@ mod main_tests {
                 &worker(),
                 &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -2415,7 +2570,7 @@ mod main_tests {
                 &worker(),
                 &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -2466,7 +2621,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work, &gh_worker(), &sweep_worker(),
+        run(&mut terminal, &mut events, &mut app, &worker(), &work, &gh_worker(), &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
@@ -2549,14 +2704,17 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
 
-        // The exact viewport PageDown should move Work by, from the same layout `run` clamps by.
+        // The viewport PageDown moves Work by, from the same layout `run` clamps by. Since
+        // cb-kcs.5.4 it moves the Work CURSOR that many selectable rows rather than the pane's
+        // own offset, and the pane follows it - so a page bigger than this document's nine
+        // selectable rows lands on the last of them.
         let area = Rect::new(0, 0, 100, 20);
         let expected_work_page = ui::metrics(&app, Utc::now(), area).work.viewport_lines;
         assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
@@ -2566,7 +2724,12 @@ mod main_tests {
             "Down moved the SELECTION in Fleet, which is focused by default"
         );
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Work, "Tab moved focus to Work");
-        assert_eq!(app.work.scroll, expected_work_page, "PageDown moved Work by its own viewport");
+        assert_eq!(
+            app.work_cursor_index(Utc::now()),
+            Some(expected_work_page),
+            "PageDown moved the Work cursor by Work's own viewport, from the first row"
+        );
+        assert!(app.work.scroll > 0, "and the pane scrolled to follow it");
     }
 
     /// A terminal that dips below the 40x12 floor draws the "too small" replacement screen, whose
@@ -2609,7 +2772,7 @@ mod main_tests {
         ]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
@@ -2648,7 +2811,7 @@ mod main_tests {
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
@@ -2820,7 +2983,7 @@ mod main_tests {
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(),
                 &gh_worker(),
-                &sweep_worker(),
+                &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, host, &mut ledger, &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), paths,
             &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
     }
@@ -4561,15 +4724,15 @@ mod main_tests {
         let clock = Utc::now;
         let (fleet, work, gh, sweeps) = (worker(), work_worker(), gh_worker(), sweep_worker());
 
-        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &clock);
+        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
         // The slot is claimed, so the second press is not stacked: whatever the reader answers,
         // only one request is in flight.
         assert!(!app.begin_gh_refresh(Instant::now()), "a request is already in flight");
-        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &clock);
+        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
 
         // A fleet-only refresh does not ask `gh` while its own ten-minute clock is unspent.
         app.finish_gh_refresh(Ok(cerebro_tui::model::GhSnapshot::default()), clock());
-        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &gh, &sweeps, &clock);
+        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
         assert!(
             app.begin_gh_refresh(Instant::now()),
             "the slot is free, so RefreshFleet asked nothing of gh"
@@ -4881,17 +5044,369 @@ mod main_tests {
         let clock = Utc::now;
         let (fleet, work, gh, sweeps) = (worker(), work_worker(), gh_worker(), sweep_worker());
 
-        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &clock);
+        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
         assert!(!app.begin_sweep_refresh(Instant::now()), "a request is already in flight");
         app.finish_sweep_refresh(Ok(Vec::new()), clock());
 
         // The ten-minute clock is unspent, so a fleet-only refresh does not re-run six scripts.
-        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &gh, &sweeps, &clock);
+        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
         assert!(!app.sweeps.refreshing, "the sweeps keep their own cadence");
 
         // And `x` asks for them alone, so a finding acted on leaves the section at once.
-        dispatch(AppAction::RefreshSweeps, &mut app, &fleet, &work, &gh, &sweeps, &clock);
+        dispatch(AppAction::RefreshSweeps, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
         assert!(app.sweeps.refreshing, "RefreshSweeps asks for the sweeps");
     }
 
+
+    // --- the priority keys and their undo (cb-kcs.5.4) ----------------------------------------
+
+    fn priority_bead(id: &str, priority: Option<u8>) -> cerebro_tui::model::Bead {
+        cerebro_tui::model::Bead {
+            id: id.into(),
+            title: format!("title of {id}"),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels: Vec::new(),
+            priority,
+            updated_at: None,
+            assignee: None,
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        }
+    }
+
+    /// One claimed bead, the Work pane focused, and the cursor on it.
+    fn app_with_bead(mode: SupervisionMode, priority: Option<u8>) -> App {
+        let mut app = lifecycle_app(
+            mode,
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+        );
+        app.finish_work_refresh(
+            Ok(cerebro_tui::model::WorkBuckets {
+                claimed: vec![priority_bead("cb-x", priority)],
+                ..cerebro_tui::model::WorkBuckets::default()
+            }),
+            Utc::now(),
+        );
+        app.focus = cerebro_tui::app::PaneFocus::Work;
+        app
+    }
+
+    #[test]
+    fn a_digit_writes_the_priority_and_pushes() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
+        let mut host = SessionHost::default();
+
+        let action = drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        // No confirmation: the write and the push ride the one keystroke.
+        assert_eq!(
+            argv(&fake),
+            vec!["update cb-x --priority 0", "dolt push"],
+            "the two argvs, in order"
+        );
+        assert_eq!(app.notice.as_deref(), Some("cb-x: P1 → P0"));
+        assert!(!app.notice_urgent);
+        // So the row's P1 becomes P0 at once rather than up to thirty seconds later.
+        assert_eq!(action, AppAction::RefreshWork);
+    }
+
+    /// `+` is more urgent and `-` is less: the priority NUMBER goes down as urgency goes up.
+    #[test]
+    fn the_two_nudges_move_in_the_directions_emacs_moves_them() {
+        for (key, want, sentence) in [
+            ('+', "update cb-x --priority 1", "cb-x: P2 → P1"),
+            ('-', "update cb-x --priority 3", "cb-x: P2 → P3"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = scratch(dir.path(), "sleep 5");
+            let programs = Programs::default();
+            let fake = cerebro_tui::readers::testing::FakeCommands::always("");
+            let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
+            let mut host = SessionHost::default();
+            drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch(key)]);
+            assert_eq!(argv(&fake), vec![want.to_string(), "dolt push".to_string()]);
+            assert_eq!(app.notice.as_deref(), Some(sentence));
+        }
+    }
+
+    /// A keystroke that does nothing must not leave an undo entry claiming it did.
+    #[test]
+    fn a_digit_on_a_bead_already_there_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(0));
+        let mut host = SessionHost::default();
+
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        assert!(fake.calls().is_empty(), "nothing ran");
+        assert_eq!(app.notice.as_deref(), Some("cb-x is already P0"));
+        assert_eq!(app.last_priority_change, None);
+    }
+
+    #[test]
+    fn a_failed_push_says_the_other_machines_cannot_see_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        // A `bd` whose write succeeds and whose push does not.
+        let fake = cerebro_tui::readers::testing::FakeCommands::new(|call| {
+            if call.args.first().map(String::as_str) == Some("dolt") {
+                Err(cerebro_tui::readers::ReadError::Exit {
+                    source: "bd".into(),
+                    status: Some(1),
+                    stderr: "no remote".into(),
+                    stdout: String::new(),
+                })
+            } else {
+                Ok(Vec::new())
+            }
+        });
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
+        let mut host = SessionHost::default();
+
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("cb-x: P1 → P0, but bd dolt push failed — other machines will not see this yet")
+        );
+        // The write happened, so it is still undoable.
+        assert_eq!(app.last_priority_change, Some(("cb-x".to_string(), Some(1))));
+    }
+
+    #[test]
+    fn a_refused_bd_says_so_and_leaves_nothing_to_undo() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        // A `bd` that refuses everything.
+        let fake = cerebro_tui::readers::testing::FakeCommands::failing(|| {
+            cerebro_tui::readers::ReadError::Exit {
+                source: "bd".into(),
+                status: Some(1),
+                stderr: "refused".into(),
+                stdout: String::new(),
+            }
+        });
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
+        let mut host = SessionHost::default();
+
+        let action = drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        assert_eq!(argv(&fake), vec!["update cb-x --priority 0"], "and no push");
+        assert_eq!(app.notice.as_deref(), Some("bd would not set cb-x to P0"));
+        assert!(app.notice_urgent, "a refusal is red");
+        assert_eq!(app.last_priority_change, None);
+        assert_eq!(action, AppAction::None);
+    }
+
+    /// Work focus only - the one key set in this view that is not "from any focus".
+    #[test]
+    fn a_digit_outside_work_focus_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
+        app.focus = cerebro_tui::app::PaneFocus::Fleet;
+        let mut host = SessionHost::default();
+
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        assert!(fake.calls().is_empty(), "nothing ran");
+        assert_eq!(app.notice, None);
+    }
+
+    /// And a read-only view ranks a bead: the board writes are outside the supervision lease.
+    #[test]
+    fn a_read_only_view_still_ranks_a_bead() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
+        let mut app = app_with_bead(
+            SupervisionMode::ReadOnly(cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                cerebro_tui::supervisor::SupervisorKind::Emacs,
+            )),
+            Some(1),
+        );
+        let mut host = SessionHost::default();
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        assert_eq!(argv(&fake), vec!["update cb-x --priority 0", "dolt push"]);
+    }
+
+    #[test]
+    fn u_puts_the_last_priority_back_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
+        let mut host = SessionHost::default();
+
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        // A work refresh between the two does not spend the entry.
+        app.finish_work_refresh(
+            Ok(cerebro_tui::model::WorkBuckets {
+                claimed: vec![priority_bead("cb-x", Some(0))],
+                ..cerebro_tui::model::WorkBuckets::default()
+            }),
+            Utc::now(),
+        );
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        assert_eq!(
+            argv(&fake),
+            vec![
+                "update cb-x --priority 0",
+                "dolt push",
+                "update cb-x --priority 1",
+                "dolt push",
+            ]
+        );
+        assert_eq!(app.notice.as_deref(), Some("cb-x: back to P1"));
+
+        // Spent: a second `u` has nothing to do rather than quietly redoing the change.
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        assert_eq!(fake.calls().len(), 4, "no fifth call");
+        assert_eq!(app.notice.as_deref(), Some("nothing to undo"));
+    }
+
+    /// A second digit overwrites the entry, so `u` always undoes the LAST change.
+    #[test]
+    fn a_second_change_overwrites_the_undo_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
+        let mut host = SessionHost::default();
+
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        app.finish_work_refresh(
+            Ok(cerebro_tui::model::WorkBuckets {
+                claimed: vec![priority_bead("cb-x", Some(0))],
+                ..cerebro_tui::model::WorkBuckets::default()
+            }),
+            Utc::now(),
+        );
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('3')]);
+        assert_eq!(app.last_priority_change, Some(("cb-x".to_string(), Some(0))));
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        assert_eq!(app.notice.as_deref(), Some("cb-x: back to P0"));
+    }
+
+    /// The decision this view made, kept whether or not the write then succeeded - and written
+    /// BEFORE the `bd`, exactly as the `sweep` line is.
+    #[test]
+    fn a_priority_change_is_written_to_the_decisions_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        // A `bd` that refuses everything.
+        let fake = cerebro_tui::readers::testing::FakeCommands::failing(|| {
+            cerebro_tui::readers::ReadError::Exit {
+                source: "bd".into(),
+                status: Some(1),
+                stderr: "refused".into(),
+                stdout: String::new(),
+            }
+        });
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
+        let mut host = SessionHost::default();
+
+        let mut logger = Logger::new(&paths.shared_root);
+        logger.set_enabled(true);
+        route_key(
+            ch('0'),
+            &mut app,
+            &mut host,
+            &mut StartLedger::default(),
+            &mut logger,
+            &paths,
+            &programs,
+            &fake,
+            10,
+            Utc::now(),
+        );
+
+        let written = std::fs::read_to_string(
+            paths.shared_root.join(".cerebro/state/decisions.jsonl"),
+        )
+        .unwrap();
+        let line: serde_json::Value = written
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+            .find(|v| v["event"] == "priority")
+            .expect("one priority line, even though bd refused");
+        assert_eq!(line["bead"], "cb-x");
+        assert_eq!(line["from"], 1);
+        assert_eq!(line["to"], 0);
+    }
+
+    /// `+` is shift-`=` on a US layout, so a terminal that reports SHIFT with it must not leave
+    /// the key silently dead while `-` works.
+    #[test]
+    fn a_shifted_plus_still_raises_the_priority() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
+        let mut host = SessionHost::default();
+
+        let shifted = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('+'),
+            crossterm::event::KeyModifiers::SHIFT,
+        );
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![shifted]);
+        assert_eq!(argv(&fake), vec!["update cb-x --priority 1", "dolt push"]);
+    }
+
+    /// An entry is spent by an undo that WROTE, not by one `bd` refused: a rescue a failed write
+    /// throws away is not there when it is reached for a second time.
+    #[test]
+    fn a_refused_undo_can_be_tried_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        // A `bd` that refuses the first undo and takes the second: the flag is flipped by the
+        // test between the two keystrokes, which is what a navigator's transient failure looks
+        // like from here.
+        let refusing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = refusing.clone();
+        let fake = cerebro_tui::readers::testing::FakeCommands::new(move |_| {
+            if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                Err(cerebro_tui::readers::ReadError::Exit {
+                    source: "bd".into(),
+                    status: Some(1),
+                    stderr: "refused".into(),
+                    stdout: String::new(),
+                })
+            } else {
+                Ok(Vec::new())
+            }
+        });
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
+        let mut host = SessionHost::default();
+
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        // Now `bd` refuses everything.
+        refusing.store(true, std::sync::atomic::Ordering::SeqCst);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        assert_eq!(app.notice.as_deref(), Some("bd would not set cb-x to P1"));
+        assert_eq!(
+            app.last_priority_change,
+            Some(("cb-x".to_string(), Some(1))),
+            "the entry survives a refusal"
+        );
+
+        // And it works once `bd` does.
+        refusing.store(false, std::sync::atomic::Ordering::SeqCst);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        assert_eq!(app.notice.as_deref(), Some("cb-x: back to P1"));
+        assert_eq!(app.last_priority_change, None, "and is spent by the one that wrote");
+    }
 }

@@ -573,9 +573,10 @@ header in red when one did not answer (`sweep-claims failed`), because three of 
 and a stale section that reads like a current one is what Emacs's own silence costs. The chain
 stops at the first script that did not answer, which is what lets the header name exactly one. Under
 Work the arrow and page keys move a **cursor over the findings** while there are any and scroll the
-pane when there are none — the ordinary day — and `x`, from any focus, shows the exact `bd` and runs
-it only on `y`, followed by `bd dolt push` on the same keystroke. That is **the one write in this
-crate that does not pass `--readonly`**, it lives in `lifecycle::run_finding` beside every other
+pane when there are none (widened to bead rows by cb-kcs.5.4, below) — and `x`, from any focus, shows the exact `bd` and runs
+it only on `y`, followed by `bd dolt push` on the same keystroke. That was **the one write in this
+crate that does not pass `--readonly`** until cb-kcs.5.4 added the priority keys beside it; it lives
+in `lifecycle::run_finding` beside every other
 write and spawns through `readers::CommandRunner` like every other command
 (cb-i1w), and it is deliberately **outside the lease**: the board is shared, so a view that may start
 nothing may still close a delivered bead. `tests/lib/sweep-findings.json` is the table both
@@ -603,6 +604,36 @@ starting and stopping a watcher is not a fleet decision, and its failures reach 
 under the context `prune` and nowhere else. Its surface was approved over three interview rounds
 on 2026-09-02 and arrives, like cb-kcs.2's, in a docs-only pull request of its own — so no path
 for it is written here, for the reason the paragraph above gives.
+
+Since cb-kcs.5.4 it carries the last two things the Emacs bead panel had and it did not, and both
+are the navigator's own hands rather than the supervisor's. **The priority keys** — `0`-`4`, `+`
+(more urgent, so the *number* goes down), `-` and `u` — write a bead's priority to the shared board
+with no confirmation and `bd dolt push` on the same keystroke, saying what they did in the header
+(`cb-x: P1 → P0`, `cb-x is already P0`, `cb-x: back to P1`, and the push failure in the same line);
+`u` is one step, spent only by using it, surviving a refresh and overwritten by the next change.
+They are the second write in this crate that does not pass `--readonly`, beside `x`, and the one key
+set in this view that is **not** "from any focus": Work focus only, because a
+digit is far more ordinary than `x` and from Fleet focus `3` would silently rerank a bead in a pane
+nobody was looking at. And **the History section**, last in the Work pane — the `M-x cerebro`
+order — one line per agent running something right now, gold when it has run past twice its own
+median (`Psylocke asking 537m - long, median 2m`), on its own five-minute reader; a state nothing
+has finished in has no median and is never called long. A failed run keeps the rows it had and says
+`History 4  fleet-history failed` in red, and a *first* failure draws no section at all, which is
+the ordinary state of a machine that has never run the fleet. Both are **outside the supervision
+lease**, exactly as `x` is, and both hint clauses are shown on a read-only view where `s`/`f`/`k`
+are not.
+
+With it the Work **cursor** widened from findings to findings, bead rows and `+N more` rows —
+never a header, a blank, `(none)` or a History row, so a grey row always means a key will do
+something here — and it is on the first selectable row from the first frame. `Enter` on a `+N more`
+row opens that one section (`all 23 shown — Enter`) and closes it again, which is the only way a
+bead in the P4 backlog can be reranked at all; an open section survives the thirty-second refresh
+and `g`. That widening is what moved the whole Work document into `app::work_body`: it now owns
+every drawn line — headers, bead rows, notices, `+N more`, History and all — and `ui::work_document`
+renders one arm per variant and computes no structure of its own, so the row the cursor is on and
+the row that is drawn cannot come from two pieces of arithmetic. `sorted_by_priority`,
+`sorted_by_recency`, `paused_age`, `SectionKind` and `WORK_ROWS_PER_SECTION` live in `app.rs` for
+that reason.
 
 **Exactly one view supervises, and `.cerebro/project.conf` says which** (`fleet_supervisor
 emacs|tui`, absent means `emacs`, so every consumer that predates the key is untouched).
@@ -635,7 +666,7 @@ stop from Fleet and Work.
 
 **cb-kcs.1 is the foundation only.** Ratatui can own the lease when a project declares it, and
 still hosts no sessions and offers no lifecycle key — `cb-kcs.2` adds the PTYs, `.3` retirement,
-`.4` triggers, and `.5` is what would set `fleet_supervisor tui` here. This repository keeps the
+`.4` triggers, and `.5.3` is what would set `fleet_supervisor tui` here. This repository keeps the
 key absent and stays Emacs-supervised.
 
 One screen, **three** independently bordered, independently scrolling widgets since cb-kcs.2.1:

@@ -620,6 +620,132 @@ pub enum FindingOutcome {
     Failed { text: String },
 }
 
+/// The least urgent priority `bd` takes. `cerebro-priority-floor` - this project's backlog floor;
+/// a consumer whose tracker ranks differently would set its own.
+pub const PRIORITY_FLOOR: u8 = 4;
+
+/// PRIORITY moved by DELTA, clamped to the range `bd` accepts.
+///
+/// Clamped rather than wrapped: holding `+` stops at P0 and holding `-` stops at the backlog
+/// floor, and neither rolls round. `cerebro--nudged-priority`.
+pub fn nudged_priority(priority: u8, delta: i8) -> u8 {
+    (i16::from(priority) + i16::from(delta)).clamp(0, i16::from(PRIORITY_FLOOR)) as u8
+}
+
+/// What a priority keystroke asked for: an exact number, or a step.
+///
+/// `+` is more urgent and `-` is less, which means `+` LOWERS the number
+/// (`cerebro-beads-raise`/`lower`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Requested {
+    Exactly(u8),
+    Nudge(i8),
+}
+
+/// What a priority keystroke means before anything is run. Pure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PriorityAction {
+    /// Ask `bd` for this.
+    Write { to: u8 },
+    /// `cb-x is already P0` - a keystroke that does nothing must not leave an undo entry claiming
+    /// it did.
+    AlreadyThere { text: String },
+    /// `+`/`-` on a bead `bd` gave no priority. Nothing is written and nothing is said: the board
+    /// always sets one, so this is unreachable in practice, and a refusal sentence for it would be
+    /// a string nobody can produce.
+    Nothing,
+}
+
+/// The digit keys and the two nudges, over one decision.
+pub fn priority_action(id: &str, current: Option<u8>, requested: Requested) -> PriorityAction {
+    let to = match requested {
+        Requested::Exactly(to) => to,
+        Requested::Nudge(delta) => match current {
+            Some(current) => nudged_priority(current, delta),
+            None => return PriorityAction::Nothing,
+        },
+    };
+    if current == Some(to) {
+        return PriorityAction::AlreadyThere { text: format!("{id} is already P{to}") };
+    }
+    PriorityAction::Write { to }
+}
+
+/// What a priority write did, and the exact sentence for it. The gold/red split is the
+/// renderer's: `Ran` and `Pushed` are gold, `Failed` is red.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PriorityOutcome {
+    /// `cb-kcs.4.2: P1 → P0`, or `cb-kcs.4.2: back to P1` for an undo.
+    Ran { text: String },
+    /// `cb-kcs.4.2: P1 → P0, but bd dolt push failed — other machines will not see this yet`
+    Pushed { text: String },
+    /// `bd would not set cb-kcs.4.2 to P0`
+    Failed { text: String },
+}
+
+/// Run `bd update <id> --priority <to>` in the shared root, then `bd dolt push` on the same
+/// keystroke - no confirmation, because reranking twenty beads would otherwise be forty
+/// keystrokes and `u` already covers the mis-key.
+///
+/// **One of the two `bd` calls in this crate that do not pass `--readonly`** - `run_finding`
+/// below is the other - and it lives here beside
+/// `run_finding` for that reason. Deliberately OUTSIDE the supervision lease, exactly as
+/// `run_finding` is: the board is shared, so a view that may start nothing may still rank a bead.
+///
+/// FROM is what the row said before, and is only ever used to build the sentence - `bd` is given
+/// the new number alone, so a stale FROM cannot write the wrong priority. UNDO picks the sentence
+/// and nothing else.
+pub fn set_priority(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    commands: &dyn CommandRunner,
+    id: &str,
+    from: Option<u8>,
+    to: u8,
+    undo: bool,
+) -> PriorityOutcome {
+    let argv = priority_command(id, to, &programs.bd);
+    // Through `readers::CommandRunner` like every other command this crate runs (cb-i1w): the
+    // draining, the bound and the kill-and-reap live there, and `run_finding` beside this is the
+    // only other board write.
+    let run = |args: &[String]| {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        commands
+            .run(&programs.bd, &args, Some(&paths.shared_root), WRITE_TIMEOUT)
+            .is_ok()
+    };
+    if !run(&argv[1..]) {
+        return PriorityOutcome::Failed { text: format!("bd would not set {id} to P{to}") };
+    }
+    // `?` for a bead that carried no priority - `cerebro--set-priority`'s own spelling.
+    let text = if undo {
+        format!("{id}: back to P{to}")
+    } else {
+        let from = from.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string());
+        format!("{id}: P{from} → P{to}")
+    };
+    if run(&["dolt".to_string(), "push".to_string()]) {
+        PriorityOutcome::Ran { text }
+    } else {
+        PriorityOutcome::Pushed {
+            text: format!(
+                "{text}, but bd dolt push failed — other machines will not see this yet"
+            ),
+        }
+    }
+}
+
+/// The one place the priority write's argv is spelled.
+pub fn priority_command(id: &str, to: u8, bd: &Path) -> Vec<String> {
+    vec![
+        bd.display().to_string(),
+        "update".into(),
+        id.to_string(),
+        "--priority".into(),
+        to.to_string(),
+    ]
+}
+
 /// How long a board write may take. Thirty seconds, chosen for the PUSH rather than inherited:
 /// the `bd` itself is a local write and answers in well under a second, while `bd dolt push`
 /// talks to the Dolt remote with the navigator's finger still on the key. `readers::GH_TIMEOUT`
@@ -638,8 +764,8 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// other machines cannot see is half done, and asking twice for one keystroke's worth of intent
 /// is its own kind of noise (`emacs/cerebro.el:1473-1479`).
 ///
-/// **This is the one `bd` in this crate that does not pass `--readonly`**, and the only place a
-/// board write may live. `readers::read_beads` passes it deliberately; copying that neighbouring
+/// **One of the two `bd` calls in this crate that do not pass `--readonly`** - `set_priority`
+/// above is the other - and this module is the only place a board write may live. `readers::read_beads` passes it deliberately; copying that neighbouring
 /// call here would produce a command that appears to succeed and changes nothing.
 ///
 /// Both commands go through `readers::CommandRunner`, like every other command this crate runs
@@ -1243,9 +1369,9 @@ mod tests {
         }
     }
 
-    /// The one `bd` that writes spawns through the same seam every other command in this crate
-    /// goes through - the bound and the directory included, neither of which a fixture script
-    /// could see.
+    /// The board writes spawn through the same seam every other command in this crate goes
+    /// through - the bound and the directory included, neither of which a fixture script could
+    /// see. There are two of them since cb-kcs.5.4; `set_priority` has its own case below.
     #[test]
     fn the_board_write_goes_through_the_one_seam() {
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -1266,6 +1392,38 @@ mod tests {
         assert_eq!(calls[0].args, vec!["unclaim", "cb-a"]);
         assert_eq!(calls[1].args, vec!["dolt", "push"]);
         assert!(matches!(outcome, FindingOutcome::Ran { .. }));
+    }
+
+    /// And so does the second one. Its own case rather than a line in the one above, because what
+    /// is worth pinning is the same three things per call - and the CWD above all: `consumer_root`
+    /// in a bead worktree is a DIFFERENT board, and an edit that passed it here would be green
+    /// against an argv-only assertion.
+    #[test]
+    fn the_priority_write_goes_through_the_one_seam() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        // DISTINCT roots, unlike `paths_in`'s: in a bead worktree the enclosing root is a
+        // different board from the shared one, so a cwd assertion made where the two are equal
+        // cannot tell them apart - which is exactly the edit this case exists to catch.
+        let paths = ReaderPaths {
+            consumer_root: dir.path().join("worktree"),
+            shared_root: dir.path().join("shared"),
+            scripts_dir: dir.path().join("scripts"),
+        };
+        let programs = Programs::default();
+        let fake = FakeCommands::always("");
+
+        let outcome = set_priority(&paths, &programs, &fake, "cb-x", Some(1), 0, false);
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 2, "the write and the push");
+        for call in &calls {
+            assert_eq!(call.program, programs.bd);
+            assert_eq!(call.cwd.as_deref(), Some(paths.shared_root.as_path()));
+            assert_eq!(call.timeout, WRITE_TIMEOUT);
+        }
+        assert_eq!(calls[0].args, vec!["update", "cb-x", "--priority", "0"]);
+        assert_eq!(calls[1].args, vec!["dolt", "push"]);
+        assert!(matches!(outcome, PriorityOutcome::Ran { .. }));
     }
 
     /// The push rides the same keypress: a close the other machines cannot see is half done.
@@ -1485,4 +1643,57 @@ mod tests {
         }
     }
 
+
+    // --- the priority keys (cb-kcs.5.4) --------------------------------------------------------
+
+    /// `+` raises urgency by LOWERING the number, and `-` the reverse: `cerebro-beads-raise` is
+    /// `nudged-priority current -1`. Both directions are named here because getting the sign
+    /// backwards is a silent inversion every test written from the same misreading would agree
+    /// with.
+    #[test]
+    fn a_priority_keystroke_decides_before_it_writes() {
+        assert_eq!(nudged_priority(2, -1), 1, "+ is more urgent");
+        assert_eq!(nudged_priority(2, 1), 3, "- is less urgent");
+        assert_eq!(nudged_priority(0, -1), 0, "clamped at P0, never wrapped");
+        assert_eq!(nudged_priority(PRIORITY_FLOOR, 1), PRIORITY_FLOOR, "and at the backlog floor");
+
+        // A digit on a bead somewhere else writes.
+        assert_eq!(
+            priority_action("cb-x", Some(1), Requested::Exactly(0)),
+            PriorityAction::Write { to: 0 }
+        );
+        // A digit on a bead already there does nothing, and must leave no undo entry claiming it
+        // did.
+        assert_eq!(
+            priority_action("cb-x", Some(0), Requested::Exactly(0)),
+            PriorityAction::AlreadyThere { text: "cb-x is already P0".into() }
+        );
+        // A digit on a bead `bd` gave no priority for is still a write: the number is absolute.
+        assert_eq!(
+            priority_action("cb-x", None, Requested::Exactly(3)),
+            PriorityAction::Write { to: 3 }
+        );
+
+        // The two nudges, in both directions.
+        assert_eq!(
+            priority_action("cb-x", Some(2), Requested::Nudge(-1)),
+            PriorityAction::Write { to: 1 }
+        );
+        assert_eq!(
+            priority_action("cb-x", Some(2), Requested::Nudge(1)),
+            PriorityAction::Write { to: 3 }
+        );
+        // `+` on a P0 and `-` on a P4 are already there.
+        assert_eq!(
+            priority_action("cb-x", Some(0), Requested::Nudge(-1)),
+            PriorityAction::AlreadyThere { text: "cb-x is already P0".into() }
+        );
+        assert_eq!(
+            priority_action("cb-x", Some(PRIORITY_FLOOR), Requested::Nudge(1)),
+            PriorityAction::AlreadyThere { text: "cb-x is already P4".into() }
+        );
+        // A nudge on a bead with no priority has nothing to move, and says nothing: the board
+        // always sets one, so this is unreachable in practice.
+        assert_eq!(priority_action("cb-x", None, Requested::Nudge(-1)), PriorityAction::Nothing);
+    }
 }

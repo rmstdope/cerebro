@@ -70,7 +70,8 @@ pub use model::{
     StateObservation, StateRecord, WorkBuckets,
 };
 pub use readers::{
-    read_beads, read_fleet, read_processes, read_roster, read_states, read_work, CommandRunner,
+    read_beads, read_fleet, read_processes, read_roster, read_states, read_sweeps, read_work,
+    Judged, CommandRunner,
     Commands, Programs, ReadError, ReaderPaths, RealCommands,
 };
 pub use supervisor::{
@@ -82,8 +83,12 @@ pub use session::{
     SessionHost, SessionView, SCROLLBACK_LINES,
 };
 pub use app::{
-    App, AppAction, FleetWorker, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, Prompt,
-    SupervisorWorker, WorkWorker,
+    work_body, work_line_of_finding, App, AppAction, FleetWorker, Metrics, Pane, PaneContent,
+    PaneFocus, PaneMetrics, Prompt, SupervisorWorker, SweepWorker, WorkBodyLine, WorkWorker,
+};
+pub use sweeps::{
+    finding_command, findings_from, label as sweep_label, prompt as sweep_prompt, Blocker,
+    Candidate, Finding, LiveSession, Snapshot, Sweep,
 };
 pub use lifecycle::{
     finish_outcome, join_names, kill_outcome, quit_refusal_lines, quit_refusal_title,

@@ -24,9 +24,10 @@ use crate::model::{self, FleetRow, GhSnapshot, RowState, WorkBuckets};
 use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{
-    read_configured_supervisor, read_fleet, read_gh, read_work, Commands, Programs, ReaderPaths,
-    ReadError,
+    read_configured_supervisor, read_fleet, read_gh, read_sweeps, read_work, Commands, Judged,
+    Programs, ReaderPaths, ReadError,
 };
+use crate::sweeps::Finding;
 use crate::triggers::GhAnswer;
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
@@ -44,6 +45,11 @@ pub const WORK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 /// and the two roles it feeds are on an hourly floor anyway, so a ten-minute reader is already
 /// finer-grained than anything it can cause. Never on the five-second tick.
 pub const GH_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
+
+/// How often the six sweeps re-run. Ten minutes, `cerebro-sweep-refresh-seconds`
+/// (`emacs/cerebro.el`): six scripts, three of which fetch from origin, against a thirty-second
+/// `bd list`. Never on the five-second tick.
+pub const SWEEP_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
 
 /// What a pane has to show, and how sure it is of it.
 ///
@@ -288,6 +294,69 @@ pub fn body_line_of_row(body: &[FleetBodyLine], index: usize) -> Option<usize> {
     body.iter().position(|entry| *entry == FleetBodyLine::Row(index))
 }
 
+/// One line of the Work pane's body ABOVE the six queues, in order, saying what that line IS
+/// rather than how it looks.
+///
+/// The Sweeps section is first on the screen (the navigator's choice: this pane shows about
+/// fourteen rows of a forty-one row document, and a section below the fold is one nobody
+/// presses), so a finding's document line depends on this list alone - which is what lets
+/// `App::move_work_cursor` place one without building a frame. `Queues` is everything
+/// `ui::work_document` already drew, kept as one element because that half has exactly one owner
+/// already and a second copy of it here is the drift `FleetBodyLine` was written to avoid.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkBodyLine {
+    /// `Sweeps {n}`, and the failed script beside it when there is one.
+    SweepHeader { count: usize, error: Option<String> },
+    /// The finding at this index in `App::work_findings`.
+    Finding(usize),
+    /// A spacer.
+    Blank,
+    /// The six queues, in whatever shape the work pane's own content gives them.
+    Queues,
+}
+
+/// The Work pane's body above the queues, from the sweeps pane's content alone.
+///
+/// It asks neither the clock nor the pane's width: only `work_row`'s truncation depends on
+/// width, and a finding's LINE is what the cursor needs.
+///
+/// Nothing at all - not even a blank - when there are no findings and no error. That is
+/// deliberately unlike the six queues, which print `(none)`: an empty Sweeps section is the
+/// ORDINARY result of every render but one, and a header saying `Sweeps 0` every ten minutes
+/// would be exactly the noise `docs/cerebro-sweeps.md` warns against. A FAILED sweep with
+/// nothing to keep still draws its header, because a clean fleet and a fleet nobody could look
+/// at must not draw the same blank.
+pub fn work_body(content: &PaneContent<Vec<Judged>>) -> Vec<WorkBodyLine> {
+    let findings = content.value().map(Vec::as_slice).unwrap_or(&[]);
+    let error = match content {
+        PaneContent::Stale { error, .. } | PaneContent::Unavailable { error, .. } => {
+            Some(error.clone())
+        }
+        PaneContent::Loading | PaneContent::Fresh { .. } => None,
+    };
+    if findings.is_empty() && error.is_none() {
+        return vec![WorkBodyLine::Queues];
+    }
+    let mut body = vec![WorkBodyLine::SweepHeader { count: findings.len(), error }];
+    for index in 0..findings.len() {
+        body.push(WorkBodyLine::Finding(index));
+    }
+    body.push(WorkBodyLine::Blank);
+    body.push(WorkBodyLine::Queues);
+    body
+}
+
+/// Which line of BODY the finding with KEY occupies, or `None` when no finding on screen carries
+/// it.
+pub fn work_line_of_finding(
+    body: &[WorkBodyLine],
+    key: &str,
+    findings: &[Judged],
+) -> Option<usize> {
+    let index = findings.iter().position(|judged| judged.finding.key() == key)?;
+    body.iter().position(|entry| *entry == WorkBodyLine::Finding(index))
+}
+
 /// Pull SCROLL back only when CONTENT_LINES no longer reaches it. The one owner of that rule,
 /// shared by `Pane<T>` and `SessionPane` so a third widget cannot acquire a fourth spelling.
 pub fn clamp_scroll(scroll: &mut usize, content_lines: usize, viewport_lines: usize) {
@@ -321,14 +390,19 @@ pub struct Metrics {
 /// What the caller must do about the key or tick it just handed over. The app itself starts no
 /// process and ends no program: it says what is wanted, and `main` does it.
 ///
-/// `RefreshBoth` is "attempt each pane independently", never "both or neither": the caller calls
-/// each pane's own `begin_*_refresh`, and a `false` from one says nothing about the other.
+/// `RefreshAll` is "attempt each pane independently", never "all or none": the caller calls each
+/// pane's own `begin_*_refresh`, and a `false` from one says nothing about the others. It was
+/// `RefreshAll` until cb-kcs.5.1 gave the screen a third reader; the doc above is what it always
+/// meant, so this is a rename rather than a third meaning for a word that says "two".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppAction {
     None,
     RefreshFleet,
     RefreshWork,
-    RefreshBoth,
+    /// Re-run the sweeps alone. What `x` asks for once its command has run: a finding acted on
+    /// must not stay on screen for up to ten minutes.
+    RefreshSweeps,
+    RefreshAll,
     Quit,
 }
 
@@ -409,6 +483,20 @@ pub struct App {
     /// its scroll offset.
     pub gh: Pane<GhSnapshot>,
     last_gh_request: Option<Instant>,
+    /// What the six sweeps last found, on its own cadence and its own in-flight slot. A
+    /// `Pane<T>` for its `finish` transitions above all: a sweep that fails must not destroy
+    /// findings still worth reading, and one that answers with nothing must clear them.
+    ///
+    /// Its `scroll` is unused - the findings are drawn inside the Work pane, which owns the
+    /// offset - and that is the price of one pane type rather than two.
+    pub sweeps: Pane<Vec<Judged>>,
+    last_sweep_request: Option<Instant>,
+    /// Which finding the Work pane's cursor stands on, as a `Finding::key`.
+    ///
+    /// A key, never an index, for `App::selected`'s reason: the findings are replaced wholesale
+    /// every ten minutes and after every `x`, and an index would silently come to mean a
+    /// different destructive command.
+    pub work_cursor: Option<String>,
 }
 
 /// A question the screen is waiting on. `k` is the only key that asks (the navigator's choice),
@@ -419,6 +507,24 @@ pub enum Prompt {
     Kill { name: String, text: String },
     /// The agent to disarm, and the gold line already built by `lifecycle::disarm_prompt`.
     Disarm { name: String, text: String },
+    /// The sweep finding to act on, and the gold line `sweeps::prompt` built for it. The one
+    /// prompt that is not about a session: it writes to the shared board, which is deliberately
+    /// outside the supervision lease.
+    Sweep { finding: Finding, text: String },
+}
+
+impl Prompt {
+    /// The gold line the header draws for whichever prompt is up.
+    ///
+    /// A method rather than a `match` in the renderer, and that is the whole of cb-4cn: `ui.rs`
+    /// rendered `Prompt::Kill` by name, so cb-kcs.4.1's disarm confirmation was built and never
+    /// drawn - a destructive question the navigator could not see, answered by their next
+    /// keystroke. A fourth variant cannot repeat it.
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Kill { text, .. } | Self::Disarm { text, .. } | Self::Sweep { text, .. } => text,
+        }
+    }
 }
 
 impl Default for App {
@@ -461,6 +567,9 @@ impl App {
             last_work_request: None,
             gh: Pane::default(),
             last_gh_request: None,
+            sweeps: Pane::default(),
+            last_sweep_request: None,
+            work_cursor: None,
         }
     }
 
@@ -589,7 +698,7 @@ impl App {
             due(self.last_fleet_request, FLEET_REFRESH_INTERVAL),
             due(self.last_work_request, WORK_REFRESH_INTERVAL),
         ) {
-            (true, true) => AppAction::RefreshBoth,
+            (true, true) => AppAction::RefreshAll,
             (true, false) => AppAction::RefreshFleet,
             (false, true) => AppAction::RefreshWork,
             (false, false) => AppAction::None,
@@ -626,7 +735,7 @@ impl App {
                 self.quit = true;
                 AppAction::Quit
             }
-            KeyCode::Char('g') => AppAction::RefreshBoth,
+            KeyCode::Char('g') => AppAction::RefreshAll,
             // Three panes, so the two bindings are opposite directions round one cycle rather
             // than the same toggle. A boundary clamps within the focused pane; it never
             // transfers focus on its own.
@@ -654,6 +763,27 @@ impl App {
             }
             KeyCode::PageDown if self.focus == PaneFocus::Fleet => {
                 self.move_selection(viewport_lines as isize, viewport_lines);
+                AppAction::None
+            }
+            // Under Work these four move the CURSOR while there are findings to move over, and
+            // that pane's own offset when there are none - which is the ordinary day, and the
+            // whole reason `n`/`p` were not ported as keys of their own.
+            KeyCode::Up if self.focus == PaneFocus::Work && !self.work_findings().is_empty() => {
+                self.move_work_cursor(-1, viewport_lines);
+                AppAction::None
+            }
+            KeyCode::Down if self.focus == PaneFocus::Work && !self.work_findings().is_empty() => {
+                self.move_work_cursor(1, viewport_lines);
+                AppAction::None
+            }
+            KeyCode::PageUp if self.focus == PaneFocus::Work && !self.work_findings().is_empty() => {
+                self.move_work_cursor(-(viewport_lines as isize), viewport_lines);
+                AppAction::None
+            }
+            KeyCode::PageDown
+                if self.focus == PaneFocus::Work && !self.work_findings().is_empty() =>
+            {
+                self.move_work_cursor(viewport_lines as isize, viewport_lines);
                 AppAction::None
             }
             KeyCode::Up => {
@@ -808,6 +938,104 @@ impl App {
             true
         } else {
             false
+        }
+    }
+
+    /// Whether the sweeps are due at NOW. Kept off `on_tick`'s `AppAction` for `gh_due`'s
+    /// reason: the enum is what the navigator's two panes need, and the sweeps have their own
+    /// ten-minute clock that no keystroke schedules.
+    pub fn sweep_due(&self, now: Instant) -> bool {
+        match self.last_sweep_request {
+            None => true,
+            Some(last) => now.duration_since(last) >= SWEEP_REFRESH_INTERVAL,
+        }
+    }
+
+    /// Claim the sweeps' in-flight slot and stamp the request. Its own slot, deliberately: a
+    /// two-minute sweep chain behind a five-second fleet read is the one thing independent panes
+    /// must not do.
+    pub fn begin_sweep_refresh(&mut self, at: Instant) -> bool {
+        if self.sweeps.begin() {
+            self.last_sweep_request = Some(at);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The sweeps pane's content transition; see `Pane::finish` for the whole rule. It touches
+    /// that pane and nothing else, and it reconciles the cursor against what came back.
+    pub fn finish_sweep_refresh(&mut self, result: Result<Vec<Judged>, ReadError>, at: DateTime<Utc>) {
+        let previous_index = self.work_cursor_index();
+        let succeeded = result.is_ok();
+        self.sweeps.finish(result, at);
+        if succeeded {
+            self.reconcile_work_cursor(previous_index);
+        }
+    }
+
+    /// The findings the Work pane is currently showing, `Fresh` and `Stale` alike; empty
+    /// otherwise. One accessor, so the cursor, the renderer and `x` cannot disagree about what is
+    /// on screen.
+    pub fn work_findings(&self) -> &[Judged] {
+        self.sweeps.content.value().map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// The cursor's index among the findings on screen, if it is still one of them.
+    pub fn work_cursor_index(&self) -> Option<usize> {
+        let key = self.work_cursor.as_deref()?;
+        self.work_findings().iter().position(|judged| judged.finding.key() == key)
+    }
+
+    /// The finding under the cursor, if there is one. What `x` acts on.
+    pub fn selected_finding(&self) -> Option<&Judged> {
+        self.work_findings().get(self.work_cursor_index()?)
+    }
+
+    /// Put the cursor back on something after a successful sweep read.
+    ///
+    /// A cursor whose finding is gone takes the row at its old index, clamped, and `None` when
+    /// there are no findings at all. Unlike the fleet's selection it sets NO notice: a roster
+    /// shrinking under the navigator is news, whereas findings are replaced every ten minutes and
+    /// after every `x`, and a gold line saying so on every tenth minute is noise. What guards the
+    /// navigator from acting on the wrong thing is the confirmation, which always names the
+    /// command.
+    fn reconcile_work_cursor(&mut self, previous_index: Option<usize>) {
+        let findings = self.work_findings();
+        if findings.is_empty() {
+            self.work_cursor = None;
+            return;
+        }
+        if self.work_cursor_index().is_some() {
+            return;
+        }
+        let index = previous_index.unwrap_or(0).min(findings.len() - 1);
+        self.work_cursor = Some(findings[index].finding.key());
+    }
+
+    /// Move the cursor by DELTA findings, saturating at both ends, and scroll the Work pane by
+    /// the least that keeps the new line visible. With no findings it does nothing - `on_key`
+    /// scrolls instead.
+    fn move_work_cursor(&mut self, delta: isize, viewport_lines: usize) {
+        let findings = self.work_findings();
+        if findings.is_empty() {
+            return;
+        }
+        let last = findings.len() - 1;
+        let current = self.work_cursor_index().unwrap_or(0);
+        let target = (current as isize).saturating_add(delta).clamp(0, last as isize) as usize;
+        let key = findings[target].finding.key();
+        self.work_cursor = Some(key.clone());
+        let body = work_body(&self.sweeps.content);
+        if let Some(line) = work_line_of_finding(&body, &key, self.work_findings()) {
+            let viewport = viewport_lines.max(1);
+            if line < viewport {
+                self.work.scroll = 0;
+            } else if line < self.work.scroll {
+                self.work.scroll = line;
+            } else if line >= self.work.scroll + viewport {
+                self.work.scroll = line + 1 - viewport;
+            }
         }
     }
 
@@ -1025,6 +1253,19 @@ impl Worker<WorkBuckets> {
     }
 }
 
+/// The sweeps' worker: `read_sweeps` on its own thread.
+///
+/// A fifth thread rather than a call on the UI thread, for the reason the others exist: it is six
+/// subprocesses, three of which fetch from origin, and a slow network would otherwise freeze the
+/// screen - keys and all - for as long as the thing that went wrong.
+pub type SweepWorker = Worker<Vec<Judged>>;
+
+impl Worker<Vec<Judged>> {
+    pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
+        Self::spawn_reader(move || read_sweeps(&paths, &programs, commands.as_ref()))
+    }
+}
+
 /// The GitHub reader's worker: `read_gh` on its own thread (`readers::read_gh`).
 ///
 /// A fourth thread rather than a call on the UI thread, for the reason the other three exist: it
@@ -1081,6 +1322,194 @@ mod tests {
             sessions: 0,
             diagnostic: None,
         }
+    }
+
+    // --- the sweeps pane, its cadence, and the Work cursor (cb-kcs.5.1) ---------------------
+
+    fn judged(action_id: &str) -> Judged {
+        let finding = match action_id {
+            "unclaim" => Finding::Unclaim { id: "cb-a".into() },
+            "reclaim" => Finding::Reclaim { id: "cb-b".into() },
+            "epic" => Finding::EpicClose { id: "cb-c".into() },
+            other => panic!("no such fixture {other}"),
+        };
+        Judged { label: format!("{} — a line", finding.key()), finding }
+    }
+
+    fn sweep_error() -> ReadError {
+        ReadError::Sweep { script: "sweep-claims".into() }
+    }
+
+    /// A failed refresh never destroys findings still worth reading - the pane rule, over the
+    /// third reader. Three scripts of six `git fetch`, so this is ordinary rather than rare.
+    #[test]
+    fn a_failed_sweep_keeps_the_findings_it_had() {
+        let mut app = App::default();
+        app.finish_sweep_refresh(Ok(vec![judged("unclaim")]), at(0));
+        app.finish_sweep_refresh(Err(sweep_error()), at(5));
+        assert_eq!(app.work_findings().len(), 1);
+        assert!(matches!(
+            &app.sweeps.content,
+            PaneContent::Stale { error, .. } if error == "sweep-claims failed"
+        ));
+    }
+
+    /// And a first failure has nothing to keep: the header still says `Sweeps 0`, with the
+    /// reason, because a clean fleet and a fleet nobody could look at must not draw one blank.
+    #[test]
+    fn a_failed_first_sweep_has_no_findings_and_an_error() {
+        let mut app = App::default();
+        app.finish_sweep_refresh(Err(sweep_error()), at(0));
+        assert!(app.work_findings().is_empty());
+        assert_eq!(
+            work_body(&app.sweeps.content),
+            vec![
+                WorkBodyLine::SweepHeader { count: 0, error: Some("sweep-claims failed".into()) },
+                WorkBodyLine::Blank,
+                WorkBodyLine::Queues,
+            ]
+        );
+    }
+
+    /// A success replaces value and error together, so a genuinely empty answer clears both the
+    /// findings and the section.
+    #[test]
+    fn an_empty_answer_clears_the_section() {
+        let mut app = App::default();
+        app.finish_sweep_refresh(Err(sweep_error()), at(0));
+        app.finish_sweep_refresh(Ok(Vec::new()), at(5));
+        assert_eq!(work_body(&app.sweeps.content), vec![WorkBodyLine::Queues]);
+        assert_eq!(app.work_cursor, None);
+    }
+
+    /// The sweeps have their own in-flight slot and their own clock: a two-minute chain behind a
+    /// five-second fleet read is the one thing independent panes must not do.
+    #[test]
+    fn the_sweep_cadence_is_its_own() {
+        let mut app = App::default();
+        let start = Instant::now();
+        assert!(app.sweep_due(start), "nothing has been asked yet");
+        assert!(app.begin_sweep_refresh(start));
+        assert!(!app.begin_sweep_refresh(start), "one at a time");
+        // A work read in flight says nothing about the sweeps, and the reverse.
+        assert!(app.begin_work_refresh(start));
+        assert!(app.begin_refresh(start));
+        app.finish_sweep_refresh(Ok(Vec::new()), at(0));
+        assert!(!app.sweep_due(start + Duration::from_secs(599)));
+        assert!(app.sweep_due(start + SWEEP_REFRESH_INTERVAL));
+    }
+
+    /// Under Work the arrows move the cursor while findings exist, and the pane follows it.
+    #[test]
+    fn the_work_cursor_moves_over_findings_only() {
+        let mut app = App::default();
+        app.focus = PaneFocus::Work;
+        app.finish_sweep_refresh(
+            Ok(vec![judged("unclaim"), judged("reclaim"), judged("epic")]),
+            at(0),
+        );
+        // The first successful read puts the cursor on the first finding, silently.
+        assert_eq!(app.work_cursor.as_deref(), Some("unclaim:cb-a"));
+        app.on_key(key(KeyCode::Down), 10);
+        assert_eq!(app.work_cursor.as_deref(), Some("reclaim:cb-b"));
+        assert_eq!(app.selected_finding().map(|j| j.finding.key()).as_deref(), Some("reclaim:cb-b"));
+        // Saturating at both ends, exactly as the fleet selection is.
+        app.on_key(key(KeyCode::PageDown), 10);
+        assert_eq!(app.work_cursor.as_deref(), Some("epic-close:cb-c"));
+        app.on_key(key(KeyCode::PageUp), 10);
+        assert_eq!(app.work_cursor.as_deref(), Some("unclaim:cb-a"));
+        // And nothing scrolled: three findings fit a ten-line viewport.
+        assert_eq!(app.work.scroll, 0);
+    }
+
+    /// On the ordinary day there are no findings at all, and the pane behaves exactly as it did
+    /// before this bead - which is why `n`/`p` were not ported as keys of their own.
+    #[test]
+    fn the_work_cursor_scrolls_when_there_are_no_findings() {
+        let mut app = App::default();
+        app.focus = PaneFocus::Work;
+        app.finish_sweep_refresh(Ok(Vec::new()), at(0));
+        app.on_key(key(KeyCode::Down), 10);
+        assert_eq!(app.work.scroll, 1);
+        assert_eq!(app.work_cursor, None);
+    }
+
+    /// A cursor whose finding is gone takes the row at its old index, clamped - and says nothing.
+    /// The findings are replaced every ten minutes and after every `x`; a gold line on each of
+    /// those is the noise this section is careful about, and the confirmation is what guards the
+    /// navigator from acting on the wrong thing.
+    #[test]
+    fn a_cursor_whose_finding_is_gone_takes_the_row_at_its_index_and_sets_no_notice() {
+        let mut app = App::default();
+        app.finish_sweep_refresh(
+            Ok(vec![judged("unclaim"), judged("reclaim"), judged("epic")]),
+            at(0),
+        );
+        app.focus = PaneFocus::Work;
+        app.on_key(key(KeyCode::Down), 10);
+        assert_eq!(app.work_cursor.as_deref(), Some("reclaim:cb-b"));
+        // The middle finding is acted on and gone; index 1 is now the third.
+        app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("epic")]), at(10));
+        assert_eq!(app.work_cursor.as_deref(), Some("epic-close:cb-c"));
+        assert_eq!(app.notice, None);
+        // Past the end, it clamps to the last.
+        app.finish_sweep_refresh(Ok(vec![judged("unclaim")]), at(20));
+        assert_eq!(app.work_cursor.as_deref(), Some("unclaim:cb-a"));
+        assert_eq!(app.notice, None);
+    }
+
+    /// A FAILED read never moves the cursor: a two-minute chain that timed out is not a finding
+    /// being resolved.
+    #[test]
+    fn a_failed_sweep_leaves_the_cursor_alone() {
+        let mut app = App::default();
+        app.finish_sweep_refresh(Ok(vec![judged("unclaim"), judged("reclaim")]), at(0));
+        app.focus = PaneFocus::Work;
+        app.on_key(key(KeyCode::Down), 10);
+        app.finish_sweep_refresh(Err(sweep_error()), at(5));
+        assert_eq!(app.work_cursor.as_deref(), Some("reclaim:cb-b"));
+    }
+
+    /// The findings are the first lines of the Work document, so a finding's line depends on the
+    /// sweeps alone - which is what lets the cursor place one without building a frame.
+    #[test]
+    fn a_findings_line_is_known_without_a_frame() {
+        let findings = vec![judged("unclaim"), judged("reclaim")];
+        let content = PaneContent::Fresh { value: findings.clone(), read_at: at(0) };
+        let body = work_body(&content);
+        assert_eq!(
+            body,
+            vec![
+                WorkBodyLine::SweepHeader { count: 2, error: None },
+                WorkBodyLine::Finding(0),
+                WorkBodyLine::Finding(1),
+                WorkBodyLine::Blank,
+                WorkBodyLine::Queues,
+            ]
+        );
+        assert_eq!(work_line_of_finding(&body, "unclaim:cb-a", &findings), Some(1));
+        assert_eq!(work_line_of_finding(&body, "reclaim:cb-b", &findings), Some(2));
+        assert_eq!(work_line_of_finding(&body, "epic-close:cb-z", &findings), None);
+    }
+
+    /// A pane with many findings scrolls to follow the cursor down, by the least that reveals it.
+    #[test]
+    fn the_work_pane_follows_its_cursor() {
+        let mut app = App::default();
+        let many: Vec<Judged> = (0..20)
+            .map(|n| {
+                let finding = Finding::Unclaim { id: format!("cb-{n:02}") };
+                Judged { label: finding.key(), finding }
+            })
+            .collect();
+        app.finish_sweep_refresh(Ok(many), at(0));
+        app.focus = PaneFocus::Work;
+        for _ in 0..10 {
+            app.on_key(key(KeyCode::Down), 5);
+        }
+        assert_eq!(app.work_cursor.as_deref(), Some("unclaim:cb-10"));
+        // Line 11 of the body (header, then ten findings above it), in a five-line viewport.
+        assert_eq!(app.work.scroll, 7);
     }
 
     /// `fleet_body` is the one owner of the Fleet pane's body shape, and `body_line_of_row` is
@@ -1232,7 +1661,7 @@ mod tests {
         }
     }
 
-    /// What `main` does with a `RefreshBoth`, followed by both answers arriving: the request time
+    /// What `main` does with a `RefreshAll`, followed by both answers arriving: the request time
     /// is recorded and neither slot is left in flight.
     fn started_both(app: &mut App, when: Instant) {
         start_fleet(app, when);
@@ -1260,7 +1689,7 @@ mod tests {
         assert!(!app.quit);
 
         let start = Instant::now();
-        assert_eq!(app.on_tick(start), AppAction::RefreshBoth);
+        assert_eq!(app.on_tick(start), AppAction::RefreshAll);
         assert!(app.begin_refresh(start));
         assert!(app.begin_work_refresh(start));
         // No second request on the very next tick: both reads are in flight and neither interval
@@ -1272,7 +1701,7 @@ mod tests {
     fn fleet_refresh_is_due_every_five_seconds() {
         let mut app = App::new();
         let start = Instant::now();
-        assert_eq!(app.on_tick(start), AppAction::RefreshBoth);
+        assert_eq!(app.on_tick(start), AppAction::RefreshAll);
         started_both(&mut app, start);
         assert_eq!(app.on_tick(start + Duration::from_millis(4_999)), AppAction::None);
         assert_eq!(app.on_tick(start + Duration::from_secs(5)), AppAction::RefreshFleet);
@@ -1285,7 +1714,7 @@ mod tests {
     fn work_refresh_is_due_every_thirty_seconds() {
         let mut app = App::new();
         let start = Instant::now();
-        assert_eq!(app.on_tick(start), AppAction::RefreshBoth);
+        assert_eq!(app.on_tick(start), AppAction::RefreshAll);
         started_both(&mut app, start);
 
         // Every fleet tick in between is the fleet's alone; the work read is not due again for
@@ -1298,7 +1727,7 @@ mod tests {
         let at = start + Duration::from_secs(30);
         assert_eq!(app.on_tick(at), AppAction::RefreshWork, "the fleet is not due at 30s");
         started_both(&mut app, at);
-        assert_eq!(app.on_tick(at + Duration::from_secs(30)), AppAction::RefreshBoth);
+        assert_eq!(app.on_tick(at + Duration::from_secs(30)), AppAction::RefreshAll);
     }
 
     /// Each pane counts from its own last *start*, so a work read that took twenty seconds does
@@ -1307,7 +1736,7 @@ mod tests {
     fn fleet_and_work_cadences_are_independent() {
         let mut app = App::new();
         let start = Instant::now();
-        assert_eq!(app.on_tick(start), AppAction::RefreshBoth);
+        assert_eq!(app.on_tick(start), AppAction::RefreshAll);
         assert!(app.begin_refresh(start));
         assert!(app.begin_work_refresh(start));
         // The fleet answers; the work read is still running.
@@ -1316,7 +1745,7 @@ mod tests {
         // A work read still in flight at 30s: the tick still says so, and the refusal leaves the
         // work clock where it was rather than postponing it by another thirty seconds.
         let due = start + Duration::from_secs(30);
-        assert_eq!(app.on_tick(due), AppAction::RefreshBoth);
+        assert_eq!(app.on_tick(due), AppAction::RefreshAll);
         assert!(app.begin_refresh(due));
         assert!(!app.begin_work_refresh(due), "the work read is still running");
         app.finish_refresh(Ok(vec![row("Xavier")]), at(1));
@@ -1897,13 +2326,13 @@ mod tests {
     fn g_requests_both_readers() {
         let mut app = App::new();
         let start = Instant::now();
-        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshBoth);
+        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshAll);
         assert!(app.begin_refresh(start));
         assert!(app.begin_work_refresh(start));
 
         // The request is only honoured once per pane: a second `g' while both reads run is
         // dropped at each pane's own door.
-        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshBoth);
+        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshAll);
         assert!(!app.begin_refresh(start + Duration::from_secs(1)));
         assert!(!app.begin_work_refresh(start + Duration::from_secs(1)));
 
@@ -1920,7 +2349,7 @@ mod tests {
         let start = Instant::now();
         assert!(app.begin_refresh(start), "the fleet is already reading");
 
-        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshBoth);
+        assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshAll);
         assert!(!app.begin_refresh(start), "the busy pane refuses");
         assert!(app.begin_work_refresh(start), "and the idle one still starts");
     }

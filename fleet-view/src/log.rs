@@ -44,8 +44,9 @@ pub const GENERATIONS: u32 = 3;
 
 /// Every event either file carries. Closed, and smaller than elisp's twelve.
 ///
-/// `sweep` and `triage` are absent because this view does neither: it runs no sweeps, and
-/// cb-kcs.4.1 declined `cerebro--triage-tell`. There is no `disarm` and no second `arm`: where a
+/// `triage` is absent because this view does not inject one - cb-kcs.4.1 declined
+/// `cerebro--triage-tell`. `sweep` joined in cb-kcs.5.1, when the view gained an `x` of its own.
+/// There is no `disarm` and no second `arm`: where a
 /// name LEFT the armed set is already readable from the `retire` or `give-up` line that put it
 /// there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +59,10 @@ pub enum Event {
     Exit,
     GiveUp,
     Evaluate,
+    /// One `x`: the exact command a confirmed sweep finding is about to run. Written BEFORE the
+    /// write, as `cerebro-sweep-act` writes it - the decision is worth keeping whether or not the
+    /// command then succeeded.
+    Sweep,
     Error,
 }
 
@@ -73,6 +78,7 @@ impl Event {
             Self::Exit => "exit",
             Self::GiveUp => "give-up",
             Self::Evaluate => "evaluate",
+            Self::Sweep => "sweep",
             Self::Error => "error",
         }
     }

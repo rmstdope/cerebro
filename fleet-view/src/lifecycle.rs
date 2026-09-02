@@ -15,8 +15,14 @@ use std::path::{Path, PathBuf};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use wait_timeout::ChildExt;
+
 use crate::model::{AgentKind, FleetRow, RowState};
-use crate::readers::{ReadError, ReaderPaths};
+use crate::readers::{Programs, ReadError, ReaderPaths};
+use crate::sweeps::{finding_command, Finding};
 use crate::session::{Ended, SessionHost};
 use crate::supervisor::SupervisionMode;
 
@@ -472,6 +478,82 @@ pub fn quit_refusal_lines(live: &[String]) -> Vec<Line<'static>> {
             Style::default().add_modifier(Modifier::DIM),
         )),
     ]
+}
+
+/// What `x` did, in the three lines the header shows for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FindingOutcome {
+    /// `ran <command>`, in gold.
+    Ran { text: String },
+    /// `ran, but bd dolt push failed — other machines will not see this yet`, in gold.
+    ///
+    /// The command is deliberately NOT repeated: it has just been on screen in the confirmation,
+    /// and the news in this line is the push. With it the line runs to 106 cells, which is cut on
+    /// every terminal this view is used on (approved 2026-09-02).
+    Pushed { text: String },
+    /// `<command> failed`, in red.
+    Failed { text: String },
+}
+
+/// How long a board write may take. `COMMAND_TIMEOUT`'s five seconds rather than a sweep's two
+/// minutes: a `bd close` is a local write, and `bd dolt push` talks to the Dolt remote but is
+/// what the navigator is waiting on with the key still under their finger.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Run FINDING's command, then `bd dolt push`, and say which of the three happened.
+///
+/// The push rides the same keypress and is not confirmed separately: a close or a reclaim the
+/// other machines cannot see is half done, and asking twice for one keystroke's worth of intent
+/// is its own kind of noise (`emacs/cerebro.el:1473-1479`).
+///
+/// **This is the one `bd` in this crate that does not pass `--readonly`**, and the only place a
+/// board write may live. `readers::read_beads` passes it deliberately; copying that neighbouring
+/// call here would produce a command that appears to succeed and changes nothing.
+///
+/// Both children run in `paths.shared_root`, where every `bd` this crate runs already points, and
+/// both are killed and reaped on the bound rather than left to hang the screen.
+pub fn run_finding(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    finding: &Finding,
+) -> FindingOutcome {
+    let argv = finding_command(finding, &programs.bd);
+    let text = argv.join(" ");
+    if !run_to_completion(&argv[0], &argv[1..], &paths.shared_root) {
+        return FindingOutcome::Failed { text: format!("{text} failed") };
+    }
+    let push = [programs.bd.display().to_string(), "dolt".into(), "push".into()];
+    if run_to_completion(&push[0], &push[1..], &paths.shared_root) {
+        FindingOutcome::Ran { text: format!("ran {text}") }
+    } else {
+        FindingOutcome::Pushed {
+            text: "ran, but bd dolt push failed — other machines will not see this yet".into(),
+        }
+    }
+}
+
+/// True when PROGRAM with ARGS exited zero in DIR inside the bound. A timed-out child is killed
+/// and then waited for, so no zombie outlives the keypress.
+fn run_to_completion(program: &str, args: &[String], dir: &Path) -> bool {
+    let Ok(mut child) = Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    match child.wait_timeout(WRITE_TIMEOUT) {
+        Ok(Some(status)) => status.success(),
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            false
+        }
+        Err(_) => false,
+    }
 }
 
 /// Everything `s` does once `start_outcome` said `Launch`, in this order:

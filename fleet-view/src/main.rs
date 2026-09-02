@@ -35,7 +35,7 @@ use ratatui::layout::Rect;
 use ratatui::Terminal;
 
 use cerebro_tui::app::{
-    self, App, AppAction, FleetWorker, GhWorker, SupervisorWorker, WorkWorker,
+    self, App, AppAction, FleetWorker, GhWorker, SupervisorWorker, SweepWorker, WorkWorker,
 };
 use cerebro_tui::lifecycle;
 use cerebro_tui::log::{self, Logger};
@@ -302,6 +302,9 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // A fourth thread for `gh`, on its own ten-minute cadence: three network calls behind a
     // rate limit would otherwise freeze the screen, keys and all (cb-kcs.4.3).
     let gh_worker = GhWorker::spawn(paths.clone(), Programs::default(), commands.clone());
+    // A fifth thread for the six sweep scripts, on their own ten-minute cadence: three of them
+    // fetch from origin (cb-kcs.5.1).
+    let sweep_worker = SweepWorker::spawn(paths.clone(), Programs::default(), commands.clone());
     let supervisor_worker = SupervisorWorker::spawn(paths.clone(), commands.clone());
     // Ownership before the first frame: the one blocking read this binary allows itself, and the
     // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
@@ -359,6 +362,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &fleet_worker,
         &work_worker,
         &gh_worker,
+        &sweep_worker,
         &supervisor_worker,
         &mut controller,
         &mut host,
@@ -948,6 +952,7 @@ fn run<B: Backend, E: Events>(
     fleet_worker: &FleetWorker,
     work_worker: &WorkWorker,
     gh_worker: &GhWorker,
+    sweep_worker: &SweepWorker,
     supervisor_worker: &SupervisorWorker,
     controller: &mut SupervisorController,
     host: &mut SessionHost,
@@ -1053,6 +1058,17 @@ where
         if let Some(result) = gh_worker.poll() {
             app.finish_gh_refresh(result, clock());
         }
+        // The sweeps fail apart from the two panes, exactly as `gh` does: six scripts nobody
+        // could run says nothing about the fleet or the board. The underlying cause is written
+        // where it is still in hand - `ReadError::Sweep`'s Display is one word by the navigator's
+        // own choice - so the log keeps what the header cannot say.
+        if let Some(result) = sweep_worker.poll() {
+            match &result {
+                Ok(_) => logger.clear_error("sweep"),
+                Err(error) => logger.error("sweep", &error.to_string(), clock()),
+            }
+            app.finish_sweep_refresh(result, clock());
+        }
         // Ownership is a third state, polled like the other two and failing apart from them: a
         // declaration that cannot be read says nothing about the fleet or the board.
         if let Some(answer) = supervisor_worker.poll() {
@@ -1078,7 +1094,7 @@ where
             controller.requested(Instant::now());
         }
 
-        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, gh_worker, &clock);
+        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, gh_worker, sweep_worker, &clock);
 
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
@@ -1092,10 +1108,10 @@ where
                     // Ratatui stays open as a read-only observer and takes the checkout with `g`
                     // once the owner closes. Its own request, so an in-flight ownership read can
                     // never swallow the fleet/work retry the key was pressed for.
-                    if action == AppAction::RefreshBoth && supervisor_worker.request() {
+                    if action == AppAction::RefreshAll && supervisor_worker.request() {
                         controller.requested(Instant::now());
                     }
-                    dispatch(action, app, fleet_worker, work_worker, gh_worker, &clock);
+                    dispatch(action, app, fleet_worker, work_worker, gh_worker, sweep_worker, &clock);
                 }
                 // Forwarded as a PASTE (Q3), so an agent composer that treats a bare newline as
                 // submit receives four pasted lines as one block rather than submitting the
@@ -1170,11 +1186,51 @@ fn route_key(
                 // So the row goes grey at once rather than up to five seconds later.
                 AppAction::RefreshFleet
             }
+            // The one prompt that writes to the shared board rather than to this checkout's
+            // sessions. The `sweep` line is written BEFORE the command runs, exactly as
+            // `cerebro-sweep-act` writes it: a decision the view made is worth keeping whether or
+            // not the write then succeeded.
+            app::Prompt::Sweep { finding, .. } => {
+                logger.write(
+                    log::Event::Sweep,
+                    now,
+                    &[(
+                        "command",
+                        serde_json::Value::from(
+                            cerebro_tui::sweeps::finding_command(&finding, &Programs::default().bd)
+                                .join(" "),
+                        ),
+                    )],
+                );
+                let outcome = lifecycle::run_finding(paths, &Programs::default(), &finding);
+                app.set_notice(match outcome {
+                    lifecycle::FindingOutcome::Ran { text }
+                    | lifecycle::FindingOutcome::Pushed { text }
+                    | lifecycle::FindingOutcome::Failed { text } => text,
+                });
+                // So a finding that has just been acted on leaves the section at once rather
+                // than sitting there for up to ten minutes.
+                AppAction::RefreshSweeps
+            }
         };
     }
     if app.session_has_keyboard() && key.code != KeyCode::BackTab {
         if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
             host.send(&name, &bytes);
+        }
+        return AppAction::None;
+    }
+    // AFTER the live-session branch, so a session holding the keyboard still gets the byte, and
+    // from ANY focus, exactly as `s`/`f`/`k` are. With no finding under the cursor it does
+    // nothing and says nothing: the cursor rule puts one there whenever any exist, so the empty
+    // case is unreachable from the keyboard and a refusal sentence for it would be a string
+    // nobody can produce.
+    if key.modifiers.is_empty() && key.code == KeyCode::Char('x') {
+        app.notice = None;
+        if let Some(judged) = app.selected_finding() {
+            let finding = judged.finding.clone();
+            let text = cerebro_tui::sweeps::prompt(&finding, &Programs::default().bd);
+            app.confirm = Some(app::Prompt::Sweep { finding, text });
         }
         return AppAction::None;
     }
@@ -1292,7 +1348,7 @@ fn lifecycle_key(
     }
 }
 
-/// Turn one `AppAction` into requests. `RefreshBoth` asks each pane in turn and never as a pair:
+/// Turn one `AppAction` into requests. `RefreshAll` asks each pane in turn and never as a set:
 /// a fleet read already in flight must not swallow the work retry the navigator pressed `g` for.
 fn dispatch(
     action: AppAction,
@@ -1300,16 +1356,17 @@ fn dispatch(
     fleet_worker: &FleetWorker,
     work_worker: &WorkWorker,
     gh_worker: &GhWorker,
+    sweep_worker: &SweepWorker,
     clock: &impl Fn() -> DateTime<Utc>,
 ) {
     let now = Instant::now();
-    if matches!(action, AppAction::RefreshFleet | AppAction::RefreshBoth)
+    if matches!(action, AppAction::RefreshFleet | AppAction::RefreshAll)
         && app.begin_refresh(now)
         && !fleet_worker.request()
     {
         app.finish_refresh(Err(worker_gone("fleet reader")), clock());
     }
-    if matches!(action, AppAction::RefreshWork | AppAction::RefreshBoth)
+    if matches!(action, AppAction::RefreshWork | AppAction::RefreshAll)
         && app.begin_work_refresh(now)
         && !work_worker.request()
     {
@@ -1319,11 +1376,20 @@ fn dispatch(
     // `gh?` suffix clear at once instead of waiting out the ten-minute clock. `begin_gh_refresh`
     // is what stops a held-down `g` from asking more than once: a request in flight is not
     // stacked, exactly as the two panes behave.
-    if (matches!(action, AppAction::RefreshBoth) || app.gh_due(now))
+    if (matches!(action, AppAction::RefreshAll) || app.gh_due(now))
         && app.begin_gh_refresh(now)
         && !gh_worker.request()
     {
         app.finish_gh_refresh(Err(worker_gone("gh reader")), clock());
+    }
+    // `g` re-runs the sweeps as well, and so does `x` once its command has run - waiting ten
+    // minutes to watch a finding you have just acted on disappear is the moment a navigator
+    // presses `g` anyway. Otherwise it is the ten-minute clock alone.
+    if (matches!(action, AppAction::RefreshAll | AppAction::RefreshSweeps) || app.sweep_due(now))
+        && app.begin_sweep_refresh(now)
+        && !sweep_worker.request()
+    {
+        app.finish_sweep_refresh(Err(worker_gone("sweep reader")), clock());
     }
 }
 
@@ -1749,6 +1815,7 @@ mod main_tests {
         // event source running out.
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
 
         assert!(!app.quit, "the session this case hosts is what refuses the quit");
@@ -1771,6 +1838,7 @@ mod main_tests {
         let mut events = ReplayedEvents::new(vec![ctrl(KeyCode::Char('c'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
@@ -1809,6 +1877,7 @@ mod main_tests {
         let mut events = ReplayedEvents::new(vec![key(KeyCode::Down), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
@@ -1829,6 +1898,7 @@ mod main_tests {
         ]);
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
         let text = echoed(&mut host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
@@ -1841,6 +1911,7 @@ mod main_tests {
             ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
@@ -1857,6 +1928,7 @@ mod main_tests {
         let (worker_handle, mut controller) = supervision();
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
         assert_eq!(
             controller.hosted_sessions, 1,
@@ -1907,6 +1979,13 @@ mod main_tests {
     fn gh_worker() -> GhWorker {
         let (paths, programs) = nowhere();
         GhWorker::spawn(paths, programs, Arc::new(RealCommands))
+    }
+
+    /// The sweeps' worker, pointed at a directory with no sweep scripts in it - so every request
+    /// answers `sweep-claims failed` and the section is never drawn.
+    fn sweep_worker() -> SweepWorker {
+        let (paths, programs) = nowhere();
+        SweepWorker::spawn(paths, programs, Arc::new(RealCommands))
     }
 
     /// The two ownership parameters, pointed at a directory with no `fleet-supervisor` in it.
@@ -2047,6 +2126,7 @@ mod main_tests {
                 &worker(),
                 &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -2078,6 +2158,7 @@ mod main_tests {
                 &worker(),
                 &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -2110,6 +2191,7 @@ mod main_tests {
                 &worker(),
                 &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -2153,6 +2235,7 @@ mod main_tests {
                 &worker(),
                 &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
@@ -2200,7 +2283,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work, &gh_worker(),
+        run(&mut terminal, &mut events, &mut app, &worker(), &work, &gh_worker(), &sweep_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
@@ -2290,6 +2373,7 @@ mod main_tests {
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
@@ -2342,6 +2426,7 @@ mod main_tests {
         ]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
@@ -2380,6 +2465,7 @@ mod main_tests {
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
@@ -2551,6 +2637,7 @@ mod main_tests {
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(),
                 &gh_worker(),
+                &sweep_worker(),
             &supervision().0, &mut supervision().1, host, &mut ledger, &mut test_logger(), paths,
             &std::collections::BTreeMap::new(), Utc::now);
     }
@@ -4019,17 +4106,17 @@ mod main_tests {
     fn g_re_asks_gh_and_a_held_key_asks_once() {
         let mut app = App::default();
         let clock = Utc::now;
-        let (fleet, work, gh) = (worker(), work_worker(), gh_worker());
+        let (fleet, work, gh, sweeps) = (worker(), work_worker(), gh_worker(), sweep_worker());
 
-        dispatch(AppAction::RefreshBoth, &mut app, &fleet, &work, &gh, &clock);
+        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &clock);
         // The slot is claimed, so the second press is not stacked: whatever the reader answers,
         // only one request is in flight.
         assert!(!app.begin_gh_refresh(Instant::now()), "a request is already in flight");
-        dispatch(AppAction::RefreshBoth, &mut app, &fleet, &work, &gh, &clock);
+        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &clock);
 
         // A fleet-only refresh does not ask `gh` while its own ten-minute clock is unspent.
         app.finish_gh_refresh(Ok(cerebro_tui::model::GhSnapshot::default()), clock());
-        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &gh, &clock);
+        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &gh, &sweeps, &clock);
         assert!(
             app.begin_gh_refresh(Instant::now()),
             "the slot is free, so RefreshFleet asked nothing of gh"

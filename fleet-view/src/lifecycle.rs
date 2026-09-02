@@ -495,9 +495,16 @@ pub enum FindingOutcome {
     Failed { text: String },
 }
 
-/// How long a board write may take. `COMMAND_TIMEOUT`'s five seconds rather than a sweep's two
-/// minutes: a `bd close` is a local write, and `bd dolt push` talks to the Dolt remote but is
-/// what the navigator is waiting on with the key still under their finger.
+/// How long a board write may take. Thirty seconds, chosen for the PUSH rather than inherited:
+/// the `bd` itself is a local write and answers in well under a second, while `bd dolt push`
+/// talks to the Dolt remote with the navigator's finger still on the key. `readers::GH_TIMEOUT`
+/// is the same number for the same reason - a network call somebody is waiting on - and it is far
+/// short of a sweep's two minutes, where nobody is.
+///
+/// A push that outruns it is killed and reported as `ran, but bd dolt push failed`, which is
+/// honest: the write happened and the other machines cannot see it yet. The recovery is the next
+/// `bd dolt push` anybody makes, so erring short costs a line the navigator can ignore, where
+/// erring long costs a frozen screen.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Run FINDING's command, then `bd dolt push`, and say which of the three happened.

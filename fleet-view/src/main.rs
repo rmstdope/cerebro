@@ -1070,7 +1070,14 @@ where
         if let Some(result) = sweep_worker.poll() {
             match &result {
                 Ok(_) => logger.clear_error("sweep"),
-                Err(error) => logger.error("sweep", &error.to_string(), clock()),
+                // The CAUSE, not the Display: the header shows one word by the navigator's own
+                // choice, and this is the only place the non-zero exit, the timeout or the parse
+                // error is written down.
+                Err(error) => logger.error(
+                    "sweep",
+                    error.cause().unwrap_or(&error.to_string()),
+                    clock(),
+                ),
             }
             app.finish_sweep_refresh(result, clock());
         }

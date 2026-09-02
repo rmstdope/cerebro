@@ -31,7 +31,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::lifecycle::LastExit;
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::app::{
-    self, App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, Prompt,
+    self, App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics,
 };
 use crate::lifecycle;
 use crate::model::{Bead, FleetRow, RowState, WorkBuckets};
@@ -3567,7 +3567,7 @@ mod tests {
         let mut app = populated();
         app.finish_work_refresh(Ok(WorkBuckets::default()), at(86_400));
         app.finish_sweep_refresh(
-            Err(ReadError::Sweep { script: "sweep-claims".into() }),
+            Err(ReadError::Sweep { script: "sweep-claims".into(), cause: "bd exited 1".into() }),
             at(86_400),
         );
         let rendered = body(&render(&app, 140, 30));
@@ -3585,7 +3585,7 @@ mod tests {
             "unclaim cb-a — Storm stalled",
         )]);
         app.finish_sweep_refresh(
-            Err(ReadError::Sweep { script: "sweep-epics".into() }),
+            Err(ReadError::Sweep { script: "sweep-epics".into(), cause: "bd exited 1".into() }),
             at(86_405),
         );
         let rendered = body(&render(&app, 140, 30));

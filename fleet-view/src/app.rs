@@ -1337,7 +1337,7 @@ mod tests {
     }
 
     fn sweep_error() -> ReadError {
-        ReadError::Sweep { script: "sweep-claims".into() }
+        ReadError::Sweep { script: "sweep-claims".into(), cause: "bd exited 1".into() }
     }
 
     /// A failed refresh never destroys findings still worth reading - the pane rule, over the

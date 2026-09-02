@@ -341,10 +341,18 @@ fn paused_finding(candidate: &Candidate) -> Option<Finding> {
     Some(Finding::Unpause { id: candidate.id.clone(), priority: candidate.priority })
 }
 
-/// Every finding from OUTPUTS, judged against SNAPSHOT, in `Sweep::ALL` order.
+/// Every finding from OUTPUTS, judged against SNAPSHOT, in `Sweep::ALL` order, each paired with
+/// **the candidate it was judged from**.
 ///
-/// `cerebro--findings-from-snapshot`'s port. A sweep absent from OUTPUTS contributes nothing.
-pub fn findings_from(outputs: &[(Sweep, Vec<Candidate>)], snapshot: &Snapshot) -> Vec<Finding> {
+/// `cerebro--findings-from-snapshot`'s port, which labels inside the same walk for the same
+/// reason: two sweeps list the same bead - `sweep-claims` and `sweep-stalled` both emit one object
+/// per `in_progress` bead - so a candidate looked up by id afterwards is the wrong sweep's as
+/// often as the right one, and the evidence four of the seven labels print comes out `nil`.
+/// A sweep absent from OUTPUTS contributes nothing.
+pub fn findings_from<'a>(
+    outputs: &'a [(Sweep, Vec<Candidate>)],
+    snapshot: &Snapshot,
+) -> Vec<(Finding, &'a Candidate)> {
     let mut findings = Vec::new();
     for sweep in Sweep::ALL {
         for (key, candidates) in outputs {
@@ -353,7 +361,7 @@ pub fn findings_from(outputs: &[(Sweep, Vec<Candidate>)], snapshot: &Snapshot) -
             }
             for candidate in candidates {
                 if let Some(finding) = sweep.judge(candidate, snapshot) {
-                    findings.push(finding);
+                    findings.push((finding, candidate));
                 }
             }
         }
@@ -701,16 +709,17 @@ mod tests {
             lease_age_min: Some(30),
             ..Candidate::default()
         };
-        let findings = findings_from(
-            &[(Sweep::Epics, vec![epic]), (Sweep::Claims, vec![claim])],
-            &snapshot,
-        );
+        let outputs = [(Sweep::Epics, vec![epic]), (Sweep::Claims, vec![claim])];
+        let findings = findings_from(&outputs, &snapshot);
         assert_eq!(
-            findings,
+            findings.iter().map(|(finding, _)| finding.clone()).collect::<Vec<_>>(),
             vec![
                 Finding::Reclaim { id: "cb-c".into() },
                 Finding::EpicClose { id: "cb-e".into() },
             ]
         );
+        // And each carries the candidate it was judged from, which is what the label needs.
+        assert_eq!(findings[0].1.id, "cb-c");
+        assert_eq!(findings[1].1.id, "cb-e");
     }
 }

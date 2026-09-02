@@ -103,9 +103,10 @@ pub enum ReadError {
     ///
     /// Its `Display` is deliberately shorter than every other variant's. The navigator chose one
     /// word for all three causes - a non-zero exit, the timeout, and output that is not the JSON
-    /// array it promised - because the next move is the same for all three, and the cause is not
-    /// lost: `read_sweeps` writes it to `errors.jsonl` before mapping it here.
-    Sweep { script: String },
+    /// array it promised - because the next move is the same for all three. The cause is not lost
+    /// with it: `cause` carries the underlying failure's own words, and `main` writes THAT to
+    /// `errors.jsonl` while the header shows the one word.
+    Sweep { script: String, cause: String },
 }
 
 impl std::fmt::Display for ReadError {
@@ -118,7 +119,20 @@ impl std::fmt::Display for ReadError {
                 write!(f, "{source} produced invalid output: {message}"),
             Self::Timeout { source, seconds } =>
                 write!(f, "{source} did not answer within {seconds}s"),
-            Self::Sweep { script } => write!(f, "{script} failed"),
+            Self::Sweep { script, .. } => write!(f, "{script} failed"),
+        }
+    }
+}
+
+impl ReadError {
+    /// The underlying failure's own words, for the log - the one thing `Display` does not say.
+    ///
+    /// `None` for every variant but `Sweep`, whose `Display` is one word by the navigator's own
+    /// choice: everywhere else the message the header shows IS the cause.
+    pub fn cause(&self) -> Option<&str> {
+        match self {
+            Self::Sweep { cause, .. } => Some(cause),
+            _ => None,
         }
     }
 }
@@ -608,28 +622,23 @@ pub fn read_sweeps(
     let mut outputs: Vec<(Sweep, Vec<Candidate>)> = Vec::new();
     for sweep in Sweep::ALL {
         let program = paths.scripts_dir.join(sweep.script());
-        let failed = || ReadError::Sweep { script: sweep.key().to_string() };
+        let failed = |cause: String| ReadError::Sweep { script: sweep.key().to_string(), cause };
         let stdout = commands
             .run(&program, &["--json"], Some(&paths.consumer_root), SWEEP_TIMEOUT)
-            .map_err(|_| failed())?;
-        let candidates: Vec<Candidate> =
-            serde_json::from_slice(&stdout).map_err(|_| failed())?;
+            .map_err(|error| failed(error.to_string()))?;
+        let candidates: Vec<Candidate> = serde_json::from_slice(&stdout)
+            .map_err(|error| failed(format!("{program}: {error}", program = program.display())))?;
         outputs.push((sweep, candidates));
     }
     let snapshot = read_sweep_snapshot(paths, programs, commands, Utc::now())?;
+    // The candidate comes back WITH the finding rather than being looked up by id afterwards:
+    // `sweep-claims` and `sweep-stalled` both emit one object per `in_progress` bead, so a lookup
+    // across the six answers the wrong sweep's candidate as often as the right one - and the
+    // evidence four of the seven labels print then comes out `nil`.
     Ok(sweeps::findings_from(&outputs, &snapshot)
         .into_iter()
-        .map(|finding| {
-            // The candidate this finding was judged from, for the four labels that print
-            // evidence the finding does not carry. Found by id within its own sweep, which is
-            // unique: a sweep lists each bead once.
-            let candidate = outputs
-                .iter()
-                .flat_map(|(_, candidates)| candidates.iter())
-                .find(|candidate| candidate.id == finding.id())
-                .cloned()
-                .unwrap_or_default();
-            let label = sweeps::label(&finding, &candidate, &snapshot);
+        .map(|(finding, candidate)| {
+            let label = sweeps::label(&finding, candidate, &snapshot);
             Judged { finding, label }
         })
         .collect())
@@ -641,6 +650,12 @@ pub fn read_sweeps(
 /// Liveness is `model::session_liveness` through `derive_fleet`, never a bare pid check - a
 /// recycled pid would suppress a real finding here, which is the failure the marker sentence
 /// exists to prevent.
+///
+/// It re-reads the roster and the process table the fleet pane read seconds ago, and that is
+/// deliberate rather than an oversight: the snapshot must be taken AFTER the last script answers,
+/// because the fleet moves while six scripts run and a candidate judged against a fleet six
+/// scripts old is a finding about a session that has since started. Once per ten minutes, against
+/// six subprocesses that ran first.
 ///
 /// The names are the roster's IMPLEMENTERS alone, which is what `cerebro--roster` returns:
 /// widening it to every agent would make `unassign` refuse to fire on any bead assigned to an
@@ -1403,8 +1418,12 @@ mod tests {
             }
         });
         let error = read_sweeps(&paths, &Programs::default(), &commands).unwrap_err();
-        assert!(matches!(&error, ReadError::Sweep { script } if script == "sweep-stalled"));
+        assert!(matches!(&error, ReadError::Sweep { script, .. } if script == "sweep-stalled"));
         assert_eq!(error.to_string(), "sweep-stalled failed");
+        // One word on the header, the whole failure in the log: the navigator chose the first,
+        // and the second is what makes a red section diagnosable at all.
+        let cause = error.cause().expect("a sweep failure carries its cause");
+        assert!(cause.contains("bd is not on PATH"), "{cause:?}");
         let ran: Vec<String> = commands
             .calls()
             .into_iter()
@@ -1429,6 +1448,50 @@ mod tests {
         });
         let error = read_sweeps(&paths, &Programs::default(), &commands).unwrap_err();
         assert_eq!(error.to_string(), "sweep-claims failed");
+        // And the parse error is kept too, which is the one cause a re-run cannot show you.
+        let cause = error.cause().expect("a sweep failure carries its cause");
+        assert!(cause.contains("sweep-claims.sh"), "{cause:?}");
+    }
+
+    /// Two sweeps list the same bead - `sweep-claims` and `sweep-stalled` both emit one object per
+    /// `in_progress` bead - so a candidate looked up by id after the judging is the wrong sweep's
+    /// as often as the right one, and the evidence the label prints comes out `nil`
+    /// (`no start for nilm`). The shared table cannot catch this: every row of it feeds exactly
+    /// one sweep.
+    #[test]
+    fn a_finding_is_labelled_from_its_own_sweeps_candidate() {
+        let paths = ReaderPaths {
+            shared_root: PathBuf::from("/repo/shared"),
+            ..paths_at(Path::new("/repo"))
+        };
+        let commands = FakeCommands::new(|call: &Call| {
+            let program = call.program.file_name().unwrap().to_string_lossy().into_owned();
+            match program.as_str() {
+                "roster" => Ok(b"Storm\timplementer\timplementer\n".to_vec()),
+                // Storm is running, which is what makes the stalled sweep the one with something
+                // to say about this bead and the claims sweep the one with nothing.
+                "ps" => Ok(format!(
+                    "{pid} 1 claude This session is Storm of the cerebro fleet rooted at /repo/shared/.\n",
+                    pid = std::process::id()
+                )
+                .into_bytes()),
+                // The same bead, from both sweeps, exactly as the two scripts emit it.
+                "sweep-claims.sh" => Ok(br#"[{"id":"cb-x","assignee":"Storm","on_main":false,
+                    "lease_age_min":300}]"#
+                    .to_vec()),
+                "sweep-stalled.sh" => Ok(br#"[{"id":"cb-x","assignee":"Storm",
+                    "progress_age_min":300,"progress_source":"commit"}]"#
+                    .to_vec()),
+                _ => Ok(b"[]".to_vec()),
+            }
+        });
+        let findings = read_sweeps(&paths, &Programs::default(), &commands).unwrap();
+        assert_eq!(findings.len(), 1, "{findings:#?}");
+        assert_eq!(
+            findings[0].label,
+            "unclaim cb-x — Storm stalled, no commit for 300m",
+            "the claims candidate carries neither the age nor the source"
+        );
     }
 
     /// The snapshot's names are the roster's IMPLEMENTERS alone. An interactive agent's name on a

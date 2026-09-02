@@ -11,7 +11,9 @@
 //! `lifecycle::state_file_path` for rather than spelling a second time. Since cb-kcs.5.1 the
 //! same division holds for the sweeps: `read_sweeps` below runs the six read-only scripts and
 //! takes the fleet snapshot they are judged against, `crate::sweeps` judges, and the one `bd`
-//! that WRITES - the command behind a confirmed finding - is `lifecycle::run_finding`.
+//! that WRITES - the command behind a confirmed finding - is `lifecycle::run_finding`, which
+//! spawns through this module's `CommandRunner` like every other command (cb-i1w), so this file
+//! remains the only place a command is spawned.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;

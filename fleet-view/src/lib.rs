@@ -8,11 +8,12 @@
 //! (`decisions.jsonl` and `errors.jsonl`, cb-kcs.4.4). Since cb-kcs.5.1 it also
 //! writes to the BOARD, in one place and only on a confirmed keystroke:
 //! `lifecycle::run_finding` runs the `bd` a sweep finding names and then `bd
-//! dolt push`. It never writes a state file - `scripts/agent-state` is the one
-//! author of those. Since cb-kcs.3 it also acts UNATTENDED on the sessions
-//! it hosts: it ends one whose pass is over, retires one under a stop flag and
-//! clears the flag with it, and types one line into an implementer whose
-//! question nobody answered.
+//! dolt push`, both through `readers::CommandRunner` like every other
+//! command this crate runs (cb-i1w). It never writes a state file -
+//! `scripts/agent-state` is the one author of those. Since cb-kcs.3 it also
+//! acts UNATTENDED on the sessions it hosts: it ends one whose pass is over,
+//! retires one under a stop flag and clears the flag with it, and types one
+//! line into an implementer whose question nobody answered.
 //!
 //! Since cb-kcs.4.1 it also STARTS sessions on its own: it evaluates the
 //! board-backed triggers for the planner, implementer, verifier and

@@ -18,13 +18,10 @@ use chrono::{DateTime, Utc};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use wait_timeout::ChildExt;
-
 use crate::model::{AgentKind, FleetRow, RowState};
-use crate::readers::{Programs, ReadError, ReaderPaths};
+use crate::readers::{CommandRunner, Programs, ReadError, ReaderPaths};
 use crate::sweeps::{finding_command, Finding};
 use crate::session::{Ended, SessionHost};
 use crate::supervisor::SupervisionMode;
@@ -645,49 +642,33 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// board write may live. `readers::read_beads` passes it deliberately; copying that neighbouring
 /// call here would produce a command that appears to succeed and changes nothing.
 ///
-/// Both children run in `paths.shared_root`, where every `bd` this crate runs already points, and
-/// both are killed and reaped on the bound rather than left to hang the screen.
+/// Both commands go through `readers::CommandRunner`, like every other command this crate runs
+/// (cb-i1w): the draining, the bound and the kill-and-reap live there, so `readers` remains the
+/// one place a command is spawned. They run in `paths.shared_root`, where every `bd` this crate
+/// runs already points.
 pub fn run_finding(
     paths: &ReaderPaths,
     programs: &Programs,
+    commands: &dyn CommandRunner,
     finding: &Finding,
 ) -> FindingOutcome {
     let argv = finding_command(finding, &programs.bd);
     let text = argv.join(" ");
-    if !run_to_completion(&argv[0], &argv[1..], &paths.shared_root) {
+    let run = |args: &[String]| {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        commands
+            .run(&programs.bd, &args, Some(&paths.shared_root), WRITE_TIMEOUT)
+            .is_ok()
+    };
+    if !run(&argv[1..]) {
         return FindingOutcome::Failed { text: format!("{text} failed") };
     }
-    let push = [programs.bd.display().to_string(), "dolt".into(), "push".into()];
-    if run_to_completion(&push[0], &push[1..], &paths.shared_root) {
+    if run(&["dolt".to_string(), "push".to_string()]) {
         FindingOutcome::Ran { text: format!("ran {text}") }
     } else {
         FindingOutcome::Pushed {
             text: "ran, but bd dolt push failed — other machines will not see this yet".into(),
         }
-    }
-}
-
-/// True when PROGRAM with ARGS exited zero in DIR inside the bound. A timed-out child is killed
-/// and then waited for, so no zombie outlives the keypress.
-fn run_to_completion(program: &str, args: &[String], dir: &Path) -> bool {
-    let Ok(mut child) = Command::new(program)
-        .args(args)
-        .current_dir(dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return false;
-    };
-    match child.wait_timeout(WRITE_TIMEOUT) {
-        Ok(Some(status)) => status.success(),
-        Ok(None) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            false
-        }
-        Err(_) => false,
     }
 }
 
@@ -727,6 +708,7 @@ pub fn start(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::readers::testing::FakeCommands;
     use crate::supervisor::ReadOnlyReason;
 
     #[test]
@@ -1237,21 +1219,20 @@ mod tests {
     }
     // --- the first board write (cb-kcs.5.1) --------------------------------------------------
 
-    /// The tracked `bd` that records rather than writes. NOT written by the test: a file a test
-    /// writes and then spawns races the writer on Linux and dies `ETXTBSY`, which is the trap
-    /// `readers.rs` says four patches in this crate had been working around - and which this
-    /// bead's first CI run walked straight into. What varies per case is DATA in the cwd
-    /// `run_finding` gives the child.
-    fn recording_bd() -> PathBuf {
-        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/recording-bd"))
+    /// What ran, as the argv the recorder used to append: the program and the bound are asserted
+    /// on their own in `the_board_write_goes_through_the_one_seam`.
+    fn argv(fake: &FakeCommands) -> Vec<String> {
+        fake.calls().iter().map(|c| c.args.join(" ")).collect()
     }
 
-    fn calls(dir: &Path) -> Vec<String> {
-        std::fs::read_to_string(dir.join("calls"))
-            .unwrap_or_default()
-            .lines()
-            .map(str::to_string)
-            .collect()
+    /// A `bd` that exited non-zero - the only kind of failure these cases care to distinguish.
+    fn failed_bd() -> ReadError {
+        ReadError::Exit {
+            source: "bd".into(),
+            status: Some(1),
+            stderr: String::new(),
+            stdout: String::new(),
+        }
     }
 
     fn paths_in(root: &Path) -> ReaderPaths {
@@ -1262,21 +1243,44 @@ mod tests {
         }
     }
 
-    fn recording_programs() -> Programs {
-        Programs { bd: recording_bd(), ..Programs::default() }
+    /// The one `bd` that writes spawns through the same seam every other command in this crate
+    /// goes through - the bound and the directory included, neither of which a fixture script
+    /// could see.
+    #[test]
+    fn the_board_write_goes_through_the_one_seam() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let paths = paths_in(dir.path());
+        let programs = Programs::default();
+        let fake = FakeCommands::always("");
+
+        let outcome =
+            run_finding(&paths, &programs, &fake, &Finding::Unclaim { id: "cb-a".into() });
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 2, "the write and the push");
+        for call in &calls {
+            assert_eq!(call.program, programs.bd);
+            assert_eq!(call.cwd.as_deref(), Some(paths.shared_root.as_path()));
+            assert_eq!(call.timeout, WRITE_TIMEOUT);
+        }
+        assert_eq!(calls[0].args, vec!["unclaim", "cb-a"]);
+        assert_eq!(calls[1].args, vec!["dolt", "push"]);
+        assert!(matches!(outcome, FindingOutcome::Ran { .. }));
     }
 
     /// The push rides the same keypress: a close the other machines cannot see is half done.
     #[test]
     fn running_a_finding_pushes_after_it_succeeds() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        let programs = recording_programs();
+        let programs = Programs::default();
+        let fake = FakeCommands::always("");
         let outcome = run_finding(
             &paths_in(dir.path()),
             &programs,
+            &fake,
             &Finding::Unclaim { id: "cb-a".into() },
         );
-        assert_eq!(calls(dir.path()), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
         assert_eq!(
             outcome,
             FindingOutcome::Ran { text: format!("ran {} unclaim cb-a", programs.bd.display()) }
@@ -1289,14 +1293,20 @@ mod tests {
     #[test]
     fn a_failed_push_is_said_and_the_write_is_not_undone() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        std::fs::write(dir.path().join("push-exit"), "1").expect("the push fails");
-        let programs = recording_programs();
+        let fake = FakeCommands::new(|call| {
+            if call.args.first().map(String::as_str) == Some("dolt") {
+                Err(failed_bd())
+            } else {
+                Ok(Vec::new())
+            }
+        });
         let outcome = run_finding(
             &paths_in(dir.path()),
-            &programs,
+            &Programs::default(),
+            &fake,
             &Finding::Reclaim { id: "cb-a".into() },
         );
-        assert_eq!(calls(dir.path()), vec!["reclaim --id cb-a --older-than 10m", "dolt push"]);
+        assert_eq!(argv(&fake), vec!["reclaim --id cb-a --older-than 10m", "dolt push"]);
         assert_eq!(
             outcome,
             FindingOutcome::Pushed {
@@ -1310,14 +1320,15 @@ mod tests {
     #[test]
     fn a_failed_command_does_not_push() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        std::fs::write(dir.path().join("exit-code"), "1").expect("the write fails");
-        let programs = recording_programs();
+        let programs = Programs::default();
+        let fake = FakeCommands::failing(failed_bd);
         let outcome = run_finding(
             &paths_in(dir.path()),
             &programs,
+            &fake,
             &Finding::EpicClose { id: "cb-e".into() },
         );
-        assert_eq!(calls(dir.path()), vec!["close cb-e"]);
+        assert_eq!(argv(&fake), vec!["close cb-e"], "the push never ran");
         assert_eq!(
             outcome,
             FindingOutcome::Failed {
@@ -1457,16 +1468,20 @@ mod tests {
     #[test]
     fn the_one_bd_that_writes_passes_no_readonly() {
         let dir = tempfile::tempdir().expect("a temp dir");
-        let programs = recording_programs();
+        let programs = Programs::default();
+        let fake = FakeCommands::always("");
         run_finding(
             &paths_in(dir.path()),
             &programs,
+            &fake,
             &Finding::Unassign { id: "cb-a".into(), priority: Some(0) },
         );
-        let calls = calls(dir.path());
-        assert_eq!(calls, vec!["update cb-a --assignee ", "dolt push"]);
-        for call in calls {
-            assert!(!call.contains("--readonly"), "{call:?}");
+        assert_eq!(argv(&fake), vec!["update cb-a --assignee ", "dolt push"]);
+        for call in fake.calls() {
+            assert!(!call.program.display().to_string().contains("--readonly"), "{call:?}");
+            for arg in &call.args {
+                assert!(!arg.contains("--readonly"), "{call:?}");
+            }
         }
     }
 

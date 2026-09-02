@@ -127,6 +127,22 @@ pub enum Supervision {
 /// The port of `cerebro--supervise-action` (`emacs/cerebro.el:1624-1712`) and, folded into it,
 /// `cerebro--end-decision` (`:1610-1622`). Held to `tests/lib/supervise.cases`.
 pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
+    // The standby arm is decided BEFORE the `ours` guard, and that is not an oversight. `ours` is
+    // `SessionHost::supervisable` - "do I host a session I have not already stopped" - and a
+    // standby row hosts none by definition, so every standby row arrives with `ours: false` and
+    // the guard would swallow the arm entirely. The question a standby row asks is a different
+    // one: not "is this session mine to end" but "is this name mine to disarm", and it is, by
+    // construction - the only way a row becomes `Standby` is by being in THIS view's armed set.
+    // Emacs has the same shape for the same reason: its guard is `external`, which is "up
+    // somewhere else", and a standby row is up nowhere.
+    //
+    // A stop flag written before its session died still says *no further bead*, so a standby
+    // implementer under one is disarmed rather than retried (cb-hzs). A standby role's flag is
+    // enforced in the start path instead.
+    if agent.state == &RowState::Standby {
+        return (agent.kind == AgentKind::Implementer && agent.stop_flag)
+            .then_some(Supervision::Retire);
+    }
     // The guard that wraps everything else: a session this view did not start is somebody else's
     // to end, and a dead one stays dead.
     if !agent.ours {
@@ -153,6 +169,8 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
         .then_some(Supervision::Nudge),
         RowState::Working
         | RowState::Up
+        // Answered above, ahead of the `ours` guard.
+        | RowState::Standby
         | RowState::Dead
         | RowState::Unknown(_)
         // No counterpart in Emacs - a malformed state file is a red diagnostic line here and a
@@ -317,6 +335,11 @@ pub fn finish_outcome(situation: Situation<'_>) -> FinishOutcome {
     if situation.stop_flag {
         return FinishOutcome::Clear;
     }
+    // `f` means what it always means. Rule 3 above already clears a flag it set, so pressing `f`
+    // twice on a standby row is the same toggle as anywhere else.
+    if row.state == RowState::Standby {
+        return FinishOutcome::Write;
+    }
     if !situation.hosted {
         return FinishOutcome::Refuse(elsewhere_or_absent(row));
     }
@@ -328,6 +351,11 @@ pub fn kill_outcome(situation: Situation<'_>) -> KillOutcome {
     let Some(row) = situation.row else { return KillOutcome::Ignore };
     if !situation.mode.may_end() {
         return KillOutcome::Refuse(refusal_for(situation.mode));
+    }
+    // Ahead of the two rules that refuse a name that is not running: a standby row hosts no
+    // session by construction, and `k` on one means disarm rather than kill.
+    if row.state == RowState::Standby {
+        return KillOutcome::Confirm { prompt: disarm_prompt(&row.name) };
     }
     if !situation.hosted {
         return KillOutcome::Refuse(elsewhere_or_absent(row));
@@ -352,6 +380,19 @@ fn kill_prompt(row: &FleetRow) -> String {
         Some(bead) => format!("Kill {}? Its bead {bead} stays claimed.  y / n", row.name),
         None => format!("Kill {}?  y / n", row.name),
     }
+}
+
+/// The gold prompt `k` puts in the notice slot for a standby row. Two spaces before `y / n`, the
+/// shape `kill_prompt` already has, where the second sentence is the consequence the navigator
+/// might not have in mind. No bead is named: a standby row has none.
+fn disarm_prompt(name: &str) -> String {
+    format!("Disarm {name}? The view will stop bringing it back.  y / n")
+}
+
+/// What the header says once `y` is pressed. It restates the consequence the prompt named, so the
+/// question and the outcome match.
+pub fn disarm_notice(name: &str) -> String {
+    format!("{name} is disarmed; the view will not bring it back.")
 }
 
 /// The one read-only sentence, naming no owner: the header's own title already names which of the
@@ -511,6 +552,7 @@ mod tests {
             "dead" => RowState::Dead,
             "up" => RowState::Up,
             "unknown" => RowState::Unknown("something".to_string()),
+            "standby" => RowState::Standby,
             other => panic!("supervise.cases: unknown state {other}"),
         }
     }
@@ -568,7 +610,7 @@ mod tests {
             assert_eq!(supervise_action(agent), table_action(fields[6]), "row: {line}");
             rows += 1;
         }
-        assert!(rows >= 30, "supervise.cases: only {rows} rows ran");
+        assert!(rows >= 34, "supervise.cases: only {rows} rows ran");
     }
 
     /// The two things the table cannot carry, both of which end a session that should be left
@@ -904,5 +946,40 @@ mod tests {
             }
             other => panic!("the reader did not open the path this module builds: {other:?}"),
         }
+    }
+
+    // --- standby rows (cb-kcs.4.1) ---------------------------------------------------------
+
+    #[test]
+    fn k_on_a_standby_row_offers_to_disarm_it() {
+        let mode = SupervisionMode::Supervising;
+        let row = row("Xavier", AgentKind::Interactive, RowState::Standby);
+        // A standby row hosts no session, which is exactly what rules 3 and 4 refuse - so the
+        // arm sits ahead of them.
+        assert_eq!(
+            kill_outcome(situation(&mode, Some(&row), false, false)),
+            KillOutcome::Confirm {
+                prompt: "Disarm Xavier? The view will stop bringing it back.  y / n".to_string()
+            }
+        );
+        assert_eq!(
+            disarm_notice("Xavier"),
+            "Xavier is disarmed; the view will not bring it back."
+        );
+    }
+
+    #[test]
+    fn f_on_a_standby_row_writes_the_flag_and_the_second_press_clears_it() {
+        let mode = SupervisionMode::Supervising;
+        let row = row("Cyclops", AgentKind::Implementer, RowState::Standby);
+        assert_eq!(
+            finish_outcome(situation(&mode, Some(&row), false, false)),
+            FinishOutcome::Write
+        );
+        // Rule 3 already precedes it, so a second press clears the flag it set.
+        assert_eq!(
+            finish_outcome(situation(&mode, Some(&row), false, true)),
+            FinishOutcome::Clear
+        );
     }
 }

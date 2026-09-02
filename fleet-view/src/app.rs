@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::model::{FleetRow, RowState, WorkBuckets};
+use crate::model::{self, FleetRow, RowState, WorkBuckets};
 use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{read_configured_supervisor, read_fleet, read_work, Programs, ReaderPaths, ReadError};
@@ -345,6 +345,19 @@ pub struct App {
     /// file said, and a renderer's convenience must not make it lie to anything else reading a
     /// row.
     pub exits: BTreeMap<String, LastExit>,
+    /// The BEAD column of each standby row, as of the last frame. Copied in by the event loop
+    /// from `triggers::standby_label`, never computed here: `ui::draw` may not reach a
+    /// `TriggerFacts` any more than it may reach a child process, and the label depends on facts
+    /// the work reader supplies. The twin of `App::exits`, set the same way, once per iteration.
+    pub standby_labels: BTreeMap<String, String>,
+    /// The names this view will start again on their trigger. The port of `cerebro--armed`, and
+    /// like it, memory only - never a file, never persisted.
+    ///
+    /// It is on `App` rather than beside the `SessionHost` because `ui::draw` is pure over `&App`
+    /// and the standby row is drawn from it. Written in exactly four places, all in `main`: a
+    /// launch adds a name, a retire removes one, a confirmed disarm removes one, and the roster's
+    /// `standby` declaration adds a set at startup.
+    pub armed: BTreeSet<String>,
     /// Names already nudged for the question they are asking now.
     ///
     /// The poll runs every five seconds; without this the line would be typed on every tick,
@@ -382,11 +395,13 @@ pub struct App {
 }
 
 /// A question the screen is waiting on. `k` is the only key that asks (the navigator's choice),
-/// so this has one variant, and it is an enum for the next one rather than for this one.
+/// and it asks two different questions: a live session is killed, a standby row is disarmed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Prompt {
     /// The agent to kill, and the gold line `lifecycle::kill_prompt` already built.
     Kill { name: String, text: String },
+    /// The agent to disarm, and the gold line already built by `lifecycle::disarm_prompt`.
+    Disarm { name: String, text: String },
 }
 
 impl Default for App {
@@ -416,6 +431,8 @@ impl App {
             selected: None,
             notice: None,
             exits: BTreeMap::new(),
+            standby_labels: BTreeMap::new(),
+            armed: BTreeSet::new(),
             nudged: BTreeSet::new(),
             focus: PaneFocus::default(),
             supervision,
@@ -438,6 +455,17 @@ impl App {
     pub fn refuse_quit(&mut self, live: Vec<String>) {
         self.quit = false;
         self.quit_refusal = Some(live);
+    }
+
+    /// Replace the standby conditions. One call per loop iteration, beside `set_exits`.
+    pub fn set_standby_labels(&mut self, labels: BTreeMap<String, String>) {
+        self.standby_labels = labels;
+    }
+
+    /// The rows the fleet pane last read, or an empty slice. What `main` walks to supervise, to
+    /// start, and to note who was seen up.
+    pub fn fleet_rows(&self) -> &[FleetRow] {
+        self.fleet.content.value().map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Replace the verdicts. One call per loop iteration, beside `set_session_view`.
@@ -767,6 +795,10 @@ impl App {
     pub fn finish_refresh(&mut self, result: Result<Vec<FleetRow>, ReadError>, at: DateTime<Utc>) {
         let previous_index = self.selected_index();
         let succeeded = result.is_ok();
+        // Applied on the way past, on success only, so the rows the pane holds are the rows any
+        // reader inspects and a new caller cannot forget the transformation.
+        let failed: BTreeSet<String> = self.exits.keys().cloned().collect();
+        let result = result.map(|rows| model::apply_standby(rows, &self.armed, &failed));
         self.fleet.finish(result, at);
         if succeeded {
             self.reconcile_selection(previous_index);

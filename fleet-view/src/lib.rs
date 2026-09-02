@@ -9,7 +9,11 @@
 //! it hosts: it ends one whose pass is over, retires one under a stop flag and
 //! clears the flag with it, and types one line into an implementer whose
 //! question nobody answered. It still evaluates no trigger, starts nothing on
-//! its own and disarms no name, which are cb-kcs.4's.
+//! Since cb-kcs.4.1 it also STARTS sessions on its own: it evaluates the
+//! board-backed triggers for the planner, implementer, verifier and
+//! orchestrator roles, honours the roster's own `autostart`/`standby`
+//! declaration, and disarms a name on `k` or on a retire. The retry backoff,
+//! the GitHub-backed roles and both JSONL logs remain cb-kcs.4.2, .3 and .4's.
 //!
 //! Since cb-kcs.1 it may hold ONE piece of state - the supervision lease
 //! (`supervisor`), a bound loopback listener that says which fleet view a
@@ -47,6 +51,7 @@ pub mod model;
 pub mod readers;
 pub mod session;
 pub mod supervisor;
+pub mod triggers;
 pub mod ui;
 
 pub use model::{

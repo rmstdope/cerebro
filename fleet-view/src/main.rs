@@ -4705,18 +4705,11 @@ mod main_tests {
     }
     // --- x: the first board write (cb-kcs.5.1) -----------------------------------------------
 
-    /// The tracked `bd` that records rather than writes. The `x` path is the one `bd` in this
-    /// crate that WRITES, so no case here may reach the real one - and the recorder is tracked
-    /// rather than written here, because a file a test writes and then spawns races the writer on
-    /// Linux and dies `ETXTBSY`.
-    fn stub_programs() -> Programs {
-        Programs {
-            bd: std::path::PathBuf::from(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/recording-bd"
-            )),
-            ..Programs::default()
-        }
+    /// What ran, as the argv the tracked recorder used to append to a file. The `x` path is the
+    /// one `bd` in this crate that WRITES, so no case here may reach the real one - and none
+    /// starts a process at all now (cb-i1w).
+    fn argv(fake: &cerebro_tui::readers::testing::FakeCommands) -> Vec<String> {
+        fake.calls().iter().map(|c| c.args.join(" ")).collect()
     }
 
     /// A runner for the cases that must never run anything: `route_key` and `run` take one, and
@@ -4767,35 +4760,26 @@ mod main_tests {
         action
     }
 
-    /// The recorder writes into the cwd `run_finding` gives it - `paths.shared_root`, which
-    /// `scratch` points at this case's own tempdir.
-    fn stub_calls(paths: &ReaderPaths) -> Vec<String> {
-        std::fs::read_to_string(paths.shared_root.join("calls"))
-            .unwrap_or_default()
-            .lines()
-            .map(str::to_string)
-            .collect()
-    }
-
     /// `x` asks, and nothing is written until `y`. The confirmation names the exact command.
     #[test]
     fn x_asks_before_it_writes() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_finding(SupervisionMode::Supervising);
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x')]);
-        assert!(stub_calls(&paths).is_empty(), "nothing ran on the question alone");
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x')]);
+        assert!(fake.calls().is_empty(), "nothing ran on the question alone");
         assert!(matches!(
             &app.confirm,
             Some(cerebro_tui::app::Prompt::Sweep { text, .. })
                 if text.ends_with("unclaim cb-a ?  y / n")
         ), "{:?}", app.confirm);
 
-        let action = drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('y')]);
-        assert_eq!(stub_calls(&paths), vec!["unclaim cb-a", "dolt push"]);
+        let action = drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('y')]);
+        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
         assert_eq!(app.notice.as_deref().map(|n| n.contains("unclaim cb-a")), Some(true));
         // And the section is re-run at once rather than in up to ten minutes.
         assert_eq!(action, AppAction::RefreshSweeps);
@@ -4807,12 +4791,13 @@ mod main_tests {
     fn any_other_key_cancels_a_sweep_and_is_consumed() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_finding(SupervisionMode::Supervising);
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x'), ch('q')]);
-        assert!(stub_calls(&paths).is_empty(), "nothing ran");
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('q')]);
+        assert!(fake.calls().is_empty(), "nothing ran");
         assert!(app.confirm.is_none(), "and the question is gone");
         assert!(!app.quit, "the cancel is not also a quit");
     }
@@ -4822,12 +4807,13 @@ mod main_tests {
     fn x_from_fleet_focus_acts_on_the_work_cursor() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_finding(SupervisionMode::Supervising);
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet);
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x'), ch('y')]);
-        assert_eq!(stub_calls(&paths), vec!["unclaim cb-a", "dolt push"]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
+        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
     }
 
     /// And a read-only view acts too: the board writes are deliberately outside the supervision
@@ -4836,15 +4822,16 @@ mod main_tests {
     fn a_read_only_view_still_acts_on_a_finding() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_finding(SupervisionMode::ReadOnly(
             cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
                 cerebro_tui::supervisor::SupervisorKind::Emacs,
             ),
         ));
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x'), ch('y')]);
-        assert_eq!(stub_calls(&paths), vec!["unclaim cb-a", "dolt push"]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
+        assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
     }
 
     /// With no finding under the cursor `x` does nothing and says nothing - and it is consumed,
@@ -4853,16 +4840,17 @@ mod main_tests {
     fn x_with_no_finding_does_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = lifecycle_app(
             SupervisionMode::Supervising,
             vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
         );
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x')]);
         assert!(app.confirm.is_none());
         assert_eq!(app.notice, None);
-        assert!(stub_calls(&paths).is_empty());
+        assert!(fake.calls().is_empty());
     }
 
     /// A live session holding the keyboard still gets the byte: the `x` branch is after it.
@@ -4870,7 +4858,8 @@ mod main_tests {
     fn a_live_session_still_gets_the_x() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let programs = stub_programs();
+        let programs = Programs::default();
+        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_finding(SupervisionMode::Supervising);
         app.focus = cerebro_tui::app::PaneFocus::Session;
         let mut host = SessionHost::default();
@@ -4878,7 +4867,7 @@ mod main_tests {
         app.selected = Some("Cyclops".into());
         app.set_session_view(cerebro_tui::session::SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
 
-        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x')]);
         assert!(app.confirm.is_none(), "the child took the key, not the prompt");
         let text = echoed(&mut host, &app, "x");
         assert!(text.contains('x'), "the byte reached the child: {text:?}");

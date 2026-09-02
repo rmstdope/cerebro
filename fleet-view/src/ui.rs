@@ -983,8 +983,9 @@ enum SectionKind {
 
 /// The six queues, in the order work moves in read backwards, and in the panel's own spelling.
 ///
-/// Exactly the sections `cerebro--bead-panel` shows, minus the two that are Emacs's alone: this
-/// view has no sweeps to act on and no history to keep.
+/// Exactly the sections `cerebro--bead-panel` shows, minus History, which is Emacs's alone until
+/// cb-kcs.5.4. The Sweeps section is drawn by `work_document` above and comes FIRST here, where
+/// the panel puts it last.
 fn work_lines(buckets: &WorkBuckets, now: DateTime<Utc>, width: usize) -> Vec<Line<'static>> {
     let sections: [(&str, &Vec<Bead>, SectionKind); 6] = [
         ("Claimed", &buckets.claimed, SectionKind::Open),

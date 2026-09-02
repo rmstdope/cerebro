@@ -1100,4 +1100,123 @@ mod tests {
             FinishOutcome::Clear
         );
     }
+    // --- the first board write (cb-kcs.5.1) --------------------------------------------------
+
+    /// A stub `bd` that records its argv, one line per call, and exits with the code the test
+    /// asked for. Written into a tempdir rather than into the source tree: a fixture no test
+    /// writes cannot be `ETXTBSY`, and this one is written once per case.
+    fn stub_bd(dir: &Path, log: &Path, script: &str) -> PathBuf {
+        let path = dir.join("bd");
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n{script}\n", log.display()),
+        )
+        .expect("the stub is written");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("the stub is executable");
+        }
+        path
+    }
+
+    fn calls(log: &Path) -> Vec<String> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn paths_in(root: &Path) -> ReaderPaths {
+        ReaderPaths {
+            consumer_root: root.to_path_buf(),
+            shared_root: root.to_path_buf(),
+            scripts_dir: root.join("scripts"),
+        }
+    }
+
+    /// The push rides the same keypress: a close the other machines cannot see is half done.
+    #[test]
+    fn running_a_finding_pushes_after_it_succeeds() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let log = dir.path().join("calls");
+        let bd = stub_bd(dir.path(), &log, "exit 0");
+        let programs = Programs { bd, ..Programs::default() };
+        let outcome = run_finding(
+            &paths_in(dir.path()),
+            &programs,
+            &Finding::Unclaim { id: "cb-a".into() },
+        );
+        assert_eq!(calls(&log), vec!["unclaim cb-a", "dolt push"]);
+        assert_eq!(
+            outcome,
+            FindingOutcome::Ran { text: format!("ran {} unclaim cb-a", programs.bd.display()) }
+        );
+    }
+
+    /// The write succeeded and only the push failed, so this is not "nothing happened" - and the
+    /// command is deliberately not repeated in the line: it has just been on screen in the
+    /// confirmation, and with it the line runs to 106 cells.
+    #[test]
+    fn a_failed_push_is_said_and_the_write_is_not_undone() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let log = dir.path().join("calls");
+        let bd = stub_bd(dir.path(), &log, r#"case "$1" in dolt) exit 1 ;; *) exit 0 ;; esac"#);
+        let programs = Programs { bd, ..Programs::default() };
+        let outcome = run_finding(
+            &paths_in(dir.path()),
+            &programs,
+            &Finding::Reclaim { id: "cb-a".into() },
+        );
+        assert_eq!(calls(&log), vec!["reclaim --id cb-a --older-than 10m", "dolt push"]);
+        assert_eq!(
+            outcome,
+            FindingOutcome::Pushed {
+                text: "ran, but bd dolt push failed — other machines will not see this yet".into()
+            }
+        );
+    }
+
+    /// A command that failed is not pushed: there is nothing to publish, and a push would say the
+    /// write happened.
+    #[test]
+    fn a_failed_command_does_not_push() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let log = dir.path().join("calls");
+        let bd = stub_bd(dir.path(), &log, "exit 1");
+        let programs = Programs { bd, ..Programs::default() };
+        let outcome = run_finding(
+            &paths_in(dir.path()),
+            &programs,
+            &Finding::EpicClose { id: "cb-e".into() },
+        );
+        assert_eq!(calls(&log), vec!["close cb-e"]);
+        assert_eq!(
+            outcome,
+            FindingOutcome::Failed {
+                text: format!("{} close cb-e failed", programs.bd.display())
+            }
+        );
+    }
+
+    /// `--readonly` is on every other `bd` this crate runs and must not be on this one: copying
+    /// the neighbouring call would produce a command that appears to succeed and changes nothing.
+    #[test]
+    fn the_one_bd_that_writes_passes_no_readonly() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let log = dir.path().join("calls");
+        let bd = stub_bd(dir.path(), &log, "exit 0");
+        let programs = Programs { bd, ..Programs::default() };
+        run_finding(
+            &paths_in(dir.path()),
+            &programs,
+            &Finding::Unassign { id: "cb-a".into(), priority: Some(0) },
+        );
+        for call in calls(&log) {
+            assert!(!call.contains("--readonly"), "{call:?}");
+        }
+    }
+
 }

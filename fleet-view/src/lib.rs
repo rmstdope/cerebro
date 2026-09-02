@@ -5,8 +5,11 @@
 //! fleet's contracts, and only through `lifecycle`: it creates and removes an
 //! agent's stop flag, and it deletes the state file of a session it is ending
 //! or replacing, and it appends to the two JSONL logs beside them
-//! (`decisions.jsonl` and `errors.jsonl`, cb-kcs.4.4). It never writes a state
-//! file - `scripts/agent-state` is the one author of those. Since cb-kcs.3 it also acts UNATTENDED on the sessions
+//! (`decisions.jsonl` and `errors.jsonl`, cb-kcs.4.4). Since cb-kcs.5.1 it also
+//! writes to the BOARD, in one place and only on a confirmed keystroke:
+//! `lifecycle::run_finding` runs the `bd` a sweep finding names and then `bd
+//! dolt push`. It never writes a state file - `scripts/agent-state` is the one
+//! author of those. Since cb-kcs.3 it also acts UNATTENDED on the sessions
 //! it hosts: it ends one whose pass is over, retires one under a stop flag and
 //! clears the flag with it, and types one line into an implementer whose
 //! question nobody answered.
@@ -18,7 +21,9 @@
 //! start that keeps failing is not retried for ever: it backs off on
 //! `0/30s/2m/10m`, its row counts the wait down, and after five consecutive
 //! starts that produced no pass the name is disarmed and only `s` brings it
-//! back. Since cb-kcs.4.3 it also starts the three roles whose work arrives
+//! back. Since cb-kcs.5.1 it also runs the six sweep scripts on their own
+//! ten-minute cadence, draws what they found as the Work pane's first section,
+//! and acts on one with `x` after showing the exact command. Since cb-kcs.4.3 it also starts the three roles whose work arrives
 //! from OUTSIDE the fleet - `user-feedback`, `reviewer` and `architect` - off
 //! a `gh` reader on its own ten-minute cadence, the beads linked to a GitHub
 //! issue, and an hourly floor per role. Both JSONL logs remain cb-kcs.4.4's.

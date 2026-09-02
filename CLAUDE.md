@@ -566,6 +566,24 @@ held it — and `errors.jsonl`, one line per outage rather than per failed read,
 the name it came from. One policy rotates both; the writer is silent and unable to fail; and a
 read-only view writes neither file, since it decides nothing.
 
+Since cb-kcs.5.1 it runs **the six sweeps** as well, on their own ten-minute cadence and their own
+in-flight slot, and draws what they found as the Work pane's **first** section — `Sweeps {n}`, one
+truncated line per finding, a gold line for a stranded P0, and the failed script named beside the
+header in red when one did not answer (`sweep-claims failed`), because three of the six `git fetch`
+and a stale section that reads like a current one is what Emacs's own silence costs. The chain
+stops at the first script that did not answer, which is what lets the header name exactly one. Under
+Work the arrow and page keys move a **cursor over the findings** while there are any and scroll the
+pane when there are none — the ordinary day — and `x`, from any focus, shows the exact `bd` and runs
+it only on `y`, followed by `bd dolt push` on the same keystroke. That is **the one write in this
+crate that does not pass `--readonly`**, it lives in `lifecycle::run_finding` beside every other
+write, and it is deliberately **outside the lease**: the board is shared, so a view that may start
+nothing may still close a delivered bead. `tests/lib/sweep-findings.json` is the table both
+implementations answer — every finding, every label and every command — for `supervise.cases`'
+reason: both views go on sweeping after the cutover, so one decision has two implementations in two
+languages. The header now renders **whichever** `Prompt` is up, through the enum's own `text`
+(cb-4cn): matching one variant by name is how cb-kcs.4.1's disarm confirmation came to be built and
+never drawn.
+
 **Exactly one view supervises, and `.cerebro/project.conf` says which** (`fleet_supervisor
 emacs|tui`, absent means `emacs`, so every consumer that predates the key is untouched).
 `scripts/fleet-supervisor` is the one place either implementation reads it, and the one place the
@@ -643,6 +661,11 @@ nothing checks a path written in prose the way `scripts/tracked-links` checks a 
 
 The crate is split the way `cerebro.el` is, and for the same reason:
 
+- `sweeps.rs` — pure throughout: what the six sweeps decide (`Sweep::judge`), the seven `Finding`
+  shapes, the Sweeps line, the exact argv and the header's question. The Rust copy of
+  `cerebro--sweeps` and its neighbours, held to `tests/lib/sweep-findings.json` the way `model.rs`
+  is held to its own table. The four thresholds are `const`s here and defcustoms there, exactly as
+  `lifecycle::END_GRACE_SECONDS` is.
 - `model.rs` — pure parsing and derivation (roster, state files, the marker sentence, the process
   tree, `partition_beads`). It is the Rust copy of the elisp rules, held to the same
   `tests/lib/session-args.cases` table as every other reader of the marker sentence.

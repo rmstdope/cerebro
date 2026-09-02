@@ -1644,8 +1644,12 @@ fn lifecycle_key(
     }
 }
 
-/// Turn one `AppAction` into requests. `RefreshAll` asks each pane in turn and never as a set:
+/// Turn one `AppAction` into requests.
+///
+/// Seven workers and a clock: the crate's own precedent for this is `lifecycle_key`'s allow, and a
+/// parameter struct invented here would be a shape nothing else in the loop uses. `RefreshAll` asks each pane in turn and never as a set:
 /// a fleet read already in flight must not swallow the work retry the navigator pressed `g` for.
+#[allow(clippy::too_many_arguments)]
 fn dispatch(
     action: AppAction,
     app: &mut App,

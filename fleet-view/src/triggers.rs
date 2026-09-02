@@ -489,6 +489,16 @@ fn unchanged(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> bool {
     *last == now_print && ended > started
 }
 
+/// Whether ROLE's condition WAS true and the unchanged-work guard is what dropped it.
+///
+/// The one thing cb-kcs.4.4's evaluation line cannot see from outside: `trigger` answers `None`
+/// for a condition that was false and for one the guard held, and those are two different answers
+/// to "why did nothing happen". Both halves are this module's own private rules, which is why the
+/// question is answered here rather than reconstructed by the caller.
+pub fn held_by_unchanged_work(facts: &TriggerFacts, agent: AgentFacts<'_>) -> bool {
+    condition(facts, &agent).is_some() && unchanged(facts, &agent)
+}
+
 /// The gold header notice for a start the view decided on: `Started Beast — buffer 2 of 4.`
 ///
 /// An em dash (U+2014) with a space either side, and a full stop. The reason is the trigger's own

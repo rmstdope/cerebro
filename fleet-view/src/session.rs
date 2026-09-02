@@ -620,6 +620,8 @@ pub struct SessionHost {
     exits: BTreeMap<String, crate::lifecycle::LastExit>,
     /// Carriage returns owed to sessions that have been typed a line, and when each is due.
     pending: Vec<(String, Instant)>,
+    /// Children reaped since `take_reaped` was last called. See it.
+    reaped: Vec<(String, Ended)>,
 }
 
 impl SessionHost {
@@ -680,6 +682,17 @@ impl SessionHost {
     /// NAME's last abnormal exit, if it had one.
     pub fn last_exit(&self, name: &str) -> Option<crate::lifecycle::LastExit> {
         self.exits.get(name).copied()
+    }
+
+    /// Every child reaped since this was last called, and what ended it.
+    ///
+    /// A queue rather than a field on `exits`, because the two answer different questions:
+    /// `exits` is the row's standing verdict and forgets a clean ending, where this is the record
+    /// of an ending having happened at all - which is what cb-kcs.4.4's `exit` line is. Drained
+    /// once per frame; nothing here writes a file, and this module keeps its own contract of
+    /// knowing nothing about the log.
+    pub fn take_reaped(&mut self) -> Vec<(String, Ended)> {
+        std::mem::take(&mut self.reaped)
     }
 
     /// Every name's last abnormal exit, for `App::set_exits`. A small map cloned once per frame.
@@ -819,6 +832,7 @@ impl SessionHost {
                 Some(Deliberate::ByView) => Ended::ByView,
                 None => end,
             };
+            self.reaped.push((name.clone(), end));
             match crate::lifecycle::classify_exit(end) {
                 Some(exit) => {
                     self.exits.insert(name.clone(), exit);

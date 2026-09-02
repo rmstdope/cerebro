@@ -38,6 +38,7 @@ use cerebro_tui::app::{
     self, App, AppAction, FleetWorker, GhWorker, SupervisorWorker, WorkWorker,
 };
 use cerebro_tui::lifecycle;
+use cerebro_tui::log::{self, Logger};
 use cerebro_tui::model::{AgentKind, RosterEntry, RowState};
 use cerebro_tui::readers::{
     self, CommandRunner, Commands, Programs, ReadError, ReaderPaths, RealCommands,
@@ -306,8 +307,14 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
     let mut controller = SupervisorController::new(&paths, commands.as_ref());
     let initial = controller.apply(readers::read_configured_supervisor(&paths, commands.as_ref()));
+    let enabled = initial.may_end();
     let mut app = App::with_supervision(initial);
     let mut ledger = StartLedger::default();
+    // Created here and enabled from the mode this frame is drawn with: a logger that defaulted to
+    // enabled would have one window - construction to that call - in which a read-only view
+    // writes. The root is passed in and never resolved by the logger itself.
+    let mut logger = Logger::new(&paths.shared_root);
+    logger.set_enabled(enabled);
 
     // BEFORE the terminal guard, so it is dropped AFTER it: a child killed on the way out must
     // not be killed while the alternate screen is still up.
@@ -330,6 +337,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
                 &mut app,
                 &mut host,
                 &mut ledger,
+                &mut logger,
                 &paths,
                 commands.as_ref(),
                 &complaints,
@@ -355,6 +363,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &mut controller,
         &mut host,
         &mut ledger,
+        &mut logger,
         &paths,
         &spacing,
         Utc::now,
@@ -383,10 +392,12 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
 ///
 /// One agent's failure never stops the others: each row's work is fallible and a failure sets the
 /// notice, exactly as an `f` that could not write its flag does.
+#[allow(clippy::too_many_arguments)]
 fn supervise(
     app: &mut App,
     host: &mut SessionHost,
     ledger: &mut StartLedger,
+    logger: &mut Logger,
     paths: &ReaderPaths,
     now: DateTime<Utc>,
     at: Instant,
@@ -403,7 +414,7 @@ fn supervise(
     if !app.supervision.may_end() {
         return;
     }
-    let rows: Vec<(String, AgentKind, RowState, Option<i64>)> = app
+    let rows: Vec<(String, String, AgentKind, RowState, Option<String>, Option<i64>)> = app
         .fleet
         .content
         .value()
@@ -412,15 +423,17 @@ fn supervise(
                 .map(|row| {
                     (
                         row.name.clone(),
+                        row.role.clone(),
                         row.kind,
                         row.state.clone(),
+                        row.bead.clone(),
                         row.since.map(|since| (now - since).num_seconds()),
                     )
                 })
                 .collect()
         })
         .unwrap_or_default();
-    for (name, kind, state, stood) in rows {
+    for (name, role, kind, state, bead, stood) in rows {
         // Before any action is decided, and for every row: a name that asked, was nudged, was
         // answered and asks again is nudgeable again.
         if state != RowState::Asking {
@@ -437,6 +450,31 @@ fn supervise(
             stood,
         };
         let Some(action) = lifecycle::supervise_action(agent) else { continue };
+        // The record of the decision, before it is carried out and whatever it is: the five
+        // fields elisp writes, in its order. `state` is the ROW's own word, so an `Unknown(w)`
+        // contributes `w`; `stop_flag` is the string `"set"` or null, never a boolean.
+        logger.write(
+            match action {
+                lifecycle::Supervision::Retire => log::Event::Retire,
+                lifecycle::Supervision::End => log::Event::End,
+                lifecycle::Supervision::Nudge => log::Event::Nudge,
+            },
+            now,
+            &[
+                ("agent", serde_json::Value::from(name.as_str())),
+                ("role", serde_json::Value::from(role.as_str())),
+                ("state", serde_json::Value::from(state.word())),
+                ("bead", bead.clone().map_or(serde_json::Value::Null, serde_json::Value::from)),
+                (
+                    "stop_flag",
+                    if agent.stop_flag {
+                        serde_json::Value::from("set")
+                    } else {
+                        serde_json::Value::Null
+                    },
+                ),
+            ],
+        );
         match action {
             lifecycle::Supervision::Retire => {
                 // Retiring disarms, which is what makes a stop flag on a standby implementer mean
@@ -448,7 +486,9 @@ fn supervise(
                 // the flag is what the next session under that name would otherwise inherit, and
                 // ending is the step that can fail.
                 if let Err(error) = lifecycle::clear_stop_flag(paths, &name) {
-                    app.set_notice(format!("Could not clear the stop flag for {name}: {error}"));
+                    let text = format!("Could not clear the stop flag for {name}: {error}");
+                    logger.error(&format!("supervise {name}"), &text, now);
+                    app.set_notice(text);
                     continue;
                 }
                 host.end(paths, &name);
@@ -491,6 +531,7 @@ fn start_due(
     app: &mut App,
     host: &mut SessionHost,
     ledger: &mut StartLedger,
+    logger: &mut Logger,
     paths: &ReaderPaths,
     spacing: &BTreeMap<String, u64>,
     roster: &[RosterEntry],
@@ -546,38 +587,99 @@ fn start_due(
         // deliberate, named divergence from `cerebro--start-due`, which checks no flag at all
         // even though `cerebro--supervise-action`'s own comment says a standby role's flag
         // belongs there. Strictly fewer starts, and it makes `f` mean one thing.
-        if lifecycle::stop_flag_set(paths, name) {
-            continue;
-        }
+        let flagged = lifecycle::stop_flag_set(paths, name);
         let agent = triggers::AgentFacts {
             role,
             ended_at: ledger.ended_at(name),
             started_at: ledger.started_at(name),
             last_fingerprint: ledger.fingerprint(name),
         };
-        let Some(reason) = triggers::trigger(&facts, agent, now) else { continue };
+        // Every guard is CONSULTED before anything is decided, rather than each one returning as
+        // it fires, because cb-kcs.4.4's evaluation line carries all of them: a row that started
+        // nothing has to say which guard was the reason, and a `continue` says nothing at all.
+        // The order below is the order the guards used to run in, and each is still asked only
+        // when the ones before it let it through - `role_start_too_soon` reads a map `note_started`
+        // writes into, so asking it for a row that was never going to start would be a different
+        // question from the one that used to be asked.
+        let reason = triggers::trigger(&facts, agent, now);
+        let held_by_guard = reason.is_none() && triggers::held_by_unchanged_work(&facts, agent);
+        let spacing_value = triggers::spacing_for(role, spacing);
         // Inside the loop, not before it, because `note_started` writes into the same map - so
         // the second planner in this very pass already sees the first.
-        if triggers::role_start_too_soon(
-            &triggers::role_peers(name, role, roster),
-            ledger.started_at_map(),
-            triggers::spacing_for(role, spacing),
-            now,
-        ) {
-            continue;
-        }
+        let spaced_out = !flagged
+            && reason.is_some()
+            && triggers::role_start_too_soon(
+                &triggers::role_peers(name, role, roster),
+                ledger.started_at_map(),
+                spacing_value,
+                now,
+            );
         let started = ledger.started_at(name);
         let failures = ledger.failures(name);
         let failed = triggers::start_failed(started, ledger.ended_at(name));
-
         // Backed off: a launch that produced no session is retried, but not on every tick. This
         // comes BEFORE the give-up, so a name at four failures counts its ten minutes down and
         // gives up when the wait expires rather than when the fourth failure lands.
-        if failed && triggers::retry_wait(failures, started, now) > 0 {
+        let backed_off = !flagged
+            && reason.is_some()
+            && !spaced_out
+            && failed
+            && triggers::retry_wait(failures, started, now) > 0;
+        let acts = !flagged && reason.is_some() && !spaced_out && !backed_off;
+        let gives_up = acts && triggers::give_up(failed, failures);
+
+        // What the trigger read and what held it, before anything is done about it: the file
+        // reads *here is what it saw, then here is what it did*.
+        let flag = |set: bool| if set { serde_json::Value::Bool(true) } else { serde_json::Value::Null };
+        logger.evaluation(
+            now,
+            &[
+                ("agent", serde_json::Value::from(name.as_str())),
+                ("role", serde_json::Value::from(role.as_str())),
+                (
+                    "reason",
+                    reason.clone().map_or(serde_json::Value::Null, serde_json::Value::from),
+                ),
+                ("planned", serde_json::Value::from(facts.planned)),
+                (
+                    "planned_ids",
+                    if facts.planned_ids.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::from(facts.planned_ids.clone())
+                    },
+                ),
+                ("implementers", serde_json::Value::from(facts.implementers)),
+                (
+                    "p0_unplanned",
+                    if facts.p0_unplanned.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::from(facts.p0_unplanned.clone())
+                    },
+                ),
+                ("p4_unranked", serde_json::Value::from(facts.unranked_ids.len())),
+                ("merged_unverified", serde_json::Value::from(facts.merged_unverified)),
+                ("stale_verdicts", serde_json::Value::from(facts.stale_verdicts)),
+                ("held_by_guard", flag(held_by_guard)),
+                ("spaced_out", flag(spaced_out)),
+                (
+                    "spacing",
+                    spacing_value.map_or(serde_json::Value::Null, serde_json::Value::from),
+                ),
+                ("backed_off", flag(backed_off)),
+                ("stop_flag", flag(flagged)),
+                // Standby when the list was built and not armed now: something disarmed it
+                // earlier in this tick.
+                ("disarmed", flag(!app.armed.contains(name))),
+                ("failed_starts", serde_json::Value::from(failures)),
+            ],
+        );
+
+        if !acts {
             continue;
         }
-
-        if triggers::give_up(failed, failures) {
+        if gives_up {
             // The counter holds the failures BEFORE this start, and the one that brought us here
             // is what the notice and the row name; left behind, they say different numbers about
             // the same sessions.
@@ -588,7 +690,20 @@ fn start_due(
             app.set_exits(host.exits());
             app.armed.remove(name);
             app.reapply_standby();
-            app.set_notice(triggers::give_up_notice(name, total));
+            let text = triggers::give_up_notice(name, total);
+            logger.write(
+                log::Event::GiveUp,
+                now,
+                &[
+                    ("agent", serde_json::Value::from(name.as_str())),
+                    ("role", serde_json::Value::from(role.as_str())),
+                    ("failed_starts", serde_json::Value::from(total)),
+                ],
+            );
+            // And the same sentence the row and the notice carry, in the file the navigator is
+            // sent to.
+            logger.error(&format!("start {name}"), &text, now);
+            app.set_notice(text);
             continue;
         }
 
@@ -598,10 +713,15 @@ fn start_due(
             Ok(_) => {
                 app.armed.insert(name.clone());
                 ledger.note_started(name, now, triggers::fingerprint(role, &facts));
+                let reason = reason.unwrap_or_default();
+                log_start(logger, name, role, Some(&reason), now);
                 app.set_notice(triggers::start_notice(name, &reason));
             }
             // The red Session pane is the report, which is the rule `s` already follows.
-            Err(error) => host.note_refusal(name, &error.to_string(), now),
+            Err(error) => {
+                logger.error(&format!("start {name}"), &error.to_string(), now);
+                host.note_refusal(name, &error.to_string(), now);
+            }
         }
     }
 
@@ -618,14 +738,90 @@ fn start_due(
     }
 }
 
+/// One `exit` line per child reaped since the last frame.
+///
+/// Its own function rather than eight lines in the frame block, so the rule it encodes -
+/// which endings are this view's own doing - is testable without a terminal.
+fn log_exits(logger: &mut Logger, host: &mut SessionHost, now: DateTime<Utc>) {
+    // An `exit` line only for an ending this view did NOT cause: `end` has already said
+    // what happened when it did, and `exit` keeps meaning what it means in Emacs's file.
+    // `classify_exit` is the same test the verdict column uses rather than a second one.
+    for (name, ended) in host.take_reaped() {
+        if matches!(ended, session::Ended::Signal(_) | session::Ended::ByView) {
+            continue;
+        }
+        let code = match ended {
+            session::Ended::Status(status) => status.to_string(),
+            // Unreachable: both are skipped above. A word rather than a panic, because a
+            // log is not a place to bring the view down.
+            _ => "by-view".to_string(),
+        };
+        logger.write(
+            log::Event::Exit,
+            now,
+            &[
+                ("agent", serde_json::Value::from(name.as_str())),
+                ("code", serde_json::Value::from(code)),
+                // `true` or null, never `false`: a clean exit is not an abnormal one, and
+                // a boolean would quietly change the shape a reader splits on.
+                (
+                    "abnormal",
+                    if lifecycle::classify_exit(ended).is_some() {
+                        serde_json::Value::Bool(true)
+                    } else {
+                        serde_json::Value::Null
+                    },
+                ),
+                // This crate keeps the last line on the retained screen rather than in a
+                // field, which is what cb-kcs.3 decided when it dropped `LastExit`'s
+                // `:line`.
+                ("last_line", serde_json::Value::Null),
+            ],
+        );
+    }
+}
+
+/// One `start` line. `by` is `"trigger"` when a trigger's reason produced it and `"navigator"`
+/// otherwise - `s` and the roster's own `autostart` alike. Two words and only two.
+fn log_start(
+    logger: &mut Logger,
+    name: &str,
+    role: &str,
+    reason: Option<&str>,
+    now: DateTime<Utc>,
+) {
+    logger.write(
+        log::Event::Start,
+        now,
+        &[
+            ("agent", serde_json::Value::from(name)),
+            ("role", serde_json::Value::from(role)),
+            ("reason", reason.map_or(serde_json::Value::Null, serde_json::Value::from)),
+            ("by", serde_json::Value::from(if reason.is_some() { "trigger" } else { "navigator" })),
+        ],
+    );
+}
+
+/// NAME's role as the last fleet read saw it, or the empty string - the log says what it knows
+/// rather than guessing, and a fleet read that has not answered yet is the only way here.
+fn role_of(app: &App, name: &str) -> String {
+    app.fleet_rows()
+        .iter()
+        .find(|row| row.name == name)
+        .map(|row| row.role.clone())
+        .unwrap_or_default()
+}
+
 /// Perform the roster's `autostart` declaration and arm its `standby` one, once, as the view
 /// comes up. The port of `cerebro--autostart`, less its vterm check, which has no counterpart.
 ///
 /// Returns the startup notice, or `None` when the roster declared neither.
+#[allow(clippy::too_many_arguments)]
 fn arm_and_autostart(
     app: &mut App,
     host: &mut SessionHost,
     ledger: &mut StartLedger,
+    logger: &mut Logger,
     paths: &ReaderPaths,
     commands: &dyn CommandRunner,
     complaints: &[String],
@@ -661,15 +857,32 @@ fn arm_and_autostart(
                 // A declaration, not a trigger: it starts whatever the countdown said, and says
                 // the failures behind it do not count.
                 ledger.clear_failures(name);
+                // A declaration is the navigator's own act, which is what `by` says: two words
+                // and only two, byte-parity with the file Emacs has written since May.
+                log_start(logger, name, &role_of(app, name), None, now);
                 started.push(name.clone());
             }
             // A start that fails is reported and does not stop the others.
-            Err(error) => host.note_refusal(name, &error.to_string(), now),
+            Err(error) => {
+                logger.error(&format!("start {name}"), &error.to_string(), now);
+                host.note_refusal(name, &error.to_string(), now);
+            }
         }
     }
     for name in &standby {
         app.armed.insert(name.clone());
         ledger.note_armed(name, now);
+        // Only for the STANDBY half of the declaration: an autostarted name gets its `start` line
+        // instead, exactly as elisp writes it.
+        logger.write(
+            log::Event::Arm,
+            now,
+            &[
+                ("agent", serde_json::Value::from(name.as_str())),
+                ("role", serde_json::Value::from(role_of(app, name))),
+                ("by", serde_json::Value::from("roster")),
+            ],
+        );
     }
     startup_notice(&started, &standby, &complaints)
 }
@@ -724,6 +937,7 @@ fn run<B: Backend, E: Events>(
     controller: &mut SupervisorController,
     host: &mut SessionHost,
     ledger: &mut StartLedger,
+    logger: &mut Logger,
     paths: &ReaderPaths,
     spacing: &BTreeMap<String, u64>,
     clock: impl Fn() -> DateTime<Utc>,
@@ -750,6 +964,7 @@ where
             app.set_session_view(view);
             host.flush_returns(Instant::now());
             app.set_exits(host.exits());
+            log_exits(logger, host, now);
         }
         terminal.draw(|frame| ui::draw(frame, app, now))?;
 
@@ -778,13 +993,23 @@ where
         // Each answer updates only its own pane. Neither poll blocks.
         if let Some(result) = fleet_worker.poll() {
             let succeeded = result.is_ok();
+            match &result {
+                // One successful fleet read proves both halves ran, so it clears both contexts.
+                Ok(_) => {
+                    logger.clear_error("fleet");
+                    logger.clear_error("roster");
+                }
+                Err(error) => {
+                    logger.error(&log::reader_context("fleet", error), &error.to_string(), clock())
+                }
+            }
             app.finish_refresh(result, clock());
             // On the snapshot just applied, and only when the read succeeded: a failed read says
             // nothing about any agent, and acting on the last good one would end a session on
             // evidence five seconds stale.
             if succeeded {
                 let now = clock();
-                supervise(app, host, ledger, paths, now, Instant::now());
+                supervise(app, host, ledger, logger, paths, now, Instant::now());
                 // After `supervise` and not before: a session ended on this tick must not also be
                 // started on it, and a row restated by the next read is what makes that true.
                 let roster: Vec<RosterEntry> = app
@@ -796,10 +1021,16 @@ where
                         kind: row.kind,
                     })
                     .collect();
-                start_due(app, host, ledger, paths, spacing, &roster, now);
+                start_due(app, host, ledger, logger, paths, spacing, &roster, now);
             }
         }
         if let Some(result) = work_worker.poll() {
+            match &result {
+                Ok(_) => logger.clear_error("work"),
+                Err(error) => {
+                    logger.error(&log::reader_context("work", error), &error.to_string(), clock())
+                }
+            }
             app.finish_work_refresh(result, clock());
         }
         // The `gh` answer draws nothing; it is polled for the same reason it is read at all, so
@@ -811,6 +1042,18 @@ where
         // declaration that cannot be read says nothing about the fleet or the board.
         if let Some(answer) = supervisor_worker.poll() {
             let mode = controller.apply(answer);
+            // Before anything else this tick writes: a view that has just gone read-only must
+            // have written nothing further, and one that has just taken the checkout may.
+            logger.set_enabled(mode.may_end());
+            match controller.diagnostic() {
+                // Already one-per-fault by construction (`clear_diagnostic`); `Logger::error`'s
+                // own dedupe is what keeps a persisting one to a single line.
+                Some(diagnostic) => {
+                    let diagnostic = diagnostic.to_string();
+                    logger.error("supervision", &diagnostic, clock());
+                }
+                None => logger.clear_error("supervision"),
+            }
             app.set_supervision(mode);
         }
         // What makes `reconcile_supervision`'s drain branch reachable: a declaration that moved
@@ -825,7 +1068,8 @@ where
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    let action = route_key(key, app, host, ledger, paths, viewport_lines, clock());
+                    let action =
+                        route_key(key, app, host, ledger, logger, paths, viewport_lines, clock());
                     if action == AppAction::Quit {
                         break;
                     }
@@ -879,6 +1123,7 @@ fn route_key(
     app: &mut App,
     host: &mut SessionHost,
     ledger: &mut StartLedger,
+    logger: &mut Logger,
     paths: &ReaderPaths,
     viewport_lines: usize,
     now: DateTime<Utc>,
@@ -923,7 +1168,7 @@ fn route_key(
             // A notice is transient exactly as it is under `on_key`: the keystroke that reads it
             // is the one that clears it, and this key may then write its own.
             app.notice = None;
-            return lifecycle_key(c, app, host, ledger, paths, now);
+            return lifecycle_key(c, app, host, ledger, logger, paths, now);
         }
     }
     let action = app.on_key(key, viewport_lines);
@@ -941,11 +1186,13 @@ fn route_key(
 ///
 /// Each of the three sets at most one notice, and each ends with `RefreshFleet` when it changed
 /// something - a started or killed agent must not wait up to five seconds to appear.
+#[allow(clippy::too_many_arguments)]
 fn lifecycle_key(
     key: char,
     app: &mut App,
     host: &mut SessionHost,
     ledger: &mut StartLedger,
+    logger: &mut Logger,
     paths: &ReaderPaths,
     now: DateTime<Utc>,
 ) -> AppAction {
@@ -967,11 +1214,16 @@ fn lifecycle_key(
                         // count down against a start that never happened.
                         ledger.note_started(&name, now, None);
                         ledger.clear_failures(&name);
+                        log_start(logger, &name, &role_of(app, &name), None, now);
                         app.set_notice(line);
                     }
                     // The red Session pane is the report; a gold line saying the same thing twice
-                    // is not.
-                    Err(error) => host.note_refusal(&name, &error.to_string(), now),
+                    // is not. A refusal of the KEY is not an error and writes nothing; a launch
+                    // that was attempted and failed is one.
+                    Err(error) => {
+                        logger.error(&format!("start {name}"), &error.to_string(), now);
+                        host.note_refusal(&name, &error.to_string(), now);
+                    }
                 }
                 AppAction::RefreshFleet
             }
@@ -1482,7 +1734,7 @@ mod main_tests {
         // event source running out.
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
 
         assert!(!app.quit, "the session this case hosts is what refuses the quit");
         assert!(app.quit_refusal.is_some(), "and the refusal pane says so");
@@ -1504,7 +1756,7 @@ mod main_tests {
         let mut events = ReplayedEvents::new(vec![ctrl(KeyCode::Char('c'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -1542,7 +1794,7 @@ mod main_tests {
         let mut events = ReplayedEvents::new(vec![key(KeyCode::Down), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
         assert!(app.quit, "and q still quits: a retained pass does not hold the keyboard");
@@ -1562,7 +1814,7 @@ mod main_tests {
         ]);
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
         let text = echoed(&mut host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
         assert!(text.contains("^[[201~"), "and closed: {text:?}");
@@ -1574,7 +1826,7 @@ mod main_tests {
             ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -1590,11 +1842,21 @@ mod main_tests {
         let (worker_handle, mut controller) = supervision();
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
+            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now);
         assert_eq!(
             controller.hosted_sessions, 1,
             "the drain branch of `reconcile_supervision` is reachable for the first time"
         );
+    }
+
+    /// A logger pointed at a root that does not exist, and never enabled.
+    ///
+    /// Two independent reasons it writes nothing: `Logger::new` starts disabled, and the root
+    /// cannot be created. A test that wants the log asserts over its OWN `tempfile::tempdir()`;
+    /// no test in this crate may hand a logger a path it did not create, or it would append
+    /// fabricated starts and exits to the live file the navigator reads.
+    fn test_logger() -> Logger {
+        Logger::new(std::path::Path::new("/nonexistent/cb-kcs.4.4"))
     }
 
     fn nowhere() -> (ReaderPaths, Programs) {
@@ -1773,7 +2035,7 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
-                &mut cerebro_tui::triggers::StartLedger::default(),
+                &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(),
                 &nowhere().0,
                 &std::collections::BTreeMap::new(),
                 Utc::now,
@@ -1804,7 +2066,7 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
-                &mut cerebro_tui::triggers::StartLedger::default(),
+                &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(),
                 &nowhere().0,
                 &std::collections::BTreeMap::new(),
                 Utc::now,
@@ -1836,7 +2098,7 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
-                &mut cerebro_tui::triggers::StartLedger::default(),
+                &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(),
                 &nowhere().0,
                 &std::collections::BTreeMap::new(),
                 Utc::now,
@@ -1879,7 +2141,7 @@ mod main_tests {
                 &supervision().0,
                 &mut supervision().1,
                 &mut SessionHost::default(),
-                &mut cerebro_tui::triggers::StartLedger::default(),
+                &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(),
                 &nowhere().0,
                 &std::collections::BTreeMap::new(),
                 Utc::now,
@@ -1924,7 +2186,7 @@ mod main_tests {
         ]);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work, &gh_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
         assert!(app.quit, "and the last of them still quit");
@@ -2013,7 +2275,7 @@ mod main_tests {
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
         assert_eq!(
@@ -2065,7 +2327,7 @@ mod main_tests {
         ]);
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");
@@ -2103,7 +2365,7 @@ mod main_tests {
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &nowhere().0, &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
     }
@@ -2256,7 +2518,7 @@ mod main_tests {
         keys: Vec<crossterm::event::KeyEvent>,
     ) {
         for key in keys {
-            route_key(key, app, host, &mut StartLedger::default(), paths, 10, Utc::now());
+            route_key(key, app, host, &mut StartLedger::default(), &mut test_logger(), paths, 10, Utc::now());
         }
     }
 
@@ -2274,7 +2536,7 @@ mod main_tests {
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(),
                 &gh_worker(),
-            &supervision().0, &mut supervision().1, host, &mut ledger, paths,
+            &supervision().0, &mut supervision().1, host, &mut ledger, &mut test_logger(), paths,
             &std::collections::BTreeMap::new(), Utc::now);
     }
 
@@ -2341,7 +2603,7 @@ mod main_tests {
             vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 31, now)],
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
 
         assert!(!host.supervisable("Cyclops"), "the session was ended");
         assert!(
@@ -2369,7 +2631,7 @@ mod main_tests {
             vec![stood_row("Storm", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 10, now)],
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
 
         assert!(!host.supervisable("Storm"));
         assert!(!flag.exists(), "the next session under that name must not inherit the flag");
@@ -2391,7 +2653,7 @@ mod main_tests {
             vec![stood_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 5_000, now)],
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
 
         assert!(state.exists(), "somebody else's session is theirs to end");
         assert_eq!(app.notice, None);
@@ -2412,7 +2674,7 @@ mod main_tests {
             vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Waiting, 5_000, now)],
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
 
         assert!(host.supervisable("Cyclops"), "a read-only view ends nothing");
         assert!(cerebro_tui::lifecycle::state_file_path(&paths, "Cyclops").exists());
@@ -2441,7 +2703,7 @@ mod main_tests {
                     cerebro_tui::model::RowState::Waiting, 31, now),
             ],
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
 
         // Ending is what ends the drain, so it still happens.
         assert!(!host.supervisable("Cyclops"));
@@ -2473,14 +2735,14 @@ mod main_tests {
         };
         let mut app = lifecycle_app(supervising(), asking(16 * 60));
         let at = Instant::now();
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, at);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
         assert!(app.nudged.contains("Cyclops"));
         assert_eq!(app.notice.as_deref(), Some("Cyclops was asked to hand its question back."));
 
         // The return is sent separately, and only once it is due.
         host.flush_returns(at);
         app.notice = None;
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, at);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
         assert_eq!(app.notice, None, "one nudge per question, not one per tick");
         host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
 
@@ -2511,12 +2773,12 @@ mod main_tests {
                 cerebro_tui::model::RowState::Working, 1, now)]),
             now,
         );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, at);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
         assert!(app.nudged.is_empty(), "a name leaves the set as soon as it stops asking");
 
         app.finish_refresh(Ok(asking(16 * 60)), now);
         app.notice = None;
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, at);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
         assert_eq!(app.notice.as_deref(), Some("Cyclops was asked to hand its question back."));
     }
 
@@ -2873,7 +3135,7 @@ mod main_tests {
         );
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(host.is_live("Xavier"), "the standby planner was started");
         assert!(app.armed.contains("Xavier"), "and stays armed");
@@ -2906,7 +3168,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
 
         // The spacing is read INSIDE the loop, so the second planner already sees the first.
         assert!(host.is_live("Xavier"));
@@ -2932,7 +3194,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Xavier"), "a flagged name is never started, whatever its trigger");
         assert!(
@@ -2956,7 +3218,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Xavier"), "no board, no starts");
     }
@@ -2980,10 +3242,10 @@ mod main_tests {
             now,
         );
 
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
         assert!(app.armed.is_empty(), "a drain keeps no promise it will not keep");
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
         assert!(!host.is_live("Xavier"));
     }
 
@@ -3054,7 +3316,7 @@ mod main_tests {
             now,
         );
 
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &paths, now, Instant::now());
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
 
         assert!(!app.armed.contains("Cyclops"), "a retire disarms");
         assert!(!cerebro_tui::lifecycle::stop_flag_path(&paths, "Cyclops").exists());
@@ -3082,7 +3344,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
         assert!(!host.is_live("Xavier"));
         assert!(
             host.exits().contains_key("Xavier"),
@@ -3102,13 +3364,300 @@ mod main_tests {
         // no launcher, so what is asserted is that no SECOND attempt was made: a retry would
         // replace the refusal with one stamped `later`.
         let later = now + chrono::Duration::seconds(60);
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, later);
         match host.sync(Some("Xavier"), 24, 80, later) {
             cerebro_tui::session::SessionView::Refused { at, .. } => {
                 assert_eq!(at, now, "the row was not started again");
             }
             other => panic!("expected the refusal to stand, got {other:?}"),
         }
+    }
+
+    // --- cb-kcs.4.4: the two logs -------------------------------------------------------------
+    //
+    // Every case here builds its own root and points the logger at it. NONE of them may reach the
+    // repository's own `.cerebro/state`.
+
+    /// An enabled logger over ROOT, which is also the fixture's shared root.
+    fn logging(root: &std::path::Path) -> Logger {
+        let mut logger = Logger::new(root);
+        logger.set_enabled(true);
+        logger
+    }
+
+    fn log_lines(root: &std::path::Path, base: &str) -> Vec<String> {
+        match std::fs::read_to_string(cerebro_tui::log_file(root, base, None)) {
+            Ok(text) => text.lines().map(str::to_string).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// The one line whose `"event"` is EVENT, or a panic naming what was there instead.
+    fn one_line(root: &std::path::Path, base: &str, event: &str) -> String {
+        let wanted = format!(r#"{{"event":"{event}","#);
+        let all = log_lines(root, base);
+        let mut found: Vec<String> =
+            all.iter().filter(|line| line.starts_with(&wanted)).cloned().collect();
+        assert_eq!(found.len(), 1, "expected exactly one {event} line, got {all:#?}");
+        found.remove(0)
+    }
+
+    #[test]
+    fn a_start_the_trigger_decided_names_the_trigger_that_fired() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(short_buffer()),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), &roster, now);
+
+        assert!(host.is_live("Xavier"));
+        let line = one_line(dir.path(), "decisions", "start");
+        assert!(line.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2","by":"trigger""#), "{line}");
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
+    }
+
+    #[test]
+    fn a_start_the_navigator_asked_for_says_navigator() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![fleet_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Dead)],
+        );
+
+        route_key(ch('s'), &mut app, &mut host, &mut ledger, &mut logger, &paths, 10, now);
+
+        assert!(host.is_live("Rogue"));
+        let line = one_line(dir.path(), "decisions", "start");
+        assert!(
+            line.contains(r#""agent":"Rogue","role":"implementer","reason":null,"by":"navigator""#),
+            "{line}"
+        );
+        host.kill(&paths, "Rogue");
+        settle_gone(&mut host, "Rogue");
+    }
+
+    #[test]
+    fn the_roster_arms_the_standby_half_and_logs_nothing_for_the_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        write_roster(dir.path(), "Cyclops", "Xavier\nBeast");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = App::with_supervision(supervising());
+
+        arm_and_autostart(&mut app, &mut host, &mut ledger, &mut logger, &paths, &[], now);
+
+        let arms: Vec<String> = log_lines(dir.path(), "decisions")
+            .into_iter()
+            .filter(|line| line.starts_with(r#"{"event":"arm","#))
+            .collect();
+        assert_eq!(arms.len(), 2, "one per standby name, and none for the autostart one: {arms:#?}");
+        assert!(arms[0].contains(r#""agent":"Xavier""#) && arms[0].contains(r#""by":"roster""#));
+        assert!(arms[1].contains(r#""agent":"Beast""#));
+        // And the autostarted name got a `start` line instead, as the navigator's own act.
+        let start = one_line(dir.path(), "decisions", "start");
+        assert!(start.contains(r#""agent":"Cyclops""#) && start.contains(r#""by":"navigator""#), "{start}");
+        host.kill(&paths, "Cyclops");
+        settle_gone(&mut host, "Cyclops");
+    }
+
+    /// A row whose pass is over and one under a stop flag: both are decisions, and both are
+    /// written with the five fields elisp writes.
+    #[test]
+    fn ending_and_retiring_are_both_written_down() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false).unwrap();
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Storm", false).unwrap();
+        cerebro_tui::lifecycle::write_stop_flag(&paths, "Storm").unwrap();
+        let mut waiting = fleet_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
+            cerebro_tui::model::RowState::Waiting);
+        waiting.since = Some(now - chrono::Duration::seconds(600));
+        waiting.bead = Some("cb-kcs.4.4".to_string());
+        let mut flagged = fleet_row("Storm", cerebro_tui::model::AgentKind::Implementer,
+            cerebro_tui::model::RowState::Idle);
+        flagged.since = Some(now);
+        let mut app = lifecycle_app(supervising(), vec![waiting, flagged]);
+
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
+            &mut logger, &paths, now, Instant::now());
+
+        let end = one_line(dir.path(), "decisions", "end");
+        assert!(
+            end.contains(r#""agent":"Rogue","role":"implementer","state":"waiting","bead":"cb-kcs.4.4","stop_flag":null"#),
+            "{end}"
+        );
+        let retire = one_line(dir.path(), "decisions", "retire");
+        assert!(
+            retire.contains(r#""agent":"Storm","role":"implementer","state":"idle","bead":null,"stop_flag":"set""#),
+            "{retire}"
+        );
+    }
+
+    #[test]
+    fn an_exit_is_written_for_an_ending_this_view_did_not_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+
+        // A child that ended on its own, and one this view ended: both are reaped, one is logged.
+        let paths = scratch(dir.path(), "exit 3");
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false).unwrap();
+        let paths_long = scratch(&dir.path().join("long"), "sleep 5");
+        cerebro_tui::lifecycle::start(&mut host, &paths_long, "Storm", false).unwrap();
+        host.end(&paths_long, "Storm");
+        settle_gone(&mut host, "Rogue");
+        settle_gone(&mut host, "Storm");
+
+        log_exits(&mut logger, &mut host, now);
+
+        let exit = one_line(dir.path(), "decisions", "exit");
+        assert!(
+            exit.contains(r#""agent":"Rogue","code":"3","abnormal":true,"last_line":null"#),
+            "the child that died on its own, with `abnormal` true and never false: {exit}"
+        );
+        assert!(!exit.contains("Storm"), "and nothing at all for the one this view ended");
+    }
+
+    #[test]
+    fn a_name_given_up_on_is_written_to_both_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        // Four failed starts already, and the last one long enough ago that the backoff has run
+        // out: the fifth is the one that gives up.
+        // The end is BEFORE the start: a launch that never became a session leaves the previous
+        // pass's end behind it, which is exactly what `start_failed` reads.
+        ledger.note_ended("Xavier", now - chrono::Duration::seconds(3700));
+        ledger.note_started("Xavier", now - chrono::Duration::seconds(3600), None);
+        ledger.set_failures("Xavier", 4);
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(short_buffer()),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), &roster, now);
+
+        assert!(!host.is_live("Xavier"), "the fifth start is not attempted");
+        let gave_up = one_line(dir.path(), "decisions", "give-up");
+        assert!(
+            gave_up.contains(r#""agent":"Xavier","role":"planner","failed_starts":5"#),
+            "the count INCLUDES the start that just failed: {gave_up}"
+        );
+        let error = one_line(dir.path(), "errors", "error");
+        assert!(error.contains(r#""context":"start Xavier""#), "{error}");
+        assert!(
+            error.contains(&cerebro_tui::triggers::give_up_notice("Xavier", 5)),
+            "the same sentence the row and the notice carry: {error}"
+        );
+    }
+
+    #[test]
+    fn an_evaluation_records_what_the_trigger_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        // Two planners, so the second is held by role-start spacing while the first starts.
+        let roster = planner_roster(&["Xavier", "Beast"]);
+        let mut spacing = BTreeMap::new();
+        spacing.insert("planner".to_string(), 30);
+        let mut app = standby_app(
+            supervising(),
+            vec![
+                planner_row("Xavier", cerebro_tui::model::RowState::Dead),
+                planner_row("Beast", cerebro_tui::model::RowState::Dead),
+            ],
+            Some(short_buffer()),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &spacing, &roster, now);
+
+        let lines = log_lines(dir.path(), "decisions");
+        let evaluations: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.starts_with(r#"{"event":"evaluate","#))
+            .collect();
+        assert_eq!(evaluations.len(), 2, "one per armed row per tick: {lines:#?}");
+        // The seventeen fields, in order, with the nulls that are nulls: asserted as raw
+        // substrings, because both the ORDER and the null-not-false shape are what is pinned and
+        // a parse would prove neither.
+        let xavier = evaluations[0];
+        assert!(xavier.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2""#), "{xavier}");
+        assert!(xavier.contains(r#""planned":0,"planned_ids":null,"implementers":0,"p0_unplanned":null"#), "{xavier}");
+        assert!(xavier.contains(r#""p4_unranked":1,"merged_unverified":0,"stale_verdicts":0"#), "{xavier}");
+        assert!(xavier.contains(r#""held_by_guard":null,"spaced_out":null,"spacing":30"#), "{xavier}");
+        assert!(xavier.contains(r#""backed_off":null,"stop_flag":null,"disarmed":null,"failed_starts":0}"#), "{xavier}");
+        // And the one the spacing held says so, on the same line as the number that did it.
+        let beast = evaluations[1];
+        assert!(beast.contains(r#""agent":"Beast""#) && beast.contains(r#""spaced_out":true,"spacing":30"#), "{beast}");
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
+    }
+
+    /// A read-only view decides nothing, so it records nothing - not even a reader failure.
+    #[test]
+    fn a_read_only_view_writes_no_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        // The production wiring: `Logger::new` starts disabled, and only `may_end()` enables it.
+        let mut logger = Logger::new(dir.path());
+        let read_only = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                cerebro_tui::supervisor::SupervisorKind::Emacs,
+            ),
+        );
+        logger.set_enabled(read_only.may_end());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = planner_roster(&["Xavier"]);
+        let mut app = standby_app(
+            read_only,
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(short_buffer()),
+            now,
+        );
+
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
+            &mut logger, &paths, now, Instant::now());
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), &roster, now);
+        logger.error("work", "bd: database is locked", now);
+
+        assert!(log_lines(dir.path(), "decisions").is_empty(), "not a decision");
+        assert!(log_lines(dir.path(), "errors").is_empty(), "and not an error either");
     }
 
     #[test]
@@ -3130,6 +3679,7 @@ mod main_tests {
             &mut app,
             &mut host,
             &mut ledger,
+            &mut test_logger(),
             &paths,
             &unreadable,
             &[],
@@ -3176,6 +3726,7 @@ mod main_tests {
             &mut app,
             &mut host,
             &mut ledger,
+            &mut test_logger(),
             &paths,
             &declaration,
             &[],
@@ -3288,7 +3839,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(),
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(),
                   &outside_roster("Moira", "user-feedback"), now);
 
         assert!(host.is_live("Moira"), "the standby row was started");
@@ -3313,7 +3864,7 @@ mod main_tests {
         // No `gh` answer at all, and nothing on the board: the clock is its whole trigger.
         ledger.note_ended("Forge", now - chrono::Duration::minutes(60));
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(),
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(),
                   &outside_roster("Forge", "architect"), now);
 
         assert!(host.is_live("Forge"));
@@ -3341,7 +3892,7 @@ mod main_tests {
 
         let mut roster = outside_roster("Moira", "user-feedback");
         roster.extend(outside_roster("Forge", "architect"));
-        start_due(&mut app, &mut host, &mut ledger, &paths, &std::collections::BTreeMap::new(),
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(),
                   &roster, now);
 
         assert!(!host.is_live("Moira"), "nothing moved and the floor is not due");
@@ -3394,7 +3945,7 @@ mod main_tests {
         // back.
         let (mut app, mut ledger) = backing_off(1, 100, short_buffer(), now);
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
         assert!(host.is_live("Xavier"), "one failure waits nothing at all");
         assert_eq!(ledger.failures("Xavier"), 2, "counted before the launch");
         host.kill(&paths, "Xavier");
@@ -3406,7 +3957,7 @@ mod main_tests {
             Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
             later,
         );
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, later);
         assert!(!host.is_live("Xavier"), "the second failure is backed off");
         assert_eq!(ledger.failures("Xavier"), 2, "and the count is not advanced by a skip");
         assert_eq!(
@@ -3446,7 +3997,7 @@ mod main_tests {
         // An empty board: the planner's condition is false, and the countdown wins anyway.
         let (mut app, mut ledger) = backing_off(3, 60, empty_board(), now);
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
 
         assert_eq!(
             app.standby_labels.get("Xavier").map(String::as_str),
@@ -3466,7 +4017,7 @@ mod main_tests {
         // Four failures behind it and the fourth's ten minutes counted out.
         let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
 
         assert!(!host.is_live("Xavier"), "no sixth start is attempted");
         assert!(!app.armed.contains("Xavier"), "the name left the armed set");
@@ -3487,7 +4038,7 @@ mod main_tests {
 
         // And it stays given up: a later tick starts nothing, the row being disarmed.
         let later = now + chrono::Duration::seconds(600);
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, later);
         assert!(!host.is_live("Xavier"));
     }
 
@@ -3501,7 +4052,7 @@ mod main_tests {
         let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
 
         // No fleet read in between: a row promising a retry the view has just decided against is
         // the one thing this must never leave on the screen.
@@ -3519,7 +4070,7 @@ mod main_tests {
         // A pass ran and ended: the three before it do not count.
         ledger.note_ended("Xavier", now - chrono::Duration::seconds(50));
 
-        start_due(&mut app, &mut host, &mut ledger, &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
 
         assert!(host.is_live("Xavier"), "nothing is owed after a pass that ran");
         assert_eq!(ledger.failures("Xavier"), 0);
@@ -3549,6 +4100,7 @@ mod main_tests {
             &mut app,
             &mut host,
             &mut ledger,
+            &mut test_logger(),
             &paths,
             10,
             now,

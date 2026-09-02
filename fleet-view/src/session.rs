@@ -590,10 +590,6 @@ pub struct Retained {
     pub at: DateTime<Utc>,
 }
 
-/// Every session this process is hosting, plus every pass it has retained, by agent name.
-///
-/// `main` owns it. `App` never does: `App` is what the renderer reads, and a struct holding
-/// process handles is not something `ui::draw` should be able to reach.
 /// A stop this view performed, remembered until the child is reaped, so the retained pass says
 /// what happened rather than what the pty crate could see.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -604,6 +600,10 @@ enum Deliberate {
     ByView,
 }
 
+/// Every session this process is hosting, plus every pass it has retained, by agent name.
+///
+/// `main` owns it. `App` never does: `App` is what the renderer reads, and a struct holding
+/// process handles is not something `ui::draw` should be able to reach.
 #[derive(Default, Debug)]
 pub struct SessionHost {
     live: HashMap<String, Session>,
@@ -1125,6 +1125,44 @@ mod tests {
             text_of(&lines).iter().any(|line| line == "Cyclops finished its pass; the view ended it."),
             "the transcript is kept, and closes with the view's own sentence"
         );
+    }
+
+    /// The reap is the only place a verdict is recorded, and a start is the only thing that
+    /// clears one - a verdict that outlived the run that produced it would sit on a row whose
+    /// session is perfectly healthy.
+    #[test]
+    fn a_reaped_child_leaves_a_verdict_until_it_starts_again() {
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell("exit 2", 24, 80));
+        settle_host(&mut host, "Storm", |view| matches!(view, SessionView::Refused { .. }));
+        assert_eq!(host.last_exit("Storm"), Some(crate::lifecycle::LastExit::Refused));
+
+        host.insert("Rogue", shell("exit 101", 24, 80));
+        settle_host(&mut host, "Rogue", |view| matches!(view, SessionView::Ended { .. }));
+        assert_eq!(host.last_exit("Rogue"), Some(crate::lifecycle::LastExit::Code(101)));
+        assert_eq!(host.exits().len(), 2, "one per name that has had an abnormal exit");
+
+        // A clean exit is no verdict at all: a blank BEAD column is what "nobody started it"
+        // looks like, and that is the truth for a pass that ended with status 0.
+        host.insert("Gambit", shell("exit 0", 24, 80));
+        settle_host(&mut host, "Gambit", |view| matches!(view, SessionView::Ended { .. }));
+        assert_eq!(host.last_exit("Gambit"), None);
+
+        // And neither is this view's own doing: an end reaps as `ByView`, a kill as a signal.
+        let paths = ReaderPaths {
+            consumer_root: std::path::PathBuf::from("/nonexistent"),
+            shared_root: std::path::PathBuf::from("/nonexistent"),
+            scripts_dir: std::path::PathBuf::from("/nonexistent"),
+        };
+        host.insert("Cyclops", shell("while :; do sleep 1; done", 24, 80));
+        assert!(host.end(&paths, "Cyclops"));
+        settle_host(&mut host, "Cyclops", |view| matches!(view, SessionView::Ended { .. }));
+        assert_eq!(host.last_exit("Cyclops"), None);
+
+        // Starting again is what clears a verdict.
+        host.insert("Storm", shell("sleep 5", 24, 80));
+        assert_eq!(host.last_exit("Storm"), None);
+        assert_eq!(host.exits().len(), 1, "only Rogue's verdict is left");
     }
 
     #[test]

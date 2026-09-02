@@ -328,9 +328,6 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     result
 }
 
-/// The whole loop, generic over its terminal and its event source so the cases below can drive it
-/// without taking over the developer's own terminal.
-#[allow(clippy::too_many_arguments)]
 /// Act on what `lifecycle::supervise_action` says about each row of the fleet snapshot that was
 /// just applied - the three things this view does on its own, from what a hosted agent wrote in
 /// its state file.
@@ -418,6 +415,9 @@ fn supervise(
     }
 }
 
+/// The whole loop, generic over its terminal and its event source so the cases below can drive it
+/// without taking over the developer's own terminal.
+#[allow(clippy::too_many_arguments)]
 fn run<B: Backend, E: Events>(
     terminal: &mut Terminal<B>,
     events: &mut E,

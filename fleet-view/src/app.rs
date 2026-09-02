@@ -440,13 +440,13 @@ impl App {
         self.quit_refusal = Some(live);
     }
 
-    /// Put TEXT in the notice slot. The one writer other than `reconcile_selection`; `on_key`
-    /// remains the one place it is cleared.
     /// Replace the verdicts. One call per loop iteration, beside `set_session_view`.
     pub fn set_exits(&mut self, exits: BTreeMap<String, LastExit>) {
         self.exits = exits;
     }
 
+    /// Put TEXT in the notice slot. The one writer other than `reconcile_selection`; `on_key`
+    /// remains the one place it is cleared.
     pub fn set_notice(&mut self, text: String) {
         self.notice = Some(text);
     }

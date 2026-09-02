@@ -482,8 +482,14 @@ pub struct App {
     fleet_viewport: usize,
     last_fleet_request: Option<Instant>,
     last_work_request: Option<Instant>,
-    /// When the board was last ASKED, in wall-clock terms. See `begin_work_refresh`.
+    /// When the board was last ASKED, in wall-clock terms - for the read whose value the pane
+    /// still holds. See `begin_work_refresh`.
     work_requested_at: Option<DateTime<Utc>>,
+    /// The in-flight read's request time, until it answers. Promoted into `work_requested_at`
+    /// only on SUCCESS, which is `cerebro--beads-read-at`'s own rule
+    /// (`emacs/cerebro.el:5588-5596`): a `Stale` pane goes on handing out its last good buckets,
+    /// so a request time moved by a read that failed would pair old ids with a young age.
+    work_request_pending: Option<DateTime<Utc>>,
     /// What `gh` last said. A third `Pane<T>` rather than a field of its own, because the four
     /// content states ARE the staleness protocol the cadence triggers need - see
     /// `triggers::GhAnswer`. It is never rendered: no widget draws it, and it takes no Tab stop.
@@ -575,6 +581,7 @@ impl App {
             last_fleet_request: None,
             last_work_request: None,
             work_requested_at: None,
+            work_request_pending: None,
             gh: Pane::default(),
             last_gh_request: None,
             sweeps: Pane::default(),
@@ -951,14 +958,15 @@ impl App {
 
     /// The work pane's counterpart of `begin_refresh`, on its own slot and its own clock.
     ///
-    /// `now` is kept as `work_requested_at`: the wall-clock moment the board was ASKED. The
-    /// triage guard needs that and not `Pane::read_at`, which is when the answer arrived - later,
-    /// so an arrival-based age is smaller and passes the guard in cases the rule refuses
-    /// (`cerebro--beads-read-at`'s own reason, `emacs/cerebro.el:5520-5527`).
+    /// `now` is the wall-clock moment the board was ASKED, held pending until the read answers.
+    /// The triage guard needs that and not `Pane::read_at`, which is when the answer arrived -
+    /// later, so an arrival-based age is smaller and passes the guard in cases the rule refuses
+    /// (`cerebro--beads-read-at`'s own reason, `emacs/cerebro.el:5520-5527`). It reaches
+    /// `work_requested_at` in `finish_work_refresh`, and only on success.
     pub fn begin_work_refresh(&mut self, at: Instant, now: DateTime<Utc>) -> bool {
         if self.work.begin() {
             self.last_work_request = Some(at);
-            self.work_requested_at = Some(now);
+            self.work_request_pending = Some(now);
             true
         } else {
             false
@@ -1137,12 +1145,12 @@ impl App {
         }
         match replacement {
             Some(new) => {
-                self.notice = Some(format!("{lost} is no longer on the roster. Selected {new}."));
+                self.set_notice(format!("{lost} is no longer on the roster. Selected {new}."));
                 self.selected = Some(new);
             }
             None => {
                 self.selected = None;
-                self.notice = Some(format!("{lost} is no longer on the roster."));
+                self.set_notice(format!("{lost} is no longer on the roster."));
             }
         }
     }
@@ -1185,18 +1193,26 @@ impl App {
         self.follow_selection(line, self.fleet_viewport);
     }
 
-    /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
-    /// cannot answer must not make the fleet rows beside it look stale.
-    /// When the board was last ASKED, or `None` before it has been.
+    /// When the board was last ASKED, for the read whose value the pane still holds, or `None`
+    /// before one has answered.
     pub fn work_requested_at(&self) -> Option<DateTime<Utc>> {
         self.work_requested_at
     }
 
+    /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
+    /// cannot answer must not make the fleet rows beside it look stale.
     pub fn finish_work_refresh(
         &mut self,
         result: Result<WorkBuckets, ReadError>,
         at: DateTime<Utc>,
     ) {
+        // The request time is promoted WITH the value and never ahead of it: a failed read leaves
+        // `work_requested_at` pointing at the request that produced the buckets still held, so
+        // the triage guard can never measure old ids against a young age.
+        if result.is_ok() {
+            self.work_requested_at = self.work_request_pending;
+        }
+        self.work_request_pending = None;
         self.work.finish(result, at);
     }
 
@@ -2264,6 +2280,49 @@ mod tests {
         let answered = asked + chrono::Duration::seconds(4);
         app.finish_work_refresh(Ok(WorkBuckets::default()), answered);
         assert_eq!(app.work_requested_at(), Some(asked), "the earlier of the two");
+    }
+
+    /// The request time is promoted WITH the value and never ahead of it
+    /// (`cerebro--beads-read-at`'s own rule, `emacs/cerebro.el:5588-5596`).
+    ///
+    /// A `Stale` pane still hands its last good buckets to `triage_tell`, so a request time
+    /// stamped by a read that then FAILED would pair old ids with a young age - and the triage
+    /// guard, which exists to prove the figures postdate the agent's transition, would pass on a
+    /// set Cerebro had already ranked.
+    #[test]
+    fn a_failed_work_read_does_not_move_the_request_time() {
+        let mut app = App::new();
+        let asked = Utc::now();
+        assert!(app.begin_work_refresh(Instant::now(), asked));
+        app.finish_work_refresh(Ok(WorkBuckets::default()), asked);
+
+        let asked_again = asked + chrono::Duration::seconds(30);
+        assert!(app.begin_work_refresh(Instant::now(), asked_again));
+        app.finish_work_refresh(
+            Err(ReadError::Spawn { source: "bd".into(), message: "no".into() }),
+            asked_again,
+        );
+
+        assert!(app.work.content.value().is_some(), "the stale buckets are still rendered");
+        assert_eq!(
+            app.work_requested_at(),
+            Some(asked),
+            "the age belongs to the read that produced the ids still held"
+        );
+    }
+
+    /// A notice set on a successful fleet read must not inherit the previous line's colour.
+    #[test]
+    fn a_selection_notice_is_never_left_red() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![row("Storm"), row("Cyclops")]), Utc::now());
+        app.selected = Some("Storm".into());
+        app.set_error_notice("Worktree pruning stopped: exit status 2".into());
+
+        app.finish_refresh(Ok(vec![row("Cyclops")]), Utc::now());
+
+        assert!(app.notice.as_deref().is_some_and(|n| n.contains("no longer on the roster")));
+        assert!(!app.notice_urgent, "a roster change is news, not a fault");
     }
 
     #[test]

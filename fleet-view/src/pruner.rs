@@ -51,7 +51,7 @@ pub fn prune_action(live: bool, may_act: bool) -> PruneAction {
     }
 }
 
-/// The red header line, verbatim from `docs/ui/cb-kcs.5.2-pruner-and-triage.html`.
+/// The red header line, verbatim from the surface the navigator approved for cb-kcs.5.2.
 pub fn failure_notice(cause: &str) -> String {
     format!("Worktree pruning stopped: {cause}")
 }

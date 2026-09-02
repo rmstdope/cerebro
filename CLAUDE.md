@@ -599,8 +599,9 @@ took the string, so its throttle then holds for a line that never left the build
 `tests/lib/triage.cases` is the table both implementations answer, for `supervise.cases`' reason —
 both views go on triaging until the declaration moves. The pruner writes **no** decision event:
 starting and stopping a watcher is not a fleet decision, and its failures reach `errors.jsonl`
-under the context `prune` and nowhere else. The approved surface is
-`docs/ui/cb-kcs.5.2-pruner-and-triage.html`.
+under the context `prune` and nowhere else. Its surface was approved over three interview rounds
+on 2026-09-02 and arrives, like cb-kcs.2's, in a docs-only pull request of its own — so no path
+for it is written here, for the reason the paragraph above gives.
 
 **Exactly one view supervises, and `.cerebro/project.conf` says which** (`fleet_supervisor
 emacs|tui`, absent means `emacs`, so every consumer that predates the key is untouched).

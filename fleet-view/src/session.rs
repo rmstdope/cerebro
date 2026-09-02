@@ -7,10 +7,11 @@
 //! the Work pane's lines, which is what keeps `ui::draw` pure while a child writes continuously
 //! into a parser on another thread.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use chrono::{DateTime, Utc};
@@ -226,6 +227,8 @@ const KILL_SIGNAL: i32 = 1;
 pub enum Ended {
     Status(u32),
     Signal(i32),
+    /// This view ended the session on purpose - a finished pass, or a stop flag.
+    ByView,
 }
 
 /// The line the view writes under a finished pass, and whether it is a failure (red).
@@ -238,6 +241,12 @@ pub fn exit_line(name: &str, ended: Ended) -> (String, bool) {
         Ended::Status(0) => (format!("{name} finished with status 0."), false),
         Ended::Status(status) => (format!("{name} finished with status {status}."), true),
         Ended::Signal(signal) => (format!("{name} was killed by signal {signal}."), true),
+        // ONE sentence for both causes - a finished pass and a stop flag - and in the ordinary
+        // colour (the navigator's choice, Q3.1). Ending a session is technically a signal 9, so
+        // without this a pass that went perfectly would close in red saying it was killed; and
+        // the header notice has already said which of the two it was, so a second sentence here
+        // would be two rules to keep in step.
+        Ended::ByView => (format!("{name} finished its pass; the view ended it."), false),
     }
 }
 
@@ -571,11 +580,24 @@ impl Default for SessionView {
     }
 }
 
+/// `cerebro-return-delay`'s default (`emacs/cerebro.el:1976-1989`), 0.3 seconds.
+pub const RETURN_DELAY: Duration = Duration::from_millis(300);
+
 /// A pass that has ended, kept until that agent starts again.
 #[derive(Clone, Debug)]
 pub struct Retained {
     pub lines: Arc<Vec<Line<'static>>>,
     pub at: DateTime<Utc>,
+}
+
+/// A stop this view performed, remembered until the child is reaped, so the retained pass says
+/// what happened rather than what the pty crate could see.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Deliberate {
+    /// `k`: the navigator killed it, with this signal.
+    Killed(i32),
+    /// Supervision ended it: a finished pass, or a stop flag.
+    ByView,
 }
 
 /// Every session this process is hosting, plus every pass it has retained, by agent name.
@@ -588,9 +610,16 @@ pub struct SessionHost {
     retained: HashMap<String, Retained>,
     /// Launches this view attempted and the launcher refused, kept until that agent starts again.
     refused: HashMap<String, Retained>,
-    /// Names this view has signalled, and with what. The reap path trusts this over whatever the
-    /// pty crate says the status was, because this view is the one that sent the signal.
-    killed: HashMap<String, i32>,
+    /// Stops this view performed, remembered until the child is reaped. The reap path trusts
+    /// this over whatever the pty crate says the status was, because this view is the one that
+    /// stopped the child - and 0.9 renders a terminating signal as a NAME rather than a number.
+    ending: HashMap<String, Deliberate>,
+    /// Each name's last abnormal exit, kept by the host because the host is what reaps. Cleared
+    /// by a start, exactly as a retained pass is: a verdict that outlived the run that produced
+    /// it would sit on a row whose session is perfectly healthy.
+    exits: BTreeMap<String, crate::lifecycle::LastExit>,
+    /// Carriage returns owed to sessions that have been typed a line, and when each is due.
+    pending: Vec<(String, Instant)>,
 }
 
 impl SessionHost {
@@ -606,7 +635,8 @@ impl SessionHost {
     pub fn insert(&mut self, name: &str, session: Session) {
         self.retained.remove(name);
         self.refused.remove(name);
-        self.killed.remove(name);
+        self.ending.remove(name);
+        self.exits.remove(name);
         self.live.insert(name.to_string(), session);
     }
 
@@ -620,10 +650,51 @@ impl SessionHost {
     pub fn kill(&mut self, paths: &ReaderPaths, name: &str) -> bool {
         let Some(session) = self.live.get_mut(name) else { return false };
         let signal = session.signal();
-        self.killed.insert(name.to_string(), signal);
+        self.ending.insert(name.to_string(), Deliberate::Killed(signal));
         // A state file that outlives its session outlives its pid, and a pid is reused.
         let _ = crate::lifecycle::delete_state_file(paths, name);
         true
+    }
+
+    /// End NAME's session because the view decided to - a finished pass, or a stop flag.
+    ///
+    /// Kills the child, records that this view did it so the reap says so rather than reporting a
+    /// killing, and deletes the state file: a file naming a session that has been ended is a
+    /// claim about a pid that no longer exists, and pids are recycled. The stop flag is NOT
+    /// touched - clearing it belongs to a retire and to nothing else, and the caller does it.
+    ///
+    /// **The retained transcript is always kept** (the navigator's choice, Q4). `emacs/cerebro.el`
+    /// keeps a buffer for an interactive role and a `waiting` implementer and kills it for an
+    /// `idle` or `standby` one; that exception is deliberately not carried over. One rule instead
+    /// of two, and a transcript thrown away cannot be recovered.
+    ///
+    /// Returns whether there was a session to end.
+    pub fn end(&mut self, paths: &ReaderPaths, name: &str) -> bool {
+        let Some(session) = self.live.get_mut(name) else { return false };
+        session.signal();
+        self.ending.insert(name.to_string(), Deliberate::ByView);
+        let _ = crate::lifecycle::delete_state_file(paths, name);
+        true
+    }
+
+    /// NAME's last abnormal exit, if it had one.
+    pub fn last_exit(&self, name: &str) -> Option<crate::lifecycle::LastExit> {
+        self.exits.get(name).copied()
+    }
+
+    /// Every name's last abnormal exit, for `App::set_exits`. A small map cloned once per frame.
+    pub fn exits(&self) -> BTreeMap<String, crate::lifecycle::LastExit> {
+        self.exits.clone()
+    }
+
+    /// Is NAME a session this view may act on - live, and not one it has already stopped?
+    ///
+    /// `is_live` alone is not that: `end` and `kill` leave the child to be reaped by the next
+    /// `sync`, so a name stays `is_live` for a frame or two after this view has finished with it,
+    /// and a supervision loop reading `is_live` would end the same session on every tick and
+    /// announce it every time.
+    pub fn supervisable(&self, name: &str) -> bool {
+        self.is_live(name) && !self.ending.contains_key(name)
     }
 
     /// The names of EVERY live session, in ROSTER order first: the quit-refusal pane names them,
@@ -672,6 +743,40 @@ impl SessionHost {
         }
     }
 
+    /// Send TEXT to NAME's session now, and its carriage return `RETURN_DELAY` later.
+    ///
+    /// Two writes, not one, and this is not a nicety: sent together they arrive in one terminal
+    /// read, and a TUI that treats a burst ending in a return as a paste puts the newline in its
+    /// composer instead of submitting it - which leaves a nudged agent sitting on the message it
+    /// was nudged with.
+    ///
+    /// It goes through `send`, which does not care whether the pane is focused: a nudge is the
+    /// view typing into a session nobody is looking at.
+    pub fn type_line(&mut self, name: &str, text: &str, at: Instant) {
+        if !self.is_live(name) {
+            return;
+        }
+        self.send(name, text.as_bytes());
+        self.pending.push((name.to_string(), at + RETURN_DELAY));
+    }
+
+    /// Send any carriage return that has come due. Called once per loop iteration, beside `sync`.
+    ///
+    /// A name whose session has gone in the meantime is dropped silently, exactly as the elisp
+    /// timer re-checks buffer liveness before it sends.
+    pub fn flush_returns(&mut self, at: Instant) {
+        let due: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, when)| *when <= at)
+            .map(|(name, _)| name.clone())
+            .collect();
+        self.pending.retain(|(_, when)| *when > at);
+        for name in due {
+            self.send(&name, b"\r");
+        }
+    }
+
     /// Once per frame: reap any child that has exited into `retained`, resize the selected
     /// agent's session to the pane it is drawn in, and return what the pane should show.
     ///
@@ -694,10 +799,19 @@ impl SessionHost {
         for (name, end) in ended {
             let Some(session) = self.live.remove(&name) else { continue };
             // This view knows what it signalled; the pty crate cannot say. See `KILL_SIGNAL`.
-            let end = match self.killed.remove(&name) {
-                Some(signal) => Ended::Signal(signal),
+            let end = match self.ending.remove(&name) {
+                Some(Deliberate::Killed(signal)) => Ended::Signal(signal),
+                Some(Deliberate::ByView) => Ended::ByView,
                 None => end,
             };
+            match crate::lifecycle::classify_exit(end) {
+                Some(exit) => {
+                    self.exits.insert(name.clone(), exit);
+                }
+                None => {
+                    self.exits.remove(&name);
+                }
+            }
             let (child_rows, child_cols) = session.size;
             // `scripts/launch-preflight` and `scripts/launch` refuse with exit 2 and one line on
             // stderr in every one of their refusal paths; `launch` then EXECS the agent CLI, so
@@ -948,6 +1062,143 @@ mod tests {
             .find(|line| texts(line).join("") == "Cyclops was killed by signal 1.")
             .expect("the exit line");
         assert_eq!(killed.spans[0].style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn a_session_the_view_ended_says_so_rather_than_reading_as_killed() {
+        // Ending a session IS a signal 9 (or a SIGHUP that escalates), and saying so to somebody
+        // whose agent worked perfectly is exactly the wrong sentence.
+        let (text, failed) = exit_line("Cyclops", Ended::ByView);
+        assert_eq!(text, "Cyclops finished its pass; the view ended it.");
+        assert!(!failed, "a pass the view ended on purpose is not a failure");
+    }
+
+    #[test]
+    fn a_transcript_of_a_view_ended_pass_closes_with_that_line() {
+        let mut parser = vt100::Parser::new(4, 20, SCROLLBACK_LINES);
+        parser.process(b"the pass\r\n");
+        let lines = transcript(&mut parser, 4, 20, Ended::ByView, "Cyclops");
+        let text = text_of(&lines);
+        assert!(
+            text.iter().any(|line| line == "Cyclops finished its pass; the view ended it."),
+            "{text:?}"
+        );
+        let closing = lines
+            .iter()
+            .find(|line| texts(line).join("") == "Cyclops finished its pass; the view ended it.")
+            .expect("the exit line");
+        assert_eq!(closing.spans[0].style.fg, None, "ended on purpose is not red");
+    }
+
+    #[test]
+    fn end_kills_retains_and_takes_the_state_file_with_it() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let paths = ReaderPaths {
+            consumer_root: dir.path().join("worktree"),
+            shared_root: dir.path().to_path_buf(),
+            scripts_dir: dir.path().join("scripts"),
+        };
+        std::fs::create_dir_all(dir.path().join(".cerebro/state")).expect("the state directory");
+        let state = crate::lifecycle::state_file_path(&paths, "Cyclops");
+        let flag = crate::lifecycle::stop_flag_path(&paths, "Cyclops");
+        std::fs::write(&state, "{}").expect("a state file");
+        std::fs::write(&flag, "").expect("a stop flag");
+
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", shell("while :; do sleep 1; done", 24, 80));
+        assert!(host.supervisable("Cyclops"));
+        assert!(host.end(&paths, "Cyclops"));
+        // Between the end and the reap the child is still `is_live`, and a supervision loop
+        // reading THAT would end the same session on every tick and announce it every time.
+        assert!(host.is_live("Cyclops"));
+        assert!(!host.supervisable("Cyclops"));
+        assert!(!host.end(&paths, "Storm"), "a name with no session here is not ended");
+
+        assert!(!state.exists(), "a file naming an ended session names a pid that is gone");
+        assert!(flag.exists(), "clearing the flag belongs to a retire, and the caller does it");
+
+        let view = settle_host(&mut host, "Cyclops", |view| {
+            matches!(view, SessionView::Ended { .. })
+        });
+        let SessionView::Ended { lines, .. } = view else { panic!("{view:?}") };
+        assert!(
+            text_of(&lines).iter().any(|line| line == "Cyclops finished its pass; the view ended it."),
+            "the transcript is kept, and closes with the view's own sentence"
+        );
+    }
+
+    /// The reap is the only place a verdict is recorded, and a start is the only thing that
+    /// clears one - a verdict that outlived the run that produced it would sit on a row whose
+    /// session is perfectly healthy.
+    #[test]
+    fn a_reaped_child_leaves_a_verdict_until_it_starts_again() {
+        let mut host = SessionHost::default();
+        host.insert("Storm", shell("exit 2", 24, 80));
+        settle_host(&mut host, "Storm", |view| matches!(view, SessionView::Refused { .. }));
+        assert_eq!(host.last_exit("Storm"), Some(crate::lifecycle::LastExit::Refused));
+
+        host.insert("Rogue", shell("exit 101", 24, 80));
+        settle_host(&mut host, "Rogue", |view| matches!(view, SessionView::Ended { .. }));
+        assert_eq!(host.last_exit("Rogue"), Some(crate::lifecycle::LastExit::Code(101)));
+        assert_eq!(host.exits().len(), 2, "one per name that has had an abnormal exit");
+
+        // A clean exit is no verdict at all: a blank BEAD column is what "nobody started it"
+        // looks like, and that is the truth for a pass that ended with status 0.
+        host.insert("Gambit", shell("exit 0", 24, 80));
+        settle_host(&mut host, "Gambit", |view| matches!(view, SessionView::Ended { .. }));
+        assert_eq!(host.last_exit("Gambit"), None);
+
+        // And neither is this view's own doing: an end reaps as `ByView`, a kill as a signal.
+        let paths = ReaderPaths {
+            consumer_root: std::path::PathBuf::from("/nonexistent"),
+            shared_root: std::path::PathBuf::from("/nonexistent"),
+            scripts_dir: std::path::PathBuf::from("/nonexistent"),
+        };
+        host.insert("Cyclops", shell("while :; do sleep 1; done", 24, 80));
+        assert!(host.end(&paths, "Cyclops"));
+        settle_host(&mut host, "Cyclops", |view| matches!(view, SessionView::Ended { .. }));
+        assert_eq!(host.last_exit("Cyclops"), None);
+
+        // Starting again is what clears a verdict.
+        host.insert("Storm", shell("sleep 5", 24, 80));
+        assert_eq!(host.last_exit("Storm"), None);
+        assert_eq!(host.exits().len(), 1, "only Rogue's verdict is left");
+    }
+
+    #[test]
+    fn a_typed_line_sends_its_return_separately() {
+        let mut host = SessionHost::default();
+        host.insert(
+            "Cyclops",
+            shell(r#"while read line; do printf "got:%s\r\n" "$line"; done"#, 24, 80),
+        );
+        let at = std::time::Instant::now();
+        host.type_line("Cyclops", "hello", at);
+        // Before the delay, nothing more is sent: a burst ending in a return would be read as a
+        // paste, and the agent would sit on the line it was typed.
+        host.flush_returns(at);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !host_text(&mut host, "Cyclops").iter().any(|line| line.contains("got:hello")),
+            "the line was submitted before its return was due"
+        );
+
+        host.flush_returns(at + RETURN_DELAY);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !host_text(&mut host, "Cyclops").iter().any(|line| line.contains("got:hello")) {
+            if std::time::Instant::now() >= deadline {
+                panic!("the return never arrived");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// The live screen of NAME's session, as plain strings.
+    fn host_text(host: &mut SessionHost, name: &str) -> Vec<String> {
+        match host.sync(Some(name), 24, 80, at("2026-01-01T00:00:00Z")) {
+            SessionView::Live { lines, .. } => text_of(&lines),
+            _ => Vec::new(),
+        }
     }
 
     #[test]

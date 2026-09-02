@@ -5,8 +5,11 @@
 //! fleet's contracts, and only through `lifecycle`: it creates and removes an
 //! agent's stop flag, and it deletes the state file of a session it is ending
 //! or replacing. It never writes a state file - `scripts/agent-state` is the
-//! one author of those - and it evaluates no trigger, ends no `waiting`
-//! session and disarms no name, which are cb-kcs.3 and cb-kcs.4.
+//! one author of those. Since cb-kcs.3 it also acts UNATTENDED on the sessions
+//! it hosts: it ends one whose pass is over, retires one under a stop flag and
+//! clears the flag with it, and types one line into an implementer whose
+//! question nobody answered. It still evaluates no trigger, starts nothing on
+//! its own and disarms no name, which are cb-kcs.4's.
 //!
 //! Since cb-kcs.1 it may hold ONE piece of state - the supervision lease
 //! (`supervisor`), a bound loopback listener that says which fleet view a

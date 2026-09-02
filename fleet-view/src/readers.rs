@@ -6,9 +6,9 @@
 //!
 //! That sentence is still true of THIS file, and `crate::lifecycle` exists so that it stays so:
 //! since cb-kcs.2.3 the crate does write to the fleet's contracts - a stop flag, and the deletion
-//! of a state file - and every one of those writes lives there. The one thing this module shares
-//! with it is the state-file path, which it asks `lifecycle::state_file_path` for rather than
-//! spelling a second time.
+//! of a state file, which cb-kcs.3 made unattended - and every one of those writes lives there.
+//! The one thing this module shares with it is the state-file path, which it asks
+//! `lifecycle::state_file_path` for rather than spelling a second time.
 
 use std::io::Read;
 use std::net::SocketAddr;

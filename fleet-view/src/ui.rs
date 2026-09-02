@@ -3210,7 +3210,7 @@ mod tests {
     fn refreshing_header_wins_over_an_existing_pane_failure() {
         let mut app = populated();
         app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
-        assert!(app.begin_work_refresh(Instant::now()), "the retry is under way");
+        assert!(app.begin_work_refresh(Instant::now(), Utc::now()), "the retry is under way");
 
         let rendered = body(&render(&app, 100, 30));
         assert!(rendered[0].contains("refreshing..."), "{:?}", rendered[0]);

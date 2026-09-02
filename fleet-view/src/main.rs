@@ -1382,7 +1382,7 @@ fn dispatch(
         app.finish_refresh(Err(worker_gone("fleet reader")), clock());
     }
     if matches!(action, AppAction::RefreshWork | AppAction::RefreshAll)
-        && app.begin_work_refresh(now)
+        && app.begin_work_refresh(now, clock())
         && !work_worker.request()
     {
         app.finish_work_refresh(Err(worker_gone("work reader")), clock());

@@ -66,9 +66,9 @@ every agent on the roster with its state, the bead or PR it is on, and how long 
 **The view your project declares is the one that operates the fleet**: every key below, every
 trigger, every stop flag and every state file deleted belongs to whichever it is. Both views offer
 the same keys and answer the same tables; this repository declares `tui`, so here they are the
-terminal view's. `docs/cerebro-supervision.md` is how supervision moves either way. The other view
-is `.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering* — which shows the
-same rows and the same queues, and which is the one this repository declares.
+terminal view's — `.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering*,
+which shows the same rows and the same queues. `docs/cerebro-supervision.md` is how supervision
+moves either way.
 
 Which of the two may act is now the project's own declaration rather than a property of the
 programs: `fleet_supervisor emacs|tui` in `.cerebro/project.conf`, absent meaning `emacs`. Leave it

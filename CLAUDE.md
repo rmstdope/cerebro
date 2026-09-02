@@ -544,9 +544,8 @@ declaring itself.
 ## fleet-view/ — the standalone terminal view
 
 `.claude/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
-same fleet and the same six work queues as `M-x cerebro`. It writes no state file and no bead — **and
-since cb-kcs.1 what it may do at all is a consequence of what the
-project declares rather than of what the program can do.** Since cb-kcs.3 it acts unattended on
+same fleet and the same six work queues as `M-x cerebro`. **Since cb-kcs.1 what it may do at all is
+a consequence of what the project declares rather than of what the program can do.** Since cb-kcs.3 it acts unattended on
 the sessions it hosts where a project declares it the supervisor: it ends one whose pass is over
 after `END_GRACE_SECONDS`, retires one under a stop flag and clears the flag with it, deletes the
 state file of every session it ends, and types one line into an implementer whose question nobody

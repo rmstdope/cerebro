@@ -8752,10 +8752,18 @@ is not allowed.  A rewrite landing inside the filesystem's timestamp
 granularity is therefore not seen at all, so the mtime is moved explicitly
 rather than slept over -- on a coarse filesystem a sleep works and on a fast
 one it hides the requirement.  The Rust side's `write_declaration' says the
-same thing about the same file."
-  (let ((conf (expand-file-name ".cerebro/project.conf" root)))
+same thing about the same file.
+
+The bump is derived from the file's OWN mtime rather than from the wall clock,
+so successive declarations are monotonically distinct by construction: two
+wall-clock bumps milliseconds apart truncate to the same second on a
+one-second-granularity filesystem, which is exactly the filesystem this comment
+is about, and the cache key would then not move at all."
+  (let* ((conf (expand-file-name ".cerebro/project.conf" root))
+         (before (and (file-exists-p conf)
+                      (file-attribute-modification-time (file-attributes conf)))))
     (with-temp-file conf (insert (format "fleet_supervisor %s\n" word)))
-    (set-file-times conf (time-add (current-time) 2))))
+    (set-file-times conf (time-add (or before (current-time)) 2))))
 
 (ert-deftest cerebro-test/the-declaration-moves-the-lease-and-brings-it-back ()
   "The cutover and the rollback, driven by the declaration file alone (cb-kcs.5.3).

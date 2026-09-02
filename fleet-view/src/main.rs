@@ -5500,12 +5500,18 @@ mod main_tests {
     /// one it hides the requirement.
     fn write_declaration(root: &std::path::Path, word: &str) {
         let conf = root.join(".cerebro/project.conf");
+        // Derived from the file's OWN mtime, not from the wall clock, so successive declarations
+        // are monotonically distinct BY CONSTRUCTION. Two wall-clock bumps milliseconds apart
+        // truncate to the same second on a one-second-granularity filesystem - which is exactly
+        // the filesystem this comment is about - and an mtime-keyed cache would then not move at
+        // all, leaving the second read answering from the first.
+        let before = std::fs::metadata(&conf).and_then(|meta| meta.modified()).ok();
         std::fs::write(&conf, format!("fleet_supervisor {word}\n")).expect("write declaration");
         let file = std::fs::File::options()
             .write(true)
             .open(&conf)
             .expect("reopen the declaration");
-        file.set_modified(std::time::SystemTime::now() + Duration::from_secs(2))
+        file.set_modified(before.unwrap_or_else(std::time::SystemTime::now) + Duration::from_secs(2))
             .expect("bump the declaration's mtime so an mtime-keyed cache re-reads it");
     }
 

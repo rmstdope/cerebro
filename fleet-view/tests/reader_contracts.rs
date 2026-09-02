@@ -89,7 +89,13 @@ fn real_fleet_history_output_names_the_fields_history_row_reads() {
     // And the other direction: a number the script printed reaches the field that reads it. The
     // list above pins the SCRIPT's key set; this pins the STRUCT's, so a `rename` on either side
     // is red rather than a silent `None`.
-    let rows = read_history(&paths, &RealCommands).expect("the script answered a moment ago");
+    //
+    // From the SAME `stdout`, never a second run of the script: `open_min` is elapsed-since-open,
+    // recomputed from the clock on every invocation, so two runs straddling a tenth of a minute
+    // disagree by 0.1 and the comparison below is a coin toss - and one that can only ever come
+    // up on a machine with an open transition, which is the navigator's own fleet and never CI.
+    let rows: Vec<model::HistoryRow> =
+        serde_json::from_slice(&stdout).expect("the same bytes `read_history` parses");
     for (raw, row) in raw.iter().zip(rows.iter()) {
         for (key, value) in raw {
             let Some(number) = value.as_f64() else { continue };

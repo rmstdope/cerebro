@@ -1369,9 +1369,9 @@ mod tests {
         }
     }
 
-    /// The one `bd` that writes spawns through the same seam every other command in this crate
-    /// goes through - the bound and the directory included, neither of which a fixture script
-    /// could see.
+    /// The board writes spawn through the same seam every other command in this crate goes
+    /// through - the bound and the directory included, neither of which a fixture script could
+    /// see. There are two of them since cb-kcs.5.4; `set_priority` has its own case below.
     #[test]
     fn the_board_write_goes_through_the_one_seam() {
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -1392,6 +1392,38 @@ mod tests {
         assert_eq!(calls[0].args, vec!["unclaim", "cb-a"]);
         assert_eq!(calls[1].args, vec!["dolt", "push"]);
         assert!(matches!(outcome, FindingOutcome::Ran { .. }));
+    }
+
+    /// And so does the second one. Its own case rather than a line in the one above, because what
+    /// is worth pinning is the same three things per call - and the CWD above all: `consumer_root`
+    /// in a bead worktree is a DIFFERENT board, and an edit that passed it here would be green
+    /// against an argv-only assertion.
+    #[test]
+    fn the_priority_write_goes_through_the_one_seam() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        // DISTINCT roots, unlike `paths_in`'s: in a bead worktree the enclosing root is a
+        // different board from the shared one, so a cwd assertion made where the two are equal
+        // cannot tell them apart - which is exactly the edit this case exists to catch.
+        let paths = ReaderPaths {
+            consumer_root: dir.path().join("worktree"),
+            shared_root: dir.path().join("shared"),
+            scripts_dir: dir.path().join("scripts"),
+        };
+        let programs = Programs::default();
+        let fake = FakeCommands::always("");
+
+        let outcome = set_priority(&paths, &programs, &fake, "cb-x", Some(1), 0, false);
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 2, "the write and the push");
+        for call in &calls {
+            assert_eq!(call.program, programs.bd);
+            assert_eq!(call.cwd.as_deref(), Some(paths.shared_root.as_path()));
+            assert_eq!(call.timeout, WRITE_TIMEOUT);
+        }
+        assert_eq!(calls[0].args, vec!["update", "cb-x", "--priority", "0"]);
+        assert_eq!(calls[1].args, vec!["dolt", "push"]);
+        assert!(matches!(outcome, PriorityOutcome::Ran { .. }));
     }
 
     /// The push rides the same keypress: a close the other machines cannot see is half done.

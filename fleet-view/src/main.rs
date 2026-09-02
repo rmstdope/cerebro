@@ -5124,7 +5124,7 @@ mod main_tests {
             let dir = tempfile::tempdir().unwrap();
             let paths = scratch(dir.path(), "sleep 5");
             let programs = Programs::default();
-        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
+            let fake = cerebro_tui::readers::testing::FakeCommands::always("");
             let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
             let mut host = SessionHost::default();
             drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch(key)]);

@@ -384,6 +384,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &mut logger,
         &paths,
         &Programs::default(),
+        commands.as_ref(),
         &spacing,
         Utc::now,
     );
@@ -1110,6 +1111,7 @@ fn run<B: Backend, E: Events>(
     logger: &mut Logger,
     paths: &ReaderPaths,
     programs: &Programs,
+    commands: &dyn CommandRunner,
     spacing: &BTreeMap<String, u64>,
     clock: impl Fn() -> DateTime<Utc>,
 ) -> Result<(), Fatal>
@@ -1265,7 +1267,7 @@ where
             match events.read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     let action =
-                        route_key(key, app, host, ledger, logger, paths, programs, viewport_lines, clock());
+                        route_key(key, app, host, ledger, logger, paths, programs, commands, viewport_lines, clock());
                     if action == AppAction::Quit {
                         break;
                     }
@@ -1324,6 +1326,7 @@ fn route_key(
     // Injectable for the reason every other program in this crate is: `x` runs a `bd` that
     // WRITES, and a case that used the default would act on the developer's own board.
     programs: &Programs,
+    commands: &dyn CommandRunner,
     viewport_lines: usize,
     now: DateTime<Utc>,
 ) -> AppAction {
@@ -1370,7 +1373,7 @@ fn route_key(
                         ),
                     )],
                 );
-                let outcome = lifecycle::run_finding(paths, programs, &finding);
+                let outcome = lifecycle::run_finding(paths, programs, commands, &finding);
                 app.set_notice(match outcome {
                     lifecycle::FindingOutcome::Ran { text }
                     | lifecycle::FindingOutcome::Pushed { text }
@@ -1984,7 +1987,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
 
         assert!(!app.quit, "the session this case hosts is what refuses the quit");
         assert!(app.quit_refusal.is_some(), "and the refusal pane says so");
@@ -2007,7 +2010,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -2046,7 +2049,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
         assert!(app.quit, "and q still quits: a retained pass does not hold the keyboard");
@@ -2067,7 +2070,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
         let text = echoed(&mut host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
         assert!(text.contains("^[[201~"), "and closed: {text:?}");
@@ -2080,7 +2083,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -2097,7 +2100,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
+            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
         assert_eq!(
             controller.hosted_sessions, 1,
             "the drain branch of `reconcile_supervision` is reachable for the first time"
@@ -2302,6 +2305,7 @@ mod main_tests {
                 &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
+                &no_commands(),
                 &std::collections::BTreeMap::new(),
                 Utc::now,
             )
@@ -2336,6 +2340,7 @@ mod main_tests {
                 &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
+                &no_commands(),
                 &std::collections::BTreeMap::new(),
                 Utc::now,
             )
@@ -2371,6 +2376,7 @@ mod main_tests {
                 &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
+                &no_commands(),
                 &std::collections::BTreeMap::new(),
                 Utc::now,
             )
@@ -2417,6 +2423,7 @@ mod main_tests {
                 &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
+                &no_commands(),
                 &std::collections::BTreeMap::new(),
                 Utc::now,
             )
@@ -2460,7 +2467,7 @@ mod main_tests {
         ]);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work, &gh_worker(), &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
         assert!(app.quit, "and the last of them still quit");
@@ -2550,7 +2557,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
         assert_eq!(
@@ -2603,7 +2610,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");
@@ -2642,7 +2649,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
                 &gh_worker(),
                 &sweep_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
     }
@@ -2795,7 +2802,7 @@ mod main_tests {
         keys: Vec<crossterm::event::KeyEvent>,
     ) {
         for key in keys {
-            route_key(key, app, host, &mut StartLedger::default(), &mut test_logger(), paths, &Programs::default(), 10, Utc::now());
+            route_key(key, app, host, &mut StartLedger::default(), &mut test_logger(), paths, &Programs::default(), &no_commands(), 10, Utc::now());
         }
     }
 
@@ -2815,7 +2822,7 @@ mod main_tests {
                 &gh_worker(),
                 &sweep_worker(),
             &supervision().0, &mut supervision().1, host, &mut ledger, &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), paths,
-            &nowhere().1, &std::collections::BTreeMap::new(), Utc::now);
+            &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
     }
 
 
@@ -3719,7 +3726,7 @@ mod main_tests {
                 cerebro_tui::model::RowState::Dead)],
         );
 
-        route_key(ch('s'), &mut app, &mut host, &mut ledger, &mut logger, &paths, &Programs::default(), 10, now);
+        route_key(ch('s'), &mut app, &mut host, &mut ledger, &mut logger, &paths, &Programs::default(), &no_commands(), 10, now);
 
         assert!(host.is_live("Rogue"));
         let line = one_line(dir.path(), "decisions", "start");
@@ -4685,6 +4692,7 @@ mod main_tests {
             &mut test_logger(),
             &paths,
             &Programs::default(),
+            &no_commands(),
             10,
             now,
         );
@@ -4711,6 +4719,13 @@ mod main_tests {
         }
     }
 
+    /// A runner for the cases that must never run anything: `route_key` and `run` take one, and
+    /// only the `x` path uses it. A case that reaches it has a bug, and says so here rather than
+    /// silently starting a `bd` against the developer's own board.
+    fn no_commands() -> cerebro_tui::readers::testing::FakeCommands {
+        cerebro_tui::readers::testing::FakeCommands::new(|call| panic!("nothing should run: {call:?}"))
+    }
+
     fn app_with_finding(mode: SupervisionMode) -> App {
         let mut app = lifecycle_app(
             mode,
@@ -4731,6 +4746,7 @@ mod main_tests {
         host: &mut SessionHost,
         paths: &ReaderPaths,
         programs: &Programs,
+        commands: &dyn CommandRunner,
         keys: Vec<crossterm::event::KeyEvent>,
     ) -> AppAction {
         let mut action = AppAction::None;
@@ -4743,6 +4759,7 @@ mod main_tests {
                 &mut test_logger(),
                 paths,
                 programs,
+                commands,
                 10,
                 Utc::now(),
             );
@@ -4769,7 +4786,7 @@ mod main_tests {
         let mut app = app_with_finding(SupervisionMode::Supervising);
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x')]);
         assert!(stub_calls(&paths).is_empty(), "nothing ran on the question alone");
         assert!(matches!(
             &app.confirm,
@@ -4777,7 +4794,7 @@ mod main_tests {
                 if text.ends_with("unclaim cb-a ?  y / n")
         ), "{:?}", app.confirm);
 
-        let action = drive_with(&mut app, &mut host, &paths, &programs, vec![ch('y')]);
+        let action = drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('y')]);
         assert_eq!(stub_calls(&paths), vec!["unclaim cb-a", "dolt push"]);
         assert_eq!(app.notice.as_deref().map(|n| n.contains("unclaim cb-a")), Some(true));
         // And the section is re-run at once rather than in up to ten minutes.
@@ -4794,7 +4811,7 @@ mod main_tests {
         let mut app = app_with_finding(SupervisionMode::Supervising);
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x'), ch('q')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x'), ch('q')]);
         assert!(stub_calls(&paths).is_empty(), "nothing ran");
         assert!(app.confirm.is_none(), "and the question is gone");
         assert!(!app.quit, "the cancel is not also a quit");
@@ -4809,7 +4826,7 @@ mod main_tests {
         let mut app = app_with_finding(SupervisionMode::Supervising);
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet);
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x'), ch('y')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x'), ch('y')]);
         assert_eq!(stub_calls(&paths), vec!["unclaim cb-a", "dolt push"]);
     }
 
@@ -4826,7 +4843,7 @@ mod main_tests {
             ),
         ));
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x'), ch('y')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x'), ch('y')]);
         assert_eq!(stub_calls(&paths), vec!["unclaim cb-a", "dolt push"]);
     }
 
@@ -4842,7 +4859,7 @@ mod main_tests {
             vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
         );
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x')]);
         assert!(app.confirm.is_none());
         assert_eq!(app.notice, None);
         assert!(stub_calls(&paths).is_empty());
@@ -4861,7 +4878,7 @@ mod main_tests {
         app.selected = Some("Cyclops".into());
         app.set_session_view(cerebro_tui::session::SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
 
-        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x')]);
+        drive_with(&mut app, &mut host, &paths, &programs, &RealCommands, vec![ch('x')]);
         assert!(app.confirm.is_none(), "the child took the key, not the prompt");
         let text = echoed(&mut host, &app, "x");
         assert!(text.contains('x'), "the byte reached the child: {text:?}");

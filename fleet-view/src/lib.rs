@@ -60,6 +60,7 @@ pub mod model;
 pub mod readers;
 pub mod session;
 pub mod supervisor;
+pub mod sweeps;
 pub mod triggers;
 pub mod ui;
 

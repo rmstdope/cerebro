@@ -342,7 +342,8 @@ impl Logger {
     ///
     /// The port of `cerebro--log-evaluation`. **`seen` is updated whether or not the line was
     /// written** - elisp does that outside its own `when`, and it is what makes `Changes` mean
-    /// "changed since the last EVALUATION" rather than "since the last line".
+    /// "changed since the last EVALUATION" rather than "since the last line". A logger that is
+    /// not enabled evaluates nothing at all and remembers nothing: see the body.
     ///
     /// The name and the reason are read back out of FIELDS rather than passed twice: they are
     /// already the first and third of the seventeen, and a second copy is a second thing to get
@@ -354,9 +355,19 @@ impl Logger {
         debug_assert!(field("agent").is_some(), "an evaluation line always carries its agent");
         let name = field("agent").and_then(|v| v.as_str()).unwrap_or_default().to_string();
         let reason = field("reason").and_then(|v| v.as_str()).map(str::to_string);
+        // A disabled logger remembers nothing either, for finding 2's reason: `seen` is the memory
+        // of what was WRITTEN, so filling it from lines nobody wrote would make the first
+        // evaluation after this view takes the lease read as "unchanged" against an answer that
+        // never reached the file.
+        if !self.enabled {
+            return;
+        }
         if log_evaluation_p(&name, reason.as_deref(), &self.seen, self.verbosity) {
             self.write(Event::Evaluate, now, fields);
         }
+        // Updated whether or not the line was written - elisp does that outside its own `when` -
+        // which is what makes `Changes` mean "changed since the last EVALUATION" rather than
+        // "since the last line".
         self.seen.insert(name, reason);
     }
 
@@ -705,5 +716,33 @@ mod tests {
 
         evaluate(&mut logger, serde_json::json!("buffer 1 of 2"));
         assert_eq!(lines(root, "decisions").len(), 2, "and a new answer is written");
+    }
+
+    /// The same rule as `error`'s, for the same reason: `seen` is the memory of what was written,
+    /// so a read-only view must not fill it from lines nobody wrote.
+    #[test]
+    fn an_evaluation_suppressed_while_read_only_is_written_when_the_view_takes_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut logger = Logger::with_policy(root, Verbosity::Changes, MAX_BYTES, GENERATIONS);
+        let evaluate = |logger: &mut Logger| {
+            logger.evaluation(
+                Utc::now(),
+                &[
+                    ("agent", serde_json::json!("Xavier")),
+                    ("reason", serde_json::json!("buffer 0 of 2")),
+                ],
+            );
+        };
+
+        evaluate(&mut logger);
+        assert!(lines(root, "decisions").is_empty(), "read-only writes nothing");
+
+        logger.set_enabled(true);
+        evaluate(&mut logger);
+        assert_eq!(lines(root, "decisions").len(), 1, "and remembered nothing to hold it back");
+
+        evaluate(&mut logger);
+        assert_eq!(lines(root, "decisions").len(), 1, "the same answer twice is still one line");
     }
 }

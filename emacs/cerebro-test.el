@@ -6304,44 +6304,6 @@ by being derived from the unplanned list."
   (make-cerebro-agent :name "Cerebro" :role "orchestrator" :kind 'interactive
                       :state state :external external :since "2026-08-14T09:00:00Z"))
 
-(ert-deftest cerebro-test/an-idle-cerebro-is-told-once-per-change ()
-  "Told when the set differs from what it was last told; not again while it
-is the same and recent; again on the clock (cb-5lx.2)."
-  (let ((cerebro-triage-repeat 600)
-        (idle-for 1800) (panel-age 10) (now 1000000.0))
-    (should (eq (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil idle-for panel-age now)
-                'tell))
-    (should (eq (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1" "cb-2")
-                                        (cons '("cb-1") 999900.0) idle-for panel-age now)
-                'tell))
-    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1")
-                                          (cons '("cb-1") 999900.0) idle-for panel-age now)))
-    (should (eq (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1")
-                                        (cons '("cb-1") 999400.0) idle-for panel-age now)
-                'repeat))))
-
-(ert-deftest cerebro-test/no-line-lands-in-a-session-that-cannot-take-it ()
-  "Never into a question dialog or over output (`working\=', `asking\='); never
-where no state file says it is safe (`up\=', `unknown\='); never where there is
-no session; never into a session this view does not own; never into a
-role that is not Cerebro; and never on figures older than the idle it is
-judging - the panel is thirty seconds behind bd, and a line judged on
-figures read before Cerebro went idle names beads it has just ranked."
-  (let ((cerebro-triage-repeat 600))
-    (dolist (state '(working asking up unknown dead standby waiting))
-      (should (null (cerebro--triage-action (cerebro-test--cerebro state) '("cb-1") nil 1800 10 1000000.0))))
-    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle t) '("cb-1") nil 1800 10 1000000.0)))
-    (should (null (cerebro--triage-action
-                   (make-cerebro-agent :name "Xavier" :role "planner" :kind 'interactive
-                                       :state 'idle :since "2026-08-14T09:00:00Z")
-                   '("cb-1") nil 1800 10 1000000.0)))
-    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) nil nil 1800 10 1000000.0)))
-    ;; Panel read 40s ago, Cerebro idle for 20s: the figures predate the idle.
-    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil 20 40 1000000.0)))
-    ;; No panel yet, or a torn state file: nothing is typed.
-    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil 1800 nil 1000000.0)))
-    (should (null (cerebro--triage-action (cerebro-test--cerebro 'idle) '("cb-1") nil nil 10 1000000.0)))))
-
 (ert-deftest cerebro-test/triage-tell-types-remembers-and-logs ()
   (let* ((typed nil) (logged nil)
          (ids '("cb-1" "cb-2"))
@@ -9027,3 +8989,73 @@ header's own wording and has no counterpart here, so this reader ignores it."
                          (list name found)))
           (should (equal (list name (alist-get 'command row))
                          (list name (cerebro--finding-command expected "/repo")))))))))
+
+;;; cb-kcs.5.2: the triage decision, answered here and in Rust
+
+(defconst cerebro-test--triage-cases-file
+  (expand-file-name "tests/lib/triage.cases" cerebro-test--repo-root)
+  "The triage table both implementations of the decision run.
+`fleet-view/src/lifecycle.rs' runs the same rows against `triage_action'.")
+
+(defun cerebro-test--triage-cases ()
+  "The rows of `cerebro-test--triage-cases-file' as plain lists.
+Each is (ROLE KIND STATE HOSTED IDS TOLD-IDS TOLD-AGE IDLE-FOR PANEL-AGE
+EXPECT).  A malformed row is an error, not a skipped case."
+  (let (rows)
+    (with-temp-buffer
+      (insert-file-contents cerebro-test--triage-cases-file)
+      (dolist (line (split-string (buffer-string) "\n" t))
+        (unless (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" line)
+          (let ((fields (split-string (string-trim line) "[ \t]+" t)))
+            (unless (= (length fields) 10)
+              (error "triage.cases: malformed row: %s" line))
+            (push fields rows)))))
+    (nreverse rows)))
+
+(defun cerebro-test--triage-list (field)
+  "FIELD as a list of ids, or nil for the table's `-'."
+  (unless (equal field "-") (split-string field "," t)))
+
+(defun cerebro-test--triage-number (field line)
+  "FIELD as a number, or nil for the table's `-'."
+  (cond ((equal field "-") nil)
+        ((string-match-p "\\`-?[0-9]+\\'" field) (string-to-number field))
+        (t (error "triage.cases: bad number %s in row: %s" field line))))
+
+(ert-deftest cerebro-test/the-triage-table-is-answered-by-the-action ()
+  "Every row of `tests/lib/triage.cases', answered here as well as in Rust.
+
+A row the two answer differently is an idle Cerebro told twice about one
+unranked set or never told at all - and both views go on triaging until
+the declaration moves, so the disagreement is invisible until a navigator
+watches one view type the line and the other not.
+
+The table speaks `hosted', which is this implementation's `external'
+inverted, and its rows assume `cerebro-triage-repeat' 600, so it is bound
+here rather than taken from whatever the running fleet is customised to."
+  (let ((rows (cerebro-test--triage-cases))
+        (cerebro-triage-repeat 600)
+        (now 1000000.0))
+    (should (>= (length rows) 15))
+    (dolist (row rows)
+      (pcase-let* ((`(,role ,kind ,state ,hosted ,ids ,told-ids ,told-age
+                            ,idle-for ,panel-age ,expect)
+                    row)
+                   (agent (make-cerebro-agent
+                           :name "Cerebro" :role role :kind (intern kind)
+                           :state (intern state)
+                           :external (not (equal hosted "yes"))
+                           :since "2026-08-14T09:00:00Z"))
+                   (told (let ((told-list (cerebro-test--triage-list told-ids)))
+                           (when told-list
+                             (cons told-list
+                                   (- now (cerebro-test--triage-number told-age row))))))
+                   (action (cerebro--triage-action
+                            agent
+                            (cerebro-test--triage-list ids)
+                            told
+                            (cerebro-test--triage-number idle-for row)
+                            (cerebro-test--triage-number panel-age row)
+                            now)))
+        (should (equal (cons (if action (symbol-name action) "none") row)
+                       (cons expect row)))))))

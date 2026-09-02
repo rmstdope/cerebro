@@ -23,7 +23,12 @@
 //! starts that produced no pass the name is disarmed and only `s` brings it
 //! back. Since cb-kcs.5.1 it also runs the six sweep scripts on their own
 //! ten-minute cadence, draws what they found as the Work pane's first section,
-//! and acts on one with `x` after showing the exact command. Since cb-kcs.4.3 it also starts the three roles whose work arrives
+//! and acts on one with `x` after showing the exact command. Since cb-kcs.5.2
+//! it runs the last two of the supervisor's own unattended jobs: it keeps a
+//! `prune-worktrees.sh --watch` child alive beside itself while it may act -
+//! killing it when it may not, and saying in red when it will not start - and
+//! it types the triage line into an idle orchestrator when unranked beads are
+//! waiting for a ranking. Since cb-kcs.4.3 it also starts the three roles whose work arrives
 //! from OUTSIDE the fleet - `user-feedback`, `reviewer` and `architect` - off
 //! a `gh` reader on its own ten-minute cadence, the beads linked to a GitHub
 //! issue, and an hourly floor per role. Both JSONL logs remain cb-kcs.4.4's.
@@ -62,6 +67,7 @@ pub mod app;
 pub mod lifecycle;
 pub mod log;
 pub mod model;
+pub mod pruner;
 pub mod readers;
 pub mod session;
 pub mod supervisor;

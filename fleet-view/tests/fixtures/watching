@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# A child that stays up until something kills it - the shape of `prune-worktrees.sh --watch`.
+#
+# `exec` so the process the pruner spawned IS the sleeping one: a bash that forked `sleep` would
+# be reaped while its child lived on, and a leaked `--watch` loop is exactly what the `Drop` this
+# fixture exists to prove is for.
+exec sleep 30

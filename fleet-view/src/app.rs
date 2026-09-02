@@ -417,10 +417,16 @@ pub struct App {
     /// index would silently come to mean a different agent. `None` only before the first
     /// successful fleet read, or when the fleet is empty.
     pub selected: Option<String>,
-    /// A one-line message shown in the header in gold, in place of the refresh/stale span, and
-    /// cleared by the next key press. Today it has exactly one writer: a selection lost to a
-    /// roster change.
+    /// A one-line message shown in the header in place of the refresh/stale span, and cleared by
+    /// the next key press. Gold, unless `notice_urgent`.
     pub notice: Option<String>,
+    /// Is the notice a FAULT rather than news? Red when it is (cb-kcs.5.2, the navigator's choice
+    /// in round one: the pruner is the first thing in this slot that is not something the view
+    /// did but something that has stopped working).
+    ///
+    /// Cleared wherever `notice` is cleared and set by whichever writer put the line there: a
+    /// stale colour is a worse lie than a stale line.
+    pub notice_urgent: bool,
     /// Each name's last abnormal exit, as of the last frame. Copied from `SessionHost` by the
     /// event loop, never read from it here: `ui::draw` is pure over `App`, and a renderer that
     /// could reach the host could reach a `vt100::Parser` and a child process with it.
@@ -476,6 +482,14 @@ pub struct App {
     fleet_viewport: usize,
     last_fleet_request: Option<Instant>,
     last_work_request: Option<Instant>,
+    /// When the board was last ASKED, in wall-clock terms - for the read whose value the pane
+    /// still holds. See `begin_work_refresh`.
+    work_requested_at: Option<DateTime<Utc>>,
+    /// The in-flight read's request time, until it answers. Promoted into `work_requested_at`
+    /// only on SUCCESS, which is `cerebro--beads-read-at`'s own rule
+    /// (`emacs/cerebro.el:5588-5596`): a `Stale` pane goes on handing out its last good buckets,
+    /// so a request time moved by a read that failed would pair old ids with a young age.
+    work_request_pending: Option<DateTime<Utc>>,
     /// What `gh` last said. A third `Pane<T>` rather than a field of its own, because the four
     /// content states ARE the staleness protocol the cadence triggers need - see
     /// `triggers::GhAnswer`. It is never rendered: no widget draws it, and it takes no Tab stop.
@@ -553,6 +567,7 @@ impl App {
             session: SessionPane::default(),
             selected: None,
             notice: None,
+            notice_urgent: false,
             exits: BTreeMap::new(),
             standby_labels: BTreeMap::new(),
             armed: BTreeSet::new(),
@@ -565,6 +580,8 @@ impl App {
             fleet_viewport: 0,
             last_fleet_request: None,
             last_work_request: None,
+            work_requested_at: None,
+            work_request_pending: None,
             gh: Pane::default(),
             last_gh_request: None,
             sweeps: Pane::default(),
@@ -657,6 +674,13 @@ impl App {
     /// remains the one place it is cleared.
     pub fn set_notice(&mut self, text: String) {
         self.notice = Some(text);
+        self.notice_urgent = false;
+    }
+
+    /// Put TEXT in the notice slot, in red: something is broken rather than something happened.
+    pub fn set_error_notice(&mut self, text: String) {
+        self.notice = Some(text);
+        self.notice_urgent = true;
     }
 
     /// Every roster name, in fleet order, for `SessionHost::live_names` to ORDER its answer by.
@@ -726,6 +750,7 @@ impl App {
         // A notice is transient by design: it survives exactly until the navigator touches the
         // keyboard, whatever they press.
         self.notice = None;
+        self.notice_urgent = false;
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quit = true;
@@ -932,9 +957,16 @@ impl App {
     }
 
     /// The work pane's counterpart of `begin_refresh`, on its own slot and its own clock.
-    pub fn begin_work_refresh(&mut self, at: Instant) -> bool {
+    ///
+    /// `now` is the wall-clock moment the board was ASKED, held pending until the read answers.
+    /// The triage guard needs that and not `Pane::read_at`, which is when the answer arrived -
+    /// later, so an arrival-based age is smaller and passes the guard in cases the rule refuses
+    /// (`cerebro--beads-read-at`'s own reason, `emacs/cerebro.el:5520-5527`). It reaches
+    /// `work_requested_at` in `finish_work_refresh`, and only on success.
+    pub fn begin_work_refresh(&mut self, at: Instant, now: DateTime<Utc>) -> bool {
         if self.work.begin() {
             self.last_work_request = Some(at);
+            self.work_request_pending = Some(now);
             true
         } else {
             false
@@ -1113,12 +1145,12 @@ impl App {
         }
         match replacement {
             Some(new) => {
-                self.notice = Some(format!("{lost} is no longer on the roster. Selected {new}."));
+                self.set_notice(format!("{lost} is no longer on the roster. Selected {new}."));
                 self.selected = Some(new);
             }
             None => {
                 self.selected = None;
-                self.notice = Some(format!("{lost} is no longer on the roster."));
+                self.set_notice(format!("{lost} is no longer on the roster."));
             }
         }
     }
@@ -1161,6 +1193,12 @@ impl App {
         self.follow_selection(line, self.fleet_viewport);
     }
 
+    /// When the board was last ASKED, for the read whose value the pane still holds, or `None`
+    /// before one has answered.
+    pub fn work_requested_at(&self) -> Option<DateTime<Utc>> {
+        self.work_requested_at
+    }
+
     /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
     /// cannot answer must not make the fleet rows beside it look stale.
     pub fn finish_work_refresh(
@@ -1168,6 +1206,13 @@ impl App {
         result: Result<WorkBuckets, ReadError>,
         at: DateTime<Utc>,
     ) {
+        // The request time is promoted WITH the value and never ahead of it: a failed read leaves
+        // `work_requested_at` pointing at the request that produced the buckets still held, so
+        // the triage guard can never measure old ids against a young age.
+        if result.is_ok() {
+            self.work_requested_at = self.work_request_pending;
+        }
+        self.work_request_pending = None;
         self.work.finish(result, at);
     }
 
@@ -1392,7 +1437,7 @@ mod tests {
         assert!(app.begin_sweep_refresh(start));
         assert!(!app.begin_sweep_refresh(start), "one at a time");
         // A work read in flight says nothing about the sweeps, and the reverse.
-        assert!(app.begin_work_refresh(start));
+        assert!(app.begin_work_refresh(start, Utc::now()));
         assert!(app.begin_refresh(start));
         app.finish_sweep_refresh(Ok(Vec::new()), at(0));
         assert!(!app.sweep_due(start + Duration::from_secs(599)));
@@ -1665,7 +1710,7 @@ mod tests {
     /// is recorded and neither slot is left in flight.
     fn started_both(app: &mut App, when: Instant) {
         start_fleet(app, when);
-        assert!(app.begin_work_refresh(when), "the work slot was free");
+        assert!(app.begin_work_refresh(when, Utc::now()), "the work slot was free");
         app.finish_work_refresh(Ok(WorkBuckets::default()), at(0));
     }
 
@@ -1691,7 +1736,7 @@ mod tests {
         let start = Instant::now();
         assert_eq!(app.on_tick(start), AppAction::RefreshAll);
         assert!(app.begin_refresh(start));
-        assert!(app.begin_work_refresh(start));
+        assert!(app.begin_work_refresh(start, Utc::now()));
         // No second request on the very next tick: both reads are in flight and neither interval
         // has passed.
         assert_eq!(app.on_tick(start + Duration::from_millis(1)), AppAction::None);
@@ -1738,7 +1783,7 @@ mod tests {
         let start = Instant::now();
         assert_eq!(app.on_tick(start), AppAction::RefreshAll);
         assert!(app.begin_refresh(start));
-        assert!(app.begin_work_refresh(start));
+        assert!(app.begin_work_refresh(start, Utc::now()));
         // The fleet answers; the work read is still running.
         app.finish_refresh(Ok(vec![row("Xavier")]), at(0));
 
@@ -1747,7 +1792,7 @@ mod tests {
         let due = start + Duration::from_secs(30);
         assert_eq!(app.on_tick(due), AppAction::RefreshAll);
         assert!(app.begin_refresh(due));
-        assert!(!app.begin_work_refresh(due), "the work read is still running");
+        assert!(!app.begin_work_refresh(due, Utc::now()), "the work read is still running");
         app.finish_refresh(Ok(vec![row("Xavier")]), at(1));
 
         assert_eq!(
@@ -1782,9 +1827,9 @@ mod tests {
     fn duplicate_work_refresh_is_ignored_without_blocking_fleet() {
         let mut app = App::new();
         let start = Instant::now();
-        assert!(app.begin_work_refresh(start));
+        assert!(app.begin_work_refresh(start, Utc::now()));
         assert!(app.work.refreshing);
-        assert!(!app.begin_work_refresh(start), "a second work request is dropped");
+        assert!(!app.begin_work_refresh(start, Utc::now()), "a second work request is dropped");
         assert!(!app.fleet.refreshing, "and it never touched the fleet's slot");
         assert!(app.begin_refresh(start), "the fleet may still start its own read");
 
@@ -1818,7 +1863,7 @@ mod tests {
     #[test]
     fn work_first_failure_is_unavailable() {
         let mut app = App::new();
-        app.begin_work_refresh(Instant::now());
+        app.begin_work_refresh(Instant::now(), Utc::now());
         app.finish_work_refresh(Err(bd_failure()), at(5));
         match &app.work.content {
             PaneContent::Unavailable { failed_at, error } => {
@@ -2199,6 +2244,87 @@ mod tests {
         assert!(app.notice.is_some());
     }
 
+    /// The notice slot has had one colour since it existed; the pruner's failure is the first
+    /// thing in it that is not news but a fault (cb-kcs.5.2).
+    #[test]
+    fn an_error_notice_is_urgent_and_a_plain_one_is_not() {
+        let mut app = App::new();
+        assert!(!app.notice_urgent, "nothing is urgent before anything is said");
+        app.set_error_notice("Worktree pruning stopped: exit status 2".into());
+        assert_eq!(app.notice.as_deref(), Some("Worktree pruning stopped: exit status 2"));
+        assert!(app.notice_urgent);
+        // A plain notice after an urgent one is not urgent: a stale colour is a worse lie than a
+        // stale line.
+        app.set_notice("Cerebro was asked to rank 2 unranked beads.".into());
+        assert!(!app.notice_urgent);
+    }
+
+    #[test]
+    fn a_key_clears_the_colour_with_the_notice() {
+        let mut app = App::new();
+        app.set_error_notice("Worktree pruning stopped: exit status 2".into());
+        app.on_key(key(KeyCode::Tab), 10);
+        assert_eq!(app.notice, None);
+        assert!(!app.notice_urgent);
+    }
+
+    /// When the board was ASKED, not when it answered. The triage guard proves the figures
+    /// postdate the agent's transition, and arrival is later - an arrival-based age is smaller and
+    /// would pass the guard in cases the rule refuses.
+    #[test]
+    fn the_work_request_time_is_when_it_was_asked() {
+        let mut app = App::new();
+        assert_eq!(app.work_requested_at(), None, "before the board has been asked");
+        let asked = Utc::now();
+        assert!(app.begin_work_refresh(Instant::now(), asked));
+        let answered = asked + chrono::Duration::seconds(4);
+        app.finish_work_refresh(Ok(WorkBuckets::default()), answered);
+        assert_eq!(app.work_requested_at(), Some(asked), "the earlier of the two");
+    }
+
+    /// The request time is promoted WITH the value and never ahead of it
+    /// (`cerebro--beads-read-at`'s own rule, `emacs/cerebro.el:5588-5596`).
+    ///
+    /// A `Stale` pane still hands its last good buckets to `triage_tell`, so a request time
+    /// stamped by a read that then FAILED would pair old ids with a young age - and the triage
+    /// guard, which exists to prove the figures postdate the agent's transition, would pass on a
+    /// set Cerebro had already ranked.
+    #[test]
+    fn a_failed_work_read_does_not_move_the_request_time() {
+        let mut app = App::new();
+        let asked = Utc::now();
+        assert!(app.begin_work_refresh(Instant::now(), asked));
+        app.finish_work_refresh(Ok(WorkBuckets::default()), asked);
+
+        let asked_again = asked + chrono::Duration::seconds(30);
+        assert!(app.begin_work_refresh(Instant::now(), asked_again));
+        app.finish_work_refresh(
+            Err(ReadError::Spawn { source: "bd".into(), message: "no".into() }),
+            asked_again,
+        );
+
+        assert!(app.work.content.value().is_some(), "the stale buckets are still rendered");
+        assert_eq!(
+            app.work_requested_at(),
+            Some(asked),
+            "the age belongs to the read that produced the ids still held"
+        );
+    }
+
+    /// A notice set on a successful fleet read must not inherit the previous line's colour.
+    #[test]
+    fn a_selection_notice_is_never_left_red() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![row("Storm"), row("Cyclops")]), Utc::now());
+        app.selected = Some("Storm".into());
+        app.set_error_notice("Worktree pruning stopped: exit status 2".into());
+
+        app.finish_refresh(Ok(vec![row("Cyclops")]), Utc::now());
+
+        assert!(app.notice.as_deref().is_some_and(|n| n.contains("no longer on the roster")));
+        assert!(!app.notice_urgent, "a roster change is news, not a fault");
+    }
+
     #[test]
     fn focused_viewport_is_the_focused_panes_own_and_never_zero() {
         let mut app = App::new();
@@ -2328,13 +2454,13 @@ mod tests {
         let start = Instant::now();
         assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshAll);
         assert!(app.begin_refresh(start));
-        assert!(app.begin_work_refresh(start));
+        assert!(app.begin_work_refresh(start, Utc::now()));
 
         // The request is only honoured once per pane: a second `g' while both reads run is
         // dropped at each pane's own door.
         assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshAll);
         assert!(!app.begin_refresh(start + Duration::from_secs(1)));
-        assert!(!app.begin_work_refresh(start + Duration::from_secs(1)));
+        assert!(!app.begin_work_refresh(start + Duration::from_secs(1), Utc::now()));
 
         // A manual refresh restarts both cadences rather than leaving a tick due immediately
         // after it.
@@ -2351,7 +2477,7 @@ mod tests {
 
         assert_eq!(app.on_key(key(KeyCode::Char('g')), 10), AppAction::RefreshAll);
         assert!(!app.begin_refresh(start), "the busy pane refuses");
-        assert!(app.begin_work_refresh(start), "and the idle one still starts");
+        assert!(app.begin_work_refresh(start, Utc::now()), "and the idle one still starts");
     }
 
     /// The worker answers off the UI thread. Since cb-x3u it answers from a `FakeCommands`

@@ -44,8 +44,8 @@ pub const GENERATIONS: u32 = 3;
 
 /// Every event either file carries. Closed, and smaller than elisp's twelve.
 ///
-/// `triage` is absent because this view does not inject one - cb-kcs.4.1 declined
-/// `cerebro--triage-tell`. `sweep` joined in cb-kcs.5.1, when the view gained an `x` of its own.
+/// `triage` joined in cb-kcs.5.2, when the view began typing that line itself; `sweep` in
+/// cb-kcs.5.1, when the view gained an `x` of its own.
 /// There is no `disarm` and no second `arm`: where a
 /// name LEFT the armed set is already readable from the `retire` or `give-up` line that put it
 /// there.
@@ -63,6 +63,10 @@ pub enum Event {
     /// write, as `cerebro-sweep-act` writes it - the decision is worth keeping whether or not the
     /// command then succeeded.
     Sweep,
+    /// One triage line typed into an idle orchestrator. Written only when the line actually went
+    /// into a session this view hosts (the navigator's choice, round three): the view must not
+    /// record something it did not do.
+    Triage,
     Error,
 }
 
@@ -79,6 +83,7 @@ impl Event {
             Self::GiveUp => "give-up",
             Self::Evaluate => "evaluate",
             Self::Sweep => "sweep",
+            Self::Triage => "triage",
             Self::Error => "error",
         }
     }
@@ -422,6 +427,17 @@ impl Logger {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ninth event (cb-kcs.5.2). A decision the view took, like `Nudge`, so it goes in the
+    /// decisions log and is written at every verbosity.
+    #[test]
+    fn triage_is_a_decision_not_an_error() {
+        assert_eq!(Event::Triage.as_str(), "triage");
+        assert_eq!(Event::Triage.basename(), "decisions");
+        assert!(log_event_p(Event::Triage, Verbosity::Decisions));
+        assert!(log_event_p(Event::Triage, Verbosity::Evaluations));
+        assert!(!log_event_p(Event::Triage, Verbosity::None));
+    }
 
     #[test]
     fn an_error_is_logged_beside_the_decisions_not_among_them() {

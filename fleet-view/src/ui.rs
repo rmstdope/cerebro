@@ -610,7 +610,10 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
         // see, answered by their next keystroke (cb-4cn).
         spans.push(Span::styled(format!(" | {}", prompt.text()), Style::default().fg(GOLD)));
     } else if let Some(notice) = &app.notice {
-        spans.push(Span::styled(format!(" | {notice}"), Style::default().fg(GOLD)));
+        // Gold for news, red for a fault: the pruner's failure is the first thing this slot has
+        // ever carried that is not something the view did (cb-kcs.5.2, the navigator's choice).
+        let colour = if app.notice_urgent { RED } else { GOLD };
+        spans.push(Span::styled(format!(" | {notice}"), Style::default().fg(colour)));
     } else if app.fleet.refreshing || app.work.refreshing {
         spans.push(Span::styled(" | refreshing...", dim()));
     } else if let Some((failed_at, stale)) = newest_failure(app) {
@@ -2671,6 +2674,21 @@ mod tests {
         assert_eq!(style_where(&buffer, "Storm is no longer").fg, Some(GOLD));
     }
 
+    /// The pruner's failure is the first thing in this slot that is a fault rather than news,
+    /// and the navigator chose red for it (cb-kcs.5.2, round one).
+    #[test]
+    fn an_urgent_notice_is_red_and_an_ordinary_one_is_gold() {
+        let mut app = populated();
+        app.set_error_notice("Worktree pruning stopped: exit status 2".into());
+        let buffer = render(&app, 160, 30);
+        assert!(lines(&buffer)[0].contains("Worktree pruning stopped: exit status 2"));
+        assert_eq!(style_where(&buffer, "Worktree pruning").fg, Some(RED));
+
+        app.set_notice("Cerebro was asked to rank 2 unranked beads.".into());
+        let buffer = render(&app, 160, 30);
+        assert_eq!(style_where(&buffer, "Cerebro was asked").fg, Some(GOLD));
+    }
+
     #[test]
     fn a_wide_screen_splits_into_a_left_column_and_a_session_pane() {
         let app = supervising();
@@ -3210,7 +3228,7 @@ mod tests {
     fn refreshing_header_wins_over_an_existing_pane_failure() {
         let mut app = populated();
         app.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
-        assert!(app.begin_work_refresh(Instant::now()), "the retry is under way");
+        assert!(app.begin_work_refresh(Instant::now(), Utc::now()), "the retry is under way");
 
         let rendered = body(&render(&app, 100, 30));
         assert!(rendered[0].contains("refreshing..."), "{:?}", rendered[0]);

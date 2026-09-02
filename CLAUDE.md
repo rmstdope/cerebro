@@ -576,7 +576,8 @@ Work the arrow and page keys move a **cursor over the findings** while there are
 pane when there are none — the ordinary day — and `x`, from any focus, shows the exact `bd` and runs
 it only on `y`, followed by `bd dolt push` on the same keystroke. That is **the one write in this
 crate that does not pass `--readonly`**, it lives in `lifecycle::run_finding` beside every other
-write and spawns through `readers::CommandRunner` like every other command (cb-i1w), and it is deliberately **outside the lease**: the board is shared, so a view that may start
+write and spawns through `readers::CommandRunner` like every other command
+(cb-i1w), and it is deliberately **outside the lease**: the board is shared, so a view that may start
 nothing may still close a delivered bead. `tests/lib/sweep-findings.json` is the table both
 implementations answer — every finding, every label and every command — for `supervise.cases`'
 reason: both views go on sweeping after the cutover, so one decision has two implementations in two

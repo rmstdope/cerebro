@@ -34,12 +34,21 @@ nothing else: work outside one stops for the navigator at each phase, like any o
 
 ## Waiting, without ending your run
 
-A bead has one long wait in it — CI — and how you wait is the difference between finishing a bead
-and abandoning one. An implementer once armed a `Monitor` against a review, said "I'll wait now
-for the monitor's event", and ended its turn. The review landed two minutes later: two comments
-unanswered, the bead claimed, the PR open, and nothing to wake it.
+**A bead has two kinds of wait in it, and they are not waited on the same way.** Getting it wrong in
+either direction costs: one strands a bead, the other burns five minutes a round doing nothing.
 
-**Wait by blocking inside a tool call. Never by ending your turn.**
+- **CI, and everything else outside this session.** Nothing will tell you it finished, so **block
+  inside a tool call**, polling a condition a shell can actually test. That is the rest of this
+  section.
+- **A sub-agent you spawned yourself** — the review, and nothing else in this skill. **You are told
+  when it finishes, and the answer comes with the telling.** Do not poll it and do not sleep on it:
+  *Waiting for a sub-agent*, below.
+
+The first kind is where a bead gets abandoned. An implementer once armed a `Monitor` against a
+review, said "I'll wait now for the monitor's event", and ended its turn. The review landed two
+minutes later: two comments unanswered, the bead claimed, the PR open, and nothing to wake it.
+
+**So for the first kind: wait by blocking inside a tool call. Never by ending your turn.**
 
 ```bash
 until <the condition>; do bd heartbeat <id>; sleep 30; done
@@ -60,6 +69,28 @@ either here. Your process survives the end of a turn now, so this is no longer t
 disaster it was when it ran under `--print` — but nothing wakes you. A turn ended against a CI run
 sits until the navigator happens to look and type something, with the bead claimed, the PR open and
 the lease going stale the whole time. Block, and stay in the run.
+
+### Waiting for a sub-agent
+
+**The review is the one wait that is delivered, so do not sleep on it.** Spawning a `reviewer`
+sub-agent hands you its findings when it is done — the result arrives and your turn carries on from
+there. There is nothing to poll: a sub-agent's completion is not a condition a shell can test, which
+is exactly why the loop above cannot be pointed at one.
+
+**What happens when it is pointed at one anyway**, measured on cb-sxf: the implementer wrote
+`for i in $(seq 1 10); do bd heartbeat <id>; sleep 30; done` — a fixed five minutes, because with no
+condition to test there is nothing for `until` to end on. The delta round it was waiting for had
+finished in **fifty-six seconds**. Three rounds cost that bead twenty-two minutes, of which about
+fifteen were this sleep.
+
+So: spawn it, take the findings when they arrive, and answer them. The lease is the one thing worth
+a thought — heartbeat the bead before you spawn and again when the findings land, which covers a
+round several times over.
+
+**This is a narrowing of the rule above, not an exception to it.** The line is which side of this
+session the thing you are waiting for lives on: a sub-agent is yours and reports back; CI,
+`gh pr checks`, a merge state and another agent's bead will tell you nothing, and every one of them
+gets the blocking loop.
 
 ## Telling the fleet view what you are doing
 
@@ -557,8 +588,10 @@ Read that list rather than weighing whether your own delta feels substantial.
 as Cypher's own session — the sub-agent reads that for itself, and you do not need to repeat it into
 the prompt.
 
-The spawn is synchronous: wait for it inside the tool call, exactly as *Waiting, without ending your
-run* says, and heartbeat the bead across it.
+**Do not sleep waiting for it.** The findings arrive when the sub-agent is done and your turn goes
+on from there — see *Waiting for a sub-agent*. Heartbeat the bead before you spawn and again when
+they land; a fixed sleep loop around a spawn is five minutes a round for nothing, which is what
+cb-sxf paid three times.
 
 ### Posting it
 

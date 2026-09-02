@@ -10,7 +10,10 @@
 //! keeping true of that file. Every write to the fleet's contracts lives here; the pty writes
 //! stay in `session`.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+use chrono::{DateTime, Utc};
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -272,6 +275,131 @@ pub const NUDGE_MESSAGE: &str =
     "[cerebro] Nobody answered within the timeout. Do not keep waiting: put the question and \
      everything you have found into the work item, hand it back for a person to decide, exactly \
      as your own instructions describe, and finish the run.";
+
+/// How many bead ids the triage line names before saying `and N more`.
+/// `cerebro--triage-ids-shown` (`emacs/cerebro.el:4067`).
+pub const TRIAGE_IDS_SHOWN: usize = 8;
+
+/// Seconds before an idle Cerebro is told again about the same unranked set.
+///
+/// `cerebro-triage-repeat`'s default (`emacs/cerebro.el:4055`), a constant here for
+/// `END_GRACE_SECONDS`' reason: this crate has no place to declare a customisation and must not
+/// invent one. `tests/lib/triage.cases` names the number in its header, so both implementations
+/// answer one table.
+pub const TRIAGE_REPEAT_SECONDS: i64 = 600;
+
+/// What the view types into an idle orchestrator.
+///
+/// Byte-identical to `cerebro--triage-message` (`emacs/cerebro.el:4078-4088`), which is what
+/// Cerebro already reads. Ids and no count, capped at `TRIAGE_IDS_SHOWN` with ` and N more`
+/// appended: the panel counts a P4 epic's children one by one where Cerebro folds them into one
+/// question, so a count would be a number Cerebro cannot reproduce.
+pub fn triage_message(ids: &[String]) -> String {
+    let shown = ids.len().min(TRIAGE_IDS_SHOWN);
+    let extra = ids.len() - shown;
+    let more = if extra > 0 { format!(" and {extra} more") } else { String::new() };
+    format!(
+        "[cerebro] Unranked beads are waiting for a ranking: {}{more}. Triage them with the \
+         navigator.",
+        ids[..shown].join(", ")
+    )
+}
+
+/// Tell, repeat, or leave it alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Triage {
+    /// The set differs from what this name was last told.
+    Tell,
+    /// The same set, told `TRIAGE_REPEAT_SECONDS` or more ago. A typed line can be lost and
+    /// Cerebro writes nothing back to say it heard.
+    Repeat,
+}
+
+/// Everything the triage decision reads, and nothing else - `Supervised`'s shape.
+#[derive(Clone, Copy, Debug)]
+pub struct Triaged<'a> {
+    pub role: &'a str,
+    pub kind: AgentKind,
+    pub state: &'a RowState,
+    /// `SessionHost::supervisable` - hosted here and not already ending. This is where the
+    /// navigator's Q4 decision lives: the view says nothing and records nothing about a session
+    /// it cannot type into. Emacs's `external` inverted, the way `Supervised::ours` is.
+    pub ours: bool,
+    /// The sorted unranked ids (`triggers::unranked_ids`).
+    pub ids: &'a [String],
+    /// What this name was last told, and when.
+    pub told: Option<(&'a [String], DateTime<Utc>)>,
+    /// Seconds since the row's `since`. `None` when the state file did not say - never 0, so a
+    /// torn file cannot read as a satisfied deadline.
+    pub idle_for: Option<i64>,
+    /// Seconds since the work read was REQUESTED - not since it answered. Arrival is later, and
+    /// an arrival-based age passes the guard below in cases the rule refuses.
+    pub panel_age: Option<i64>,
+    pub now: DateTime<Utc>,
+}
+
+/// The port of `cerebro--triage-action` (`emacs/cerebro.el:4090-4118`). Held to
+/// `tests/lib/triage.cases`.
+///
+/// `None` unless every one of these holds: the role is `orchestrator`, the kind is `Interactive`,
+/// `ours`, the state is EXACTLY `Idle`, `ids` is non-empty, `idle_for` and `panel_age` are both
+/// known, and `panel_age < idle_for` - the board was read AFTER the agent went idle, so the set
+/// was not measured before Cerebro ranked it.
+pub fn triage_action(agent: Triaged<'_>) -> Option<Triage> {
+    if agent.role != "orchestrator"
+        || agent.kind != AgentKind::Interactive
+        || !agent.ours
+        || agent.state != &RowState::Idle
+        || agent.ids.is_empty()
+    {
+        return None;
+    }
+    let (idle_for, panel_age) = (agent.idle_for?, agent.panel_age?);
+    if panel_age >= idle_for {
+        return None;
+    }
+    match agent.told {
+        Some((told, at)) if told == agent.ids => {
+            ((agent.now - at).num_seconds() >= TRIAGE_REPEAT_SECONDS).then_some(Triage::Repeat)
+        }
+        _ => Some(Triage::Tell),
+    }
+}
+
+/// The gold header notice for a triage line that went into a session.
+///
+/// Beside `supervision_notice`, whose nudge line this one sits next to. The name comes from the
+/// roster and is not always the word `Cerebro`; the ids are deliberately not in it, since the
+/// line's width would then depend on the board (the navigator's choice, round two).
+pub fn triage_notice(name: &str, count: usize) -> String {
+    let beads = if count == 1 { "bead" } else { "beads" };
+    format!("{name} was asked to rank {count} unranked {beads}.")
+}
+
+/// Each name's last told set and when.
+///
+/// Memory only, lost with the process - one redundant line after a restart rather than a wrong
+/// one, exactly as `Logger::seen` accepts. `cerebro--triage-told`'s counterpart.
+#[derive(Debug, Default)]
+pub struct TriageLedger {
+    told: BTreeMap<String, (Vec<String>, DateTime<Utc>)>,
+}
+
+impl TriageLedger {
+    pub fn told(&self, name: &str) -> Option<(&[String], DateTime<Utc>)> {
+        self.told.get(name).map(|(ids, at)| (ids.as_slice(), *at))
+    }
+
+    pub fn note_told(&mut self, name: &str, ids: &[String], now: DateTime<Utc>) {
+        self.told.insert(name.to_string(), (ids.to_vec(), now));
+    }
+
+    /// Forgotten for a name the moment the set is empty, so a set that comes back is told as a
+    /// change and not as a repeat (`cerebro--triage-told`'s own rule).
+    pub fn forget(&mut self, name: &str) {
+        self.told.remove(name);
+    }
+}
 
 /// Everything the three decisions read, and nothing else.
 #[derive(Clone, Copy, Debug)]
@@ -1196,6 +1324,132 @@ mod tests {
                 text: format!("{} close cb-e failed", programs.bd.display())
             }
         );
+    }
+
+    // --- the shared triage table ---------------------------------------------------------------
+
+    fn triage_ids(field: &str) -> Vec<String> {
+        if field == "-" {
+            Vec::new()
+        } else {
+            field.split(',').map(str::to_string).collect()
+        }
+    }
+
+    fn triage_number(field: &str, line: &str) -> Option<i64> {
+        match field {
+            "-" => None,
+            number => Some(
+                number
+                    .parse::<i64>()
+                    .unwrap_or_else(|_| panic!("triage.cases: bad number: {line}")),
+            ),
+        }
+    }
+
+    fn triage_expect(word: &str) -> Option<Triage> {
+        match word {
+            "tell" => Some(Triage::Tell),
+            "repeat" => Some(Triage::Repeat),
+            "none" => None,
+            other => panic!("triage.cases: unknown expectation {other}"),
+        }
+    }
+
+    /// Every row of `tests/lib/triage.cases`, which `cerebro--triage-action` answers too. A row
+    /// the two answer differently is an idle Cerebro told twice or never told at all.
+    #[test]
+    fn the_shared_triage_table_is_answered_here() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/triage.cases");
+        let text =
+            std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+        let now = Utc::now();
+        let mut rows = 0;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let fields: Vec<&str> = trimmed.split_whitespace().collect();
+            assert_eq!(fields.len(), 10, "triage.cases: malformed row: {line}");
+            let state = table_state(fields[2]);
+            let ids = triage_ids(fields[4]);
+            let told_ids = triage_ids(fields[5]);
+            let told = (!told_ids.is_empty()).then(|| {
+                let age = triage_number(fields[6], line)
+                    .unwrap_or_else(|| panic!("triage.cases: told without an age: {line}"));
+                (told_ids.as_slice(), now - chrono::Duration::seconds(age))
+            });
+            let agent = Triaged {
+                role: fields[0],
+                kind: table_kind(fields[1]),
+                state: &state,
+                ours: table_flag(fields[3]),
+                ids: &ids,
+                told,
+                idle_for: triage_number(fields[7], line),
+                panel_age: triage_number(fields[8], line),
+                now,
+            };
+            assert_eq!(triage_action(agent), triage_expect(fields[9]), "row: {line}");
+            rows += 1;
+        }
+        assert!(rows >= 15, "triage.cases: only {rows} rows ran");
+    }
+
+    #[test]
+    fn the_triage_line_names_up_to_eight_beads() {
+        let ids = |n: usize| -> Vec<String> {
+            (1..=n).map(|i| format!("cb-{i:02}")).collect()
+        };
+        assert_eq!(
+            triage_message(&ids(1)),
+            "[cerebro] Unranked beads are waiting for a ranking: cb-01. Triage them with the \
+             navigator."
+        );
+        assert_eq!(
+            triage_message(&ids(2)),
+            "[cerebro] Unranked beads are waiting for a ranking: cb-01, cb-02. Triage them with \
+             the navigator."
+        );
+        assert_eq!(
+            triage_message(&ids(8)),
+            "[cerebro] Unranked beads are waiting for a ranking: cb-01, cb-02, cb-03, cb-04, \
+             cb-05, cb-06, cb-07, cb-08. Triage them with the navigator."
+        );
+        assert_eq!(
+            triage_message(&ids(9)),
+            "[cerebro] Unranked beads are waiting for a ranking: cb-01, cb-02, cb-03, cb-04, \
+             cb-05, cb-06, cb-07, cb-08 and 1 more. Triage them with the navigator."
+        );
+        assert_eq!(
+            triage_message(&ids(10)),
+            "[cerebro] Unranked beads are waiting for a ranking: cb-01, cb-02, cb-03, cb-04, \
+             cb-05, cb-06, cb-07, cb-08 and 2 more. Triage them with the navigator."
+        );
+    }
+
+    #[test]
+    fn the_triage_notice_counts_in_the_singular() {
+        assert_eq!(triage_notice("Cerebro", 1), "Cerebro was asked to rank 1 unranked bead.");
+        assert_eq!(triage_notice("Cerebro", 3), "Cerebro was asked to rank 3 unranked beads.");
+        // The name comes from the roster and is not always the word Cerebro.
+        assert_eq!(triage_notice("Xavier", 2), "Xavier was asked to rank 2 unranked beads.");
+    }
+
+    /// An empty set is FORGOTTEN and not remembered as an empty telling, so a set that comes back
+    /// - the navigator removing a `triage:declined` - is told as a change and not as a repeat.
+    #[test]
+    fn an_empty_set_is_forgotten_not_remembered() {
+        let now = Utc::now();
+        let mut ledger = TriageLedger::default();
+        let ids = vec!["cb-1".to_string()];
+        ledger.note_told("Cerebro", &ids, now);
+        assert_eq!(ledger.told("Cerebro").map(|(ids, _)| ids.to_vec()), Some(ids.clone()));
+        ledger.forget("Cerebro");
+        assert!(ledger.told("Cerebro").is_none());
+        // Forgetting a name that was never told is not an error.
+        ledger.forget("Nobody");
     }
 
     /// `--readonly` is on every other `bd` this crate runs and must not be on this one: copying

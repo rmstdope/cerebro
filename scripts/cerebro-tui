@@ -6,9 +6,11 @@
 #
 #     .claude/cerebro/scripts/cerebro-tui
 #
-# It is a READER. The process it starts writes no state file, no stop flag and no bead, starts and
-# stops nothing, and supervises nothing - Emacs remains the sole supervisor, and both views may
-# read the same state at the same time (docs/fleet-view-alternatives.md).
+# What the process it starts may DO is the consumer's own declaration, read at run time:
+# `fleet_supervisor tui' and it operates the fleet, anything else and it draws everything and acts
+# on nothing. This launcher takes no view of that and passes no flag about it - see
+# scripts/fleet-supervisor, which is the one place the question is answered, and
+# docs/cerebro-supervision.md for moving it either way.
 #
 # It resolves the consumer's three roots ONCE (`consumer-root --hints', cb-ue0), exports them with
 # the scripts directory, cd's to the enclosing consumer and exec's Cargo, so nothing sits between

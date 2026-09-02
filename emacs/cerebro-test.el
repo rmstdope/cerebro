@@ -8743,6 +8743,76 @@ read-only until the bind succeeds and never asks for an autostart."
   (should (equal (cerebro--supervision-decision 'emacs 'emacs nil 0)
                  '((read-only not-owned) . acquire))))
 
+(defun cerebro-test--declare (root word)
+  "Declare WORD as ROOT's `fleet_supervisor', VISIBLY to an mtime-keyed reader.
+
+`cerebro--configured-supervisor' re-reads only when `.cerebro/project.conf''s
+mtime has moved, because it runs on every five-second tick and a fork per tick
+is not allowed.  A rewrite landing inside the filesystem's timestamp
+granularity is therefore not seen at all, so the mtime is moved explicitly
+rather than slept over -- on a coarse filesystem a sleep works and on a fast
+one it hides the requirement.  The Rust side's `write_declaration' says the
+same thing about the same file.
+
+The bump is derived from the file's OWN mtime rather than from the wall clock,
+so successive declarations are monotonically distinct by construction: two
+wall-clock bumps milliseconds apart truncate to the same second on a
+one-second-granularity filesystem, which is exactly the filesystem this comment
+is about, and the cache key would then not move at all."
+  (let* ((conf (expand-file-name ".cerebro/project.conf" root))
+         (before (and (file-exists-p conf)
+                      (file-attribute-modification-time (file-attributes conf)))))
+    (with-temp-file conf (insert (format "fleet_supervisor %s\n" word)))
+    (set-file-times conf (time-add (or before (current-time)) 2))))
+
+(ert-deftest cerebro-test/the-declaration-moves-the-lease-and-brings-it-back ()
+  "The cutover and the rollback, driven by the declaration file alone (cb-kcs.5.3).
+
+The pure decision is table-covered (`tests/lib/supervisor.cases\'), and the
+lease is covered against a hand-bound listener.  Neither proves the thing the
+cutover rests on: that rewriting `.cerebro/project.conf\' takes a real listener
+away from this Emacs and gives it back again, with no restart in between --
+which is what `docs/cerebro-supervision.md\' promises about rolling back."
+  (let ((tmp (cerebro-test--supervisor-consumer "emacs")))
+    (unwind-protect
+        (with-temp-buffer
+          (setq-local cerebro--supervision-process nil)
+          ;; Declared for this view: it acquires a real listener.
+          (should (equal (cerebro--reconcile-supervision tmp) '(supervising)))
+          (should (process-live-p cerebro--supervision-process))
+          ;; The declaration moves.  The mtime must move with it, or the answer
+          ;; comes from `cerebro--configured-supervisor''s mtime-keyed cache and
+          ;; this test passes for the wrong reason.  Bumped EXPLICITLY rather
+          ;; than slept over, the same rule the Rust side's `write_declaration'
+          ;; states: on a coarse filesystem a sleep works and on a fast one it
+          ;; hides the requirement.
+          (cerebro-test--declare tmp "tui")
+          (let ((mode (cerebro--reconcile-supervision tmp)))
+            (should (equal mode '(read-only configured-for tui)))
+            ;; The wording the navigator approved in cb-kcs.1, from the mode this
+            ;; reconciliation actually returned rather than from a literal.
+            (should (equal (cerebro--supervision-mode-line mode)
+                           "read-only: Ratatui supervises")))
+          (should-not (process-live-p cerebro--supervision-process))
+          ;; Rolling back: one line, and the lease comes back with no restart.
+          ;; Retried rather than asserted on one attempt, for the reason the
+          ;; Rust side's `apply_until' gives: a released listener is not
+          ;; instantly rebindable, because anything on the machine sitting
+          ;; between `fork' and `exec' holds a copy of every descriptor until
+          ;; its own exec.  The window is narrower here than there and it is
+          ;; still not zero, and a sibling test that retries while this one does
+          ;; not would be an asymmetry the next reader has to re-derive.
+          (cerebro-test--declare tmp "emacs")
+          (let ((mode nil))
+            (dotimes (_ 40)
+              (unless (equal mode '(supervising))
+                (setq mode (cerebro--reconcile-supervision tmp))
+                (unless (equal mode '(supervising)) (sleep-for 0.05))))
+            (should (equal mode '(supervising))))
+          (should (process-live-p cerebro--supervision-process))
+          (cerebro--release-supervision tmp))
+      (delete-directory tmp t))))
+
 (ert-deftest cerebro-test/a-deleted-lease-process-is-not-a-held-lease ()
   "Holding a lease means holding a LIVE one.
 

@@ -17,8 +17,10 @@ in this tree.
 
 The one exception, since the `cb-vyp` family, is `fleet-view/` — a Rust workspace whose
 `cerebro-tui` binary **does** run here, and is the one thing in this repository a person can start
-and look at. It is a **reader**: it draws the fleet and the bead panel from the same contracts
-`M-x cerebro` reads and writes nothing at all. Emacs remains the sole supervisor.
+and look at. It draws the fleet and the bead panel from the same contracts `M-x cerebro`
+reads. Which of the two views may act on a checkout is the project's own declaration
+(`fleet_supervisor`); this repository declares `tui`, so `cerebro-tui` is the view that operates
+this fleet and `M-x cerebro` reads.
 
 Every project-specific fact is read from `<consumer>/.cerebro/project.conf`
 (`scripts/project-conf`), and the fleet's names from `<consumer>/.cerebro/roster.conf`
@@ -539,12 +541,11 @@ thousand credits that week (cb-d89). Since cb-9su that subscription is checked m
 than trusted: `scripts/marker-readers` fails the gate on any file that spells the sentence without
 declaring itself.
 
-## fleet-view/ — the standalone read-only view
+## fleet-view/ — the standalone terminal view
 
 `.claude/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
-same fleet and the same six work queues as `M-x cerebro`. It writes no state file and no bead — **and
-since cb-kcs.1 what it may do at all is a consequence of what the
-project declares rather than of what the program can do.** Since cb-kcs.3 it acts unattended on
+same fleet and the same six work queues as `M-x cerebro`. **Since cb-kcs.1 what it may do at all is
+a consequence of what the project declares rather than of what the program can do.** Since cb-kcs.3 it acts unattended on
 the sessions it hosts where a project declares it the supervisor: it ends one whose pass is over
 after `END_GRACE_SECONDS`, retires one under a stop flag and clears the flag with it, deletes the
 state file of every session it ends, and types one line into an implementer whose question nobody
@@ -664,10 +665,10 @@ this in its mode line (`Cerebro[read-only: Ratatui supervises]`); the TUI shows 
 line and nowhere else, which is the navigator's choice: ownership takes neither a row nor a Tab
 stop from Fleet and Work.
 
-**cb-kcs.1 is the foundation only.** Ratatui can own the lease when a project declares it, and
-still hosts no sessions and offers no lifecycle key — `cb-kcs.2` adds the PTYs, `.3` retirement,
-`.4` triggers, and `.5.3` is what would set `fleet_supervisor tui` here. This repository keeps the
-key absent and stays Emacs-supervised.
+**The family is complete.** `cb-kcs.1` brought ownership, `.2` the PTYs, `.3` retirement, `.4` the
+triggers and `.5` the sweeps, the pruner, the triage line and the cutover itself. This repository
+declares `fleet_supervisor tui`; `M-x cerebro` is read-only here and stays supported, and rolling
+back is one line (`docs/cerebro-supervision.md`).
 
 One screen, **three** independently bordered, independently scrolling widgets since cb-kcs.2.1:
 Fleet, Work and Session, each with its own title, focus and scroll offset rather than one shared

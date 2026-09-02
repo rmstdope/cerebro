@@ -63,10 +63,12 @@ M-x cerebro                       # in your own
 Everything below can be done from a terminal, and almost nobody does. The Emacs fleet view lists
 every agent on the roster with its state, the bead or PR it is on, and how long it has been there.
 
-**This is the view that operates the fleet**: every key below, every trigger, every stop flag and
-every state file it deletes belongs to it. There is a second view for watching —
-`.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering* — which shows the same
-rows and the same queues.
+**The view your project declares is the one that operates the fleet**: every key below, every
+trigger, every stop flag and every state file deleted belongs to whichever it is. Both views offer
+the same keys and answer the same tables; this repository declares `tui`, so here they are the
+terminal view's — `.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering*,
+which shows the same rows and the same queues. `docs/cerebro-supervision.md` is how supervision
+moves either way.
 
 Which of the two may act is now the project's own declaration rather than a property of the
 programs: `fleet_supervisor emacs|tui` in `.cerebro/project.conf`, absent meaning `emacs`. Leave it
@@ -604,7 +606,8 @@ bd update <id> --remove-label human                        # back to a planner
 The fleet view is the short answer — the agent list, the bead panel and the sweeps in one buffer.
 
 If you only want to watch, and especially from a machine or a terminal without Emacs, there is a
-standalone read-only view:
+standalone terminal view — which, where a project declares `fleet_supervisor tui` as this one does,
+is also the view that acts:
 
 ```bash
 .claude/cerebro/scripts/cerebro-tui     # needs cargo; anywhere inside the consumer
@@ -617,17 +620,16 @@ what it is allowed to do, and says nothing in the ordinary case: `Cerebro — re
 that has not moved supervision — exactly what it has always said — and `Cerebro — supervising` in
 one that declared `fleet_supervisor tui`. The longer spellings are spent only where there is
 something to say, such as `Cerebro — read-only; another Ratatui process owns supervision` when a
-second one is already running. It
-still offers no lifecycle key either way; owning the lease and hosting sessions are separate
-steps, and the second is not built yet. Fleet refreshes
+second one is already running. Fleet refreshes
 every five seconds and Work every thirty. `Tab`/`Shift-Tab` swap which widget is focused; the
 focused one draws a bright-blue thick-line border and `↑`/`↓`/`PgUp`/`PgDn` scroll only it. `g`
 refreshes both panes regardless of focus, `q`/`Esc`/`Ctrl-C` quits. If one of the two readers fails,
 that pane keeps its last good data and says when it went stale; the other carries on.
 
-It is a reader and only a reader: no `s`, no `k`, no `f`, no priority keys, no sweep actions — it
-starts nothing, ends nothing and writes nothing at all. Everything under *The fleet view is the
-console* still needs Emacs, and the two may run side by side on one repository.
+It offers the same keys as the Emacs view — `s`, `f`, `k`, `x`, the priority keys — and whether
+the first three act is the declaration. The keys that write to the board rather than to this
+checkout's sessions, `x` and the priority keys, act either way. The two may run side by side on one
+repository; `docs/cerebro-supervision.md` is how supervision moves between them.
 
 In a terminal:
 

@@ -533,6 +533,17 @@ the sole supervisor, and both views may read one repository at the same time —
 the property this section said made the read-only increment safe. Nothing below is revised by it:
 the measurements and the recommendation stand as they were made.
 
+### Delivered: the supervision half moved too (cb-kcs)
+
+`cb-kcs` took the second increment this section called a cutover. `cerebro-tui` hosts sessions in
+its own ptys, starts them on the same triggers, retires them on `waiting`, runs the six sweeps,
+prunes worktrees and types the triage line — and which of the two views may do any of it is the
+project's `fleet_supervisor` declaration, held by a bound loopback listener so that exactly one
+process ever acts. This repository declares `tui`; `docs/cerebro-supervision.md` is how it moves
+either way. **The recommendation below is unrevised**, and so is the reasoning above it: this was
+taken as *The three compared* said to take it — the read-only view first, supervision last — and
+the trigger it names is a decision that was made rather than one that expired.
+
 ## Recommendation
 
 **Ranked, all three:**

@@ -5409,4 +5409,326 @@ mod main_tests {
         assert_eq!(app.notice.as_deref(), Some("cb-x: back to P1"));
         assert_eq!(app.last_priority_change, None, "and is spent by the one that wrote");
     }
+
+    // --- the cutover: a declaration file that moves the lease (cb-kcs.5.3) -------------------
+    //
+    // Everything above proves the pure rule against invented inputs, or the lease against a
+    // hand-bound listener. Neither proves the thing the cutover actually rests on: that a
+    // `.cerebro/project.conf` CHANGING ON DISK moves supervision from one implementation to the
+    // other. These two run the real `scripts/fleet-supervisor` over a real throwaway consumer.
+
+    /// A throwaway consumer declaring `declaration` (or nothing), with the real scripts in it.
+    ///
+    /// Returns the tempdir (which must outlive the test) and the `ReaderPaths` that address it.
+    /// The derived lease port is a function of THIS root, so every test gets a port of its own
+    /// and none of them contends with the navigator's live fleet view (cb-kcs.6, cb-m7u).
+    ///
+    /// Three things it must do, each a real constraint rather than a style choice:
+    ///
+    ///   1. `git init` and one commit - `consumer-root --shared` answers from git, and a plain
+    ///      directory is not a working tree at all (`emacs/cerebro-test.el:8524-8531`).
+    ///   2. `tests/lib/place-scripts --copy`, which places every library each script sources,
+    ///      transitively (cb-u70), so no fixture writes a library name down. `--copy` and not
+    ///      `--link`: `consumer-root`'s validated `../../..` climb is `pwd -P` arithmetic that
+    ///      must resolve to the fixture rather than to this checkout.
+    ///   3. The standard mount, `<root>/.claude/cerebro/scripts`.
+    ///
+    /// Starting processes from a unit test is fine here and does not breach cb-x3u's rule: that
+    /// one is about a fixture executable the test WRITES and then runs (the `ETXTBSY` race), and
+    /// these are tracked scripts and a system `emacs`. `supervisor.rs`'s own `mod tests` spawns
+    /// Emacs for the same reason.
+    fn supervisor_consumer(declaration: Option<&str>) -> (tempfile::TempDir, ReaderPaths) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_path_buf();
+        let scripts = root.join(".claude/cerebro/scripts");
+        std::fs::create_dir_all(&scripts).expect("scripts dir");
+        std::fs::create_dir_all(root.join(".cerebro")).expect("declaration dir");
+
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .current_dir(&root)
+                .args(args)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git {args:?} failed in the fixture");
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ]);
+
+        let place = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/lib/place-scripts");
+        let status = std::process::Command::new("bash")
+            .arg(&place)
+            .arg("--copy")
+            .arg(&scripts)
+            .args(["fleet-supervisor", "project-conf", "consumer-root"])
+            .status()
+            .expect("run place-scripts");
+        assert!(status.success(), "place-scripts failed for the fixture");
+
+        if let Some(declaration) = declaration {
+            write_declaration(&root, declaration);
+        }
+
+        let paths = ReaderPaths {
+            consumer_root: root.clone(),
+            shared_root: root,
+            scripts_dir: scripts,
+        };
+        (dir, paths)
+    }
+
+    /// Write `fleet_supervisor <word>` and make sure the change is VISIBLE to a reader that
+    /// caches on mtime.
+    ///
+    /// The Emacs side re-reads the declaration only when `.cerebro/project.conf`'s mtime has
+    /// moved (`cerebro--configured-supervisor`, `emacs/cerebro.el`), because it runs on every
+    /// five-second tick and a fork per tick is not allowed. A rewrite landing inside the
+    /// filesystem's timestamp granularity is not seen at all, so the mtime is bumped explicitly
+    /// rather than papered over with a sleep - on a coarse filesystem a sleep works and on a fast
+    /// one it hides the requirement.
+    fn write_declaration(root: &std::path::Path, word: &str) {
+        let conf = root.join(".cerebro/project.conf");
+        // Derived from the file's OWN mtime, not from the wall clock, so successive declarations
+        // are monotonically distinct BY CONSTRUCTION. Two wall-clock bumps milliseconds apart
+        // truncate to the same second on a one-second-granularity filesystem - which is exactly
+        // the filesystem this comment is about - and an mtime-keyed cache would then not move at
+        // all, leaving the second read answering from the first.
+        let before = std::fs::metadata(&conf).and_then(|meta| meta.modified()).ok();
+        std::fs::write(&conf, format!("fleet_supervisor {word}\n")).expect("write declaration");
+        let file = std::fs::File::options()
+            .write(true)
+            .open(&conf)
+            .expect("reopen the declaration");
+        file.set_modified(before.unwrap_or_else(std::time::SystemTime::now) + Duration::from_secs(2))
+            .expect("bump the declaration's mtime so an mtime-keyed cache re-reads it");
+    }
+
+    /// `apply`, retried on a short sleep until it answers `want`.
+    ///
+    /// A released listener is not instantly rebindable: anything on the machine sitting between
+    /// `fork` and `exec` holds a copy of every descriptor until its own exec
+    /// (`supervisor.rs:546-553`), which is why `acquire_once_free` exists. Asserting on one
+    /// attempt is a flake by construction.
+    fn apply_until(
+        controller: &mut SupervisorController,
+        paths: &ReaderPaths,
+        want: &SupervisionMode,
+    ) -> SupervisionMode {
+        let mut mode = SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned);
+        for _ in 0..40 {
+            mode = controller.apply(readers::read_configured_supervisor(paths, &RealCommands));
+            if &mode == want {
+                return mode;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        mode
+    }
+
+    /// The record path as the SCRIPT reports it, never one the test assembles.
+    ///
+    /// On macOS a tempdir is reached through `/var` and lives at `/private/var`, and
+    /// `fleet-supervisor` answers `pwd -P`; a hand-built path never matches
+    /// (`emacs/cerebro-test.el:8585-8589`, cb-os4).
+    fn reported_record(controller: &SupervisorController) -> PathBuf {
+        controller.record.clone().expect("the script reported a record path")
+    }
+
+    /// The cutover and the rollback, driven by the file alone.
+    ///
+    /// Read-only -> supervising -> draining -> released -> supervising again, with a real
+    /// declaration, a real bound listener and a real record. This is the mechanism
+    /// `docs/cerebro-supervision.md` describes; nothing else in the crate proves it end to end.
+    #[test]
+    fn a_declaration_change_moves_the_lease_and_back() {
+        let (dir, paths) = supervisor_consumer(Some("emacs"));
+        let mut controller = SupervisorController::new(&paths, &RealCommands);
+        let record = reported_record(&controller);
+
+        // 1. Declared for the other view: read-only, and a read-only view writes NOTHING.
+        assert_eq!(
+            controller.apply(readers::read_configured_supervisor(&paths, &RealCommands)),
+            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs))
+        );
+        assert!(!record.exists(), "a read-only view writes no supervisor record");
+
+        // 2. The declaration moves: this process acquires, and says so in the record.
+        write_declaration(dir.path(), "tui");
+        assert_eq!(
+            apply_until(&mut controller, &paths, &SupervisionMode::Supervising),
+            SupervisionMode::Supervising
+        );
+        let written = std::fs::read_to_string(&record).expect("the record exists once supervising");
+        assert!(
+            written.contains("\"owner\":\"tui\""),
+            "the record names this view as the owner, not {written}"
+        );
+
+        // 3. It moves away again WHILE sessions are hosted: a drain keeps the lease.
+        controller.hosted_sessions = 2;
+        write_declaration(dir.path(), "emacs");
+        assert_eq!(
+            controller.apply(readers::read_configured_supervisor(&paths, &RealCommands)),
+            SupervisionMode::Draining {
+                configured_for: Some(SupervisorKind::Emacs),
+                live_sessions: 2,
+            }
+        );
+        assert!(record.exists(), "a drain keeps the lease, and so keeps its record");
+
+        // 4. The last session ends: released, and `SupervisorLease`'s Drop takes the record with
+        //    it - a record whose identity is its own.
+        controller.hosted_sessions = 0;
+        assert_eq!(
+            controller.apply(readers::read_configured_supervisor(&paths, &RealCommands)),
+            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs))
+        );
+        assert!(!record.exists(), "releasing the lease removes the record it wrote");
+
+        // 5. A SECOND, independent controller takes it - the endpoint was genuinely released
+        //    rather than merely reported released.
+        write_declaration(dir.path(), "tui");
+        let mut successor = SupervisorController::new(&paths, &RealCommands);
+        assert_eq!(
+            apply_until(&mut successor, &paths, &SupervisionMode::Supervising),
+            SupervisionMode::Supervising,
+            "the released endpoint is bindable by another process"
+        );
+    }
+
+    /// The cutover across the two implementations: a real Emacs, running the real
+    /// `cerebro--reconcile-supervision`, hands the lease over because a file changed.
+    ///
+    /// CI installs Emacs in the Rust job for exactly this class of test; a machine without it
+    /// skips, and CI without it fails loudly rather than passing as a green no-op.
+    #[test]
+    fn a_real_emacs_releases_on_the_declaration_and_this_process_takes_it() {
+        let Some(emacs) = which_emacs() else {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "emacs is not on PATH and CI is set: the Rust job's setup-emacs step has broken, \
+                 and skipping here would turn the cutover's only cross-implementation proof into \
+                 a green no-op."
+            );
+            eprintln!("emacs is not on PATH: skipping the cross-implementation cutover test");
+            return;
+        };
+        let (dir, paths) = supervisor_consumer(Some("emacs"));
+        let root = dir.path().to_path_buf();
+        let emacs_lisp = concat!(env!("CARGO_MANIFEST_DIR"), "/../emacs");
+        // Readiness through a FILE, never stdout: Emacs's batch stdout is buffered, so a `princ`
+        // before a `sleep-for` arrives when the process ends (`supervisor.rs:637-639`).
+        let ready = root.join("emacs-ready");
+
+        // The REAL reconciliation, on a loop, against the fixture's real declaration.
+        let program = format!(
+            "(with-temp-buffer \
+               (dotimes (i 600) \
+                 (cerebro--reconcile-supervision {root}) \
+                 (when (= i 0) (with-temp-file {ready} (insert \"up\"))) \
+                 (sleep-for 0.2)))",
+            root = format!("{:?}", root.display().to_string()),
+            ready = format!("{:?}", ready.display().to_string()),
+        );
+        let mut child = std::process::Command::new(emacs)
+            .args(["--batch", "-L", emacs_lisp, "-l", "cerebro", "--eval", &program])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn the Emacs supervisor");
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            for _ in 0..400 {
+                if ready.exists() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert!(ready.exists(), "the Emacs supervisor never reported itself up");
+
+            // While the declaration says `emacs`, this process is read-only BECAUSE OF THE
+            // DECLARATION and never reaches for the lease at all - `ConfiguredFor`, not
+            // `OwnedBy`. (The plan predicted `OwnedBy` here; that answer needs a declaration of
+            // `tui` racing an Emacs that has not released yet, which is a transient
+            // `emacs_and_tui_share_one_crash_released_lease` already covers with a real bound
+            // listener. Deviation recorded in the pull request.) What proves the Emacs really
+            // holds it is its own record, written by the real `cerebro--acquire-supervision`.
+            let mut controller = SupervisorController::new(&paths, &RealCommands);
+            let record = reported_record(&controller);
+            assert_eq!(
+                apply_until(
+                    &mut controller,
+                    &paths,
+                    &SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(
+                        SupervisorKind::Emacs
+                    )),
+                ),
+                SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
+                "the declaration alone keeps this process read-only"
+            );
+            // POLLED, not read once. The readiness file is written after the FIRST
+            // reconciliation returns, and that first one may not be the one that acquires: a
+            // released listener is not instantly rebindable, so Emacs retries on its own loop.
+            // Reading the record on one attempt failed here roughly one run in four.
+            let mut held = String::new();
+            for _ in 0..100 {
+                held = std::fs::read_to_string(&record).unwrap_or_default();
+                if held.contains("\"owner\":\"emacs\"") {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert!(
+                held.contains("\"owner\":\"emacs\""),
+                "the record names Emacs as the live owner, not {held:?}"
+            );
+
+            // The cutover: one line in one file, and nothing restarted.
+            write_declaration(&root, "tui");
+            assert_eq!(
+                apply_until(&mut controller, &paths, &SupervisionMode::Supervising),
+                SupervisionMode::Supervising,
+                "Emacs released on the declaration and this process took the lease"
+            );
+            let written = std::fs::read_to_string(&record).expect("the record exists");
+            assert!(
+                written.contains("\"owner\":\"tui\""),
+                "the record names the new owner, not {written}"
+            );
+        }));
+
+        let _ = child.kill();
+        let _ = child.wait();
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    /// `supervisor.rs`'s test module has this and is not public; twelve lines, no `unsafe` and no
+    /// crate, so it is copied rather than exported. A `pub mod testing` on the model of
+    /// `readers::testing` would be the alternative and is not worth a public surface for one
+    /// helper used twice - do not "fix" this duplication.
+    fn which_emacs() -> Option<std::path::PathBuf> {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("emacs"))
+            .find(|candidate| {
+                std::fs::metadata(candidate)
+                    .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+                    .unwrap_or(false)
+            })
+    }
 }

@@ -792,7 +792,7 @@ fn fleet_document(
     let body = crate::app::fleet_body(&app.fleet.content);
     let empty: Vec<FleetRow> = Vec::new();
     let rows = app.fleet.content.value().unwrap_or(&empty);
-    let columns = columns(rows, width, &app.standby_labels);
+    let columns = columns(rows, width, &app.standby_labels, &app.exits);
     let inner_width = (width as usize).saturating_sub(2);
     body.iter()
         .map(|entry| {
@@ -1103,6 +1103,7 @@ fn columns(
     rows: &[FleetRow],
     width: u16,
     standby_labels: &BTreeMap<String, String>,
+    exits: &BTreeMap<String, LastExit>,
 ) -> Columns {
     let longest = |values: Vec<usize>| values.into_iter().max().unwrap_or(0);
     let natural_agent = AGENT_FLOOR.max(2 + longest(rows.iter().map(|r| r.name.chars().count()).collect()));
@@ -1111,17 +1112,16 @@ fn columns(
         1 + longest(
             rows.iter()
                 .map(|r| {
-                    let bead = r.bead.as_deref().unwrap_or("").width();
-                    if r.state == RowState::Standby {
-                        bead.max(
-                            standby_labels
-                                .get(&r.name)
-                                .map(|label| label.width())
-                                .unwrap_or(0),
-                        )
-                    } else {
-                        bead
-                    }
+                    // The cell this row will actually SHOW, from the one function that decides
+                    // it. `✗ 5 failed starts` is seventeen cells and `↻ retry in 30s, 2 failed`
+                    // twenty-four, where a column measured from `FleetRow::bead` alone is ten.
+                    bead_cell(
+                        r,
+                        exits.get(&r.name).copied(),
+                        standby_labels.get(&r.name).map(String::as_str),
+                    )
+                    .text()
+                    .width()
                 })
                 .collect(),
         ),
@@ -1249,6 +1249,57 @@ fn emphasized(style: Style, attention: bool) -> Style {
     }
 }
 
+/// The BEAD cell a row will show, and what it is - because `row_line` draws it and `columns`
+/// sizes the column to it, and two copies of this rule are how a column comes to be sized for a
+/// cell the row does not draw.
+///
+/// A row shows a bead, or a verdict, or a standby condition, and never two. WHICH is decided by
+/// the state first, the way `cerebro--entry` decides it: a `Standby` row shows its condition or
+/// its countdown even when it still carries an exit record, since cb-kcs.4.2 restates a silent
+/// crash as `Standby` to be retried on the backoff and the countdown is what that row is there to
+/// say. **A standby row with no condition at all falls back to the verdict**: `standby_label`
+/// answers `None` for every role without a board trigger, and a `standby` roster row of one of
+/// those that crashed would otherwise draw an empty cell - a failure made invisible, and one no
+/// backoff will ever retry.
+fn bead_cell<'a>(
+    row: &'a FleetRow,
+    exit: Option<LastExit>,
+    standby_label: Option<&'a str>,
+) -> BeadCell {
+    if row.state == RowState::Standby {
+        if let Some(label) = standby_label {
+            return BeadCell::Standby(label.to_string());
+        }
+    }
+    match exit {
+        Some(exit) => BeadCell::Verdict(crate::lifecycle::verdict(exit)),
+        None => BeadCell::Bead(row.bead.clone().unwrap_or_default()),
+    }
+}
+
+/// One of the three things the BEAD column ever holds. The variant is the colour.
+enum BeadCell {
+    Bead(String),
+    Verdict(String),
+    Standby(String),
+}
+
+impl BeadCell {
+    fn text(&self) -> &str {
+        match self {
+            BeadCell::Bead(text) | BeadCell::Verdict(text) | BeadCell::Standby(text) => text,
+        }
+    }
+
+    fn colour(&self) -> Style {
+        match self {
+            BeadCell::Bead(_) => Style::default(),
+            BeadCell::Verdict(_) => Style::default().fg(RED),
+            BeadCell::Standby(_) => Style::default().fg(BLUE),
+        }
+    }
+}
+
 fn row_line(
     row: &FleetRow,
     now: DateTime<Utc>,
@@ -1282,22 +1333,13 @@ fn row_line(
     // flight is not one that has exited. The verdict is red on a row that is otherwise dim, and a
     // span of its own, so the selection band sits beneath it and the colour survives being
     // selected - the rule the state glyph already follows.
-    // A row shows a bead, or a verdict, or a standby condition, and never two: `apply_standby`
-    // refuses to restate a failed name, and a standby row has no bead.
-    match (exit, standby_label) {
-        (Some(exit), _) => spans.push(Span::styled(
-            pad(&crate::lifecycle::verdict(exit), columns.bead),
-            emphasized(Style::default().fg(RED), attention),
-        )),
-        (None, Some(label)) => spans.push(Span::styled(
-            pad(label, columns.bead),
-            emphasized(Style::default().fg(BLUE), attention),
-        )),
-        (None, None) => spans.push(Span::styled(
-            pad(row.bead.as_deref().unwrap_or(""), columns.bead),
-            emphasized(Style::default(), attention),
-        )),
-    }
+    // `bead_cell` is the one place the three are chosen between; a verdict and a standby
+    // condition each get a span of their own so the selection band sits beneath the colour.
+    let cell = bead_cell(row, exit, standby_label);
+    spans.push(Span::styled(
+        pad(cell.text(), columns.bead),
+        emphasized(cell.colour(), attention),
+    ));
     if columns.wide {
         spans.push(Span::styled(
             for_column(row, now),
@@ -3289,6 +3331,105 @@ mod tests {
 
         let rendered = body(&render(&app, 120, 24));
         assert!(line_with(&rendered, "Beast").contains("→ buffer<10"), "{rendered:?}");
+    }
+
+    /// Seventeen cells, where `✗ refused` and `✗ code 137` fit inside `BEAD_FLOOR`. The column
+    /// sizes to the cell it will actually DRAW - a bead id, a verdict, or a standby condition -
+    /// and not to `FleetRow::bead` alone, which is only the first of the three.
+    #[test]
+    fn a_row_that_gave_up_says_how_many_starts_failed() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![row("Xavier", "planner", RowState::Dead)]), at(86_400));
+        app.set_exits(
+            [("Xavier".to_string(), LastExit::GaveUp { failures: 5 })]
+                .into_iter()
+                .collect(),
+        );
+        app.selected = Some("Xavier".to_string());
+
+        // Below `SPLIT_COLUMNS`, so the Fleet pane has the whole width: seventeen cells do not
+        // fit in the 40-column Fleet pane of a split screen, and the case below is what says so.
+        let buffer = render(&app, 80, 24);
+        let rendered = body(&buffer);
+        assert!(
+            line_with(&rendered, "Xavier").contains("✗ 5 failed starts"),
+            "drawn whole: {rendered:?}"
+        );
+        let cell = style_where(&buffer, "✗ 5 failed starts");
+        assert_eq!(cell.fg, Some(RED));
+        assert_eq!(cell.bg, Some(SELECTED_BG), "red survives the selection band");
+    }
+
+    #[test]
+    fn the_bead_column_is_sized_by_the_cell_it_draws() {
+        let rows = vec![row("Xavier", "planner", RowState::Dead)];
+        let exits: BTreeMap<String, LastExit> =
+            [("Xavier".to_string(), LastExit::GaveUp { failures: 5 })]
+                .into_iter()
+                .collect();
+        let columns = columns(&rows, 80, &BTreeMap::new(), &exits);
+        assert_eq!(columns.bead, 18, "seventeen cells and the column's own gap");
+
+        // A pane too narrow to spare them cuts the cell - the clamp below the measurement,
+        // unchanged - rather than widening the column past the pane.
+        let narrow = self::columns(&rows, 40, &BTreeMap::new(), &exits);
+        assert!(narrow.bead < 18, "the clamp still bites: {}", narrow.bead);
+        let mut app = App::new();
+        app.finish_refresh(Ok(rows), at(86_400));
+        app.set_exits(exits);
+        let rendered = body(&render(&app, 40, 24));
+        assert!(
+            !line_with(&rendered, "Xavier").contains("failed starts"),
+            "{rendered:?}"
+        );
+    }
+
+    /// A crash is the ONLY way a row reaches the backoff - a refusal is parked from the first
+    /// failure - so the record it left behind must not be what the row shows. The elisp being
+    /// ported picks the cell by STATE (`cerebro--entry`), and so does this.
+    #[test]
+    fn a_backing_off_row_shows_its_countdown_and_not_the_crash_behind_it() {
+        let mut app = App::new();
+        app.armed = ["Xavier"].into_iter().map(String::from).collect();
+        app.set_exits(
+            [("Xavier".to_string(), LastExit::Code(137))].into_iter().collect(),
+        );
+        app.finish_refresh(Ok(vec![row("Xavier", "planner", RowState::Dead)]), at(86_400));
+        assert_eq!(app.fleet_rows()[0].state, RowState::Standby, "a crash is retried");
+        app.set_standby_labels(
+            [("Xavier".to_string(), "↻ retry in 30s, 2 failed".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let buffer = render(&app, 80, 24);
+        let rendered = body(&buffer);
+        let line = line_with(&rendered, "Xavier");
+        assert!(line.contains("↻ retry in 30s, 2 failed"), "drawn whole: {rendered:?}");
+        assert!(!line.contains("✗ code 137"), "a bead, a verdict or a condition, never two: {line}");
+        assert_eq!(style_where(&buffer, "↻ retry in 30s, 2 failed").fg, Some(BLUE));
+    }
+
+    /// Arming is roster-driven, not role-driven: a `standby` roster row of a role with no board
+    /// trigger has no condition to show, and its crash must not become invisible on a row nothing
+    /// will ever retry.
+    #[test]
+    fn a_standby_row_with_no_condition_still_shows_why_it_died() {
+        let mut app = App::new();
+        app.armed = ["Moira"].into_iter().map(String::from).collect();
+        app.set_exits([("Moira".to_string(), LastExit::Code(137))].into_iter().collect());
+        app.finish_refresh(
+            Ok(vec![row("Moira", "user-feedback", RowState::Dead)]),
+            at(86_400),
+        );
+        assert_eq!(app.fleet_rows()[0].state, RowState::Standby);
+        // `standby_cell` answers `None` for this role, so `start_due` records no label for it.
+        assert!(app.standby_labels.is_empty());
+
+        let buffer = render(&app, 80, 24);
+        let rendered = body(&buffer);
+        assert!(line_with(&rendered, "Moira").contains("✗ code 137"), "{rendered:?}");
+        assert_eq!(style_where(&buffer, "✗ code 137").fg, Some(RED));
     }
 
     #[test]

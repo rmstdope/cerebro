@@ -204,6 +204,11 @@ pub enum LastExit {
     Refused,
     /// Any other non-zero status.
     Code(u32),
+    /// The view stopped retrying this name: FAILURES consecutive starts produced no pass. Not
+    /// produced by `classify_exit`, which classifies a child that ended; this one is a decision
+    /// the loop made about a child that never started, and its only producer is
+    /// `SessionHost::note_gave_up`.
+    GaveUp { failures: u32 },
 }
 
 /// The record an `Ended` leaves, or `None` when nothing went wrong.
@@ -224,13 +229,20 @@ pub fn classify_exit(ended: Ended) -> Option<LastExit> {
 
 /// The BEAD column's contents for a row that is not running, or nothing.
 ///
-/// Ten cells at most, which is the column's floor and so its width at every terminal size:
-/// `✗ code 137` is exactly ten. `✗` is one char and one cell, so this is safe for the `char`-
-/// counting `pad` the column already uses, and a status above 999 truncates like any other cell.
+/// `✗ refused` and `✗ code 137` are within the column's floor of ten cells. `✗ 5 failed starts`
+/// is seventeen and is NOT. What gives it the room is `ui::columns`, which sizes the column from
+/// the cell each row will actually show - `ui::bead_cell` decides which of the three that is.
+///
+/// `✗` is one char and one cell, so this is safe for the `char`-counting `pad` the column already
+/// uses, and a status above 999 truncates like any other cell.
 pub fn verdict(exit: LastExit) -> String {
     match exit {
         LastExit::Refused => "✗ refused".to_string(),
         LastExit::Code(code) => format!("✗ code {code}"),
+        // The plural is unconditional: `GIVE_UP_AFTER` is 5, and `failures` is never below it
+        // here. The count is what distinguishes this row from every other dead one; the exit code
+        // is one `Tab` away on the retained screen (the navigator's choice, Q3).
+        LastExit::GaveUp { failures } => format!("✗ {failures} failed starts"),
     }
 }
 
@@ -304,8 +316,13 @@ pub enum KillOutcome {
 }
 
 /// Is this row's agent running at all, as far as the fleet read can tell?
+///
+/// `Standby` is not: it is `apply_standby`'s restatement of a `Dead` row this view has armed, so
+/// there is no process anywhere under that name. Without it here, `s` on a backing-off row -
+/// which is the row a navigator most wants to start by hand, the backoff being the whole reason
+/// it is not starting itself - refuses with `is running outside this view`.
 fn row_is_alive(row: &FleetRow) -> bool {
-    !matches!(row.state, RowState::Dead | RowState::Invalid)
+    !matches!(row.state, RowState::Dead | RowState::Invalid | RowState::Standby)
 }
 
 /// What `s` decides, in this order.
@@ -508,6 +525,13 @@ mod tests {
         assert_eq!(verdict(LastExit::Code(137)), "✗ code 137");
         // Exactly the column's floor, in chars and in cells: it must never need truncating.
         assert_eq!(verdict(LastExit::Code(137)).chars().count(), 10);
+    }
+
+    #[test]
+    fn a_name_the_view_gave_up_on_says_how_many_starts_failed() {
+        // Not `classify_exit`'s: this is a decision the loop made about a child that never
+        // started, and its only producer is `SessionHost::note_gave_up`.
+        assert_eq!(verdict(LastExit::GaveUp { failures: 5 }), "\u{2717} 5 failed starts");
     }
 
     /// The three sentences the header says, and the one the view types into a live session.
@@ -758,6 +782,14 @@ mod tests {
             StartOutcome::Refuse("Storm is running outside this view".to_string())
         );
         assert_eq!(start_outcome(situation(&up, None, false, false)), StartOutcome::Ignore);
+        // A standby row hosts no process anywhere under that name - it is a `Dead` row this view
+        // has armed - so `s` starts it. It is the row a navigator most wants to start by hand,
+        // the backoff being the whole reason it is not starting itself.
+        let waiting = row("Beast", AgentKind::Interactive, RowState::Standby);
+        assert_eq!(
+            start_outcome(situation(&up, Some(&waiting), false, false)),
+            StartOutcome::Launch { clears_flag: false }
+        );
 
         // f: the flag wins over every liveness test, so a flag somebody left set can be cleared.
         assert_eq!(finish_outcome(situation(&up, Some(&dead), false, true)), FinishOutcome::Clear);

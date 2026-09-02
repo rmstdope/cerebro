@@ -341,12 +341,16 @@ pub enum RowState {
 /// The port of `cerebro--apply-standby`. Pure, and run on the rows a successful fleet read
 /// produced, before they reach the pane.
 ///
-/// `armed` is `App::armed`. `failed` is every name with a recorded abnormal exit: a launch that
-/// was refused died the moment it started, and a row promising a trigger was coming would say
-/// something untrue for as long as the refusal stood. **Any** abnormal exit keeps the row `Dead`
-/// with its verdict, where `M-x cerebro` sends a silent crash back to standby - because the
-/// backoff that makes retrying safe is cb-kcs.4.2's, and without it a silently crashing agent
-/// would be relaunched every five seconds.
+/// `armed` is `App::armed`. `failed` is `App::parked_names` - the names whose recorded exit has
+/// something to say about the future: a refusal, and a give-up. A silent crash is NOT one of
+/// them, and its row goes back to standby to be retried on the backoff (cb-ccl).
+///
+/// **It answers in both directions**, which is what makes it safe to run again over rows it has
+/// already transformed: a `Standby` row whose name has left the armed set, or has since been
+/// parked, is restated as `Dead`. `App::reapply_standby` needs exactly that - the fleet reader
+/// never produces a `Standby` row, so this function is the only thing that can take one away
+/// again, and a row promising a retry the view has just decided against is the one thing this
+/// must never leave on the screen.
 ///
 /// Emacs additionally excludes an `external` agent here. There is no counterpart and none is
 /// needed: this only touches `RowState::Dead`, which already means no live process anywhere under
@@ -358,9 +362,11 @@ pub fn apply_standby(
 ) -> Vec<FleetRow> {
     rows.into_iter()
         .map(|mut row| {
-            if row.state == RowState::Dead && armed.contains(&row.name) && !failed.contains(&row.name)
-            {
-                row.state = RowState::Standby;
+            let standing_by = armed.contains(&row.name) && !failed.contains(&row.name);
+            match row.state {
+                RowState::Dead if standing_by => row.state = RowState::Standby,
+                RowState::Standby if !standing_by => row.state = RowState::Dead,
+                _ => {}
             }
             row
         })
@@ -1188,6 +1194,24 @@ mod tests {
             sessions: 0,
             diagnostic: None,
         }
+    }
+
+    #[test]
+    fn a_standby_row_goes_back_to_dead_when_its_promise_is_withdrawn() {
+        let rows = vec![
+            standby_row("Xavier", RowState::Standby),
+            standby_row("Beast", RowState::Standby),
+            standby_row("Rogue", RowState::Standby),
+        ];
+        let armed: BTreeSet<String> = ["Beast", "Rogue"].into_iter().map(String::from).collect();
+        let failed: BTreeSet<String> = ["Rogue"].into_iter().map(String::from).collect();
+        let out = apply_standby(rows, &armed, &failed);
+        let states: Vec<RowState> = out.iter().map(|r| r.state.clone()).collect();
+        assert_eq!(
+            states,
+            vec![RowState::Dead, RowState::Standby, RowState::Dead],
+            "disarmed and parked both take the promise away; the armed one keeps it"
+        );
     }
 
     #[test]

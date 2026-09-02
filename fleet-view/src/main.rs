@@ -1889,9 +1889,11 @@ mod main_tests {
         // The stopwatch this replaces read `elapsed < 500ms`, and a machine that can add five
         // seconds to a `fork` can add half a second to three keystrokes — it would have failed as
         // an accusation about production code, which is the same defect the rest of this change
-        // removes, one crate over and ten times tighter. What is left has the reader's own bound
-        // as its margin: the fake sleeps thirty seconds, so this loop has five to finish in,
-        // against the microseconds three queued keystrokes actually take.
+        // removes, one crate over and ten times tighter. What is left has the FAKE's sleep as its
+        // whole margin: nothing bounds a `FakeCommands`, so the worker sleeps all thirty seconds,
+        // against the microseconds three queued keystrokes actually take. (Before cb-x3u the
+        // margin was the reader's own five-second timeout, because the slowness was a real
+        // child's.)
         assert!(
             app.work.refreshing,
             "the loop waited for the reader: the work read had finished by the time it exited"

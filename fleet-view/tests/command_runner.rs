@@ -134,14 +134,18 @@ fn a_program_that_does_not_exist_is_a_spawn_failure() {
     assert!(matches!(err, ReadError::Spawn { .. }), "expected Spawn, got {err:?}");
 }
 
-/// The runner hands bytes back; decoding them is the reader's own job, which is what lets a
-/// reader turn invalid UTF-8 into its own `ReadError::Invalid`.
+/// The runner hands BYTES back, decoding them is the reader's own job — which is what lets a
+/// reader turn invalid UTF-8 into its own `ReadError::Invalid` rather than losing it here.
+///
+/// The fixture emits bytes that are not valid UTF-8 on purpose: a case over ASCII output would
+/// pass identically if this returned a `String`, and so would prove nothing.
 #[test]
 fn stdout_is_returned_as_raw_bytes() {
     let stdout: Vec<u8> = RealCommands
-        .run(&fixture("loud"), &[], None, Duration::from_secs(60))
+        .run(&fixture("raw"), &[], None, Duration::from_secs(60))
         .unwrap();
-    assert!(stdout.iter().all(|b| *b == b'x'));
+    assert_eq!(stdout, b"\xff\xfeok\n");
+    assert!(String::from_utf8(stdout).is_err(), "the bytes did not survive a decode");
 }
 
 /// The arguments and the working directory reach the child.

@@ -872,8 +872,11 @@ mod tests {
         ));
     }
 
+    /// A non-zero `bd` is preserved as itself. That the argv it refuses on is the panel's own is
+    /// `bd_reader_uses_shared_root_all_statuses_and_readonly`'s claim, and since cb-x3u it is
+    /// made against `fake.calls()` rather than inside a fixture's `want=`/`got=`.
     #[test]
-    fn bd_reader_refuses_without_the_expected_argv() {
+    fn bd_reader_preserves_a_non_zero_exit() {
         let paths = paths_at(Path::new("/consumer"));
         let fake = FakeCommands::failing(|| exit(2, "bd: refusing"));
         let err = read_beads(&paths, &Programs::default(), &fake).unwrap_err();

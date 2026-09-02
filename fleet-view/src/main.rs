@@ -1,8 +1,9 @@
 //! `cerebro-tui`: the standalone fleet screen, started by
 //! `.claude/cerebro/scripts/cerebro-tui` and never by hand.
 //!
-//! It owns five things and nothing else: the terminal, the event loop, the workers that keep the
-//! readers off the drawing thread, the sessions it hosts (cb-kcs.2.2), and - since cb-kcs.1 - the
+//! It owns six things and nothing else: the terminal, the event loop, the workers that keep the
+//! readers off the drawing thread, the sessions it hosts (cb-kcs.2.2), the `prune-worktrees.sh
+//! --watch` child it keeps running beside itself (cb-kcs.5.2), and - since cb-kcs.1 - the
 //! supervision lease, through `SupervisorController`. Since cb-kcs.2.3 `s`, `f` and `k` reach the
 //! fleet through `route_key` and `lifecycle_key`: it starts an agent, writes and clears a stop
 //! flag, and kills a session it hosts, each refused with a visible line unless the lease says it

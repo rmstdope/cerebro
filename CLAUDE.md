@@ -584,6 +584,24 @@ languages. The header now renders **whichever** `Prompt` is up, through the enum
 (cb-4cn): matching one variant by name is how cb-kcs.4.1's disarm confirmation came to be built and
 never drawn.
 
+Since cb-kcs.5.2 it runs the supervisor's last two unattended jobs as well. It keeps one
+`prune-worktrees.sh --watch` child alive beside itself on a five-second clock while it may act,
+kills it when it may not — a drain is a handover, and the pruner is a writer — and says
+`Worktree pruning stopped: <cause>` in **red** in the header's notice slot when the child will not
+start or has died, once and then again every ten minutes while it stays broken (Emacs swallows all
+of this, and the cost is worktrees quietly not being pruned). And it types the triage line into an
+idle orchestrator this view hosts when unranked beads are waiting for a ranking — the same bytes
+Cerebro already reads — saying `Cerebro was asked to rank 3 unranked beads.` in gold beside the
+nudge's own line, and repeating the same set every ten minutes while Cerebro stays idle. The line
+is typed, recorded and throttled **only when it went into a session this view hosts**, which is a
+deliberate divergence from `cerebro--triage-tell`: that one records and logs even when no buffer
+took the string, so its throttle then holds for a line that never left the building.
+`tests/lib/triage.cases` is the table both implementations answer, for `supervise.cases`' reason —
+both views go on triaging until the declaration moves. The pruner writes **no** decision event:
+starting and stopping a watcher is not a fleet decision, and its failures reach `errors.jsonl`
+under the context `prune` and nowhere else. The approved surface is
+`docs/ui/cb-kcs.5.2-pruner-and-triage.html`.
+
 **Exactly one view supervises, and `.cerebro/project.conf` says which** (`fleet_supervisor
 emacs|tui`, absent means `emacs`, so every consumer that predates the key is untouched).
 `scripts/fleet-supervisor` is the one place either implementation reads it, and the one place the
@@ -666,6 +684,12 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   `cerebro--sweeps` and its neighbours, held to `tests/lib/sweep-findings.json` the way `model.rs`
   is held to its own table. The four thresholds are `const`s here and defcustoms there, exactly as
   `lifecycle::END_GRACE_SECONDS` is.
+- `pruner.rs` — the `prune-worktrees.sh --watch` child and its one pure decision
+  (`prune_action`), its own module for `session.rs`'s reason: it owns a child process with a
+  lifetime longer than any call. Its `Drop` kills the child, and the `Pruner` is constructed
+  **before** the `TerminalGuard` so it drops after it. Both pipes are `Stdio::null()` — a pipe
+  nobody drains is a deadlock — and `Child::try_wait` is what keeps a dead watcher from being a
+  zombie that reads as live for ever.
 - `model.rs` — pure parsing and derivation (roster, state files, the marker sentence, the process
   tree, `partition_beads`). It is the Rust copy of the elisp rules, held to the same
   `tests/lib/session-args.cases` table as every other reader of the marker sentence.

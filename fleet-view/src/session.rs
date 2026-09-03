@@ -890,6 +890,7 @@ impl SessionHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::probe;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1009,19 +1010,14 @@ mod tests {
         Session::spawn_command("Cyclops", command, rows, cols).expect("the session spawns")
     }
 
-    /// Poll every 10ms for up to five seconds until PREDICATE holds; panic with what the screen
-    /// said if it never does. A bare `sleep' is either flaky or slow, and an unbounded loop is a
-    /// CI job that hangs until the runner kills it. Five seconds is the bound every other child
-    /// in this crate already gets (`readers.rs').
+    /// Poll until PREDICATE holds; panic with what the screen said if it never does. A bare
+    /// `sleep' is either flaky or slow, and an unbounded loop is a CI job that hangs until the
+    /// runner kills it. `probe::POLL_BOUND' is the bound every other child in this crate already
+    /// gets (`readers.rs').
     fn settle(session: &mut Session, what: &str, mut predicate: impl FnMut(&mut Session) -> bool) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            if predicate(session) {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+        if !probe::wait_until(probe::POLL_BOUND, || predicate(session)) {
+            panic!("never settled: {what}\nscreen was {:?}", session.screen(24, 80));
         }
-        panic!("never settled: {what}\nscreen was {:?}", session.screen(24, 80));
     }
 
     /// The screen's rows as plain text, blank rows and all.
@@ -1032,10 +1028,6 @@ mod tests {
             .iter()
             .map(|line| texts(line).join(""))
             .collect()
-    }
-
-    fn text_of(lines: &[Line<'static>]) -> Vec<String> {
-        lines.iter().map(|line| texts(line).join("")).collect()
     }
 
     #[test]
@@ -1049,7 +1041,7 @@ mod tests {
             matches!(view, SessionView::Refused { .. })
         });
         let SessionView::Refused { lines, .. } = view else { panic!("not a refusal: {view:?}") };
-        let text = text_of(&lines);
+        let text = probe::text_of(&lines);
         assert!(
             text.iter().any(|line| line == "agents/implementer.md is missing"),
             "the launcher's own words, without its prefix: {text:?}"
@@ -1096,7 +1088,7 @@ mod tests {
             matches!(view, SessionView::Ended { .. })
         });
         let SessionView::Ended { lines, .. } = view else { panic!("{view:?}") };
-        let text = text_of(&lines);
+        let text = probe::text_of(&lines);
         assert!(
             text.iter().any(|line| line == "Cyclops was killed by signal 1."),
             "this view sent the signal and knows which, and 0.9 sends SIGHUP: {text:?}"
@@ -1122,7 +1114,7 @@ mod tests {
         let mut parser = vt100::Parser::new(4, 20, SCROLLBACK_LINES);
         parser.process(b"the pass\r\n");
         let lines = transcript(&mut parser, 4, 20, Ended::ByView, "Cyclops");
-        let text = text_of(&lines);
+        let text = probe::text_of(&lines);
         assert!(
             text.iter().any(|line| line == "Cyclops finished its pass; the view ended it."),
             "{text:?}"
@@ -1166,7 +1158,7 @@ mod tests {
         });
         let SessionView::Ended { lines, .. } = view else { panic!("{view:?}") };
         assert!(
-            text_of(&lines).iter().any(|line| line == "Cyclops finished its pass; the view ended it."),
+            probe::text_of(&lines).iter().any(|line| line == "Cyclops finished its pass; the view ended it."),
             "the transcript is kept, and closes with the view's own sentence"
         );
     }
@@ -1228,21 +1220,17 @@ mod tests {
         );
 
         host.flush_returns(at + RETURN_DELAY);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !host_text(&mut host, "Cyclops").iter().any(|line| line.contains("got:hello")) {
-            if std::time::Instant::now() >= deadline {
-                panic!("the return never arrived");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        assert!(
+            probe::wait_until(probe::POLL_BOUND, || {
+                host_text(&mut host, "Cyclops").iter().any(|line| line.contains("got:hello"))
+            }),
+            "the return never arrived"
+        );
     }
 
     /// The live screen of NAME's session, as plain strings.
     fn host_text(host: &mut SessionHost, name: &str) -> Vec<String> {
-        match host.sync(Some(name), 24, 80, at("2026-01-01T00:00:00Z")) {
-            SessionView::Live { lines, .. } => text_of(&lines),
-            _ => Vec::new(),
-        }
+        probe::view_text(&host.sync(Some(name), 24, 80, at("2026-01-01T00:00:00Z")))
     }
 
     #[test]
@@ -1265,16 +1253,18 @@ mod tests {
         name: &str,
         predicate: impl Fn(&SessionView) -> bool,
     ) -> SessionView {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
+        let mut last = SessionView::None;
+        let settled = probe::wait_for(probe::POLL_BOUND, || {
             let view = host.sync(Some(name), 24, 80, at("2026-01-01T00:00:00Z"));
             if predicate(&view) {
-                return view;
+                return Some(view);
             }
-            if std::time::Instant::now() >= deadline {
-                panic!("never settled for {name}: {view:?}");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            last = view;
+            None
+        });
+        match settled {
+            Some(view) => view,
+            None => panic!("never settled for {name}: {last:?}"),
         }
     }
 
@@ -1341,7 +1331,7 @@ mod tests {
             ended.is_some()
         });
         assert_eq!(ended, Some(Ended::Status(0)));
-        let lines = text_of(&session.into_transcript(24, 80, Ended::Status(0)));
+        let lines = probe::text_of(&session.into_transcript(24, 80, Ended::Status(0)));
         assert_eq!(
             lines,
             vec![
@@ -1383,7 +1373,7 @@ mod tests {
             ended = session.poll_exit();
             ended.is_some()
         });
-        let lines = text_of(&session.into_transcript(24, 80, ended.unwrap()));
+        let lines = probe::text_of(&session.into_transcript(24, 80, ended.unwrap()));
         assert_eq!(lines.first().map(String::as_str), Some("line 1"));
         // The three closing lines the view adds sit under the last thing the agent said.
         let content: Vec<&String> = lines.iter().take(lines.len() - 4).collect();
@@ -1400,19 +1390,16 @@ mod tests {
     fn a_finished_session_becomes_a_retained_pass_and_starting_again_replaces_it() {
         let mut host = SessionHost::default();
         host.insert("Cyclops", shell(r#"printf "first pass\r\n""#, 24, 80));
-        let mut view = SessionView::None;
-        for _ in 0..500 {
-            view = host.sync(Some("Cyclops"), 24, 80, at("2026-09-01T15:42:00Z"));
-            if matches!(view, SessionView::Ended { .. }) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        let view = probe::wait_for(probe::POLL_BOUND, || {
+            let view = host.sync(Some("Cyclops"), 24, 80, at("2026-09-01T15:42:00Z"));
+            matches!(view, SessionView::Ended { .. }).then_some(view)
+        })
+        .unwrap_or(SessionView::None);
         let SessionView::Ended { lines, at: ended_at } = view else {
             panic!("expected a retained pass, got {view:?}");
         };
         assert_eq!(ended_at, at("2026-09-01T15:42:00Z"));
-        assert!(text_of(&lines).iter().any(|line| line == "first pass"), "{:?}", text_of(&lines));
+        assert!(probe::text_of(&lines).iter().any(|line| line == "first pass"), "{:?}", probe::text_of(&lines));
         assert_eq!(host.live_count(), 0);
 
         // Starting again throws the retained pass away: it is kept until the next start, and no

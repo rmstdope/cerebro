@@ -2088,50 +2088,28 @@ mod main_tests {
         app
     }
 
-    /// Poll `sync` until the child's view is `Live`, for at most five seconds - the bound every
-    /// other child in this crate gets.
+    /// Poll `sync` until the child's view is `Live` and has announced itself.
     fn settle_view(host: &mut SessionHost, app: &mut App) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
+        let settled = probe::wait_until(probe::POLL_BOUND, || {
             let view = host.sync(app.selected.as_deref(), 20, 80, Utc::now());
-            let ready = match &view {
-                cerebro_tui::session::SessionView::Live { lines, .. } => {
-                    lines.iter().any(|line| {
-                        line.spans.iter().any(|span| span.content.contains("ready"))
-                    })
-                }
-                _ => false,
-            };
+            let ready = probe::view_text(&view).iter().any(|line| line.contains("ready"));
             app.set_session_view(view);
-            if ready {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        panic!("the child never announced itself");
+            ready
+        });
+        assert!(settled, "the child never announced itself");
     }
 
     /// What the child has echoed back, as one string.
     fn echoed(host: &mut SessionHost, app: &App, wanted: &str) -> String {
-        let deadline = Instant::now() + Duration::from_secs(5);
         let mut text = String::new();
-        while Instant::now() < deadline {
-            if let cerebro_tui::session::SessionView::Live { lines, .. } =
-                host.sync(app.selected.as_deref(), 20, 80, Utc::now())
-            {
-                text = lines
-                    .iter()
-                    .map(|line| {
-                        line.spans.iter().map(|span| span.content.to_string()).collect::<String>()
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-                if text.contains(wanted) {
-                    return text;
-                }
+        probe::wait_for(probe::POLL_BOUND, || {
+            let view = host.sync(app.selected.as_deref(), 20, 80, Utc::now());
+            let seen = probe::view_text(&view).join("");
+            if !seen.is_empty() {
+                text = seen;
             }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+            text.contains(wanted).then_some(())
+        });
         text
     }
 
@@ -2221,16 +2199,12 @@ mod main_tests {
             "Storm",
             cerebro_tui::session::Session::spawn_command("Storm", command, 24, 80).unwrap(),
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
+        probe::wait_until(probe::POLL_BOUND, || {
             let view = host.sync(app.selected.as_deref(), 20, 80, Utc::now());
             let ended = matches!(view, cerebro_tui::session::SessionView::Ended { .. });
             app.set_session_view(view);
-            if ended {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+            ended
+        });
         assert!(
             matches!(app.session.view, cerebro_tui::session::SessionView::Ended { .. }),
             "the pass ended and was retained"
@@ -3025,14 +2999,11 @@ mod main_tests {
     /// `SessionHost::kill` signals the child and leaves it to be reaped by the next `sync`, so a
     /// killed pass becomes an ordinary retained transcript. Poll until that has happened.
     fn settle_gone(host: &mut SessionHost, name: &str) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while host.is_live(name) {
+        let reaped = probe::wait_until(probe::POLL_BOUND, || {
             host.sync(Some(name), 24, 80, Utc::now());
-            if std::time::Instant::now() >= deadline {
-                panic!("{name} was signalled and never reaped");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+            !host.is_live(name)
+        });
+        assert!(reaped, "{name} was signalled and never reaped");
     }
 
     // ---- cb-kcs.3: what the view does unattended ----------------------------------------
@@ -3227,26 +3198,7 @@ mod main_tests {
         assert_eq!(app.notice, None, "one nudge per question, not one per tick");
         host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            let view = host.sync(Some("Cyclops"), 24, 200, Utc::now());
-            let text: Vec<String> = match &view {
-                cerebro_tui::session::SessionView::Live { lines, .. } => lines
-                    .iter()
-                    .map(|line| {
-                        line.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            };
-            if text.iter().any(|line| line.contains("got:[cerebro] Nobody answered")) {
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                panic!("the nudge never reached the child: {text:?}");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        saw_line(&mut host, "Cyclops", 24, 200, "got:[cerebro] Nobody answered");
 
         // Answered, and asking again: nudgeable again.
         app.finish_refresh(
@@ -4244,25 +4196,14 @@ mod main_tests {
         app
     }
 
-    fn saw_line(host: &mut SessionHost, name: &str, needle: &str) -> bool {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            let view = host.sync(Some(name), 24, 400, Utc::now());
-            let text: Vec<String> = match &view {
-                cerebro_tui::session::SessionView::Live { lines, .. } => lines
-                    .iter()
-                    .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
-                    .collect(),
-                _ => Vec::new(),
-            };
-            if text.iter().any(|line| line.contains(needle)) {
-                return true;
-            }
-            if std::time::Instant::now() >= deadline {
-                panic!("{needle:?} never reached {name}: {text:?}");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+    fn saw_line(host: &mut SessionHost, name: &str, rows: u16, cols: u16, needle: &str) -> bool {
+        let mut last = Vec::new();
+        let seen = probe::wait_until(probe::POLL_BOUND, || {
+            last = probe::view_text(&host.sync(Some(name), rows, cols, Utc::now()));
+            last.iter().any(|line| line.contains(needle))
+        });
+        assert!(seen, "{needle:?} never reached {name}: {last:?}");
+        true
     }
 
     #[test]
@@ -4296,7 +4237,7 @@ mod main_tests {
 
         host.flush_returns(at);
         host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
-        assert!(saw_line(&mut host, "Cerebro", "got:[cerebro] Unranked beads are waiting"));
+        assert!(saw_line(&mut host, "Cerebro", 24, 400, "got:[cerebro] Unranked beads are waiting"));
         host.kill(&cerebro_tui::readers::ReaderPaths {
             consumer_root: dir.path().into(),
             shared_root: dir.path().into(),

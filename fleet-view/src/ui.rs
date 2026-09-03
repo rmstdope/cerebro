@@ -586,6 +586,103 @@ fn lifecycle_hint(mode: &SupervisionMode) -> Option<&'static str> {
     }
 }
 
+/// What a hint clause gives way to when the line will not fit.
+///
+/// Ranks are dropped WHOLE: every clause of the lowest rank present goes at once, then the next.
+/// That is what keeps this behaviour-preserving (cb-51u) — the three literal format strings it
+/// replaces dropped in exactly these groups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum HintRank {
+    /// Moving around the screen. The first thing to go: a navigator can find `Tab` and the arrow
+    /// keys by pressing them.
+    Movement,
+    /// Keys that act on what the cursor is on, and `x`. Shown only while their key acts on
+    /// something, so they are already conditional; they give way second.
+    Cursor,
+    /// The keys that change the fleet, and the two a navigator cannot guess from the screen.
+    /// Never dropped: a terminal too narrow for these truncates, exactly as it always has.
+    Kept,
+}
+
+/// One clause of the hint line: the text as drawn, without its leading `" | "`, and its rank.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HintClause {
+    text: &'static str,
+    rank: HintRank,
+}
+
+/// The hint string that fits `width` cells beside the `used` cells already drawn.
+///
+/// Drops the lowest rank present, whole, and tries again. `HintRank::Kept` is never dropped, so a
+/// terminal narrower than those clauses truncates - which is what it has always done.
+///
+/// The leading `" | "` belongs to each clause: `header_line` pushes this as a span with no
+/// separator of its own.
+fn fit_hints(clauses: &[HintClause], used: usize, width: usize) -> String {
+    let join = |floor: HintRank| -> String {
+        clauses
+            .iter()
+            .filter(|clause| clause.rank >= floor)
+            .map(|clause| format!(" | {}", clause.text))
+            .collect()
+    };
+    for floor in [HintRank::Movement, HintRank::Cursor] {
+        let text = join(floor);
+        // Cells, not chars: `·` and the arrows are one cell each here, but the rule is the measure.
+        if used + text.width() <= width {
+            return text;
+        }
+    }
+    join(HintRank::Kept)
+}
+
+/// Every clause this screen offers, in the order they are drawn.
+///
+/// The order is the drawn string, and it is the order the literal format strings this replaces
+/// had: the lifecycle clause between the movement hints and `x act`. Adding a hint is one row
+/// here plus a rank, never a width decision (cb-51u).
+fn hint_clauses(app: &App) -> Vec<HintClause> {
+    let mut clauses = vec![
+        HintClause { text: "Tab/Shift-Tab pane", rank: HintRank::Movement },
+        HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement },
+    ];
+    if let Some(text) = lifecycle_hint(&app.supervision) {
+        clauses.push(HintClause { text, rank: HintRank::Kept });
+    }
+    // Whatever `lifecycle_hint` returned, including `None` on a read-only view: acting on a sweep
+    // finding writes to the shared board, which is deliberately outside the supervision lease.
+    // Only while there IS a finding - on the ordinary day the hint is exactly what it was.
+    if !app.work_findings().is_empty() {
+        clauses.push(HintClause { text: "x act", rank: HintRank::Cursor });
+    }
+    // The two clauses of cb-kcs.5.4, by the same rule and for the same reason: both write to the
+    // shared board rather than to this checkout's sessions, so both are shown on a read-only
+    // view. Each only while the cursor is on a row that key acts on. cb-41r's `Enter bead` rides
+    // beside the priority keys by the same rule.
+    match &app.work_cursor {
+        Some(app::WorkCursor::Bead(_)) => {
+            clauses.push(HintClause { text: "0-4/+/-/u priority", rank: HintRank::Cursor });
+            clauses.push(HintClause { text: "Enter bead", rank: HintRank::Cursor });
+        }
+        Some(app::WorkCursor::More(_)) => {
+            clauses.push(HintClause { text: "Enter show all", rank: HintRank::Cursor })
+        }
+        _ => {}
+    }
+    // cb-d31, by the same rule as `x act` and the priority keys above: a clause is shown only
+    // while its key acts on what is under the cursor. Fleet focus alone - Work's own `Enter` is a
+    // different key on a different row and carries its own clause.
+    if app.focus == PaneFocus::Fleet && app.session_reachable() {
+        clauses.push(HintClause { text: "Enter session", rank: HintRank::Cursor });
+    }
+    clauses.push(HintClause {
+        text: if failed(&app.fleet) || failed(&app.work) { "g retry" } else { "g refresh" },
+        rank: HintRank::Kept,
+    });
+    clauses.push(HintClause { text: "q/Esc/Ctrl-C quit", rank: HintRank::Kept });
+    clauses
+}
+
 /// The one status line: the title, what is happening right now, and the keys.
 ///
 /// `refreshing...` wins over a retained failure: a navigator looking at a stale pane most wants
@@ -645,61 +742,16 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
             Style::default().fg(GOLD),
         ));
     }
-    let refresh_key = if failed(&app.fleet) || failed(&app.work) {
-        "g retry"
-    } else {
-        "g refresh"
-    };
-    // The hints give way before the state does. Ownership made the title up to twenty-eight cells
-    // longer (cb-kcs.1), which pushed `q/Esc/Ctrl-C quit` off a hundred-column screen entirely -
-    // and a hint the terminal has cut in half is worse than a shorter hint that fits. What is left
-    // when it shortens is the two keys a navigator cannot guess from the screen: refresh and quit.
+    // The hints give way before the state does, by rank and whole (`fit_hints`). Ownership made
+    // the title up to twenty-eight cells longer (cb-kcs.1), which pushed `q/Esc/Ctrl-C quit` off a
+    // hundred-column screen entirely - and a hint the terminal has cut in half is worse than a
+    // shorter hint that fits. What is left when it shortens is the two keys a navigator cannot
+    // guess from the screen: refresh and quit.
+    //
+    // `used` is summed AFTER every state span is pushed: the notice, the confirmation prompt and
+    // the live count all cost width.
     let used: usize = spans.iter().map(|span| span.content.width()).sum();
-    let lifecycle_keys =
-        lifecycle_hint(&app.supervision).map(|k| format!(" | {k}")).unwrap_or_default();
-    let mut keys = lifecycle_keys.clone();
-    // Whatever `lifecycle_hint` returned, including `None` on a read-only view: acting on a sweep
-    // finding writes to the shared board, which is deliberately outside the supervision lease.
-    // Only while there IS a finding - on the ordinary day the hint is exactly what it was.
-    if !app.work_findings().is_empty() {
-        keys.push_str(" | x act");
-    }
-    // The two clauses of cb-kcs.5.4, by the same rule and for the same reason: both write to the
-    // shared board rather than to this checkout's sessions, so both are shown on a read-only
-    // view. Each only while the cursor is on a row that key acts on.
-    match &app.work_cursor {
-        // cb-41r rides beside the priority keys, by the same rule: only while the cursor is on
-        // the row `Enter` acts on.
-        Some(app::WorkCursor::Bead(_)) => keys.push_str(" | 0-4/+/-/u priority | Enter bead"),
-        Some(app::WorkCursor::More(_)) => keys.push_str(" | Enter show all"),
-        _ => {}
-    }
-    // cb-d31, by the same rule as `x act` and the priority keys above: a clause is shown only
-    // while its key acts on what is under the cursor. Fleet focus alone - Work's own `Enter` is a
-    // different key on a different row and carries its own clause. It rides in `keys` rather than
-    // in `full`, so it survives the narrow-terminal shortening beside them.
-    if app.focus == PaneFocus::Fleet && app.session_reachable() {
-        keys.push_str(" | Enter session");
-    }
-    let full = format!(
-        " | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move{keys} | {refresh_key} | q/Esc/Ctrl-C quit"
-    );
-    // Cells, not chars: `·` and the arrows are one cell each here, but the rule is the measure.
-    // The lifecycle keys survive the first shortening and the movement hints do not (Q7): the
-    // keys that change the fleet outlast the keys that move around it. And when even that does
-    // not fit, the cursor clauses go too - the rule this shortening exists for is that refresh
-    // and quit, the two keys a navigator cannot guess from the screen, are never the ones cut.
-    // cb-41r's `Enter bead` is what made a hundred-column header overflow the second step.
-    let shortened = format!("{keys} | {refresh_key} | q/Esc/Ctrl-C quit");
-    let bare = format!("{lifecycle_keys} | {refresh_key} | q/Esc/Ctrl-C quit");
-    let hints = if used + full.width() <= width as usize {
-        full
-    } else if used + shortened.width() <= width as usize {
-        shortened
-    } else {
-        bare
-    };
-    spans.push(Span::styled(hints, dim()));
+    spans.push(Span::styled(fit_hints(&hint_clauses(app), used, width as usize), dim()));
     Line::from(spans)
 }
 
@@ -4191,5 +4243,206 @@ mod tests {
         assert!(!narrow[0].contains("0-4/+/-/u priority"), "{:?}", narrow[0]);
         assert!(narrow[0].contains("g refresh"), "{:?}", narrow[0]);
         assert!(narrow[0].contains("q/Esc/Ctrl-C quit"), "{:?}", narrow[0]);
+    }
+
+    const MOVE_PANE: HintClause =
+        HintClause { text: "Tab/Shift-Tab pane", rank: HintRank::Movement };
+    const MOVE_SCROLL: HintClause =
+        HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement };
+    const KEEP_LIFECYCLE: HintClause =
+        HintClause { text: "s/f/k start·finish·kill", rank: HintRank::Kept };
+    const CURSOR_ACT: HintClause = HintClause { text: "x act", rank: HintRank::Cursor };
+    const CURSOR_BEAD: HintClause = HintClause { text: "Enter bead", rank: HintRank::Cursor };
+    const KEEP_REFRESH: HintClause = HintClause { text: "g refresh", rank: HintRank::Kept };
+    const KEEP_QUIT: HintClause = HintClause { text: "q/Esc/Ctrl-C quit", rank: HintRank::Kept };
+
+    /// The one place header widths are asserted: every rank boundary, exact strings.
+    ///
+    /// Ranks give way WHOLE and in order — movement first, then the cursor clauses, and the kept
+    /// clauses never. That is the rule the three literal format strings used to spell out three
+    /// times, and it is why adding a hint is now a row rather than a width decision (cb-51u).
+    #[test]
+    fn the_hint_line_gives_way_by_rank() {
+        let all = [
+            MOVE_PANE,
+            MOVE_SCROLL,
+            KEEP_LIFECYCLE,
+            CURSOR_ACT,
+            CURSOR_BEAD,
+            KEEP_REFRESH,
+            KEEP_QUIT,
+        ];
+        let join = |clauses: &[HintClause]| -> String {
+            clauses.iter().map(|c| format!(" | {}", c.text)).collect()
+        };
+        let full = join(&all);
+        let no_movement = join(&[KEEP_LIFECYCLE, CURSOR_ACT, CURSOR_BEAD, KEEP_REFRESH, KEEP_QUIT]);
+        let kept_only = join(&[KEEP_LIFECYCLE, KEEP_REFRESH, KEEP_QUIT]);
+        let kept_list = [KEEP_LIFECYCLE, KEEP_REFRESH, KEEP_QUIT];
+
+        let used = 20;
+        let cases: Vec<(&str, &[HintClause], usize, usize, &str)> = vec![
+            ("everything fits", &all, used, used + full.width(), &full),
+            (
+                "one cell too narrow for the full join",
+                &all,
+                used,
+                used + full.width() - 1,
+                &no_movement,
+            ),
+            (
+                "exactly wide enough for the movement clauses to be gone",
+                &all,
+                used,
+                used + no_movement.width(),
+                &no_movement,
+            ),
+            (
+                "one cell too narrow for that",
+                &all,
+                used,
+                used + no_movement.width() - 1,
+                &kept_only,
+            ),
+            (
+                "narrower than even the kept join: the kept join anyway",
+                &all,
+                used,
+                0,
+                &kept_only,
+            ),
+            (
+                "no movement and no cursor clauses: one string at every width",
+                &kept_list,
+                used,
+                0,
+                &kept_only,
+            ),
+            (
+                "no movement and no cursor clauses, with room to spare",
+                &kept_list,
+                used,
+                1000,
+                &kept_only,
+            ),
+        ];
+        for (label, clauses, used, width, expected) in cases {
+            assert_eq!(fit_hints(clauses, used, width), expected, "{label}");
+        }
+    }
+
+    /// Which clauses each screen offers, in the order they are drawn, with their ranks.
+    ///
+    /// The order IS the behaviour: the lifecycle clause sits after `↑/↓/PgUp/PgDn move` and
+    /// before `x act`, because that is where the literal string it replaces put it (cb-51u).
+    #[test]
+    fn the_clauses_a_screen_offers_are_ranked() {
+        let refresh = HintClause { text: "g refresh", rank: HintRank::Kept };
+        let retry = HintClause { text: "g retry", rank: HintRank::Kept };
+        let quit = HintClause { text: "q/Esc/Ctrl-C quit", rank: HintRank::Kept };
+        let pane = HintClause { text: "Tab/Shift-Tab pane", rank: HintRank::Movement };
+        let scroll = HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement };
+
+        assert_eq!(
+            hint_clauses(&populated()),
+            vec![pane, scroll, refresh, quit],
+            "read-only, no findings, no cursor, no reachable session"
+        );
+        assert_eq!(
+            hint_clauses(&supervising()),
+            vec![
+                pane,
+                scroll,
+                HintClause { text: "s/f/k start·finish·kill", rank: HintRank::Kept },
+                refresh,
+                quit
+            ],
+            "supervising"
+        );
+        assert_eq!(
+            hint_clauses(&handing_over(3)),
+            vec![
+                pane,
+                scroll,
+                HintClause { text: "f finish | k kill", rank: HintRank::Kept },
+                refresh,
+                quit
+            ],
+            "handing over"
+        );
+
+        let mut failed = populated();
+        failed.finish_refresh(Err(failure()), at(86_400));
+        assert_eq!(
+            hint_clauses(&failed),
+            vec![pane, scroll, retry, quit],
+            "a failed pane asks for a retry rather than a refresh"
+        );
+
+        let mut work = work_app(WorkBuckets {
+            claimed: vec![bead("cb-51u", Some(2), "header hints are ranked clauses")],
+            unplanned: (1..=12)
+                .map(|n| bead(&format!("cb-{n:02}"), Some(4), "backlog"))
+                .collect(),
+            ..WorkBuckets::default()
+        });
+        work.selected = Some("Rogue".to_string());
+        work.focus = PaneFocus::Work;
+        while !matches!(work.work_cursor, Some(app::WorkCursor::Bead(_))) {
+            work.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, at(86_400));
+        }
+        assert_eq!(
+            hint_clauses(&work),
+            vec![
+                pane,
+                scroll,
+                HintClause { text: "0-4/+/-/u priority", rank: HintRank::Cursor },
+                HintClause { text: "Enter bead", rank: HintRank::Cursor },
+                refresh,
+                quit
+            ],
+            "the cursor on a bead row"
+        );
+
+        while !matches!(work.work_cursor, Some(app::WorkCursor::More(_))) {
+            work.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, at(86_400));
+        }
+        assert_eq!(
+            hint_clauses(&work),
+            vec![
+                pane,
+                scroll,
+                HintClause { text: "Enter show all", rank: HintRank::Cursor },
+                refresh,
+                quit
+            ],
+            "the cursor on a +N more row"
+        );
+
+        let mut fleet_focus = populated();
+        fleet_focus.selected = Some("Xavier".to_string());
+        fleet_focus.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        fleet_focus.focus = PaneFocus::Fleet;
+        assert_eq!(
+            hint_clauses(&fleet_focus),
+            vec![
+                pane,
+                scroll,
+                HintClause { text: "Enter session", rank: HintRank::Cursor },
+                refresh,
+                quit
+            ],
+            "Fleet focus with a reachable session"
+        );
+
+        let findings = with_findings(vec![judged(
+            Finding::Unclaim { id: "cb-a".into() },
+            "unclaim cb-a — Storm stalled",
+        )]);
+        assert!(
+            hint_clauses(&findings)
+                .contains(&HintClause { text: "x act", rank: HintRank::Cursor }),
+            "a sweep finding offers `x act`"
+        );
     }
 }

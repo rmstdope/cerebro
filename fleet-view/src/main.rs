@@ -3721,10 +3721,9 @@ mod main_tests {
             .collect()
     }
 
-    /// A board with one unplanned P4 bead and nothing planned: a short buffer with something to
-    /// plan, which is the planner's second arm.
-    /// One unplanned bead a planner may actually take, which since cb-zgg means a RANKED one:
-    /// a P4 is unranked and no longer counts as something to plan.
+    /// A board with one unplanned RANKED (P2) bead and nothing planned: a short buffer with
+    /// something to plan, which is the planner's second arm. It is a P2 rather than a P4 since
+    /// cb-zgg: an unranked bead is Cerebro's to rank, and no longer counts as something to plan.
     fn short_buffer() -> cerebro_tui::model::WorkBuckets {
         cerebro_tui::model::partition_beads(vec![cerebro_tui::model::Bead {
             id: "cb-a".into(),

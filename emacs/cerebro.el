@@ -2161,15 +2161,18 @@ is merely waiting for it."
              (p0 (format "P0 %s unplanned" (car p0)))
              ;; A short buffer is a reason to plan only while there is
              ;; something to plan. `actionable-ids' is the unplanned list -
-             ;; already minus what the navigator holds, and minus what a
-             ;; planner holds, since a bead labelled `planning' is a bucket of
-             ;; its own (`cerebro--partition-beads'). Two planners over one
+             ;; already minus what the navigator holds, minus what a planner
+             ;; holds, since a bead labelled `planning' is a bucket of its own
+             ;; (`cerebro--partition-beads'), and since cb-zgg minus the
+             ;; unranked (`cerebro--rankable-beads'), which is what makes a
+             ;; ranking release the no-progress guard. Two planners over one
              ;; bead is what found this: Beast taking the last one moved it out
              ;; of unplanned, the buffer stayed short, and Xavier was started
              ;; to find an empty queue. The no-progress guard cannot cover it -
-             ;; that same taking changes the fingerprint - so the rule asks,
-             ;; the way the P0 and P4 rules already do by being derived from
-             ;; this list.
+             ;; that same taking changes the fingerprint - so the rule asks.
+             ;; The P4 rule is deliberately NOT derived from this list: it is
+             ;; built from the un-narrowed `unplanned' (`cerebro--trigger-context'),
+             ;; since narrowing it would silence Cerebro's own trigger.
              ((and (< planned want) (alist-get 'actionable-ids context))
               (format "buffer %d of %d" planned want)))))
          ("verifier"

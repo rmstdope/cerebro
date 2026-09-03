@@ -6700,6 +6700,17 @@ touch."
                            (cerebro--actionable-beads beads))
                    '("cb-1" "cb-4")))))
 
+(ert-deftest cerebro-test/rankable-beads-are-the-ones-a-planner-may-take ()
+  "A P4 is unranked, not low priority, and a planner may not take one.  A bead
+with no priority at all is not a P4 and is kept."
+  (let ((beads '(((id . "a") (priority . 0))
+                 ((id . "b") (priority . 4))
+                 ((id . "c") (priority . 2))
+                 ((id . "d")))))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                           (cerebro--rankable-beads beads))
+                   '("a" "c" "d")))))
+
 (ert-deftest cerebro-test/a-blocked-bead-is-still-a-planner-s-work ()
   "`skills/plan-bead' plans beads whose blockers are unbuilt on purpose - `bd
 ready' hides the ones most worth having planned.  So blockedness is not a
@@ -7670,7 +7681,36 @@ key rather than its position."
               ;; included - a bucket named `future' must not silently join
               ;; that count, nor may reordering drop `paused' from it.
               (should (equal (alist-get 'stale-verdicts context) 1))
-              (should (equal (alist-get 'planned-ids context) '("a" "b"))))))
+              (should (equal (alist-get 'planned-ids context) '("a" "b")))
+              ;; `d' is unranked, so it is in `unranked-ids' and `p4-unranked'
+              ;; and in neither the planner's actionable list nor its
+              ;; fingerprint (cb-zgg).
+              (should (equal (alist-get 'actionable-ids context) '("c"))))))
+      (kill-buffer panel))))
+
+(ert-deftest cerebro-test/ranking-a-bead-moves-the-planner-fingerprint ()
+  "Cerebro ranking a bead is what the fleet view wakes it for, and it has to be
+able to wake a planner.  Before cb-zgg `actionable-ids\=' carried every unplanned
+bead, so a P4 -> P2 ranking left the planner fingerprint identical and
+`cerebro--unless-unchanged\=' held the start over one ranked bead for 45 minutes."
+  (let ((panel (get-buffer-create "*cerebro-beads-ranking-test*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--fleet) (lambda (_) nil))
+                  ((symbol-function 'cerebro--beads-panel-buffer) (lambda () panel)))
+          (let ((print-of
+                 (lambda (priority)
+                   (with-current-buffer panel
+                     (setq cerebro--beads
+                           `((claimed . nil) (planned . nil) (being-planned . nil)
+                             (unplanned . (((id . "cb-agg") (priority . ,priority))))
+                             (paused . nil) (merged . nil))
+                           cerebro--beads-read-at 3.5))
+                   (with-temp-buffer
+                     (setq cerebro--agents nil)
+                     (cerebro--trigger-fingerprint
+                      "planner"
+                      (cerebro--trigger-context "/tmp/nowhere" (seconds-to-time 5.0)))))))
+            (should-not (equal (funcall print-of 4) (funcall print-of 2)))))
       (kill-buffer panel))))
 
 (ert-deftest cerebro-test/the-panel-records-when-it-asked-not-only-when-it-heard ()

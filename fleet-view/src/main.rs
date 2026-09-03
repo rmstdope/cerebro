@@ -3723,6 +3723,8 @@ mod main_tests {
 
     /// A board with one unplanned P4 bead and nothing planned: a short buffer with something to
     /// plan, which is the planner's second arm.
+    /// One unplanned bead a planner may actually take, which since cb-zgg means a RANKED one:
+    /// a P4 is unranked and no longer counts as something to plan.
     fn short_buffer() -> cerebro_tui::model::WorkBuckets {
         cerebro_tui::model::partition_beads(vec![cerebro_tui::model::Bead {
             id: "cb-a".into(),
@@ -3730,7 +3732,7 @@ mod main_tests {
             status: "open".into(),
             issue_type: "task".into(),
             labels: Vec::new(),
-            priority: Some(4),
+            priority: Some(2),
             updated_at: None,
             assignee: None,
             metadata: serde_json::Value::Null,
@@ -4274,7 +4276,7 @@ mod main_tests {
         let xavier = evaluations[0];
         assert!(xavier.contains(r#""agent":"Xavier","role":"planner","reason":"buffer 0 of 2""#), "{xavier}");
         assert!(xavier.contains(r#""planned":0,"planned_ids":null,"implementers":0,"p0_unplanned":null"#), "{xavier}");
-        assert!(xavier.contains(r#""p4_unranked":1,"merged_unverified":0,"stale_verdicts":0"#), "{xavier}");
+        assert!(xavier.contains(r#""p4_unranked":0,"merged_unverified":0,"stale_verdicts":0"#), "{xavier}");
         assert!(xavier.contains(r#""held_by_guard":null,"spaced_out":null,"spacing":30"#), "{xavier}");
         assert!(xavier.contains(r#""backed_off":null,"stop_flag":null,"disarmed":null,"failed_starts":0}"#), "{xavier}");
         // And the one the spacing held says so, on the same line as the number that did it.

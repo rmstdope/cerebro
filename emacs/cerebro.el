@@ -1800,6 +1800,22 @@ know."
                                   #'equal))
               beads))
 
+(defun cerebro--rankable-beads (beads)
+  "Pure.  BEADS minus the unranked ones.
+
+A P4 is not a low priority, it is a bead nobody has ranked, and
+`skills/plan-bead\=' forbids a planner from taking one.  So the unplanned list
+a planner is judged against is this one, and it does two jobs.  It keeps a
+board of nothing but unranked beads from starting a planner that can only come
+up and end - the ranking those beads need is Cerebro\='s.  And it makes RANKING
+a bead move the set `cerebro--trigger-fingerprint\=' compares, which is what
+releases the no-progress guard: carrying P4s made a P4 -> P2 ranking identical
+to the fingerprint the last pass was started with, and the newly plannable bead
+sat unplanned until an unrelated board change broke it (cb-zgg).
+
+A bead with no priority at all is kept: absent is not P4."
+  (seq-remove (lambda (bead) (equal (alist-get 'priority bead) 4)) beads))
+
 (defun cerebro--planner-want (implementers)
   "Pure.  How many planned, unclaimed beads the fleet wants right now.
 
@@ -2013,6 +2029,9 @@ clock (`cerebro--trigger\=').
 It has to carry ids and not only counts.  A planner that plans one bead while
 another arrives leaves every count where it was, and \"nothing changed\" would
 then be wrong in the one direction that costs the fleet work.
+
+The planner\='s ids are the RANKABLE ones (`cerebro--rankable-beads\='), so a bead
+being ranked moves this value and releases the guard (cb-zgg).
 
 Nil for a role with no condition rules - anything a consumer
 added - and for the cadence roles, whose reason is a clock this must not
@@ -5986,9 +6005,12 @@ was a failure, are both plain values: neither depends on whose pass it is."
           (cons 'beads-read-at (and panel (buffer-local-value 'cerebro--beads-read-at panel)))
           ;; The ids rather than their number, because the fingerprint the
           ;; no-progress guard compares has to see one bead replaced by
-          ;; another (`cerebro--trigger-fingerprint').
+          ;; another (`cerebro--trigger-fingerprint').  The unranked ones are
+          ;; not among them (`cerebro--rankable-beads'): they are Cerebro's to
+          ;; rank, and a ranking has to move this set (cb-zgg).
           (cons 'actionable-ids
-                (mapcar (lambda (bead) (alist-get 'id bead)) unplanned))
+                (mapcar (lambda (bead) (alist-get 'id bead))
+                        (cerebro--rankable-beads unplanned)))
           ;; The planned, claimable ids: what a standby implementer is
           ;; started for, and what its fingerprint compares (cb-1or.1).  Nil
           ;; before the panel has answered, which is what keeps "no figures

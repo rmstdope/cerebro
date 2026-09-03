@@ -18,8 +18,13 @@
 #      caller wants closed beads" was the assumption, and two beads (ah-tjaz, ah-e0kf) each added
 #      an arm for an open bead to a query answered from closed ones - dead code nobody saw, because
 #      the status was on no line they read. A caller says what it means.
-#   2. An `epic` closing is bookkeeping, not delivery. It closes when its last child does, so
-#      counting both reports the same work twice.
+#   2. An `epic` closing is bookkeeping, not delivery - WHILE IT HAS CHILDREN. It closes when its
+#      last child does, so counting both reports the same work twice. A CHILDLESS epic is
+#      bookkeeping over nothing: nobody has broken it down, so whatever it delivered it delivered
+#      itself, and it is real work at every status (cb-hzl). That question is answered per epic
+#      with `bd children`, which is authoritative - the id-prefix rule the two fleet views use
+#      cannot be used here, because this list is scoped to the status the caller named and a child
+#      outside it would make its parent look childless.
 #   3. `bd set-state <id> <k>=<v>` writes an **event bead** as its audit record: `issue_type:
 #      "event"`, closed, carrying the very labels these queries key on. Left in, each pass finds
 #      the previous pass's event beads, acts on them, and writes more - a chain that grows one link
@@ -29,9 +34,10 @@
 #      the fleet reasons about - and a wrong-root answer is an empty list that reads as a quiet day
 #      rather than an error (ah-il8j).
 #
-# Epics and events are excluded TWICE, on purpose: `--exclude-type epic,event` on the `bd` call
-# does the work, and the `jq` guard keeps the answer right under a `bd` whose `--exclude-type` does
-# not know `event`. A belt and a brace, because being wrong here is invisible.
+# Events are excluded TWICE, on purpose: `--exclude-type event` on the `bd` call does the work, and
+# the `jq` guard keeps the answer right under a `bd` whose `--exclude-type` does not know `event`.
+# A belt and a brace, because being wrong here is invisible. Since cb-hzl the belt-and-brace covers
+# `event` alone; `epic` is decided per bead, below.
 #
 # It fails LOUDLY - non-zero, a message on stderr, nothing on stdout - when `bd` fails or prints
 # something that is not JSON. A reader of this output is deciding what has shipped or what needs
@@ -43,9 +49,15 @@
 
 set -euo pipefail
 
-# The issue types that are never work. `--print-excluded-types` prints these so
-# `emacs/cerebro-test.el` can hold the panel's own list to this one and stop the two drifting.
+# The issue types that are bookkeeping rather than work. `--print-excluded-types` prints these so
+# `emacs/cerebro-test.el` can hold the panel's own list to this one and stop the two drifting -
+# UNCHANGED by cb-hzl, and the ERT contract depends on it staying both words.
 excluded_types=("epic" "event")
+
+# The ones excluded UNCONDITIONALLY, which is what the `bd` call and the `jq` guard use. An `epic`
+# is not on this list since cb-hzl: it is bookkeeping over its CHILDREN, so it is real work exactly
+# while it has none, and that question needs `bd children` (below).
+always_excluded=("event")
 
 usage() {
   echo "usage: work-beads --status <list> [--closed-after <when>] | work-beads --print-excluded-types" >&2
@@ -78,7 +90,7 @@ if [[ -z "$status" ]]; then
   usage
 fi
 
-excluded_csv="$(IFS=,; echo "${excluded_types[*]}")"
+excluded_csv="$(IFS=,; echo "${always_excluded[*]}")"
 
 # The shared checkout every worktree has in common - see scripts/consumer-root's header for the two
 # roots and why a fleet-wide question needs the shared one. Resolved AFTER the argument loop, so
@@ -104,6 +116,35 @@ fi
 if ! out="$(printf '%s' "$raw" | jq --arg excluded "$excluded_csv" \
       '($excluded | split(",")) as $types | [.[] | select(.issue_type as $t | ($types | index($t)) == null)]' 2>/dev/null)"; then
   echo "work-beads: bd printed something that is not JSON: ${argv[*]}" >&2
+  exit 1
+fi
+
+# An epic is work exactly while nothing is under it. Epics are rare in any one status window, so
+# this is a call or none. `if ... then ... fi` inside the loop body rather than `[[ ]] && ...`: the
+# last statement of a loop body is that loop's status under `set -e` (.cerebro/traps.md). A string
+# accumulator rather than a bash array, because `"${arr[@]}"` on an empty array is an unbound
+# variable error under `set -u` in the bash 3.2 macOS ships.
+parented=""
+while IFS= read -r epic_id; do
+  if [[ -n "$epic_id" ]]; then
+    if ! children="$(bd -C "$repo_root" children "$epic_id" --json)"; then
+      echo "work-beads: bd children failed for $epic_id" >&2
+      exit 1
+    fi
+    if ! count="$(printf '%s' "$children" | jq 'length' 2>/dev/null)"; then
+      echo "work-beads: bd children printed something that is not JSON for $epic_id" >&2
+      exit 1
+    fi
+    if [[ "$count" -gt 0 ]]; then
+      parented="$parented$epic_id"$'\n'
+    fi
+  fi
+done < <(printf '%s' "$out" | jq -r '.[] | select(.issue_type == "epic") | .id')
+
+if ! out="$(printf '%s' "$out" | jq --arg ids "$parented" \
+      '($ids | split("\n") | map(select(. != ""))) as $p
+       | [.[] | select(.id as $i | ($p | index($i)) == null)]' 2>/dev/null)"; then
+  echo "work-beads: could not filter parented epics" >&2
   exit 1
 fi
 

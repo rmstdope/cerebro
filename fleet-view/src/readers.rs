@@ -1239,7 +1239,8 @@ mod tests {
       {"id":"cb-new","title":"filed","status":"open","issue_type":"bug","labels":[],"priority":4,"updated_at":null,"assignee":null},
       {"id":"cb-human","title":"parked","status":"open","issue_type":"feature","labels":["human"],"priority":2,"updated_at":null,"assignee":null},
       {"id":"cb-merged","title":"landed","status":"closed","issue_type":"feature","labels":[],"priority":1,"updated_at":"2026-01-01T00:00:00Z","assignee":null},
-      {"id":"cb-epic","title":"a family","status":"open","issue_type":"epic","labels":[],"priority":1,"updated_at":null,"assignee":null}]"#;
+      {"id":"cb-epic","title":"a family","status":"open","issue_type":"epic","labels":[],"priority":1,"updated_at":null,"assignee":null},
+      {"id":"cb-epic.1","title":"a child, so the epic above is bookkeeping","status":"in_progress","issue_type":"feature","labels":[],"priority":1,"updated_at":null,"assignee":"Rogue"}]"#;
 
     #[test]
     fn work_reader_returns_the_partitioned_single_bd_answer() {
@@ -1247,7 +1248,7 @@ mod tests {
         let paths = paths_at(Path::new("/consumer"));
 
         let work = read_work(&paths, &Programs::default(), &fake).unwrap();
-        assert_eq!(ids(&work.claimed), ["cb-claimed"]);
+        assert_eq!(ids(&work.claimed), ["cb-claimed", "cb-epic.1"]);
         assert_eq!(ids(&work.planned), ["cb-planned"]);
         assert_eq!(ids(&work.being_planned), ["cb-held"]);
         assert_eq!(ids(&work.unplanned), ["cb-new"]);

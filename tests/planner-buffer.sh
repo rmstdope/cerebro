@@ -73,15 +73,32 @@ count_consumer="$(consumer_new count --copy)"
 mkdir -p "$count_consumer/.cerebro/state"
 printf 'Xavier planner\nCyclops implementer\n' > "$count_consumer/.cerebro/roster.conf"
 
-argv_file="$stub_dir/argv"
+# The subcommand whose argv this suite reads. The stub dispatches, because `work-beads` asks
+# `bd children` per epic since cb-hzl and a single argv file would keep only the last call.
+argv_file="$stub_dir/argv.list"
 stub_stdout="$stub_dir/stdout"
 stub_exit="$stub_dir/exit"
 
 cat > "$stub_dir/bd" <<STUB
 #!/usr/bin/env bash
-: > "$argv_file"
-for a in "\$@"; do printf 'ARG:%s\n' "\$a" >> "$argv_file"; done
-cat "$stub_stdout"
+sub=""
+skip=0
+for a in "\$@"; do
+  if [ "\$skip" = 1 ]; then skip=0; continue; fi
+  case "\$a" in
+    -C) skip=1 ;;
+    -*) ;;
+    *) sub="\$a"; break ;;
+  esac
+done
+[ -n "\$sub" ] || sub="unknown"
+: > "$stub_dir/argv.\$sub"
+for a in "\$@"; do printf 'ARG:%s\n' "\$a" >> "$stub_dir/argv.\$sub"; done
+if [ -f "$stub_dir/stdout.\$sub" ]; then
+  cat "$stub_dir/stdout.\$sub"
+else
+  cat "$stub_stdout"
+fi
 exit "\$(cat "$stub_exit")"
 STUB
 chmod +x "$stub_dir/bd"
@@ -89,6 +106,9 @@ chmod +x "$stub_dir/bd"
 set_stub() {
   printf '%s' "$1" > "$stub_stdout"
   printf '%s' "${2:-0}" > "$stub_exit"
+  # The epic in the fixture below is a SPLIT one - `work-beads` drops an epic exactly while
+  # `bd children` answers with something (cb-hzl).
+  printf '%s' '[{"id":"e.1"}]' > "$stub_dir/stdout.children"
 }
 
 run_count() {
@@ -101,7 +121,8 @@ argv_has_pair() {
 }
 
 # One of each shape an implementer might or might not be able to take. The stub ignores
-# `--exclude-type', so the epic here also proves work-beads' own jq guard is still in the path.
+# `--exclude-type', so the epic here also proves work-beads' own filtering is still in the path -
+# it is a split epic (see `set_stub'), which is bookkeeping over its children rather than work.
 beads='[{"id":"a","issue_type":"task","labels":["planned"]},
         {"id":"b","issue_type":"task","labels":["planned","human"]},
         {"id":"c","issue_type":"task","labels":["planned","triage:declined"]},

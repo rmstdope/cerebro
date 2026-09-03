@@ -32,26 +32,62 @@ consumer="$(consumer_new repo --copy)"
 # and on macOS $TMPDIR is under /var, a symlink to /private/var.
 consumer_resolved="$consumer"
 
-argv_file="$stub_dir/argv"
+# The subcommand every case that reads argv exercises.
+argv_file="$stub_dir/argv.list"
 stub_stdout="$stub_dir/stdout"
 stub_exit="$stub_dir/exit"
 
-cat > "$stub_dir/bd" <<STUB
+# The stub dispatches on the SUBCOMMAND (`bd -C <root> list ...` -> `list`), appending its argv to
+# $stub_dir/argv.<subcommand> and printing $stub_dir/stdout.<subcommand>, falling back to the shared
+# $stub_stdout when no per-subcommand file exists. Before cb-hzl it truncated one argv file per call
+# and printed one fixed stdout, so a script calling `bd` twice read the same answer twice and lost
+# the first argv - a second call was invisible, and a case that "passed" may have proved nothing.
+cat > "$stub_dir/bd" <<'STUB'
 #!/usr/bin/env bash
-: > "$argv_file"
-for a in "\$@"; do printf 'ARG:%s\n' "\$a" >> "$argv_file"; done
-cat "$stub_stdout"
-exit "\$(cat "$stub_exit")"
+stub_dir="STUB_DIR"
+sub=""
+skip=0
+for a in "$@"; do
+  if [ "$skip" = 1 ]; then skip=0; continue; fi
+  case "$a" in
+    -C) skip=1 ;;
+    -*) ;;
+    *) sub="$a"; break ;;
+  esac
+done
+[ -n "$sub" ] || sub="unknown"
+argv="$stub_dir/argv.$sub"
+# APPENDS. `bd children` is asked once per epic, and a truncating stub would keep only the last
+# one - which is exactly the "a second call is invisible" defect this dispatch exists to end.
+# `set_stub' clears the files at the start of each case, so a case never reads another's argv.
+for a in "$@"; do printf 'ARG:%s\n' "$a" >> "$argv"; done
+if [ -f "$stub_dir/stdout.$sub" ]; then
+  cat "$stub_dir/stdout.$sub"
+else
+  cat "$stub_dir/stdout"
+fi
+exit "$(cat "$stub_dir/exit")"
 STUB
+sed -i.bak "s|STUB_DIR|$stub_dir|" "$stub_dir/bd" && rm -f "$stub_dir/bd.bak"
 chmod +x "$stub_dir/bd"
 
 set_stub() {
-  # $1 = stdout, $2 = exit status (default 0)
+  # $1 = stdout, $2 = exit status (default 0). Clears any per-subcommand answers, so one case
+  # cannot leave a `bd children` reply behind for the next.
+  rm -f "$stub_dir"/stdout.*
   printf '%s' "$1" > "$stub_stdout"
   printf '%s' "${2:-0}" > "$stub_exit"
 }
 
+# The answer for one subcommand, e.g. `set_stub_for children '[]'`.
+set_stub_for() {
+  printf '%s' "$2" > "$stub_dir/stdout.$1"
+}
+
 run() {
+  # One run's argv, not the suite's: the stub APPENDS (`bd children` is asked once per epic, and a
+  # truncating stub would keep only the last), so each invocation starts from empty instead.
+  rm -f "$stub_dir"/argv.*
   PATH="$stub_dir:$PATH" bash "$consumer/.claude/cerebro/scripts/work-beads" "$@"
 }
 
@@ -99,19 +135,43 @@ run --status closed > /dev/null
 if argv_has "--closed-after"; then fail "--closed-after reached bd when none was given"; fi
 pass "omits the closed-after window when absent"
 
-# --- asks bd to exclude epics and events --------------------------------------------------------
+# --- asks bd to exclude events ------------------------------------------------------------------
+#
+# `epic` came off this list in cb-hzl: an epic is bookkeeping over its CHILDREN, so it is real work
+# exactly while it has none, and that question needs `bd children` rather than a type exclusion.
 run --status closed > /dev/null
-argv_has_pair "--exclude-type" "epic,event" || fail "no --exclude-type epic,event on the bd call"
+argv_has_pair "--exclude-type" "event" || fail "no --exclude-type event on the bd call"
 argv_has "--json" || fail "no --json on the bd call"
-pass "asks bd to exclude them as well"
+pass "asks bd to exclude events as well"
 
 # --- the jq guard, under a bd whose --exclude-type does not know event --------------------------
 mixed='[{"id":"ah-a","issue_type":"task"},{"id":"ah-b","issue_type":"epic"},
         {"id":"ah-c","issue_type":"event"},{"id":"ah-d","issue_type":"bug"}]'
 set_stub "$mixed"
+set_stub_for children '[]'
 ids="$(run --status closed | jq -r '.[].id' | tr '\n' ' ')"
-[ "$ids" = "ah-a ah-d " ] || fail "epics and events survived the guard: got '$ids'"
-pass "drops epics and events even when bd returns them"
+[ "$ids" = "ah-a ah-b ah-d " ] || fail "events survived the guard, or a childless epic did not: got '$ids'"
+pass "drops events even when bd returns them, and keeps a childless epic"
+
+# --- a childless epic is work; a parented one is not (cb-hzl) -----------------------------------
+#
+# `bd children` rather than the id-prefix rule the fleet views use: this list is scoped to the
+# status the caller named, so a child outside that status is simply not in it and a prefix scan
+# would call a parented epic childless. It is asked PER epic, which the second half proves - both
+# epics go when `bd children` answers with a child.
+epics='[{"id":"tt-lone","issue_type":"epic"},{"id":"tt-parent","issue_type":"epic"},
+        {"id":"tt-ord","issue_type":"task"}]'
+set_stub "$epics"
+set_stub_for children '[]'
+ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
+[ "$ids" = "tt-lone tt-parent tt-ord " ] || fail "a childless epic was dropped: got '$ids'"
+grep -qxF "ARG:tt-lone" "$stub_dir/argv.children" || fail "bd children was not asked about tt-lone"
+
+set_stub "$epics"
+set_stub_for children '[{"id":"tt-lone.1"}]'
+ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
+[ "$ids" = "tt-ord " ] || fail "a parented epic survived: got '$ids'"
+pass "keeps a childless epic and drops a parented one, asking bd children per epic"
 
 # --- fails loudly when bd fails -----------------------------------------------------------------
 set_stub "$empty_json" 1

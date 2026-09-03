@@ -207,10 +207,12 @@ this exclusion, each pass would find the previous pass's own event beads in the 
 recording *that* label — a chain that grows one link per pass, forever. **Never label an
 event bead** — a chain that already exists from before this fix is harmless and is left alone.
 
-**Closed epics are excluded too**, which they were not before `work-beads`. An epic has no
-diff of its own — its work is entirely in the children you already see — so it could only ever be
-marked `not-needed`, and every one of those markings writes another event bead. Four closed epics
-were sitting in this list when the script replaced the query.
+**A closed epic is excluded while it has children**, which it was not before `work-beads`. A split
+epic has no diff of its own — its work is entirely in the children you already see — so it could
+only ever be marked `not-needed`, and every one of those markings writes another event bead. Four
+closed epics were sitting in this list when the script replaced the query. A **childless** epic is
+different: nobody broke it down, so whatever it delivered it delivered itself, and it reaches you
+like any other closed bead.
 
 `verification:failed` is kept **through the rebuild** — a bead reopened by a failed verdict closes
 again when the rework merges, still carrying that label, which is exactly what makes it a candidate a

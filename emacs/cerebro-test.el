@@ -3617,9 +3617,14 @@ than filed somewhere nobody reads."
     (let ((case-fold-search nil))
       (should-not (string-match-p "Verified" text))
       (should-not (string-match-p "Other" text)))
-    (dolist (id '("closed-passed" "closed-not-needed" "epic" "event"
+    (dolist (id '("closed-passed" "closed-not-needed" "event"
                   "blocked" "deferred" "from-the-future"))
       (should-not (string-match-p (regexp-quote id) text)))
+    ;; The epic itself has no row - it is bookkeeping over the child below it
+    ;; - while that child is ordinary claimed work.  Checked as a whole row,
+    ;; because every child id has its parent's id as a prefix (cb-hzl).
+    (should-not (string-match-p "^ *epic P2" text))
+    (should (string-match-p "epic\\.1" text))
     ;; What the panel is for is still all there.
     (dolist (id '("in-progress" "open-planned" "open-loose" "closed-bare"))
       (should (string-match-p (regexp-quote id) text)))))
@@ -3670,6 +3675,9 @@ work that came back."
         (cerebro-test--any "blocked" "blocked")
         (cerebro-test--any "deferred" "deferred")
         (cerebro-test--any "epic" "open" nil "epic")
+        ;; Its child: an epic is bookkeeping over its CHILDREN, so it is
+        ;; skipped exactly while it has one (cb-hzl).
+        (cerebro-test--any "epic.1" "in_progress")
         ;; bd's own audit record of a state change, and it carries the label
         ;; of the change it records - so it lands in Verified unless the type
         ;; is checked first.
@@ -3682,7 +3690,7 @@ work that came back."
   (let* ((buckets (cerebro--partition-beads cerebro-test--every-shape))
          (ids (lambda (key) (mapcar (lambda (b) (alist-get 'id b)) (alist-get key buckets)))))
     (should (= 6 (length buckets)))
-    (should (equal (funcall ids 'claimed) '("in-progress")))
+    (should (equal (funcall ids 'claimed) '("in-progress" "epic.1")))
     (should (equal (funcall ids 'planned) '("open-planned")))
     (should (equal (funcall ids 'being-planned) '("open-planning")))
     (should (equal (funcall ids 'unplanned) '("open-loose")))
@@ -3691,7 +3699,7 @@ work that came back."
     (should (equal (sort (funcall ids 'merged) #'string<) '("closed-bare" "closed-failed")))
     ;; And nothing else got in anywhere: verified work, epics, bd's own event
     ;; records, blocked, deferred, and a status from a future bd.
-    (should (= 6 (length (apply #'append (mapcar #'cdr buckets)))))))
+    (should (= 7 (length (apply #'append (mapcar #'cdr buckets)))))))
 
 (ert-deftest cerebro-test/partition-beads-names-every-bucket ()
   "The producer's contract is a named association list, not a positional one
@@ -3707,7 +3715,7 @@ belongs' pins, read here by name instead of by position."
       ;; absent key from one whose bucket is merely empty.
       (should-not (eq (alist-get key buckets 'cerebro-test--missing) 'cerebro-test--missing)))
     (should (equal (mapcar (lambda (b) (alist-get 'id b)) (alist-get 'claimed buckets))
-                   '("in-progress")))
+                   '("in-progress" "epic.1")))
     (should (equal (mapcar (lambda (b) (alist-get 'id b)) (alist-get 'planned buckets))
                    '("open-planned")))
     (should (equal (mapcar (lambda (b) (alist-get 'id b)) (alist-get 'being-planned buckets))
@@ -3718,6 +3726,60 @@ belongs' pins, read here by name instead of by position."
     (should (equal (sort (mapcar (lambda (b) (alist-get 'id b)) (alist-get 'merged buckets))
                          #'string<)
                    '("closed-bare" "closed-failed")))))
+
+(ert-deftest cerebro-test/a-childless-epic-is-work-and-a-parented-one-is-not ()
+  "An epic is bookkeeping over its CHILDREN, so it is skipped exactly while it
+has some: a split epic listed beside its children double-counts the same work.
+A childless epic is bookkeeping over nothing - nobody has broken it down yet -
+so it partitions like any other bead, at every status (cb-hzl).  An `event'
+never does.  The Rust half answers identically, in
+`fleet-view/src/model.rs' (`a_childless_epic_is_work_and_a_parented_one_is_not')."
+  (let* ((beads (list (cerebro-test--any "cb-p" "open" nil "epic")
+                      (cerebro-test--any "cb-p.1" "open" '("planned"))
+                      (cerebro-test--any "cb-lone" "open" nil "epic")
+                      (cerebro-test--any "cb-c" "closed" nil "epic")
+                      (cerebro-test--any "cb-c.1" "closed")
+                      (cerebro-test--any "cb-done" "closed" nil "epic")
+                      (cerebro-test--any "cb-ev" "closed" nil "event")
+                      (cerebro-test--any "cb-ord" "open")))
+         (buckets (cerebro--partition-beads beads))
+         (ids (lambda (key) (mapcar (lambda (b) (alist-get 'id b)) (alist-get key buckets)))))
+    (should (equal (funcall ids 'unplanned) '("cb-lone" "cb-ord")))
+    (should (equal (funcall ids 'merged) '("cb-c.1" "cb-done")))
+    (should (equal (funcall ids 'planned) '("cb-p.1")))
+    (should-not (funcall ids 'claimed))
+    (should-not (funcall ids 'being-planned))
+    (should-not (funcall ids 'paused))))
+
+(ert-deftest cerebro-test/a-grandchild-names-only-its-own-parent ()
+  "The set is DIRECT parents, not ancestors: everything before an id's LAST
+dot.  A `string-prefix-p' spelling on cb-p. would call `cb-p' parented by its
+grandchild and skip it."
+  (let* ((beads (list (cerebro-test--any "cb-p" "open" nil "epic")
+                      (cerebro-test--any "cb-p.1.1" "open")))
+         (buckets (cerebro--partition-beads beads)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (alist-get 'unplanned buckets))
+                   '("cb-p" "cb-p.1.1")))))
+
+(ert-deftest cerebro-test/a-childless-epic-row-is-marked-and-a-paused-one-keeps-its-age ()
+  "A bead of type `epic' that reaches any section is childless by
+construction, so its row says `epic' - otherwise it is indistinguishable from
+a bead that wants a plan when it wants a split.  The Waiting-on-you section's
+age wins that same column: `epic 3h' is two facts in a column sized for one.
+The Rust half answers identically, in `fleet-view/src/app.rs' (cb-hzl)."
+  (let* ((epic (cerebro-test--any "cb-lone" "open" nil "epic"))
+         (parked (append (cerebro-test--any "cb-parked" "open" '("human") "epic")
+                         '((metadata . ((paused_at . "2026-08-14T09:00:00Z"))))))
+         (buckets (cerebro-test--buckets
+                   :unplanned (list epic (cerebro-test--any "cb-ord" "open"))
+                   :paused (list parked)))
+         (lines (cerebro--bead-panel buckets 62 5 (date-to-time "2026-08-14T12:00:00Z")))
+         (row (lambda (id) (car (seq-filter (lambda (l) (string-match-p id l)) lines)))))
+    (should (string-suffix-p "epic" (funcall row "cb-lone")))
+    (should-not (string-match-p "epic" (funcall row "cb-ord")))
+    (let ((parked-row (funcall row "cb-parked")))
+      (should-not (string-suffix-p "epic" parked-row))
+      (should (string-match-p "3h" parked-row)))))
 
 ;; ---------------------------------------------------------------------------
 ;; What the planners are holding (ah-2p.2)

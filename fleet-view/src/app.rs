@@ -710,7 +710,7 @@ fn section_body<'a>(
     let expanded = hidden > 0 && app.expanded.contains(title);
     let shown = if expanded { sorted.len() } else { WORK_ROWS_PER_SECTION };
     for bead in sorted.iter().take(shown) {
-        let suffix = (kind == SectionKind::Paused).then(|| paused_age(bead, now));
+        let suffix = row_suffix(bead, kind, now);
         body.push(WorkBodyLine::Bead { bead, suffix });
     }
     if hidden > 0 {
@@ -808,6 +808,22 @@ pub fn sorted_by_recency(beads: &[Bead]) -> Vec<&Bead> {
 /// The one place the empty string `elapsed` returns becomes something the eye can find: a bead
 /// parked before the pause sites wrote `metadata.paused_at` has no age, and rendering it as a
 /// small number would read as "just now".
+/// The right-aligned column on a bead row, or `None` for a row that has none.
+///
+/// The Waiting-on-you section's age wins that column wherever it has one - the age is the whole
+/// reason that section carries a column at all. Everywhere else a childless epic says so, because
+/// its row is otherwise indistinguishable from a bead that wants a plan when it wants a split.
+/// A bead of type `epic` that reaches a section IS childless, by `model::partition_beads` - the
+/// test is not repeated here (cb-hzl).
+fn row_suffix(bead: &Bead, kind: SectionKind, now: DateTime<Utc>) -> Option<String> {
+    match kind {
+        SectionKind::Paused => Some(paused_age(bead, now)),
+        SectionKind::Open | SectionKind::Merged => {
+            (bead.issue_type == "epic").then(|| "epic".to_string())
+        }
+    }
+}
+
 pub fn paused_age(bead: &Bead, now: DateTime<Utc>) -> String {
     let age = crate::ui::elapsed(bead.paused_at(), now);
     if age.is_empty() {
@@ -4407,6 +4423,44 @@ mod tests {
         app.on_key(key(KeyCode::Enter), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Fleet);
         assert_eq!(app.notice, None);
+    }
+
+    /// A bead of type `epic` that reaches ANY section is childless by construction, since
+    /// `model::partition_beads` skipped every parented one - so the row says `epic`, which is the
+    /// only thing distinguishing "wants splitting" from "wants planning" at a glance. The
+    /// Waiting-on-you section's age wins that same column: `epic 3h` is two facts in a column
+    /// sized for one (cb-hzl).
+    #[test]
+    fn a_childless_epic_row_is_marked_and_a_paused_one_keeps_its_age() {
+        let mut epic = test_bead("cb-lone", Some(2));
+        epic.issue_type = "epic".into();
+        let mut paused_epic = test_bead("cb-parked", Some(2));
+        paused_epic.issue_type = "epic".into();
+        paused_epic.metadata = serde_json::json!({ "paused_at": "2026-01-01T00:00:00Z" });
+
+        let mut app = App::default();
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                unplanned: vec![epic, test_bead("cb-ord", Some(2))],
+                paused: vec![paused_epic],
+                ..WorkBuckets::default()
+            }),
+            at(0),
+        );
+
+        let body = work_body(&app, at(3600));
+        let suffix_of = |id: &str| -> Option<String> {
+            body.iter().find_map(|l| match l {
+                WorkBodyLine::Bead { bead, suffix } if bead.id == id => Some(suffix.clone()),
+                _ => None,
+            })
+            .expect("the row is drawn")
+        };
+        assert_eq!(suffix_of("cb-lone").as_deref(), Some("epic"));
+        assert_eq!(suffix_of("cb-ord"), None, "an ordinary bead's row ends with neither");
+        let parked = suffix_of("cb-parked").expect("the paused row keeps a suffix");
+        assert_ne!(parked, "epic", "the age wins the Waiting-on-you column");
+        assert!(!parked.is_empty());
     }
 
     #[test]

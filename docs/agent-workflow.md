@@ -622,7 +622,9 @@ one that declared `fleet_supervisor tui`. The longer spellings are spent only wh
 something to say, such as `Cerebro — read-only; another Ratatui process owns supervision` when a
 second one is already running. Fleet refreshes
 every five seconds and Work every thirty. `Tab`/`Shift-Tab` swap which widget is focused; the
-focused one draws a bright-blue thick-line border and `↑`/`↓`/`PgUp`/`PgDn` scroll only it; `Enter`
+focused one draws a bright-blue thick-line border and `↑`/`↓`/`PgUp`/`PgDn` scroll only it — and
+from a focused live session both are held back from the agent, `Tab` returning to Fleet and
+`Shift-Tab` to Work, so **`Ctrl-I` is how a literal tab is sent to the agent**; `Enter`
 under Fleet focus jumps straight to the selected agent's session, refusing in gold when that pane is
 empty. `g` refreshes both panes regardless of focus, `q`/`Esc`/`Ctrl-C` quits. If one of the
 two readers fails, that pane keeps its last good data and says when it went stale; the other

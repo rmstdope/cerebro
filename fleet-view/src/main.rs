@@ -1378,8 +1378,10 @@ fn write_priority(
     }
 }
 
-/// In branch 3, `Shift-Tab` is held back and handed to `App::on_key` as the only way out (Q8),
-/// which is the reason the child can never receive it; everything else goes to
+/// In branch 3, `Tab` and `Shift-Tab` are BOTH held back and handed to `App::on_key`, which runs
+/// the plain focus cycle: from Session that is `Tab` -> Fleet and `Shift-Tab` -> Work (cb-3v5 for the
+/// first of them, Q8 for the second), which is the reason the child can never receive either;
+/// everything else goes to
 /// `session::key_bytes`, and a `None` is dropped without a word (Q1), because the pane is a window
 /// onto the child rather than a commentary on it. So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or
 /// refresh while a live session is focused - they are the child's, which is exactly what the
@@ -1458,7 +1460,11 @@ fn route_key(
             }
         };
     }
-    if app.session_has_keyboard() && key.code != KeyCode::BackTab {
+    // Both tabs are held back: the navigator asked for one key back to the roster (cb-3v5) and
+    // accepted the cost, which is that no hosted agent ever receives a plain tab again. `Ctrl-I`
+    // still sends one - it IS 0x09, through `control_byte` - so an agent that needs a real tab
+    // gets one in two keys.
+    if app.session_has_keyboard() && !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
         if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
             host.send(&name, &bytes);
         }
@@ -2129,7 +2135,7 @@ mod main_tests {
     }
 
     #[test]
-    fn a_focused_live_session_receives_every_key_but_shift_tab() {
+    fn a_focused_live_session_receives_every_key_but_the_two_tabs() {
         let mut host = SessionHost::default();
         let mut app = hosting(&mut host);
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
@@ -2160,6 +2166,31 @@ mod main_tests {
         assert!(text.contains('x'), "the plain char reached the child: {text:?}");
         assert!(text.contains("^["), "and Escape did too: {text:?}");
         assert!(text.contains("^C"), "and so did Ctrl-C: {text:?}");
+    }
+
+    #[test]
+    fn tab_leaves_a_focused_live_session_for_fleet() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        assert!(app.session_has_keyboard(), "the fixture hands the keyboard to the child");
+        let tab = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        drive(&mut app, &mut host, &nowhere().0, vec![tab]);
+        assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet, "Tab is the plain cycle");
+        assert_eq!(app.selected, Some("Storm".to_string()), "and the selection does not move");
+        assert!(app.notice.is_none(), "a focus key says nothing");
+
+        // And `Shift-Tab` is unchanged: still the reverse of the cycle, still landing on Work.
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        let back = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::BackTab,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        drive(&mut app, &mut host, &nowhere().0, vec![back]);
+        assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Work);
     }
 
     #[test]

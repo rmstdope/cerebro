@@ -682,7 +682,9 @@ Fleet, Work and Session, each with its own title, focus and scroll offset rather
 document. At `SPLIT_COLUMNS` (100) or wider the screen is a fixed `LEFT_COLUMN` (40) holding Fleet
 over Work, with Session taking every remaining cell beside them; below that width all three stack.
 `Tab` cycles Fleet → Work → Session and `Shift-Tab` reverses it — the focused one draws a
-bright-blue thick-line border and a bold title. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:
+bright-blue thick-line border and a bold title. From a focused **live** session both are held back
+from the child and run that same cycle (cb-3v5), so `Tab` is the one key back to Fleet and
+`Shift-Tab` the one key to Work. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:
 under Work and Session that is its own scroll offset, and **under Fleet it is the selection**, which
 the pane then scrolls to follow. Since cb-d31 **`Enter` under Fleet focus is `Tab` twice in one
 key**: it moves focus straight to the selected agent's Session pane, and only while that pane is
@@ -705,8 +707,9 @@ second copy.
 
 Session can hold a real child since cb-kcs.2.2: `scripts/launch <Name>` in a pty (`portable-pty`),
 its screen drawn from a `vt100::Parser` this crate owns — which is why a killed child's screen is
-still drawable — and every key of a focused live session forwarded to it, `Shift-Tab` alone held
-back as the way out. A pass that ends is kept as a scrollable transcript of at most ten thousand
+still drawable — and every key of a focused live session forwarded to it, with `Tab` and
+`Shift-Tab` both held back as the two ways out — `Tab` to Fleet, `Shift-Tab` to
+Work. A pass that ends is kept as a scrollable transcript of at most ten thousand
 lines, until that agent starts again. **Nothing a navigator can press starts one**: `SessionHost::spawn`
 is reached by test code alone, and `s`/`f`/`k` are cb-kcs.2.3's, so the pane still says why there is
 no session in it and the header hint still names no key that does not exist. The rule that pays for

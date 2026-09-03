@@ -33,8 +33,10 @@ pub const INITIAL_COLS: u16 = 80;
 /// `None` is dropped in silence - the navigator's choice, taken over naming the key in the
 /// header. The table is incomplete by construction (S2): `F(5)`-`F(12)`, keypad keys and most
 /// modifier combinations beyond a plain Ctrl or Alt have no entry, and each of those is a bug
-/// report this crate now owns. `Shift-Tab` never reaches here at all - it is how a navigator
-/// leaves the session, so `main` takes it before this is called.
+/// report this crate now owns. `Tab` and `Shift-Tab` never reach here at all - they are how a
+/// navigator leaves the session, `Tab` to Fleet and `Shift-Tab` to Work, so `main` takes both
+/// before this is called. `Ctrl-I` remains available as `0x09` through the CONTROL arm, which is
+/// how a literal tab still reaches a child.
 ///
 /// `Backspace` is `0x7f`, not `0x08`: that is what every terminal the fleet runs under sends by
 /// default and what an agent CLI's line editor expects. `Ctrl-H` remains available as `0x08`
@@ -56,7 +58,6 @@ pub fn key_bytes(key: KeyEvent) -> Option<Vec<u8>> {
         }
         KeyCode::Char(c) => Some(c.encode_utf8(&mut [0u8; 4]).as_bytes().to_vec()),
         KeyCode::Enter => Some(vec![b'\r']),
-        KeyCode::Tab => Some(vec![b'\t']),
         KeyCode::Backspace => Some(vec![0x7f]),
         KeyCode::Esc => Some(vec![0x1b]),
         KeyCode::Left => Some(b"\x1b[D".to_vec()),
@@ -906,7 +907,6 @@ mod tests {
             (with(KeyCode::Char('@'), KeyModifiers::CONTROL), vec![0]),
             (with(KeyCode::Char('x'), KeyModifiers::ALT), vec![27, 120]),
             (key(KeyCode::Enter), vec![13]),
-            (key(KeyCode::Tab), vec![9]),
             (key(KeyCode::Backspace), vec![127]),
             (key(KeyCode::Esc), vec![27]),
             (key(KeyCode::Left), vec![27, 91, 68]),
@@ -933,6 +933,7 @@ mod tests {
     fn an_unmapped_key_produces_no_bytes() {
         assert_eq!(key_bytes(key(KeyCode::F(9))), None);
         assert_eq!(key_bytes(key(KeyCode::BackTab)), None);
+        assert_eq!(key_bytes(key(KeyCode::Tab)), None);
         assert_eq!(
             key_bytes(with(KeyCode::Char('1'), KeyModifiers::CONTROL)),
             None
@@ -940,6 +941,15 @@ mod tests {
         let mut release = key(KeyCode::Char('a'));
         release.kind = KeyEventKind::Release;
         assert_eq!(key_bytes(release), None);
+    }
+
+    /// The hatch that pays for `Tab` being held back: `Ctrl-I` IS `0x09`, and always was.
+    #[test]
+    fn ctrl_i_still_sends_a_literal_tab() {
+        assert_eq!(
+            key_bytes(with(KeyCode::Char('i'), KeyModifiers::CONTROL)),
+            Some(vec![9])
+        );
     }
 
     /// A parser of the given size, fed BYTES.

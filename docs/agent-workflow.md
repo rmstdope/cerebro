@@ -2,7 +2,7 @@
 
 This is the human's guide to running the fleet: what to start, what each agent will ask you for,
 where to look when something wants you, and what it costs. You are "the navigator" throughout — the
-agents' word for the one person every user-facing decision belongs to.
+agents' word for the one person the shape of every user-facing decision belongs to.
 
 The agents' own instructions live in `.claude/cerebro/agents/<role>.md`, and for the three roles that
 have one, in `.claude/cerebro/skills/`: `plan-bead`, `implement-bead` and the shared
@@ -221,13 +221,20 @@ like, then — if the planned, unclaimed count is below the number of implemente
 is still short the fleet view starts the next session within seconds, against a board that has moved
 rather than a planner's memory of it.
 
-**It will interrupt you**, and this is the part worth your attention. Anything the audience sees —
-layout, wording, what a control is called, what happens on a click — is yours to decide, not the
-agent's. It will propose, usually with a self-contained HTML mockup you can open in a browser, and
-wait for you to choose. Architecture, file layout, test shape and ordering it decides by itself.
+**It will interrupt you**, and this is the part worth your attention. The *shape* of anything the
+audience sees — what a feature is from your side, a new pane or dialog, a key or gesture, what a
+control does — is yours to decide, not the agent's. It will propose, usually with a self-contained
+HTML mockup you can open in a browser, and wait for you to choose. Architecture, file layout, test
+shape and ordering it decides by itself.
 
-If you walk away mid-question, it parks that bead with a `human` label and moves to one with no
-user-facing surface, so the queue keeps filling. It will not guess on your behalf.
+**It will not interrupt you over a label.** The detail inside a shape you have already agreed —
+wording, colour, sizes, spacing, the empty and error states — the planner decides itself and lists
+every one of them under *Decided by me* in the plan. You overrule any of them in a sentence, and
+Psylocke names that list again when she puts the merged work in front of you.
+
+If you walk away mid-question, it parks that bead with a `human` label and moves to one whose shape
+needs nothing from you, so the queue keeps filling. It will not guess about the shape — and it will
+not park a bead over a button label.
 
 ## Starting builders
 
@@ -734,8 +741,12 @@ send it to a planner (`--remove-label human`, leave `planned` off) rather than t
 
 ## What agents never decide
 
-- Anything the audience sees. That is the whole reason the planners talk to you, and why Psylocke and
-  Cypher put a running application in front of you rather than describing it.
+- The shape of anything the audience sees — what a feature is from your side, a new surface, a key
+  or gesture, what a control does. That is the whole reason the planners talk to you, and why
+  Psylocke and Cypher put a running application in front of you rather than describing it. The
+  detail inside a shape you have agreed — wording, colour, sizes, the empty and error states — a
+  planner decides and writes into the plan's *Decided by me*, where you can overrule it; no other
+  role decides any of it.
 - Whether to merge something red, stale, or unreviewed — and for a PR from outside, whether to merge
   it at all.
 - Whether to take a bead off another agent, beyond the narrow crashed-agent case above.

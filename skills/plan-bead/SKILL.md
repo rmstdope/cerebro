@@ -1,6 +1,6 @@
 ---
 name: plan-bead
-description: The planning role — plan every P0 immediately, keep a buffer of planned, unclaimed beads ahead of the implementers, sized from the roster's implementers, turning each into something an agent can build unattended, deciding architecture yourself and every user-facing question with the navigator. Use when running a planning session.
+description: The planning role — plan every P0 immediately, keep a buffer of planned, unclaimed beads ahead of the implementers, sized from the roster's implementers, turning each into something an agent can build unattended, deciding architecture yourself, deciding the detail inside an interaction the navigator has already agreed, and taking the shape of every new one to them. Use when running a planning session.
 ---
 
 # Planning a bead
@@ -167,7 +167,7 @@ less:
 - **A P0's unplanned blocker is still planned first.** Urgency does not make a plan writable against
   an interface nobody has specified. Walk down to the deepest unplanned blocker exactly as always —
   it is now the most urgent bead in the repository, since the P0 cannot be built until it exists.
-- **A user-facing question on a P0 is still the navigator's.** But say plainly that it is a P0 you
+- **A question about a P0's shape is still the navigator's.** But say plainly that it is a P0 you
   are blocked on, and if it goes unanswered, park it with `needs-ui-decision` and `human` like any
   other and **lead your next report with it**. A P0 in the `human` queue is the most important thing
   the navigator needs to hear from you, and it must not arrive as the last line of a status summary.
@@ -503,8 +503,10 @@ maintainer said in the thread that the bead never absorbed. Where the thread cha
 the work, say so in the plan's *Context* and name the comment — the implementer never sees the
 issue, and a decision whose reason lives in a GitHub thread is a decision it cannot check.
 
-If the thread turns out to contradict the bead, that is a user-facing question and it is the
-navigator's: ask, rather than planning the version you prefer.
+If the thread turns out to contradict the bead, run it past the two lists and the cost test above.
+Where the contradiction is about the shape it is the navigator's: ask, rather than planning the
+version you prefer. Where it is a detail inside a shape they have already agreed, settle it and
+write it into *Decided by me* with the thread as its reason.
 
 ## How two planners stay off each other's work
 
@@ -748,28 +750,53 @@ before you free it, and the navigator can stop you.
 ## What you decide, and what you must not
 
 **Yours:** architecture, file layout, which existing code to reuse, the order of increments, the
-shape of the tests, what is out of scope.
+shape of the tests, what is out of scope — **and the detail inside an interaction the navigator has
+already agreed to.** The exact wording of a label, a message, an error line; a colour from the
+palette this project already uses; sizes, spacing, truncation, where a line wraps; which of two
+synonymous names a thing gets; the order of items in a list you were told to show; what the empty,
+loading and error states of an agreed surface look like.
 
-**The navigator's:** anything the user sees or feels. Layout, wording, colour, what a control is
-called, what happens on a click, which of two behaviours is right. Propose, do not choose.
+**The navigator's:** the shape of the interaction itself. What the feature *is* from the user's
+side; a new surface — a pane, a dialog, a mode, a section; a key or gesture, and any change to what
+an existing one means; what a control *does*; which of two behaviours is right; anything that
+changes a habit the navigator already has; anything the user cannot undo; and anything that sets a
+precedent the next three features will copy. Propose, do not choose.
 
-For a user-facing question, build **self-contained HTML mockups** in the `docs/ui/` house style — no
-build step, no external assets, inline SVG, opens straight in a browser — iterate them in the
-scratchpad — `<consumer>/.cerebro/scratch/`, which the consumer's `.gitignore` keeps out of every
-commit — and discuss until the navigator decides.
+**The test, when the lists do not answer:** *if the navigator disliked this after it shipped,
+what would fixing it cost?* A string, a constant, a colour — yours: decide it, and write it down. A
+re-plan, a migration, a second bead, or the navigator's fingers relearning something — theirs: ask.
+
+**When the test does not answer either, it is theirs.** That question costs a minute.
+
+**Everything in the first bucket is still written down**, under *Decided by me* in the plan's
+*User-facing decisions*. Deciding a detail is not the same as leaving it unsaid: that list is what
+the navigator scans to overrule one in a sentence, and what stops an implementer re-opening it.
+
+For a question in the second bucket, build **self-contained HTML mockups** in the `docs/ui/` house
+style — no build step, no external assets, inline SVG, opens straight in a browser — iterate them in
+the scratchpad — `<consumer>/.cerebro/scratch/`, which the consumer's `.gitignore` keeps out of every
+commit — and discuss until the navigator decides. **A bead whose open items are all details gets no
+mockup round at all**: decide them, write them into *Decided by me*, and plan the bead.
 
 ### Interview, don't ask
 
-A single question with a single mockup is not a discussion, and a first "yes" is where this starts
-rather than where it stops. The navigator is sitting there; the implementer will not be, and neither
-will you when it builds. Every detail you do not settle now is either a decision Sonnet takes alone
-or a bead's worth of rework — so **be relentless, and expect several rounds.**
+This is about the shape, and it is where the navigator's minute buys the most. A single question
+with a single mockup is not a discussion, and a first "yes" is where this starts rather than where
+it stops. The navigator is sitting there; the implementer will not be, and neither will you when it
+builds. **Be relentless about the shape, and expect several rounds.**
 
-- **Never present one option.** At least two variants that differ in something a person can see, and
-  say in one line what the difference costs. One option is not a choice, it is you deciding with
-  extra steps.
-- **A chosen variant opens the interview.** Once they have picked, walk the surface deliberately and
-  ask about each part of it that is still undecided:
+Everything below still has to be **settled** before an unattended Sonnet reads the plan — that has
+not loosened at all. What has loosened is who settles it: run each item past the cost test above,
+decide the ones that are yours and write them into *Decided by me*, and put only the rest to the
+navigator.
+
+- **Never present one option** — when the question is the navigator's. At least two variants that
+  differ in something a person can see, and say in one line what the difference costs. One option is
+  not a choice, it is you deciding with extra steps. A detail you are deciding yourself is not
+  presented at all; it is decided and written down.
+- **A chosen variant opens the work.** Once they have picked, walk the surface deliberately and
+  settle each part of it that is still undecided — deciding the ones the cost test gives you,
+  asking about the rest:
   - the states the happy path hides — **empty, loading, error, too many, too few, too long**;
   - **cancel and Escape**: what closes it, what that leaves behind, whether anything was written;
   - **keyboard and focus**: what is reachable, where focus lands when it opens and where it returns
@@ -778,12 +805,16 @@ or a bead's worth of rework — so **be relentless, and expect several rounds.**
     error message, quoted, not paraphrased;
   - **a narrow window**, since the header already wraps as one unit and a new control joins that;
   - **what persists** across a reload, a switch of data set, and new data arriving.
+  - which bucket each of these falls in: **a key or gesture is the navigator's by name**, and so
+    is anything that changes what an existing one means; the rest of this list is yours once the
+    surface itself is agreed.
 - **Mock the states, not the happy path.** A mockup showing only the populated, successful case
   invites agreement about the case nobody argues over. Put the empty and error states on the page —
   side by side, or as labelled sections — because that is where the disagreements actually are.
-- **Stop when the next question would be one the implementer could answer from the plan**, not when
-  the navigator sounds satisfied. If you cannot yet write the *User-facing decisions* section without
-  a "the implementer chooses" anywhere in it, you have another question to ask.
+- **Stop asking when the remaining questions are ones you may answer yourself. Stop *planning* when
+  none of them is left unanswered in the plan.** If you cannot yet write both halves of *User-facing
+  decisions* without a "the implementer chooses" anywhere in them, you have another item to settle —
+  and settling it may or may not mean asking.
 
 Batch questions with the question tool — up to four at a time — rather than trickling them one per
 message. A navigator answering four related questions in one pass is thinking about the whole
@@ -885,8 +916,8 @@ this, not a substitute for it — it waits half an hour and only removes what is
 into a worktree leaves every later git command there — including the one you meant to run somewhere
 else.
 
-**Never stall the pipeline on an absent navigator.** If a user-facing question goes unanswered,
-park the bead and move on:
+**Never stall the pipeline on an absent navigator.** If a question about **the shape** goes
+unanswered, park the bead and move on:
 
 ```bash
 bd update <id> --add-label needs-ui-decision --add-label human --remove-label planning:<your-name> \
@@ -909,8 +940,11 @@ Then take the next bead. A parked one still counts against nothing — it is exc
 precisely because an implementer cannot pick it up — so parking one means the buffer is short by one
 and you keep going.
 
-A bead with a user-facing surface cannot be planned while the navigator is away, and pretending
-otherwise puts the decision in the wrong hands.
+**Only the navigator's bucket is ever parked.** A detail is never parked for an absent navigator —
+decide it, write it into *Decided by me*, and plan the bead. A bead whose *shape* is undecided
+cannot be planned while the navigator is away, and pretending otherwise puts the decision in the
+wrong hands; a bead whose shape is settled and whose remaining opens are wording, sizes and states
+is a bead you finish.
 
 ## Too big for one increment
 
@@ -1044,12 +1078,21 @@ eight it asks you to write. Write them at the top level of the `design` field, u
 3. **Increments** — small, ordered, each naming **the failing test that opens it**. This is what
    makes an unattended RED → GREEN possible at all.
 4. **The test plan** — unit and browser, with names and what each pins. Say which suites must run.
-5. **User-facing decisions** — **the whole interview, not just the outcome**: every question you
-   put, the answer, the options that were rejected and why, and the mockup path. The rejections
-   matter as much as the choice — without them an implementer meeting the same fork re-opens a
-   question the navigator has already answered, and the navigator gets asked twice. Quote the agreed
-   wording of labels and messages here verbatim, so nobody has to invent a string.
-   "None." for a bead with no user-facing surface, which is most of them.
+5. **User-facing decisions** — in two subsections, both always present:
+   - `### Agreed with the navigator` — **the whole interview, not just the outcome**: every question
+     you put, the answer, the options that were rejected and why, and the mockup path. The
+     rejections matter as much as the choice — without them an implementer meeting the same fork
+     re-opens a question the navigator has already answered, and the navigator gets asked twice.
+     Quote the agreed wording of labels and messages here verbatim, so nobody has to invent a
+     string.
+   - `### Decided by me` — every detail you took under *What you decide, and what you must not*,
+     one line each: the value exactly as it will ship, and half a line of why. This is what makes
+     deciding them safe rather than merely faster — it is the list the navigator scans to overrule
+     one in a sentence, and the list the verifier puts in front of them at verification.
+
+   "None." under either subheading, with a line saying why — a bead with no user-facing surface at
+   all, which is most of them, gets "None." under both. The eight `##` headings above are
+   unchanged: these two are `###` headings inside the fifth of them.
 6. **Out of scope** — what a reader might reasonably assume is included and is not.
 7. **Validation** — the exact commands, and any check that only a human can make. Two rules
    decide what may go in it, and both are below: *Validation a worktree cannot run* and
@@ -1124,8 +1167,9 @@ of this step, not of that one.
 
 So before `--add-label planned`, read the plan through once as that agent, and write down every
 point where you would have to decide something yourself. Then **resolve each one** — decide it and
-say so if it is yours (architecture, layout of the code, test shape, scope), ask the navigator if it
-is theirs. What must not survive this pass:
+say so if it is yours (architecture, layout of the code, test shape, scope, and the detail inside an
+interaction the navigator agreed — that last one written into *Decided by me*), ask the navigator if
+it is theirs. What must not survive this pass:
 
 - a sentence containing "the implementer decides", "as appropriate", "something like", "or similar",
   or a choice offered without one of the options being chosen;

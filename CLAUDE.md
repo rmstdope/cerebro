@@ -258,8 +258,9 @@ not a session count — **`planner` is held by two agents, Xavier and Beast** (`
 planner`), which is the one place a name and a role stop being interchangeable:
 
 - **Xavier** and **Beast** (`planner`, Opus/high) — load `plan-bead`. Turn unplanned beads into
-  plans a Sonnet agent could build unattended. Decide architecture themselves; take every
-  user-facing decision to the human ("the navigator"). Keep a buffer of planned beads ahead of the
+  plans a Sonnet agent could build unattended. Decide architecture themselves, and the detail inside an interaction the human ("the navigator") has
+  already agreed — recorded in the plan's *Decided by me* — while the shape of every new interaction
+  goes to them. Keep a buffer of planned beads ahead of the
   builders, sized from the roster's implementers minus any told to finish (one each, never fewer
   than two) and refilled one bead per pass, with no wake interval to wait out — the rule itself lives in `scripts/planner-buffer`,
   which the skill calls and `cerebro-test/the-trigger-counts-what-planner-buffer-counts` holds the
@@ -375,8 +376,11 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   fills is a condition true for every standby builder on one tick.
   `cerebro-role-start-spacing` holds the second for 30s; it counts
   peers only, so a role is never held by its own restart.
-- **Agents never decide anything a user sees**, never take work off another agent (except the
-  documented crashed-agent recovery), and never act outside a planned bead.
+- **Agents never decide the shape of what a user sees** — a new surface, a key or gesture, what a
+  control does — and **only the planner** decides the detail inside a shape the navigator has
+  already agreed, writing every one of them into the plan's *Decided by me* where the navigator can
+  overrule it. No agent takes work off another (except the documented crashed-agent recovery), and
+  none acts outside a planned bead.
 - Each agent announces its own name in its first message — the human watches several sessions at once.
 - **Closed is not terminal.** A failed verification reopens a bead at P0, and every role above
   describes what it does when one comes back — Psylocke reopens it, a planner amends the plan if the

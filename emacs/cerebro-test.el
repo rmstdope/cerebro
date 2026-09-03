@@ -6829,6 +6829,27 @@ be a loop at the speed of the end grace."
     (should (null (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
                                     again)))))
 
+(ert-deftest cerebro-test/the-planner-arm-reads-the-declared-multiple ()
+  "The trigger and the standby label both read `planner-multiple\=' from the
+context (cb-3in).  The pure rule is proved elsewhere; this is the wiring: with
+three implementers and three planned beads a multiple of 1 is satisfied, and a
+multiple of 2 wants six and starts."
+  (let ((satisfied (cerebro-test--context '(planned . 3) '(implementers . 3)
+                                          '(actionable-ids "cb-new")
+                                          '(planner-multiple . 1)))
+        (short (cerebro-test--context '(planned . 3) '(implementers . 3)
+                                      '(actionable-ids "cb-new")
+                                      '(planner-multiple . 2))))
+    (should (null (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                    satisfied)))
+    (should (equal (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                     short)
+                   "buffer 3 of 6"))
+    ;; And the row's own label names the same number.
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "planner" 'standby) short)
+                   "→ buffer < 6"))))
+
 (ert-deftest cerebro-test/work-that-moved-starts-the-next-pass-at-once ()
   "The guard is a comparison, not a clock: the moment anything the trigger
 measures changes - a bead arrives, one is planned, an implementer comes up -

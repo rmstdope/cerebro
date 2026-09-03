@@ -3272,7 +3272,7 @@ reasons `cerebro--project-spacing\=' gives about itself."
         (cond ((eq multiple 'bad)
                (cerebro--report-error
                 "project.conf"
-                "project.conf: %s is not a whole number above zero (%S); using 1"
+                "project.conf: %s is not a whole number above zero (%S); using 1."
                 cerebro--planner-multiple-key (string-trim raw))
                1)
               (multiple)

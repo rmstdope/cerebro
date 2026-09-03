@@ -3743,6 +3743,85 @@ mod main_tests {
         }])
     }
 
+    /// Three planned, unclaimed beads and one unplanned one to plan: a buffer that satisfies a
+    /// three-implementer fleet at a multiple of 1 and is short at a multiple of 2 (cb-3in).
+    fn buffer_of_three() -> cerebro_tui::model::WorkBuckets {
+        let bead = |id: &str, labels: Vec<String>| cerebro_tui::model::Bead {
+            id: id.into(),
+            title: id.into(),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels,
+            priority: Some(2),
+            updated_at: None,
+            assignee: None,
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        };
+        cerebro_tui::model::partition_beads(vec![
+            bead("cb-p1", vec!["planned".to_string()]),
+            bead("cb-p2", vec!["planned".to_string()]),
+            bead("cb-p3", vec!["planned".to_string()]),
+            bead("cb-u1", Vec::new()),
+        ])
+    }
+
+    /// One planner and COUNT implementers, so `TriggerFacts::implementers` is COUNT.
+    fn planner_and_implementers(count: usize) -> Vec<cerebro_tui::model::RosterEntry> {
+        let mut roster = planner_roster(&["Xavier"]);
+        for n in 0..count {
+            roster.push(cerebro_tui::model::RosterEntry {
+                name: format!("Builder{n}"),
+                role: "implementer".to_string(),
+                kind: cerebro_tui::model::AgentKind::Implementer,
+            });
+        }
+        roster
+    }
+
+    #[test]
+    fn the_declared_multiple_reaches_the_planner_trigger() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let roster = planner_and_implementers(3);
+
+        // A multiple of 1 - today's rule - wants three, and three are planned.
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(buffer_of_three()),
+            now,
+        );
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        assert!(!host.is_live("Xavier"), "a satisfied buffer starts nobody");
+        assert_eq!(
+            app.standby_labels.get("Xavier").map(String::as_str),
+            Some("→ buffer<3")
+        );
+
+        // A multiple of 2 wants six, so the same board is short.
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(buffer_of_three()),
+            now,
+        );
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 2, &roster, now);
+        assert!(host.is_live("Xavier"), "a multiple of 2 makes the same buffer short");
+        assert_eq!(app.notice.as_deref(), Some("Started Xavier — buffer 3 of 6."));
+        assert_eq!(
+            app.standby_labels.get("Xavier").map(String::as_str),
+            Some("→ buffer<6")
+        );
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
+    }
+
     /// An app on standby for NAMES, with the given work snapshot applied.
     fn standby_app(
         mode: cerebro_tui::supervisor::SupervisionMode,

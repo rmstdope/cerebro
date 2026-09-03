@@ -362,7 +362,9 @@ impl TriggerFacts {
     /// How many planned, unclaimed beads the fleet wants: `planner_multiple` per implementer,
     /// never fewer than `PLANNER_BUFFER_FLOOR` (`cerebro--planner-want`).
     pub fn planner_want(&self) -> usize {
-        (self.implementers * self.planner_multiple).max(PLANNER_BUFFER_FLOOR)
+        // Saturating, so an absurd declaration cannot wrap to a number BELOW the floor - which
+        // would silently pin the buffer - where elisp would have grown a bignum.
+        self.implementers.saturating_mul(self.planner_multiple).max(PLANNER_BUFFER_FLOOR)
     }
 }
 
@@ -991,6 +993,10 @@ mod tests {
         facts.planner_multiple = 1;
         facts.implementers = 4;
         assert_eq!(facts.planner_want(), 4);
+        // An absurd declaration saturates rather than wrapping below the floor.
+        facts.planner_multiple = usize::MAX;
+        facts.implementers = 2;
+        assert_eq!(facts.planner_want(), usize::MAX);
     }
 
     #[test]

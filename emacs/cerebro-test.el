@@ -3999,7 +3999,12 @@ Run as CI runs ERT, from the repository root."
                    (sort (process-lines "bash" script "--print-excluded-labels") #'string<)))
     (should (equal cerebro-planner-buffer-floor
                    (string-to-number
-                    (car (process-lines "bash" script "--print-floor")))))))
+                    (car (process-lines "bash" script "--print-floor")))))
+    ;; The drift this can actually catch: two implementations reading DIFFERENT
+    ;; keys would both find "absent" and both answer 1, which looks correct
+    ;; until a project declares one.
+    (should (equal cerebro--planner-multiple-key
+                   (car (process-lines "bash" script "--print-multiple-key"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 3: turning a sweep's facts into a decision
@@ -7119,6 +7124,34 @@ to spell, so `scripts/planner-buffer' can be held to it."
   (let ((cerebro-planner-buffer-floor 4))
     (should (equal (cerebro--planner-want 3) 4))
     (should (equal (cerebro--planner-want 6) 6))))
+
+(ert-deftest cerebro-test/a-planner-multiple-is-a-whole-number-above-zero ()
+  "The pure parser behind `planner_buffer_multiple' (cb-3in).
+nil is \"the project declared none\", which is 1; `bad' is a declaration this
+view refuses to act on - zero included, since a zero taken at face value
+would pin the wanted number to the floor for ever."
+  (should (equal (cerebro--planner-multiple-value nil) nil))
+  (should (equal (cerebro--planner-multiple-value "") nil))
+  (should (equal (cerebro--planner-multiple-value "  ") nil))
+  (should (equal (cerebro--planner-multiple-value "3") 3))
+  (should (equal (cerebro--planner-multiple-value " 3\n") 3))
+  (should (equal (cerebro--planner-multiple-value "01") 1))
+  (should (equal (cerebro--planner-multiple-value "0") 'bad))
+  (should (equal (cerebro--planner-multiple-value "-1") 'bad))
+  (should (equal (cerebro--planner-multiple-value "1.5") 'bad))
+  (should (equal (cerebro--planner-multiple-value "2x") 'bad)))
+
+(ert-deftest cerebro-test/planner-want-scales-with-the-declared-multiple ()
+  "`planner_buffer_multiple' multiplies the per-implementer number (cb-3in).
+An absent multiple is 1 - today's rule - so a consumer that predates the key
+is untouched, and the floor still wins."
+  (should (equal (cerebro--planner-want 3 2) 6))
+  (should (equal (cerebro--planner-want 3 nil) 3))
+  (should (equal (cerebro--planner-want 3) 3))
+  (should (equal (cerebro--planner-want 1 1) 2))
+  (let ((cerebro-planner-buffer-floor 4))
+    (should (equal (cerebro--planner-want 3 2) 6))
+    (should (equal (cerebro--planner-want 1 2) 4))))
 
 (ert-deftest cerebro-test/the-planners-have-no-floor ()
   "The floor was the only thing damping a trigger a pass could not clear, and

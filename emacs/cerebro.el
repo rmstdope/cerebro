@@ -1822,14 +1822,44 @@ sat unplanned until an unrelated board change broke it (cb-zgg).
 A bead with no priority at all is kept: absent is not P4."
   (seq-remove (lambda (bead) (equal (alist-get 'priority bead) 4)) beads))
 
-(defun cerebro--planner-want (implementers)
+(defconst cerebro--planner-multiple-key "planner_buffer_multiple"
+  "The project.conf key that scales the planner buffer (cb-3in).
+
+Held to `scripts/planner-buffer --print-multiple-key\=' by
+`cerebro-test/the-trigger-counts-what-planner-buffer-counts\='; the Rust copy
+is `triggers::PLANNER_MULTIPLE_KEY\='.  ABSENT means 1 - the rule every
+consumer had before the key existed.")
+
+(defun cerebro--planner-multiple-value (raw)
+  "Pure.  RAW as a buffer multiple: an integer above zero, nil, or `bad\='.
+
+nil is \"the project declared nothing\" - an absent key, an empty value, or
+the empty string `project-conf\=' prints for a key it does not have - and
+means 1.  `bad\=' is a declaration this view refuses to act on: zero, a
+negative, a fraction, anything not a whole number.  Zero is `bad\=' rather
+than legal because a zero taken at face value would pin
+`cerebro--planner-want\=' to the floor for ever.
+
+Digits are parsed and then the value is checked, rather than a canonical
+spelling being pattern-matched, so \"01\" is 1 in all three implementations."
+  (let ((text (and (stringp raw) (string-trim raw))))
+    (cond ((or (null text) (string-empty-p text)) nil)
+          ((and (string-match-p "\\`[0-9]+\\'" text)
+                (> (string-to-number text) 0))
+           (string-to-number text))
+          (t 'bad))))
+
+(defun cerebro--planner-want (implementers &optional multiple)
   "Pure.  How many planned, unclaimed beads the fleet wants right now.
 
-One per implementer on the roster that has not been told to finish, never
-fewer than `cerebro-planner-buffer-floor\='.  The shell copy is
-`scripts/planner-buffer --want\='; see that script and the floor\='s
-docstring for why there are two."
-  (max cerebro-planner-buffer-floor implementers))
+MULTIPLE per implementer on the roster that has not been told to finish,
+never fewer than `cerebro-planner-buffer-floor\='.  MULTIPLE is nil for a
+project that declares none, which is 1 - today\='s rule, so a consumer that
+predates `planner_buffer_multiple\=' is untouched.  Optional rather than
+required, so nil and 1 are the same answer and no caller has to spell the
+default.  The shell copy is `scripts/planner-buffer --want\='; see that
+script and the floor\='s docstring for why there are two."
+  (max cerebro-planner-buffer-floor (* implementers (or multiple 1))))
 
 (defcustom cerebro-retry-backoff '(0 30 120 600)
   "Seconds to wait before starting a role again, by consecutive failed starts.
@@ -2111,7 +2141,7 @@ CONTEXT is what `cerebro--trigger-context\=' gathers - `now\=',
 `implementers\=', `planned\=', `p0-unplanned\=' (ids), `p4-unranked\=',
 `unranked-ids\=' (ids), `beads-read-at\=',
 `actionable-ids\=', `planned-ids\=', `merged-unverified\=', `stale-verdicts\=',
-`gh\=' (nil for no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) and
+`planner-multiple\=', `gh\=' (nil for no answer yet, `failed\=', or (ISSUE-NUMBERS PR-NUMBERS)) and
 `linked\=' (`cerebro--linked-beads\=') - plus the per-agent facts
 `cerebro--agent-context\=' adds to it: `ended-at\=', `started-at\=', `floor\=',
 `failed-starts\=', `last-fingerprint\=' and
@@ -2160,7 +2190,8 @@ is merely waiting for it."
                 ;; left out: it takes no further bead
                 ;; (`cerebro--trigger-context' excludes it). The rule's shell
                 ;; copy, which the skill calls, is `scripts/planner-buffer'.
-                (want (cerebro--planner-want (alist-get 'implementers context))))
+                (want (cerebro--planner-want (alist-get 'implementers context)
+                                             (alist-get 'planner-multiple context))))
             (cond
              ;; A P0 is planned the moment it appears, whichever planner sees
              ;; it: it is what the whole fleet is blocked behind.
@@ -2339,7 +2370,9 @@ floor that has half a minute left to run is not worth a different word."
      ;; (cb-1or.1).
      ((equal role "implementer") "→ planned bead")
      ((equal role "planner")
-      (format "→ buffer < %d" (cerebro--planner-want (alist-get 'implementers context))))
+      (format "→ buffer < %d" (cerebro--planner-want
+                               (alist-get 'implementers context)
+                               (alist-get 'planner-multiple context))))
      ((equal role "verifier") "→ merged, unverified")
      ((equal role "orchestrator") "→ unranked bead")
      (cadence
@@ -3209,6 +3242,42 @@ degrades to the built-in numbers rather than taking the render down."
                        (seconds (cons role seconds)))))
              (delete-dups (copy-sequence roles))))
     (error nil)))
+
+(defvar-local cerebro--planner-multiple-cache 'unread
+  "The project\='s declared buffer multiple, once read; `unread\=' until it is.
+
+Buffer-local and read once, for `cerebro--project-spacing-cache\=''s reason:
+this is consulted from the planner trigger on every five-second tick, and a
+fork per tick is not a thing the view may do.  `unread\=' rather than nil,
+because nil is the ordinary answer for a project that declares none.")
+
+(defun cerebro--planner-multiple (repo-root)
+  "The multiple REPO-ROOT\='s project.conf declares, or 1.
+
+One `scripts/project-conf planner_buffer_multiple\=' call.  A declaration that
+is not a whole number above zero is said out loud, once, through
+`cerebro--report-error\=', and 1 is used - the safe direction, since 1 is
+today\='s rule and can never stop the fleet.
+
+Stdout only, and a non-zero exit read as nothing declared, both for the
+reasons `cerebro--project-spacing\=' gives about itself."
+  (condition-case nil
+      (let* ((raw (with-temp-buffer
+                    (let ((status (call-process
+                                   (expand-file-name
+                                    (cerebro--script "project-conf") repo-root)
+                                   nil (list t nil) nil cerebro--planner-multiple-key)))
+                      (and (eq status 0) (buffer-string)))))
+             (multiple (cerebro--planner-multiple-value raw)))
+        (cond ((eq multiple 'bad)
+               (cerebro--report-error
+                "project.conf"
+                "project.conf: %s is not a whole number above zero (%S); using 1"
+                cerebro--planner-multiple-key (string-trim raw))
+               1)
+              (multiple)
+              (t 1)))
+    (error 1)))
 
 (defun cerebro--standby-names (repo-root)
   "The names `scripts/roster --standby\=' lists in REPO-ROOT, in file order.
@@ -6095,6 +6164,16 @@ was a failure, are both plain values: neither depends on whose pass it is."
                 (cerebro--implementer-count
                  cerebro--agents
                  (lambda (name) (cerebro--stop-flag-p repo-root name))))
+          ;; One fork per fleet buffer, not per tick: the multiple cannot
+          ;; change under a running view, so it is read once and cached.  The
+          ;; three diagnostic callers of this function outside the fleet
+          ;; buffer see the defvar-local default and fork once each; they are
+          ;; one-off paths, not the five-second loop.
+          (cons 'planner-multiple
+                (if (eq cerebro--planner-multiple-cache 'unread)
+                    (setq cerebro--planner-multiple-cache
+                          (cerebro--planner-multiple repo-root))
+                  cerebro--planner-multiple-cache))
           (cons 'gh (cerebro--gh-resolver))
           ;; The linked beads as the panel last saw them; which of them moved
           ;; is measured against the role's own pass, so that part is

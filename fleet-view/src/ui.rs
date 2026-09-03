@@ -2120,7 +2120,8 @@ mod tests {
         let rendered = lines(&render(&app, 99, 40));
         assert!(rendered[0].contains("refresh failed at 00:00:05"), "{:?}", rendered[0]);
         assert!(!rendered[0].contains("stale"), "there is nothing to be stale: {:?}", rendered[0]);
-        assert!(rendered[0].contains("g retry"), "the key hint changes: {:?}", rendered[0]);
+        // The `g retry` hint is asserted in `the_clauses_a_screen_offers_are_ranked` and in
+        // `failure_keeps_the_retry_hint_while_the_peer_refreshes`; this test is about the pane.
         assert!(line_with(&rendered, "Fleet unavailable").contains("Fleet unavailable"));
         assert!(line_with(&rendered, "boom").contains("ps exited with status Some(3)"));
         assert!(line_with(&rendered, "No fleet snapshot is available.").contains("No fleet"));
@@ -2137,7 +2138,8 @@ mod tests {
         // about the range cue a shorter pane would need instead.
         let rendered = lines(&render(&app, 99, 60));
         assert!(rendered[0].contains("stale — refresh failed at 00:00:05"), "{:?}", rendered[0]);
-        assert!(rendered[0].contains("g retry"), "{:?}", rendered[0]);
+        // The `g retry` hint is asserted in `the_clauses_a_screen_offers_are_ranked` and in
+        // `failure_keeps_the_retry_hint_while_the_peer_refreshes`; this test is about the pane.
         assert!(line_with(&rendered, "stale since 00:00:05").contains("Fleet"));
         assert!(line_with(&rendered, "boom").contains("boom"), "the exact error is shown");
         assert!(line_with(&rendered, "Xavier").contains("● Xavier"), "the rows are retained");
@@ -2533,11 +2535,13 @@ mod tests {
     /// The keys that change the fleet outlast the keys that move around it (Q7).
     #[test]
     fn the_lifecycle_keys_outlast_the_movement_hints() {
-        let rendered = lines(&render(&supervising(), 100, 20));
-        assert!(rendered[0].contains("s/f/k start·finish·kill"), "{:?}", rendered[0]);
-        assert!(rendered[0].contains("g refresh"), "{:?}", rendered[0]);
-        assert!(rendered[0].contains("q/Esc/Ctrl-C quit"), "{:?}", rendered[0]);
-        assert!(!rendered[0].contains("Tab/Shift-Tab"), "the pane hint gave way: {:?}", rendered[0]);
+        let app = supervising();
+        let used = supervision_title(&SupervisionMode::Supervising).width();
+        let hints = fit_hints(&hint_clauses(&app), used, 100);
+        assert!(hints.contains("s/f/k start·finish·kill"), "{hints:?}");
+        assert!(hints.contains("g refresh"), "{hints:?}");
+        assert!(hints.contains("q/Esc/Ctrl-C quit"), "{hints:?}");
+        assert!(!hints.contains("Tab/Shift-Tab"), "the pane hint gave way: {hints:?}");
     }
 
     /// The read-only screen is exactly what it was: this is what proves the increment stayed put.
@@ -2603,31 +2607,35 @@ mod tests {
     /// from the screen stay.
     #[test]
     fn a_long_ownership_title_shortens_the_hints_rather_than_losing_them() {
+        let owned = SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui));
         let mut app = populated();
-        app.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(
-            SupervisorKind::Tui,
-        )));
+        app.set_supervision(owned.clone());
+        let used = supervision_title(&owned).width();
+        assert!(
+            supervision_title(&owned).contains("another Ratatui process owns supervision"),
+            "the title this test is about"
+        );
 
-        let narrow = lines(&render(&app, 100, 20));
-        assert!(narrow[0].contains("another Ratatui process owns supervision"), "{:?}", narrow[0]);
-        assert!(narrow[0].contains("g refresh"), "the refresh key survives: {:?}", narrow[0]);
-        assert!(narrow[0].contains("q/Esc/Ctrl-C quit"), "the quit key survives: {:?}", narrow[0]);
-        assert!(!narrow[0].contains("Tab/Shift-Tab"), "the pane hint gave way: {:?}", narrow[0]);
+        let narrow = fit_hints(&hint_clauses(&app), used, 100);
+        assert!(narrow.contains("g refresh"), "the refresh key survives: {narrow:?}");
+        assert!(narrow.contains("q/Esc/Ctrl-C quit"), "the quit key survives: {narrow:?}");
+        assert!(!narrow.contains("Tab/Shift-Tab"), "the pane hint gave way: {narrow:?}");
 
         // With room for everything, everything is shown.
-        let wide = lines(&render(&app, 160, 20));
-        assert!(wide[0].contains("Tab/Shift-Tab pane"), "{:?}", wide[0]);
-        assert!(wide[0].contains("↑/↓/PgUp/PgDn move"), "{:?}", wide[0]);
+        let wide = fit_hints(&hint_clauses(&app), used, 160);
+        assert!(wide.contains("Tab/Shift-Tab pane"), "{wide:?}");
+        assert!(wide.contains("↑/↓/PgUp/PgDn move"), "{wide:?}");
 
-        // A supervising sibling at the same two widths: the lifecycle keys survive both, and the
-        // movement hints are what give way when they must.
+        // A supervising sibling at two widths: the lifecycle keys survive both, and the movement
+        // hints are what give way when they must.
         let supervising = supervising();
-        let narrow = lines(&render(&supervising, 60, 20));
-        assert!(narrow[0].contains("s/f/k start·finish·kill"), "{:?}", narrow[0]);
-        assert!(!narrow[0].contains("Tab/Shift-Tab"), "{:?}", narrow[0]);
-        let wide = lines(&render(&supervising, 200, 20));
-        assert!(wide[0].contains("Tab/Shift-Tab pane"), "{:?}", wide[0]);
-        assert!(wide[0].contains("s/f/k start·finish·kill"), "{:?}", wide[0]);
+        let used = supervision_title(&SupervisionMode::Supervising).width();
+        let narrow = fit_hints(&hint_clauses(&supervising), used, 60);
+        assert!(narrow.contains("s/f/k start·finish·kill"), "{narrow:?}");
+        assert!(!narrow.contains("Tab/Shift-Tab"), "{narrow:?}");
+        let wide = fit_hints(&hint_clauses(&supervising), used, 200);
+        assert!(wide.contains("Tab/Shift-Tab pane"), "{wide:?}");
+        assert!(wide.contains("s/f/k start·finish·kill"), "{wide:?}");
     }
 
     #[test]
@@ -3414,7 +3422,8 @@ mod tests {
 
         let rendered = body(&render(&app, 99, 80));
         assert!(rendered[0].contains("stale — refresh failed at 00:00:05"), "{:?}", rendered[0]);
-        assert!(rendered[0].contains("g retry"), "{:?}", rendered[0]);
+        // The `g retry` hint is asserted in `the_clauses_a_screen_offers_are_ranked` and in
+        // `failure_keeps_the_retry_hint_while_the_peer_refreshes`; this test is about the pane.
         assert!(line_with(&rendered, "Work — stale since 00:00:05").contains("Work"));
         assert!(line_with(&rendered, "database is locked").contains("bd exited with status"));
         assert!(line_with(&rendered, "cb-123").contains("Preserve session output"));
@@ -3440,7 +3449,8 @@ mod tests {
         let rendered = body(&render(&app, 99, 40));
         assert!(rendered[0].contains("refresh failed at 00:00:05"), "{:?}", rendered[0]);
         assert!(!rendered[0].contains("stale"), "there is nothing to be stale: {:?}", rendered[0]);
-        assert!(rendered[0].contains("g retry"), "{:?}", rendered[0]);
+        // The `g retry` hint is asserted in `the_clauses_a_screen_offers_are_ranked` and in
+        // `failure_keeps_the_retry_hint_while_the_peer_refreshes`; this test is about the pane.
         assert!(line_with(&rendered, "Work unavailable").contains("Work unavailable"));
         assert!(line_with(&rendered, "database is locked").contains("database is locked"));
         assert_eq!(rendered[index_of(&rendered, "No work snapshot is available.")],
@@ -4218,31 +4228,31 @@ mod tests {
     /// cb-41r's `Enter bead` is what made a hundred-column header need it.
     #[test]
     fn the_cursor_clauses_are_the_last_thing_to_give_way() {
+        let owned = SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(SupervisorKind::Tui));
         let mut app = work_app(WorkBuckets {
             claimed: vec![bead("cb-41r", Some(2), "Enter on a bead opens it")],
             ..WorkBuckets::default()
         });
         app.selected = Some("Rogue".to_string());
-        app.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(
-            SupervisorKind::Tui,
-        )));
+        app.set_supervision(owned.clone());
         app.focus = PaneFocus::Work;
         while !matches!(app.work_cursor, Some(app::WorkCursor::Bead(_))) {
             app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, at(86_400));
         }
+        let used = supervision_title(&owned).width();
 
         // Wide: everything, the cursor clauses included.
-        let wide = lines(&render(&app, 200, 20));
-        assert!(wide[0].contains("Enter bead"), "{:?}", wide[0]);
-        assert!(wide[0].contains("Tab/Shift-Tab pane"), "{:?}", wide[0]);
+        let wide = fit_hints(&hint_clauses(&app), used, 200);
+        assert!(wide.contains("Enter bead"), "{wide:?}");
+        assert!(wide.contains("Tab/Shift-Tab pane"), "{wide:?}");
 
         // Narrow enough that even the shortened form will not fit: the clauses go, and the two
         // keys a navigator cannot guess from the screen stay.
-        let narrow = lines(&render(&app, 100, 20));
-        assert!(!narrow[0].contains("Enter bead"), "{:?}", narrow[0]);
-        assert!(!narrow[0].contains("0-4/+/-/u priority"), "{:?}", narrow[0]);
-        assert!(narrow[0].contains("g refresh"), "{:?}", narrow[0]);
-        assert!(narrow[0].contains("q/Esc/Ctrl-C quit"), "{:?}", narrow[0]);
+        let narrow = fit_hints(&hint_clauses(&app), used, 100);
+        assert!(!narrow.contains("Enter bead"), "{narrow:?}");
+        assert!(!narrow.contains("0-4/+/-/u priority"), "{narrow:?}");
+        assert!(narrow.contains("g refresh"), "{narrow:?}");
+        assert!(narrow.contains("q/Esc/Ctrl-C quit"), "{narrow:?}");
     }
 
     const MOVE_PANE: HintClause =
@@ -4443,6 +4453,47 @@ mod tests {
             hint_clauses(&findings)
                 .contains(&HintClause { text: "x act", rank: HintRank::Cursor }),
             "a sweep finding offers `x act`"
+        );
+    }
+
+    /// The bead's actual claim: a fourth hint is one row with a rank, and it breaks nothing.
+    ///
+    /// In the shape of `cerebro-test/a-sixth-sweep-is-one-row`. `Ctrl-r reload` is a key this view
+    /// does not have, so nobody can mistake the fixture for a real hint or grep it up as one.
+    #[test]
+    fn a_new_clause_is_one_row_and_breaks_no_other_test() {
+        let existing = hint_clauses(&supervising());
+        let new = HintClause { text: "Ctrl-r reload", rank: HintRank::Cursor };
+        let first_kept = existing
+            .iter()
+            .position(|clause| clause.rank == HintRank::Kept)
+            .expect("the kept clauses are always offered");
+        let mut clauses = existing.clone();
+        clauses.insert(first_kept, new);
+
+        let kept: Vec<&str> = clauses
+            .iter()
+            .filter(|clause| clause.rank == HintRank::Kept)
+            .map(|clause| clause.text)
+            .collect();
+        let used = 20;
+        let full = fit_hints(&clauses, used, 1000);
+        assert!(full.contains("Ctrl-r reload"), "at a width that fits everything: {full:?}");
+
+        // One cell too narrow for the full join: the movement rank gave way first, and the new
+        // clause is still there.
+        let no_movement = fit_hints(&clauses, used, used + full.width() - 1);
+        assert!(no_movement.contains("Ctrl-r reload"), "{no_movement:?}");
+        assert!(!no_movement.contains("Tab/Shift-Tab pane"), "{no_movement:?}");
+
+        // One cell narrower again: the cursor rank gives way, the new clause with it, and every
+        // kept clause is there character for character.
+        let bare = fit_hints(&clauses, used, used + no_movement.width() - 1);
+        assert!(!bare.contains("Ctrl-r reload"), "{bare:?}");
+        assert_eq!(
+            bare,
+            kept.iter().map(|text| format!(" | {text}")).collect::<String>(),
+            "the kept clauses survive, in order and unaltered"
         );
     }
 }

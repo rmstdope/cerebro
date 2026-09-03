@@ -1,0 +1,117 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+table{border-collapse:collapse;background:#2a2a2a;color:#ddd;margin-top:10px}
+td,th{border:1px solid #555;padding:4px 10px;text-align:left;font-size:12px}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.cut{background:#4a1111}
+</style>
+<meta charset="utf-8"><title>cb-3v5 — the agreed surface</title>
+
+<h1>cb-3v5 &mdash; the surface the navigator approved, 2026-09-03</h1>
+<p class="lede">Two rounds. This file is the specification for how a navigator leaves a
+<b>focused live session</b> in <code>cerebro-tui</code>, and for every sentence the screen says
+while doing it. Where this file and the bead&rsquo;s plan disagree, this file is right. It changes
+nothing any earlier file in the <code>cb-kcs</code> family decided: not a fleet row, not a
+lifecycle key, not a pane&rsquo;s borders, not the Work pane&rsquo;s own keys. It is the outbound
+half of the journey <code>cb-d31</code> made inbound.</p>
+
+<h2>1. The rule</h2>
+<p class="lede"><b><code>Tab</code> becomes a second held-back key.</b> A focused live session
+receives every key except <code>Tab</code> and <code>Shift-Tab</code>; both run the plain focus
+cycle, which from Session means <code>Tab</code>&nbsp;&rarr;&nbsp;<b>Fleet</b> and
+<code>Shift-Tab</code>&nbsp;&rarr;&nbsp;<b>Work</b>. Nothing else about the cycle moves, and no pane
+holding anything other than a live session changes at all.</p>
+
+<table>
+<tr><th>Session pane holds</th><th><code>Tab</code></th><th><code>Shift-Tab</code></th></tr>
+<tr><td>a live session, focused</td><td><b>&rarr; Fleet</b> (new; today the agent gets a tab byte)</td><td>&rarr; Work (unchanged)</td></tr>
+<tr><td><code>Starting <i>Name</i>&hellip;</code></td><td>&rarr; Fleet (unchanged)</td><td>&rarr; Work (unchanged)</td></tr>
+<tr><td>an ended pass (retained transcript)</td><td>&rarr; Fleet (unchanged)</td><td>&rarr; Work (unchanged)</td></tr>
+<tr><td>a refused launch (red pane)</td><td>&rarr; Fleet (unchanged)</td><td>&rarr; Work (unchanged)</td></tr>
+<tr><td>nothing at all</td><td>&rarr; Fleet (unchanged)</td><td>&rarr; Work (unchanged)</td></tr>
+</table>
+
+<p class="note"><b>What it costs:</b> no hosted agent ever receives a plain <code>Tab</code> again.
+<b>What pays for it:</b> <code>Ctrl-I</code> <i>is</i> a tab (0x09), and the forwarding table
+already maps every <code>Ctrl-</code>letter to its control byte &mdash; so an agent that needs a
+real tab still gets one, in two keys instead of one, with no code written for it. That fact is
+written down in the navigator&rsquo;s operating guide (&sect;4) and nowhere else.</p>
+
+<p class="note"><b>Rejected, round one:</b> &ldquo;leave <code>Tab</code> to the agent and make
+<code>Shift-Tab</code> land on Fleet instead&rdquo;. It costs the child nothing and still gets back
+to Fleet in one key &mdash; turned down because <code>Shift-Tab</code> would then mean one thing on
+a live session and another everywhere else, so the cycle stops being a cycle.
+<b>Also rejected:</b> &ldquo;<code>Tab</code> held back <i>and</i> <code>Shift-Tab</code> also
+lands on Fleet&rdquo; &mdash; leaving a session would have one destination, at the price of Work no
+longer being one key away from a session at all.</p>
+
+<h2>2. Leaving a focused live session</h2>
+<h3>Before &mdash; the session has the keyboard</h3>
+<div class="screen"><pre><span class="d">Beast has the keyboard | Tab leaves to Fleet, Shift-Tab to Work</span>
+<span class="d">┌ Fleet 6 ────────────────────────────┐</span>   <span class="b">┏━ Beast — plan cb-3v5 [Tab/Shift-Tab leave] ━┓</span>
+<span class="d">│</span>  Xavier    <span class="g">working</span>  plan  cb-op0  3m <span class="d">│</span>   <span class="b">┃</span> Now researching the code.               <span class="b">┃</span>
+<span class="d">│</span><span class="sel">▸ Beast     <span class="g">working</span>  plan  cb-3v5  1m </span><span class="d">│</span>   <span class="b">┃</span> ● Bash(grep -n "fn on_key" …)           <span class="b">┃</span>
+<span class="d">└─────────────────────────────────────┘</span>   <span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span></pre></div>
+<h3>&hellip; and after <code>Tab</code></h3>
+<div class="screen"><pre><span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k agent | g refresh | q quit</span>
+<span class="b">┏━ Fleet 6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>   <span class="d">┌ Beast — plan cb-3v5  [Tab to focus] ─┐</span>
+<span class="b">┃</span>  Xavier    <span class="g">working</span>  plan  cb-op0  3m <span class="b">┃</span>   <span class="d">│</span> Now researching the code.            <span class="d">│</span>
+<span class="b">┃</span><span class="sel">▸ Beast     <span class="g">working</span>  plan  cb-3v5  1m </span><span class="b">┃</span>   <span class="d">│</span> ● Bash(grep -n "fn on_key" …)        <span class="d">│</span>
+<span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span>   <span class="d">└──────────────────────────────────────┘</span></pre></div>
+<p class="note">The selection does not move, the Session pane keeps its scroll offset, the child is
+untouched, and the ordinary header comes back exactly as it is today. With <code>cb-d31</code>
+merged the journey is one key each way: <code>Enter</code> in, <code>Tab</code> out.</p>
+
+<h3>&hellip; and after <code>Shift-Tab</code>, which is unchanged</h3>
+<div class="screen"><pre><span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k agent | 0-4/+/-/u priority | g refresh | q quit</span>
+<span class="d">┌ Fleet 6 ────────────────────────────┐</span>   <span class="d">┌ Beast — plan cb-3v5  [Tab to focus] ─┐</span>
+<span class="d">│</span>  Xavier    <span class="g">working</span>  plan  cb-op0  3m <span class="d">│</span>   <span class="d">│</span> Now researching the code.            <span class="d">│</span>
+<span class="d">└─────────────────────────────────────┘</span>   <span class="d">│</span> ● Bash(grep -n "fn on_key" …)        <span class="d">│</span>
+<span class="b">┏━ Work ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>   <span class="d">└──────────────────────────────────────┘</span>
+<span class="b">┃</span> <span class="sel">cb-3v5  P1  Tab out of a focused ses…</span> <span class="b">┃</span></pre></div>
+
+<h2>3. The two strings, verbatim</h2>
+<table>
+<tr><th>Where</th><th>Today</th><th>Ships as</th></tr>
+<tr><td>the header, while a live session holds the keyboard</td>
+    <td><code>&lt;Name&gt; has the keyboard | Shift-Tab leaves the session</code></td>
+    <td><code>&lt;Name&gt; has the keyboard | Tab leaves to Fleet, Shift-Tab to Work</code></td></tr>
+<tr><td>the Session pane title hint, focused</td>
+    <td><code>[Shift-Tab leaves]</code></td>
+    <td><code>[Tab/Shift-Tab leave]</code></td></tr>
+<tr><td>the Session pane title hint, unfocused</td>
+    <td><code>[Tab to focus]</code></td>
+    <td><code>[Tab to focus]</code> &mdash; unchanged, and still true</td></tr>
+<tr><td>every other pane title hint</td><td colspan="2">unchanged</td></tr>
+</table>
+<p class="note">The header sentence replaces the whole header and is clipped, not wrapped. At 80
+cells with the longest name on this roster it fits with room left:
+<code>Psylocke has the keyboard | Tab leaves to Fleet, Shift-Tab to Work</code> is 66 cells.
+<b>Rejected wordings:</b> <code>Tab&nbsp;&rarr;&nbsp;Fleet, Shift-Tab&nbsp;&rarr;&nbsp;Work</code>
+(nine cells shorter, but scans as a table where every other sentence on this screen is prose), and
+appending <code>| Ctrl-I sends a Tab</code> (clipped mid-word at 80 cells &mdash; the operating
+guide carries it instead).</p>
+
+<h2>4. Where <code>Ctrl-I</code> is written down</h2>
+<p class="lede">In <code>docs/agent-workflow.md</code>, the navigator&rsquo;s operating guide, in the
+sentence that already describes <code>Tab</code> and <code>Shift-Tab</code> &mdash; and nowhere
+else. Not in the header, which cannot afford the cells; not in <code>CLAUDE.md</code>, which
+describes the rule rather than the hatch.</p>
+
+<h2>5. Unfocused, and the panes that never held the keyboard</h2>
+<p class="lede">None of these changes. A pane holding an ended pass, a refused launch,
+<code>Starting&hellip;</code> or nothing at all does not hold the keyboard, so both keys already ran
+the plain cycle and still do.</p>
+<div class="screen"><pre><span class="b">┏━ Rogue — ended 14:02 [retained until next start] ━┓</span>
+<span class="b">┃</span> <span class="d">bd dolt push</span>                                     <span class="b">┃</span>
+<span class="b">┃</span> <span class="d">Push complete.</span>                                   <span class="b">┃</span>
+<span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span></pre></div>
+<div class="screen"><pre><span class="e">┏━ Rogue — launch refused 14:02 ━━━━━━━━━━━━━━━━━━━┓</span>
+<span class="e">┃</span> <span class="e">claude is not on PATH</span>                           <span class="e">┃</span>
+<span class="e">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span></pre></div>

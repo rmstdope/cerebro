@@ -586,7 +586,9 @@ and a stale section that reads like a current one is what Emacs's own silence co
 stops at the first script that did not answer, which is what lets the header name exactly one. Under
 Work the arrow and page keys move a **cursor over the findings** while there are any and scroll the
 pane when there are none (widened to bead rows by cb-kcs.5.4, below) — and `x`, from any focus, shows the exact `bd` and runs
-it only on `y`, followed by `bd dolt push` on the same keystroke. That was **the one write in this
+it only on `y`, followed by `bd dolt push` on the same keystroke — since cb-21g both of those run
+on the **write worker** rather than on the drawing thread, so the keystroke returns at once and the
+header's sentence arrives when the write answers. That was **the one write in this
 crate that does not pass `--readonly`** until cb-kcs.5.4 added the priority keys beside it; it lives
 in `lifecycle::run_finding` beside every other
 write and spawns through `readers::CommandRunner` like every other command
@@ -621,8 +623,12 @@ Since cb-kcs.5.4 it carries the last two things the Emacs bead panel had and it 
 are the navigator's own hands rather than the supervisor's. **The priority keys** — `0`-`4`, `+`
 (more urgent, so the *number* goes down), `-` and `u` — write a bead's priority to the shared board
 with no confirmation and `bd dolt push` on the same keystroke, saying what they did in the header
-(`cb-x: P1 → P0`, `cb-x is already P0`, `cb-x: back to P1`, and the push failure in the same line);
-`u` is one step, spent only by using it, surviving a refresh and overwritten by the next change.
+(`cb-x: P1 → P0`, `cb-x is already P0`, `cb-x: back to P1`, and the push failure in the same line).
+Since cb-21g the write itself runs on the **write worker**: the keystroke leaves a dim provisional
+line (`cb-x: P1 → P0…`) that no other keystroke clears, the row shows the priority it was asked to
+have until a board read that began after the write settled lands, and the sentence above arrives
+when the write answers — a refused one in red, and in `errors.jsonl` under the context `write`.
+`u` is one step, spent only by using it, surviving a refresh and overwritten by the next change;
 They are the second write in this crate that does not pass `--readonly`, beside `x`, and the one key
 set in this view that is **not** "from any focus": Work focus only, because a
 digit is far more ordinary than `x` and from Fleet focus `3` would silently rerank a bead in a pane
@@ -779,7 +785,13 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   one worker thread per pane. The panes are independent all the way down: one in-flight slot each,
   one clock each, one `Pane<T>` state machine each. A global busy bit would let the five-second
   fleet read starve the thirty-second work read, and a busy fleet would swallow the retry a
-  navigator pressed `g` for.
+  navigator pressed `g` for. Since cb-21g the two board **writes** have a worker of their own — the
+  eighth — for the reason the seven readers have theirs: a `bd dolt push` is a network call bounded
+  at thirty seconds, and running it on the drawing thread froze the screen, keys and all, for as
+  long as the remote took. **One** worker and one write at a time, deliberately: writes to the
+  shared board must run in the order the navigator pressed them, and a pool would let `3` overtake
+  `0` on the same bead. The UI thread decides (`lifecycle::priority_action`), records
+  (`App::begin_write`) and looks (`App::finish_write`); it starts nothing.
 - `ui.rs` — pure over `App` plus an injected `DateTime<Utc>`. It never reads a file, runs a
   program or asks the clock, which is what makes its `TestBackend` cases assertions about the
   screen rather than about the machine. Widths are **terminal cells** (`unicode-width`), never

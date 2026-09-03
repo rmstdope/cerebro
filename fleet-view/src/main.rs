@@ -40,7 +40,7 @@ use ratatui::Terminal;
 
 use cerebro_tui::app::{
     self, App, AppAction, DetailWorker, FleetWorker, GhWorker, HistoryWorker, SupervisorWorker, SweepWorker,
-    WorkWorker,
+    WorkWorker, WriteWorker,
 };
 use cerebro_tui::lifecycle;
 use cerebro_tui::log::{self, Logger};
@@ -318,6 +318,10 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // over a log that grows without limit (cb-kcs.5.4).
     let history_worker = HistoryWorker::spawn(paths.clone(), commands.clone());
     let supervisor_worker = SupervisorWorker::spawn(paths.clone(), commands.clone());
+    // An EIGHTH thread for the two board writes, for the reason the other seven exist: a
+    // `bd dolt push` is a network call bounded at thirty seconds, and running it on the drawing
+    // thread froze the screen - keys and all - for as long as the remote took (cb-21g).
+    let write_worker = WriteWorker::spawn(paths.clone(), Programs::default(), commands.clone());
     // Ownership before the first frame: the one blocking read this binary allows itself, and the
     // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
     let mut controller = SupervisorController::new(&paths, commands.as_ref());
@@ -393,7 +397,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &mut logger,
         &paths,
         &Programs::default(),
-        commands.as_ref(),
+        &write_worker,
         &spacing,
         Utc::now,
     );
@@ -1142,7 +1146,7 @@ fn run<B: Backend, E: Events>(
     logger: &mut Logger,
     paths: &ReaderPaths,
     programs: &Programs,
-    commands: &dyn CommandRunner,
+    write_worker: &WriteWorker,
     spacing: &BTreeMap<String, u64>,
     clock: impl Fn() -> DateTime<Utc>,
 ) -> Result<(), Fatal>
@@ -1280,6 +1284,22 @@ where
             }
             app.finish_sweep_refresh(result, clock());
         }
+        // The eighth worker: a board write's answer, which is what now carries the header
+        // sentence the keystroke used to carry itself (cb-21g). A refused write is written to
+        // `errors.jsonl` as well, under the context `write`: the header is painted over by the
+        // next frame, and `clear_error` on a successful one is what stops `Logger::error`'s
+        // one-per-fault dedupe from swallowing an identical failure minutes later.
+        if let Some(Ok(answer)) = write_worker.poll() {
+            log_write(logger, &answer, clock());
+            let action = app.finish_write(answer);
+            dispatch(action, app, fleet_worker, work_worker, detail_worker, gh_worker, sweep_worker, history_worker, &clock);
+        }
+        // A request that was ACCEPTED and whose answer will never come: the other half of
+        // `dispatch_write`'s refusal. Without it one dead thread leaves the dim line up for ever,
+        // the newest-write rule permanently false and an overlay entry outliving the session.
+        if write_worker.is_dead() {
+            app.abandon_outstanding_writes();
+        }
         // History fails apart from the two panes as well: a script that would not run says
         // nothing about the fleet or the board, and its only sign on screen is the red word
         // beside its own header. The `Display` already carries the cause, so this is `work`'s
@@ -1329,7 +1349,7 @@ where
             match events.read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     let action =
-                        route_key(key, app, host, ledger, logger, paths, programs, commands, viewport_lines, clock());
+                        route_key(key, app, host, ledger, logger, paths, programs, viewport_lines, clock());
                     if action == AppAction::Quit {
                         break;
                     }
@@ -1340,6 +1360,7 @@ where
                     if action == AppAction::RefreshAll && supervisor_worker.request() {
                         controller.requested(Instant::now());
                     }
+                    dispatch_write(action.clone(), app, write_worker);
                     dispatch(action, app, fleet_worker, work_worker, detail_worker, gh_worker, sweep_worker, history_worker, &clock);
                 }
                 // Forwarded as a PASTE (Q3), so an agent composer that treats a bare newline as
@@ -1380,9 +1401,7 @@ where
 fn write_priority(
     app: &mut App,
     logger: &mut Logger,
-    paths: &ReaderPaths,
     programs: &Programs,
-    commands: &dyn CommandRunner,
     now: DateTime<Utc>,
     id: &str,
     from: Option<u8>,
@@ -1398,25 +1417,16 @@ fn write_priority(
             ("to", serde_json::Value::from(to)),
         ],
     );
-    let outcome = lifecycle::set_priority(paths, programs, commands, id, from, to, undo);
-    let wrote = !matches!(outcome, lifecycle::PriorityOutcome::Failed { .. });
-    app.set_notice(match &outcome {
-        lifecycle::PriorityOutcome::Ran { text }
-        | lifecycle::PriorityOutcome::Pushed { text }
-        | lifecycle::PriorityOutcome::Failed { text } => text.clone(),
-    });
-    if let lifecycle::PriorityOutcome::Failed { .. } = outcome {
-        app.notice_urgent = true;
-    }
-    if wrote && !undo {
-        app.last_priority_change = Some((id.to_string(), from));
-    }
-    if wrote {
-        // So the row's `P1` becomes `P0` at once rather than up to thirty seconds later.
-        AppAction::RefreshWork
-    } else {
-        AppAction::None
-    }
+    let request = app::WriteRequest::Priority {
+        id: id.to_string(),
+        from,
+        to,
+        undo,
+    };
+    // The dim line, the counter, the overlay entry and the optimistic undo entry - and then off
+    // the drawing thread, which is the whole of cb-21g.
+    app.begin_write(&request, &programs.bd);
+    AppAction::Write(request)
 }
 
 /// In branch 3, `Tab` and `Shift-Tab` are BOTH held back and handed to `App::on_key`, which runs
@@ -1435,10 +1445,9 @@ fn route_key(
     ledger: &mut StartLedger,
     logger: &mut Logger,
     paths: &ReaderPaths,
-    // Injectable for the reason every other program in this crate is: `x` runs a `bd` that
-    // WRITES, and a case that used the default would act on the developer's own board.
+    // Injectable for the reason every other program in this crate is: the two board writes name
+    // `bd`, and a case that used the default would act on the developer's own board.
     programs: &Programs,
-    commands: &dyn CommandRunner,
     viewport_lines: usize,
     now: DateTime<Utc>,
 ) -> AppAction {
@@ -1446,7 +1455,7 @@ fn route_key(
     // has to be true of the keys these two panes consume as well - or a gold line outlives the
     // keystroke that should have cleared it and reappears when the pane closes.
     if app.quit_refusal.is_some() {
-        app.notice = None;
+        app.clear_notice();
         app.quit_refusal = None;
         return AppAction::None;
     }
@@ -1489,15 +1498,9 @@ fn route_key(
                         ),
                     )],
                 );
-                let outcome = lifecycle::run_finding(paths, programs, commands, &finding);
-                app.set_notice(match outcome {
-                    lifecycle::FindingOutcome::Ran { text }
-                    | lifecycle::FindingOutcome::Pushed { text }
-                    | lifecycle::FindingOutcome::Failed { text } => text,
-                });
-                // So a finding that has just been acted on leaves the section at once rather
-                // than sitting there for up to ten minutes.
-                AppAction::RefreshSweeps
+                let request = app::WriteRequest::Finding { finding };
+                app.begin_write(&request, &programs.bd);
+                AppAction::Write(request)
             }
         };
     }
@@ -1549,8 +1552,7 @@ fn route_key(
             _ => None,
         };
         if let Some(requested) = requested {
-            app.notice = None;
-            app.notice_urgent = false;
+            app.clear_notice();
             let Some(bead) = app.selected_bead(now) else {
                 return AppAction::None;
             };
@@ -1562,21 +1564,19 @@ fn route_key(
                     AppAction::None
                 }
                 lifecycle::PriorityAction::Write { to } => {
-                    write_priority(app, logger, paths, programs, commands, now, &id, from, to, false)
+                    write_priority(app, logger, programs, now, &id, from, to, false)
                 }
             };
         }
         if key.code == KeyCode::Char('u') {
-            app.notice = None;
-            app.notice_urgent = false;
+            app.clear_notice();
             // Spent by USING it, and by nothing else: one step back rather than a stack, so a
             // second `u` has nothing to do rather than quietly redoing the change.
             // READ, never taken: an entry is spent by an undo that actually wrote, not by one
             // `bd` refused. A rescue that a failed write throws away is not there when it is
             // reached for a second time, which is the whole case `u` exists for.
             let Some((id, previous)) = app.last_priority_change.clone() else {
-                app.set_notice("nothing to undo".to_string());
-                app.notice_urgent = true;
+                app.set_error_notice("nothing to undo".to_string());
                 return AppAction::None;
             };
             let Some(previous) = previous else {
@@ -1585,20 +1585,16 @@ fn route_key(
                 // rather than destroyed by a keystroke that did nothing.
                 return AppAction::None;
             };
-            let action =
-                write_priority(app, logger, paths, programs, commands, now, &id, None, previous, true);
-            // An undo that wrote leaves no entry of its own: `u` is one step back, not a toggle.
-            if action == AppAction::RefreshWork {
-                app.last_priority_change = None;
-            }
-            return action;
+            // The entry is spent when the undo ANSWERS, in `App::finish_write`: an undo `bd`
+            // refuses must leave the rescue in place to be reached for a second time.
+            return write_priority(app, logger, programs, now, &id, None, previous, true);
         }
     }
     if key.modifiers.is_empty() {
         if let KeyCode::Char(c @ ('s' | 'f' | 'k')) = key.code {
             // A notice is transient exactly as it is under `on_key`: the keystroke that reads it
             // is the one that clears it, and this key may then write its own.
-            app.notice = None;
+            app.clear_notice();
             return lifecycle_key(c, app, host, ledger, logger, paths, now);
         }
     }
@@ -1715,6 +1711,38 @@ fn lifecycle_key(
             lifecycle::KillOutcome::Ignore => AppAction::None,
         },
         _ => AppAction::None,
+    }
+}
+
+/// A board write's answer, in `errors.jsonl` (the navigator's choice, cb-21g round one): the
+/// header is painted over by the next frame, and a refused board write is worth a line that
+/// survives it.
+///
+/// `clear_error` on a successful write is what stops `Logger::error`'s own one-per-fault dedupe
+/// from swallowing the second occurrence of an identical failure minutes later. A FAILED PUSH is
+/// not a failure by `WriteAnswer::failed`'s test - the write happened - so it writes no line.
+///
+/// Its own function, and not inlined into the poll, so a case can exercise it: `run`'s loop is
+/// not somewhere a test reaches (found in review).
+fn log_write(logger: &mut Logger, answer: &app::WriteAnswer, now: DateTime<Utc>) {
+    if answer.failed() {
+        logger.error("write", answer.text(), now);
+    } else {
+        logger.clear_error("write");
+    }
+}
+
+/// Send a board write to the eighth worker, off the drawing thread (cb-21g).
+///
+/// Its own function rather than an arm of `dispatch`: a write is the only action that does not
+/// ask a pane for anything, and `dispatch`'s ten callers have no worker to hand it.
+fn dispatch_write(action: AppAction, app: &mut App, write_worker: &WriteWorker) {
+    if let AppAction::Write(request) = &action {
+        if !write_worker.request_with(request.clone()) {
+            // A write that could never be sent is reported rather than lost.
+            let action = app.finish_write(app::WriteAnswer::undeliverable(request));
+            debug_assert_eq!(action, AppAction::None);
+        }
     }
 }
 
@@ -2193,7 +2221,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now);
 
         assert!(!app.quit, "the session this case hosts is what refuses the quit");
         assert!(app.quit_refusal.is_some(), "and the refusal pane says so");
@@ -2241,7 +2269,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -2276,7 +2304,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
         assert!(app.quit, "and q still quits: a retained pass does not hold the keyboard");
@@ -2297,7 +2325,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
+            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now);
         let text = echoed(&mut host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
         assert!(text.contains("^[[201~"), "and closed: {text:?}");
@@ -2310,7 +2338,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now)
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -2327,7 +2355,7 @@ mod main_tests {
         let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
-            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
+            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now);
         assert_eq!(
             controller.hosted_sessions, 1,
             "the drain branch of `reconcile_supervision` is reachable for the first time"
@@ -2388,6 +2416,18 @@ mod main_tests {
     /// answers `sweep-claims failed` and the section is never drawn.
     fn history_worker() -> cerebro_tui::app::HistoryWorker {
         cerebro_tui::app::HistoryWorker::spawn(nowhere().0, std::sync::Arc::new(RealCommands))
+    }
+
+    /// The write worker, pointed at a directory with no `bd` in it: every write fails, which is
+    /// what these cases about the terminal and the event source want it to do.
+    fn write_worker() -> WriteWorker {
+        let (paths, programs) = nowhere();
+        WriteWorker::spawn(paths, programs, Arc::new(RealCommands))
+    }
+
+    /// A write worker whose thread has already gone: `request_with` cannot deliver.
+    fn dead_write_worker() -> WriteWorker {
+        WriteWorker::stopped()
     }
 
     fn sweep_worker() -> SweepWorker {
@@ -2533,7 +2573,7 @@ mod main_tests {
                 &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
-                &no_commands(),
+                &write_worker(),
                 &std::collections::BTreeMap::new(),
                 Utc::now,
             )
@@ -2568,7 +2608,7 @@ mod main_tests {
                 &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
-                &no_commands(),
+                &write_worker(),
                 &std::collections::BTreeMap::new(),
                 Utc::now,
             )
@@ -2604,7 +2644,7 @@ mod main_tests {
                 &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
-                &no_commands(),
+                &write_worker(),
                 &std::collections::BTreeMap::new(),
                 Utc::now,
             )
@@ -2651,7 +2691,7 @@ mod main_tests {
                 &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
                 &nowhere().0,
                 &nowhere().1,
-                &no_commands(),
+                &write_worker(),
                 &std::collections::BTreeMap::new(),
                 Utc::now,
             )
@@ -2695,7 +2735,7 @@ mod main_tests {
         ]);
 
         run(&mut terminal, &mut events, &mut app, &worker(), &work, &detail_worker(), &gh_worker(), &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
         assert!(app.quit, "and the last of them still quit");
@@ -2788,7 +2828,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
         assert_eq!(
@@ -2846,7 +2886,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");
@@ -2885,7 +2925,7 @@ mod main_tests {
         run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
     }
@@ -3038,7 +3078,7 @@ mod main_tests {
         keys: Vec<crossterm::event::KeyEvent>,
     ) {
         for key in keys {
-            route_key(key, app, host, &mut StartLedger::default(), &mut test_logger(), paths, &Programs::default(), &no_commands(), 10, Utc::now());
+            route_key(key, app, host, &mut StartLedger::default(), &mut test_logger(), paths, &Programs::default(), 10, Utc::now());
         }
     }
 
@@ -3058,7 +3098,7 @@ mod main_tests {
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, host, &mut ledger, &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), paths,
-            &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
+            &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now);
     }
 
 
@@ -4036,7 +4076,7 @@ mod main_tests {
                 cerebro_tui::model::RowState::Dead)],
         );
 
-        route_key(ch('s'), &mut app, &mut host, &mut ledger, &mut logger, &paths, &Programs::default(), &no_commands(), 10, now);
+        route_key(ch('s'), &mut app, &mut host, &mut ledger, &mut logger, &paths, &Programs::default(), 10, now);
 
         assert!(host.is_live("Rogue"));
         let line = one_line(dir.path(), "decisions", "start");
@@ -4325,7 +4365,7 @@ mod main_tests {
             app.notice.as_deref(),
             Some("Cerebro was asked to rank 2 unranked beads.")
         );
-        assert!(!app.notice_urgent, "a triage line is news, not a fault");
+        assert_ne!(app.notice_tone, app::NoticeTone::Urgent, "a triage line is news, not a fault");
         let line = one_line(dir.path(), "decisions", "triage");
         assert!(line.contains(r#""agent":"Cerebro","role":"orchestrator""#), "{line}");
         assert!(line.contains(r#""ids":["cb-1","cb-2"],"repeat":false"#), "{line}");
@@ -4483,7 +4523,7 @@ mod main_tests {
         let at = Instant::now();
         prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(), at);
 
-        assert!(app.notice_urgent, "a fault, not news");
+        assert_eq!(app.notice_tone, app::NoticeTone::Urgent, "a fault, not news");
         let notice = app.notice.clone().expect("a notice");
         assert!(
             notice.starts_with("Worktree pruning stopped: No such file or directory"),
@@ -4496,7 +4536,7 @@ mod main_tests {
         // Five seconds later it is retried and still fails - and says nothing more, on screen or
         // in the log: the header is inside its ten-minute gate and the fault is the same one.
         app.notice = None;
-        app.notice_urgent = false;
+        app.notice_tone = app::NoticeTone::News;
         prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(),
               at + std::time::Duration::from_secs(5));
         assert_eq!(app.notice, None, "not a strobe");
@@ -4991,7 +5031,6 @@ mod main_tests {
             &mut test_logger(),
             &paths,
             &Programs::default(),
-            &no_commands(),
             10,
             now,
         );
@@ -5011,13 +5050,6 @@ mod main_tests {
         fake.calls().iter().map(|c| c.args.join(" ")).collect()
     }
 
-    /// A runner for the cases that must never run anything: `route_key` and `run` take one, and
-    /// only the `x` path uses it. A case that reaches it has a bug, and says so here rather than
-    /// silently starting a `bd` against the developer's own board.
-    fn no_commands() -> cerebro_tui::readers::testing::FakeCommands {
-        cerebro_tui::readers::testing::FakeCommands::new(|call| panic!("nothing should run: {call:?}"))
-    }
-
     fn app_with_finding(mode: SupervisionMode) -> App {
         let mut app = lifecycle_app(
             mode,
@@ -5033,12 +5065,13 @@ mod main_tests {
         app
     }
 
+    /// The keystrokes alone. It takes no `CommandRunner` because `route_key` no longer runs one:
+    /// a board write is asked for and dispatched to the write worker (cb-21g).
     fn drive_with(
         app: &mut App,
         host: &mut SessionHost,
         paths: &ReaderPaths,
         programs: &Programs,
-        commands: &dyn CommandRunner,
         keys: Vec<crossterm::event::KeyEvent>,
     ) -> AppAction {
         let mut action = AppAction::None;
@@ -5051,7 +5084,6 @@ mod main_tests {
                 &mut test_logger(),
                 paths,
                 programs,
-                commands,
                 10,
                 Utc::now(),
             );
@@ -5069,7 +5101,7 @@ mod main_tests {
         let mut app = app_with_finding(SupervisionMode::Supervising);
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x')]);
         assert!(fake.calls().is_empty(), "nothing ran on the question alone");
         assert!(matches!(
             &app.confirm,
@@ -5077,7 +5109,7 @@ mod main_tests {
                 if text.ends_with("unclaim cb-a ?  y / n")
         ), "{:?}", app.confirm);
 
-        let action = drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('y')]);
+        let action = drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('y')]);
         assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
         assert_eq!(app.notice.as_deref().map(|n| n.contains("unclaim cb-a")), Some(true));
         // And the section is re-run at once rather than in up to ten minutes.
@@ -5095,7 +5127,7 @@ mod main_tests {
         let mut app = app_with_finding(SupervisionMode::Supervising);
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('q')]);
+        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x'), ch('q')]);
         assert!(fake.calls().is_empty(), "nothing ran");
         assert!(app.confirm.is_none(), "and the question is gone");
         assert!(!app.quit, "the cancel is not also a quit");
@@ -5111,7 +5143,7 @@ mod main_tests {
         let mut app = app_with_finding(SupervisionMode::Supervising);
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet);
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
         assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
     }
 
@@ -5129,7 +5161,7 @@ mod main_tests {
             ),
         ));
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x'), ch('y')]);
         assert_eq!(argv(&fake), vec!["unclaim cb-a", "dolt push"]);
     }
 
@@ -5146,7 +5178,7 @@ mod main_tests {
             vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
         );
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x')]);
+        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x')]);
         assert!(app.confirm.is_none());
         assert_eq!(app.notice, None);
         assert!(fake.calls().is_empty());
@@ -5158,7 +5190,6 @@ mod main_tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let programs = Programs::default();
-        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_finding(SupervisionMode::Supervising);
         app.focus = cerebro_tui::app::PaneFocus::Session;
         let mut host = SessionHost::default();
@@ -5166,7 +5197,7 @@ mod main_tests {
         app.selected = Some("Cyclops".into());
         app.set_session_view(cerebro_tui::session::SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
 
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('x')]);
+        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x')]);
         assert!(app.confirm.is_none(), "the child took the key, not the prompt");
         let text = echoed(&mut host, &app, "x");
         assert!(text.contains('x'), "the byte reached the child: {text:?}");
@@ -5228,6 +5259,158 @@ mod main_tests {
         app
     }
 
+    /// The keystrokes, and then the write they asked for: what the navigator sees a moment after
+    /// pressing the key, with the worker's own body run in place of a thread.
+    fn drive_and_settle(
+        app: &mut App,
+        host: &mut SessionHost,
+        paths: &ReaderPaths,
+        programs: &Programs,
+        commands: &dyn CommandRunner,
+        keys: Vec<crossterm::event::KeyEvent>,
+    ) -> AppAction {
+        let action = drive_with(app, host, paths, programs, keys);
+        settle(app, paths, programs, commands, action)
+    }
+
+    /// Run what the write worker would run, and land its answer - so a case keeps its argv and
+    /// its sentence without a thread, and without the UI thread ever spawning.
+    fn settle(
+        app: &mut App,
+        paths: &ReaderPaths,
+        programs: &Programs,
+        commands: &dyn CommandRunner,
+        action: AppAction,
+    ) -> AppAction {
+        match action {
+            AppAction::Write(request) => {
+                let answer = cerebro_tui::app::run_write(paths, programs, commands, request);
+                app.finish_write(answer)
+            }
+            other => other,
+        }
+    }
+
+    /// Q4: a refused board write survives the next frame, under the context `write`. A failed
+    /// PUSH does not - the write happened, and its own sentence already says so.
+    #[test]
+    fn a_refused_write_is_written_to_the_error_log_under_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = Logger::new(&paths.shared_root);
+        logger.set_enabled(true);
+        let errors = paths.shared_root.join(".cerebro/state/errors.jsonl");
+
+        let refused = cerebro_tui::app::WriteAnswer::Priority {
+            id: "cb-x".into(),
+            from: Some(1),
+            to: 0,
+            undo: false,
+            outcome: lifecycle::PriorityOutcome::Failed {
+                text: "bd would not set cb-x to P0".into(),
+            },
+        };
+        log_write(&mut logger, &refused, Utc::now());
+        let written = std::fs::read_to_string(&errors).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(written.lines().next().expect("one line")).unwrap();
+        assert_eq!(line["context"], "write");
+        assert_eq!(line["message"], "bd would not set cb-x to P0");
+
+        // A push that failed is not a failure by this test, and clears the context - so an
+        // identical refusal minutes later is not swallowed by the one-per-fault dedupe.
+        let pushed = cerebro_tui::app::WriteAnswer::Priority {
+            id: "cb-x".into(),
+            from: Some(1),
+            to: 0,
+            undo: false,
+            outcome: lifecycle::PriorityOutcome::Pushed { text: "cb-x: P1 → P0, but…".into() },
+        };
+        log_write(&mut logger, &pushed, Utc::now());
+        assert_eq!(
+            std::fs::read_to_string(&errors).unwrap().lines().count(),
+            1,
+            "a failed push writes no error line"
+        );
+        log_write(&mut logger, &refused, Utc::now());
+        assert_eq!(
+            std::fs::read_to_string(&errors).unwrap().lines().count(),
+            2,
+            "and the same refusal again is written, because the success cleared the context"
+        );
+    }
+
+    /// THE REGRESSION TEST FOR THE FREEZE (cb-21g): the keystroke ASKS for the write and returns,
+    /// leaving the dim line behind it.
+    ///
+    /// That it starts no process is guaranteed by `route_key`'s signature rather than asserted
+    /// here - it takes no `CommandRunner` at all, so a command on this path is a compile error,
+    /// which is stronger than any case. A `FakeCommands` here would be unreachable from the code
+    /// under test and could not fail for any implementation (found in review).
+    #[test]
+    fn a_priority_keystroke_runs_no_command_and_asks_for_a_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
+        let mut host = SessionHost::default();
+
+        let action = drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
+        assert_eq!(
+            action,
+            AppAction::Write(cerebro_tui::app::WriteRequest::Priority {
+                id: "cb-x".into(),
+                from: Some(2),
+                to: 0,
+                undo: false,
+            })
+        );
+        assert_eq!(app.notice.as_deref(), Some("cb-x: P2 → P0…"));
+        assert_eq!(app.notice_tone, app::NoticeTone::Pending);
+    }
+
+    /// The same for `x`, and the same guarantee: `route_key` cannot run a command.
+    #[test]
+    fn x_on_a_finding_asks_for_a_write_rather_than_running_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let programs = Programs::default();
+        let mut app = app_with_finding(SupervisionMode::Supervising);
+        let mut host = SessionHost::default();
+
+        let action =
+            drive_with(&mut app, &mut host, &paths, &programs, vec![ch('x'), ch('y')]);
+        assert!(
+            matches!(action, AppAction::Write(cerebro_tui::app::WriteRequest::Finding { .. })),
+            "x asks for a write rather than running one: {action:?}"
+        );
+        assert_eq!(app.notice_tone, app::NoticeTone::Pending);
+    }
+
+    /// A write that could never be sent is reported rather than lost.
+    #[test]
+    fn an_undeliverable_write_is_reported_rather_than_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
+        let request = cerebro_tui::app::WriteRequest::Priority {
+            id: "cb-x".into(),
+            from: Some(2),
+            to: 0,
+            undo: false,
+        };
+        app.begin_write(&request, &Programs::default().bd);
+        // A worker whose thread is gone: its receiver has been dropped.
+        let worker = dead_write_worker();
+        dispatch_write(AppAction::Write(request), &mut app, &worker);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("the write worker has stopped — nothing was written")
+        );
+        assert_eq!(app.notice_tone, app::NoticeTone::Urgent);
+        drop(paths);
+    }
+
     #[test]
     fn a_digit_writes_the_priority_and_pushes() {
         let dir = tempfile::tempdir().unwrap();
@@ -5237,7 +5420,7 @@ mod main_tests {
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        let action = drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        let action = drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         // No confirmation: the write and the push ride the one keystroke.
         assert_eq!(
             argv(&fake),
@@ -5245,7 +5428,7 @@ mod main_tests {
             "the two argvs, in order"
         );
         assert_eq!(app.notice.as_deref(), Some("cb-x: P1 → P0"));
-        assert!(!app.notice_urgent);
+        assert_ne!(app.notice_tone, app::NoticeTone::Urgent);
         // So the row's P1 becomes P0 at once rather than up to thirty seconds later.
         assert_eq!(action, AppAction::RefreshWork);
     }
@@ -5263,7 +5446,7 @@ mod main_tests {
             let fake = cerebro_tui::readers::testing::FakeCommands::always("");
             let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
             let mut host = SessionHost::default();
-            drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch(key)]);
+            drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch(key)]);
             assert_eq!(argv(&fake), vec![want.to_string(), "dolt push".to_string()]);
             assert_eq!(app.notice.as_deref(), Some(sentence));
         }
@@ -5279,7 +5462,7 @@ mod main_tests {
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(0));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
         assert!(fake.calls().is_empty(), "nothing ran");
         assert_eq!(app.notice.as_deref(), Some("cb-x is already P0"));
         assert_eq!(app.last_priority_change, None);
@@ -5306,7 +5489,7 @@ mod main_tests {
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         assert_eq!(
             app.notice.as_deref(),
             Some("cb-x: P1 → P0, but bd dolt push failed — other machines will not see this yet")
@@ -5332,10 +5515,10 @@ mod main_tests {
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        let action = drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        let action = drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         assert_eq!(argv(&fake), vec!["update cb-x --priority 0"], "and no push");
         assert_eq!(app.notice.as_deref(), Some("bd would not set cb-x to P0"));
-        assert!(app.notice_urgent, "a refusal is red");
+        assert_eq!(app.notice_tone, app::NoticeTone::Urgent, "a refusal is red");
         assert_eq!(app.last_priority_change, None);
         assert_eq!(action, AppAction::None);
     }
@@ -5351,7 +5534,7 @@ mod main_tests {
         app.focus = cerebro_tui::app::PaneFocus::Fleet;
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        drive_with(&mut app, &mut host, &paths, &programs, vec![ch('0')]);
         assert!(fake.calls().is_empty(), "nothing ran");
         assert_eq!(app.notice, None);
     }
@@ -5370,7 +5553,7 @@ mod main_tests {
             Some(1),
         );
         let mut host = SessionHost::default();
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         assert_eq!(argv(&fake), vec!["update cb-x --priority 0", "dolt push"]);
     }
 
@@ -5383,7 +5566,7 @@ mod main_tests {
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         // A work refresh between the two does not spend the entry.
         app.finish_work_refresh(
             Ok(cerebro_tui::model::WorkBuckets {
@@ -5392,7 +5575,7 @@ mod main_tests {
             }),
             Utc::now(),
         );
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
         assert_eq!(
             argv(&fake),
             vec![
@@ -5405,7 +5588,7 @@ mod main_tests {
         assert_eq!(app.notice.as_deref(), Some("cb-x: back to P1"));
 
         // Spent: a second `u` has nothing to do rather than quietly redoing the change.
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
         assert_eq!(fake.calls().len(), 4, "no fifth call");
         assert_eq!(app.notice.as_deref(), Some("nothing to undo"));
     }
@@ -5420,7 +5603,7 @@ mod main_tests {
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         app.finish_work_refresh(
             Ok(cerebro_tui::model::WorkBuckets {
                 claimed: vec![priority_bead("cb-x", Some(0))],
@@ -5428,28 +5611,19 @@ mod main_tests {
             }),
             Utc::now(),
         );
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('3')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('3')]);
         assert_eq!(app.last_priority_change, Some(("cb-x".to_string(), Some(0))));
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
         assert_eq!(app.notice.as_deref(), Some("cb-x: back to P0"));
     }
 
     /// The decision this view made, kept whether or not the write then succeeded - and written
-    /// BEFORE the `bd`, exactly as the `sweep` line is.
+    /// BEFORE the request reaches the write worker, exactly as the `sweep` line is.
     #[test]
     fn a_priority_change_is_written_to_the_decisions_log() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let programs = Programs::default();
-        // A `bd` that refuses everything.
-        let fake = cerebro_tui::readers::testing::FakeCommands::failing(|| {
-            cerebro_tui::readers::ReadError::Exit {
-                source: "bd".into(),
-                status: Some(1),
-                stderr: "refused".into(),
-                stdout: String::new(),
-            }
-        });
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
@@ -5463,7 +5637,6 @@ mod main_tests {
             &mut logger,
             &paths,
             &programs,
-            &fake,
             10,
             Utc::now(),
         );
@@ -5476,7 +5649,7 @@ mod main_tests {
             .lines()
             .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
             .find(|v| v["event"] == "priority")
-            .expect("one priority line, even though bd refused");
+            .expect("one priority line, written before the write is even sent");
         assert_eq!(line["bead"], "cb-x");
         assert_eq!(line["from"], 1);
         assert_eq!(line["to"], 0);
@@ -5497,7 +5670,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('+'),
             crossterm::event::KeyModifiers::SHIFT,
         );
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![shifted]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![shifted]);
         assert_eq!(argv(&fake), vec!["update cb-x --priority 1", "dolt push"]);
     }
 
@@ -5528,10 +5701,10 @@ mod main_tests {
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
         let mut host = SessionHost::default();
 
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         // Now `bd` refuses everything.
         refusing.store(true, std::sync::atomic::Ordering::SeqCst);
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
         assert_eq!(app.notice.as_deref(), Some("bd would not set cb-x to P1"));
         assert_eq!(
             app.last_priority_change,
@@ -5541,7 +5714,7 @@ mod main_tests {
 
         // And it works once `bd` does.
         refusing.store(false, std::sync::atomic::Ordering::SeqCst);
-        drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
+        drive_and_settle(&mut app, &mut host, &paths, &programs, &fake, vec![ch('u')]);
         assert_eq!(app.notice.as_deref(), Some("cb-x: back to P1"));
         assert_eq!(app.last_priority_change, None, "and is spent by the one that wrote");
     }
@@ -5884,7 +6057,7 @@ mod main_tests {
             &mut cerebro_tui::triggers::StartLedger::default(),
             &mut cerebro_tui::lifecycle::TriageLedger::default(),
             &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0,
-            &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now,
+            &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now,
         );
 
         assert!(app.bead_detail.is_some(), "Enter pinned the bead");

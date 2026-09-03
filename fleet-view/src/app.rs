@@ -85,6 +85,15 @@ pub enum PaneContent<T> {
 }
 
 impl<T> PaneContent<T> {
+    /// The held value, to be changed in place. The one caller is `App::begin_write`, applying the
+    /// overlay to the buckets already on screen so the row changes on the keystroke's own frame.
+    pub fn value_mut(&mut self) -> Option<&mut T> {
+        match self {
+            Self::Fresh { value, .. } | Self::Stale { value, .. } => Some(value),
+            Self::Loading | Self::Unavailable { .. } => None,
+        }
+    }
+
     /// The value still worth rendering, fresh or stale; `None` while loading or unavailable.
     pub fn value(&self) -> Option<&T> {
         match self {
@@ -737,6 +746,35 @@ fn history_body(app: &App) -> Vec<WorkBodyLine<'static>> {
     body
 }
 
+/// Overwrite each bead's priority with the one it has been asked to have.
+///
+/// Called on the buckets a work read just returned, AND on the buckets already on screen when a
+/// write is asked for - so the row changes on the keystroke's own frame and the next keystroke
+/// computes its nudge from what the row says. One rule, both moments.
+///
+/// No re-partition is needed: `partition_beads` splits on status and labels, never on priority.
+/// No re-sort either: `sorted_by_priority` runs at render time. `linked` is left alone - it
+/// carries no priority and renders nothing.
+fn apply_pending_priority(overlay: &BTreeMap<String, PendingPriority>, buckets: &mut WorkBuckets) {
+    if overlay.is_empty() {
+        return;
+    }
+    for section in [
+        &mut buckets.claimed,
+        &mut buckets.planned,
+        &mut buckets.being_planned,
+        &mut buckets.unplanned,
+        &mut buckets.paused,
+        &mut buckets.merged,
+    ] {
+        for bead in section.iter_mut() {
+            if let Some(entry) = overlay.get(&bead.id) {
+                bead.priority = Some(entry.to);
+            }
+        }
+    }
+}
+
 pub fn sorted_by_priority(beads: &[Bead]) -> Vec<&Bead> {
     let mut sorted: Vec<&Bead> = beads.iter().collect();
     // A missing priority sorts after P4 rather than before P0: an unranked bead is not urgent.
@@ -821,7 +859,7 @@ pub struct Metrics {
 /// pane's own `begin_*_refresh`, and a `false` from one says nothing about the others. It was
 /// `RefreshAll` until cb-kcs.5.1 gave the screen a third reader; the doc above is what it always
 /// meant, so this is a rename rather than a third meaning for a word that says "two".
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppAction {
     None,
     RefreshFleet,
@@ -832,7 +870,29 @@ pub enum AppAction {
     RefreshAll,
     /// Read the bead `App::bead_detail` now names. What `Enter` on a bead row asks for.
     ReadBead,
+    /// Send this board write to the write worker (cb-21g). `App` still starts no process: it says
+    /// what is wanted and `dispatch` does it, off the drawing thread.
+    Write(WriteRequest),
     Quit,
+}
+
+/// One bead's requested priority, and whether the write that asked for it has answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingPriority {
+    pub to: u8,
+    pub settled: bool,
+}
+
+/// How the header's notice slot is coloured, and whether a keystroke clears it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeTone {
+    /// Gold. Something happened. Cleared by the next keystroke.
+    News,
+    /// Red. Something is broken. Cleared by the next keystroke.
+    Urgent,
+    /// Dim. A board write is still running. NOT cleared by a keystroke: a line that says work is
+    /// happening stays true while the work is happening (cb-21g).
+    Pending,
 }
 
 /// Everything one frame is drawn from.
@@ -847,15 +907,13 @@ pub struct App {
     /// successful fleet read, or when the fleet is empty.
     pub selected: Option<String>,
     /// A one-line message shown in the header in place of the refresh/stale span, and cleared by
-    /// the next key press. Gold, unless `notice_urgent`.
+    /// the next key press, unless its tone is `Pending`. Coloured by `notice_tone`.
     pub notice: Option<String>,
-    /// Is the notice a FAULT rather than news? Red when it is (cb-kcs.5.2, the navigator's choice
-    /// in round one: the pruner is the first thing in this slot that is not something the view
-    /// did but something that has stopped working).
+    /// How the notice slot is coloured, and whether a keystroke clears it.
     ///
-    /// Cleared wherever `notice` is cleared and set by whichever writer put the line there: a
-    /// stale colour is a worse lie than a stale line.
-    pub notice_urgent: bool,
+    /// Set by whichever writer put the line there: a stale colour is a worse lie than a stale
+    /// line. `Pending` is the one tone a keystroke does not clear (cb-21g).
+    pub notice_tone: NoticeTone,
     /// Each name's last abnormal exit, as of the last frame. Copied from `SessionHost` by the
     /// event loop, never read from it here: `ui::draw` is pure over `App`, and a renderer that
     /// could reach the host could reach a `vt100::Parser` and a child process with it.
@@ -957,6 +1015,21 @@ pub struct App {
     /// warning there was. `cerebro--last-priority-change`. Spent only by USING it: it survives a
     /// refresh, a `g` and the bead scrolling out of view, and a later change overwrites it.
     pub last_priority_change: Option<(String, Option<u8>)>,
+    /// Board writes asked for, and answered. They are equal when nothing is in flight, and an
+    /// answer whose arrival makes them equal is the NEWEST write's - which is what decides
+    /// whether its sentence may take the header from a dim line for a write still running.
+    /// Counters rather than ids: one worker thread and one FIFO channel answer in request order.
+    pub writes_requested: u64,
+    pub writes_answered: u64,
+    /// The priority each bead has been ASKED to have, held over whatever the board last said.
+    ///
+    /// Without it the thirty-second board read shows a reranked bead at its old priority until
+    /// the next read - the navigator declined that (cb-21g, round one).
+    pub pending_priority: BTreeMap<String, PendingPriority>,
+    /// The settled entries as they stood when the in-flight work read was ASKED for. A read that
+    /// began after a write settled is a read that saw it, and only such a read may drop the
+    /// entry; a read already in flight when the key was pressed may not.
+    work_settled_at_request: Vec<(String, u8)>,
     /// The bead the Session pane is showing instead of a session, or `None` for the ordinary day.
     ///
     /// A SNAPSHOT rather than a live view of the board (the navigator's choice): the row was
@@ -1029,7 +1102,7 @@ impl App {
             session: SessionPane::default(),
             selected: None,
             notice: None,
-            notice_urgent: false,
+            notice_tone: NoticeTone::News,
             exits: BTreeMap::new(),
             standby_labels: BTreeMap::new(),
             armed: BTreeSet::new(),
@@ -1052,6 +1125,10 @@ impl App {
             work_cursor: None,
             expanded: BTreeSet::new(),
             last_priority_change: None,
+            writes_requested: 0,
+            writes_answered: 0,
+            pending_priority: BTreeMap::new(),
+            work_settled_at_request: Vec::new(),
             bead_detail: None,
             history: Pane::default(),
             last_history_request: None,
@@ -1147,13 +1224,29 @@ impl App {
     /// remains the one place it is cleared.
     pub fn set_notice(&mut self, text: String) {
         self.notice = Some(text);
-        self.notice_urgent = false;
+        self.notice_tone = NoticeTone::News;
     }
 
     /// Put TEXT in the notice slot, in red: something is broken rather than something happened.
     pub fn set_error_notice(&mut self, text: String) {
         self.notice = Some(text);
-        self.notice_urgent = true;
+        self.notice_tone = NoticeTone::Urgent;
+    }
+
+    /// Put TEXT in the notice slot, dim: a board write is still running (cb-21g). Not cleared by
+    /// a keystroke - see `clear_notice`.
+    pub fn set_pending_notice(&mut self, text: String) {
+        self.notice = Some(text);
+        self.notice_tone = NoticeTone::Pending;
+    }
+
+    /// The ONE place the notice slot is cleared. A `Pending` notice survives, because the write
+    /// it describes has not finished; every other tone goes.
+    pub fn clear_notice(&mut self) {
+        if self.notice_tone != NoticeTone::Pending {
+            self.notice = None;
+            self.notice_tone = NoticeTone::News;
+        }
     }
 
     /// Every roster name, in fleet order, for `SessionHost::live_names` to ORDER its answer by.
@@ -1229,8 +1322,7 @@ impl App {
         }
         // A notice is transient by design: it survives exactly until the navigator touches the
         // keyboard, whatever they press.
-        self.notice = None;
-        self.notice_urgent = false;
+        self.clear_notice();
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quit = true;
@@ -1512,6 +1604,14 @@ impl App {
         if self.work.begin() {
             self.last_work_request = Some(at);
             self.work_request_pending = Some(now);
+            // Which overlay entries had settled when this read was ASKED for. Only those may be
+            // dropped when it answers: a read already in flight saw nothing of them.
+            self.work_settled_at_request = self
+                .pending_priority
+                .iter()
+                .filter(|(_, entry)| entry.settled)
+                .map(|(id, entry)| (id.clone(), entry.to))
+                .collect();
             true
         } else {
             false
@@ -1883,13 +1983,123 @@ impl App {
         self.work_requested_at
     }
 
+    /// Record a write about to be sent: the dim line, the request counter, and - for a priority
+    /// write - the overlay entry and the optimistic undo entry.
+    ///
+    /// Called from `route_key` immediately before it returns `AppAction::Write`, so `App` still
+    /// starts no process: it says what is wanted and `dispatch` does it.
+    pub fn begin_write(&mut self, request: &WriteRequest, bd: &std::path::Path) {
+        self.writes_requested += 1;
+        self.set_pending_notice(request.pending_text(bd));
+        if let WriteRequest::Priority { id, from, to, undo } = request {
+            // A newer write on the same bead replaces the entry outright: newest wins on screen.
+            self.pending_priority
+                .insert(id.clone(), PendingPriority { to: *to, settled: false });
+            if !undo {
+                // OPTIMISTIC: `u` pressed half a second after a digit must undo that digit, and
+                // an entry that does not exist yet is a lost undo.
+                self.last_priority_change = Some((id.clone(), *from));
+            }
+            // The buckets ALREADY on screen, not only the next read's: the row must change on
+            // this frame, and the next keystroke computes its nudge from what the row says - two
+            // quick `-`s on a P2 bead would otherwise both read P2 and both write P1.
+            if let Some(buckets) = self.work.content.value_mut() {
+                apply_pending_priority(&self.pending_priority, buckets);
+            }
+        }
+    }
+
+    /// Give up on every write still in flight, because the worker that would have answered them
+    /// is gone.
+    ///
+    /// A write whose REQUEST was refused is answered by `WriteAnswer::undeliverable`; this is the
+    /// other half - a request that was accepted and whose answer will never come. Without it one
+    /// dead thread breaks three of this bead's rules at once and permanently: the counters never
+    /// meet, so no later write takes the header; the dim line can never be cleared, because
+    /// `clear_notice` refuses that tone; and every unsettled overlay entry outlives the session.
+    ///
+    /// A settled entry is kept: its write DID happen, and the board read that saw it is what
+    /// drops it, exactly as ever.
+    pub fn abandon_outstanding_writes(&mut self) {
+        if self.writes_answered >= self.writes_requested {
+            return;
+        }
+        self.writes_answered = self.writes_requested;
+        self.pending_priority.retain(|_, entry| entry.settled);
+        // Nothing was written, so there is nothing to undo.
+        self.last_priority_change = None;
+        self.set_error_notice(UNDELIVERABLE.to_string());
+    }
+
+    /// A write's answer: the header sentence, the overlay's settle-or-remove, and the undo entry.
+    /// Returns what the caller must refresh.
+    pub fn finish_write(&mut self, answer: WriteAnswer) -> AppAction {
+        self.writes_answered += 1;
+        let newest = self.writes_answered == self.writes_requested;
+        // A failure always takes the header; a success takes it only when it is the newest write,
+        // so an older write's sentence cannot replace the dim line of one still running.
+        if answer.failed() {
+            self.set_error_notice(answer.text().to_string());
+        } else if newest {
+            self.set_notice(answer.text().to_string());
+        }
+        match answer {
+            WriteAnswer::Priority { id, from, to, undo, outcome } => {
+                let failed = matches!(outcome, crate::lifecycle::PriorityOutcome::Failed { .. });
+                // Only if the entry is still THIS write's: a newer one has replaced it otherwise,
+                // and this answer is stale.
+                if let Some(entry) = self.pending_priority.get(&id) {
+                    if entry.to == to {
+                        if failed {
+                            self.pending_priority.remove(&id);
+                        } else {
+                            self.pending_priority
+                                .insert(id.clone(), PendingPriority { to, settled: true });
+                        }
+                    }
+                }
+                if failed && !undo {
+                    // The write never happened, so there is nothing to undo.
+                    if self.last_priority_change.as_ref() == Some(&(id.clone(), from)) {
+                        self.last_priority_change = None;
+                    }
+                } else if !failed && undo {
+                    // `u` is one step back, spent by an undo that actually wrote.
+                    if self.last_priority_change.as_ref().is_some_and(|(entry, _)| entry == &id) {
+                        self.last_priority_change = None;
+                    }
+                }
+                if failed { AppAction::None } else { AppAction::RefreshWork }
+            }
+            WriteAnswer::Finding { outcome } => {
+                if matches!(outcome, crate::lifecycle::FindingOutcome::Failed { .. }) {
+                    AppAction::None
+                } else {
+                    AppAction::RefreshSweeps
+                }
+            }
+        }
+    }
+
     /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
     /// cannot answer must not make the fleet rows beside it look stale.
+    ///
+    /// The overlay is settled and applied HERE, before the buckets reach the pane, so the whole
+    /// document is consistent - see `apply_pending_priority`.
     pub fn finish_work_refresh(
         &mut self,
-        result: Result<WorkBuckets, ReadError>,
+        mut result: Result<WorkBuckets, ReadError>,
         at: DateTime<Utc>,
     ) {
+        let settled = std::mem::take(&mut self.work_settled_at_request);
+        if let Ok(buckets) = &mut result {
+            for (id, to) in settled {
+                if self.pending_priority.get(&id) == Some(&PendingPriority { to, settled: true }) {
+                    self.pending_priority.remove(&id);
+                }
+            }
+            apply_pending_priority(&self.pending_priority, buckets);
+        }
         // The request time is promoted WITH the value and never ahead of it: a failed read leaves
         // `work_requested_at` pointing at the request that produced the buckets still held, so
         // the triage guard can never measure old ids against a young age.
@@ -1924,6 +2134,10 @@ pub struct Worker<T, Req = ()> {
     requests: Sender<Req>,
     results: Receiver<Result<T, ReadError>>,
     handle: Option<std::thread::JoinHandle<()>>,
+    /// Set the first time `poll` sees the result channel disconnected - the thread is gone, so
+    /// nothing outstanding will ever be answered. `poll` alone cannot say so: it answers `None`
+    /// for "nothing yet" and for "never", which are the same shape and not the same news.
+    dead: std::cell::Cell<bool>,
 }
 
 /// The fleet's worker: `read_fleet` on its own thread.
@@ -1961,6 +2175,7 @@ impl<T: Send + 'static, Req: Send + 'static> Worker<T, Req> {
             requests: request_tx,
             results: result_rx,
             handle: Some(handle),
+            dead: std::cell::Cell::new(false),
         }
     }
 
@@ -1971,12 +2186,32 @@ impl<T: Send + 'static, Req: Send + 'static> Worker<T, Req> {
         self.requests.send(request).is_ok()
     }
 
+    /// A worker whose thread is already gone: every `request_with` is refused.
+    ///
+    /// The one shape a caller cannot build by hand - the channels are private - and the only way
+    /// a case can exercise the undeliverable path without racing a real thread's death.
+    pub fn stopped() -> Self {
+        let (requests, _) = mpsc::channel();
+        let (_, results) = mpsc::channel();
+        Self { requests, results, handle: None, dead: std::cell::Cell::new(true) }
+    }
+
     /// The finished read, if one is waiting. Never blocks.
     pub fn poll(&self) -> Option<Result<T, ReadError>> {
         match self.results.try_recv() {
             Ok(result) => Some(result),
-            Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                self.dead.set(true);
+                None
+            }
         }
+    }
+
+    /// True once `poll` has found the thread gone. A caller with work outstanding reads this to
+    /// tell "no answer yet" from "no answer ever" - `poll` answers `None` for both.
+    pub fn is_dead(&self) -> bool {
+        self.dead.get()
     }
 }
 
@@ -2057,6 +2292,153 @@ impl Worker<(String, Result<BeadDetailFields, ReadError>), String> {
             let answer = read_bead_detail(&paths, &programs, commands.as_ref(), &id);
             Ok((id, answer))
         })
+    }
+}
+
+/// A board write, decided on the UI thread and run on the write worker's.
+///
+/// It carries what `lifecycle::set_priority` and `lifecycle::run_finding` need and nothing more:
+/// the decision (`lifecycle::priority_action`) is still made on the UI thread, so a keystroke that
+/// writes nothing - `AlreadyThere`, `Nothing` - never reaches the worker at all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriteRequest {
+    /// `bd update <id> --priority <to>`, then `bd dolt push`.
+    Priority { id: String, from: Option<u8>, to: u8, undo: bool },
+    /// A sweep finding's own command, then `bd dolt push`.
+    Finding { finding: Finding },
+}
+
+impl WriteRequest {
+    /// The dim line shown from the keystroke until this write answers. BD is `Programs::bd`, the
+    /// same path `sweeps::finding_command` is given, so the two lines name the same command.
+    pub fn pending_text(&self, bd: &std::path::Path) -> String {
+        match self {
+            // The finished sentences' own spelling (`lifecycle::set_priority`), with an ellipsis:
+            // the colour alone carries too little (approved round two).
+            WriteRequest::Priority { id, from, to, undo } => {
+                if *undo {
+                    format!("{id}: back to P{to}\u{2026}")
+                } else {
+                    let from = from.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string());
+                    format!("{id}: P{from} \u{2192} P{to}\u{2026}")
+                }
+            }
+            WriteRequest::Finding { finding } => {
+                format!("running {}\u{2026}", crate::sweeps::finding_command(finding, bd).join(" "))
+            }
+        }
+    }
+}
+
+/// What a write did, with its request echoed beside it.
+///
+/// The echo is the `DetailWorker` rule and it is load-bearing for two things: the overlay entry
+/// this answer settles, and the undo entry a failure revokes. Without it a late answer would be
+/// applied to whatever the navigator has since pressed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriteAnswer {
+    Priority {
+        id: String,
+        from: Option<u8>,
+        to: u8,
+        undo: bool,
+        outcome: crate::lifecycle::PriorityOutcome,
+    },
+    Finding { outcome: crate::lifecycle::FindingOutcome },
+}
+
+impl WriteAnswer {
+    /// The header sentence - already exact in both outcome enums, so nothing is re-spelled here.
+    pub fn text(&self) -> &str {
+        match self {
+            WriteAnswer::Priority { outcome, .. } => match outcome {
+                crate::lifecycle::PriorityOutcome::Ran { text }
+                | crate::lifecycle::PriorityOutcome::Pushed { text }
+                | crate::lifecycle::PriorityOutcome::Failed { text } => text,
+            },
+            WriteAnswer::Finding { outcome } => match outcome {
+                crate::lifecycle::FindingOutcome::Ran { text }
+                | crate::lifecycle::FindingOutcome::Pushed { text }
+                | crate::lifecycle::FindingOutcome::Failed { text } => text,
+            },
+        }
+    }
+
+    /// Whether `bd` refused. A push that failed is NOT a failure by this test: the write happened,
+    /// and its own sentence already says the other machines cannot see it yet.
+    pub fn failed(&self) -> bool {
+        match self {
+            WriteAnswer::Priority { outcome, .. } => {
+                matches!(outcome, crate::lifecycle::PriorityOutcome::Failed { .. })
+            }
+            WriteAnswer::Finding { outcome } => {
+                matches!(outcome, crate::lifecycle::FindingOutcome::Failed { .. })
+            }
+        }
+    }
+
+    /// The answer for a write that could never be sent, because the worker thread has stopped.
+    /// Its sentence names that rather than blaming `bd`, which never ran.
+    pub fn undeliverable(request: &WriteRequest) -> Self {
+        let text = UNDELIVERABLE.to_string();
+        match request {
+            WriteRequest::Priority { id, from, to, undo } => WriteAnswer::Priority {
+                id: id.clone(),
+                from: *from,
+                to: *to,
+                undo: *undo,
+                outcome: crate::lifecycle::PriorityOutcome::Failed { text },
+            },
+            WriteRequest::Finding { .. } => WriteAnswer::Finding {
+                outcome: crate::lifecycle::FindingOutcome::Failed { text },
+            },
+        }
+    }
+}
+
+/// The write path's counterpart of `main::worker_gone`'s `the reader thread has stopped`.
+const UNDELIVERABLE: &str = "the write worker has stopped \u{2014} nothing was written";
+
+/// The board writer's worker: `lifecycle::set_priority` and `lifecycle::run_finding` on their own
+/// thread.
+///
+/// An eighth thread rather than a call on the UI thread, for the reason the other seven exist: a
+/// `bd dolt push` is a network call bounded at thirty seconds, and running it here froze the
+/// screen - keys and all - for as long as the remote took (cb-21g).
+///
+/// ONE worker, and one write at a time, deliberately: writes to the shared board must run in the
+/// order the navigator pressed them, and a pool would let `3` overtake `0` on the same bead.
+pub type WriteWorker = Worker<WriteAnswer, WriteRequest>;
+
+impl Worker<WriteAnswer, WriteRequest> {
+    pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
+        // The outer `Result` only ever succeeds: a write's failure is inside the answer.
+        Self::spawn_reader(move |request: WriteRequest| {
+            Ok(run_write(&paths, &programs, commands.as_ref(), request))
+        })
+    }
+}
+
+/// One board write, with its request echoed into the answer.
+///
+/// A free function rather than a closure inside `Worker::spawn`, so a test can run exactly what
+/// the worker thread runs without starting one.
+pub fn run_write(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    commands: &dyn crate::readers::CommandRunner,
+    request: WriteRequest,
+) -> WriteAnswer {
+    match request {
+        WriteRequest::Priority { id, from, to, undo } => {
+            let outcome = crate::lifecycle::set_priority(
+                paths, programs, commands, &id, from, to, undo,
+            );
+            WriteAnswer::Priority { id, from, to, undo, outcome }
+        }
+        WriteRequest::Finding { finding } => WriteAnswer::Finding {
+            outcome: crate::lifecycle::run_finding(paths, programs, commands, &finding),
+        },
     }
 }
 
@@ -2988,14 +3370,376 @@ mod tests {
     #[test]
     fn an_error_notice_is_urgent_and_a_plain_one_is_not() {
         let mut app = App::new();
-        assert!(!app.notice_urgent, "nothing is urgent before anything is said");
+        assert_ne!(app.notice_tone, NoticeTone::Urgent, "nothing is urgent before anything is said");
         app.set_error_notice("Worktree pruning stopped: exit status 2".into());
         assert_eq!(app.notice.as_deref(), Some("Worktree pruning stopped: exit status 2"));
-        assert!(app.notice_urgent);
+        assert_eq!(app.notice_tone, NoticeTone::Urgent);
         // A plain notice after an urgent one is not urgent: a stale colour is a worse lie than a
         // stale line.
         app.set_notice("Cerebro was asked to rank 2 unranked beads.".into());
-        assert!(!app.notice_urgent);
+        assert_ne!(app.notice_tone, NoticeTone::Urgent);
+    }
+
+    fn bd_path() -> &'static std::path::Path {
+        std::path::Path::new("/usr/local/bin/bd")
+    }
+
+    fn priority_write(id: &str, from: Option<u8>, to: u8) -> WriteRequest {
+        WriteRequest::Priority { id: id.into(), from, to, undo: false }
+    }
+
+    fn ran(id: &str, from: Option<u8>, to: u8, undo: bool, text: &str) -> WriteAnswer {
+        WriteAnswer::Priority {
+            id: id.into(),
+            from,
+            to,
+            undo,
+            outcome: crate::lifecycle::PriorityOutcome::Ran { text: text.into() },
+        }
+    }
+
+    fn refused(id: &str, from: Option<u8>, to: u8, undo: bool) -> WriteAnswer {
+        WriteAnswer::Priority {
+            id: id.into(),
+            from,
+            to,
+            undo,
+            outcome: crate::lifecycle::PriorityOutcome::Failed {
+                text: format!("bd would not set {id} to P{to}"),
+            },
+        }
+    }
+
+    #[test]
+    fn a_write_in_flight_says_so_and_a_late_answer_replaces_it() {
+        let mut app = App::new();
+        let request = priority_write("cb-x", Some(2), 0);
+        app.begin_write(&request, bd_path());
+        assert_eq!(app.notice.as_deref(), Some("cb-x: P2 \u{2192} P0\u{2026}"));
+        assert_eq!(app.notice_tone, NoticeTone::Pending);
+        assert_eq!((app.writes_requested, app.writes_answered), (1, 0));
+
+        let action = app.finish_write(ran("cb-x", Some(2), 0, false, "cb-x: P2 \u{2192} P0"));
+        assert_eq!(action, AppAction::RefreshWork);
+        assert_eq!(app.notice.as_deref(), Some("cb-x: P2 \u{2192} P0"));
+        assert_eq!(app.notice_tone, NoticeTone::News);
+        assert_eq!((app.writes_requested, app.writes_answered), (1, 1));
+    }
+
+    /// An older write's success must not take the header from the dim line of a write still
+    /// running: the screen would say the work is over while it is not.
+    #[test]
+    fn an_older_answer_does_not_take_the_header_from_a_newer_write() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-a", Some(2), 0), bd_path());
+        app.begin_write(&priority_write("cb-b", Some(3), 1), bd_path());
+        assert_eq!(app.notice.as_deref(), Some("cb-b: P3 \u{2192} P1\u{2026}"));
+
+        app.finish_write(ran("cb-a", Some(2), 0, false, "cb-a: P2 \u{2192} P0"));
+        assert_eq!(app.notice.as_deref(), Some("cb-b: P3 \u{2192} P1\u{2026}"));
+        assert_eq!(app.notice_tone, NoticeTone::Pending);
+
+        app.finish_write(ran("cb-b", Some(3), 1, false, "cb-b: P3 \u{2192} P1"));
+        assert_eq!(app.notice.as_deref(), Some("cb-b: P3 \u{2192} P1"));
+        assert_eq!(app.notice_tone, NoticeTone::News);
+    }
+
+    #[test]
+    fn a_failed_write_takes_the_header_whatever_else_is_running() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-a", Some(2), 0), bd_path());
+        app.begin_write(&priority_write("cb-b", Some(3), 1), bd_path());
+
+        let action = app.finish_write(refused("cb-a", Some(2), 0, false));
+        assert_eq!(action, AppAction::None, "a refused write asks for no refresh");
+        assert_eq!(app.notice.as_deref(), Some("bd would not set cb-a to P0"));
+        assert_eq!(app.notice_tone, NoticeTone::Urgent, "no failure is swallowed");
+    }
+
+    /// The entry exists from the KEYSTROKE, not from the answer: `u` pressed half a second after
+    /// a digit must undo that digit.
+    #[test]
+    fn an_undo_entry_exists_from_the_keystroke_and_a_refusal_revokes_it() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-a", Some(2), 0), bd_path());
+        assert_eq!(app.last_priority_change, Some(("cb-a".to_string(), Some(2))));
+
+        // A refusal for another bead leaves it where it is.
+        app.finish_write(refused("cb-b", Some(3), 1, false));
+        assert_eq!(app.last_priority_change, Some(("cb-a".to_string(), Some(2))));
+
+        // A refusal for this one revokes it: the write never happened.
+        app.finish_write(refused("cb-a", Some(2), 0, false));
+        assert_eq!(app.last_priority_change, None);
+    }
+
+    #[test]
+    fn an_undo_that_wrote_spends_the_entry_and_one_that_failed_does_not() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-a", Some(2), 0), bd_path());
+        let undo = WriteRequest::Priority {
+            id: "cb-a".into(),
+            from: None,
+            to: 2,
+            undo: true,
+        };
+        app.begin_write(&undo, bd_path());
+        assert_eq!(
+            app.last_priority_change,
+            Some(("cb-a".to_string(), Some(2))),
+            "an undo leaves no entry of its own"
+        );
+
+        // A refused undo leaves the rescue in place, to be reached for a second time.
+        app.finish_write(refused("cb-a", None, 2, true));
+        assert_eq!(app.last_priority_change, Some(("cb-a".to_string(), Some(2))));
+
+        app.begin_write(&undo, bd_path());
+        app.finish_write(ran("cb-a", None, 2, true, "cb-a: back to P2"));
+        assert_eq!(app.last_priority_change, None, "u is one step, spent by using it");
+    }
+
+    /// A write worker that dies with a write in flight must not leave the view permanently wrong:
+    /// the counters would never meet again, so no later write could take the header, the dim line
+    /// could never be cleared, and the overlay entry would outlive the session (found in review).
+    #[test]
+    fn a_write_worker_that_dies_mid_write_is_recovered_from() {
+        let mut app = App::new();
+        let mut bead = test_bead("cb-x", Some(2));
+        bead.labels = vec!["planned".into()];
+        app.finish_work_refresh(Ok(crate::model::partition_beads(vec![bead])), at(0));
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+
+        app.abandon_outstanding_writes();
+        assert_eq!(app.writes_answered, app.writes_requested, "the counters meet again");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("the write worker has stopped \u{2014} nothing was written")
+        );
+        assert_eq!(app.notice_tone, NoticeTone::Urgent, "and a keystroke can clear it");
+        assert!(app.pending_priority.is_empty(), "the row falls back to the board");
+        assert_eq!(app.last_priority_change, None, "there is nothing to undo");
+
+        // A later write still takes the header: the newest-write rule works again.
+        app.begin_write(&priority_write("cb-y", Some(3), 1), bd_path());
+        app.finish_write(ran("cb-y", Some(3), 1, false, "cb-y: P3 \u{2192} P1"));
+        assert_eq!(app.notice.as_deref(), Some("cb-y: P3 \u{2192} P1"));
+
+        // And it is a no-op when nothing is outstanding.
+        let before = app.notice.clone();
+        app.abandon_outstanding_writes();
+        assert_eq!(app.notice, before);
+    }
+
+    /// The row must change on the frame the key was pressed, not when the write answers - and the
+    /// NEXT keystroke must compute from it, or two quick nudges both read the board's old number
+    /// and write the same value twice (found in review, cb-21g).
+    #[test]
+    fn a_reranked_bead_changes_on_the_keystroke_and_the_next_key_computes_from_it() {
+        let mut app = App::new();
+        let mut bead = test_bead("cb-x", Some(2));
+        bead.labels = vec!["planned".into()];
+        app.finish_work_refresh(Ok(crate::model::partition_beads(vec![bead])), at(0));
+
+        app.begin_write(&priority_write("cb-x", Some(2), 1), bd_path());
+        let planned = &app.work.content.value().expect("a read that succeeded").planned;
+        assert_eq!(planned[0].priority, Some(1), "the row changes on that frame");
+
+        // And a second nudge reads the requested value rather than the board's.
+        let held = app.work.content.value().expect("held").planned[0].priority;
+        assert_eq!(
+            crate::lifecycle::priority_action("cb-x", held, crate::lifecycle::Requested::Nudge(-1)),
+            crate::lifecycle::PriorityAction::Write { to: 0 }
+        );
+    }
+
+    /// A bead reranked but not yet settled shows the number it was ASKED to have, in the row and
+    /// in `sorted_by_priority`'s order - the navigator declined seeing it flick back (round one).
+    ///
+    /// The buckets come through `model::partition_beads` rather than being built by hand: a rule
+    /// exercised only against invented inputs can still be wrong about every real one.
+    #[test]
+    fn a_reranked_bead_does_not_revert_when_a_board_read_lands() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+
+        let mut low = test_bead("cb-a", Some(1));
+        low.labels = vec!["planned".into()];
+        let mut reranked = test_bead("cb-x", Some(2));
+        reranked.labels = vec!["planned".into()];
+        let buckets = crate::model::partition_beads(vec![low, reranked]);
+        app.finish_work_refresh(Ok(buckets), at(0));
+
+        let planned = &app.work.content.value().expect("a read that succeeded").planned;
+        let x = planned.iter().find(|b| b.id == "cb-x").expect("cb-x is planned");
+        assert_eq!(x.priority, Some(0), "the row shows what it was asked to have");
+        assert_eq!(
+            sorted_by_priority(planned).first().map(|b| b.id.as_str()),
+            Some("cb-x"),
+            "and it sorts where P0 sorts"
+        );
+    }
+
+    #[test]
+    fn a_board_read_that_began_after_the_write_settled_drops_the_overlay() {
+        // Settled BEFORE the read was asked for: that read saw the new value, so the entry goes.
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.finish_write(ran("cb-x", Some(2), 0, false, "cb-x: P2 \u{2192} P0"));
+        app.begin_work_refresh(Instant::now(), at(0));
+        let mut fresh = test_bead("cb-x", Some(0));
+        fresh.labels = vec!["planned".into()];
+        app.finish_work_refresh(Ok(crate::model::partition_beads(vec![fresh])), at(0));
+        assert!(app.pending_priority.is_empty(), "a read that saw it settles it");
+
+        // The other order: the read was already in flight when the key was pressed, so it may not
+        // drop the entry, and the row still shows the new value.
+        let mut app = App::new();
+        app.begin_work_refresh(Instant::now(), at(0));
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.finish_write(ran("cb-x", Some(2), 0, false, "cb-x: P2 \u{2192} P0"));
+        let mut stale = test_bead("cb-x", Some(2));
+        stale.labels = vec!["planned".into()];
+        app.finish_work_refresh(Ok(crate::model::partition_beads(vec![stale])), at(0));
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 0, settled: true })
+        );
+        let planned = &app.work.content.value().expect("a read that succeeded").planned;
+        assert_eq!(planned[0].priority, Some(0));
+    }
+
+    #[test]
+    fn a_refused_write_lets_the_row_fall_back_to_the_board() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.finish_write(refused("cb-x", Some(2), 0, false));
+        assert!(app.pending_priority.is_empty(), "a failure leaves no ghost");
+
+        let mut bead = test_bead("cb-x", Some(2));
+        bead.labels = vec!["planned".into()];
+        app.finish_work_refresh(Ok(crate::model::partition_beads(vec![bead])), at(0));
+        let planned = &app.work.content.value().expect("a read that succeeded").planned;
+        assert_eq!(planned[0].priority, Some(2));
+    }
+
+    #[test]
+    fn a_newer_write_on_one_bead_replaces_the_older_overlay_entry_and_an_older_answer_is_ignored() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.begin_write(&priority_write("cb-x", Some(0), 3), bd_path());
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 3, settled: false }),
+            "newest wins on screen"
+        );
+
+        // The FIRST write's answer is stale: it must neither settle nor remove the newer entry.
+        app.finish_write(ran("cb-x", Some(2), 0, false, "cb-x: P2 \u{2192} P0"));
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 3, settled: false })
+        );
+        app.finish_write(refused("cb-x", Some(2), 0, false));
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 3, settled: false }),
+            "a stale refusal removes nobody's entry but its own"
+        );
+    }
+
+    #[test]
+    fn a_failed_board_read_drops_no_overlay_entry() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.finish_write(ran("cb-x", Some(2), 0, false, "cb-x: P2 \u{2192} P0"));
+        app.begin_work_refresh(Instant::now(), at(0));
+        app.finish_work_refresh(
+            Err(ReadError::Spawn { source: "bd".into(), message: "no".into() }),
+            at(0),
+        );
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 0, settled: true }),
+            "a read that saw nothing settles nothing"
+        );
+    }
+
+    /// The four dim lines a write shows from the keystroke until it answers, verbatim (cb-21g,
+    /// approved round two): the same words as the finished sentence, with a trailing ellipsis.
+    #[test]
+    fn a_write_request_says_what_it_is_doing() {
+        let bd = std::path::Path::new("/usr/local/bin/bd");
+        let digit = WriteRequest::Priority {
+            id: "cb-21g".into(),
+            from: Some(2),
+            to: 0,
+            undo: false,
+        };
+        assert_eq!(digit.pending_text(bd), "cb-21g: P2 \u{2192} P0\u{2026}");
+        let no_priority = WriteRequest::Priority {
+            id: "cb-21g".into(),
+            from: None,
+            to: 0,
+            undo: false,
+        };
+        assert_eq!(no_priority.pending_text(bd), "cb-21g: P? \u{2192} P0\u{2026}");
+        let undo = WriteRequest::Priority {
+            id: "cb-21g".into(),
+            from: None,
+            to: 2,
+            undo: true,
+        };
+        assert_eq!(undo.pending_text(bd), "cb-21g: back to P2\u{2026}");
+        let finding = WriteRequest::Finding {
+            finding: crate::sweeps::Finding::Reclaim { id: "cb-9f2".into() },
+        };
+        assert_eq!(
+            finding.pending_text(bd),
+            "running /usr/local/bin/bd reclaim --id cb-9f2 --older-than 10m\u{2026}"
+        );
+    }
+
+    /// A write that could never be sent names the worker, not `bd` - which never ran.
+    #[test]
+    fn a_write_answer_carries_its_own_request() {
+        let request = WriteRequest::Priority {
+            id: "cb-21g".into(),
+            from: Some(2),
+            to: 0,
+            undo: false,
+        };
+        let answer = WriteAnswer::undeliverable(&request);
+        assert!(answer.failed());
+        assert_eq!(answer.text(), "the write worker has stopped \u{2014} nothing was written");
+        match &answer {
+            WriteAnswer::Priority { id, to, .. } => {
+                assert_eq!((id.as_str(), *to), ("cb-21g", 0));
+            }
+            other => panic!("a priority request answers as a priority write: {other:?}"),
+        }
+        let finding = WriteRequest::Finding {
+            finding: crate::sweeps::Finding::Reclaim { id: "cb-9f2".into() },
+        };
+        assert!(WriteAnswer::undeliverable(&finding).failed());
+    }
+
+    /// A dim line that says a board write is running must stay true while the write is running:
+    /// clearing it on the next keystroke would make the screen briefly say nothing is happening
+    /// while something is (cb-21g, the navigator's choice in round two).
+    #[test]
+    fn a_pending_notice_survives_a_keystroke() {
+        let mut app = App::new();
+        app.set_pending_notice("cb-x: P2 \u{2192} P0\u{2026}".into());
+        assert_eq!(app.notice_tone, NoticeTone::Pending);
+        app.on_key(key(KeyCode::Down), 10, at(0));
+        assert_eq!(app.notice.as_deref(), Some("cb-x: P2 \u{2192} P0\u{2026}"));
+        assert_eq!(app.notice_tone, NoticeTone::Pending);
+
+        // Every other tone goes on the next key, exactly as it always has.
+        app.set_notice("cb-x: P2 \u{2192} P0".into());
+        app.on_key(key(KeyCode::Down), 10, at(0));
+        assert_eq!(app.notice, None);
     }
 
     #[test]
@@ -3004,7 +3748,7 @@ mod tests {
         app.set_error_notice("Worktree pruning stopped: exit status 2".into());
         app.on_key(key(KeyCode::Tab), 10, at(0));
         assert_eq!(app.notice, None);
-        assert!(!app.notice_urgent);
+        assert_ne!(app.notice_tone, NoticeTone::Urgent);
     }
 
     /// When the board was ASKED, not when it answered. The triage guard proves the figures
@@ -3061,7 +3805,7 @@ mod tests {
         app.finish_refresh(Ok(vec![row("Cyclops")]), Utc::now());
 
         assert!(app.notice.as_deref().is_some_and(|n| n.contains("no longer on the roster")));
-        assert!(!app.notice_urgent, "a roster change is news, not a fault");
+        assert_ne!(app.notice_tone, NoticeTone::Urgent, "a roster change is news, not a fault");
     }
 
     #[test]
@@ -3652,7 +4396,7 @@ mod tests {
         assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::None);
         assert_eq!(app.focus, PaneFocus::Fleet);
         assert_eq!(app.notice.as_deref(), Some("Rogue has no session"));
-        assert!(!app.notice_urgent, "news, not a fault");
+        assert_ne!(app.notice_tone, NoticeTone::Urgent, "news, not a fault");
 
         app.set_supervision(SupervisionMode::Supervising);
         app.on_key(key(KeyCode::Enter), 10, at(0));

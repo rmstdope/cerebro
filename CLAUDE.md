@@ -280,7 +280,8 @@ planner`), which is the one place a name and a role stop being interchangeable:
   worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
   (`ah-4ao`; see `docs/cerebro-jobs.md` for the decision and `docs/cerebro-sweeps.md` for what each
   sweep looks for and the guards it runs under); what is left for a Cerebro session is the claims
-  sweep and the worktrees the watcher declined, both of which need a judgement no table makes,
+  sweep, the beads parked on the navigator, and the worktrees the watcher declined, each of which
+  needs a judgement no table makes,
   handing a release
   request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in

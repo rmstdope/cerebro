@@ -205,7 +205,8 @@ Then re-add `planned` as usual — **and remove `plan:revise` in the same update
 a planner candidate for ever:
 
 ```bash
-bd update <id> --add-label planned --remove-label plan:revise --remove-label planning:<your-name>
+bd update <id> --add-label planned --remove-label plan:revise --remove-label planning:<your-name> \
+  --remove-label needs-ui-decision
 ```
 
 Then go on to the buffer.
@@ -386,7 +387,8 @@ bd list --exclude-label planned --exclude-label human \
 bd update <id> --add-label planning:<your-name>
 bd dolt push                                       # publish it at once
 # ... research, decide, discuss, write ...
-bd update <id> --design-file plan.md --add-label planned --remove-label planning:<your-name>
+bd update <id> --design-file plan.md --add-label planned --remove-label planning:<your-name> \
+  --remove-label needs-ui-decision   # a no-op unless the bead was parked on a shape question
 bd dolt push                                       # or the release is invisible elsewhere
 ```
 
@@ -458,6 +460,12 @@ Three details that decide whether this works:
 on the navigator, and an epic has no plan to write; planning either is not available to you. Take the
 next candidate by priority and say, once, which bead you skipped and what is holding it — that
 sentence is how the navigator learns their queue is jammed behind one decision.
+
+**A bead that was parked and has come back may carry the answer already.** Look for a
+`## Navigator's answer` heading in its notes: it is written when the orchestrator got the navigator
+to settle the pause, in their own words. That is a decision they have already made — treat it
+exactly as an interview answer, record it under *Agreed with the navigator*, and do not ask it
+again.
 
 That has a cost, and it is yours to manage rather than ignore: **a blocked bead's plan is written
 against code its blocker is about to change.** So keep the plan honest about what it stands on — name
@@ -938,9 +946,20 @@ would sit in nobody's queue. `--remove-label planning:<your-name>`, because you 
 later session must be free to pick it up once the navigator has answered. And the push, or no other
 machine learns it was parked.
 
+The appended note is what the orchestrator puts in front of the navigator when it walks the parked
+beads, quoted as it stands. So write it as you would have asked it: the question, and the options
+you would have offered.
+
 Then take the next bead. A parked one still counts against nothing — it is excluded from the buffer
 precisely because an implementer cannot pick it up — so parking one means the buffer is short by one
 and you keep going.
+
+**A bead that reaches you carrying `needs-ui-decision` is yours to take the label off.** Parked by
+you or by another planner, or handed back by the orchestrator with `human` already removed because
+the navigator is here to be interviewed — either way the shape question is still open. Interview
+them, record the answer under *Agreed with the navigator*, and remove the label in the same
+`bd update` that swaps your `planning:` for `planned`. Nothing else clears it on this route: a bead
+planned with it still on reads as waiting on a UI answer for the rest of its life.
 
 **Only the navigator's bucket is ever parked.** A detail is never parked for an absent navigator —
 decide it, write it into *Decided by me*, and plan the bead. A bead whose *shape* is undecided
@@ -1200,7 +1219,8 @@ whether Sonnet could finish without asking.
 
 ## Finishing one, and the session
 
-Add `planned`, remove your `planning:<your-name>`, `bd dolt push`, and say which bead you planned, what the navigator
+Add `planned`, remove your `planning:<your-name>` (and `needs-ui-decision`, if the bead carried
+one), `bd dolt push`, and say which bead you planned, what the navigator
 decided, and — if you rewrote it — what the title now says and why. A bead left carrying `planning`
 is one no later session will consider, so check that nothing behind you still has it:
 

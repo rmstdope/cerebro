@@ -79,6 +79,7 @@ holds nothing but a label.
 | being implemented | in_progress, implementer holds the lease | the builder pickup above |
 | needs the user | open, unassigned, `human`, **`planned` removed** | either role, on anything it must not decide |
 | parked on a UI answer | open, unassigned, `needs-ui-decision` **and** `human` | planner, when the user is away |
+| parked, and asked about already | as either row above, plus `pause:kept` | orchestrator, when the user was asked and left it parked |
 
 A **split family is owned by one planner**, marked `planner:<name>` on the parent rather than on any
 child: the children share one design, so a second planner taking one of them writes half a family
@@ -106,6 +107,11 @@ bd dolt push             # or no other machine learns it was released
 *Waiting on you* section reads it and says how long the bead has been sitting there, and a bead
 parked without it reads as parked just now, for ever (cb-wfb).
 
+The note you append is the only record of *why*, and it is read again: the orchestrator walks the
+parked beads on every sweep and works out from that note whether the pause is still true. So write
+what would **unblock** the bead — the question, the answer that would settle it, the thing you were
+waiting for — rather than only what stopped you.
+
 Removing `planned` stops `bd ready --label planned` handing the bead straight back to the next
 implementer, which would hit the same wall and escalate again. `bd unclaim` is the half that is easy
 to forget and worse to skip: `bd update` sets no status, so without it the bead stays `in_progress`
@@ -126,10 +132,24 @@ adds `plan:revise`; only the verifier sets that.
 `--remove-label planning:<its own name>` in place of the second. `bd unclaim` on a bead you never claimed is not
 harmless bookkeeping — it is a claim you should not have had in the first place.
 
+`pause:kept` is the orchestrator's own mark and nobody else writes or reads it. It means *this pause
+was put to the user and they left it parked*, so the next sweep does not ask again — the way
+`triage:declined` stops a P4 being re-ranked every session. It never suppresses **acting**: a bead
+carrying it whose blockers have all since closed is still unparked. It needs no plumbing anywhere,
+because such a bead always carries `human` too and every candidate query already excludes that. It
+goes when the orchestrator unparks the bead, or when the user takes it off by hand to be asked
+again.
+
 A bead parked on a UI answer carries **both** `needs-ui-decision` and `human`, for the same reason:
 `bd human list` lists the `human` label and nothing else, so a bead with only the first sits in
 nobody's queue at all. With both, `bd human list` is the user's one queue across every agent and
 every terminal.
+
+There is one deliberate exception, and it is the orchestrator's: when the user, asked about a parked
+bead, sends it back to a planner to be interviewed live, `human` comes off and `needs-ui-decision`
+stays. Nobody is waiting on the user any more — a planner is — so the bead belongs in the planners'
+queue rather than in `bd human list`, and the label is what tells that planner which question it is
+being handed.
 
 ## Claiming, and not colliding
 

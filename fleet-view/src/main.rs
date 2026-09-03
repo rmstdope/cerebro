@@ -1316,9 +1316,10 @@ where
             let action = app.finish_write(answer);
             dispatch(action, app, workers, &clock);
         }
-        // A request that was ACCEPTED and whose answer will never come: the other half of
-        // `dispatch_write`'s refusal. Without it one dead thread leaves the dim line up for ever,
-        // the newest-write rule permanently false and an overlay entry outliving the session.
+        // A request that was ACCEPTED and whose answer will never come: the other half of the
+        // refusal in `dispatch`'s write branch. Without it one dead thread leaves the dim line up
+        // for ever, the newest-write rule permanently false and an overlay entry outliving the
+        // session.
         if workers.write.is_dead() {
             app.abandon_outstanding_writes();
         }
@@ -1382,7 +1383,6 @@ where
                     if action == AppAction::RefreshAll && workers.supervisor.request() {
                         state.controller.requested(Instant::now());
                     }
-                    dispatch_write(action.clone(), app, workers);
                     dispatch(action, app, workers, &clock);
                 }
                 // Forwarded as a PASTE (Q3), so an agent composer that treats a bare newline as
@@ -1751,20 +1751,6 @@ fn log_write(logger: &mut Logger, answer: &app::WriteAnswer, now: DateTime<Utc>)
     }
 }
 
-/// Send a board write to the eighth worker, off the drawing thread (cb-21g).
-///
-/// Its own function rather than an arm of `dispatch`: a write is the only action that does not
-/// ask a pane for anything, and `dispatch`'s ten callers have no worker to hand it.
-fn dispatch_write(action: AppAction, app: &mut App, workers: &Workers) {
-    if let AppAction::Write(request) = &action {
-        if !workers.write.request_with(request.clone()) {
-            // A write that could never be sent is reported rather than lost.
-            let action = app.finish_write(app::WriteAnswer::undeliverable(request));
-            debug_assert_eq!(action, AppAction::None);
-        }
-    }
-}
-
 /// Turn one `AppAction` into requests.
 ///
 /// `RefreshAll` asks each pane in turn and never as a set:
@@ -1775,6 +1761,20 @@ fn dispatch(
     workers: &Workers,
     clock: &impl Fn() -> DateTime<Utc>,
 ) {
+    // FIRST, and before any refresh is asked for: the order the two calls had while this was its
+    // own `dispatch_write` (cb-21g), which sent the board write off the drawing thread before
+    // `dispatch` ran at all.
+    if let AppAction::Write(request) = &action {
+        if !workers.write.request_with(request.clone()) {
+            // A write that could never be sent is reported rather than lost.
+            let answered = app.finish_write(app::WriteAnswer::undeliverable(request));
+            // The two `dispatch` calls off the keystroke path can never carry a `Write`:
+            // `App::on_tick` and `App::finish_write` return refresh actions and `None` alone, and
+            // `AppAction::Write` is produced by `route_key` and nowhere else. This is what would
+            // catch a third producer.
+            debug_assert_eq!(answered, AppAction::None);
+        }
+    }
     let now = Instant::now();
     if matches!(action, AppAction::RefreshFleet | AppAction::RefreshAll)
         && app.begin_refresh(now)
@@ -5359,9 +5359,11 @@ mod main_tests {
         assert_eq!(app.notice_tone, app::NoticeTone::Pending);
     }
 
-    /// A write that could never be sent is reported rather than lost.
+    /// One `dispatch`, not two: a `Write` action reaches the write worker through the same
+    /// function every other action goes through, and one that could never be sent is reported
+    /// rather than lost (cb-agg).
     #[test]
-    fn an_undeliverable_write_is_reported_rather_than_lost() {
+    fn dispatch_sends_a_write_and_reports_an_undeliverable_one() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
@@ -5374,7 +5376,7 @@ mod main_tests {
         app.begin_write(&request, &Programs::default().bd);
         // A worker whose thread is gone: its receiver has been dropped.
         let workers = Workers { write: dead_write_worker(), ..test_workers() };
-        dispatch_write(AppAction::Write(request), &mut app, &workers);
+        dispatch(AppAction::Write(request), &mut app, &workers, &Utc::now);
         assert_eq!(
             app.notice.as_deref(),
             Some("the write worker has stopped — nothing was written")

@@ -2597,6 +2597,15 @@ mod tests {
         assert!(supervising[0].contains("s/f/k start·finish·kill"), "{:?}", supervising[0]);
         assert!(supervising[0].contains("g refresh"), "{:?}", supervising[0]);
         assert!(supervising[0].contains("q/Esc/Ctrl-C quit"), "{:?}", supervising[0]);
+        // And the shortening actually happened on a REAL width: this is the one rendered
+        // assertion that a hint is absent, so it is what proves `header_line` measures the drawn
+        // title rather than passing a `used` of its own invention (cb-51u). The pure `fit_hints`
+        // cases cannot see that: they compute `used` themselves.
+        assert!(
+            !supervising[0].contains("Tab/Shift-Tab"),
+            "the fitter is applied against the drawn title's width: {:?}",
+            supervising[0]
+        );
     }
 
     /// When there IS something to say, the hints give way before the state does.

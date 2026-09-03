@@ -900,6 +900,26 @@ fn start_due(
     }
 }
 
+/// Copy the stop-flagged names onto `App`, so the Fleet pane can draw the marker cb-44b added.
+///
+/// Read every iteration rather than on the fleet refresh: `f` returns `AppAction::None`, so a set
+/// that only moved with the five-second read would leave the marker up to five seconds behind the
+/// keystroke that caused it. A `stat` per roster row at 200ms is the same order as the per-name
+/// `stop_flag_set` the start path already does each tick.
+///
+/// Deliberately OUTSIDE any `may_supervise` guard, unlike `set_standby_labels`: a flag is true
+/// whoever set it, and a read-only view draws it.
+fn refresh_flagged(app: &mut App, paths: &ReaderPaths) {
+    // Two steps because `fleet_rows` borrows `app` immutably and `set_flagged` needs it mutably.
+    let names: Vec<String> = app.fleet_rows().iter().map(|row| row.name.clone()).collect();
+    app.set_flagged(
+        names
+            .into_iter()
+            .filter(|name| lifecycle::stop_flag_set(paths, name))
+            .collect(),
+    );
+}
+
 /// One `exit` line per child reaped since the last frame.
 ///
 /// Its own function rather than eight lines in the frame block, so the rule it encodes -
@@ -1149,6 +1169,7 @@ where
             host.flush_returns(Instant::now());
             app.set_exits(host.exits());
             log_exits(logger, host, now);
+            refresh_flagged(app, paths);
         }
         terminal.draw(|frame| ui::draw(frame, app, now))?;
 
@@ -3110,6 +3131,41 @@ mod main_tests {
         assert!(!flag.exists(), "an end writes no flag");
         assert_eq!(app.notice.as_deref(), Some("Cyclops finished its pass and was ended."));
         settle_gone(&mut host, "Cyclops");
+    }
+
+    #[test]
+    fn a_stop_flag_reaches_the_fleet_row_without_a_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        cerebro_tui::lifecycle::write_stop_flag(&paths, "Cyclops").unwrap();
+
+        // `f` returns `AppAction::None`, so nothing here asks for a fleet read: the set is filled
+        // from the pre-frame block on the very next iteration.
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![
+                stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
+                    cerebro_tui::model::RowState::Working, 10, now),
+                stood_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
+                    cerebro_tui::model::RowState::Working, 10, now),
+            ],
+        );
+        refresh_flagged(&mut app, &paths);
+        assert!(app.flagged.contains("Cyclops"), "the flagged name is carried to the renderer");
+        assert!(!app.flagged.contains("Rogue"), "and only that one");
+
+        // A read-only view draws the marker too: the flag is a fact about the fleet, true
+        // whoever set it, and this view merely reads it.
+        let mut read_only = lifecycle_app(
+            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+                cerebro_tui::supervisor::ReadOnlyReason::NotOwned,
+            ),
+            vec![stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
+                cerebro_tui::model::RowState::Working, 10, now)],
+        );
+        refresh_flagged(&mut read_only, &paths);
+        assert!(read_only.flagged.contains("Cyclops"), "a read-only view reads the flag too");
     }
 
     #[test]

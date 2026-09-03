@@ -18,13 +18,14 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use unicode_width::UnicodeWidthStr;
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::model::{self, Bead, FleetRow, GhSnapshot, HistoryRow, RowState, WorkBuckets};
+use crate::model::{self, Bead, BeadDetailFields, FleetRow, GhSnapshot, HistoryRow, RowState, WorkBuckets};
 use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{
-    read_configured_supervisor, read_fleet, read_gh, read_history, read_sweeps, read_work,
+    read_bead_detail, read_configured_supervisor, read_fleet, read_gh, read_history, read_sweeps, read_work,
     Commands, Judged, Programs, ReaderPaths, ReadError,
 };
 use crate::sweeps::Finding;
@@ -394,6 +395,196 @@ impl WorkBodyLine<'_> {
     }
 }
 
+/// A bead pinned in the Session pane: the row as it was when `Enter` was pressed, and what
+/// `bd show` has said about it so far.
+///
+/// `PartialEq` without `Eq`, deliberately: `Bead::metadata` is a `serde_json::Value`, which is
+/// not `Eq`. Restoring the derive the plan named does not compile.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BeadDetail {
+    pub bead: Bead,
+    pub body: DetailBody,
+}
+
+/// What `bd show` has said about a pinned bead so far. The whole state machine: no `Pane<T>`,
+/// because there is no staleness protocol and no retained value here - a failed read shows one
+/// red line and `g` retries, which is what the navigator chose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DetailBody {
+    /// The read is in flight. `Reading cb-41r…`
+    Reading,
+    Ready(BeadDetailFields),
+    /// The read failed. The pane says `bd show <id> failed` and `Press g to retry.`; this string
+    /// is the underlying cause, for `errors.jsonl` alone - never drawn.
+    Failed(String),
+}
+
+/// One drawn line of a pinned bead, saying what that line IS rather than how it looks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BeadBodyLine {
+    /// The bead's own title, wrapped. Bold.
+    Title(String),
+    /// `open · feature · P2 · planned · Rogue · gh-212 · updated 14:02`, wrapped. Dim.
+    Fields(String),
+    Blank,
+    /// A line of the description or the design, wrapped. `heading` is true for a line that began
+    /// with `#` BEFORE wrapping, and only its first wrapped piece - a continuation is body text.
+    Body { text: String, heading: bool },
+    /// `Reading cb-41r…`, `No description.`, `No design.`, `Press g to retry.` Dim.
+    Dim(String),
+    /// `bd show cb-41r failed`. Red.
+    Error(String),
+}
+
+/// The pane's title tail: `P2 feature`, or `feature` when the bead has no priority.
+pub fn bead_title(bead: &Bead) -> String {
+    match bead.priority {
+        Some(p) => format!("P{p} {}", bead.issue_type),
+        None => bead.issue_type.clone(),
+    }
+}
+
+/// Hard-wrap TEXT at WIDTH terminal cells, on whitespace where it can and mid-word where a token
+/// is longer than the pane. Widths are cells (`unicode-width`), never bytes or `char`s.
+///
+/// Wrapping happens here rather than in the renderer because `render_bordered_pane` sets no
+/// `.wrap` and must not start (`src/ui.rs`): it renders the viewport slice, not the document,
+/// which is what makes a ten-thousand-line transcript free to draw - and what would make the
+/// `Rows n–m of total` cue count lines that were never drawn.
+fn wrap_cells(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+    // Walked as alternating runs of whitespace and non-whitespace rather than `split(' ')`, so a
+    // line's own indentation survives: this pane exists to read design fields, and those are
+    // markdown with indented code blocks and nested bullets. A `split` drops every empty token,
+    // which turned `  - b` into a sibling of the bullet above it.
+    let mut tokens: Vec<String> = Vec::new();
+    for ch in text.chars() {
+        let same = tokens
+            .last()
+            .is_some_and(|last| last.ends_with(' ') == (ch == ' '));
+        if same {
+            tokens.last_mut().expect("checked above").push(ch);
+        } else {
+            tokens.push(ch.to_string());
+        }
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    for token in tokens {
+        let token_width = UnicodeWidthStr::width(token.as_str());
+        if current_width + token_width <= width {
+            current.push_str(&token);
+            current_width += token_width;
+            continue;
+        }
+        // The whitespace a break falls on is the break, and is dropped with it.
+        if token.starts_with(' ') {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+            continue;
+        }
+        if !current.is_empty() {
+            // Trailing whitespace goes with the break it fell on, so a wrapped line never carries
+            // a space the pane has to account for.
+            let broken = std::mem::take(&mut current);
+            lines.push(broken.trim_end().to_string());
+            current_width = 0;
+        }
+        if token_width <= width {
+            current.push_str(&token);
+            current_width = token_width;
+            continue;
+        }
+        // A token longer than the pane is broken mid-word rather than overflowing it.
+        for ch in token.chars() {
+            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+            if current_width + cw > width {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            current.push(ch);
+            current_width += cw;
+        }
+    }
+    lines.push(current);
+    lines
+}
+
+/// The one dim line under the title. Absent fields are dropped with their separator; labels are
+/// one field, joined among themselves by a comma with no space. `docs/ui/cb-41r-bead-detail.html`
+/// is the specification.
+fn fields_line(bead: &Bead) -> String {
+    let mut fields = vec![bead.status.clone(), bead.issue_type.clone()];
+    fields.push(format!("P{}", bead.priority.unwrap_or(4)));
+    if !bead.labels.is_empty() {
+        fields.push(bead.labels.join(","));
+    }
+    if let Some(assignee) = &bead.assignee {
+        fields.push(assignee.clone());
+    }
+    if let Some(external) = &bead.external_ref {
+        fields.push(external.clone());
+    }
+    if let Some(at) = bead.updated_at {
+        fields.push(format!("updated {}", at.format("%H:%M")));
+    }
+    fields.join(" · ")
+}
+
+/// Wrap one stored field - a description or a design - into `Body` lines, picking out any line
+/// that began with `#` as a heading. Only the first wrapped piece of such a line is a heading.
+fn body_lines(text: &str, width: usize) -> Vec<BeadBodyLine> {
+    let mut lines = Vec::new();
+    for source in text.lines() {
+        let heading = source.trim_start().starts_with('#');
+        for (index, piece) in wrap_cells(source, width).into_iter().enumerate() {
+            lines.push(BeadBodyLine::Body { text: piece, heading: heading && index == 0 });
+        }
+    }
+    if lines.is_empty() {
+        lines.push(BeadBodyLine::Body { text: String::new(), heading: false });
+    }
+    lines
+}
+
+/// Every line of the pinned bead, in order: title, blank, fields, blank, description, blank,
+/// design. WIDTH is the pane's inner width in terminal cells.
+///
+/// No clock is injected and none is read: the only time it draws is the bead's own `updated_at`.
+pub fn bead_body(detail: &BeadDetail, width: usize) -> Vec<BeadBodyLine> {
+    let id = &detail.bead.id;
+    let mut body: Vec<BeadBodyLine> = wrap_cells(&detail.bead.title, width)
+        .into_iter()
+        .map(BeadBodyLine::Title)
+        .collect();
+    body.push(BeadBodyLine::Blank);
+    body.extend(wrap_cells(&fields_line(&detail.bead), width).into_iter().map(BeadBodyLine::Fields));
+    body.push(BeadBodyLine::Blank);
+    match &detail.body {
+        DetailBody::Reading => body.push(BeadBodyLine::Dim(format!("Reading {id}…"))),
+        DetailBody::Failed(_) => {
+            body.push(BeadBodyLine::Error(format!("bd show {id} failed")));
+            body.push(BeadBodyLine::Dim("Press g to retry.".into()));
+        }
+        DetailBody::Ready(fields) => {
+            match fields.description.as_deref().filter(|t| !t.trim().is_empty()) {
+                Some(text) => body.extend(body_lines(text, width)),
+                None => body.push(BeadBodyLine::Dim("No description.".into())),
+            }
+            body.push(BeadBodyLine::Blank);
+            match fields.design.as_deref().filter(|t| !t.trim().is_empty()) {
+                Some(text) => body.extend(body_lines(text, width)),
+                None => body.push(BeadBodyLine::Dim("No design.".into())),
+            }
+        }
+    }
+    body
+}
+
 /// The whole Work document, in order: the Sweeps section, the six queues, then History.
 ///
 /// The Sweeps section is FIRST on the screen (the navigator's choice: this pane shows about
@@ -639,6 +830,8 @@ pub enum AppAction {
     /// must not stay on screen for up to ten minutes.
     RefreshSweeps,
     RefreshAll,
+    /// Read the bead `App::bead_detail` now names. What `Enter` on a bead row asks for.
+    ReadBead,
     Quit,
 }
 
@@ -758,6 +951,13 @@ pub struct App {
     /// warning there was. `cerebro--last-priority-change`. Spent only by USING it: it survives a
     /// refresh, a `g` and the bead scrolling out of view, and a later change overwrites it.
     pub last_priority_change: Option<(String, Option<u8>)>,
+    /// The bead the Session pane is showing instead of a session, or `None` for the ordinary day.
+    ///
+    /// A SNAPSHOT rather than a live view of the board (the navigator's choice): the row was
+    /// copied out of the Work pane when `Enter` was pressed, so the heading never changes under
+    /// somebody reading it and the pane goes on drawing after the bead leaves the queues
+    /// entirely. `g` is what re-reads it. Memory only, like `expanded`.
+    pub bead_detail: Option<BeadDetail>,
     /// What `scripts/fleet-history --summary` last said, on its own five-minute cadence and its
     /// own in-flight slot. A `Pane<T>` for `finish`'s transitions above all: a failed run must not
     /// destroy rows still worth reading, and the header names the script in red while it holds
@@ -845,6 +1045,7 @@ impl App {
             work_cursor: None,
             expanded: BTreeSet::new(),
             last_priority_change: None,
+            bead_detail: None,
             history: Pane::default(),
             last_history_request: None,
         }
@@ -1096,6 +1297,9 @@ impl App {
             KeyCode::Enter if self.focus == PaneFocus::Fleet => {
                 if self.session_reachable() {
                     self.focus = PaneFocus::Session;
+                    // The pane is the session's again: a bead pinned in it is dropped, and only
+                    // when the move actually happened - a refusal keeps what was being read.
+                    self.bead_detail = None;
                 } else if let Some(name) = self.selected.clone() {
                     // Gold: news, not a fault. `on_key` already cleared the slot above, so this
                     // is the one notice this keystroke leaves, and the next keystroke clears it.
@@ -1107,14 +1311,17 @@ impl App {
             // `Enter` opens the section under a `+N more` row, and closes it again. The one way
             // past the eight-row cap, and the only reason a bead in the P4 backlog can be
             // reranked at all.
-            KeyCode::Enter if self.focus == PaneFocus::Work => {
-                if let Some(WorkCursor::More(section)) = self.work_cursor.clone() {
+            KeyCode::Enter if self.focus == PaneFocus::Work => match self.work_cursor.clone() {
+                Some(WorkCursor::More(section)) => {
                     if !self.expanded.remove(section) {
                         self.expanded.insert(section);
                     }
+                    AppAction::None
                 }
-                AppAction::None
-            }
+                Some(WorkCursor::Bead(id)) => self.toggle_bead_detail(&id, now),
+                // A finding, or nothing: does nothing and says nothing (the navigator's choice).
+                _ => AppAction::None,
+            },
             KeyCode::Up => {
                 let scroll = self.focused_scroll_mut();
                 *scroll = scroll.saturating_sub(1);
@@ -1231,7 +1438,12 @@ impl App {
     /// session leaves the arrows, `g` and `q` exactly as they are, which is what makes a retained
     /// pass scrollable at all.
     pub fn session_has_keyboard(&self) -> bool {
-        self.focus == PaneFocus::Session && matches!(self.session.view, SessionView::Live { .. })
+        // A pinned bead is what the pane is drawing, so the child is invisible: forwarding keys
+        // to it would have the navigator typing into an agent they cannot see, and would replace
+        // the header with `<Name> has the keyboard`.
+        self.bead_detail.is_none()
+            && self.focus == PaneFocus::Session
+            && matches!(self.session.view, SessionView::Live { .. })
     }
 
     /// Is there a session for `Enter` under Fleet focus to go to?
@@ -1255,7 +1467,9 @@ impl App {
     /// nothing above the top row to reach - so this forces the offset to 0 while a session is
     /// live and leaves it alone otherwise.
     pub fn set_session_view(&mut self, view: SessionView) {
-        if matches!(view, SessionView::Live { .. }) {
+        // ...and never while a bead is pinned, or the bead would be unscrollable for exactly as
+        // long as the selected agent has a live child.
+        if self.bead_detail.is_none() && matches!(view, SessionView::Live { .. }) {
             self.session.scroll = 0;
         }
         self.session.view = view;
@@ -1403,6 +1617,55 @@ impl App {
             WorkBodyLine::Bead { bead, .. } if bead.id == *id => Some(bead),
             _ => None,
         })
+    }
+
+    /// `Enter` on a bead row. Pins it and moves focus to the Session pane, replaces a different
+    /// pinned bead, or unpins THIS one and leaves focus on Work.
+    ///
+    /// Returns `AppAction::ReadBead` in the first two cases, which is what asks the loop to spawn
+    /// the read; `AppAction::None` when it unpinned, and when the id is not in the current
+    /// buckets at all (which the cursor rule makes unreachable from the keyboard, and which must
+    /// still not panic).
+    fn toggle_bead_detail(&mut self, id: &str, now: DateTime<Utc>) -> AppAction {
+        if self.bead_detail.as_ref().is_some_and(|detail| detail.bead.id == id) {
+            self.bead_detail = None;
+            return AppAction::None;
+        }
+        // `selected_bead` is the one place "find the cursor's bead in the document" is answered;
+        // the id always comes from the cursor, so this is the same question. The clone ends the
+        // immutable borrow before the mutation below.
+        let Some(bead) = self.selected_bead(now).cloned() else {
+            return AppAction::None;
+        };
+        self.bead_detail = Some(BeadDetail { bead, body: DetailBody::Reading });
+        self.focus = PaneFocus::Session;
+        // A bead always opens at its top, whatever the pane was scrolled to before.
+        self.session.scroll = 0;
+        AppAction::ReadBead
+    }
+
+    /// Land a finished `bd show`, or drop it.
+    ///
+    /// Does nothing at all when nothing is pinned or a different bead is - a read that answers
+    /// after the navigator unpinned must not put a body back on screen.
+    pub fn finish_bead_read(&mut self, id: &str, result: Result<BeadDetailFields, ReadError>) {
+        let Some(detail) = self.bead_detail.as_mut() else {
+            return;
+        };
+        if detail.bead.id != id {
+            return;
+        }
+        detail.body = match result {
+            Ok(fields) => DetailBody::Ready(fields),
+            Err(error) => DetailBody::Failed(error.to_string()),
+        };
+    }
+
+    /// Ask for the pinned bead again, from the top: what `g` does when one is pinned.
+    pub fn restart_bead_read(&mut self) -> Option<String> {
+        let detail = self.bead_detail.as_mut()?;
+        detail.body = DetailBody::Reading;
+        Some(detail.bead.id.clone())
     }
 
     /// Put the cursor back on something after a refresh that changed the document.
@@ -1645,8 +1908,8 @@ impl App {
 /// add ways for two `ps` runs to overlap. Two workers rather than one shared thread, equally
 /// deliberately: a thirty-second `bd` behind a five-second `ps` would make each wait for the
 /// other, which is the one thing independent panes must not do.
-pub struct Worker<T> {
-    requests: Sender<()>,
+pub struct Worker<T, Req = ()> {
+    requests: Sender<Req>,
     results: Receiver<Result<T, ReadError>>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -1664,18 +1927,20 @@ pub type WorkWorker = Worker<WorkBuckets>;
 /// declaration); the outer one is whether the reader ran at all.
 pub type SupervisorWorker = Worker<Result<SupervisorKind, String>>;
 
-impl<T: Send + 'static> Worker<T> {
+impl<T: Send + 'static, Req: Send + 'static> Worker<T, Req> {
     /// `FnMut`, not `Fn`: the `gh` reader keeps the login it has learnt between requests, and the
     /// loop below calls it from one thread only. A `RefCell` in the closure instead would be
     /// interior mutability bought to preserve a bound nothing needed.
-    fn spawn_reader(mut reader: impl FnMut() -> Result<T, ReadError> + Send + 'static) -> Self {
-        let (request_tx, request_rx) = mpsc::channel::<()>();
+    fn spawn_reader(
+        mut reader: impl FnMut(Req) -> Result<T, ReadError> + Send + 'static,
+    ) -> Self {
+        let (request_tx, request_rx) = mpsc::channel::<Req>();
         let (result_tx, result_rx) = mpsc::channel();
         let handle = std::thread::spawn(move || {
             // The loop ends when the sender is dropped, which is what `Drop` below does: the
             // thread cannot outlive the screen it reads for.
-            while request_rx.recv().is_ok() {
-                if result_tx.send(reader()).is_err() {
+            while let Ok(request) = request_rx.recv() {
+                if result_tx.send(reader(request)).is_err() {
                     break;
                 }
             }
@@ -1687,10 +1952,11 @@ impl<T: Send + 'static> Worker<T> {
         }
     }
 
-    /// Ask for one read. False only when the worker thread is gone, which the caller shows as a
-    /// failed refresh rather than treating as a reason to exit.
-    pub fn request(&self) -> bool {
-        self.requests.send(()).is_ok()
+    /// Ask for one read, carrying the request the reader needs. False only when the worker
+    /// thread is gone, which the caller shows as a failed refresh rather than treating as a
+    /// reason to exit.
+    pub fn request_with(&self, request: Req) -> bool {
+        self.requests.send(request).is_ok()
     }
 
     /// The finished read, if one is waiting. Never blocks.
@@ -1702,15 +1968,22 @@ impl<T: Send + 'static> Worker<T> {
     }
 }
 
+impl<T: Send + 'static> Worker<T, ()> {
+    /// Ask for one read. The six readers that need no argument keep this call unchanged.
+    pub fn request(&self) -> bool {
+        self.requests.send(()).is_ok()
+    }
+}
+
 impl Worker<Vec<FleetRow>> {
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
-        Self::spawn_reader(move || read_fleet(&paths, &programs, commands.as_ref()))
+        Self::spawn_reader(move |()| read_fleet(&paths, &programs, commands.as_ref()))
     }
 }
 
 impl Worker<WorkBuckets> {
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
-        Self::spawn_reader(move || read_work(&paths, &programs, commands.as_ref()))
+        Self::spawn_reader(move |()| read_work(&paths, &programs, commands.as_ref()))
     }
 }
 
@@ -1723,7 +1996,7 @@ pub type SweepWorker = Worker<Vec<Judged>>;
 
 impl Worker<Vec<Judged>> {
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
-        Self::spawn_reader(move || read_sweeps(&paths, &programs, commands.as_ref()))
+        Self::spawn_reader(move |()| read_sweeps(&paths, &programs, commands.as_ref()))
     }
 }
 
@@ -1736,7 +2009,7 @@ pub type HistoryWorker = Worker<Vec<HistoryRow>>;
 
 impl Worker<Vec<HistoryRow>> {
     pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
-        Self::spawn_reader(move || read_history(&paths, commands.as_ref()))
+        Self::spawn_reader(move |()| read_history(&paths, commands.as_ref()))
     }
 }
 
@@ -1752,17 +2025,36 @@ impl Worker<GhSnapshot> {
     /// only until it answers - which is why the reader bound is `FnMut`.
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
         let mut me: Option<String> = None;
-        Self::spawn_reader(move || read_gh(&paths, &programs, &mut me, commands.as_ref()))
+        Self::spawn_reader(move |()| read_gh(&paths, &programs, &mut me, commands.as_ref()))
+    }
+}
+
+/// The pinned bead's worker: `read_bead_detail` on its own thread, for the reason the other six
+/// exist - a `bd` that will not answer must not freeze the screen, keys and all.
+///
+/// It answers with the id BESIDE the answer, which is what lets a late answer be dropped rather
+/// than landed on whatever bead is pinned by then - and the FAILURE carries it too. `request_with`
+/// sends into an unbounded channel, so `Enter` on A and then on B before A answers queues two
+/// reads: an error without an id would say `bd show cb-B failed` about a bead still being read.
+/// The inner `Result` is that answer; the outer one only ever succeeds.
+pub type DetailWorker = Worker<(String, Result<BeadDetailFields, ReadError>), String>;
+
+impl Worker<(String, Result<BeadDetailFields, ReadError>), String> {
+    pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
+        Self::spawn_reader(move |id: String| {
+            let answer = read_bead_detail(&paths, &programs, commands.as_ref(), &id);
+            Ok((id, answer))
+        })
     }
 }
 
 impl Worker<Result<SupervisorKind, String>> {
     pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
-        Self::spawn_reader(move || read_configured_supervisor(&paths, commands.as_ref()))
+        Self::spawn_reader(move |()| read_configured_supervisor(&paths, commands.as_ref()))
     }
 }
 
-impl<T> Drop for Worker<T> {
+impl<T, Req> Drop for Worker<T, Req> {
     fn drop(&mut self) {
         // Dropping the sender asks the loop to end, but do not join: a reader may be inside its
         // timeout while the navigator is quitting, and terminal cleanup must remain immediate.
@@ -3466,5 +3758,396 @@ mod tests {
             Some(WorkCursor::Finding("unclaim:cb-a".into())),
             "Up put it back on a real row"
         );
+    }
+
+    #[test]
+    fn a_worker_answers_the_request_it_was_given() {
+        let worker: Worker<String, String> =
+            Worker::spawn_reader(|req: String| Ok(format!("saw {req}")));
+        assert!(worker.request_with("cb-41r".into()));
+        for _ in 0..200 {
+            if let Some(answer) = worker.poll() {
+                assert_eq!(answer.unwrap(), "saw cb-41r");
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the worker never answered");
+    }
+
+    // --- the pinned bead's document (cb-41r) --------------------------------------------------
+
+    fn detail_bead() -> Bead {
+        Bead {
+            id: "cb-41r".into(),
+            title: "Enter on a bead opens it".into(),
+            status: "open".into(),
+            issue_type: "feature".into(),
+            labels: Vec::new(),
+            priority: Some(2),
+            updated_at: Some(
+                DateTime::parse_from_rfc3339("2026-09-03T14:02:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+            ),
+            assignee: None,
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        }
+    }
+
+    fn pinned(bead: Bead, body: DetailBody) -> BeadDetail {
+        BeadDetail { bead, body }
+    }
+
+    #[test]
+    fn bead_body_opens_with_the_title_then_the_fields() {
+        let body = bead_body(&pinned(detail_bead(), DetailBody::Reading), 60);
+        assert_eq!(body[0], BeadBodyLine::Title("Enter on a bead opens it".into()));
+        assert_eq!(body[1], BeadBodyLine::Blank);
+        assert_eq!(
+            body[2],
+            BeadBodyLine::Fields("open · feature · P2 · updated 14:02".into())
+        );
+        assert_eq!(body[3], BeadBodyLine::Blank);
+        assert_eq!(body[4], BeadBodyLine::Dim("Reading cb-41r…".into()));
+        assert_eq!(body.len(), 5, "a read in flight stops there");
+    }
+
+    #[test]
+    fn the_fields_line_drops_what_the_bead_has_not_got() {
+        let mut bead = detail_bead();
+        assert_eq!(fields_line(&bead), "open · feature · P2 · updated 14:02");
+        bead.labels = vec!["planned".into(), "human".into()];
+        bead.assignee = Some("Rogue".into());
+        bead.external_ref = Some("gh-212".into());
+        assert_eq!(
+            fields_line(&bead),
+            "open · feature · P2 · planned,human · Rogue · gh-212 · updated 14:02"
+        );
+    }
+
+    #[test]
+    fn a_bead_with_no_priority_has_no_p_in_its_title() {
+        let mut bead = detail_bead();
+        assert_eq!(bead_title(&bead), "P2 feature");
+        bead.priority = None;
+        assert_eq!(bead_title(&bead), "feature");
+    }
+
+    #[test]
+    fn a_long_body_line_wraps_at_the_pane_width() {
+        let paragraph = "word ".repeat(40);
+        let paragraph = paragraph.trim_end().to_string();
+        let fields = crate::model::BeadDetailFields {
+            description: Some(paragraph.clone()),
+            design: None,
+        };
+        let body = bead_body(&pinned(detail_bead(), DetailBody::Ready(fields)), 40);
+        let texts: Vec<String> = body
+            .iter()
+            .filter_map(|line| match line {
+                BeadBodyLine::Body { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(texts.len() > 1, "a 200-cell paragraph wraps at 40");
+        for text in &texts {
+            assert!(
+                UnicodeWidthStr::width(text.as_str()) <= 40,
+                "line wider than the pane: {text:?}"
+            );
+        }
+        assert_eq!(texts.join(" "), paragraph);
+    }
+
+    #[test]
+    fn only_the_first_piece_of_a_wrapped_heading_is_a_heading() {
+        let heading = format!("# {}", "long ".repeat(20).trim_end());
+        let lines = body_lines(&heading, 30);
+        assert!(lines.len() > 1);
+        assert!(matches!(lines[0], BeadBodyLine::Body { heading: true, .. }));
+        for line in &lines[1..] {
+            assert!(matches!(line, BeadBodyLine::Body { heading: false, .. }));
+        }
+    }
+
+    #[test]
+    fn a_blank_line_inside_a_field_survives() {
+        let lines = body_lines("one\n\ntwo", 40);
+        assert_eq!(
+            lines,
+            vec![
+                BeadBodyLine::Body { text: "one".into(), heading: false },
+                BeadBodyLine::Body { text: String::new(), heading: false },
+                BeadBodyLine::Body { text: "two".into(), heading: false },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_bead_says_so() {
+        let body = bead_body(
+            &pinned(detail_bead(), DetailBody::Ready(crate::model::BeadDetailFields::default())),
+            60,
+        );
+        assert_eq!(body[4], BeadBodyLine::Dim("No description.".into()));
+        assert_eq!(body[5], BeadBodyLine::Blank);
+        assert_eq!(body[6], BeadBodyLine::Dim("No design.".into()));
+    }
+
+    #[test]
+    fn a_failed_read_is_one_red_line_and_a_retry() {
+        let body = bead_body(
+            &pinned(detail_bead(), DetailBody::Failed("bd: exit 2, no such bead".into())),
+            60,
+        );
+        assert_eq!(body[4], BeadBodyLine::Error("bd show cb-41r failed".into()));
+        assert_eq!(body[5], BeadBodyLine::Dim("Press g to retry.".into()));
+        let drawn = format!("{body:?}");
+        assert!(
+            !drawn.contains("no such bead"),
+            "the cause is for errors.jsonl alone: {drawn}"
+        );
+    }
+
+    // --- `Enter` on a bead row, and what does and does not drop it (cb-41r) --------------------
+
+    /// Walk the Work cursor to the first row of KIND, and return the app there.
+    fn cursor_on_first_bead(app: &mut App) -> String {
+        app.focus = PaneFocus::Work;
+        for _ in 0..30 {
+            if let Some(WorkCursor::Bead(id)) = app.work_cursor.clone() {
+                return id;
+            }
+            app.on_key(key(KeyCode::Down), 10, at(0));
+        }
+        panic!("no bead row under the cursor");
+    }
+
+    #[test]
+    fn enter_on_a_bead_row_pins_it_and_focuses_the_session_pane() {
+        let mut app = document_app();
+        let id = cursor_on_first_bead(&mut app);
+        app.session.scroll = 9;
+
+        assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::ReadBead);
+        let detail = app.bead_detail.as_ref().expect("a bead is pinned");
+        assert_eq!(detail.bead.id, id);
+        assert_eq!(detail.body, DetailBody::Reading);
+        assert_eq!(app.focus, PaneFocus::Session);
+        assert_eq!(app.session.scroll, 0, "a bead opens at its top");
+    }
+
+    #[test]
+    fn enter_on_the_same_bead_row_unpins_it_and_leaves_focus_on_work() {
+        let mut app = document_app();
+        cursor_on_first_bead(&mut app);
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        app.focus = PaneFocus::Work;
+
+        assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::None);
+        assert_eq!(app.bead_detail, None);
+        assert_eq!(app.focus, PaneFocus::Work);
+    }
+
+    #[test]
+    fn enter_on_a_different_bead_row_replaces_it_and_focuses_the_pane() {
+        let mut app = document_app();
+        let first = cursor_on_first_bead(&mut app);
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        app.focus = PaneFocus::Work;
+        app.on_key(key(KeyCode::Down), 10, at(0));
+        let Some(WorkCursor::Bead(second)) = app.work_cursor.clone() else {
+            panic!("the next row is a bead");
+        };
+        assert_ne!(first, second);
+
+        assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::ReadBead);
+        assert_eq!(app.bead_detail.as_ref().unwrap().bead.id, second);
+        assert_eq!(app.focus, PaneFocus::Session);
+    }
+
+    #[test]
+    fn enter_on_a_finding_does_nothing() {
+        let mut app = document_app();
+        app.focus = PaneFocus::Work;
+        assert!(matches!(app.work_cursor, Some(WorkCursor::Finding(_))));
+
+        assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::None);
+        assert_eq!(app.bead_detail, None);
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert_eq!(app.notice, None, "silently, the navigator's choice");
+    }
+
+    #[test]
+    fn enter_on_a_more_row_still_opens_the_section() {
+        let mut app = document_app();
+        app.focus = PaneFocus::Work;
+        for _ in 0..12 {
+            app.on_key(key(KeyCode::Down), 10, at(0));
+        }
+        assert_eq!(app.work_cursor, Some(WorkCursor::More("Unplanned")));
+
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        assert!(app.expanded.contains("Unplanned"));
+        assert_eq!(app.bead_detail, None, "a `+N more` row pins nothing");
+    }
+
+    #[test]
+    fn a_pinned_bead_never_gives_the_child_the_keyboard() {
+        let mut app = document_app();
+        app.selected = Some("Rogue".into());
+        app.focus = PaneFocus::Session;
+        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        assert!(app.session_has_keyboard());
+
+        app.bead_detail = Some(BeadDetail {
+            bead: detail_bead(),
+            body: DetailBody::Reading,
+        });
+        assert!(!app.session_has_keyboard());
+    }
+
+    #[test]
+    fn a_live_view_does_not_reset_a_pinned_beads_scroll() {
+        let mut app = document_app();
+        app.bead_detail = Some(BeadDetail {
+            bead: detail_bead(),
+            body: DetailBody::Reading,
+        });
+        app.session.scroll = 7;
+        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        assert_eq!(app.session.scroll, 7, "the bead can be scrolled while an agent is live");
+
+        app.bead_detail = None;
+        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        assert_eq!(app.session.scroll, 0);
+    }
+
+    #[test]
+    fn enter_under_fleet_focus_drops_the_pinned_bead() {
+        let mut app = document_app();
+        app.focus = PaneFocus::Fleet;
+        app.selected = Some("Rogue".into());
+        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        app.bead_detail = Some(BeadDetail {
+            bead: detail_bead(),
+            body: DetailBody::Reading,
+        });
+
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        assert_eq!(app.focus, PaneFocus::Session);
+        assert_eq!(app.bead_detail, None);
+    }
+
+    #[test]
+    fn enter_under_fleet_focus_that_refuses_keeps_the_pinned_bead() {
+        let mut app = document_app();
+        app.focus = PaneFocus::Fleet;
+        app.selected = Some("Rogue".into());
+        app.bead_detail = Some(BeadDetail {
+            bead: detail_bead(),
+            body: DetailBody::Reading,
+        });
+        app.set_session_view(SessionView::None);
+
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        assert_eq!(app.notice.as_deref(), Some("Rogue has no session"));
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert!(app.bead_detail.is_some(), "a refusal does not steal the bead");
+    }
+
+    #[test]
+    fn a_finished_read_fills_the_pinned_bead() {
+        let mut app = App::default();
+        app.bead_detail = Some(BeadDetail {
+            bead: detail_bead(),
+            body: DetailBody::Reading,
+        });
+        app.finish_bead_read(
+            "cb-41r",
+            Ok(crate::model::BeadDetailFields {
+                description: Some("d".into()),
+                design: Some("g".into()),
+            }),
+        );
+        assert!(matches!(
+            app.bead_detail.as_ref().unwrap().body,
+            DetailBody::Ready(_)
+        ));
+    }
+
+    #[test]
+    fn a_read_that_answers_after_it_was_unpinned_is_dropped() {
+        let mut app = App::default();
+        app.bead_detail = None;
+        app.finish_bead_read("cb-41r", Ok(crate::model::BeadDetailFields::default()));
+        assert_eq!(app.bead_detail, None);
+    }
+
+    #[test]
+    fn a_read_for_a_different_bead_is_dropped() {
+        let mut app = App::default();
+        app.bead_detail = Some(BeadDetail {
+            bead: detail_bead(),
+            body: DetailBody::Reading,
+        });
+        app.finish_bead_read("cb-other", Ok(crate::model::BeadDetailFields::default()));
+        assert_eq!(app.bead_detail.as_ref().unwrap().body, DetailBody::Reading);
+    }
+
+    #[test]
+    fn a_failed_read_keeps_its_cause_for_the_log() {
+        let mut app = App::default();
+        app.bead_detail = Some(BeadDetail {
+            bead: detail_bead(),
+            body: DetailBody::Reading,
+        });
+        app.finish_bead_read(
+            "cb-41r",
+            Err(ReadError::Invalid { source: "bd".into(), message: "boom".into() }),
+        );
+        assert!(matches!(
+            app.bead_detail.as_ref().unwrap().body,
+            DetailBody::Failed(ref cause) if cause.contains("boom")
+        ));
+    }
+
+    #[test]
+    fn g_asks_for_the_pinned_bead_again_from_the_top() {
+        let mut app = App::default();
+        assert_eq!(app.restart_bead_read(), None, "g with nothing pinned asks nothing");
+        app.bead_detail = Some(BeadDetail {
+            bead: detail_bead(),
+            body: DetailBody::Ready(crate::model::BeadDetailFields::default()),
+        });
+        assert_eq!(app.restart_bead_read().as_deref(), Some("cb-41r"));
+        assert_eq!(app.bead_detail.as_ref().unwrap().body, DetailBody::Reading);
+    }
+
+    /// Indentation is what a design field is made of - nested bullets and code blocks - and a
+    /// `split(' ')` wrapper dropped every leading empty token, making `  - b` a sibling of the
+    /// bullet above it.
+    #[test]
+    fn an_indented_body_line_keeps_its_indentation() {
+        let lines = body_lines("```\n    let x = 1;\n- a\n  - b\n```", 40);
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|line| match line {
+                BeadBodyLine::Body { text, .. } => text.clone(),
+                other => panic!("not a body line: {other:?}"),
+            })
+            .collect();
+        assert_eq!(texts, vec!["```", "    let x = 1;", "- a", "  - b", "```"]);
+    }
+
+    #[test]
+    fn an_indented_line_that_wraps_keeps_the_indent_on_its_first_piece() {
+        let lines = wrap_cells("    a bb ccc dddd", 8);
+        assert_eq!(lines.first().map(String::as_str), Some("    a bb"));
+        for line in &lines {
+            assert!(UnicodeWidthStr::width(line.as_str()) <= 8, "{line:?}");
+        }
     }
 }

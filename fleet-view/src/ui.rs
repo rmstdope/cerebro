@@ -158,7 +158,8 @@ pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
         split(area, fleet_lines.len(), work_content_lines(app, now, area));
     let work_inner_width = (work_rect.width as usize).saturating_sub(2);
     let work_lines = work_document(app, now, work_inner_width);
-    let session_lines = session_document(app);
+    let session_lines =
+        session_document(app, (session_rect.width as usize).saturating_sub(2));
     let (fleet_viewport, _) = pane_geometry(fleet_rect, fleet_lines.len());
     let (work_viewport, _) = pane_geometry(work_rect, work_lines.len());
     let (session_viewport, _) = pane_geometry(session_rect, session_lines.len());
@@ -340,7 +341,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     );
 
     let session_focused = app.focus == PaneFocus::Session;
-    let session_lines = session_document(app);
+    let session_lines =
+        session_document(app, (session_rect.width as usize).saturating_sub(2));
     // RED is this screen's spelling for a thing that went wrong, and a refused launch is the one
     // Session state that is one.
     let session_border =
@@ -645,7 +647,9 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     // and a hint the terminal has cut in half is worse than a shorter hint that fits. What is left
     // when it shortens is the two keys a navigator cannot guess from the screen: refresh and quit.
     let used: usize = spans.iter().map(|span| span.content.width()).sum();
-    let mut keys = lifecycle_hint(&app.supervision).map(|k| format!(" | {k}")).unwrap_or_default();
+    let lifecycle_keys =
+        lifecycle_hint(&app.supervision).map(|k| format!(" | {k}")).unwrap_or_default();
+    let mut keys = lifecycle_keys.clone();
     // Whatever `lifecycle_hint` returned, including `None` on a read-only view: acting on a sweep
     // finding writes to the shared board, which is deliberately outside the supervision lease.
     // Only while there IS a finding - on the ordinary day the hint is exactly what it was.
@@ -656,7 +660,9 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     // shared board rather than to this checkout's sessions, so both are shown on a read-only
     // view. Each only while the cursor is on a row that key acts on.
     match &app.work_cursor {
-        Some(app::WorkCursor::Bead(_)) => keys.push_str(" | 0-4/+/-/u priority"),
+        // cb-41r rides beside the priority keys, by the same rule: only while the cursor is on
+        // the row `Enter` acts on.
+        Some(app::WorkCursor::Bead(_)) => keys.push_str(" | 0-4/+/-/u priority | Enter bead"),
         Some(app::WorkCursor::More(_)) => keys.push_str(" | Enter show all"),
         _ => {}
     }
@@ -671,12 +677,19 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
         " | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move{keys} | {refresh_key} | q/Esc/Ctrl-C quit"
     );
     // Cells, not chars: `·` and the arrows are one cell each here, but the rule is the measure.
+    // The lifecycle keys survive the first shortening and the movement hints do not (Q7): the
+    // keys that change the fleet outlast the keys that move around it. And when even that does
+    // not fit, the cursor clauses go too - the rule this shortening exists for is that refresh
+    // and quit, the two keys a navigator cannot guess from the screen, are never the ones cut.
+    // cb-41r's `Enter bead` is what made a hundred-column header overflow the second step.
+    let shortened = format!("{keys} | {refresh_key} | q/Esc/Ctrl-C quit");
+    let bare = format!("{lifecycle_keys} | {refresh_key} | q/Esc/Ctrl-C quit");
     let hints = if used + full.width() <= width as usize {
         full
+    } else if used + shortened.width() <= width as usize {
+        shortened
     } else {
-        // The lifecycle keys survive the shortening and the movement hints do not (Q7): the keys
-        // that change the fleet outlast the keys that move around it.
-        format!("{keys} | {refresh_key} | q/Esc/Ctrl-C quit")
+        bare
     };
     spans.push(Span::styled(hints, dim()));
     Line::from(spans)
@@ -710,6 +723,19 @@ fn plain_title_style(focused: bool) -> Style {
 fn session_title(app: &App, focused: bool) -> Line<'static> {
     let name = app.selected.clone().unwrap_or_else(|| "Session".to_string());
     let style = plain_title_style(focused);
+    // A pinned bead is what the pane is drawing, whatever the session behind it is doing.
+    if let Some(detail) = &app.bead_detail {
+        return Line::from(vec![
+            Span::styled(
+                format!("{} — {}", detail.bead.id, app::bead_title(&detail.bead)),
+                style,
+            ),
+            Span::styled(
+                format!(" {}", if focused { "[Shift-Tab leaves]" } else { "[Tab to focus]" }),
+                dim(),
+            ),
+        ]);
+    }
     let (title, hint) = match &app.session.view {
         SessionView::None => (name, None),
         SessionView::Live { .. } | SessionView::Starting => (
@@ -776,8 +802,37 @@ fn live_title(app: &App, name: &str) -> String {
 /// whatever is selected, and offering `s` there would be a key that does nothing. The wording
 /// names nobody deliberately (the navigator's choice) - naming Emacs would need a second spelling
 /// for the case where another Ratatui process holds the lease.
-fn session_document(app: &App) -> std::borrow::Cow<'_, [Line<'static>]> {
+fn session_document(app: &App, width: usize) -> std::borrow::Cow<'_, [Line<'static>]> {
     let line = |text: &str| Line::from(Span::styled(text.to_string(), dim()));
+    // The pinned bead, wrapped in `app::bead_body` - never by a `.wrap` here, which
+    // `render_bordered_pane` deliberately does not set.
+    if let Some(detail) = &app.bead_detail {
+        return std::borrow::Cow::Owned(
+            app::bead_body(detail, width)
+                .into_iter()
+                .map(|body_line| match body_line {
+                    app::BeadBodyLine::Title(text) => Line::from(Span::styled(
+                        text,
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    app::BeadBodyLine::Fields(text) | app::BeadBodyLine::Dim(text) => {
+                        Line::from(Span::styled(text, dim()))
+                    }
+                    app::BeadBodyLine::Blank => Line::from(Span::raw(String::new())),
+                    app::BeadBodyLine::Body { text, heading: true } => Line::from(Span::styled(
+                        text,
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    app::BeadBodyLine::Body { text, heading: false } => {
+                        Line::from(Span::raw(text))
+                    }
+                    app::BeadBodyLine::Error(text) => {
+                        Line::from(Span::styled(text, Style::default().fg(RED)))
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
     match &app.session.view {
         SessionView::Live { lines, .. } => return std::borrow::Cow::Borrowed(lines),
         SessionView::Ended { lines, .. } => return std::borrow::Cow::Borrowed(lines.as_slice()),
@@ -3848,5 +3903,132 @@ mod tests {
         app.work_cursor = Some(app::WorkCursor::Bead("cb-001".into()));
         let header = lines(&render(&app, 140, 40))[0].clone();
         assert!(!header.contains("Enter show all"), "{header}");
+    }
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    // --- the pinned bead in the Session pane (cb-41r) ------------------------------------------
+
+    fn pinned_app() -> App {
+        let mut app = work_app(WorkBuckets {
+            claimed: vec![bead("cb-41r", Some(2), "Enter on a bead opens it")],
+            ..WorkBuckets::default()
+        });
+        app.selected = Some("Rogue".to_string());
+        app.focus = PaneFocus::Work;
+        while !matches!(app.work_cursor, Some(app::WorkCursor::Bead(_))) {
+            app.on_key(
+                KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+                10,
+                at(86_400),
+            );
+        }
+        app
+    }
+
+    #[test]
+    fn the_session_pane_draws_a_pinned_bead() {
+        let mut app = pinned_app();
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, at(86_400));
+        assert_eq!(app.focus, PaneFocus::Session);
+
+        let rendered = lines(&render(&app, 140, 30));
+        assert!(
+            rendered.iter().any(|l| l.contains("cb-41r — P2 feature")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|l| l.contains("[Shift-Tab leaves]")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|l| l.contains("Enter on a bead opens it")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|l| l.contains("open · feature · P2")),
+            "the fields line: {rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|l| l.contains("Reading cb-41r…")),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn a_pinned_bead_keeps_the_header_line() {
+        let mut app = pinned_app();
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, at(86_400));
+        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+
+        let rendered = lines(&render(&app, 140, 30));
+        assert!(
+            !rendered[0].contains("has the keyboard"),
+            "the child is invisible, so it does not hold the keyboard: {:?}",
+            rendered[0]
+        );
+        assert!(rendered[0].contains("Tab/Shift-Tab pane"), "{:?}", rendered[0]);
+    }
+
+    #[test]
+    fn the_header_offers_enter_bead_only_on_a_bead_row_under_work_focus() {
+        let mut app = work_app(WorkBuckets {
+            claimed: vec![bead("cb-41r", Some(2), "Enter on a bead opens it")],
+            unplanned: (1..=12)
+                .map(|n| bead(&format!("cb-{n:02}"), Some(4), "backlog"))
+                .collect(),
+            ..WorkBuckets::default()
+        });
+        app.selected = Some("Rogue".to_string());
+        app.focus = PaneFocus::Work;
+        while !matches!(app.work_cursor, Some(app::WorkCursor::Bead(_))) {
+            app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, at(86_400));
+        }
+        let on_bead = lines(&render(&app, 160, 30));
+        assert!(on_bead[0].contains("0-4/+/-/u priority"), "{:?}", on_bead[0]);
+        assert!(on_bead[0].contains("Enter bead"), "{:?}", on_bead[0]);
+
+        while !matches!(app.work_cursor, Some(app::WorkCursor::More(_))) {
+            app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, at(86_400));
+        }
+        let on_more = lines(&render(&app, 160, 30));
+        assert!(on_more[0].contains("Enter show all"), "{:?}", on_more[0]);
+        assert!(!on_more[0].contains("Enter bead"), "{:?}", on_more[0]);
+
+        app.focus = PaneFocus::Fleet;
+        let on_fleet = lines(&render(&app, 160, 30));
+        assert!(!on_fleet[0].contains("Enter bead"), "{:?}", on_fleet[0]);
+    }
+
+    /// The third shortening step: when even the shortened hints do not fit, the cursor clauses go
+    /// too and the lifecycle keys, refresh and quit survive — the rule the shortening states.
+    /// cb-41r's `Enter bead` is what made a hundred-column header need it.
+    #[test]
+    fn the_cursor_clauses_are_the_last_thing_to_give_way() {
+        let mut app = work_app(WorkBuckets {
+            claimed: vec![bead("cb-41r", Some(2), "Enter on a bead opens it")],
+            ..WorkBuckets::default()
+        });
+        app.selected = Some("Rogue".to_string());
+        app.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(
+            SupervisorKind::Tui,
+        )));
+        app.focus = PaneFocus::Work;
+        while !matches!(app.work_cursor, Some(app::WorkCursor::Bead(_))) {
+            app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, at(86_400));
+        }
+
+        // Wide: everything, the cursor clauses included.
+        let wide = lines(&render(&app, 200, 20));
+        assert!(wide[0].contains("Enter bead"), "{:?}", wide[0]);
+        assert!(wide[0].contains("Tab/Shift-Tab pane"), "{:?}", wide[0]);
+
+        // Narrow enough that even the shortened form will not fit: the clauses go, and the two
+        // keys a navigator cannot guess from the screen stay.
+        let narrow = lines(&render(&app, 100, 20));
+        assert!(!narrow[0].contains("Enter bead"), "{:?}", narrow[0]);
+        assert!(!narrow[0].contains("0-4/+/-/u priority"), "{:?}", narrow[0]);
+        assert!(narrow[0].contains("g refresh"), "{:?}", narrow[0]);
+        assert!(narrow[0].contains("q/Esc/Ctrl-C quit"), "{:?}", narrow[0]);
     }
 }

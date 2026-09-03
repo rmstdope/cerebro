@@ -39,7 +39,7 @@ use ratatui::layout::Rect;
 use ratatui::Terminal;
 
 use cerebro_tui::app::{
-    self, App, AppAction, FleetWorker, GhWorker, HistoryWorker, SupervisorWorker, SweepWorker,
+    self, App, AppAction, DetailWorker, FleetWorker, GhWorker, HistoryWorker, SupervisorWorker, SweepWorker,
     WorkWorker,
 };
 use cerebro_tui::lifecycle;
@@ -307,6 +307,9 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     let work_worker = WorkWorker::spawn(paths.clone(), Programs::default(), commands.clone());
     // A fourth thread for `gh`, on its own ten-minute cadence: three network calls behind a
     // rate limit would otherwise freeze the screen, keys and all (cb-kcs.4.3).
+    // A seventh thread for one bead's `bd show`, spawned per `Enter` rather than on a cadence
+    // (cb-41r).
+    let detail_worker = DetailWorker::spawn(paths.clone(), Programs::default(), commands.clone());
     let gh_worker = GhWorker::spawn(paths.clone(), Programs::default(), commands.clone());
     // A fifth thread for the six sweep scripts, on their own ten-minute cadence: three of them
     // fetch from origin (cb-kcs.5.1).
@@ -377,6 +380,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &mut app,
         &fleet_worker,
         &work_worker,
+        &detail_worker,
         &gh_worker,
         &sweep_worker,
         &history_worker,
@@ -1105,6 +1109,7 @@ fn run<B: Backend, E: Events>(
     app: &mut App,
     fleet_worker: &FleetWorker,
     work_worker: &WorkWorker,
+    detail_worker: &DetailWorker,
     gh_worker: &GhWorker,
     sweep_worker: &SweepWorker,
     history_worker: &HistoryWorker,
@@ -1216,6 +1221,21 @@ where
             }
             app.finish_work_refresh(result, clock());
         }
+        // The pinned bead fails apart from every pane: a `bd show` nobody could run says nothing
+        // about the fleet or the board, and its only sign on screen is the red line in its own
+        // pane. A late answer names its own bead, which is what lets `App` drop one for a bead
+        // the navigator has since unpinned.
+        // The answer names its own bead whether it succeeded or failed, so a queued read that
+        // fails can never report about the bead pinned by the time it answers.
+        if let Some(Ok((id, answer))) = detail_worker.poll() {
+            match &answer {
+                Ok(_) => logger.clear_error("bead"),
+                Err(error) => {
+                    logger.error(&log::reader_context("bead", error), &error.to_string(), clock())
+                }
+            }
+            app.finish_bead_read(&id, answer);
+        }
         // The `gh` answer draws nothing; it is polled for the same reason it is read at all, so
         // that the two cadence triggers see a current one.
         if let Some(result) = gh_worker.poll() {
@@ -1282,7 +1302,7 @@ where
             controller.requested(Instant::now());
         }
 
-        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, gh_worker, sweep_worker, history_worker, &clock);
+        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, detail_worker, gh_worker, sweep_worker, history_worker, &clock);
 
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
@@ -1299,7 +1319,7 @@ where
                     if action == AppAction::RefreshAll && supervisor_worker.request() {
                         controller.requested(Instant::now());
                     }
-                    dispatch(action, app, fleet_worker, work_worker, gh_worker, sweep_worker, history_worker, &clock);
+                    dispatch(action, app, fleet_worker, work_worker, detail_worker, gh_worker, sweep_worker, history_worker, &clock);
                 }
                 // Forwarded as a PASTE (Q3), so an agent composer that treats a bare newline as
                 // submit receives four pasted lines as one block rather than submitting the
@@ -1595,7 +1615,11 @@ fn lifecycle_key(
         stop_flag: lifecycle::stop_flag_set(paths, &name),
     };
     match key {
-        's' => match lifecycle::start_outcome(situation) {
+        's' => {
+            // Whatever the outcome: the pane is the agent's again, which is the rule the
+            // navigator chose. `f` and `k` leave a pinned bead alone.
+            app.bead_detail = None;
+            match lifecycle::start_outcome(situation) {
             lifecycle::StartOutcome::Launch { clears_flag } => {
                 match lifecycle::start(host, paths, &name, clears_flag) {
                     Ok(line) => {
@@ -1627,7 +1651,8 @@ fn lifecycle_key(
                 AppAction::None
             }
             lifecycle::StartOutcome::Ignore => AppAction::None,
-        },
+            }
+        }
         'f' => {
             let (result, line) = match lifecycle::finish_outcome(situation) {
                 lifecycle::FinishOutcome::Write => (
@@ -1683,6 +1708,7 @@ fn dispatch(
     app: &mut App,
     fleet_worker: &FleetWorker,
     work_worker: &WorkWorker,
+    detail_worker: &DetailWorker,
     gh_worker: &GhWorker,
     sweep_worker: &SweepWorker,
     history_worker: &HistoryWorker,
@@ -1694,6 +1720,20 @@ fn dispatch(
         && !fleet_worker.request()
     {
         app.finish_refresh(Err(worker_gone("fleet reader")), clock());
+    }
+    // The pinned bead, when there is one: `ReadBead` is what `Enter` asked for, and `g` re-reads
+    // it from the top. `g` with nothing pinned spawns nothing at all.
+    if matches!(action, AppAction::ReadBead | AppAction::RefreshAll) {
+        let id = if matches!(action, AppAction::RefreshAll) {
+            app.restart_bead_read()
+        } else {
+            app.bead_detail.as_ref().map(|detail| detail.bead.id.clone())
+        };
+        if let Some(id) = id {
+            if !detail_worker.request_with(id.clone()) {
+                app.finish_bead_read(&id, Err(worker_gone("bead reader")));
+            }
+        }
     }
     if matches!(action, AppAction::RefreshWork | AppAction::RefreshAll)
         && app.begin_work_refresh(now, clock())
@@ -2129,7 +2169,7 @@ mod main_tests {
         ]);
         // `Err` is the ordinary ending: the quit is refused, so nothing ends the loop but the
         // event source running out.
-        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
@@ -2177,7 +2217,7 @@ mod main_tests {
         let mut app = App::new();
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![ctrl(KeyCode::Char('c'))]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now)
@@ -2212,7 +2252,7 @@ mod main_tests {
 
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![key(KeyCode::Down), key(KeyCode::Char('q'))]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
@@ -2233,7 +2273,7 @@ mod main_tests {
             key(KeyCode::BackTab),
             key(KeyCode::Char('q')),
         ]);
-        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
@@ -2246,7 +2286,7 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events =
             ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now)
@@ -2263,7 +2303,7 @@ mod main_tests {
         let mut events =
             ReplayedEvents::stopping(vec![key(KeyCode::BackTab), key(KeyCode::Char('q'))]);
         let (worker_handle, mut controller) = supervision();
-        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now);
@@ -2311,6 +2351,11 @@ mod main_tests {
     fn work_worker() -> WorkWorker {
         let (paths, programs) = nowhere();
         WorkWorker::spawn(paths, programs, Arc::new(RealCommands))
+    }
+
+    fn detail_worker() -> DetailWorker {
+        let (paths, programs) = nowhere();
+        DetailWorker::spawn(paths, programs, Arc::new(RealCommands))
     }
 
     fn gh_worker() -> GhWorker {
@@ -2457,7 +2502,7 @@ mod main_tests {
                 &mut ScriptedEvents { poll_fails: false, read_fails: false },
                 &mut app,
                 &worker(),
-                &work_worker(),
+                &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
                 &supervision().0,
@@ -2492,7 +2537,7 @@ mod main_tests {
                 &mut ScriptedEvents { poll_fails: true, read_fails: false },
                 &mut app,
                 &worker(),
-                &work_worker(),
+                &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
                 &supervision().0,
@@ -2528,7 +2573,7 @@ mod main_tests {
                 &mut ScriptedEvents { poll_fails: false, read_fails: true },
                 &mut app,
                 &worker(),
-                &work_worker(),
+                &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
                 &supervision().0,
@@ -2575,7 +2620,7 @@ mod main_tests {
                 &mut ScriptedEvents { poll_fails: false, read_fails: false },
                 &mut app,
                 &worker(),
-                &work_worker(),
+                &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
                 &supervision().0,
@@ -2628,7 +2673,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work, &gh_worker(), &sweep_worker(), &history_worker(),
+        run(&mut terminal, &mut events, &mut app, &worker(), &work, &detail_worker(), &gh_worker(), &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
@@ -2719,7 +2764,7 @@ mod main_tests {
         let expected_work_page = ui::metrics(&app, Utc::now(), area).work.viewport_lines;
         assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
@@ -2777,7 +2822,7 @@ mod main_tests {
             crossterm::event::KeyCode::Char('g'),
             crossterm::event::KeyCode::Char('q'),
         ]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
@@ -2816,7 +2861,7 @@ mod main_tests {
         let m = ui::metrics(&app, Utc::now(), area);
         let expected = m.session.content_lines.saturating_sub(m.session.viewport_lines);
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(),
+        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
@@ -2988,7 +3033,7 @@ mod main_tests {
         let mut events = QueuedEvents::events(keys);
         // `Err` is the ordinary ending here: the source stops the loop when the keys are spent.
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(),
+        let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(), &detail_worker(),
                 &gh_worker(),
                 &sweep_worker(), &history_worker(),
             &supervision().0, &mut supervision().1, host, &mut ledger, &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), paths,
@@ -4759,15 +4804,15 @@ mod main_tests {
         let clock = Utc::now;
         let (fleet, work, gh, sweeps) = (worker(), work_worker(), gh_worker(), sweep_worker());
 
-        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
         // The slot is claimed, so the second press is not stacked: whatever the reader answers,
         // only one request is in flight.
         assert!(!app.begin_gh_refresh(Instant::now()), "a request is already in flight");
-        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
 
         // A fleet-only refresh does not ask `gh` while its own ten-minute clock is unspent.
         app.finish_gh_refresh(Ok(cerebro_tui::model::GhSnapshot::default()), clock());
-        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
         assert!(
             app.begin_gh_refresh(Instant::now()),
             "the slot is free, so RefreshFleet asked nothing of gh"
@@ -5079,16 +5124,16 @@ mod main_tests {
         let clock = Utc::now;
         let (fleet, work, gh, sweeps) = (worker(), work_worker(), gh_worker(), sweep_worker());
 
-        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
         assert!(!app.begin_sweep_refresh(Instant::now()), "a request is already in flight");
         app.finish_sweep_refresh(Ok(Vec::new()), clock());
 
         // The ten-minute clock is unspent, so a fleet-only refresh does not re-run six scripts.
-        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
         assert!(!app.sweeps.refreshing, "the sweeps keep their own cadence");
 
         // And `x` asks for them alone, so a finding acted on leaves the section at once.
-        dispatch(AppAction::RefreshSweeps, &mut app, &fleet, &work, &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshSweeps, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
         assert!(app.sweeps.refreshing, "RefreshSweeps asks for the sweeps");
     }
 
@@ -5726,6 +5771,189 @@ mod main_tests {
         assert!(
             written.contains("\"owner\":\"tui\""),
             "the record names the new owner, not {written}"
+        );
+    }
+
+    // --- the pinned bead, in the running program (cb-41r) --------------------------------------
+
+    /// A `bd` that answers both the list and one bead's `show`.
+    fn bd_answering_a_bead() -> cerebro_tui::readers::testing::FakeCommands {
+        cerebro_tui::readers::testing::FakeCommands::new(|call| {
+            if call.args.iter().any(|arg| arg == "show") {
+                Ok(br#"[{"id":"cb-41r","description":"the description","design":"the design"}]"#
+                    .to_vec())
+            } else {
+                Ok(br#"[{"id":"cb-41r","title":"Enter on a bead opens it","status":"in_progress","issue_type":"feature","priority":2,"assignee":"Rogue"}]"#.to_vec())
+            }
+        })
+    }
+
+    fn app_with_a_bead_under_the_cursor() -> App {
+        let mut app = App::new();
+        let commands: Commands = Arc::new(bd_answering_a_bead());
+        let beads = cerebro_tui::readers::read_work(
+            &nowhere().0,
+            &Programs::default(),
+            commands.as_ref(),
+        );
+        app.finish_work_refresh(beads, Utc::now());
+        app.selected = Some("Rogue".to_string());
+        app
+    }
+
+    #[test]
+    fn a_pinned_bead_reaches_the_screen() {
+        let mut app = app_with_a_bead_under_the_cursor();
+        let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
+        let mut host = SessionHost::default();
+        let mut events = QueuedEvents::events(vec![
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Tab,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+        ]);
+        let detail = DetailWorker::spawn(
+            nowhere().0,
+            Programs::default(),
+            Arc::new(bd_answering_a_bead()),
+        );
+        let _ = run(
+            &mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail,
+            &gh_worker(), &sweep_worker(), &history_worker(),
+            &supervision().0, &mut supervision().1, &mut host,
+            &mut cerebro_tui::triggers::StartLedger::default(),
+            &mut cerebro_tui::lifecycle::TriageLedger::default(),
+            &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0,
+            &nowhere().1, &no_commands(), &std::collections::BTreeMap::new(), Utc::now,
+        );
+
+        assert!(app.bead_detail.is_some(), "Enter pinned the bead");
+        let screen: String = {
+            let buffer = terminal.backend().buffer().clone();
+            let area = buffer.area;
+            (0..area.height)
+                .map(|y| {
+                    (0..area.width)
+                        .map(|x| buffer.cell((x, y)).map(|c| c.symbol()).unwrap_or(" ").to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(screen.contains("cb-41r — P2 feature"), "{screen}");
+        assert!(screen.contains("Enter on a bead opens it"), "{screen}");
+    }
+
+    #[test]
+    fn pressing_s_drops_the_pinned_bead() {
+        let mut app = app_with_a_bead_under_the_cursor();
+        app.bead_detail = Some(cerebro_tui::app::BeadDetail {
+            bead: cerebro_tui::model::Bead {
+                id: "cb-41r".into(),
+                title: "Enter on a bead opens it".into(),
+                status: "open".into(),
+                issue_type: "feature".into(),
+                labels: Vec::new(),
+                priority: Some(2),
+                updated_at: None,
+                assignee: None,
+                metadata: serde_json::Value::Null,
+                external_ref: None,
+            },
+            body: cerebro_tui::app::DetailBody::Reading,
+        });
+        let mut host = SessionHost::default();
+        drive(
+            &mut app,
+            &mut host,
+            &nowhere().0,
+            vec![crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('s'),
+                crossterm::event::KeyModifiers::NONE,
+            )],
+        );
+        assert_eq!(app.bead_detail, None, "s hands the pane back to the agent");
+    }
+
+    /// `g` re-reads the pinned bead, and asks nothing at all when none is pinned.
+    #[test]
+    fn refresh_all_re_reads_only_a_pinned_bead() {
+        let fake = Arc::new(bd_answering_a_bead());
+        let detail = DetailWorker::spawn(nowhere().0, Programs::default(), fake.clone());
+        let mut app = App::new();
+
+        dispatch(AppAction::RefreshAll, &mut app, &worker(), &work_worker(), &detail,
+                 &gh_worker(), &sweep_worker(), &history_worker(), &Utc::now);
+        assert!(
+            !fake.calls().iter().any(|call| call.args.iter().any(|a| a == "show")),
+            "g with nothing pinned spawns no bd show"
+        );
+
+        app.bead_detail = Some(cerebro_tui::app::BeadDetail {
+            bead: cerebro_tui::model::Bead {
+                id: "cb-41r".into(),
+                title: "t".into(),
+                status: "open".into(),
+                issue_type: "feature".into(),
+                labels: Vec::new(),
+                priority: Some(2),
+                updated_at: None,
+                assignee: None,
+                metadata: serde_json::Value::Null,
+                external_ref: None,
+            },
+            body: cerebro_tui::app::DetailBody::Ready(Default::default()),
+        });
+        dispatch(AppAction::RefreshAll, &mut app, &worker(), &work_worker(), &detail,
+                 &gh_worker(), &sweep_worker(), &history_worker(), &Utc::now);
+        assert_eq!(
+            app.bead_detail.as_ref().unwrap().body,
+            cerebro_tui::app::DetailBody::Reading,
+            "and the pane says it is working"
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if fake.calls().iter().any(|call| call.args.iter().any(|a| a == "show")) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("g never asked for the pinned bead");
+    }
+
+    /// A queued read that fails must report about ITS bead, never the one pinned by the time it
+    /// answers: `request_with` is an unbounded channel, so two `Enter`s queue two reads.
+    #[test]
+    fn a_failed_read_names_its_own_bead() {
+        let mut app = App::new();
+        app.bead_detail = Some(cerebro_tui::app::BeadDetail {
+            bead: cerebro_tui::model::Bead {
+                id: "cb-b".into(),
+                title: "the second bead".into(),
+                status: "open".into(),
+                issue_type: "feature".into(),
+                labels: Vec::new(),
+                priority: Some(2),
+                updated_at: None,
+                assignee: None,
+                metadata: serde_json::Value::Null,
+                external_ref: None,
+            },
+            body: cerebro_tui::app::DetailBody::Reading,
+        });
+        // cb-a's read failing after cb-b was pinned leaves cb-b's pane alone.
+        app.finish_bead_read(
+            "cb-a",
+            Err(ReadError::Invalid { source: "bd".into(), message: "boom".into() }),
+        );
+        assert_eq!(
+            app.bead_detail.as_ref().unwrap().body,
+            cerebro_tui::app::DetailBody::Reading,
+            "the failure belonged to a bead nobody is reading"
         );
     }
 }

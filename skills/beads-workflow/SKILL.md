@@ -79,6 +79,7 @@ holds nothing but a label.
 | being implemented | in_progress, implementer holds the lease | the builder pickup above |
 | needs the user | open, unassigned, `human`, **`planned` removed** | either role, on anything it must not decide |
 | parked on a UI answer | open, unassigned, `needs-ui-decision` **and** `human` | planner, when the user is away |
+| parked, and asked about already | as either row above, plus `pause:kept` | orchestrator, when the user was asked and left it parked |
 
 A **split family is owned by one planner**, marked `planner:<name>` on the parent rather than on any
 child: the children share one design, so a second planner taking one of them writes half a family
@@ -130,6 +131,14 @@ adds `plan:revise`; only the verifier sets that.
 **A planner escalating has no claim to release**, so it runs the first and third commands and
 `--remove-label planning:<its own name>` in place of the second. `bd unclaim` on a bead you never claimed is not
 harmless bookkeeping — it is a claim you should not have had in the first place.
+
+`pause:kept` is the orchestrator's own mark and nobody else writes or reads it. It means *this pause
+was put to the user and they left it parked*, so the next sweep does not ask again — the way
+`triage:declined` stops a P4 being re-ranked every session. It never suppresses **acting**: a bead
+carrying it whose blockers have all since closed is still unparked. It needs no plumbing anywhere,
+because such a bead always carries `human` too and every candidate query already excludes that. It
+goes when the orchestrator unparks the bead, or when the user takes it off by hand to be asked
+again.
 
 A bead parked on a UI answer carries **both** `needs-ui-decision` and `human`, for the same reason:
 `bd human list` lists the `human` label and nothing else, so a bead with only the first sits in

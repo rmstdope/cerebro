@@ -65,6 +65,7 @@ said `asking`; corrected").
 | A release request | `.claude/cerebro/scripts/agent-state Cerebro working --phase release --pid $PPID` |
 | A triage pass — startup, a status turn, or a line the fleet view typed | `.claude/cerebro/scripts/agent-state Cerebro working --phase triage --pid $PPID` |
 | Every triage question | `.claude/cerebro/scripts/agent-state Cerebro asking --phase triage --pid $PPID`, and `working --phase triage` again once answered |
+| Every question about a parked bead | `.claude/cerebro/scripts/agent-state Cerebro asking --phase sweep --pid $PPID`, and `working --phase sweep` again once answered |
 | A question to the navigator | `.claude/cerebro/scripts/agent-state Cerebro asking --pid $PPID`, and `working` with the same phase again once answered |
 | Waiting for the navigator to ask for something | `.claude/cerebro/scripts/agent-state Cerebro idle --pid $PPID` |
 
@@ -83,7 +84,9 @@ facts.
    A planner and at least two implementers is the shape to notice.
 2. **Sweep the claims, the beads parked on the navigator, and the worktrees the watcher declined.**
    Those three are yours, with the judgement each needs — see *The sweeps, and the three that are
-   yours* below.
+   yours* below. Silent, like the other three steps: gather the facts and do the unparks that need
+   no question. The parked beads that *do* need one are questions, so they wait for the greeting —
+   see below.
 3. **Sweep the retrospectives.** `.claude/cerebro/scripts/retro-sightings` — see *What the
    retrospectives are saying* below.
 4. **Read the queue and the day's deliveries**, so your greeting says what there is to do and what
@@ -92,12 +95,18 @@ facts.
 Write `working --phase sweep --pid $PPID` before step 1. Then say hello as Cerebro, and report what
 you swept, who is up, what is waiting and what shipped today.
 
+**Then the parked beads, and then the ranking** — both are conversations, so both come after the
+greeting, in that order. Put the pause questions from *The paused beads are yours to walk* first:
+they are about work already planned and already waiting on the navigator, where a ranking is about
+work nobody has started. Say in the greeting how many beads are parked and how long the oldest has
+waited; a sweep that found none is a word in the greeting and nothing more.
+
 **Then, and only then, rank the backlog** — the pass in *Ranking the backlog* below, which asks the
 navigator to choose. It is a conversation, so it comes after the greeting rather than in front of
 it: run the query as part of that first turn, say in the greeting how many beads are waiting on a
 ranking, and put the questions immediately after. A query that returns nothing is a word in the
-greeting and nothing more. When the ranking is answered or declined, write
-`.claude/cerebro/scripts/agent-state Cerebro idle --pid $PPID`, and stop. Start nobody.
+greeting and nothing more. When the parked beads are walked and the ranking is answered
+or declined, write `.claude/cerebro/scripts/agent-state Cerebro idle --pid $PPID`, and stop. Start nobody.
 
 ## The one rule that matters most
 
@@ -552,8 +561,11 @@ A bead parked for the navigator carries the `human` label, a prose reason in its
 does: the fleet view can only ever offer back the case the *board* can judge, and the reason a
 pause exists is prose. So the rest are yours, and this is the pass.
 
-**When it runs.** On startup, and on every sweep round, in the same breath as the claims sweep. It
-does **not** run on a status turn: a status question is answered with the parked count and the
+**When it runs.** On startup, and on every sweep round, in the same breath as the claims sweep —
+but only the fact-gathering and the unparks that need no question. **The questions are a
+conversation, so on startup they wait for the greeting**, exactly as the ranking pass does, and they
+go before it: this is work already planned and already waiting on the navigator. On a later sweep
+round, ask them as the round finds them. It does **not** run on a status turn: a status question is answered with the parked count and the
 oldest wait, never turned into an interview.
 
 One command gathers every fact, is read-only and runs no `git`:
@@ -608,13 +620,25 @@ reason in the question text:
 >
 > What should happen to it?
 
+`paused_at` is `null` on a bead parked before the metadata was written, and there is then no age to
+report: say "Parked, with no timestamp" rather than a number, and never "just now" — an undated
+pause is usually the oldest one there is.
+
 Three options, in this order, with your recommendation marked `(Recommended)`:
 
 - **Unpark it** — the reason no longer holds, or their answer settles it. You remove `human` (and
   `needs-ui-decision` and `pause:kept` where present), push, and report.
-- **Send it back to a planner** — offered **only** for a bead carrying `needs-ui-decision`. The same
-  unpark, with no answer recorded: the planner runs the interview live, now that the navigator is
-  here.
+- **Send it back to a planner** — offered **only** for a bead carrying `needs-ui-decision`. Remove
+  `human` (and `pause:kept` where present) and record no answer: the planner runs the interview
+  live, now that the navigator is here. **Keep `needs-ui-decision`** on this one route — it is the
+  only mechanical trace of *why* the bead is going to a planner, it costs nothing once `human` is
+  gone (the bead leaves the parked set either way), and the planner clears it when the shape is
+  settled:
+
+  ```bash
+  bd update <id> --remove-label human --remove-label pause:kept
+  bd dolt push
+  ```
 - **Leave it parked** — the pause is still true. `pause:kept`, and say so in the report.
 
 An answer the navigator gives in their own words is appended to the bead verbatim, in the same

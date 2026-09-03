@@ -937,6 +937,13 @@ bd dolt push
 *Waiting on you* section reads it and says how long the bead has been sitting there, and a bead
 parked without it reads as parked just now, for ever (cb-wfb).
 
+**`needs-ui-decision` is yours to take off, and nothing else ever does.** A bead reaching you with
+that label — parked by you or by another planner, or handed back by the orchestrator with `human`
+already removed because the navigator is here to be interviewed — carries a shape question that is
+still open. Interview them, record the answer under *Agreed with the navigator*, and remove the
+label in the same `bd update` that swaps your `planning:` for `planned`. A bead planned with it
+still on reads as waiting on a UI answer for the rest of its life.
+
 Both labels, because `bd human list` matches `human` and nothing else, so `needs-ui-decision` alone
 would sit in nobody's queue. `--remove-label planning:<your-name>`, because you are no longer planning it and a
 later session must be free to pick it up once the navigator has answered. And the push, or no other

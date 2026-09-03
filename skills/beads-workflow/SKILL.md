@@ -145,6 +145,12 @@ A bead parked on a UI answer carries **both** `needs-ui-decision` and `human`, f
 nobody's queue at all. With both, `bd human list` is the user's one queue across every agent and
 every terminal.
 
+There is one deliberate exception, and it is the orchestrator's: when the user, asked about a parked
+bead, sends it back to a planner to be interviewed live, `human` comes off and `needs-ui-decision`
+stays. Nobody is waiting on the user any more — a planner is — so the bead belongs in the planners'
+queue rather than in `bd human list`, and the label is what tells that planner which question it is
+being handed.
+
 ## Claiming, and not colliding
 
 Several agents work this backlog at once, so a claim is the only thing keeping two of them off the

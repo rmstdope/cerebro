@@ -720,12 +720,13 @@ pub struct WorkBuckets {
     pub linked: Vec<LinkedBead>,
 }
 
-/// The issue types that are bookkeeping rather than work. The `epic` arm is CONDITIONAL - see
-/// `is_bookkeeping`, which skips an epic exactly while it has a direct child (cb-hzl). The list
-/// itself is unchanged, and `emacs/cerebro.el`'s `cerebro-skipped-issue-types` holds the same two
-/// words.
-#[allow(dead_code)]
+/// The issue types that are bookkeeping rather than work. Every one is skipped outright EXCEPT
+/// `epic`, whose arm is conditional - see `is_bookkeeping`, which skips an epic exactly while it
+/// has a direct child (cb-hzl). `emacs/cerebro.el`'s `cerebro-skipped-issue-types` holds the same
+/// two words, and `cerebro-test/the-panel-skips-exactly-what-work-beads-excludes` holds that list
+/// to `scripts/work-beads --print-excluded-types`.
 const SKIPPED_ISSUE_TYPES: [&str; 2] = ["epic", "event"];
+const CONDITIONAL_ISSUE_TYPE: &str = "epic";
 const PAUSED_LABEL: &str = "human";
 const PLANNED_LABEL: &str = "planned";
 const PLANNING_LABEL: &str = "planning";
@@ -768,11 +769,9 @@ fn parent_ids(beads: &[Bead]) -> BTreeSet<String> {
 /// when its last child does. A childless epic is bookkeeping over nothing - nobody has broken it
 /// down yet, so it is work, and it partitions like any other bead at any status (cb-hzl).
 fn is_bookkeeping(bead: &Bead, parents: &BTreeSet<String>) -> bool {
-    match bead.issue_type.as_str() {
-        "event" => true,
-        "epic" => parents.contains(&bead.id),
-        _ => false,
-    }
+    let issue_type = bead.issue_type.as_str();
+    SKIPPED_ISSUE_TYPES.contains(&issue_type)
+        && (issue_type != CONDITIONAL_ISSUE_TYPE || parents.contains(&bead.id))
 }
 
 /// Split BEADS into the fleet panel's six buckets.

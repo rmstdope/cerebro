@@ -23,8 +23,16 @@
 #      bookkeeping over nothing: nobody has broken it down, so whatever it delivered it delivered
 #      itself, and it is real work at every status (cb-hzl). That question is answered per epic
 #      with `bd children`, which is authoritative - the id-prefix rule the two fleet views use
-#      cannot be used here, because this list is scoped to the status the caller named and a child
-#      outside it would make its parent look childless.
+#      cannot be used here ALONE, because this list is scoped to the status the caller named and a
+#      child outside it would make its parent look childless. It is used as a PREFILTER (below),
+#      which only ever saves a call.
+#
+#      So the two answers can part, and THIS ONE WINS where they do: the views read every status bd
+#      has, so their id rule is complete for them, while a status-scoped list is not - and being
+#      wrong here shows a verifier an epic with nothing to verify, for ever. A closed epic whose
+#      child is outside the caller's window is excluded here and may still reach the panel's
+#      `Merged, unverified`; that is the safe direction, and it is why this script asks bd rather
+#      than copying the views' rule.
 #   3. `bd set-state <id> <k>=<v>` writes an **event bead** as its audit record: `issue_type:
 #      "event"`, closed, carrying the very labels these queries key on. Left in, each pass finds
 #      the previous pass's event beads, acts on them, and writes more - a chain that grows one link
@@ -119,24 +127,43 @@ if ! out="$(printf '%s' "$raw" | jq --arg excluded "$excluded_csv" \
   exit 1
 fi
 
-# An epic is work exactly while nothing is under it. Epics are rare in any one status window, so
-# this is a call or none. `if ... then ... fi` inside the loop body rather than `[[ ]] && ...`: the
-# last statement of a loop body is that loop's status under `set -e` (.cerebro/traps.md). A string
-# accumulator rather than a bash array, because `"${arr[@]}"` on an empty array is an unbound
-# variable error under `set -u` in the bash 3.2 macOS ships.
+# An epic is work exactly while nothing is under it, and that is asked in two steps so the number
+# of `bd` calls stays near zero on the hot path: `scripts/planner-buffer` runs this on every planner
+# pass, and this board carries eleven open epics - twelve serial calls each contending with the Dolt
+# traffic cb-boc already records timing out (~10x a day) is not a cost worth paying to answer a
+# question the list itself usually settles.
+#
+#   1. The PREFILTER: any bead in this list whose id is `<epic>.<n>` proves that epic has a child.
+#      Sound in one direction only, which is the direction that saves the call - a split epic whose
+#      children share the caller's status window (the ordinary case) costs nothing.
+#   2. `bd children`, for the epics the prefilter could not settle. That is the authoritative
+#      answer, and it is needed because this list is scoped to the status the caller named: a child
+#      outside that window is simply not in it, so a prefix scan ALONE would call a parented epic
+#      childless.
+#
+# `if ... then ... fi` inside the loop body rather than `[[ ]] && ...`: the last statement of a loop
+# body is that loop's status under `set -e` (.cerebro/traps.md). A string accumulator rather than a
+# bash array, because `"${arr[@]}"` on an empty array is an unbound variable error under `set -u`
+# in the bash 3.2 macOS ships.
+prefiltered="$(printf '%s' "$out" | jq -r '[.[] | .id | select(test("\\.")) | sub("\\.[^.]*$"; "")] | unique | .[]')"
+
 parented=""
 while IFS= read -r epic_id; do
   if [[ -n "$epic_id" ]]; then
-    if ! children="$(bd -C "$repo_root" children "$epic_id" --json)"; then
-      echo "work-beads: bd children failed for $epic_id" >&2
-      exit 1
-    fi
-    if ! count="$(printf '%s' "$children" | jq 'length' 2>/dev/null)"; then
-      echo "work-beads: bd children printed something that is not JSON for $epic_id" >&2
-      exit 1
-    fi
-    if [[ "$count" -gt 0 ]]; then
+    if printf '%s\n' "$prefiltered" | grep -qxF "$epic_id"; then
       parented="$parented$epic_id"$'\n'
+    else
+      if ! children="$(bd -C "$repo_root" children "$epic_id" --json)"; then
+        echo "work-beads: bd children failed for $epic_id" >&2
+        exit 1
+      fi
+      if ! count="$(printf '%s' "$children" | jq 'length' 2>/dev/null)"; then
+        echo "work-beads: bd children printed something that is not JSON for $epic_id" >&2
+        exit 1
+      fi
+      if [[ "$count" -gt 0 ]]; then
+        parented="$parented$epic_id"$'\n'
+      fi
     fi
   fi
 done < <(printf '%s' "$out" | jq -r '.[] | select(.issue_type == "epic") | .id')

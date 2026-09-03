@@ -5182,9 +5182,10 @@ other way sets its own here."
 
 (defcustom cerebro-skipped-issue-types '("epic" "event")
   "Issue types that are bookkeeping rather than work, and so never shown.
-The `epic' arm is CONDITIONAL - see `cerebro--bookkeeping-p', which skips
-an epic exactly while it has a direct child (cb-hzl).  The list itself is
-unchanged, and both words stay in it.
+Every type on the list is skipped outright EXCEPT `epic', whose arm is
+conditional: `cerebro--bookkeeping-p' skips one exactly while it has a
+direct child (cb-hzl).  Adding a type here still excludes it, which is what
+keeps this a setting rather than a comment.
 The shell has the same list, in `scripts/work-beads', which is where the
 reasoning is written down for every reader of closed beads (ah-cg1);
 `cerebro-test/the-panel-skips-exactly-what-work-beads-excludes' holds the
@@ -5281,10 +5282,13 @@ childless epic is bookkeeping over nothing - nobody has broken it down yet
 - so it is work, and it partitions like any other bead at any status
 \(cb-hzl\)."
   (let ((type (alist-get 'issue_type bead)))
-    (cond
-     ((equal type "event") t)
-     ((equal type "epic") (and (member (alist-get 'id bead) parent-ids) t))
-     (t nil))))
+    (and (member type cerebro-skipped-issue-types)
+         ;; `epic' is the ONE conditional arm.  Every other type on the list is
+         ;; skipped outright, so a navigator who adds one to the defcustom still
+         ;; gets it excluded - the list is what decides, and this qualifies it.
+         (or (not (equal type "epic"))
+             (and (member (alist-get 'id bead) parent-ids) t))
+         t)))
 
 (defun cerebro--epic-suffix (bead)
   "The right-aligned `epic' marker for BEAD, or nil.

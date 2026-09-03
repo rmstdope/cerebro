@@ -173,6 +173,20 @@ ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
 [ "$ids" = "tt-ord " ] || fail "a parented epic survived: got '$ids'"
 pass "keeps a childless epic and drops a parented one, asking bd children per epic"
 
+# --- the prefilter: a child in the list settles its parent with no bd call (cb-hzl) -------------
+#
+# `scripts/planner-buffer` runs this on every planner pass, so the epic loop may not cost one `bd`
+# call per epic on a board with eleven of them. Any bead whose id is `<epic>.<n>` proves that epic
+# has a child, and the prefilter is what turns the ordinary case - a split epic listed beside its
+# own children - into no call at all.
+set_stub '[{"id":"tt-split","issue_type":"epic"},{"id":"tt-split.1","issue_type":"task"},
+           {"id":"tt-ord","issue_type":"task"}]'
+set_stub_for children '[]'
+ids="$(run --status open | jq -r '.[].id' | tr '\n' ' ')"
+[ "$ids" = "tt-split.1 tt-ord " ] || fail "the prefilter did not drop the split epic: got '$ids'"
+[ ! -f "$stub_dir/argv.children" ] || fail "bd children was asked about an epic the list settled"
+pass "settles a split epic from the list itself, without asking bd children"
+
 # --- fails loudly when bd fails -----------------------------------------------------------------
 set_stub "$empty_json" 1
 if out="$(run --status closed 2>"$stub_dir/err")"; then

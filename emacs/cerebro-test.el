@@ -3751,6 +3751,24 @@ never does.  The Rust half answers identically, in
     (should-not (funcall ids 'being-planned))
     (should-not (funcall ids 'paused))))
 
+(ert-deftest cerebro-test/a-changed-skipped-issue-type-repartitions-the-panel ()
+  "`cerebro-skipped-issue-types' is a setting, not a comment: a type added to it
+is excluded, and one removed from it comes back.  cb-hzl made the `epic' arm
+conditional, and the list has to go on deciding the unconditional ones - a
+`cerebro--bookkeeping-p' that hardcoded its two words would leave a navigator's
+own value doing nothing at all, silently."
+  (let ((beads (list (cerebro-test--any "note" "open" nil "note")
+                     (cerebro-test--any "ord" "open"))))
+    (let ((cerebro-skipped-issue-types '("epic" "event" "note")))
+      (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                             (alist-get 'unplanned (cerebro--partition-beads beads)))
+                     '("ord"))))
+    (let ((cerebro-skipped-issue-types '("epic")))
+      ;; And an `event' comes back when the navigator takes it off the list.
+      (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                             (alist-get 'unplanned (cerebro--partition-beads beads)))
+                     '("note" "ord"))))))
+
 (ert-deftest cerebro-test/a-grandchild-names-only-its-own-parent ()
   "The set is DIRECT parents, not ancestors: everything before an id's LAST
 dot.  A `string-prefix-p' spelling on cb-p. would call `cb-p' parented by its
@@ -3944,7 +3962,16 @@ changed `cerebro-bd-program' reaches it."
 (ert-deftest cerebro-test/the-panel-skips-exactly-what-work-beads-excludes ()
   "The two owners of \"which issue types are not work\" cannot drift apart.
 `scripts/work-beads' is the shell-side one; `cerebro-skipped-issue-types'
-is this one.  Run as CI runs ERT, from the repository root."
+is this one.  Run as CI runs ERT, from the repository root.
+
+Since cb-hzl this pins the list itself, and so the UNCONDITIONAL arm: `epic'
+is on both lists and is skipped by neither outright.  Whether one has
+children is answered by two DELIBERATELY different rules - the panel from the
+ids in its one all-status board read, `work-beads' with `bd children' because
+its own list is scoped to one status - and that divergence is written down in
+that script\='s header, which also says which rule wins when they part.  The
+two rules are not held to each other by any test, because there is no query
+both can be asked."
   ;; Absolute, because `process-lines' searches `exec-path' rather than
   ;; `default-directory' - a relative name here reads as "no such program".
   (let ((script (expand-file-name "scripts/work-beads")))

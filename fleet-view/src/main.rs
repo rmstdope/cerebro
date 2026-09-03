@@ -322,29 +322,43 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // `bd dolt push` is a network call bounded at thirty seconds, and running it on the drawing
     // thread froze the screen - keys and all - for as long as the remote took (cb-21g).
     let write_worker = WriteWorker::spawn(paths.clone(), Programs::default(), commands.clone());
+    let workers = Workers {
+        fleet: fleet_worker,
+        work: work_worker,
+        detail: detail_worker,
+        gh: gh_worker,
+        sweep: sweep_worker,
+        history: history_worker,
+        supervisor: supervisor_worker,
+        write: write_worker,
+    };
     // Ownership before the first frame: the one blocking read this binary allows itself, and the
     // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
     let mut controller = SupervisorController::new(&paths, commands.as_ref());
     let initial = controller.apply(readers::read_configured_supervisor(&paths, commands.as_ref()));
     let enabled = initial.may_end();
     let mut app = App::with_supervision(initial);
-    let mut ledger = StartLedger::default();
     // Created here and enabled from the mode this frame is drawn with: a logger that defaulted to
     // enabled would have one window - construction to that call - in which a read-only view
     // writes. The root is passed in and never resolved by the logger itself.
     let mut logger = Logger::new(&paths.shared_root);
     logger.set_enabled(enabled);
 
-    // BEFORE the terminal guard, so it is dropped AFTER it: a child killed on the way out must
-    // not be killed while the alternate screen is still up.
-    let mut host = SessionHost::default();
-    // Beside the host, and threaded into `run` with it: what each name was last told about the
-    // unranked set, in memory only (cb-kcs.5.2).
-    let mut told = lifecycle::TriageLedger::default();
-    // Created BEFORE the `TerminalGuard` below, so it drops AFTER it: the watcher's `Drop` is the
-    // one cleanup a `?`, an early return and a panic all respect, and it must run with the
-    // terminal already restored.
-    let mut pruner = Pruner::new();
+    // Built BEFORE the terminal guard, so the whole of it is dropped AFTER it: a child killed on
+    // the way out must not be killed while the alternate screen is still up, and the pruner's
+    // `Drop` must run with the terminal already restored. Its field order is its drop order, and
+    // it reproduces the order these values had as locals.
+    //
+    // `told` is what each name was last told about the unranked set, in memory only
+    // (cb-kcs.5.2).
+    let mut state = LoopState {
+        pruner: Pruner::new(),
+        told: lifecycle::TriageLedger::default(),
+        host: SessionHost::default(),
+        logger,
+        ledger: StartLedger::default(),
+        controller,
+    };
 
     // Raw mode and the alternate screen are entered HERE and nowhere else, under a guard whose
     // `Drop` leaves them. A sequence of cleanup calls after the loop is skipped by `?`, by an
@@ -361,9 +375,9 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         if let Some(notice) =
             arm_and_autostart(
                 &mut app,
-                &mut host,
-                &mut ledger,
-                &mut logger,
+                &mut state.host,
+                &mut state.ledger,
+                &mut state.logger,
                 &paths,
                 commands.as_ref(),
                 &complaints,
@@ -374,6 +388,8 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         }
     }
 
+    let config = LoopConfig { paths, programs: Programs::default(), spacing };
+
     let mut guard = TerminalGuard::enter(CrosstermTerminal)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -382,29 +398,15 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         &mut terminal,
         &mut events,
         &mut app,
-        &fleet_worker,
-        &work_worker,
-        &detail_worker,
-        &gh_worker,
-        &sweep_worker,
-        &history_worker,
-        &supervisor_worker,
-        &mut controller,
-        &mut host,
-        &mut ledger,
-        &mut told,
-        &mut pruner,
-        &mut logger,
-        &paths,
-        &Programs::default(),
-        &write_worker,
-        &spacing,
+        &workers,
+        &mut state,
+        &config,
         Utc::now,
     );
     guard.leave()?;
     // After the alternate screen is gone, so it is readable: the header carries the short
     // sentence, and this is where the detail behind it goes.
-    if let Some(diagnostic) = controller.diagnostic() {
+    if let Some(diagnostic) = state.controller.diagnostic() {
         eprintln!("cerebro-tui: {diagnostic}");
     }
     result
@@ -1124,30 +1126,51 @@ fn startup_notice(started: &[String], standby: &[String], complaints: &[String])
     Some(notice)
 }
 
+/// Everything the loop MUTATES that is not `App` and is not the terminal.
+///
+/// The field order reproduces the drop order these values have as locals in `start` today
+/// (pruner, then told, then host, then the logger, then the ledger, then the controller -
+/// the reverse of the order they were declared in): struct fields drop in declaration
+/// order, and reproducing the existing order is cheaper than proving that none of these
+/// `Drop`s interact.
+struct LoopState {
+    pruner: Pruner,
+    told: lifecycle::TriageLedger,
+    host: SessionHost,
+    logger: Logger,
+    ledger: StartLedger,
+    controller: SupervisorController,
+}
+
+/// What the loop READS and never changes.
+struct LoopConfig {
+    paths: ReaderPaths,
+    programs: Programs,
+    spacing: BTreeMap<String, u64>,
+}
+
+/// Every worker the loop polls or asks. One value, so a ninth is a field rather than a
+/// parameter added to `run`, to `dispatch` and to sixteen cases (cb-agg).
+struct Workers {
+    fleet: FleetWorker,
+    work: WorkWorker,
+    detail: DetailWorker,
+    gh: GhWorker,
+    sweep: SweepWorker,
+    history: HistoryWorker,
+    supervisor: SupervisorWorker,
+    write: WriteWorker,
+}
+
 /// The whole loop, generic over its terminal and its event source so the cases below can drive it
 /// without taking over the developer's own terminal.
-#[allow(clippy::too_many_arguments)]
 fn run<B: Backend, E: Events>(
     terminal: &mut Terminal<B>,
     events: &mut E,
     app: &mut App,
-    fleet_worker: &FleetWorker,
-    work_worker: &WorkWorker,
-    detail_worker: &DetailWorker,
-    gh_worker: &GhWorker,
-    sweep_worker: &SweepWorker,
-    history_worker: &HistoryWorker,
-    supervisor_worker: &SupervisorWorker,
-    controller: &mut SupervisorController,
-    host: &mut SessionHost,
-    ledger: &mut StartLedger,
-    told: &mut lifecycle::TriageLedger,
-    pruner: &mut Pruner,
-    logger: &mut Logger,
-    paths: &ReaderPaths,
-    programs: &Programs,
-    write_worker: &WriteWorker,
-    spacing: &BTreeMap<String, u64>,
+    workers: &Workers,
+    state: &mut LoopState,
+    config: &LoopConfig,
     clock: impl Fn() -> DateTime<Utc>,
 ) -> Result<(), Fatal>
 where
@@ -1163,17 +1186,17 @@ where
             let size = terminal.size()?;
             let area = Rect::new(0, 0, size.width, size.height);
             let session = ui::metrics(app, now, area).session;
-            let view = host.sync(
+            let view = state.host.sync(
                 app.selected.as_deref(),
                 session.viewport_lines as u16,
                 session.inner_width as u16,
                 now,
             );
             app.set_session_view(view);
-            host.flush_returns(Instant::now());
-            app.set_exits(host.exits());
-            log_exits(logger, host, now);
-            refresh_flagged(app, paths);
+            state.host.flush_returns(Instant::now());
+            app.set_exits(state.host.exits());
+            log_exits(&mut state.logger, &mut state.host, now);
+            refresh_flagged(app, &config.paths);
         }
         terminal.draw(|frame| ui::draw(frame, app, now))?;
 
@@ -1200,16 +1223,16 @@ where
         }
 
         // Each answer updates only its own pane. Neither poll blocks.
-        if let Some(result) = fleet_worker.poll() {
+        if let Some(result) = workers.fleet.poll() {
             let succeeded = result.is_ok();
             match &result {
                 // One successful fleet read proves both halves ran, so it clears both contexts.
                 Ok(_) => {
-                    logger.clear_error("fleet");
-                    logger.clear_error("roster");
+                    state.logger.clear_error("fleet");
+                    state.logger.clear_error("roster");
                 }
                 Err(error) => {
-                    logger.error(&log::reader_context("fleet", error), &error.to_string(), clock())
+                    state.logger.error(&log::reader_context("fleet", error), &error.to_string(), clock())
                 }
             }
             app.finish_refresh(result, clock());
@@ -1218,7 +1241,7 @@ where
             // evidence five seconds stale.
             if succeeded {
                 let now = clock();
-                supervise(app, host, ledger, logger, paths, now, Instant::now());
+                supervise(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, now, Instant::now());
                 // After `supervise` and not before: a session ended on this tick must not also be
                 // started on it, and a row restated by the next read is what makes that true.
                 let roster: Vec<RosterEntry> = app
@@ -1230,18 +1253,18 @@ where
                         kind: row.kind,
                     })
                     .collect();
-                start_due(app, host, ledger, logger, paths, spacing, &roster, now);
+                start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, &roster, now);
                 // And a line into an idle Cerebro, on the same freshly derived rows (cb-kcs.5.2).
                 // After `start_due` for its own reason: a Cerebro started on this very tick has
                 // no session to type into until the next read restates its row.
-                triage_tell(app, host, told, logger, now, Instant::now());
+                triage_tell(app, &mut state.host, &mut state.told, &mut state.logger, now, Instant::now());
             }
         }
-        if let Some(result) = work_worker.poll() {
+        if let Some(result) = workers.work.poll() {
             match &result {
-                Ok(_) => logger.clear_error("work"),
+                Ok(_) => state.logger.clear_error("work"),
                 Err(error) => {
-                    logger.error(&log::reader_context("work", error), &error.to_string(), clock())
+                    state.logger.error(&log::reader_context("work", error), &error.to_string(), clock())
                 }
             }
             app.finish_work_refresh(result, clock());
@@ -1252,31 +1275,31 @@ where
         // the navigator has since unpinned.
         // The answer names its own bead whether it succeeded or failed, so a queued read that
         // fails can never report about the bead pinned by the time it answers.
-        if let Some(Ok((id, answer))) = detail_worker.poll() {
+        if let Some(Ok((id, answer))) = workers.detail.poll() {
             match &answer {
-                Ok(_) => logger.clear_error("bead"),
+                Ok(_) => state.logger.clear_error("bead"),
                 Err(error) => {
-                    logger.error(&log::reader_context("bead", error), &error.to_string(), clock())
+                    state.logger.error(&log::reader_context("bead", error), &error.to_string(), clock())
                 }
             }
             app.finish_bead_read(&id, answer);
         }
         // The `gh` answer draws nothing; it is polled for the same reason it is read at all, so
         // that the two cadence triggers see a current one.
-        if let Some(result) = gh_worker.poll() {
+        if let Some(result) = workers.gh.poll() {
             app.finish_gh_refresh(result, clock());
         }
         // The sweeps fail apart from the two panes, exactly as `gh` does: six scripts nobody
         // could run says nothing about the fleet or the board. The underlying cause is written
         // where it is still in hand - `ReadError::Sweep`'s Display is one word by the navigator's
         // own choice - so the log keeps what the header cannot say.
-        if let Some(result) = sweep_worker.poll() {
+        if let Some(result) = workers.sweep.poll() {
             match &result {
-                Ok(_) => logger.clear_error("sweep"),
+                Ok(_) => state.logger.clear_error("sweep"),
                 // The CAUSE, not the Display: the header shows one word by the navigator's own
                 // choice, and this is the only place the non-zero exit, the timeout or the parse
                 // error is written down.
-                Err(error) => logger.error(
+                Err(error) => state.logger.error(
                     "sweep",
                     error.cause().unwrap_or(&error.to_string()),
                     clock(),
@@ -1289,25 +1312,30 @@ where
         // `errors.jsonl` as well, under the context `write`: the header is painted over by the
         // next frame, and `clear_error` on a successful one is what stops `Logger::error`'s
         // one-per-fault dedupe from swallowing an identical failure minutes later.
-        if let Some(Ok(answer)) = write_worker.poll() {
-            log_write(logger, &answer, clock());
+        if let Some(Ok(answer)) = workers.write.poll() {
+            log_write(&mut state.logger, &answer, clock());
             let action = app.finish_write(answer);
-            dispatch(action, app, fleet_worker, work_worker, detail_worker, gh_worker, sweep_worker, history_worker, &clock);
+            // Neither of the two `dispatch` calls off the keystroke path may carry a `Write`:
+            // `App::finish_write` and `App::on_tick` return refresh actions and `None` alone, and
+            // a third producer would make this one re-entrant (review finding 4).
+            debug_assert!(!matches!(action, AppAction::Write(_)));
+            dispatch(action, app, workers, &clock);
         }
-        // A request that was ACCEPTED and whose answer will never come: the other half of
-        // `dispatch_write`'s refusal. Without it one dead thread leaves the dim line up for ever,
-        // the newest-write rule permanently false and an overlay entry outliving the session.
-        if write_worker.is_dead() {
+        // A request that was ACCEPTED and whose answer will never come: the other half of the
+        // refusal in `dispatch`'s write branch. Without it one dead thread leaves the dim line up
+        // for ever, the newest-write rule permanently false and an overlay entry outliving the
+        // session.
+        if workers.write.is_dead() {
             app.abandon_outstanding_writes();
         }
         // History fails apart from the two panes as well: a script that would not run says
         // nothing about the fleet or the board, and its only sign on screen is the red word
         // beside its own header. The `Display` already carries the cause, so this is `work`'s
         // shape rather than the sweeps'.
-        if let Some(result) = history_worker.poll() {
+        if let Some(result) = workers.history.poll() {
             match &result {
-                Ok(_) => logger.clear_error("history"),
-                Err(error) => logger.error(
+                Ok(_) => state.logger.clear_error("history"),
+                Err(error) => state.logger.error(
                     &log::reader_context("history", error),
                     &error.to_string(),
                     clock(),
@@ -1317,19 +1345,19 @@ where
         }
         // Ownership is a third state, polled like the other two and failing apart from them: a
         // declaration that cannot be read says nothing about the fleet or the board.
-        if let Some(answer) = supervisor_worker.poll() {
-            let mode = controller.apply(answer);
+        if let Some(answer) = workers.supervisor.poll() {
+            let mode = state.controller.apply(answer);
             // Before anything else this tick writes: a view that has just gone read-only must
             // have written nothing further, and one that has just taken the checkout may.
-            logger.set_enabled(mode.may_end());
-            match controller.diagnostic() {
+            state.logger.set_enabled(mode.may_end());
+            match state.controller.diagnostic() {
                 // Already one-per-fault by construction (`clear_diagnostic`); `Logger::error`'s
                 // own dedupe is what keeps a persisting one to a single line.
                 Some(diagnostic) => {
                     let diagnostic = diagnostic.to_string();
-                    logger.error("supervision", &diagnostic, clock());
+                    state.logger.error("supervision", &diagnostic, clock());
                 }
-                None => logger.clear_error("supervision"),
+                None => state.logger.clear_error("supervision"),
             }
             app.set_supervision(mode);
         }
@@ -1337,19 +1365,21 @@ where
         // supervision while this process hosts children keeps the lease until the last one ends.
         // The watcher, on its own five-second clock and outside the fleet poll: it is nothing to
         // do with what any agent wrote in a state file (cb-kcs.5.2).
-        prune(app, pruner, logger, paths, clock(), Instant::now());
-        controller.hosted_sessions = host.live_count();
-        if controller.due(Instant::now()) && supervisor_worker.request() {
-            controller.requested(Instant::now());
+        prune(app, &mut state.pruner, &mut state.logger, &config.paths, clock(), Instant::now());
+        state.controller.hosted_sessions = state.host.live_count();
+        if state.controller.due(Instant::now()) && workers.supervisor.request() {
+            state.controller.requested(Instant::now());
         }
 
-        dispatch(app.on_tick(Instant::now()), app, fleet_worker, work_worker, detail_worker, gh_worker, sweep_worker, history_worker, &clock);
+        let ticked = app.on_tick(Instant::now());
+        debug_assert!(!matches!(ticked, AppAction::Write(_)));
+        dispatch(ticked, app, workers, &clock);
 
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     let action =
-                        route_key(key, app, host, ledger, logger, paths, programs, viewport_lines, clock());
+                        route_key(key, app, state, config, viewport_lines, clock());
                     if action == AppAction::Quit {
                         break;
                     }
@@ -1357,11 +1387,10 @@ where
                     // Ratatui stays open as a read-only observer and takes the checkout with `g`
                     // once the owner closes. Its own request, so an in-flight ownership read can
                     // never swallow the fleet/work retry the key was pressed for.
-                    if action == AppAction::RefreshAll && supervisor_worker.request() {
-                        controller.requested(Instant::now());
+                    if action == AppAction::RefreshAll && workers.supervisor.request() {
+                        state.controller.requested(Instant::now());
                     }
-                    dispatch_write(action.clone(), app, write_worker);
-                    dispatch(action, app, fleet_worker, work_worker, detail_worker, gh_worker, sweep_worker, history_worker, &clock);
+                    dispatch(action, app, workers, &clock);
                 }
                 // Forwarded as a PASTE (Q3), so an agent composer that treats a bare newline as
                 // submit receives four pasted lines as one block rather than submitting the
@@ -1369,7 +1398,7 @@ where
                 Event::Paste(text) => {
                     if let Some(name) = app.selected.clone() {
                         if app.session_has_keyboard() {
-                            host.send(&name, &session::paste_bytes(&text));
+                            state.host.send(&name, &session::paste_bytes(&text));
                         }
                     }
                 }
@@ -1437,17 +1466,14 @@ fn write_priority(
 /// onto the child rather than a commentary on it. So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or
 /// refresh while a live session is focused - they are the child's, which is exactly what the
 /// replaced header line says.
-#[allow(clippy::too_many_arguments)]
 fn route_key(
     key: KeyEvent,
     app: &mut App,
-    host: &mut SessionHost,
-    ledger: &mut StartLedger,
-    logger: &mut Logger,
-    paths: &ReaderPaths,
-    // Injectable for the reason every other program in this crate is: the two board writes name
-    // `bd`, and a case that used the default would act on the developer's own board.
-    programs: &Programs,
+    state: &mut LoopState,
+    // `config.programs` is injectable for the reason every other program in this crate is: the
+    // two board writes name `bd`, and a case that used the default would act on the developer's
+    // own board.
+    config: &LoopConfig,
     viewport_lines: usize,
     now: DateTime<Utc>,
 ) -> AppAction {
@@ -1472,7 +1498,7 @@ fn route_key(
                 // armed is started again by its own trigger within five seconds, on the bead the
                 // kill just stranded (cb-op0). The stop flag is left alone - `k` is not a retire.
                 app.armed.remove(&name);
-                host.kill(paths, &name);
+                state.host.kill(&config.paths, &name);
                 // A killed agent must not wait up to five seconds to disappear from the fleet.
                 AppAction::RefreshFleet
             }
@@ -1487,19 +1513,19 @@ fn route_key(
             // `cerebro-sweep-act` writes it: a decision the view made is worth keeping whether or
             // not the write then succeeded.
             app::Prompt::Sweep { finding, .. } => {
-                logger.write(
+                state.logger.write(
                     log::Event::Sweep,
                     now,
                     &[(
                         "command",
                         serde_json::Value::from(
-                            cerebro_tui::sweeps::finding_command(&finding, &programs.bd)
+                            cerebro_tui::sweeps::finding_command(&finding, &config.programs.bd)
                                 .join(" "),
                         ),
                     )],
                 );
                 let request = app::WriteRequest::Finding { finding };
-                app.begin_write(&request, &programs.bd);
+                app.begin_write(&request, &config.programs.bd);
                 AppAction::Write(request)
             }
         };
@@ -1510,7 +1536,7 @@ fn route_key(
     // gets one in two keys.
     if app.session_has_keyboard() && !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
         if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
-            host.send(&name, &bytes);
+            state.host.send(&name, &bytes);
         }
         return AppAction::None;
     }
@@ -1523,7 +1549,7 @@ fn route_key(
         app.notice = None;
         if let Some(judged) = app.selected_finding() {
             let finding = judged.finding.clone();
-            let text = cerebro_tui::sweeps::prompt(&finding, &programs.bd);
+            let text = cerebro_tui::sweeps::prompt(&finding, &config.programs.bd);
             app.confirm = Some(app::Prompt::Sweep { finding, text });
         }
         return AppAction::None;
@@ -1564,7 +1590,7 @@ fn route_key(
                     AppAction::None
                 }
                 lifecycle::PriorityAction::Write { to } => {
-                    write_priority(app, logger, programs, now, &id, from, to, false)
+                    write_priority(app, &mut state.logger, &config.programs, now, &id, from, to, false)
                 }
             };
         }
@@ -1587,7 +1613,7 @@ fn route_key(
             };
             // The entry is spent when the undo ANSWERS, in `App::finish_write`: an undo `bd`
             // refuses must leave the rescue in place to be reached for a second time.
-            return write_priority(app, logger, programs, now, &id, None, previous, true);
+            return write_priority(app, &mut state.logger, &config.programs, now, &id, None, previous, true);
         }
     }
     if key.modifiers.is_empty() {
@@ -1595,12 +1621,12 @@ fn route_key(
             // A notice is transient exactly as it is under `on_key`: the keystroke that reads it
             // is the one that clears it, and this key may then write its own.
             app.clear_notice();
-            return lifecycle_key(c, app, host, ledger, logger, paths, now);
+            return lifecycle_key(c, app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, now);
         }
     }
     let action = app.on_key(key, viewport_lines, now);
     if action == AppAction::Quit {
-        let live = host.live_names(&app.roster_order());
+        let live = state.host.live_names(&app.roster_order());
         if !live.is_empty() {
             app.refuse_quit(live);
             return AppAction::None;
@@ -1732,41 +1758,34 @@ fn log_write(logger: &mut Logger, answer: &app::WriteAnswer, now: DateTime<Utc>)
     }
 }
 
-/// Send a board write to the eighth worker, off the drawing thread (cb-21g).
-///
-/// Its own function rather than an arm of `dispatch`: a write is the only action that does not
-/// ask a pane for anything, and `dispatch`'s ten callers have no worker to hand it.
-fn dispatch_write(action: AppAction, app: &mut App, write_worker: &WriteWorker) {
-    if let AppAction::Write(request) = &action {
-        if !write_worker.request_with(request.clone()) {
-            // A write that could never be sent is reported rather than lost.
-            let action = app.finish_write(app::WriteAnswer::undeliverable(request));
-            debug_assert_eq!(action, AppAction::None);
-        }
-    }
-}
-
 /// Turn one `AppAction` into requests.
 ///
-/// Seven workers and a clock: the crate's own precedent for this is `lifecycle_key`'s allow, and a
-/// parameter struct invented here would be a shape nothing else in the loop uses. `RefreshAll` asks each pane in turn and never as a set:
+/// `RefreshAll` asks each pane in turn and never as a set:
 /// a fleet read already in flight must not swallow the work retry the navigator pressed `g` for.
-#[allow(clippy::too_many_arguments)]
 fn dispatch(
     action: AppAction,
     app: &mut App,
-    fleet_worker: &FleetWorker,
-    work_worker: &WorkWorker,
-    detail_worker: &DetailWorker,
-    gh_worker: &GhWorker,
-    sweep_worker: &SweepWorker,
-    history_worker: &HistoryWorker,
+    workers: &Workers,
     clock: &impl Fn() -> DateTime<Utc>,
 ) {
+    // FIRST, and before any refresh is asked for: the order the two calls had while this was its
+    // own `dispatch_write` (cb-21g), which sent the board write off the drawing thread before
+    // `dispatch` ran at all.
+    if let AppAction::Write(request) = &action {
+        if !workers.write.request_with(request.clone()) {
+            // A write that could never be sent is reported rather than lost.
+            let answered = app.finish_write(app::WriteAnswer::undeliverable(request));
+            // The two `dispatch` calls off the keystroke path can never carry a `Write`:
+            // `App::on_tick` and `App::finish_write` return refresh actions and `None` alone, and
+            // `AppAction::Write` is produced by `route_key` and nowhere else. This is what would
+            // catch a third producer.
+            debug_assert_eq!(answered, AppAction::None);
+        }
+    }
     let now = Instant::now();
     if matches!(action, AppAction::RefreshFleet | AppAction::RefreshAll)
         && app.begin_refresh(now)
-        && !fleet_worker.request()
+        && !workers.fleet.request()
     {
         app.finish_refresh(Err(worker_gone("fleet reader")), clock());
     }
@@ -1779,14 +1798,14 @@ fn dispatch(
             app.bead_detail.as_ref().map(|detail| detail.bead.id.clone())
         };
         if let Some(id) = id {
-            if !detail_worker.request_with(id.clone()) {
+            if !workers.detail.request_with(id.clone()) {
                 app.finish_bead_read(&id, Err(worker_gone("bead reader")));
             }
         }
     }
     if matches!(action, AppAction::RefreshWork | AppAction::RefreshAll)
         && app.begin_work_refresh(now, clock())
-        && !work_worker.request()
+        && !workers.work.request()
     {
         app.finish_work_refresh(Err(worker_gone("work reader")), clock());
     }
@@ -1796,7 +1815,7 @@ fn dispatch(
     // stacked, exactly as the two panes behave.
     if (matches!(action, AppAction::RefreshAll) || app.gh_due(now))
         && app.begin_gh_refresh(now)
-        && !gh_worker.request()
+        && !workers.gh.request()
     {
         app.finish_gh_refresh(Err(worker_gone("gh reader")), clock());
     }
@@ -1805,7 +1824,7 @@ fn dispatch(
     // presses `g` anyway. Otherwise it is the ten-minute clock alone.
     if (matches!(action, AppAction::RefreshAll | AppAction::RefreshSweeps) || app.sweep_due(now))
         && app.begin_sweep_refresh(now)
-        && !sweep_worker.request()
+        && !workers.sweep.request()
     {
         app.finish_sweep_refresh(Err(worker_gone("sweep reader")), clock());
     }
@@ -1813,7 +1832,7 @@ fn dispatch(
     // there is no `AppAction` of its own.
     if (matches!(action, AppAction::RefreshAll) || app.history_due(now))
         && app.begin_history_refresh(now)
-        && !history_worker.request()
+        && !workers.history.request()
     {
         app.finish_history_refresh(Err(worker_gone("history reader")), clock());
     }
@@ -2218,10 +2237,10 @@ mod main_tests {
         ]);
         // `Err` is the ordinary ending: the quit is refused, so nothing ends the loop but the
         // event source running out.
-        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now);
+        let workers = test_workers();
+        let mut state = LoopState { host, ..test_state() };
+        let config = test_config();
+        let _ = run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now);
 
         assert!(!app.quit, "the session this case hosts is what refuses the quit");
         assert!(app.quit_refusal.is_some(), "and the refusal pane says so");
@@ -2230,7 +2249,7 @@ mod main_tests {
             cerebro_tui::app::PaneFocus::Work,
             "Shift-Tab is the way out, and it is the plain cycle"
         );
-        let text = echoed(&mut host, &app, "^C");
+        let text = echoed(&mut state.host, &app, "^C");
         assert!(text.contains('x'), "the plain char reached the child: {text:?}");
         assert!(text.contains("^["), "and Escape did too: {text:?}");
         assert!(text.contains("^C"), "and so did Ctrl-C: {text:?}");
@@ -2266,10 +2285,10 @@ mod main_tests {
         let mut app = App::new();
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![ctrl(KeyCode::Char('c'))]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now)
+        let workers = test_workers();
+        let mut state = test_state();
+        let config = test_config();
+        run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -2301,10 +2320,10 @@ mod main_tests {
 
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::new(vec![key(KeyCode::Down), key(KeyCode::Char('q'))]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+        let workers = test_workers();
+        let mut state = LoopState { host, ..test_state() };
+        let config = test_config();
+        run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, 1, "Down scrolled the retained pass");
         assert!(app.quit, "and q still quits: a retained pass does not hold the keyboard");
@@ -2322,11 +2341,11 @@ mod main_tests {
             key(KeyCode::BackTab),
             key(KeyCode::Char('q')),
         ]);
-        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now);
-        let text = echoed(&mut host, &app, "^[[201~");
+        let workers = test_workers();
+        let mut state = LoopState { host, ..test_state() };
+        let config = test_config();
+        let _ = run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now);
+        let text = echoed(&mut state.host, &app, "^[[201~");
         assert!(text.contains("^[[200~one"), "the paste arrived bracketed: {text:?}");
         assert!(text.contains("^[[201~"), "and closed: {text:?}");
 
@@ -2335,10 +2354,12 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events =
             ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now)
+        // Its own worker set, as each `run` had before cb-agg: two loop runs sharing one set
+        // would let an answer queued by the first be polled by the second (review finding 1).
+        let workers = test_workers();
+        let mut state = test_state();
+        let config = test_config();
+        run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now)
             .unwrap();
         assert!(app.quit);
     }
@@ -2351,13 +2372,14 @@ mod main_tests {
         // Same as above: a hosted session refuses the quit, so the source ends the loop.
         let mut events =
             ReplayedEvents::stopping(vec![key(KeyCode::BackTab), key(KeyCode::Char('q'))]);
-        let (worker_handle, mut controller) = supervision();
-        let _ = run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &worker_handle, &mut controller, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now);
+        let worker_handle = SupervisorWorker::spawn(nowhere().0, Arc::new(RealCommands));
+        let controller = SupervisorController::new(&nowhere().0, &RealCommands);
+        let workers = Workers { supervisor: worker_handle, ..test_workers() };
+        let mut state = LoopState { controller, host, ..test_state() };
+        let config = test_config();
+        let _ = run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now);
         assert_eq!(
-            controller.hosted_sessions, 1,
+            state.controller.hosted_sessions, 1,
             "the drain branch of `reconcile_supervision` is reachable for the first time"
         );
     }
@@ -2390,6 +2412,41 @@ mod main_tests {
                 gh: "/nonexistent/gh".into(),
             },
         )
+    }
+
+    /// The loop's mutable collaborators, all empty, with a logger that writes nowhere and a
+    /// controller pointed at a directory with no `fleet-supervisor` in it - every reader fails,
+    /// which is the read-only-with-a-lock-error case these cases already run under.
+    fn test_state() -> LoopState {
+        LoopState {
+            pruner: Pruner::new(),
+            told: lifecycle::TriageLedger::default(),
+            host: SessionHost::default(),
+            ledger: StartLedger::default(),
+            logger: test_logger(),
+            controller: SupervisorController::new(&nowhere().0, &RealCommands),
+        }
+    }
+
+    /// The paths, programs and spacing the loop reads, all pointed at `nowhere()`.
+    fn test_config() -> LoopConfig {
+        let (paths, programs) = nowhere();
+        LoopConfig { paths, programs, spacing: BTreeMap::new() }
+    }
+
+    /// The eight workers, each pointed at `nowhere()`. A case that needs a specific one writes
+    /// `Workers { detail, ..test_workers() }`.
+    fn test_workers() -> Workers {
+        Workers {
+            fleet: worker(),
+            work: work_worker(),
+            detail: detail_worker(),
+            gh: gh_worker(),
+            sweep: sweep_worker(),
+            history: history_worker(),
+            supervisor: SupervisorWorker::spawn(nowhere().0, Arc::new(RealCommands)),
+            write: write_worker(),
+        }
     }
 
     fn worker() -> FleetWorker {
@@ -2433,17 +2490,6 @@ mod main_tests {
     fn sweep_worker() -> SweepWorker {
         let (paths, programs) = nowhere();
         SweepWorker::spawn(paths, programs, Arc::new(RealCommands))
-    }
-
-    /// The two ownership parameters, pointed at a directory with no `fleet-supervisor` in it.
-    /// Every reader fails, which is exactly the read-only-with-a-lock-error case: these cases are
-    /// about the terminal and the event source, and ownership must not be what decides them.
-    fn supervision() -> (SupervisorWorker, SupervisorController) {
-        let (paths, _) = nowhere();
-        (
-            SupervisorWorker::spawn(paths.clone(), Arc::new(RealCommands)),
-            SupervisorController::new(&paths, &RealCommands),
-        )
     }
 
     /// A reader that could not answer must not cost this process a lease it holds.
@@ -2558,25 +2604,10 @@ mod main_tests {
             .unwrap();
             let mut terminal = Terminal::new(FailingBackend).unwrap();
             let mut app = App::new();
-            let error = run(
-                &mut terminal,
-                &mut ScriptedEvents { poll_fails: false, read_fails: false },
-                &mut app,
-                &worker(),
-                &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-                &supervision().0,
-                &mut supervision().1,
-                &mut SessionHost::default(),
-                &mut cerebro_tui::triggers::StartLedger::default(),
-                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
-                &nowhere().0,
-                &nowhere().1,
-                &write_worker(),
-                &std::collections::BTreeMap::new(),
-                Utc::now,
-            )
+            let workers = test_workers();
+            let mut state = test_state();
+            let config = test_config();
+            let error = run(&mut terminal, &mut ScriptedEvents { poll_fails: false, read_fails: false }, &mut app, &workers, &mut state, &config, Utc::now)
             .unwrap_err();
             assert!(error.to_string().contains("the terminal went away"));
             drop(guard.leave());
@@ -2593,25 +2624,10 @@ mod main_tests {
             .unwrap();
             let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
             let mut app = App::new();
-            let error = run(
-                &mut terminal,
-                &mut ScriptedEvents { poll_fails: true, read_fails: false },
-                &mut app,
-                &worker(),
-                &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-                &supervision().0,
-                &mut supervision().1,
-                &mut SessionHost::default(),
-                &mut cerebro_tui::triggers::StartLedger::default(),
-                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
-                &nowhere().0,
-                &nowhere().1,
-                &write_worker(),
-                &std::collections::BTreeMap::new(),
-                Utc::now,
-            )
+            let workers = test_workers();
+            let mut state = test_state();
+            let config = test_config();
+            let error = run(&mut terminal, &mut ScriptedEvents { poll_fails: true, read_fails: false }, &mut app, &workers, &mut state, &config, Utc::now)
             .unwrap_err();
             assert!(error.to_string().contains("poll failed"));
             // No explicit leave at all: the drop at the end of this block is the whole cleanup,
@@ -2629,25 +2645,10 @@ mod main_tests {
             .unwrap();
             let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
             let mut app = App::new();
-            assert!(run(
-                &mut terminal,
-                &mut ScriptedEvents { poll_fails: false, read_fails: true },
-                &mut app,
-                &worker(),
-                &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-                &supervision().0,
-                &mut supervision().1,
-                &mut SessionHost::default(),
-                &mut cerebro_tui::triggers::StartLedger::default(),
-                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
-                &nowhere().0,
-                &nowhere().1,
-                &write_worker(),
-                &std::collections::BTreeMap::new(),
-                Utc::now,
-            )
+            let workers = test_workers();
+            let mut state = test_state();
+            let config = test_config();
+            assert!(run(&mut terminal, &mut ScriptedEvents { poll_fails: false, read_fails: true }, &mut app, &workers, &mut state, &config, Utc::now)
             .is_err());
         }
         assert_eq!(*events.borrow(), vec!["enter", "leave"]);
@@ -2676,25 +2677,10 @@ mod main_tests {
             .unwrap();
             let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
             let mut app = App::new();
-            run(
-                &mut terminal,
-                &mut ScriptedEvents { poll_fails: false, read_fails: false },
-                &mut app,
-                &worker(),
-                &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-                &supervision().0,
-                &mut supervision().1,
-                &mut SessionHost::default(),
-                &mut cerebro_tui::triggers::StartLedger::default(),
-                &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(),
-                &nowhere().0,
-                &nowhere().1,
-                &write_worker(),
-                &std::collections::BTreeMap::new(),
-                Utc::now,
-            )
+            let workers = test_workers();
+            let mut state = test_state();
+            let config = test_config();
+            run(&mut terminal, &mut ScriptedEvents { poll_fails: false, read_fails: false }, &mut app, &workers, &mut state, &config, Utc::now)
             .unwrap();
             assert!(app.quit, "q sets quit");
             guard.leave().unwrap();
@@ -2734,8 +2720,10 @@ mod main_tests {
             crossterm::event::KeyCode::Char('q'),
         ]);
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work, &detail_worker(), &gh_worker(), &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+        let workers = Workers { work, ..test_workers() };
+        let mut state = test_state();
+        let config = test_config();
+        run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now).unwrap();
 
         assert!(events.remaining() == 0, "every keystroke was read while bd was running");
         assert!(app.quit, "and the last of them still quit");
@@ -2825,10 +2813,10 @@ mod main_tests {
         let expected_work_page = ui::metrics(&app, Utc::now(), area).work.viewport_lines;
         assert!(expected_work_page > 0, "the fixture must actually be scrollable, or this proves nothing");
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+        let workers = test_workers();
+        let mut state = test_state();
+        let config = test_config();
+        run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now).unwrap();
 
         assert!(app.quit, "q still quits once both panes have been exercised");
         assert_eq!(
@@ -2883,10 +2871,10 @@ mod main_tests {
             crossterm::event::KeyCode::Char('g'),
             crossterm::event::KeyCode::Char('q'),
         ]);
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+        let workers = test_workers();
+        let mut state = test_state();
+        let config = test_config();
+        run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now).unwrap();
 
         assert_eq!(app.fleet.scroll, 20, "a too-small frame must not silently reset Fleet's offset");
         assert_eq!(app.work.scroll, 5, "or Work's");
@@ -2922,10 +2910,10 @@ mod main_tests {
         let m = ui::metrics(&app, Utc::now(), area);
         let expected = m.session.content_lines.saturating_sub(m.session.viewport_lines);
 
-        run(&mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut SessionHost::default(), &mut cerebro_tui::triggers::StartLedger::default(), &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0, &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now).unwrap();
+        let workers = test_workers();
+        let mut state = test_state();
+        let config = test_config();
+        run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now).unwrap();
 
         assert_eq!(app.session.scroll, expected, "the session offset is pulled back like the others");
     }
@@ -3077,8 +3065,13 @@ mod main_tests {
         paths: &ReaderPaths,
         keys: Vec<crossterm::event::KeyEvent>,
     ) {
+        let config = LoopConfig { paths: paths.clone(), ..test_config() };
         for key in keys {
-            route_key(key, app, host, &mut StartLedger::default(), &mut test_logger(), paths, &Programs::default(), 10, Utc::now());
+            // The host is lent to the `LoopState` for the keystroke and handed straight back, so
+            // a caller still asserts over its own (cb-agg).
+            let mut state = LoopState { host: std::mem::take(host), ..test_state() };
+            route_key(key, app, &mut state, &config, 10, Utc::now());
+            *host = std::mem::take(&mut state.host);
         }
     }
 
@@ -3093,12 +3086,11 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
         let mut events = QueuedEvents::events(keys);
         // `Err` is the ordinary ending here: the source stops the loop when the keys are spent.
-        let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let _ = run(&mut terminal, &mut events, app, &worker(), &work_worker(), &detail_worker(),
-                &gh_worker(),
-                &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, host, &mut ledger, &mut cerebro_tui::lifecycle::TriageLedger::default(), &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), paths,
-            &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now);
+        let workers = test_workers();
+        let mut state = LoopState { host: std::mem::take(host), ..test_state() };
+        let config = LoopConfig { paths: paths.clone(), ..test_config() };
+        let _ = run(&mut terminal, &mut events, app, &workers, &mut state, &config, Utc::now);
+        *host = std::mem::take(&mut state.host);
     }
 
 
@@ -4067,26 +4059,28 @@ mod main_tests {
     fn a_start_the_navigator_asked_for_says_navigator() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let mut logger = logging(dir.path());
+        let logger = logging(dir.path());
         let now = Utc::now();
-        let mut host = SessionHost::default();
-        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let host = SessionHost::default();
+        let ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = lifecycle_app(
             supervising(),
             vec![fleet_row("Rogue", cerebro_tui::model::AgentKind::Implementer,
                 cerebro_tui::model::RowState::Dead)],
         );
 
-        route_key(ch('s'), &mut app, &mut host, &mut ledger, &mut logger, &paths, &Programs::default(), 10, now);
+        let mut state = LoopState { host, ledger, logger, ..test_state() };
+        let config = LoopConfig { paths: paths.clone(), programs: Programs::default(), ..test_config() };
+        route_key(ch('s'), &mut app, &mut state, &config, 10, now);
 
-        assert!(host.is_live("Rogue"));
+        assert!(state.host.is_live("Rogue"));
         let line = one_line(dir.path(), "decisions", "start");
         assert!(
             line.contains(r#""agent":"Rogue","role":"implementer","reason":null,"by":"navigator""#),
             "{line}"
         );
-        host.kill(&paths, "Rogue");
-        settle_gone(&mut host, "Rogue");
+        state.host.kill(&paths, "Rogue");
+        settle_gone(&mut state.host, "Rogue");
     }
 
     #[test]
@@ -4901,15 +4895,16 @@ mod main_tests {
         let clock = Utc::now;
         let (fleet, work, gh, sweeps) = (worker(), work_worker(), gh_worker(), sweep_worker());
 
-        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
+        let workers = Workers { fleet, work, gh, sweep: sweeps, ..test_workers() };
+        dispatch(AppAction::RefreshAll, &mut app, &workers, &clock);
         // The slot is claimed, so the second press is not stacked: whatever the reader answers,
         // only one request is in flight.
         assert!(!app.begin_gh_refresh(Instant::now()), "a request is already in flight");
-        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshAll, &mut app, &workers, &clock);
 
         // A fleet-only refresh does not ask `gh` while its own ten-minute clock is unspent.
         app.finish_gh_refresh(Ok(cerebro_tui::model::GhSnapshot::default()), clock());
-        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshFleet, &mut app, &workers, &clock);
         assert!(
             app.begin_gh_refresh(Instant::now()),
             "the slot is free, so RefreshFleet asked nothing of gh"
@@ -5012,7 +5007,7 @@ mod main_tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let now = Utc::now();
-        let mut host = SessionHost::default();
+        let host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
         let mut app = standby_app(
             supervising(),
@@ -5024,23 +5019,15 @@ mod main_tests {
         ledger.set_failures("Xavier", 3);
         app.selected = Some("Xavier".to_string());
 
-        route_key(
-            crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('s')),
-            &mut app,
-            &mut host,
-            &mut ledger,
-            &mut test_logger(),
-            &paths,
-            &Programs::default(),
-            10,
-            now,
-        );
+        let mut state = LoopState { host, ledger, ..test_state() };
+        let config = LoopConfig { paths: paths.clone(), programs: Programs::default(), ..test_config() };
+        route_key(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('s')), &mut app, &mut state, &config, 10, now);
 
-        assert!(host.is_live("Xavier"), "the navigator's start is never held: {:?}", app.notice);
-        assert_eq!(ledger.failures("Xavier"), 0, "and the last three do not count");
-        assert_eq!(ledger.started_at("Xavier"), Some(now), "the start is recorded");
-        host.kill(&paths, "Xavier");
-        settle_gone(&mut host, "Xavier");
+        assert!(state.host.is_live("Xavier"), "the navigator's start is never held: {:?}", app.notice);
+        assert_eq!(state.ledger.failures("Xavier"), 0, "and the last three do not count");
+        assert_eq!(state.ledger.started_at("Xavier"), Some(now), "the start is recorded");
+        state.host.kill(&paths, "Xavier");
+        settle_gone(&mut state.host, "Xavier");
     }
     // --- x: the first board write (cb-kcs.5.1) -----------------------------------------------
 
@@ -5076,18 +5063,12 @@ mod main_tests {
         keys: Vec<crossterm::event::KeyEvent>,
     ) -> AppAction {
         let mut action = AppAction::None;
+        let config =
+            LoopConfig { paths: paths.clone(), programs: programs.clone(), ..test_config() };
         for key in keys {
-            action = route_key(
-                key,
-                app,
-                host,
-                &mut StartLedger::default(),
-                &mut test_logger(),
-                paths,
-                programs,
-                10,
-                Utc::now(),
-            );
+            let mut state = LoopState { host: std::mem::take(host), ..test_state() };
+            action = route_key(key, app, &mut state, &config, 10, Utc::now());
+            *host = std::mem::take(&mut state.host);
         }
         action
     }
@@ -5212,16 +5193,17 @@ mod main_tests {
         let clock = Utc::now;
         let (fleet, work, gh, sweeps) = (worker(), work_worker(), gh_worker(), sweep_worker());
 
-        dispatch(AppAction::RefreshAll, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
+        let workers = Workers { fleet, work, gh, sweep: sweeps, ..test_workers() };
+        dispatch(AppAction::RefreshAll, &mut app, &workers, &clock);
         assert!(!app.begin_sweep_refresh(Instant::now()), "a request is already in flight");
         app.finish_sweep_refresh(Ok(Vec::new()), clock());
 
         // The ten-minute clock is unspent, so a fleet-only refresh does not re-run six scripts.
-        dispatch(AppAction::RefreshFleet, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshFleet, &mut app, &workers, &clock);
         assert!(!app.sweeps.refreshing, "the sweeps keep their own cadence");
 
         // And `x` asks for them alone, so a finding acted on leaves the section at once.
-        dispatch(AppAction::RefreshSweeps, &mut app, &fleet, &work, &detail_worker(), &gh, &sweeps, &history_worker(), &clock);
+        dispatch(AppAction::RefreshSweeps, &mut app, &workers, &clock);
         assert!(app.sweeps.refreshing, "RefreshSweeps asks for the sweeps");
     }
 
@@ -5388,11 +5370,11 @@ mod main_tests {
         assert_eq!(app.notice_tone, app::NoticeTone::Pending);
     }
 
-    /// A write that could never be sent is reported rather than lost.
+    /// One `dispatch`, not two: a `Write` action reaches the write worker through the same
+    /// function every other action goes through, and one that could never be sent is reported
+    /// rather than lost (cb-agg).
     #[test]
-    fn an_undeliverable_write_is_reported_rather_than_lost() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
+    fn dispatch_sends_a_write_and_reports_an_undeliverable_one() {
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
         let request = cerebro_tui::app::WriteRequest::Priority {
             id: "cb-x".into(),
@@ -5402,14 +5384,13 @@ mod main_tests {
         };
         app.begin_write(&request, &Programs::default().bd);
         // A worker whose thread is gone: its receiver has been dropped.
-        let worker = dead_write_worker();
-        dispatch_write(AppAction::Write(request), &mut app, &worker);
+        let workers = Workers { write: dead_write_worker(), ..test_workers() };
+        dispatch(AppAction::Write(request), &mut app, &workers, &Utc::now);
         assert_eq!(
             app.notice.as_deref(),
             Some("the write worker has stopped — nothing was written")
         );
         assert_eq!(app.notice_tone, app::NoticeTone::Urgent);
-        drop(paths);
     }
 
     #[test]
@@ -5626,21 +5607,13 @@ mod main_tests {
         let paths = scratch(dir.path(), "sleep 5");
         let programs = Programs::default();
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(1));
-        let mut host = SessionHost::default();
+        let host = SessionHost::default();
 
         let mut logger = Logger::new(&paths.shared_root);
         logger.set_enabled(true);
-        route_key(
-            ch('0'),
-            &mut app,
-            &mut host,
-            &mut StartLedger::default(),
-            &mut logger,
-            &paths,
-            &programs,
-            10,
-            Utc::now(),
-        );
+        let mut state = LoopState { host, ledger: StartLedger::default(), logger, ..test_state() };
+        let config = LoopConfig { paths: paths.clone(), programs, ..test_config() };
+        route_key(ch('0'), &mut app, &mut state, &config, 10, Utc::now());
 
         let written = std::fs::read_to_string(
             paths.shared_root.join(".cerebro/state/decisions.jsonl"),
@@ -6035,7 +6008,7 @@ mod main_tests {
     fn a_pinned_bead_reaches_the_screen() {
         let mut app = app_with_a_bead_under_the_cursor();
         let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
-        let mut host = SessionHost::default();
+        let host = SessionHost::default();
         let mut events = QueuedEvents::events(vec![
             crossterm::event::KeyEvent::new(
                 crossterm::event::KeyCode::Tab,
@@ -6051,15 +6024,10 @@ mod main_tests {
             Programs::default(),
             Arc::new(bd_answering_a_bead()),
         );
-        let _ = run(
-            &mut terminal, &mut events, &mut app, &worker(), &work_worker(), &detail,
-            &gh_worker(), &sweep_worker(), &history_worker(),
-            &supervision().0, &mut supervision().1, &mut host,
-            &mut cerebro_tui::triggers::StartLedger::default(),
-            &mut cerebro_tui::lifecycle::TriageLedger::default(),
-            &mut cerebro_tui::pruner::Pruner::new(), &mut test_logger(), &nowhere().0,
-            &nowhere().1, &write_worker(), &std::collections::BTreeMap::new(), Utc::now,
-        );
+        let workers = Workers { detail, ..test_workers() };
+        let mut state = LoopState { host, ..test_state() };
+        let config = test_config();
+        let _ = run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now);
 
         assert!(app.bead_detail.is_some(), "Enter pinned the bead");
         let screen: String = {
@@ -6116,8 +6084,8 @@ mod main_tests {
         let detail = DetailWorker::spawn(nowhere().0, Programs::default(), fake.clone());
         let mut app = App::new();
 
-        dispatch(AppAction::RefreshAll, &mut app, &worker(), &work_worker(), &detail,
-                 &gh_worker(), &sweep_worker(), &history_worker(), &Utc::now);
+        let workers = Workers { detail, ..test_workers() };
+        dispatch(AppAction::RefreshAll, &mut app, &workers, &Utc::now);
         assert!(
             !fake.calls().iter().any(|call| call.args.iter().any(|a| a == "show")),
             "g with nothing pinned spawns no bd show"
@@ -6138,8 +6106,7 @@ mod main_tests {
             },
             body: cerebro_tui::app::DetailBody::Ready(Default::default()),
         });
-        dispatch(AppAction::RefreshAll, &mut app, &worker(), &work_worker(), &detail,
-                 &gh_worker(), &sweep_worker(), &history_worker(), &Utc::now);
+        dispatch(AppAction::RefreshAll, &mut app, &workers, &Utc::now);
         assert_eq!(
             app.bead_detail.as_ref().unwrap().body,
             cerebro_tui::app::DetailBody::Reading,

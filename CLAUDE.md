@@ -560,8 +560,9 @@ per-role wake floor, the unchanged-work fingerprint and role-start spacing. Ever
 launch arms, whoever asked for it — `s`, an autostart and a trigger alike — and a retire, a `k`
 (at every row state, not only standby), a give-up and a tick on which this view may not supervise
 all disarm; a pass that merely ends does not, which is the whole point of the set (cb-op0).
-`docs/ui/cb-op0-arming.html` §6 is where that whole rule is written down, for both views. Since cb-kcs.4.2 a start that keeps failing backs off on `0/30s/2m/10m` — the row
-counts the wait down in place of its condition — and is abandoned after five consecutive starts
+`docs/ui/cb-op0-arming.html` §6 is where that whole rule is written down, for both views. Since
+cb-kcs.4.2 a start that keeps failing backs off on `0/30s/2m/10m` — the row counts the wait down
+in place of its condition — and is abandoned after five consecutive starts
 that produced no pass, which disarms the name and leaves `s` as the only way back; a launcher
 refusal is parked from the first failure, where a silent crash is retried. Since cb-kcs.4.3 the
 three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own

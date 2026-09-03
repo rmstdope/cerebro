@@ -3266,9 +3266,8 @@ mod main_tests {
 
     #[test]
     fn s_arms_the_name_it_starts() {
-        // The elisp answers the same rule in
-        // `cerebro-test/killing-a-live-interactive-session-disarms-it-too` and through
-        // `cerebro--launch`; `docs/ui/cb-op0-arming.html` §6 is the table both follow.
+        // The elisp answers the same rule through `cerebro--launch`, which has always armed on
+        // every start; `docs/ui/cb-op0-arming.html` §6 is the table both follow.
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let mut app = lifecycle_app(

@@ -85,7 +85,6 @@ pub enum PaneContent<T> {
 }
 
 impl<T> PaneContent<T> {
-    /// The value still worth rendering, fresh or stale; `None` while loading or unavailable.
     /// The held value, to be changed in place. The one caller is `App::begin_write`, applying the
     /// overlay to the buckets already on screen so the row changes on the keystroke's own frame.
     pub fn value_mut(&mut self) -> Option<&mut T> {
@@ -95,6 +94,7 @@ impl<T> PaneContent<T> {
         }
     }
 
+    /// The value still worth rendering, fresh or stale; `None` while loading or unavailable.
     pub fn value(&self) -> Option<&T> {
         match self {
             Self::Fresh { value, .. } | Self::Stale { value, .. } => Some(value),
@@ -1983,8 +1983,6 @@ impl App {
         self.work_requested_at
     }
 
-    /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
-    /// cannot answer must not make the fleet rows beside it look stale.
     /// Record a write about to be sent: the dim line, the request counter, and - for a priority
     /// write - the overlay entry and the optimistic undo entry.
     ///
@@ -2083,6 +2081,11 @@ impl App {
         }
     }
 
+    /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
+    /// cannot answer must not make the fleet rows beside it look stale.
+    ///
+    /// The overlay is settled and applied HERE, before the buckets reach the pane, so the whole
+    /// document is consistent - see `apply_pending_priority`.
     pub fn finish_work_refresh(
         &mut self,
         mut result: Result<WorkBuckets, ReadError>,

@@ -3,7 +3,7 @@
 //! Unconditionally `pub`, on `readers::testing`'s precedent and for its reason - `main.rs` and
 //! the integration targets are separate crates and cannot see a `#[cfg(test)]` item here.
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::time::{Duration, Instant};
 
 use ratatui::text::Line;
@@ -53,6 +53,16 @@ pub fn wait_for<T>(bound: Duration, mut attempt: impl FnMut() -> Option<T>) -> O
 /// The predicate case: `true` if READY held within BOUND.
 pub fn wait_until(bound: Duration, mut ready: impl FnMut() -> bool) -> bool {
     wait_for(bound, || ready().then_some(())).is_some()
+}
+
+/// A loopback address that was free a moment ago: bound on port 0, read back, released.
+///
+/// There IS a window between finding it and taking it - anything on the machine may bind it in
+/// between - so every caller retries rather than treating one refusal as final. That race is the
+/// cb-kcs.1 flake, and it is a property of the machine rather than of this function.
+pub fn free_endpoint() -> SocketAddr {
+    let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind probe");
+    probe.local_addr().expect("probe addr")
 }
 
 /// A `Line`'s spans, joined - one string per line.
@@ -118,6 +128,14 @@ mod tests {
             calls == 2
         }));
         assert!(!wait_until(Duration::from_millis(50), || false));
+    }
+
+    #[test]
+    fn free_endpoint_answers_a_bindable_loopback_address() {
+        let addr = free_endpoint();
+        assert_eq!(addr.ip(), std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
+        assert_ne!(addr.port(), 0, "the port was read back after the probe bound it");
+        TcpListener::bind(addr).expect("the address a probe just released is bindable");
     }
 
     #[test]

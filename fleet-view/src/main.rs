@@ -1846,6 +1846,7 @@ impl<M: TerminalModes> Drop for TerminalGuard<M> {
 #[cfg(test)]
 mod main_tests {
     use super::*;
+    use cerebro_tui::probe;
     use std::cell::RefCell;
     use std::rc::Rc;
     use ratatui::backend::TestBackend;
@@ -2383,18 +2384,10 @@ mod main_tests {
         controller.record = Some(record.clone());
         // Whatever port is actually free: between a probe closing and the lease binding, anything
         // on the machine may take it, so a lost race here is setup noise and simply tries again.
-        let mut held = false;
-        for _ in 0..64 {
-            let listener =
-                std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("probe");
-            let addr = listener.local_addr().expect("addr");
-            drop(listener);
-            controller.endpoint = Some(addr);
-            if controller.apply(Ok(Ok(SupervisorKind::Tui))) == SupervisionMode::Supervising {
-                held = true;
-                break;
-            }
-        }
+        let held = probe::wait_until(probe::POLL_BOUND, || {
+            controller.endpoint = Some(probe::free_endpoint());
+            controller.apply(Ok(Ok(SupervisorKind::Tui))) == SupervisionMode::Supervising
+        });
         assert!(held && controller.lease.is_some(), "the setup must actually hold a lease");
 
         let failure = ReadError::Timeout { source: "fleet-supervisor".into(), seconds: 5 };

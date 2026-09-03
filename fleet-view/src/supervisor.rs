@@ -386,6 +386,7 @@ fn json_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::probe;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     // --- the shared transition table ------------------------------------------------------------
@@ -512,17 +513,12 @@ mod tests {
 
     /// A free loopback port, found by binding one and letting it go.
     ///
-    /// Between the probe closing and the caller binding, anything on the machine may take the
-    /// port - so NOTHING below asserts on a bind that used this directly. Setting up a lease goes
-    /// through `acquire_on_a_free_port`, which retries, and a test that needs a foreign listener
-    /// binds it on port 0 and asks it what it got. Two of these cases were written the obvious
-    /// way first and failed about one run in ten, which is the kind of test this repository
-    /// refuses to ship.
-    fn free_port() -> u16 {
-        let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind probe");
-        probe.local_addr().expect("probe addr").port()
-    }
-
+    // Between a probe closing and the caller binding, anything on the machine may take the port -
+    // so NOTHING below asserts on a bind that used `probe::free_endpoint` directly. Setting up a
+    // lease goes through `acquire_on_a_free_port`, which retries, and a test that needs a foreign
+    // listener binds it on port 0 and asks it what it got. Two of these cases were written the
+    // obvious way first and failed about one run in ten, which is the kind of test this repository
+    // refuses to ship.
     fn endpoint(port: u16) -> SocketAddr {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
     }
@@ -534,13 +530,13 @@ mod tests {
         identity: &str,
         owner: SupervisorKind,
     ) -> (SupervisorLease, SocketAddr) {
-        for _ in 0..64 {
-            let addr = endpoint(free_port());
-            if let Ok(lease) = SupervisorLease::try_acquire(addr, record, identity, owner) {
-                return (lease, addr);
-            }
-        }
-        panic!("no free loopback port for a test lease");
+        probe::wait_for(probe::POLL_BOUND, || {
+            let addr = probe::free_endpoint();
+            SupervisorLease::try_acquire(addr, record, identity, owner)
+                .ok()
+                .map(|lease| (lease, addr))
+        })
+        .expect("no free loopback port for a test lease")
     }
 
     /// Take a lease that ought to be free, allowing for the moment after a release in which it is
@@ -559,16 +555,19 @@ mod tests {
         owner: SupervisorKind,
     ) -> SupervisorLease {
         let mut last = None;
-        for _ in 0..200 {
+        let lease = probe::wait_for(std::time::Duration::from_secs(4), || {
             match SupervisorLease::try_acquire(addr, record, identity, owner) {
-                Ok(lease) => return lease,
+                Ok(lease) => Some(lease),
                 Err(error) => {
                     last = Some(error);
-                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    None
                 }
             }
+        });
+        match lease {
+            Some(lease) => lease,
+            None => panic!("the lease never became free: {last:?}"),
         }
-        panic!("the lease never became free: {last:?}");
     }
 
     /// Somebody else's listener, and the address it actually got. Bound on port 0, so there is no

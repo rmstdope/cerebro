@@ -710,7 +710,9 @@ One screen, **three** independently bordered, independently scrolling widgets si
 Fleet, Work and Session, each with its own title, focus and scroll offset rather than one shared
 document. At `SPLIT_COLUMNS` (100) or wider the screen is a fixed `LEFT_COLUMN` (40) holding Fleet
 over Work, with Session taking every remaining cell beside them; below that width all three stack.
-`Tab` cycles Fleet → Work → Session and `Shift-Tab` reverses it — the focused one draws a
+`Tab` cycles Fleet → Work → Session and `Shift-Tab` reverses it, and since cb-5kk `F1`/`F2`/`F3`
+jump straight to those three panes from any focus (held back from a focused live session like the
+tabs; `F4` and above still reach the agent) — the focused one draws a
 bright-blue thick-line border and a bold title. From a focused **live** session both are held back
 from the child and run that same cycle (cb-3v5), so `Tab` is the one key back to Fleet and
 `Shift-Tab` the one key to Work. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:

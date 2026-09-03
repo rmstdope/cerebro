@@ -225,7 +225,8 @@ consumer:
 It shows the same fleet rows and the same six work queues (Claimed, Planned unclaimed, Being
 planned, Unplanned, Waiting on you, Merged unverified) in two separately bordered, independently
 scrolling widgets stacked one above the other - Fleet on top, Work below - refreshing the fleet
-every five seconds and the board every thirty. `Tab`/`Shift-Tab` move focus between them; the
+every five seconds and the board every thirty. `Tab`/`Shift-Tab` move focus between them, and `F1`/`F2`/`F3`
+jump straight to the Fleet, Work and Session panes from any focus; the
 focused widget has a bright-blue thick-line border and `↑`/`↓`/`PgUp`/`PgDn` scroll only it. `g`
 refreshes both panes, and `q`, `Esc` or `Ctrl-C` quits.
 

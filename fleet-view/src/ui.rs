@@ -643,7 +643,7 @@ fn fit_hints(clauses: &[HintClause], used: usize, width: usize) -> String {
 /// here plus a rank, never a width decision (cb-51u).
 fn hint_clauses(app: &App) -> Vec<HintClause> {
     let mut clauses = vec![
-        HintClause { text: "Tab/Shift-Tab pane", rank: HintRank::Movement },
+        HintClause { text: "Tab/Shift-Tab/F1-F3 pane", rank: HintRank::Movement },
         HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement },
     ];
     if let Some(text) = lifecycle_hint(&app.supervision) {
@@ -696,7 +696,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     if app.session_has_keyboard() {
         let name = app.selected.clone().unwrap_or_else(|| "The session".to_string());
         return Line::from(Span::raw(format!(
-            "{name} has the keyboard | Tab leaves to Fleet, Shift-Tab to Work"
+            "{name} has the keyboard | Tab to Fleet, Shift-Tab to Work, F1/F2/F3 to a pane"
         )));
     }
     let mut spans = vec![Span::raw(supervision_title(&app.supervision))];
@@ -1679,16 +1679,16 @@ mod tests {
         app.focus = PaneFocus::Fleet;
         live(&mut app, &["a line"]);
         let rendered = lines(&render(&app, 160, 30));
-        assert!(line_with(&rendered, "Tab/Shift-Tab pane").contains("Enter session"));
+        assert!(line_with(&rendered, "Tab/Shift-Tab/F1-F3 pane").contains("Enter session"));
 
         app.set_session_view(SessionView::None);
         let rendered = lines(&render(&app, 160, 30));
-        assert!(!line_with(&rendered, "Tab/Shift-Tab pane").contains("Enter session"));
+        assert!(!line_with(&rendered, "Tab/Shift-Tab/F1-F3 pane").contains("Enter session"));
 
         live(&mut app, &["a line"]);
         app.focus = PaneFocus::Work;
         let rendered = lines(&render(&app, 160, 30));
-        let header = line_with(&rendered, "Tab/Shift-Tab pane");
+        let header = line_with(&rendered, "Tab/Shift-Tab/F1-F3 pane");
         assert!(!header.contains("Enter session"), "Work focus has its own Enter");
 
         // Moving focus is not a supervised act, so a read-only view offers it too.
@@ -1696,7 +1696,7 @@ mod tests {
         app.focus = PaneFocus::Fleet;
         live(&mut app, &["a line"]);
         let rendered = lines(&render(&app, 160, 30));
-        assert!(line_with(&rendered, "Tab/Shift-Tab pane").contains("Enter session"));
+        assert!(line_with(&rendered, "Tab/Shift-Tab/F1-F3 pane").contains("Enter session"));
     }
 
     /// A row that is not running carries WHY in the BEAD column, in red - the navigator's choice
@@ -1980,7 +1980,7 @@ mod tests {
         let rendered = lines(&render(&app, 120, 20));
         assert_eq!(
             rendered[0],
-            "Xavier has the keyboard | Tab leaves to Fleet, Shift-Tab to Work"
+            "Xavier has the keyboard | Tab to Fleet, Shift-Tab to Work, F1/F2/F3 to a pane"
         );
 
         // Unfocused, the ordinary header is back untouched - ownership span, hints and all.
@@ -2585,7 +2585,7 @@ mod tests {
         let app = populated(); // App::new(): no declaration, so read-only because Emacs
         let rendered = lines(&render(&app, 100, 20));
         assert!(rendered[0].starts_with("Cerebro — read-only |"), "{:?}", rendered[0]);
-        for hint in ["Tab/Shift-Tab pane", "↑/↓/PgUp/PgDn move", "g refresh", "q/Esc/Ctrl-C quit"] {
+        for hint in ["Tab/Shift-Tab/F1-F3 pane", "↑/↓/PgUp/PgDn move", "g refresh", "q/Esc/Ctrl-C quit"] {
             assert!(rendered[0].contains(hint), "the default screen keeps {hint}: {:?}", rendered[0]);
         }
 
@@ -2632,7 +2632,7 @@ mod tests {
 
         // With room for everything, everything is shown.
         let wide = fit_hints(&hint_clauses(&app), used, 160);
-        assert!(wide.contains("Tab/Shift-Tab pane"), "{wide:?}");
+        assert!(wide.contains("Tab/Shift-Tab/F1-F3 pane"), "{wide:?}");
         assert!(wide.contains("↑/↓/PgUp/PgDn move"), "{wide:?}");
 
         // A supervising sibling at two widths: the lifecycle keys survive both, and the movement
@@ -2643,7 +2643,7 @@ mod tests {
         assert!(narrow.contains("s/f/k start·finish·kill"), "{narrow:?}");
         assert!(!narrow.contains("Tab/Shift-Tab"), "{narrow:?}");
         let wide = fit_hints(&hint_clauses(&supervising), used, 200);
-        assert!(wide.contains("Tab/Shift-Tab pane"), "{wide:?}");
+        assert!(wide.contains("Tab/Shift-Tab/F1-F3 pane"), "{wide:?}");
         assert!(wide.contains("s/f/k start·finish·kill"), "{wide:?}");
     }
 
@@ -4199,7 +4199,7 @@ mod tests {
             "the child is invisible, so it does not hold the keyboard: {:?}",
             rendered[0]
         );
-        assert!(rendered[0].contains("Tab/Shift-Tab pane"), "{:?}", rendered[0]);
+        assert!(rendered[0].contains("Tab/Shift-Tab/F1-F3 pane"), "{:?}", rendered[0]);
     }
 
     #[test]
@@ -4253,7 +4253,7 @@ mod tests {
         // Wide: everything, the cursor clauses included.
         let wide = fit_hints(&hint_clauses(&app), used, 200);
         assert!(wide.contains("Enter bead"), "{wide:?}");
-        assert!(wide.contains("Tab/Shift-Tab pane"), "{wide:?}");
+        assert!(wide.contains("Tab/Shift-Tab/F1-F3 pane"), "{wide:?}");
 
         // Narrow enough that even the shortened form will not fit: the clauses go, and the two
         // keys a navigator cannot guess from the screen stay.
@@ -4265,7 +4265,7 @@ mod tests {
     }
 
     const MOVE_PANE: HintClause =
-        HintClause { text: "Tab/Shift-Tab pane", rank: HintRank::Movement };
+        HintClause { text: "Tab/Shift-Tab/F1-F3 pane", rank: HintRank::Movement };
     const MOVE_SCROLL: HintClause =
         HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement };
     const KEEP_LIFECYCLE: HintClause =
@@ -4359,7 +4359,7 @@ mod tests {
         let refresh = HintClause { text: "g refresh", rank: HintRank::Kept };
         let retry = HintClause { text: "g retry", rank: HintRank::Kept };
         let quit = HintClause { text: "q/Esc/Ctrl-C quit", rank: HintRank::Kept };
-        let pane = HintClause { text: "Tab/Shift-Tab pane", rank: HintRank::Movement };
+        let pane = HintClause { text: "Tab/Shift-Tab/F1-F3 pane", rank: HintRank::Movement };
         let scroll = HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement };
 
         assert_eq!(
@@ -4493,7 +4493,7 @@ mod tests {
         // clause is still there.
         let no_movement = fit_hints(&clauses, used, used + full.width() - 1);
         assert!(no_movement.contains("Ctrl-r reload"), "{no_movement:?}");
-        assert!(!no_movement.contains("Tab/Shift-Tab pane"), "{no_movement:?}");
+        assert!(!no_movement.contains("Tab/Shift-Tab/F1-F3 pane"), "{no_movement:?}");
 
         // One cell narrower again: the cursor rank gives way, the new clause with it, and every
         // kept clause is there character for character.

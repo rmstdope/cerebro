@@ -503,8 +503,10 @@ maintainer said in the thread that the bead never absorbed. Where the thread cha
 the work, say so in the plan's *Context* and name the comment — the implementer never sees the
 issue, and a decision whose reason lives in a GitHub thread is a decision it cannot check.
 
-If the thread turns out to contradict the bead, that is a user-facing question and it is the
-navigator's: ask, rather than planning the version you prefer.
+If the thread turns out to contradict the bead, run it past the two lists and the cost test above.
+Where the contradiction is about the shape it is the navigator's: ask, rather than planning the
+version you prefer. Where it is a detail inside a shape they have already agreed, settle it and
+write it into *Decided by me* with the thread as its reason.
 
 ## How two planners stay off each other's work
 

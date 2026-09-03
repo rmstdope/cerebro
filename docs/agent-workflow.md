@@ -2,7 +2,7 @@
 
 This is the human's guide to running the fleet: what to start, what each agent will ask you for,
 where to look when something wants you, and what it costs. You are "the navigator" throughout — the
-agents' word for the one person every user-facing decision belongs to.
+agents' word for the one person the shape of every user-facing decision belongs to.
 
 The agents' own instructions live in `.claude/cerebro/agents/<role>.md`, and for the three roles that
 have one, in `.claude/cerebro/skills/`: `plan-bead`, `implement-bead` and the shared

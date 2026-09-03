@@ -660,6 +660,13 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
         Some(app::WorkCursor::More(_)) => keys.push_str(" | Enter show all"),
         _ => {}
     }
+    // cb-d31, by the same rule as `x act` and the priority keys above: a clause is shown only
+    // while its key acts on what is under the cursor. Fleet focus alone - Work's own `Enter` is a
+    // different key on a different row and carries its own clause. It rides in `keys` rather than
+    // in `full`, so it survives the narrow-terminal shortening beside them.
+    if app.focus == PaneFocus::Fleet && app.session_reachable() {
+        keys.push_str(" | Enter session");
+    }
     let full = format!(
         " | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move{keys} | {refresh_key} | q/Esc/Ctrl-C quit"
     );
@@ -1517,6 +1524,34 @@ mod tests {
             .unwrap_or_else(|| {
                 panic!("no line contains {needle:?}; screen was:\n{}", rendered.join("\n"))
             })
+    }
+
+    /// The header offers `Enter session` only while that key would act: Fleet focus, and a
+    /// Session pane with something in it. The same rule `x act` and the priority clause follow.
+    #[test]
+    fn the_header_offers_enter_only_while_it_acts() {
+        let mut app = supervising();
+        app.focus = PaneFocus::Fleet;
+        live(&mut app, &["a line"]);
+        let rendered = lines(&render(&app, 160, 30));
+        assert!(line_with(&rendered, "Tab/Shift-Tab pane").contains("Enter session"));
+
+        app.set_session_view(SessionView::None);
+        let rendered = lines(&render(&app, 160, 30));
+        assert!(!line_with(&rendered, "Tab/Shift-Tab pane").contains("Enter session"));
+
+        live(&mut app, &["a line"]);
+        app.focus = PaneFocus::Work;
+        let rendered = lines(&render(&app, 160, 30));
+        let header = line_with(&rendered, "Tab/Shift-Tab pane");
+        assert!(!header.contains("Enter session"), "Work focus has its own Enter");
+
+        // Moving focus is not a supervised act, so a read-only view offers it too.
+        let mut app = populated();
+        app.focus = PaneFocus::Fleet;
+        live(&mut app, &["a line"]);
+        let rendered = lines(&render(&app, 160, 30));
+        assert!(line_with(&rendered, "Tab/Shift-Tab pane").contains("Enter session"));
     }
 
     /// A row that is not running carries WHY in the BEAD column, in red - the navigator's choice

@@ -1087,6 +1087,22 @@ impl App {
                 }
                 AppAction::None
             }
+            // `Enter` under Fleet is "Tab twice" in one key: it moves focus to the selected
+            // agent's Session pane, and only when that pane is holding something. Refusing on an
+            // empty pane is the navigator's own choice (cb-d31, round one) over always moving:
+            // walking the roster with `Down` and pressing `Enter` on each row must not throw them
+            // into an empty pane and make them `Shift-Tab` back on every standby agent.
+            KeyCode::Enter if self.focus == PaneFocus::Fleet => {
+                if self.session_reachable() {
+                    self.focus = PaneFocus::Session;
+                } else if let Some(name) = self.selected.clone() {
+                    // Gold: news, not a fault. `on_key` already cleared the slot above, so this
+                    // is the one notice this keystroke leaves, and the next keystroke clears it.
+                    self.set_notice(format!("{name} has no session"));
+                }
+                // Nothing selected: silent, exactly as `s`/`f`/`k` are with no row.
+                AppAction::None
+            }
             // `Enter` opens the section under a `+N more` row, and closes it again. The one way
             // past the eight-row cap, and the only reason a bead in the P4 backlog can be
             // reranked at all.
@@ -1215,6 +1231,21 @@ impl App {
     /// pass scrollable at all.
     pub fn session_has_keyboard(&self) -> bool {
         self.focus == PaneFocus::Session && matches!(self.session.view, SessionView::Live { .. })
+    }
+
+    /// Is there a session for `Enter` under Fleet focus to go to?
+    ///
+    /// True when an agent is selected AND the Session pane is holding something: a live child,
+    /// one starting, a retained pass, or a refused launch. False only for `SessionView::None`.
+    /// Supervision is not part of the question: a view that drained to read-only still holds the
+    /// retained transcripts of the sessions it hosted, so the same rule serves both, which is the
+    /// navigator's own choice. The one place this question is answered: the key below and the
+    /// header's own hint both read it, so the clause and the key can never disagree. Matching
+    /// `None` and negating - rather than listing the four positive variants - is deliberate: a
+    /// fifth `SessionView` added later is content by default, which is the safe direction for a
+    /// key that only moves focus.
+    pub fn session_reachable(&self) -> bool {
+        self.selected.is_some() && !matches!(self.session.view, SessionView::None)
     }
 
     /// Install the view `SessionHost::sync` materialised for this frame.
@@ -1745,6 +1776,7 @@ impl<T> Drop for Worker<T> {
 mod tests {
     use super::*;
     use crate::model::AgentKind;
+    use std::sync::Arc;
 
     fn at(seconds: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(1_767_225_600 + seconds, 0).expect("a valid timestamp")
@@ -3278,6 +3310,54 @@ mod tests {
         );
         assert_eq!(app.work_cursor, Some(WorkCursor::Bead("cb-c".into())));
         assert_eq!(app.notice, None, "a refresh is not news");
+    }
+
+    /// `Enter` under Fleet focus is "Tab twice" in one key: it lands on the selected agent's
+    /// Session pane whenever that pane is holding anything at all.
+    #[test]
+    fn enter_under_fleet_focuses_a_session_that_exists() {
+        let views = vec![
+            SessionView::Live { lines: vec![], cursor: (0, 0) },
+            SessionView::Starting,
+            SessionView::Ended { lines: Arc::new(vec![]), at: at(0) },
+            SessionView::Refused { lines: Arc::new(vec![]), at: at(0) },
+        ];
+        for view in views {
+            let mut app = App::new();
+            app.focus = PaneFocus::Fleet;
+            app.selected = Some("Xavier".to_string());
+            app.set_session_view(view);
+
+            assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::None);
+            assert_eq!(app.focus, PaneFocus::Session);
+            assert_eq!(app.selected.as_deref(), Some("Xavier"));
+            assert_eq!(app.notice, None);
+        }
+    }
+
+    /// An empty pane refuses, in gold, and says whose - the same sentence whether or not this
+    /// view supervises, since moving focus is not a supervised act.
+    #[test]
+    fn enter_under_fleet_refuses_an_empty_session_pane() {
+        let mut app = App::new();
+        app.focus = PaneFocus::Fleet;
+        app.selected = Some("Rogue".to_string());
+        app.set_session_view(SessionView::None);
+
+        assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::None);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert_eq!(app.notice.as_deref(), Some("Rogue has no session"));
+        assert!(!app.notice_urgent, "news, not a fault");
+
+        app.set_supervision(SupervisionMode::Supervising);
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        assert_eq!(app.notice.as_deref(), Some("Rogue has no session"));
+
+        // Nothing selected is silent, exactly as `s`/`f`/`k` are with no row.
+        app.selected = None;
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert_eq!(app.notice, None);
     }
 
     #[test]

@@ -677,8 +677,14 @@ over Work, with Session taking every remaining cell beside them; below that widt
 `Tab` cycles Fleet → Work → Session and `Shift-Tab` reverses it — the focused one draws a
 bright-blue thick-line border and a bold title. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:
 under Work and Session that is its own scroll offset, and **under Fleet it is the selection**, which
-the pane then scrolls to follow. `g` refreshes both readers regardless of focus, `q`/`Esc`/`Ctrl-C`
-quits. A pane whose content outgrows its inner height reserves its last row for a dim
+the pane then scrolls to follow. Since cb-d31 **`Enter` under Fleet focus is `Tab` twice in one
+key**: it moves focus straight to the selected agent's Session pane, and only while that pane is
+holding something — a live child, one starting, a retained pass or a refused launch. An empty pane
+refuses in gold (`Rogue has no session`) and leaves the focus where it was, so walking the roster
+with `↓` never throws the navigator into an empty pane; nothing selected is silent. It moves focus
+and nothing else, so it is **outside the supervision lease** exactly as `x` and the priority keys
+are, and it behaves identically on a read-only view. `g` refreshes both readers regardless of focus,
+`q`/`Esc`/`Ctrl-C` quits. A pane whose content outgrows its inner height reserves its last row for a dim
 `Rows n–m of total` cue.
 
 **The selection is a name, never an index** (`App::selected`, `App::selected_index`): the roster can

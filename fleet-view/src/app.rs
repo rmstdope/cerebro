@@ -1236,9 +1236,11 @@ impl App {
     /// Is there a session for `Enter` under Fleet focus to go to?
     ///
     /// True when an agent is selected AND the Session pane is holding something: a live child,
-    /// one starting, a retained pass, or a refused launch. False for `SessionView::None`, which
-    /// is what a read-only view always shows, so the same rule serves both (the navigator's
-    /// choice). The one place this question is answered: the key below and the header's own hint
+    /// one starting, a retained pass, or a refused launch. False only for `SessionView::None`.
+    /// Supervision is not part of the question: a view that drained to read-only still holds the
+    /// retained transcripts of the sessions it hosted, so the same rule serves both, which is the
+    /// navigator's own choice. The one place this question is answered: the key below and the
+    /// header's own hint
     /// both read it, so the clause and the key can never disagree. Matching `None` and negating -
     /// rather than listing the four positive variants - is deliberate: a fifth `SessionView`
     /// added later is content by default, which is the safe direction for a key that only moves

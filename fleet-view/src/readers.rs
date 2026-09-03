@@ -47,6 +47,17 @@ use crate::model::{
 /// would trade a visible, self-healing pane for a screen that sits on `refreshing...` instead.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long either `bd` child may run. Thirty seconds, not `COMMAND_TIMEOUT`'s five: this is a
+/// local database read, but it is a read of a *shared* Dolt board, and every agent in the fleet
+/// runs `bd dolt pull` and `bd dolt push` on every pass while this view's own write worker pushes
+/// on `x` and on every priority key. Measured on this board: a median of about half a second
+/// quiet, and a p95 of six and a p100 of nine seconds while one `bd dolt pull` runs beside it. Five
+/// seconds cut into that tail about ten times a day, and each cut was a Work pane silently a cycle
+/// out of date. It is the same number `lifecycle::WRITE_TIMEOUT` gives the two `bd` writes, and it
+/// is far under the 120s `cerebro-subprocess-timeout-seconds` the Emacs view gives the identical
+/// query (`emacs/cerebro.el:1285`), which has never timed out on it.
+const BD_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Roots this crate reads from, supplied by the launcher (`cb-vyp.2`); this child does not
 /// rediscover them itself.
 #[derive(Clone, Debug)]
@@ -478,7 +489,7 @@ pub fn read_beads(
             "--brief",
         ],
         None,
-        COMMAND_TIMEOUT,
+        BD_TIMEOUT,
     )?;
     serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
         source: programs.bd.display().to_string(),
@@ -489,8 +500,8 @@ pub fn read_beads(
 /// One bead's long fields, via `bd --readonly -C <shared_root> show <id> --json`.
 ///
 /// `--readonly` and the explicit `-C` are mandatory for `read_beads`' reason: `bd` answers about
-/// whatever repository it runs in. This is a local database read, not a network call, so it takes
-/// `COMMAND_TIMEOUT` rather than `GH_TIMEOUT`.
+/// whatever repository it runs in. It takes `BD_TIMEOUT` rather than `COMMAND_TIMEOUT`: the database
+/// is local but shared, so this child waits behind whatever Dolt work the fleet is doing.
 ///
 /// The reader does not carry the id back - its worker does, by pairing the id it was handed with
 /// what this returned.
@@ -505,7 +516,7 @@ pub fn read_bead_detail(
         &programs.bd,
         &["--readonly", "-C", &root, "show", id, "--json"],
         None,
-        COMMAND_TIMEOUT,
+        BD_TIMEOUT,
     )?;
     model::parse_bead_detail(&stdout).map_err(|message| ReadError::Invalid {
         source: programs.bd.display().to_string(),
@@ -1075,6 +1086,21 @@ mod tests {
         let calls = fake.calls();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].args, bd_argv(&paths.shared_root));
+        assert_eq!(calls[0].timeout, BD_TIMEOUT);
+    }
+
+    /// Thirty seconds, not `COMMAND_TIMEOUT`'s five. The board is shared, so this child waits behind
+    /// every `bd dolt pull` and `bd dolt push` the fleet makes: measured on this board, a median near
+    /// half a second and a p100 near nine while one pull runs beside it. Five cut into that tail about
+    /// ten times a day, and each cut was a Work pane silently a cycle out of date - which the pane
+    /// cannot show, since a `Stale` snapshot is drawn exactly like a fresh one.
+    #[test]
+    fn the_bd_reads_are_bounded_for_a_contended_board_not_a_quiet_one() {
+        assert_eq!(BD_TIMEOUT, Duration::from_secs(30));
+        assert_ne!(
+            BD_TIMEOUT, COMMAND_TIMEOUT,
+            "the general bound is not this child's bound"
+        );
     }
 
     #[test]
@@ -1645,7 +1671,7 @@ mod tests {
             calls[0].args,
             vec!["--readonly", "-C", &root, "show", "cb-41r", "--json"]
         );
-        assert_eq!(calls[0].timeout, Duration::from_secs(5));
+        assert_eq!(calls[0].timeout, BD_TIMEOUT);
         assert_eq!(calls[0].cwd, None);
     }
 

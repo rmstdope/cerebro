@@ -759,7 +759,8 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   and kills it, which is why CI installs Emacs in the Rust job.
 - `readers.rs` — every file and subprocess: `scripts/roster`, `ps -axo pid=,ppid=,args=`, and one
   `bd --readonly -C <shared root> list --status open,in_progress,blocked,deferred,closed --json
-  --brief`. Each child has a five-second wall-clock bound, is killed **and reaped** on it, and has
+  --brief`. Each child has a wall-clock bound - five seconds, or `BD_TIMEOUT`'s thirty for the two `bd` reads,
+  which wait behind the fleet's Dolt traffic - is killed **and reaped** on it, and has
   both pipes drained on their own threads before anything waits — a child that fills a pipe while
   the parent waits is a deadlock no timeout can see. `read_fleet` and `read_work` are the two
   aggregate reads, and **a failure is never an empty answer**: `Ok(vec![])` would draw a fleet in

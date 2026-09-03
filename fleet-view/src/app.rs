@@ -1563,6 +1563,14 @@ impl App {
         if self.work.begin() {
             self.last_work_request = Some(at);
             self.work_request_pending = Some(now);
+            // Which overlay entries had settled when this read was ASKED for. Only those may be
+            // dropped when it answers: a read already in flight saw nothing of them.
+            self.work_settled_at_request = self
+                .pending_priority
+                .iter()
+                .filter(|(_, entry)| entry.settled)
+                .map(|(id, entry)| (id.clone(), entry.to))
+                .collect();
             true
         } else {
             false
@@ -1936,6 +1944,33 @@ impl App {
 
     /// The work pane's content transition. It touches the work pane and nothing else: a `bd` that
     /// cannot answer must not make the fleet rows beside it look stale.
+    /// Overwrite each bead's priority with the one it has been asked to have. Called on the
+    /// buckets a work read just returned, before they reach the pane, so the whole document - the
+    /// row, and `sorted_by_priority`'s order within its section - is consistent.
+    ///
+    /// No re-partition is needed: `partition_beads` splits on status and labels, never on
+    /// priority. No re-sort either: `sorted_by_priority` runs at render time. `linked` is left
+    /// alone - it carries no priority and renders nothing.
+    fn apply_pending_priority(&self, buckets: &mut WorkBuckets) {
+        if self.pending_priority.is_empty() {
+            return;
+        }
+        for section in [
+            &mut buckets.claimed,
+            &mut buckets.planned,
+            &mut buckets.being_planned,
+            &mut buckets.unplanned,
+            &mut buckets.paused,
+            &mut buckets.merged,
+        ] {
+            for bead in section.iter_mut() {
+                if let Some(entry) = self.pending_priority.get(&bead.id) {
+                    bead.priority = Some(entry.to);
+                }
+            }
+        }
+    }
+
     /// Record a write about to be sent: the dim line, the request counter, and - for a priority
     /// write - the overlay entry and the optimistic undo entry.
     ///
@@ -2008,9 +2043,18 @@ impl App {
 
     pub fn finish_work_refresh(
         &mut self,
-        result: Result<WorkBuckets, ReadError>,
+        mut result: Result<WorkBuckets, ReadError>,
         at: DateTime<Utc>,
     ) {
+        let settled = std::mem::take(&mut self.work_settled_at_request);
+        if let Ok(buckets) = &mut result {
+            for (id, to) in settled {
+                if self.pending_priority.get(&id) == Some(&PendingPriority { to, settled: true }) {
+                    self.pending_priority.remove(&id);
+                }
+            }
+            self.apply_pending_priority(buckets);
+        }
         // The request time is promoted WITH the value and never ahead of it: a failed read leaves
         // `work_requested_at` pointing at the request that produced the buckets still held, so
         // the triage guard can never measure old ids against a young age.
@@ -3381,6 +3425,118 @@ mod tests {
         app.begin_write(&undo, bd_path());
         app.finish_write(ran("cb-a", None, 2, true, "cb-a: back to P2"));
         assert_eq!(app.last_priority_change, None, "u is one step, spent by using it");
+    }
+
+    /// A bead reranked but not yet settled shows the number it was ASKED to have, in the row and
+    /// in `sorted_by_priority`'s order - the navigator declined seeing it flick back (round one).
+    ///
+    /// The buckets come through `model::partition_beads` rather than being built by hand: a rule
+    /// exercised only against invented inputs can still be wrong about every real one.
+    #[test]
+    fn a_reranked_bead_does_not_revert_when_a_board_read_lands() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+
+        let mut low = test_bead("cb-a", Some(1));
+        low.labels = vec!["planned".into()];
+        let mut reranked = test_bead("cb-x", Some(2));
+        reranked.labels = vec!["planned".into()];
+        let buckets = crate::model::partition_beads(vec![low, reranked]);
+        app.finish_work_refresh(Ok(buckets), at(0));
+
+        let planned = &app.work.content.value().expect("a read that succeeded").planned;
+        let x = planned.iter().find(|b| b.id == "cb-x").expect("cb-x is planned");
+        assert_eq!(x.priority, Some(0), "the row shows what it was asked to have");
+        assert_eq!(
+            sorted_by_priority(planned).first().map(|b| b.id.as_str()),
+            Some("cb-x"),
+            "and it sorts where P0 sorts"
+        );
+    }
+
+    #[test]
+    fn a_board_read_that_began_after_the_write_settled_drops_the_overlay() {
+        // Settled BEFORE the read was asked for: that read saw the new value, so the entry goes.
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.finish_write(ran("cb-x", Some(2), 0, false, "cb-x: P2 \u{2192} P0"));
+        app.begin_work_refresh(Instant::now(), at(0));
+        let mut fresh = test_bead("cb-x", Some(0));
+        fresh.labels = vec!["planned".into()];
+        app.finish_work_refresh(Ok(crate::model::partition_beads(vec![fresh])), at(0));
+        assert!(app.pending_priority.is_empty(), "a read that saw it settles it");
+
+        // The other order: the read was already in flight when the key was pressed, so it may not
+        // drop the entry, and the row still shows the new value.
+        let mut app = App::new();
+        app.begin_work_refresh(Instant::now(), at(0));
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.finish_write(ran("cb-x", Some(2), 0, false, "cb-x: P2 \u{2192} P0"));
+        let mut stale = test_bead("cb-x", Some(2));
+        stale.labels = vec!["planned".into()];
+        app.finish_work_refresh(Ok(crate::model::partition_beads(vec![stale])), at(0));
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 0, settled: true })
+        );
+        let planned = &app.work.content.value().expect("a read that succeeded").planned;
+        assert_eq!(planned[0].priority, Some(0));
+    }
+
+    #[test]
+    fn a_refused_write_lets_the_row_fall_back_to_the_board() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.finish_write(refused("cb-x", Some(2), 0, false));
+        assert!(app.pending_priority.is_empty(), "a failure leaves no ghost");
+
+        let mut bead = test_bead("cb-x", Some(2));
+        bead.labels = vec!["planned".into()];
+        app.finish_work_refresh(Ok(crate::model::partition_beads(vec![bead])), at(0));
+        let planned = &app.work.content.value().expect("a read that succeeded").planned;
+        assert_eq!(planned[0].priority, Some(2));
+    }
+
+    #[test]
+    fn a_newer_write_on_one_bead_replaces_the_older_overlay_entry_and_an_older_answer_is_ignored() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.begin_write(&priority_write("cb-x", Some(0), 3), bd_path());
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 3, settled: false }),
+            "newest wins on screen"
+        );
+
+        // The FIRST write's answer is stale: it must neither settle nor remove the newer entry.
+        app.finish_write(ran("cb-x", Some(2), 0, false, "cb-x: P2 \u{2192} P0"));
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 3, settled: false })
+        );
+        app.finish_write(refused("cb-x", Some(2), 0, false));
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 3, settled: false }),
+            "a stale refusal removes nobody's entry but its own"
+        );
+    }
+
+    #[test]
+    fn a_failed_board_read_drops_no_overlay_entry() {
+        let mut app = App::new();
+        app.begin_write(&priority_write("cb-x", Some(2), 0), bd_path());
+        app.finish_write(ran("cb-x", Some(2), 0, false, "cb-x: P2 \u{2192} P0"));
+        app.begin_work_refresh(Instant::now(), at(0));
+        app.finish_work_refresh(
+            Err(ReadError::Spawn { source: "bd".into(), message: "no".into() }),
+            at(0),
+        );
+        assert_eq!(
+            app.pending_priority.get("cb-x"),
+            Some(&PendingPriority { to: 0, settled: true }),
+            "a read that saw nothing settles nothing"
+        );
     }
 
     /// The four dim lines a write shows from the keystroke until it answers, verbatim (cb-21g,

@@ -364,6 +364,37 @@ pub fn read_role_spacing(
     (declared, complaints)
 }
 
+/// The `planner_buffer_multiple` this project declares, and a complaint if it declared something
+/// unusable. 1 when it declares none, which is today's rule (cb-3in).
+///
+/// The same three rules `read_role_spacing` copies: stdout only, a non-zero exit read as
+/// "declared nothing", and a value that is not a whole number above zero returned beside the
+/// value rather than silently replaced.
+///
+/// Runs once, at startup, beside `read_role_spacing` - not per tick and not per row.
+pub fn read_planner_multiple(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> (usize, Option<String>) {
+    let program = paths.scripts_dir.join("project-conf");
+    let key = crate::triggers::PLANNER_MULTIPLE_KEY;
+    let Ok(stdout) = commands.run(&program, &[key], Some(&paths.consumer_root), COMMAND_TIMEOUT)
+    else {
+        return (1, None);
+    };
+    let raw = String::from_utf8_lossy(&stdout).trim().to_string();
+    match crate::triggers::parse_planner_multiple(&raw) {
+        Ok(Some(multiple)) => (multiple, None),
+        Ok(None) => (1, None),
+        Err(bad) => (
+            1,
+            Some(format!(
+                "project.conf: {key} is not a whole number above zero (\"{bad}\"); using 1."
+            )),
+        ),
+    }
+}
+
 /// Which implementation this project declares may supervise, from `scripts/fleet-supervisor`
 /// (cb-kcs.1).
 ///
@@ -1365,6 +1396,38 @@ mod tests {
                 "project.conf: role_start_spacing_implementer is not a whole number of seconds (\"30s\"); using 30.".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn project_conf_declares_the_planner_multiple_and_names_a_bad_one() {
+        let paths = paths_at(Path::new("/consumer"));
+        let declared = FakeCommands::new(|_: &Call| Ok(b"2\n".to_vec()));
+        assert_eq!(read_planner_multiple(&paths, &declared), (2, None));
+
+        let bad = FakeCommands::new(|_: &Call| Ok(b"0\n".to_vec()));
+        assert_eq!(
+            read_planner_multiple(&paths, &bad),
+            (
+                1,
+                Some(
+                    "project.conf: planner_buffer_multiple is not a whole number above zero (\"0\"); using 1."
+                        .to_string()
+                )
+            )
+        );
+
+        // Nothing declared, and a non-zero exit, are the same answer: 1.
+        let absent = FakeCommands::new(|_: &Call| Ok(b"\n".to_vec()));
+        assert_eq!(read_planner_multiple(&paths, &absent), (1, None));
+        let failed = FakeCommands::new(|_: &Call| {
+            Err(ReadError::Exit {
+                source: "project-conf".into(),
+                status: Some(1),
+                stderr: String::new(),
+                stdout: String::new(),
+            })
+        });
+        assert_eq!(read_planner_multiple(&paths, &failed), (1, None));
     }
 
     // --- the gh reader (cb-kcs.4.3) ------------------------------------------------------------

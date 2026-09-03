@@ -1,0 +1,110 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+table{border-collapse:collapse;background:#1e1e1e;color:#d4d4d4;margin:8px 0}
+td,th{border:1px solid #333;padding:5px 10px;text-align:left;font-weight:normal}
+th{color:#fff;background:#2a2a2a}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+</style>
+<meta charset="utf-8"><title>cb-21g — board writes off the drawing thread</title>
+
+<h1>cb-21g — the surface the navigator approved, 2026-09-03</h1>
+<p class="lede">Two rounds. This file is the specification for <b>what the navigator sees while a board
+write is running</b> — the priority keys (<b class="k">0</b>-<b class="k">4</b>, <b class="k">+</b>,
+<b class="k">-</b>, <b class="k">u</b>) and <b class="k">x</b> on a sweep finding, the two writes in
+<code>cerebro-tui</code>. Both run <code>bd</code> and then <code>bd dolt push</code>, and both did it
+on the thread that draws the screen, so the whole view froze for about a second — thirty on a bad
+network. Where this file and the bead's plan disagree, this file is right.</p>
+
+<h2>1. What was wrong</h2>
+<p class="lede">Every reader in this crate has its own worker thread precisely so a slow subprocess
+cannot stall the frame. The two writes never got the same treatment: pressing <b class="k">0</b> on a
+bead stopped the clock, the arrow keys and every pane until the remote answered.</p>
+
+<h2>2. The line that says it is running</h2>
+<p class="lede">The write moves to its own worker. So that the keystroke is still acknowledged at once,
+the header's notice slot carries a <b>dim provisional line</b> from the moment the key is pressed,
+replaced by exactly today's sentence when the write answers. The row itself changes on the very frame
+the key was pressed (§4).</p>
+
+<div class="screen"><pre><span class="dim">the frame the key was pressed on</span>
+<span class="hd">Cerebro (Ratatui supervises)</span> | <span class="dim">cb-21g: P2 → P0…</span>
+<span class="d">──────────────────────────────────────────────</span>
+ <span class="hd">Planned, unclaimed 3</span>
+<span class="sel">  cb-21g  P0  A board write freezes the whole TUI…</span>
+   cb-44b  P2  Enter on a bead in the Work pane…
+
+<span class="dim">about a second later</span>
+<span class="hd">Cerebro (Ratatui supervises)</span> | <span class="y">cb-21g: P2 → P0</span>
+
+<span class="dim">or, when bd itself refused</span>
+<span class="hd">Cerebro (Ratatui supervises)</span> | <span class="e">bd would not set cb-21g to P0</span></pre></div>
+
+<div class="screen"><pre><span class="dim">x, the moment y is pressed</span>
+<span class="hd">Cerebro (Ratatui supervises)</span> | <span class="dim">running bd unclaim cb-9f2…</span>
+
+<span class="dim">when it answers</span>
+<span class="hd">Cerebro (Ratatui supervises)</span> | <span class="y">ran bd unclaim cb-9f2</span>
+
+<span class="dim">or</span>
+<span class="hd">Cerebro (Ratatui supervises)</span> | <span class="e">bd unclaim cb-9f2 failed</span></pre></div>
+
+<p class="note"><b>Rejected:</b> saying nothing until the answer. For <b class="k">x</b> that is a blank
+header for up to thirty seconds on a slow network, which is indistinguishable from a keystroke that was
+never received. <b>Also rejected:</b> a single <code>writing…</code> for every path, which says less
+than the view already knows.</p>
+
+<h2>3. Every sentence, verbatim</h2>
+<p class="lede">The provisional lines are dim, use the same words as the finished sentence, and end in
+an ellipsis. <b>No sentence that ships today changes.</b></p>
+
+<table>
+<tr><th>Keystroke</th><th>while it runs (dim)</th><th>when it answers</th></tr>
+<tr><td>a digit, <b class="k">+</b> or <b class="k">-</b></td><td>cb-21g: P2 → P0…</td><td>cb-21g: P2 → P0</td></tr>
+<tr><td>the same, bead with no priority</td><td>cb-21g: P? → P0…</td><td>cb-21g: P? → P0</td></tr>
+<tr><td><b class="k">u</b></td><td>cb-21g: back to P2…</td><td>cb-21g: back to P2</td></tr>
+<tr><td>either, push failed</td><td>—</td><td>cb-21g: P2 → P0, but bd dolt push failed — other machines will not see this yet</td></tr>
+<tr><td>either, bd refused</td><td>—</td><td><span class="e">bd would not set cb-21g to P0</span></td></tr>
+<tr><td><b class="k">x</b>, on <b class="k">y</b></td><td>running bd unclaim cb-9f2…</td><td>ran bd unclaim cb-9f2</td></tr>
+<tr><td><b class="k">x</b>, refused</td><td>—</td><td><span class="e">bd unclaim cb-9f2 failed</span></td></tr>
+<tr><td>the write worker has stopped</td><td>—</td><td><span class="e">the write worker has stopped — nothing was written</span></td></tr>
+</table>
+
+<p class="note">The last line is for a case no keystroke can reach — the worker thread having died. It
+names the worker rather than <code>bd</code>, which never ran, and it is the write path's counterpart of
+the reader's <code>the reader thread has stopped</code>.</p>
+
+<h2>4. The row changes at once, and never appears to revert</h2>
+<p class="lede">The Work pane re-reads the board every thirty seconds. A read that lands while the write
+is still running would otherwise show the bead at its old priority. So the requested priority is held
+over the row from the keystroke until a board read that <i>began after the write settled</i> lands — it
+is what the row shows, and what it sorts by.</p>
+
+<div class="screen"><pre><span class="dim">0 pressed on a P2 bead; the board still says P2 for another second</span>
+ <span class="hd">Planned, unclaimed 3</span>
+<span class="sel">  cb-21g  P0  A board write freezes the whole TUI…</span>   <span class="dim">← already, and it stays</span>
+   cb-44b  P2  Enter on a bead in the Work pane…
+
+<span class="dim">bd refused: the row falls back to what the board says</span>
+   cb-44b  P2  Enter on a bead in the Work pane…
+<span class="sel">  cb-21g  P2  A board write freezes the whole TUI…</span></pre></div>
+
+<h2>5. The edges</h2>
+<table>
+<tr><th>Case</th><th>What happens</th></tr>
+<tr><td>a keystroke while the dim line is up</td><td><b>It survives.</b> Only the answer replaces it — a line that says work is happening stays true while the work is happening. Every other notice is still cleared by the next key.</td></tr>
+<tr><td>a second write while one is running</td><td><b>Queued.</b> Writes run in the order they were pressed, one at a time, so nothing is lost or reordered. The row and the dim line show the newest.</td></tr>
+<tr><td>an older write answers while a newer one runs</td><td>Its success does <b>not</b> take the header from the newer write's dim line. A <b>failure</b> always does.</td></tr>
+<tr><td><b class="k">u</b> pressed while a write is still running</td><td>It undoes that write. The undo step exists from the keystroke, not from the answer; a write <code>bd</code> then refuses revokes it.</td></tr>
+<tr><td>a failed write</td><td>Red in the header <b>and</b> a line in <code>.cerebro/state/errors.jsonl</code> under the context <code>write</code> — the header is painted over by the next frame. A failed <i>push</i> is not a failed write and logs nothing.</td></tr>
+<tr><td><b class="k">q</b> while a write is running</td><td><b>Quits at once.</b> Terminal cleanup stays immediate; an unpushed write is recovered by the next <code>bd dolt push</code> anybody makes.</td></tr>
+</table>
+
+<p class="note">This is <code>cerebro-tui</code> only. <code>M-x cerebro</code>'s own priority keys and
+<b class="k">x</b> block Emacs the same way and are not touched here.</p>

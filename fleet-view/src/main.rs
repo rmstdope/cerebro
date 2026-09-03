@@ -355,8 +355,8 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         pruner: Pruner::new(),
         told: lifecycle::TriageLedger::default(),
         host: SessionHost::default(),
-        ledger: StartLedger::default(),
         logger,
+        ledger: StartLedger::default(),
         controller,
     };
 

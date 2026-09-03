@@ -145,7 +145,11 @@ fi
 # body is that loop's status under `set -e` (.cerebro/traps.md). A string accumulator rather than a
 # bash array, because `"${arr[@]}"` on an empty array is an unbound variable error under `set -u`
 # in the bash 3.2 macOS ships.
-prefiltered="$(printf '%s' "$out" | jq -r '[.[] | .id | select(test("\\.")) | sub("\\.[^.]*$"; "")] | unique | .[]')"
+if ! prefiltered="$(printf '%s' "$out" | jq -r \
+      '[.[] | .id | select(test("\\.")) | sub("\\.[^.]*$"; "")] | unique | .[]' 2>/dev/null)"; then
+  echo "work-beads: could not read the ids that settle a parented epic" >&2
+  exit 1
+fi
 
 parented=""
 while IFS= read -r epic_id; do

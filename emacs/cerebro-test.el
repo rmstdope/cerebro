@@ -3764,7 +3764,7 @@ own value doing nothing at all, silently."
                              (alist-get 'unplanned (cerebro--partition-beads beads)))
                      '("ord"))))
     (let ((cerebro-skipped-issue-types '("epic")))
-      ;; And an `event' comes back when the navigator takes it off the list.
+      ;; And a `note' comes back when the navigator takes it off the list.
       (should (equal (mapcar (lambda (b) (alist-get 'id b))
                              (alist-get 'unplanned (cerebro--partition-beads beads)))
                      '("note" "ord"))))))

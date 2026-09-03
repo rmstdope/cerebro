@@ -482,7 +482,10 @@ Two data sources it depends on, both under `.cerebro/state/` in the consumer rep
   that function, not by listing artifacts again. A session that ends by *itself* reaches none of
   those, so since cb-hzs `cerebro--launch` deletes the file before it spawns: one present then is
   always a previous session's, since a name with a live session is refused. Retiring an implementer
-  also disarms it, the way retiring a role does — armed is what promises a retry.
+  also disarms it, the way retiring a role does — armed is what promises a retry. Arming follows the
+  same rule in both views (cb-op0): every successful launch arms, and a retire, a `k`, a stop flag
+  on a waiting role and a tick on which this view may not supervise disarm — see
+  `docs/ui/cb-op0-arming.html` §6.
 - `scripts/roster` — the fleet: name, role and kind per agent, read once per buffer by
   `cerebro--fleet`.
 
@@ -553,9 +556,13 @@ answered — held to `tests/lib/supervise.cases`, which `cerebro--supervise-acti
 Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart`/`standby`
 declaration is honoured as the view comes up, and the board-backed triggers for the planner,
 implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a
-per-role wake floor, the unchanged-work fingerprint and role-start spacing, and disarmed by `k` or
-by a retire. Since cb-kcs.4.2 a start that keeps failing backs off on `0/30s/2m/10m` — the row
-counts the wait down in place of its condition — and is abandoned after five consecutive starts
+per-role wake floor, the unchanged-work fingerprint and role-start spacing. Every successful
+launch arms, whoever asked for it — `s`, an autostart and a trigger alike — and a retire, a `k`
+(at every row state, not only standby), a give-up and a tick on which this view may not supervise
+all disarm; a pass that merely ends does not, which is the whole point of the set (cb-op0).
+`docs/ui/cb-op0-arming.html` §6 is where that whole rule is written down, for both views. Since
+cb-kcs.4.2 a start that keeps failing backs off on `0/30s/2m/10m` — the row counts the wait down
+in place of its condition — and is abandoned after five consecutive starts
 that produced no pass, which disarms the name and leaves `s` as the only way back; a launcher
 refusal is parked from the first failure, where a silent crash is retried. Since cb-kcs.4.3 the
 three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own

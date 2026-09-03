@@ -4726,6 +4726,55 @@ panel render."
           (kill-buffer list-buffer)
           (kill-buffer panel))))))
 
+(ert-deftest cerebro-test/a-read-only-tick-arms-nobody ()
+  "A view that may not act arms nobody: every armed name is a promise it
+will not keep, and a blue `standby\=' row in a read-only view says the
+opposite (cb-op0).  The Ratatui view answers the same rule in
+`s_arms_the_name_it_starts\=' and `k_on_a_live_session_disarms_it_too\=';
+`docs/ui/cb-op0-arming.html\=' §6 is the table both follow."
+  (cl-letf (((symbol-function 'cerebro--list-render) #'ignore)
+            ((symbol-function 'cerebro--supervise) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--start-due) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+            ;; Ownership stubbed for the reason given in
+            ;; `tick-refreshes-the-panel-only-when-due\=': an unstubbed tick binds this
+            ;; machine's real supervision lease.
+            ((symbol-function 'cerebro--reconcile-supervision-safely)
+             (lambda (&rest _) '(read-only configured-for tui)))
+            ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore))
+    (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-readonly*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer list-buffer
+              (cerebro-mode)
+              (setq cerebro--armed '("Xavier" "Beast")))
+            (cerebro--tick list-buffer (seconds-to-time 1000))
+            (with-current-buffer list-buffer
+              (should (null cerebro--armed))))
+        (kill-buffer list-buffer)))))
+
+(ert-deftest cerebro-test/a-supervising-tick-leaves-the-armed-set-alone ()
+  "And the clear is conditional: a view that may act keeps what it armed,
+since a pass that merely ends does not disarm (cb-op0)."
+  (cl-letf (((symbol-function 'cerebro--list-render) #'ignore)
+            ((symbol-function 'cerebro--supervise) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--start-due) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--triage-tell) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+            ((symbol-function 'cerebro--reconcile-supervision-safely)
+             (lambda (&rest _) '(supervising)))
+            ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore))
+    (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-supervising*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer list-buffer
+              (cerebro-mode)
+              (setq cerebro--armed '("Xavier" "Beast")))
+            (cerebro--tick list-buffer (seconds-to-time 1000))
+            (with-current-buffer list-buffer
+              (should (equal cerebro--armed '("Xavier" "Beast")))))
+        (kill-buffer list-buffer)))))
+
 (ert-deftest cerebro-test/tick-asks-gh-in-the-fleet-buffer ()
   "The reader's answers are what `cerebro--trigger-context' reads, and that
 runs in the fleet buffer - so the tick asks from there, on the fleet

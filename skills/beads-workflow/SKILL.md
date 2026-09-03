@@ -106,6 +106,11 @@ bd dolt push             # or no other machine learns it was released
 *Waiting on you* section reads it and says how long the bead has been sitting there, and a bead
 parked without it reads as parked just now, for ever (cb-wfb).
 
+The note you append is the only record of *why*, and it is read again: the orchestrator walks the
+parked beads on every sweep and works out from that note whether the pause is still true. So write
+what would **unblock** the bead — the question, the answer that would settle it, the thing you were
+waiting for — rather than only what stopped you.
+
 Removing `planned` stops `bd ready --label planned` handing the bead straight back to the next
 implementer, which would hit the same wall and escalate again. `bd unclaim` is the half that is easy
 to forget and worse to skip: `bd update` sets no status, so without it the bead stays `in_progress`

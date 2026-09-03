@@ -457,6 +457,12 @@ on the navigator, and an epic has no plan to write; planning either is not avail
 next candidate by priority and say, once, which bead you skipped and what is holding it — that
 sentence is how the navigator learns their queue is jammed behind one decision.
 
+**A bead that was parked and has come back may carry the answer already.** Look for a
+`## Navigator's answer` heading in its notes: it is written when the orchestrator got the navigator
+to settle the pause, in their own words. That is a decision they have already made — treat it
+exactly as an interview answer, record it under *Agreed with the navigator*, and do not ask it
+again.
+
 That has a cost, and it is yours to manage rather than ignore: **a blocked bead's plan is written
 against code its blocker is about to change.** So keep the plan honest about what it stands on — name
 the blocker in *Context*, say in *Files to change* which parts depend on work that has not landed,
@@ -935,6 +941,10 @@ Both labels, because `bd human list` matches `human` and nothing else, so `needs
 would sit in nobody's queue. `--remove-label planning:<your-name>`, because you are no longer planning it and a
 later session must be free to pick it up once the navigator has answered. And the push, or no other
 machine learns it was parked.
+
+The appended note is what the orchestrator puts in front of the navigator when it walks the parked
+beads, quoted as it stands. So write it as you would have asked it: the question, and the options
+you would have offered.
 
 Then take the next bead. A parked one still counts against nothing — it is excluded from the buffer
 precisely because an implementer cannot pick it up — so parking one means the buffer is short by one

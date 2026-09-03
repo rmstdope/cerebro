@@ -573,6 +573,27 @@ impl Bead {
     }
 }
 
+/// The two long fields `bd list --brief` does not carry. Everything else the pane draws comes
+/// from the `Bead` row the Work pane already holds, which is why the pane is never blank while
+/// this is in flight.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct BeadDetailFields {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub design: Option<String>,
+}
+
+/// `bd show <id> --json` answers with a ONE-ELEMENT ARRAY, never a bare object. Parsing it as an
+/// object fails on every bead, which would read as "bd is broken" rather than as a mistake.
+/// An empty array is an id `bd` does not know, and is an error rather than an empty detail.
+pub fn parse_bead_detail(json: &[u8]) -> Result<BeadDetailFields, String> {
+    let rows: Vec<BeadDetailFields> = serde_json::from_slice(json).map_err(|e| e.to_string())?;
+    rows.into_iter()
+        .next()
+        .ok_or_else(|| "bd show answered with an empty array".to_string())
+}
+
 // --- GitHub, and the beads linked to it -------------------------------------------------------
 
 /// A `serde` deserializer for an instant that may be absent, null or unreadable, all of which
@@ -1536,5 +1557,29 @@ mod tests {
                 open_min: Some(3.5),
             }]
         );
+    }
+
+    #[test]
+    fn a_bead_detail_is_parsed_from_a_one_element_array() {
+        let parsed = parse_bead_detail(br#"[{"id":"cb-1","description":"d","design":"g"}]"#)
+            .expect("a one-element array parses");
+        assert_eq!(
+            parsed,
+            BeadDetailFields {
+                description: Some("d".into()),
+                design: Some("g".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn a_bead_detail_with_neither_field_parses() {
+        let parsed = parse_bead_detail(br#"[{"id":"cb-1"}]"#).expect("omitted keys are None");
+        assert_eq!(parsed, BeadDetailFields::default());
+    }
+
+    #[test]
+    fn an_empty_array_is_an_error() {
+        assert!(parse_bead_detail(b"[]").is_err());
     }
 }

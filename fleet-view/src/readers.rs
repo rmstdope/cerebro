@@ -29,7 +29,7 @@ use chrono::{DateTime, Utc};
 use crate::supervisor::SupervisorKind;
 use crate::sweeps::{self, Candidate, Finding, LiveSession, Snapshot, Sweep};
 use crate::model::{
-    self, Bead, FleetRow, GhIssue, GhPull, GhSnapshot, ProcessRow, RosterEntry, StateInputs,
+    self, Bead, BeadDetailFields, FleetRow, GhIssue, GhPull, GhSnapshot, ProcessRow, RosterEntry, StateInputs,
     StateObservation, StateRecord, WorkBuckets,
 };
 
@@ -483,6 +483,33 @@ pub fn read_beads(
     serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
         source: programs.bd.display().to_string(),
         message: e.to_string(),
+    })
+}
+
+/// One bead's long fields, via `bd --readonly -C <shared_root> show <id> --json`.
+///
+/// `--readonly` and the explicit `-C` are mandatory for `read_beads`' reason: `bd` answers about
+/// whatever repository it runs in. This is a local database read, not a network call, so it takes
+/// `COMMAND_TIMEOUT` rather than `GH_TIMEOUT`.
+///
+/// The reader does not carry the id back - its worker does, by pairing the id it was handed with
+/// what this returned.
+pub fn read_bead_detail(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    commands: &dyn CommandRunner,
+    id: &str,
+) -> Result<BeadDetailFields, ReadError> {
+    let root = paths.shared_root.to_string_lossy().into_owned();
+    let stdout = commands.run(
+        &programs.bd,
+        &["--readonly", "-C", &root, "show", id, "--json"],
+        None,
+        COMMAND_TIMEOUT,
+    )?;
+    model::parse_bead_detail(&stdout).map_err(|message| ReadError::Invalid {
+        source: programs.bd.display().to_string(),
+        message,
     })
 }
 
@@ -1599,5 +1626,33 @@ mod tests {
             ReadError::Invalid { source, .. } => assert!(source.ends_with("fleet-history"), "{source}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn the_detail_reader_names_the_bead_readonly_and_the_shared_root() {
+        let fake = FakeCommands::always(r#"[{"id":"cb-41r","description":"d","design":"g"}]"#);
+        let paths = paths_at(Path::new("/consumer"));
+
+        let detail =
+            read_bead_detail(&paths, &Programs::default(), &fake, "cb-41r").unwrap();
+        assert_eq!(detail.description.as_deref(), Some("d"));
+        assert_eq!(detail.design.as_deref(), Some("g"));
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1);
+        let root = paths.shared_root.to_string_lossy().into_owned();
+        assert_eq!(
+            calls[0].args,
+            vec!["--readonly", "-C", &root, "show", "cb-41r", "--json"]
+        );
+        assert_eq!(calls[0].timeout, Duration::from_secs(5));
+        assert_eq!(calls[0].cwd, None);
+    }
+
+    #[test]
+    fn a_detail_read_that_answers_nothing_is_an_error() {
+        let fake = FakeCommands::always("[]");
+        let paths = paths_at(Path::new("/consumer"));
+        assert!(read_bead_detail(&paths, &Programs::default(), &fake, "cb-x").is_err());
     }
 }

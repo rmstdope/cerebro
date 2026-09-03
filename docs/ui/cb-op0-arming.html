@@ -1,0 +1,138 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+</style>
+<meta charset="utf-8"><title>cb-op0 — the agreed surface</title>
+
+<h1>cb-op0 — the surface the navigator approved, 2026-09-03</h1>
+<p class="lede">Two rounds. This file is the specification for <b>when a name enters and leaves the armed
+set</b> — the set that decides whether a row with no session reads <code>standby</code> or
+<code>dead</code>, and whether a trigger will ever start that name again. Where this file and the
+bead's plan disagree, this file is right. It follows
+<code>docs/ui/cb-kcs.4.1-standby-and-starts.html</code>, which specified what a standby row looks like,
+and <code>docs/ui/cb-kcs.4.2-retry-and-give-up.html</code>, which specified how one stops coming back.
+Neither said what <b class="k">s</b> does to the set, and the two fleet views answered differently.</p>
+
+<h2>1. What was wrong</h2>
+<p class="lede">An agent the navigator started by hand ended its pass cleanly and its row went grey for
+good. The row is honest about the armed set — the agent simply was not in it, because the Ratatui
+view's <b class="k">s</b> starts a session without arming, where <code>M-x cerebro</code> arms on every
+launch. The roster's declaration is read once, as the view comes up, so nothing put the name back.</p>
+
+<div class="screen"><pre><span class="dim">armed as the view came up, because the roster declares this name standby</span>
+<span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>  <span class="b">│</span>
+
+<span class="dim">f, and then the pass ended — retired, and disarmed. Correct, and unchanged.</span>
+<span class="b">│</span><span class="d">○</span> Xavier      <span class="d">dead</span>                    <span class="b">│</span>
+
+<span class="dim">s — a session runs</span>
+<span class="b">│</span><span class="g">●</span> Xavier      plan        cb-op0      <span class="b">│</span>
+
+<span class="dim">the pass ends on `waiting'; the view ends it</span>
+<span class="b">│</span><span class="d">○</span> Xavier      <span class="d">dead</span>                    <span class="b">│</span>  <span class="e">← the defect: nothing brings him back</span></pre></div>
+
+<h2>2. Every start arms, whoever asked for it</h2>
+<p class="lede">A launch that succeeds puts the name in the armed set — <b class="k">s</b>, the roster's
+<code>autostart</code>, and a trigger alike. That is what <code>M-x cerebro</code> has always done, and
+it is what makes <code>docs/ui/cb-kcs.4.1-standby-and-starts.html</code> §6's promise — <i>"only
+<b class="k">s</b> brings it back"</i> — true for the first time in the Ratatui view.</p>
+
+<div class="screen"><pre><span class="dim">s — a session runs, and the name is armed again</span>
+<span class="b">│</span><span class="g">●</span> Xavier      plan        cb-op0      <span class="b">│</span>
+
+<span class="dim">the pass ends on `waiting'; the view ends it</span>
+<span class="b">│</span><span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>  <span class="b">│</span>  <span class="g">← armed. The trigger starts the next pass.</span></pre></div>
+
+<p class="note"><b>The cost, taken deliberately.</b> A name the roster never declared is armed too, once
+it has been started by hand, and the view will keep starting it on its own trigger until
+<b class="k">k</b> says otherwise. That makes the roster's <i>"omitted means the navigator starts it
+with <b class="k">s</b>"</i> less literally true. Arming only names the roster declared was drawn and
+declined: it would have left the two views with different armed sets after the same keystroke, which is
+the class of divergence this bead exists to close.</p>
+
+<div class="screen"><pre><span class="dim">a name with no third word in the roster, started by hand, after its pass ends</span>
+<span class="b">│</span><span class="b">◌</span> Cypher      <span class="b">standby</span>     <span class="b">→ PR</span>        <span class="b">│</span>  <span class="y">← armed now, by that one keystroke</span></pre></div>
+
+<h2>3. Arming is silent</h2>
+<p class="lede"><b class="k">s</b> keeps the two sentences it has and says nothing about the armed set.
+The blue row after the pass ends is what shows it; a notice saying the same thing a moment earlier was
+drawn and declined, as was a sentence marking an undeclared name as a one-off.</p>
+
+<div class="screen"><pre>Cerebro — supervising <span class="y">| Started Xavier.</span> <span class="dim">| g refresh | q quit</span>
+Cerebro — supervising <span class="y">| Started Xavier, and cleared a stale stop flag.</span> <span class="dim">| q quit</span></pre></div>
+
+<h2>4. <b class="k">k</b> means stay gone, at every state</h2>
+<p class="lede">On a standby row <b class="k">k</b> already means disarm
+(<code>docs/ui/cb-kcs.4.1-standby-and-starts.html</code> §5). On a <i>live</i> session it now means that
+too: the session is killed <b>and</b> the name leaves the armed set, so nothing starts it again until
+<b class="k">s</b> does. Without this, killing a mid-bead agent past its own warning got it restarted on
+the next tick, on the bead the kill had just stranded.</p>
+
+<div class="screen"><pre><span class="hd">before</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-a54      <span class="b">│</span>
+<span class="dim">k … y</span>
+<span class="b">│</span><span class="d">○</span> Cyclops     <span class="d">dead</span>                    <span class="b">│</span>
+<span class="dim">five seconds later, its trigger is still true</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-a54      <span class="b">│</span>  <span class="e">← back, on the bead just stranded</span>
+
+<span class="hd">after</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-a54      <span class="b">│</span>
+<span class="dim">k … y</span>
+<span class="b">│</span><span class="d">○</span> Cyclops     <span class="d">dead</span>                    <span class="b">│</span>
+<span class="dim">and it stays there</span>
+<span class="b">│</span><span class="d">○</span> Cyclops     <span class="d">dead</span>                    <span class="b">│</span>  <span class="g">← only s brings it back</span></pre></div>
+
+<p class="note"><b>Neither kill prompt changes.</b> Only what follows <b class="k">y</b> does. Adding
+<i>"and the view will not bring it back"</i> to the mid-bead warning was drawn and declined: it is
+already the longest sentence in the view, and the rule would then be stated in two places that can
+drift. <b class="k">f</b> is untouched and keeps its one meaning at every state — it writes the stop
+flag, and pressing it again clears it.</p>
+
+<h2>5. A view that may not act arms nobody</h2>
+<p class="lede">A read-only or draining view holds an empty armed set, so its rows say <code>dead</code>
+rather than promising a return it cannot perform. The Ratatui view already did this
+(<code>docs/ui/cb-kcs.4.1-standby-and-starts.html</code> §7); <code>M-x cerebro</code> now does it too,
+so the same fleet reads the same way in both.</p>
+
+<div class="screen"><pre><span class="hd">before</span>
+  <span class="hd">cerebro-tui</span>  Cerebro — read-only: Emacs supervises
+                <span class="d">○</span> Xavier      <span class="d">dead</span>
+  <span class="hd">M-x cerebro</span>  Cerebro[read-only: Ratatui supervises]
+                <span class="b">◌</span> Xavier      <span class="b">standby</span>     <span class="b">→ buffer&lt;4</span>  <span class="e">← a promise it cannot keep</span>
+
+<span class="hd">after</span>
+  <span class="hd">cerebro-tui</span>  <span class="d">○</span> Xavier      <span class="d">dead</span>
+  <span class="hd">M-x cerebro</span>  <span class="d">○</span> Xavier      <span class="d">dead</span>                          <span class="g">← the same thing, both ways round</span></pre></div>
+
+<p class="note"><b>The consequence is already written down.</b> A view that goes read-only and later
+takes the lease back comes up with an empty armed set until it is restarted.
+<code>docs/cerebro-supervision.md</code> step 3 already tells the navigator that of <b>both</b> views;
+this makes that sentence true rather than adding a caveat to it. Keeping the set while read-only, and
+having the Ratatui view drop its clear instead, were both drawn and declined.</p>
+
+<h2>6. The whole rule, in one table</h2>
+<p class="lede">Nothing else touches the armed set, and both views answer every row the same way.</p>
+<div class="screen"><pre>  <span class="hd">what happened</span>                                  <span class="hd">the armed set</span>
+  the roster declares a name <span class="b">standby</span>              <span class="g">arm</span>      <span class="dim">at startup, once</span>
+  the roster declares a name <span class="b">autostart</span>            <span class="g">arm</span>      <span class="dim">with the launch it does</span>
+  a launch succeeds — <b class="k">s</b>, autostart or trigger      <span class="g">arm</span>
+  a launch fails                                  <span class="dim">unchanged</span>
+  a pass ends and the view ends it                <span class="dim">unchanged</span>  <span class="dim">the point of the set</span>
+  a retire — a stop flag, once the pass ends      <span class="e">disarm</span>
+  <b class="k">k</b> on a standby row — the disarm prompt         <span class="e">disarm</span>
+  <b class="k">k</b> on a live session — the kill prompt          <span class="e">disarm</span>   <span class="dim">§4</span>
+  five starts produced no pass                    <span class="e">disarm</span>
+  this view may not supervise                     <span class="e">disarm all</span> <span class="dim">§5</span></pre></div>
+
+<p class="note"><b>Deliberately not a shared case table.</b> A fixture both implementations answer — the
+shape of <code>tests/lib/supervise.cases</code> — was drawn and declined: this is the first time the two
+views have been found to disagree about arming, and this repository earns a mechanical check the second
+time a class of defect appears, not the first. The rule above is kept by a test on each side that names
+the other.</p>

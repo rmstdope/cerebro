@@ -386,6 +386,7 @@ fn json_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::probe;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     // --- the shared transition table ------------------------------------------------------------
@@ -510,19 +511,12 @@ mod tests {
 
     // --- the lease itself -----------------------------------------------------------------------
 
-    /// A free loopback port, found by binding one and letting it go.
-    ///
-    /// Between the probe closing and the caller binding, anything on the machine may take the
-    /// port - so NOTHING below asserts on a bind that used this directly. Setting up a lease goes
-    /// through `acquire_on_a_free_port`, which retries, and a test that needs a foreign listener
-    /// binds it on port 0 and asks it what it got. Two of these cases were written the obvious
-    /// way first and failed about one run in ten, which is the kind of test this repository
-    /// refuses to ship.
-    fn free_port() -> u16 {
-        let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind probe");
-        probe.local_addr().expect("probe addr").port()
-    }
-
+    // Between a probe closing and the caller binding, anything on the machine may take the port -
+    // so NOTHING below asserts on a bind that used `probe::free_endpoint` directly. Setting up a
+    // lease goes through `acquire_on_a_free_port`, which retries, and a test that needs a foreign
+    // listener binds it on port 0 and asks it what it got. Two of these cases were written the
+    // obvious way first and failed about one run in ten, which is the kind of test this repository
+    // refuses to ship.
     fn endpoint(port: u16) -> SocketAddr {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
     }
@@ -534,13 +528,13 @@ mod tests {
         identity: &str,
         owner: SupervisorKind,
     ) -> (SupervisorLease, SocketAddr) {
-        for _ in 0..64 {
-            let addr = endpoint(free_port());
-            if let Ok(lease) = SupervisorLease::try_acquire(addr, record, identity, owner) {
-                return (lease, addr);
-            }
-        }
-        panic!("no free loopback port for a test lease");
+        probe::wait_for(probe::POLL_BOUND, || {
+            let addr = probe::free_endpoint();
+            SupervisorLease::try_acquire(addr, record, identity, owner)
+                .ok()
+                .map(|lease| (lease, addr))
+        })
+        .expect("no free loopback port for a test lease")
     }
 
     /// Take a lease that ought to be free, allowing for the moment after a release in which it is
@@ -559,16 +553,22 @@ mod tests {
         owner: SupervisorKind,
     ) -> SupervisorLease {
         let mut last = None;
-        for _ in 0..200 {
+        // `probe::POLL_BOUND` rather than the plan's count x interval (200 x 20ms = 4s): that
+        // identity only holds when an attempt is free, and this one binds a socket. The bound is
+        // the wall clock the case gets, not an attempt budget.
+        let lease = probe::wait_for(probe::POLL_BOUND, || {
             match SupervisorLease::try_acquire(addr, record, identity, owner) {
-                Ok(lease) => return lease,
+                Ok(lease) => Some(lease),
                 Err(error) => {
                     last = Some(error);
-                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    None
                 }
             }
+        });
+        match lease {
+            Some(lease) => lease,
+            None => panic!("the lease never became free: {last:?}"),
         }
-        panic!("the lease never became free: {last:?}");
     }
 
     /// Somebody else's listener, and the address it actually got. Bound on port 0, so there is no
@@ -614,25 +614,9 @@ mod tests {
     /// run it, and the assertion is skipped there rather than failing for the wrong reason.
     #[test]
     fn emacs_and_tui_share_one_crash_released_lease() {
-        let Some(emacs) = which_emacs() else {
-            // CI installs Emacs in the Rust job FOR this test. If it is missing there, the setup
-            // step has broken and this would otherwise pass as a green no-op - which would leave
-            // the fleet's only cross-language lock proof silently unrun, the exact failure this
-            // test exists to rule out.
-            assert!(
-                std::env::var_os("CI").is_none(),
-                "emacs is not on PATH and CI is set: the Rust job's setup-emacs step has broken, \
-                 and skipping here would turn the only cross-implementation lock proof into a \
-                 green no-op. (If you exported CI by hand on a machine without Emacs, that is \
-                 what this is telling you.)"
-            );
-            eprintln!("emacs is not on PATH: skipping the cross-implementation lease test");
-            return;
-        };
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("supervisor.json");
         let identity = "/repos/shared-checkout";
-        let emacs_lisp = concat!(env!("CARGO_MANIFEST_DIR"), "/../emacs");
 
         // Bind on port 0, then report the port through a FILE rather than through stdout:
         // Emacs's batch stdout is buffered, so a `princ` before a `sleep-for` arrives two minutes
@@ -662,29 +646,19 @@ mod tests {
             port_file = format!("{:?}", port_file.display().to_string()),
         );
 
-        let mut child = std::process::Command::new(emacs)
-            .args(["--batch", "-L", emacs_lisp, "--eval", &program])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn the Emacs owner");
+        let Some(child) = probe::RealEmacs::batch(
+            "the only cross-implementation lock proof",
+            None,
+            &program,
+        ) else {
+            return;
+        };
 
         // The port file appears only once the listener is bound and the record written.
-        let mut port = None;
-        for _ in 0..400 {
-            if let Ok(text) = std::fs::read_to_string(&port_file) {
-                if let Ok(parsed) = text.trim().parse::<u16>() {
-                    port = Some(parsed);
-                    break;
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        let Some(port) = port else {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("the Emacs owner never reported a bound port");
-        };
+        let port = probe::wait_for(std::time::Duration::from_secs(20), || {
+            std::fs::read_to_string(&port_file).ok()?.trim().parse::<u16>().ok()
+        })
+        .expect("the Emacs owner never reported a bound port");
         let addr = endpoint(port);
 
         // Refused, and told who holds it - across two languages, one record, one port.
@@ -708,9 +682,8 @@ mod tests {
             .expect("a pid");
 
         // The owner dies without cleaning up. Its session does not: a SIGKILLed Emacs orphans its
-        // children rather than taking them with it.
-        let _ = child.kill();
-        let _ = child.wait();
+        // children rather than taking them with it. `Drop` kills and reaps.
+        drop(child);
         assert!(
             alive(session_pid),
             "the owner's session must outlive it, or this proves nothing about inherited \
@@ -744,20 +717,6 @@ mod tests {
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
-    }
-
-    fn which_emacs() -> Option<std::path::PathBuf> {
-        use std::os::unix::fs::PermissionsExt;
-        let path = std::env::var_os("PATH")?;
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("emacs"))
-            .find(|candidate| {
-                // Executable, not merely present: a file named `emacs` that cannot be run would
-                // fail this test for a reason that has nothing to do with the lease.
-                std::fs::metadata(candidate)
-                    .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-                    .unwrap_or(false)
-            })
     }
 
     #[test]

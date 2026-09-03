@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+use cerebro_tui::probe;
 use cerebro_tui::pruner::Pruner;
 
 /// One of the tracked fixture scripts beside this file.
@@ -31,11 +32,12 @@ fn pid_exists(pid: u32) -> bool {
 
 /// Wait for PID to be gone entirely - not merely signalled, and not a zombie of this process.
 fn assert_gone(pid: u32, what: &str) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while pid_exists(pid) {
-        assert!(std::time::Instant::now() < deadline, "{what} is still there as {pid}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    // Ten seconds rather than `probe::POLL_BOUND`: `ps` is a fork per attempt, and a loaded
+    // runner reaps more slowly than it answers.
+    assert!(
+        probe::wait_until(Duration::from_secs(10), || !pid_exists(pid)),
+        "{what} is still there as {pid}"
+    );
 }
 
 #[test]

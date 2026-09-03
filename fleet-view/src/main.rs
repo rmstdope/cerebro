@@ -1846,6 +1846,7 @@ impl<M: TerminalModes> Drop for TerminalGuard<M> {
 #[cfg(test)]
 mod main_tests {
     use super::*;
+    use cerebro_tui::probe;
     use std::cell::RefCell;
     use std::rc::Rc;
     use ratatui::backend::TestBackend;
@@ -2087,50 +2088,28 @@ mod main_tests {
         app
     }
 
-    /// Poll `sync` until the child's view is `Live`, for at most five seconds - the bound every
-    /// other child in this crate gets.
+    /// Poll `sync` until the child's view is `Live` and has announced itself.
     fn settle_view(host: &mut SessionHost, app: &mut App) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
+        let settled = probe::wait_until(probe::POLL_BOUND, || {
             let view = host.sync(app.selected.as_deref(), 20, 80, Utc::now());
-            let ready = match &view {
-                cerebro_tui::session::SessionView::Live { lines, .. } => {
-                    lines.iter().any(|line| {
-                        line.spans.iter().any(|span| span.content.contains("ready"))
-                    })
-                }
-                _ => false,
-            };
+            let ready = probe::view_text(&view).iter().any(|line| line.contains("ready"));
             app.set_session_view(view);
-            if ready {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        panic!("the child never announced itself");
+            ready
+        });
+        assert!(settled, "the child never announced itself");
     }
 
     /// What the child has echoed back, as one string.
     fn echoed(host: &mut SessionHost, app: &App, wanted: &str) -> String {
-        let deadline = Instant::now() + Duration::from_secs(5);
         let mut text = String::new();
-        while Instant::now() < deadline {
-            if let cerebro_tui::session::SessionView::Live { lines, .. } =
-                host.sync(app.selected.as_deref(), 20, 80, Utc::now())
-            {
-                text = lines
-                    .iter()
-                    .map(|line| {
-                        line.spans.iter().map(|span| span.content.to_string()).collect::<String>()
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-                if text.contains(wanted) {
-                    return text;
-                }
+        probe::wait_for(probe::POLL_BOUND, || {
+            let view = host.sync(app.selected.as_deref(), 20, 80, Utc::now());
+            let seen = probe::view_text(&view).join("");
+            if !seen.is_empty() {
+                text = seen;
             }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+            text.contains(wanted).then_some(())
+        });
         text
     }
 
@@ -2220,16 +2199,12 @@ mod main_tests {
             "Storm",
             cerebro_tui::session::Session::spawn_command("Storm", command, 24, 80).unwrap(),
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
+        probe::wait_until(probe::POLL_BOUND, || {
             let view = host.sync(app.selected.as_deref(), 20, 80, Utc::now());
             let ended = matches!(view, cerebro_tui::session::SessionView::Ended { .. });
             app.set_session_view(view);
-            if ended {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+            ended
+        });
         assert!(
             matches!(app.session.view, cerebro_tui::session::SessionView::Ended { .. }),
             "the pass ended and was retained"
@@ -2383,18 +2358,10 @@ mod main_tests {
         controller.record = Some(record.clone());
         // Whatever port is actually free: between a probe closing and the lease binding, anything
         // on the machine may take it, so a lost race here is setup noise and simply tries again.
-        let mut held = false;
-        for _ in 0..64 {
-            let listener =
-                std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("probe");
-            let addr = listener.local_addr().expect("addr");
-            drop(listener);
-            controller.endpoint = Some(addr);
-            if controller.apply(Ok(Ok(SupervisorKind::Tui))) == SupervisionMode::Supervising {
-                held = true;
-                break;
-            }
-        }
+        let held = probe::wait_until(probe::POLL_BOUND, || {
+            controller.endpoint = Some(probe::free_endpoint());
+            controller.apply(Ok(Ok(SupervisorKind::Tui))) == SupervisionMode::Supervising
+        });
         assert!(held && controller.lease.is_some(), "the setup must actually hold a lease");
 
         let failure = ReadError::Timeout { source: "fleet-supervisor".into(), seconds: 5 };
@@ -3032,14 +2999,11 @@ mod main_tests {
     /// `SessionHost::kill` signals the child and leaves it to be reaped by the next `sync`, so a
     /// killed pass becomes an ordinary retained transcript. Poll until that has happened.
     fn settle_gone(host: &mut SessionHost, name: &str) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while host.is_live(name) {
+        let reaped = probe::wait_until(probe::POLL_BOUND, || {
             host.sync(Some(name), 24, 80, Utc::now());
-            if std::time::Instant::now() >= deadline {
-                panic!("{name} was signalled and never reaped");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+            !host.is_live(name)
+        });
+        assert!(reaped, "{name} was signalled and never reaped");
     }
 
     // ---- cb-kcs.3: what the view does unattended ----------------------------------------
@@ -3234,26 +3198,7 @@ mod main_tests {
         assert_eq!(app.notice, None, "one nudge per question, not one per tick");
         host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            let view = host.sync(Some("Cyclops"), 24, 200, Utc::now());
-            let text: Vec<String> = match &view {
-                cerebro_tui::session::SessionView::Live { lines, .. } => lines
-                    .iter()
-                    .map(|line| {
-                        line.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            };
-            if text.iter().any(|line| line.contains("got:[cerebro] Nobody answered")) {
-                break;
-            }
-            if std::time::Instant::now() >= deadline {
-                panic!("the nudge never reached the child: {text:?}");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        saw_line(&mut host, "Cyclops", 24, 200, "got:[cerebro] Nobody answered");
 
         // Answered, and asking again: nudgeable again.
         app.finish_refresh(
@@ -4251,25 +4196,14 @@ mod main_tests {
         app
     }
 
-    fn saw_line(host: &mut SessionHost, name: &str, needle: &str) -> bool {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            let view = host.sync(Some(name), 24, 400, Utc::now());
-            let text: Vec<String> = match &view {
-                cerebro_tui::session::SessionView::Live { lines, .. } => lines
-                    .iter()
-                    .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
-                    .collect(),
-                _ => Vec::new(),
-            };
-            if text.iter().any(|line| line.contains(needle)) {
-                return true;
-            }
-            if std::time::Instant::now() >= deadline {
-                panic!("{needle:?} never reached {name}: {text:?}");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+    fn saw_line(host: &mut SessionHost, name: &str, rows: u16, cols: u16, needle: &str) -> bool {
+        let mut last = Vec::new();
+        let seen = probe::wait_until(probe::POLL_BOUND, || {
+            last = probe::view_text(&host.sync(Some(name), rows, cols, Utc::now()));
+            last.iter().any(|line| line.contains(needle))
+        });
+        assert!(seen, "{needle:?} never reached {name}: {last:?}");
+        true
     }
 
     #[test]
@@ -4303,7 +4237,7 @@ mod main_tests {
 
         host.flush_returns(at);
         host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
-        assert!(saw_line(&mut host, "Cerebro", "got:[cerebro] Unranked beads are waiting"));
+        assert!(saw_line(&mut host, "Cerebro", 24, 400, "got:[cerebro] Unranked beads are waiting"));
         host.kill(&cerebro_tui::readers::ReaderPaths {
             consumer_root: dir.path().into(),
             shared_root: dir.path().into(),
@@ -5620,7 +5554,8 @@ mod main_tests {
     ///
     /// A released listener is not instantly rebindable: anything on the machine sitting between
     /// `fork` and `exec` holds a copy of every descriptor until its own exec
-    /// (`supervisor.rs:546-553`), which is why `acquire_once_free` exists. Asserting on one
+    /// (`acquire_once_free`'s own doc comment in `supervisor.rs`), which is why it exists. Named
+    /// rather than cited by line: this reference had already gone stale once. Asserting on one
     /// attempt is a flake by construction.
     fn apply_until(
         controller: &mut SupervisorController,
@@ -5628,13 +5563,15 @@ mod main_tests {
         want: &SupervisionMode,
     ) -> SupervisionMode {
         let mut mode = SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned);
-        for _ in 0..40 {
+        // `probe::POLL_BOUND`, NOT the plan's count x interval (40 x 50ms = 2s). That identity
+        // holds only when an attempt is free, and each attempt here FORKS `fleet-supervisor`, so
+        // 2s of wall clock buys far fewer attempts than the old loop had. This is the case
+        // cb-kcs.5.3 spent 25 minutes diagnosing for being one attempt short; shrinking its
+        // budget is the opposite of what this bead is for.
+        probe::wait_for(probe::POLL_BOUND, || {
             mode = controller.apply(readers::read_configured_supervisor(paths, &RealCommands));
-            if &mode == want {
-                return mode;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
+            (&mode == want).then_some(())
+        });
         mode
     }
 
@@ -5716,19 +5653,8 @@ mod main_tests {
     /// skips, and CI without it fails loudly rather than passing as a green no-op.
     #[test]
     fn a_real_emacs_releases_on_the_declaration_and_this_process_takes_it() {
-        let Some(emacs) = which_emacs() else {
-            assert!(
-                std::env::var_os("CI").is_none(),
-                "emacs is not on PATH and CI is set: the Rust job's setup-emacs step has broken, \
-                 and skipping here would turn the cutover's only cross-implementation proof into \
-                 a green no-op."
-            );
-            eprintln!("emacs is not on PATH: skipping the cross-implementation cutover test");
-            return;
-        };
         let (dir, paths) = supervisor_consumer(Some("emacs"));
         let root = dir.path().to_path_buf();
-        let emacs_lisp = concat!(env!("CARGO_MANIFEST_DIR"), "/../emacs");
         // Readiness through a FILE, never stdout: Emacs's batch stdout is buffered, so a `princ`
         // before a `sleep-for` arrives when the process ends (`supervisor.rs:637-639`).
         let ready = root.join("emacs-ready");
@@ -5743,93 +5669,63 @@ mod main_tests {
             root = format!("{:?}", root.display().to_string()),
             ready = format!("{:?}", ready.display().to_string()),
         );
-        let mut child = std::process::Command::new(emacs)
-            .args(["--batch", "-L", emacs_lisp, "-l", "cerebro", "--eval", &program])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn the Emacs supervisor");
+        // `RealEmacs` kills and reaps on Drop, which runs on an unwind as well as a normal end -
+        // so this case needs no `catch_unwind`, and a failing assertion reports at itself.
+        let Some(_child) = probe::RealEmacs::batch(
+            "the cutover's only cross-implementation proof",
+            Some("cerebro"),
+            &program,
+        ) else {
+            return;
+        };
 
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            for _ in 0..400 {
-                if ready.exists() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            assert!(ready.exists(), "the Emacs supervisor never reported itself up");
+        assert!(
+            probe::wait_until(Duration::from_secs(20), || ready.exists()),
+            "the Emacs supervisor never reported itself up"
+        );
 
-            // While the declaration says `emacs`, this process is read-only BECAUSE OF THE
-            // DECLARATION and never reaches for the lease at all - `ConfiguredFor`, not
-            // `OwnedBy`. (The plan predicted `OwnedBy` here; that answer needs a declaration of
-            // `tui` racing an Emacs that has not released yet, which is a transient
-            // `emacs_and_tui_share_one_crash_released_lease` already covers with a real bound
-            // listener. Deviation recorded in the pull request.) What proves the Emacs really
-            // holds it is its own record, written by the real `cerebro--acquire-supervision`.
-            let mut controller = SupervisorController::new(&paths, &RealCommands);
-            let record = reported_record(&controller);
-            assert_eq!(
-                apply_until(
-                    &mut controller,
-                    &paths,
-                    &SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(
-                        SupervisorKind::Emacs
-                    )),
-                ),
-                SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
-                "the declaration alone keeps this process read-only"
-            );
-            // POLLED, not read once. The readiness file is written after the FIRST
-            // reconciliation returns, and that first one may not be the one that acquires: a
-            // released listener is not instantly rebindable, so Emacs retries on its own loop.
-            // Reading the record on one attempt failed here roughly one run in four.
-            let mut held = String::new();
-            for _ in 0..100 {
-                held = std::fs::read_to_string(&record).unwrap_or_default();
-                if held.contains("\"owner\":\"emacs\"") {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            assert!(
-                held.contains("\"owner\":\"emacs\""),
-                "the record names Emacs as the live owner, not {held:?}"
-            );
+        // While the declaration says `emacs`, this process is read-only BECAUSE OF THE
+        // DECLARATION and never reaches for the lease at all - `ConfiguredFor`, not
+        // `OwnedBy`. (The plan predicted `OwnedBy` here; that answer needs a declaration of
+        // `tui` racing an Emacs that has not released yet, which is a transient
+        // `emacs_and_tui_share_one_crash_released_lease` already covers with a real bound
+        // listener. Deviation recorded in the pull request.) What proves the Emacs really
+        // holds it is its own record, written by the real `cerebro--acquire-supervision`.
+        let mut controller = SupervisorController::new(&paths, &RealCommands);
+        let record = reported_record(&controller);
+        assert_eq!(
+            apply_until(
+                &mut controller,
+                &paths,
+                &SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(
+                    SupervisorKind::Emacs
+                )),
+            ),
+            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
+            "the declaration alone keeps this process read-only"
+        );
+        // POLLED, not read once. The readiness file is written after the FIRST
+        // reconciliation returns, and that first one may not be the one that acquires: a
+        // released listener is not instantly rebindable, so Emacs retries on its own loop.
+        // Reading the record on one attempt failed here roughly one run in four.
+        let mut held = String::new();
+        let named = probe::wait_until(probe::POLL_BOUND, || {
+            held = std::fs::read_to_string(&record).unwrap_or_default();
+            held.contains("\"owner\":\"emacs\"")
+        });
+        assert!(named, "the record names Emacs as the live owner, not {held:?}");
 
-            // The cutover: one line in one file, and nothing restarted.
-            write_declaration(&root, "tui");
-            assert_eq!(
-                apply_until(&mut controller, &paths, &SupervisionMode::Supervising),
-                SupervisionMode::Supervising,
-                "Emacs released on the declaration and this process took the lease"
-            );
-            let written = std::fs::read_to_string(&record).expect("the record exists");
-            assert!(
-                written.contains("\"owner\":\"tui\""),
-                "the record names the new owner, not {written}"
-            );
-        }));
-
-        let _ = child.kill();
-        let _ = child.wait();
-        if let Err(panic) = outcome {
-            std::panic::resume_unwind(panic);
-        }
-    }
-
-    /// `supervisor.rs`'s test module has this and is not public; twelve lines, no `unsafe` and no
-    /// crate, so it is copied rather than exported. A `pub mod testing` on the model of
-    /// `readers::testing` would be the alternative and is not worth a public surface for one
-    /// helper used twice - do not "fix" this duplication.
-    fn which_emacs() -> Option<std::path::PathBuf> {
-        use std::os::unix::fs::PermissionsExt;
-        let path = std::env::var_os("PATH")?;
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("emacs"))
-            .find(|candidate| {
-                std::fs::metadata(candidate)
-                    .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-                    .unwrap_or(false)
-            })
+        // The cutover: one line in one file, and nothing restarted.
+        write_declaration(&root, "tui");
+        assert_eq!(
+            apply_until(&mut controller, &paths, &SupervisionMode::Supervising),
+            SupervisionMode::Supervising,
+            "Emacs released on the declaration and this process took the lease"
+        );
+        let written = std::fs::read_to_string(&record).expect("the record exists");
+        assert!(
+            written.contains("\"owner\":\"tui\""),
+            "the record names the new owner, not {written}"
+        );
     }
 }

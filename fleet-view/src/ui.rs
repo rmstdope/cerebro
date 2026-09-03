@@ -13,9 +13,12 @@
 //! The row vocabulary is `emacs/cerebro.el`'s, deliberately unchanged (`cerebro--glyph`,
 //! `cerebro--elapsed`, `cerebro--state-label`, `cerebro--entry`): a navigator reading this screen
 //! beside `M-x cerebro` must not have to learn a second set of glyphs, and a difference between
-//! the two would read as a difference in the fleet. Emacs-only signals are absent rather than
-//! guessed - there is no `standby` row here and no stop-flag mark, because neither is in this
-//! reader's normalized model, and inventing one would show supervisor intent as observed fact.
+//! the two would read as a difference in the fleet. A signal this module draws is one some
+//! reader actually supplies: the `standby` row from what this view armed, and the stop-flag mark
+//! (cb-44b) from `App::flagged`, which the event loop fills. Nothing here is inferred from the
+//! rows alone, because inventing a signal would show supervisor intent as observed fact - and
+//! where the two views deliberately differ, as they do on a flagged `standby` row, the rule and
+//! its reason live in `flag_shows_for`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1251,9 +1254,6 @@ fn glyph(state: &RowState) -> Span<'static> {
     }
 }
 
-/// The State column's word, from `cerebro--state-label`: a working agent shows its phase, an
-/// `asking` one always shows `asking`, and a word this view does not know is shown verbatim
-/// rather than translated into a lie.
 /// Which states show the stop-flag marker. `cerebro--in-flight-p`'s two, plus `Standby`.
 ///
 /// `Working` and `Asking` because a bead is in flight for the flag to be waiting on; `Standby`
@@ -1270,6 +1270,9 @@ fn flag_shows_for(state: &RowState) -> bool {
     matches!(state, RowState::Working | RowState::Asking | RowState::Standby)
 }
 
+/// The State column's word, from `cerebro--state-label`: a working agent shows its phase, an
+/// `asking` one always shows `asking`, and a word this view does not know is shown verbatim
+/// rather than translated into a lie.
 fn state_label(row: &FleetRow) -> String {
     match &row.state {
         RowState::Unknown(raw) => truncate(raw, 10),

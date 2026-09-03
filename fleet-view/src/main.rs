@@ -900,10 +900,6 @@ fn start_due(
     }
 }
 
-/// One `exit` line per child reaped since the last frame.
-///
-/// Its own function rather than eight lines in the frame block, so the rule it encodes -
-/// which endings are this view's own doing - is testable without a terminal.
 /// Copy the stop-flagged names onto `App`, so the Fleet pane can draw the marker cb-44b added.
 ///
 /// Read every iteration rather than on the fleet refresh: `f` returns `AppAction::None`, so a set
@@ -924,6 +920,10 @@ fn refresh_flagged(app: &mut App, paths: &ReaderPaths) {
     );
 }
 
+/// One `exit` line per child reaped since the last frame.
+///
+/// Its own function rather than eight lines in the frame block, so the rule it encodes -
+/// which endings are this view's own doing - is testable without a terminal.
 fn log_exits(logger: &mut Logger, host: &mut SessionHost, now: DateTime<Utc>) {
     // An `exit` line only for an ending this view did NOT cause: `end` has already said
     // what happened when it did, and `exit` keeps meaning what it means in Emacs's file.

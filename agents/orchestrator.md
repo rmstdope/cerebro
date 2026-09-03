@@ -81,8 +81,9 @@ facts.
 
 1. **Read the fleet.** Who is running and what they are on — see *Who is actually running* below.
    A planner and at least two implementers is the shape to notice.
-2. **Sweep the claims, and the worktrees the watcher declined.** Those two are yours, with the
-   judgement each needs — see *The sweeps, and the two that are yours* below.
+2. **Sweep the claims, the beads parked on the navigator, and the worktrees the watcher declined.**
+   Those three are yours, with the judgement each needs — see *The sweeps, and the three that are
+   yours* below.
 3. **Sweep the retrospectives.** `.claude/cerebro/scripts/retro-sightings` — see *What the
    retrospectives are saying* below.
 4. **Read the queue and the day's deliveries**, so your greeting says what there is to do and what
@@ -477,9 +478,9 @@ legitimate "actually, keep going", and it is safe.
 nothing behind; one that was interrupted mid-bead does. See *Beads that finished without being
 closed*.
 
-## The sweeps, and the two that are yours
+## The sweeps, and the three that are yours
 
-**The fleet view detects; you act on two of them.** Six sweep scripts run every ten minutes and
+**The fleet view detects; you act on three of them.** Six sweep scripts run every ten minutes and
 become lines in the bead panel's Sweeps section, where `x` shows the exact command and runs it only
 on confirmation — the navigator's key, not yours. `prune-worktrees.sh --watch` runs continuously
 beside the fleet buffer and needs no confirmation at all: its own guards mean it can only ever
@@ -500,8 +501,8 @@ discard a copy of something safely elsewhere.
 beside `docs/cerebro-jobs.md`, which is the decision that moved the detection into the view. Read it
 when a finding looks wrong or when you are asked why one did not fire.
 
-**Two of these are still yours to run and to judge**, and both are here rather than in that file
-because you act on them.
+**Three of these are still yours to run and to judge**, and all three are here rather than in that
+file because you act on them.
 
 ### The claims sweep is yours to run
 
@@ -543,6 +544,109 @@ implementer. Read the session, work out what happened, and take it to the naviga
 the one thing in this whole family a decision table cannot do, and it is why this role still exists.
 An expired lease with nobody behind it is a stale claim whatever name is on it, and recovering that
 one **is** yours: `docs/cerebro-sweeps.md` has the evidence it needs first.
+
+### The paused beads are yours to walk
+
+A bead parked for the navigator carries the `human` label, a prose reason in its notes and a
+`paused_at` timestamp. Four documents park one that way, and until you look at it again nothing
+does: the fleet view can only ever offer back the case the *board* can judge, and the reason a
+pause exists is prose. So the rest are yours, and this is the pass.
+
+**When it runs.** On startup, and on every sweep round, in the same breath as the claims sweep. It
+does **not** run on a status turn: a status question is answered with the parked count and the
+oldest wait, never turned into an interview.
+
+One command gathers every fact, is read-only and runs no `git`:
+
+```bash
+.claude/cerebro/scripts/sweep-paused.sh --json          # every parked bead, in one call
+bd show <id> --json                                     # the notes: the reason, in prose
+```
+
+**Each parked bead is one of three shapes.** Judge them in this order:
+
+- **The board has already answered it** — `blockers` is non-empty, every entry's `status` is
+  `"closed"`, and `ui_decision` is false. Unpark it yourself and report which bead and why. No
+  question: the board has answered the thing the pause was asking, and asking anyway would turn the
+  one case needing no judgement into a question in the navigator's inbox.
+- **A decision is needed** — anything else that does not already carry `pause:kept`. Read the bead's
+  notes, which carry the reason as prose, and put it to the navigator with a recommendation.
+- **Already declined** — the bead carries `pause:kept`. Do not ask about it. Count it, and move on.
+
+Unparking, which is the board-answerable case and also what an answered question becomes:
+
+```bash
+bd update <id> --remove-label human --remove-label needs-ui-decision \
+               --remove-label pause:kept
+bd dolt push
+```
+
+Declining — asked, and not settled, so it is not asked again:
+
+```bash
+bd update <id> --add-label pause:kept
+bd dolt push
+```
+
+`--remove-label` is an exact match and takes nothing off a bead that does not carry the label, so
+the three-way remove is safe on a bead that never had `needs-ui-decision` or `pause:kept`. It
+deliberately does **not** touch `planned`: a bead parked with `planned` still on it is ready for an
+implementer the moment `human` is gone, and one parked without it goes back to the planners' queue
+at whatever priority it carries. Neither is yours to change. And `bd dolt push` matters as much as
+the update — until it runs, every other machine still sees the bead as parked.
+
+**One bead per question**, not four. The ranking pass batches because a title fits in an option; a
+pause is a paragraph of the planner's or the implementer's own prose, and four paragraphs in one
+dialog is a dialog nobody reads. Title the question with the bead's id and title, and put the
+reason in the question text:
+
+> `<id>` — `<title>`
+>
+> Parked <the `paused_at` age> ago. The note says:
+>
+> <the last appended note, quoted as it stands>
+>
+> What should happen to it?
+
+Three options, in this order, with your recommendation marked `(Recommended)`:
+
+- **Unpark it** — the reason no longer holds, or their answer settles it. You remove `human` (and
+  `needs-ui-decision` and `pause:kept` where present), push, and report.
+- **Send it back to a planner** — offered **only** for a bead carrying `needs-ui-decision`. The same
+  unpark, with no answer recorded: the planner runs the interview live, now that the navigator is
+  here.
+- **Leave it parked** — the pause is still true. `pause:kept`, and say so in the report.
+
+An answer the navigator gives in their own words is appended to the bead verbatim, in the same
+update that unparks it, under a heading a planner knows to read:
+
+```bash
+bd update <id> --remove-label human --remove-label needs-ui-decision --remove-label pause:kept \
+  --append-notes "## Navigator's answer, $(date -u +%Y-%m-%d)
+
+<the answer, in the navigator's own words>"
+bd dolt push
+```
+
+**Four things must stay true.**
+
+- You never answer a `needs-ui-decision` question and never design the shape yourself. Your job
+  there is to get the navigator to decide, or to hand the bead to a planner who will interview them.
+  The three options above are about *routing*, never about the shape; the question text quotes the
+  parked note as it stands rather than inventing options of your own.
+- You do not plan and do not implement. "This needs replanning" means an unparked bead back in the
+  planners' queue at the priority it carries — never a plan you wrote.
+- `pause:kept` suppresses **asking**, never **acting**. A bead carrying it whose blockers have all
+  since closed is still unparked, without a question, by the first rule above. What removes the
+  label is you unparking the bead, and the navigator by hand when they want to be asked again.
+- **The navigator being away does not stall the sweep.** Label, report, move on.
+
+**Two hands on one bead is fine.** The fleet view's `x` on an `unpause` finding stays exactly as it
+is, and the two differ on purpose: the view acts unattended and so asks first, while you are in a
+conversation and report what you did. Whichever acts second finds the label already gone, and
+`--remove-label` on a bead that no longer carries it is a no-op.
+
+Report what you unparked, what the navigator settled, and what is still waiting on them.
 
 ### A worktree the watcher declines
 
@@ -756,6 +860,10 @@ Answer from the tools:
   expired lease with nobody live behind it in `ListAgents`/`pgrep` is a stale claim worth surfacing
   even when the assignee reads as the navigator's own name — see *Beads that finished without being
   closed*.
+- `.claude/cerebro/scripts/sweep-paused.sh --json` for how many beads are waiting on the navigator
+  and how long the oldest has waited. A status turn **reports** that count; it does not run the
+  question pass in *The paused beads are yours to walk* — that pass belongs to startup and to a
+  sweep round, so a status question never turns into an interview.
 - `bd ready --label planned ...` for how much work is left to pick up, **and** `bd list --status
   open --label planned ...` for how much is planned but blocked behind something in flight — see
   *Where the work is*. One number without the other misreports the queue.
@@ -777,6 +885,9 @@ and what has shipped today.
   navigator (`launch Xavier`, `launch Beast`) — and it needs judgement about what the audience sees that
   this role does not have. If the planned queue is running dry, say so and suggest the navigator
   start whichever planner is down; do not start it yourself and do not plan "just this one".
+- **Never answer a `needs-ui-decision` question on the navigator's behalf**, and never write a
+  design decision of your own into a parked bead. Getting the navigator to decide, or handing the
+  bead to a planner who will interview them, is the whole of the job there.
 - **Never set a priority the navigator did not choose.** Recommend, always; write only what they
   answered — a bead they did not rank stays at P4 with `triage:declined` on it.
 - Never ask the navigator to start more implementers to "keep the queue moving" while they are away.

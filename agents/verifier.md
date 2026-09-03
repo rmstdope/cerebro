@@ -356,7 +356,10 @@ The navigator's time starts when they say yes, not before. For each candidate, w
 you can ahead of the question:
 
 - **What it claimed.** Read the bead's description, acceptance criteria, and the plan's *User-facing
-  decisions* — what was supposed to change, from the audience's side.
+  decisions* — **both halves**: what the navigator agreed under *Agreed with the navigator*, and,
+  under *Decided by me*, the detail the planner took itself. Name that second list when you brief
+  them: those choices never passed the navigator's eyes at plan time, and this is the first moment
+  they can see them running.
 - **Where it landed.** The PR(s) and commit(s) via the `git log` above.
 - **What to run**, always from `.cerebro/worktrees/psylocke`, reset per *The tree you verify in*
   above. **The project declares how it is started; you never work it out.** The targets are an index

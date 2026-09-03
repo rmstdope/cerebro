@@ -214,6 +214,29 @@ impl PaneFocus {
             Self::Work => Self::Fleet,
         }
     }
+
+    /// F1, F2, F3 -> Fleet, Work, Session. Every other function key: `None`.
+    ///
+    /// The one place a function key becomes a pane. `is_pane_key` below and `App::on_key`'s
+    /// `KeyCode::F` arm both read it, so the set of keys held back from a hosted agent and the
+    /// set that actually moves focus can never disagree.
+    pub fn from_function_key(n: u8) -> Option<Self> {
+        match n {
+            1 => Some(Self::Fleet),
+            2 => Some(Self::Work),
+            3 => Some(Self::Session),
+            _ => None,
+        }
+    }
+}
+
+/// Does this key move focus between panes, whoever currently holds the keyboard?
+///
+/// `main.rs` asks this to decide what a focused live session does NOT receive; the answer must be
+/// exactly the keys `App::on_key` acts on.
+pub fn is_pane_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Tab | KeyCode::BackTab)
+        || matches!(code, KeyCode::F(n) if PaneFocus::from_function_key(n).is_some())
 }
 
 /// The Session pane's own scroll offset, and the lines one frame draws it from. It has no reader
@@ -1358,6 +1381,20 @@ impl App {
             }
             KeyCode::BackTab => {
                 self.focus = self.focus.previous();
+                AppAction::None
+            }
+            // cb-5kk: three keys straight to the three panes, from any focus. Deliberately
+            // `Tab`-shaped and not `Enter`-shaped: it moves focus and does nothing else, so it
+            // does NOT clear a pinned bead and does NOT refuse an empty Session pane the way
+            // `Enter` under Fleet does. `Tab` into an empty Session pane has always worked, and
+            // these keys are that key with the cycle skipped.
+            //
+            // No modifier gate, exactly as `Tab` and `BackTab` have none: a terminal that reports
+            // `SHIFT` or `CTRL` alongside `F(1)` still means the Fleet pane.
+            KeyCode::F(n) if PaneFocus::from_function_key(n).is_some() => {
+                // A no-op when it names the focused pane: the assignment is the no-op, so there
+                // is no branch and nothing to say.
+                self.focus = PaneFocus::from_function_key(n).expect("guarded above");
                 AppAction::None
             }
             // Under Fleet these four move the SELECTION and let the pane follow it; under Work
@@ -3175,6 +3212,70 @@ mod tests {
             assert_eq!(app.on_key(key(KeyCode::BackTab), 10, at(0)), AppAction::None);
             assert_eq!(app.focus, expected);
         }
+    }
+
+    /// cb-5kk: the one place a function key becomes a pane.
+    #[test]
+    fn function_keys_one_to_three_name_the_three_panes() {
+        assert_eq!(PaneFocus::from_function_key(1), Some(PaneFocus::Fleet));
+        assert_eq!(PaneFocus::from_function_key(2), Some(PaneFocus::Work));
+        assert_eq!(PaneFocus::from_function_key(3), Some(PaneFocus::Session));
+        for n in [0, 4, 5, 12] {
+            assert_eq!(PaneFocus::from_function_key(n), None, "F{n} names no pane");
+        }
+    }
+
+    /// The set held back from a hosted agent is exactly the set that moves focus.
+    #[test]
+    fn pane_keys_are_the_two_tabs_and_f1_to_f3() {
+        for code in [KeyCode::Tab, KeyCode::BackTab, KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
+            assert!(is_pane_key(code), "{code:?} moves focus");
+        }
+        for code in [KeyCode::F(4), KeyCode::Char('x'), KeyCode::Enter, KeyCode::Up] {
+            assert!(!is_pane_key(code), "{code:?} does not move focus");
+        }
+    }
+
+    /// F1/F2/F3 land on their named pane whatever the focus was.
+    #[test]
+    fn f1_f2_f3_focus_fleet_work_and_session_from_any_focus() {
+        for start in [PaneFocus::Fleet, PaneFocus::Work, PaneFocus::Session] {
+            for (n, expected) in
+                [(1, PaneFocus::Fleet), (2, PaneFocus::Work), (3, PaneFocus::Session)]
+            {
+                let mut app = App::new();
+                app.focus = start;
+                assert_eq!(app.on_key(key(KeyCode::F(n)), 10, at(0)), AppAction::None);
+                assert_eq!(app.focus, expected, "F{n} from {start:?}");
+            }
+        }
+    }
+
+    /// The key for the focused pane is a silent no-op, and F3 is `Tab`-shaped: it keeps a pinned
+    /// bead, unlike `Enter` under Fleet focus.
+    #[test]
+    fn a_function_key_for_the_focused_pane_changes_nothing() {
+        let mut app = document_app();
+        cursor_on_first_bead(&mut app);
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        app.focus = PaneFocus::Work;
+        app.work.scroll = 4;
+        app.session.scroll = 7;
+        app.fleet.scroll = 2;
+        app.selected = Some("Storm".to_string());
+
+        assert_eq!(app.on_key(key(KeyCode::F(2)), 10, at(0)), AppAction::None);
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert_eq!(app.work.scroll, 4);
+        assert_eq!(app.session.scroll, 7);
+        assert_eq!(app.fleet.scroll, 2);
+        assert_eq!(app.selected.as_deref(), Some("Storm"));
+        assert!(app.bead_detail.is_some(), "the no-op keeps the pinned bead");
+        assert!(app.notice.is_none(), "the no-op reports nothing");
+
+        assert_eq!(app.on_key(key(KeyCode::F(3)), 10, at(0)), AppAction::None);
+        assert_eq!(app.focus, PaneFocus::Session);
+        assert!(app.bead_detail.is_some(), "F3 is Tab-shaped and keeps the pinned bead");
     }
 
     /// Arrow and page keys act on the focused pane alone; the boundary clamps within it and never

@@ -1624,8 +1624,10 @@ fn route_key(
     // Both tabs are held back: the navigator asked for one key back to the roster (cb-3v5) and
     // accepted the cost, which is that no hosted agent ever receives a plain tab again. `Ctrl-I`
     // still sends one - it IS 0x09, through `control_byte` - so an agent that needs a real tab
-    // gets one in two keys.
-    if app.session_has_keyboard() && !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+    // gets one in two keys. Since cb-5kk `F1`, `F2` and `F3` join them, at the same accepted
+    // cost and with no escape hatch; `F4` and every other function key still reach the agent.
+    // `app::is_pane_key` is the one place that set is named.
+    if app.session_has_keyboard() && !cerebro_tui::app::is_pane_key(key.code) {
         if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
             state.host.send(&name, &bytes);
         }
@@ -2369,6 +2371,49 @@ mod main_tests {
         );
         drive(&mut app, &mut host, &nowhere().0, vec![back]);
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Work);
+    }
+
+    /// cb-5kk: the three pane keys escape a hosted agent exactly as the tabs do.
+    #[test]
+    fn f1_f2_f3_leave_a_focused_live_session_and_never_reach_the_child() {
+        for (n, expected) in [
+            (1, cerebro_tui::app::PaneFocus::Fleet),
+            (2, cerebro_tui::app::PaneFocus::Work),
+            (3, cerebro_tui::app::PaneFocus::Session),
+        ] {
+            let mut host = SessionHost::default();
+            let mut app = hosting(&mut host);
+            assert!(app.session_has_keyboard(), "the fixture hands the keyboard to the child");
+            let f = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::F(n),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            drive(&mut app, &mut host, &nowhere().0, vec![f]);
+            assert_eq!(app.focus, expected, "F{n} names its pane");
+            assert_eq!(app.selected, Some("Storm".to_string()), "and the selection does not move");
+            assert!(app.notice.is_none(), "a focus key says nothing");
+        }
+    }
+
+    /// Only F1-F3 are held back: F4 is still the agent's.
+    #[test]
+    fn f4_still_reaches_a_focused_live_session() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let mut events = ReplayedEvents::stopping(vec![key(KeyCode::F(4))]);
+        let workers = test_workers();
+        let mut state = LoopState { host, ..test_state() };
+        let config = test_config();
+        let _ = run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now);
+
+        assert_eq!(
+            app.focus,
+            cerebro_tui::app::PaneFocus::Session,
+            "F4 names no pane, so focus does not move"
+        );
+        let text = echoed(&mut state.host, &app, "^[");
+        assert!(text.contains("^["), "F4's escape sequence reached the child: {text:?}");
     }
 
     #[test]

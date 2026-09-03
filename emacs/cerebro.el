@@ -3364,7 +3364,8 @@ what it started.")
   "Names the view will start again on their trigger (cb-5yr).
 
 Armed by `cerebro--launch\=' - every start, `s\=' or autostart - and disarmed by
-`k\=', by `f\=' once the pass ends, and by a stop flag on a waiting role.  Emacs
+`k\=', by `f\=' once the pass ends, by a stop flag on a waiting role, and by a
+tick on which this view may not supervise (cb-op0).  Emacs
 memory only: nothing is written to any file, so a new Emacs arms nothing
 until something is started in it.  That is deliberate rather than an
 omission - opening the fleet view must not resurrect a fleet the navigator
@@ -6429,6 +6430,14 @@ left and runs every `cerebro-system-scan-seconds'."
                ;; declaration that moved supervision to Ratatui has to be
                ;; obeyed on this tick, not after one more round of starts.
                (mode (cerebro--reconcile-supervision-safely repo-root)))
+          ;; A view that may not act arms nobody: every armed name is a promise
+          ;; it will not keep, and a blue `standby\=' row in a read-only view says
+          ;; the opposite (cb-op0).  The Ratatui view already does this
+          ;; (`main.rs\=' `supervise\='); `docs/cerebro-supervision.md\=' step 3 already
+          ;; tells the navigator BOTH views come back with an empty armed set,
+          ;; which this makes true.
+          (unless (cerebro--supervision-may-act-p mode)
+            (setq cerebro--armed nil))
           ;; Ending and retiring survive a drain; starting, nudging and
           ;; triaging do not. That is the graceful handover: the sessions this
           ;; Emacs already hosts stay usable and are allowed to finish, and

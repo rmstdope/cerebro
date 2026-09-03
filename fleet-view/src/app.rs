@@ -680,9 +680,10 @@ pub struct App {
     /// like it, memory only - never a file, never persisted.
     ///
     /// It is on `App` rather than beside the `SessionHost` because `ui::draw` is pure over `&App`
-    /// and the standby row is drawn from it. Written in exactly four places, all in `main`: a
-    /// launch adds a name, a retire removes one, a confirmed disarm removes one, and the roster's
-    /// `standby` declaration adds a set at startup.
+    /// and the standby row is drawn from it. The rule, rather than a list of the call sites that
+    /// kept going stale: a successful launch arms, whoever asked for it; a retire, a `k`, a
+    /// give-up and a view that may not supervise disarm; a pass that merely ends does not, which
+    /// is the whole point of the set. `docs/ui/cb-op0-arming.html` §6 is the table.
     pub armed: BTreeSet<String>,
     /// Names already nudged for the question they are asking now.
     ///

@@ -1416,6 +1416,10 @@ fn route_key(
         }
         return match prompt {
             app::Prompt::Kill { name, .. } => {
+                // `k` means stay gone at every state, not only on a standby row: a name still
+                // armed is started again by its own trigger within five seconds, on the bead the
+                // kill just stranded (cb-op0). The stop flag is left alone - `k` is not a retire.
+                app.armed.remove(&name);
                 host.kill(paths, &name);
                 // A killed agent must not wait up to five seconds to disappear from the fleet.
                 AppAction::RefreshFleet
@@ -1589,6 +1593,11 @@ fn lifecycle_key(
             lifecycle::StartOutcome::Launch { clears_flag } => {
                 match lifecycle::start(host, paths, &name, clears_flag) {
                     Ok(line) => {
+                        // Starting an agent is what arms it, whoever asked - the rule
+                        // `cerebro--launch` has always followed (cb-op0). Without it a name
+                        // disarmed by a retire, a `k` or a give-up came back for exactly one pass
+                        // and then went grey for good.
+                        app.armed.insert(name.clone());
                         // The navigator asking for a session is what says the last failures do
                         // not count - and without the start being recorded at all, the row would
                         // count down against a start that never happened.
@@ -3253,6 +3262,68 @@ mod main_tests {
 
         assert!(host.is_live("Rogue"), "the host holds a session for the selected agent");
         assert_eq!(app.notice.as_deref(), Some("Started Rogue."));
+    }
+
+    #[test]
+    fn s_arms_the_name_it_starts() {
+        // The elisp answers the same rule in
+        // `cerebro-test/killing-a-live-interactive-session-disarms-it-too` and through
+        // `cerebro--launch`; `docs/ui/cb-op0-arming.html` §6 is the table both follow.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = lifecycle_app(
+            SupervisionMode::Supervising,
+            vec![fleet_row("Rogue", AgentKind::Interactive, RowState::Dead)],
+        );
+        let mut host = SessionHost::default();
+        drive(&mut app, &mut host, &paths, vec![ch('s')]);
+
+        assert!(app.armed.contains("Rogue"), "a start arms the name, whoever asked for it");
+
+        host.kill(&paths, "Rogue");
+        settle_gone(&mut host, "Rogue");
+        let rows = vec![fleet_row("Rogue", AgentKind::Interactive, RowState::Dead)];
+        let rows = cerebro_tui::model::apply_standby(rows, &app.armed, &app.parked_names());
+        assert_eq!(
+            rows[0].state,
+            RowState::Standby,
+            "and the row says so once the pass is over"
+        );
+    }
+
+    #[test]
+    fn k_on_a_live_session_disarms_it_too() {
+        // The elisp answers the same rule in
+        // `cerebro-test/killing-a-live-interactive-session-disarms-it-too`;
+        // `docs/ui/cb-op0-arming.html` §6 is the table both follow.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = standby_app(
+            supervising(),
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+            None,
+            Utc::now(),
+        );
+        // `standby_app` does not select a row; every test that presses a key on it sets this by
+        // hand.
+        app.selected = Some("Cyclops".to_string());
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+
+        drive(&mut app, &mut host, &paths, vec![ch('k')]);
+        assert!(
+            matches!(&app.confirm, Some(cerebro_tui::app::Prompt::Kill { name, .. }) if name == "Cyclops"),
+            "{:?}",
+            app.confirm
+        );
+        assert!(app.armed.contains("Cyclops"), "asking disarms nothing");
+
+        drive(&mut app, &mut host, &paths, vec![ch('y')]);
+        assert!(
+            !app.armed.contains("Cyclops"),
+            "k means stay gone at every state, not only on standby"
+        );
+        settle_gone(&mut host, "Cyclops");
     }
 
     #[test]

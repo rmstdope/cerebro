@@ -32,3 +32,21 @@ Three rules, and the first is the one that matters:
 
 Sightings: cb-e33 (`shell: bash` is what supplies `-o pipefail` at all), cb-ccl, cb-ue0 (twice),
 cb-u70, cb-c13.
+
+## A port a probe just released is not a port you can bind
+
+`fleet-view/src/probe.rs`'s `free_endpoint` binds loopback port 0, reads the port back and closes
+the listener. The address it answers was free a moment ago and is *not* reserved: anything on the
+machine may take it in the window before the caller binds it, and on a busy CI runner something
+does. A single-shot re-bind of that address is a test that fails a few runs in a hundred, on a head
+whose diff may be nothing but Markdown, and it reads as a fault in the change rather than in the
+test.
+
+So every bind of a `free_endpoint` address is retried within `probe::POLL_BOUND`, asking for a new
+address each attempt, and only `AddrInUse` is retried — any other bind error is answered at once
+rather than being spent against the bound. The same rule already applies to anything that takes a
+supervision lease: the lease's bind *is* the lock, so a caller cannot be handed a listener to avoid
+the race, and both implementations retry on their own tick instead.
+
+Sightings: cb-gln (a prose-only pull request reddened by `AddrInUse` in the `Rust tests` job),
+cb-3da (the fix).

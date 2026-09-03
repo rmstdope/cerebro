@@ -1,0 +1,79 @@
+# The two-hourly sweep decision, run by BOTH implementations of the rule:
+#
+#   lifecycle::sweep_action         (Rust, fleet-view/)  via fleet-view/src/lifecycle.rs
+#   cerebro--sweep-action           (emacs/cerebro.el)   via emacs/cerebro-test.el
+#
+# WHY IT IS ONE FILE. `tests/lib/triage.cases`' reason exactly: until the declaration moves both
+# views supervise the same checkout, and a row the two answer differently is a Cerebro told to
+# sweep twice in one window, or never told at all - neither of which announces itself, because a
+# typed line is fire-and-forget and Cerebro writes nothing back to say it heard.
+#
+# IT IS A SEPARATE TABLE FROM `triage.cases` ON PURPOSE. Triage's trigger is a CONDITION that
+# stays true, so a busy Cerebro needs no queue. A two-hour mark is an EDGE that passes, and if it
+# passes while Cerebro is working there is nothing left to observe next tick - which is the whole
+# reason the `pending' column exists here and in no sibling table.
+#
+# WHAT BOTH READERS MUST BIND. The rows assume `cerebro-sweep-interval' / `SWEEP_INTERVAL_SECONDS'
+# is 7200, so a reader binds or passes exactly that number rather than whatever the running fleet
+# is customised to.
+#
+# THE COLUMNS, tab- or space-separated, in order:
+#
+#   role            The roster role. Only `orchestrator' is ever told.
+#   kind            `interactive' or `implementer' - the roster kind.
+#   state           The derived row state: `idle' `working' `asking' `waiting' `up' `unknown'
+#                   `dead' `standby'. Only an exact `idle' is ever told.
+#   hosted          `yes' when THIS view holds a live session for the agent it could type into.
+#                   Rust's `SessionHost::supervisable'; Emacs's `cerebro--session' answering a
+#                   live buffer. NOT the elisp triage teller's weaker `external' test.
+#   since_mark_s    Seconds since this name's mark - the last sweep line typed into it, or the
+#                   first tick this view saw a session for it. `-' when this view holds no mark.
+#   pending         `yes' when a mark has already passed while this name was not idle.
+#   expect          `tell' `queue' `forget' `mark' or `none'.
+#
+#   `tell'   type the line, move the mark to now, clear the pending flag.
+#   `queue'  set the pending flag; type nothing, and leave the mark where it is.
+#   `forget' drop this name's mark and pending flag; type nothing.
+#   `mark'   start the clock silently at now; type nothing.
+#   `none'   do nothing at all - neither type, nor record, nor forget.
+
+# role          kind         state    hosted since_mark_s pending expect
+
+# Not an orchestrator, not an interactive kind: nothing recorded, nothing forgotten.
+planner         interactive  idle     yes    0            no      none
+implementer     interactive  idle     yes    7200         no      none
+orchestrator    implementer  idle     yes    7200         no      none
+
+# No session this view hosts: no clock, and any mark or queued line is dropped. This is what
+# keeps a restarted Cerebro from being told to sweep seconds after its own startup sweep.
+orchestrator    interactive  idle     no     7200         no      forget
+orchestrator    interactive  idle     no     -            no      forget
+orchestrator    interactive  dead     no     30000        yes     forget
+
+# A hosted session with no mark: the clock starts, silently, whatever the state.
+orchestrator    interactive  idle     yes    -            no      mark
+orchestrator    interactive  working  yes    -            no      mark
+
+# Before the mark, nothing. `>=', so 7200 exactly tells.
+orchestrator    interactive  idle     yes    0            no      none
+orchestrator    interactive  idle     yes    7199         no      none
+orchestrator    interactive  idle     yes    7200         no      tell
+orchestrator    interactive  idle     yes    10800        no      tell
+
+# A mark that passes while Cerebro is not idle is queued and never typed.
+orchestrator    interactive  working  yes    7200         no      queue
+orchestrator    interactive  asking   yes    7200         no      queue
+orchestrator    interactive  waiting  yes    7200         no      queue
+orchestrator    interactive  up       yes    7200         no      queue
+orchestrator    interactive  unknown  yes    7200         no      queue
+orchestrator    interactive  standby  yes    7200         no      queue
+orchestrator    interactive  dead     yes    7200         no      queue
+
+# A queued line waits for idle however long that takes, and is typed then - even though the mark
+# itself is fresh, which is what "queued" means.
+orchestrator    interactive  working  yes    30000        yes     queue
+orchestrator    interactive  idle     yes    30000        yes     tell
+orchestrator    interactive  idle     yes    10           yes     tell
+
+# A flag and not a count: a second mark passing while it is set changes nothing.
+orchestrator    interactive  working  yes    20000        yes     queue

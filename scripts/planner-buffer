@@ -8,6 +8,7 @@
 #     .claude/cerebro/scripts/planner-buffer --want                      <m>
 #     .claude/cerebro/scripts/planner-buffer --print-excluded-labels     one label per line
 #     .claude/cerebro/scripts/planner-buffer --print-floor               the floor, as a number
+#     .claude/cerebro/scripts/planner-buffer --print-multiple-key        the project.conf key name
 #
 # It exists because that one rule was written twice, in two languages, by two readers that have to
 # agree: `cerebro--trigger's planner arm in emacs/cerebro.el, and a hand-written `bd list' in
@@ -42,8 +43,13 @@ excluded_labels=("human" "triage:declined")
 # hand expects it to have something to claim. The elisp copy is `cerebro-planner-buffer-floor'.
 floor=2
 
+# The project.conf key that scales the buffer (cb-3in). ABSENT MEANS 1 - today's rule - so every
+# consumer that predates this key is untouched. The elisp copy is `cerebro--planner-multiple-key';
+# the Rust copy is `triggers::PLANNER_MULTIPLE_KEY'.
+multiple_key="planner_buffer_multiple"
+
 usage() {
-  echo "usage: planner-buffer --count | --planned | --want | --print-excluded-labels | --print-floor" >&2
+  echo "usage: planner-buffer --count | --planned | --want | --print-excluded-labels | --print-floor | --print-multiple-key" >&2
   exit 2
 }
 
@@ -59,6 +65,8 @@ while [[ $# -gt 0 ]]; do
       printf '%s\n' "${excluded_labels[@]}"; exit 0 ;;
     --print-floor)
       printf '%s\n' "$floor"; exit 0 ;;
+    --print-multiple-key)
+      printf '%s\n' "$multiple_key"; exit 0 ;;
     *)
       echo "planner-buffer: unknown argument '$1'" >&2
       usage ;;
@@ -94,7 +102,8 @@ planned_count() {
   fi
 }
 
-# How many beads the fleet wants: one per implementer ON THE ROSTER, minus those told to finish.
+# How many beads the fleet wants: `planner_buffer_multiple' beads per implementer ON THE ROSTER
+# (absent means one each - cb-3in), minus those told to finish.
 # Sessions are not counted at all. Since cb-1or.1 an implementer ends its pass with `waiting', the
 # fleet view ends the session, and a fresh one is started *by* a planned bead - so on a quiet board
 # no builder is running, a count of sessions is the floor, and a four-builder fleet plans two beads
@@ -110,6 +119,23 @@ planned_count() {
 #
 # The shared checkout, never the enclosing tree: from a worktree `.cerebro/state' is the worktree's,
 # while the fleet writes its stop flags into the checkout it actually runs in.
+# The declared multiple, or 1. A value that is not a whole number ABOVE ZERO is announced on stderr
+# and 1 is used: 1 is today's behaviour, so the safe direction, and a 0 taken at face value would
+# make `want' the floor for ever on a large fleet.
+multiple_value() {
+  local raw
+  # `|| raw=""' rather than a bare call: project-conf exits non-zero only for a caller's programming
+  # error or a declaration left at the retired .claude/ path, and under `set -e' an unguarded
+  # non-zero here would take this script down instead of letting it fall back. Its stderr carries an
+  # explanation on every call, successful ones included, and this script's stderr is a refusal
+  # channel - hence 2>/dev/null.
+  raw="$("$script_dir/project-conf" "$multiple_key" 2>/dev/null)" || raw=""
+  if [ -z "$raw" ]; then echo 1; return 0; fi
+  if [[ "$raw" =~ ^[0-9]+$ ]] && [ "$raw" -gt 0 ]; then echo "$raw"; return 0; fi
+  echo "planner-buffer: project.conf: $multiple_key is not a whole number above zero (\"$raw\"); using 1." >&2
+  echo 1
+}
+
 want_count() {
   local state name n=0
   if ! state="$("$script_dir/consumer-root" --shared 2>/dev/null)"; then
@@ -124,7 +150,11 @@ want_count() {
   for name in $("$script_dir/roster" --implementers); do
     [ -e "$state/$name.stop" ] || n=$((n+1))
   done
-  echo $(( n > floor ? n : floor ))
+  # The assignment is separate from the arithmetic for the reason the header gives about
+  # `planned_count': an `exit' inside `$( )' used as an argument does not trip `set -e'.
+  local multiple
+  multiple="$(multiple_value)"
+  echo $(( n * multiple > floor ? n * multiple : floor ))
 }
 
 # The counts land in variables before anything is printed, and that is load-bearing rather than

@@ -354,6 +354,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     let mut state = LoopState {
         pruner: Pruner::new(),
         told: lifecycle::TriageLedger::default(),
+        swept: lifecycle::SweepLedger::default(),
         host: SessionHost::default(),
         logger,
         ledger: StartLedger::default(),
@@ -368,10 +369,18 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // may act on this checkout. The spacing is read here too - once, in the one place, and only
     // when it will be used: a fork per role per five-second tick is not a thing this view may do.
     let mut spacing = BTreeMap::new();
+    // 1 for a read-only view, which starts nothing and draws no `-> buffer<N`.
+    let mut planner_multiple = 1;
     if app.supervision.may_supervise() {
-        let (declared, complaints) =
+        let (declared, mut complaints) =
             readers::read_role_spacing(&paths, &SPACED_ROLES, commands.as_ref());
         spacing = declared;
+        let (multiple, multiple_complaint) =
+            readers::read_planner_multiple(&paths, commands.as_ref());
+        planner_multiple = multiple;
+        // Onto the same vector, so a bad declaration reaches the header by the path the spacing
+        // complaint already uses.
+        complaints.extend(multiple_complaint);
         if let Some(notice) =
             arm_and_autostart(
                 &mut app,
@@ -388,7 +397,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         }
     }
 
-    let config = LoopConfig { paths, programs: Programs::default(), spacing };
+    let config = LoopConfig { paths, programs: Programs::default(), spacing, planner_multiple };
 
     let mut guard = TerminalGuard::enter(CrosstermTerminal)?;
     let backend = CrosstermBackend::new(io::stdout());
@@ -683,6 +692,82 @@ fn triage_tell(
     }
 }
 
+
+/// Type the sweep line into an idle orchestrator this view hosts, on the rows just applied.
+///
+/// After `start_due` and not before - `triage_tell`'s own reason: a Cerebro started on this very
+/// tick has no session to type into until the next read restates its row.
+///
+/// Gated on `may_supervise()`, like the triage line: typing a line is session lifecycle, and a
+/// view handing supervision over issues no new instruction.
+///
+/// It reads no board at all - no `WorkBuckets`, no `panel_age` - so unlike `triage_tell` it has
+/// no "no board, no line" guard.
+///
+/// A mark FREEZES across a drain rather than advancing, because a view that may not supervise
+/// never reaches this function at all - so a view that regains supervision after a long
+/// read-only spell finds the mark already past and types at once. That is deliberate and both
+/// views do it: nobody swept during the handover, so a sweep is exactly what is owed.
+/// `cerebro--sweep-tell` is gated the same way, by `cerebro--supervision-may-act-p'.
+fn sweep_tell(
+    app: &mut App,
+    host: &mut SessionHost,
+    swept: &mut lifecycle::SweepLedger,
+    logger: &mut Logger,
+    now: DateTime<Utc>,
+    at: Instant,
+) {
+    if !app.supervision.may_supervise() {
+        return;
+    }
+    // Collected BEFORE `app` is touched mutably: `fleet.content.value()` borrows `app` and
+    // `set_notice` needs it mutably, exactly as `triage_tell` collects its own.
+    let rows: Vec<(String, String, AgentKind, RowState)> = app
+        .fleet
+        .content
+        .value()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| (row.name.clone(), row.role.clone(), row.kind, row.state.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    for (name, role, kind, state) in rows {
+        let queued = swept.pending(&name);
+        let agent = lifecycle::Sweeping {
+            role: &role,
+            kind,
+            state: &state,
+            ours: host.supervisable(&name),
+            since_mark: swept.mark(&name).map(|at| (now - at).num_seconds()),
+            pending: queued,
+        };
+        match lifecycle::sweep_action(agent) {
+            None => continue,
+            Some(lifecycle::Sweep::Forget) => swept.forget(&name),
+            Some(lifecycle::Sweep::Mark) => swept.note_marked(&name, now),
+            Some(lifecycle::Sweep::Queue) => swept.note_pending(&name),
+            Some(lifecycle::Sweep::Tell) => {
+                // The line FIRST, then the ledger, then the notice and the record. `ours` has
+                // already established the session is there to take it, so nothing is recorded
+                // for a line that was not sent.
+                host.type_line(&name, lifecycle::SWEEP_MESSAGE, at);
+                swept.note_marked(&name, now);
+                app.set_notice(lifecycle::sweep_notice(&name));
+                logger.write(
+                    log::Event::SweepTell,
+                    now,
+                    &[
+                        ("agent", serde_json::Value::from(name.as_str())),
+                        ("role", serde_json::Value::from(role.as_str())),
+                        ("queued", serde_json::Value::from(queued)),
+                    ],
+                );
+            }
+        }
+    }
+}
+
 /// Start every standby row whose trigger is true. The port of `cerebro--start-due`, less its
 /// retry and give-up branches, which are cb-kcs.4.2's.
 ///
@@ -702,6 +787,7 @@ fn start_due(
     logger: &mut Logger,
     paths: &ReaderPaths,
     spacing: &BTreeMap<String, u64>,
+    planner_multiple: usize,
     roster: &[RosterEntry],
     now: DateTime<Utc>,
 ) {
@@ -716,6 +802,7 @@ fn start_due(
         roster,
         |name| lifecycle::stop_flag_set(paths, name),
         app.gh_answer(),
+        planner_multiple,
     );
 
     let standby: Vec<(String, String)> = app
@@ -1136,6 +1223,7 @@ fn startup_notice(started: &[String], standby: &[String], complaints: &[String])
 struct LoopState {
     pruner: Pruner,
     told: lifecycle::TriageLedger,
+    swept: lifecycle::SweepLedger,
     host: SessionHost,
     logger: Logger,
     ledger: StartLedger,
@@ -1147,6 +1235,8 @@ struct LoopConfig {
     paths: ReaderPaths,
     programs: Programs,
     spacing: BTreeMap<String, u64>,
+    /// The project's declared planner buffer multiple, read once at startup (cb-3in).
+    planner_multiple: usize,
 }
 
 /// Every worker the loop polls or asks. One value, so a ninth is a field rather than a
@@ -1253,11 +1343,12 @@ where
                         kind: row.kind,
                     })
                     .collect();
-                start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, &roster, now);
+                start_due(app, &mut state.host, &mut state.ledger, &mut state.logger, &config.paths, &config.spacing, config.planner_multiple, &roster, now);
                 // And a line into an idle Cerebro, on the same freshly derived rows (cb-kcs.5.2).
                 // After `start_due` for its own reason: a Cerebro started on this very tick has
                 // no session to type into until the next read restates its row.
                 triage_tell(app, &mut state.host, &mut state.told, &mut state.logger, now, Instant::now());
+                sweep_tell(app, &mut state.host, &mut state.swept, &mut state.logger, now, Instant::now());
             }
         }
         if let Some(result) = workers.work.poll() {
@@ -2421,6 +2512,7 @@ mod main_tests {
         LoopState {
             pruner: Pruner::new(),
             told: lifecycle::TriageLedger::default(),
+            swept: lifecycle::SweepLedger::default(),
             host: SessionHost::default(),
             ledger: StartLedger::default(),
             logger: test_logger(),
@@ -2431,7 +2523,7 @@ mod main_tests {
     /// The paths, programs and spacing the loop reads, all pointed at `nowhere()`.
     fn test_config() -> LoopConfig {
         let (paths, programs) = nowhere();
-        LoopConfig { paths, programs, spacing: BTreeMap::new() }
+        LoopConfig { paths, programs, spacing: BTreeMap::new(), planner_multiple: 1 }
     }
 
     /// The eight workers, each pointed at `nowhere()`. A case that needs a specific one writes
@@ -3731,6 +3823,85 @@ mod main_tests {
         }])
     }
 
+    /// Three planned, unclaimed beads and one unplanned one to plan: a buffer that satisfies a
+    /// three-implementer fleet at a multiple of 1 and is short at a multiple of 2 (cb-3in).
+    fn buffer_of_three() -> cerebro_tui::model::WorkBuckets {
+        let bead = |id: &str, labels: Vec<String>| cerebro_tui::model::Bead {
+            id: id.into(),
+            title: id.into(),
+            status: "open".into(),
+            issue_type: "task".into(),
+            labels,
+            priority: Some(2),
+            updated_at: None,
+            assignee: None,
+            metadata: serde_json::Value::Null,
+            external_ref: None,
+        };
+        cerebro_tui::model::partition_beads(vec![
+            bead("cb-p1", vec!["planned".to_string()]),
+            bead("cb-p2", vec!["planned".to_string()]),
+            bead("cb-p3", vec!["planned".to_string()]),
+            bead("cb-u1", Vec::new()),
+        ])
+    }
+
+    /// One planner and COUNT implementers, so `TriggerFacts::implementers` is COUNT.
+    fn planner_and_implementers(count: usize) -> Vec<cerebro_tui::model::RosterEntry> {
+        let mut roster = planner_roster(&["Xavier"]);
+        for n in 0..count {
+            roster.push(cerebro_tui::model::RosterEntry {
+                name: format!("Builder{n}"),
+                role: "implementer".to_string(),
+                kind: cerebro_tui::model::AgentKind::Implementer,
+            });
+        }
+        roster
+    }
+
+    #[test]
+    fn the_declared_multiple_reaches_the_planner_trigger() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let roster = planner_and_implementers(3);
+
+        // A multiple of 1 - today's rule - wants three, and three are planned.
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(buffer_of_three()),
+            now,
+        );
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
+        assert!(!host.is_live("Xavier"), "a satisfied buffer starts nobody");
+        assert_eq!(
+            app.standby_labels.get("Xavier").map(String::as_str),
+            Some("→ buffer<3")
+        );
+
+        // A multiple of 2 wants six, so the same board is short.
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            Some(buffer_of_three()),
+            now,
+        );
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 2, &roster, now);
+        assert!(host.is_live("Xavier"), "a multiple of 2 makes the same buffer short");
+        assert_eq!(app.notice.as_deref(), Some("Started Xavier — buffer 3 of 6."));
+        assert_eq!(
+            app.standby_labels.get("Xavier").map(String::as_str),
+            Some("→ buffer<6")
+        );
+        host.kill(&paths, "Xavier");
+        settle_gone(&mut host, "Xavier");
+    }
+
     /// An app on standby for NAMES, with the given work snapshot applied.
     fn standby_app(
         mode: cerebro_tui::supervisor::SupervisionMode,
@@ -3763,7 +3934,7 @@ mod main_tests {
         );
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
 
         assert!(host.is_live("Xavier"), "the standby planner was started");
         assert!(app.armed.contains("Xavier"), "and stays armed");
@@ -3796,7 +3967,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
 
         // The spacing is read INSIDE the loop, so the second planner already sees the first.
         assert!(host.is_live("Xavier"));
@@ -3822,7 +3993,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
 
         assert!(!host.is_live("Xavier"), "a flagged name is never started, whatever its trigger");
         assert!(
@@ -3846,7 +4017,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
 
         assert!(!host.is_live("Xavier"), "no board, no starts");
     }
@@ -3873,7 +4044,7 @@ mod main_tests {
         supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
         assert!(app.armed.is_empty(), "a drain keeps no promise it will not keep");
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
         assert!(!host.is_live("Xavier"));
     }
 
@@ -3972,7 +4143,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
         assert!(!host.is_live("Xavier"));
         assert!(
             host.exits().contains_key("Xavier"),
@@ -3992,7 +4163,7 @@ mod main_tests {
         // no launcher, so what is asserted is that no SECOND attempt was made: a retry would
         // replace the refusal with one stamped `later`.
         let later = now + chrono::Duration::seconds(60);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, later);
         match host.sync(Some("Xavier"), 24, 80, later) {
             cerebro_tui::session::SessionView::Refused { at, .. } => {
                 assert_eq!(at, now, "the row was not started again");
@@ -4046,7 +4217,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &roster, now);
 
         assert!(host.is_live("Xavier"));
         let line = one_line(dir.path(), "decisions", "start");
@@ -4217,7 +4388,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &roster, now);
 
         assert!(!host.is_live("Xavier"), "the fifth start is not attempted");
         let gave_up = one_line(dir.path(), "decisions", "give-up");
@@ -4255,7 +4426,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &spacing, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &spacing, 1, &roster, now);
 
         let lines = log_lines(dir.path(), "decisions");
         let evaluations: Vec<&String> = lines
@@ -4432,6 +4603,164 @@ mod main_tests {
         assert!(told.told("Cerebro").is_none(), "and nothing is throttled");
     }
 
+
+    /// A sweep fixture needs no board at all - `sweep_tell` reads none - so this is `triage_app`
+    /// less its two work-refresh calls.
+    fn sweep_app(state: cerebro_tui::model::RowState, now: DateTime<Utc>) -> App {
+        let mut app = App::with_supervision(supervising());
+        app.finish_refresh(Ok(vec![cerebro_row(state, 1800, now)]), now);
+        app
+    }
+
+    #[test]
+    fn a_two_hour_mark_types_the_sweep_line_into_an_idle_cerebro() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let mut logger = Logger::new(dir.path());
+        logger.set_enabled(true);
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Cerebro");
+        let mut swept = cerebro_tui::lifecycle::SweepLedger::default();
+        let mut app = sweep_app(cerebro_tui::model::RowState::Idle, now);
+
+        // The first tick starts the clock silently: a Cerebro that has just started has just swept.
+        let at = Instant::now();
+        sweep_tell(&mut app, &mut host, &mut swept, &mut logger, now, at);
+        assert_eq!(app.notice, None, "the clock starts without a word");
+        assert_eq!(swept.mark("Cerebro"), Some(now));
+        assert!(log_lines(dir.path(), "decisions").is_empty());
+
+        let later = now + chrono::Duration::seconds(cerebro_tui::lifecycle::SWEEP_INTERVAL_SECONDS);
+        let mut app = sweep_app(cerebro_tui::model::RowState::Idle, later);
+        sweep_tell(&mut app, &mut host, &mut swept, &mut logger, later, at);
+
+        assert_eq!(app.notice.as_deref(), Some("Cerebro was asked to sweep."));
+        assert_ne!(app.notice_tone, app::NoticeTone::Urgent, "a sweep line is news, not a fault");
+        assert_eq!(swept.mark("Cerebro"), Some(later), "the clock resets when the line is typed");
+        let line = one_line(dir.path(), "decisions", "sweep-tell");
+        assert!(line.contains(r#""agent":"Cerebro","role":"orchestrator""#), "{line}");
+        assert!(line.contains(r#""queued":false"#), "{line}");
+
+        // The next tick is inside the window again, so nothing more is typed or said.
+        app.notice = None;
+        sweep_tell(&mut app, &mut host, &mut swept, &mut logger, later, at);
+        assert_eq!(app.notice, None, "one line per window, not one per tick");
+        assert_eq!(log_lines(dir.path(), "decisions").len(), 1);
+
+        host.flush_returns(at);
+        host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
+        assert!(saw_line(&mut host, "Cerebro", 24, 400, "got:[cerebro] Two hours since your last sweep."));
+        host.kill(&cerebro_tui::readers::ReaderPaths {
+            consumer_root: dir.path().into(),
+            shared_root: dir.path().into(),
+            scripts_dir: dir.path().into(),
+        }, "Cerebro");
+        settle_gone(&mut host, "Cerebro");
+    }
+
+    /// The whole reason this is not `triage_tell`: a mark is an EDGE that passes, so one falling
+    /// while Cerebro works is queued rather than lost, and typed at the first idle tick after it -
+    /// once, however many marks passed meanwhile.
+    #[test]
+    fn a_mark_that_passes_while_cerebro_is_busy_is_queued_and_typed_when_it_goes_idle() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let mut logger = Logger::new(dir.path());
+        logger.set_enabled(true);
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Cerebro");
+        let mut swept = cerebro_tui::lifecycle::SweepLedger::default();
+        let at = Instant::now();
+
+        let mut app = sweep_app(cerebro_tui::model::RowState::Working, now);
+        sweep_tell(&mut app, &mut host, &mut swept, &mut logger, now, at);
+        assert_eq!(swept.mark("Cerebro"), Some(now), "the clock starts whatever the state");
+
+        let busy = now + chrono::Duration::seconds(cerebro_tui::lifecycle::SWEEP_INTERVAL_SECONDS);
+        let mut app = sweep_app(cerebro_tui::model::RowState::Working, busy);
+        sweep_tell(&mut app, &mut host, &mut swept, &mut logger, busy, at);
+        assert_eq!(app.notice, None, "nothing is typed into a working Cerebro");
+        assert!(swept.pending("Cerebro"), "and the line is queued");
+        assert_eq!(swept.mark("Cerebro"), Some(now), "queueing does not move the mark");
+        assert!(log_lines(dir.path(), "decisions").is_empty(), "a queued line is not a typed one");
+
+        // A second mark passing while the flag is set changes nothing: a flag, not a count.
+        let busier = busy + chrono::Duration::seconds(cerebro_tui::lifecycle::SWEEP_INTERVAL_SECONDS);
+        let mut app = sweep_app(cerebro_tui::model::RowState::Working, busier);
+        sweep_tell(&mut app, &mut host, &mut swept, &mut logger, busier, at);
+        assert!(log_lines(dir.path(), "decisions").is_empty());
+
+        let free = busier + chrono::Duration::seconds(60);
+        let mut app = sweep_app(cerebro_tui::model::RowState::Idle, free);
+        sweep_tell(&mut app, &mut host, &mut swept, &mut logger, free, at);
+        assert_eq!(app.notice.as_deref(), Some("Cerebro was asked to sweep."));
+        assert!(!swept.pending("Cerebro"), "the queued line is spent");
+        assert_eq!(swept.mark("Cerebro"), Some(free));
+        let lines = log_lines(dir.path(), "decisions");
+        assert_eq!(lines.len(), 1, "six hours of work is followed by ONE sweep: {lines:?}");
+        assert!(lines[0].contains(r#""queued":true"#), "{}", lines[0]);
+
+        host.kill(&cerebro_tui::readers::ReaderPaths {
+            consumer_root: dir.path().into(),
+            shared_root: dir.path().into(),
+            scripts_dir: dir.path().into(),
+        }, "Cerebro");
+        settle_gone(&mut host, "Cerebro");
+    }
+
+    /// Typing a line is session lifecycle, and is inside the lease.
+    #[test]
+    fn a_read_only_view_types_no_sweep_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let mut logger = Logger::new(dir.path());
+        logger.set_enabled(true);
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Cerebro");
+        let mut swept = cerebro_tui::lifecycle::SweepLedger::default();
+        let mut app = App::with_supervision(cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                cerebro_tui::supervisor::SupervisorKind::Emacs,
+            ),
+        ));
+        app.finish_refresh(Ok(vec![cerebro_row(cerebro_tui::model::RowState::Idle, 1800, now)]), now);
+
+        sweep_tell(&mut app, &mut host, &mut swept, &mut logger, now, Instant::now());
+
+        assert_eq!(app.notice, None);
+        assert!(log_lines(dir.path(), "decisions").is_empty());
+        assert_eq!(swept.mark("Cerebro"), None, "a draining view holds no clock either");
+
+        host.kill(&cerebro_tui::readers::ReaderPaths {
+            consumer_root: dir.path().into(),
+            shared_root: dir.path().into(),
+            scripts_dir: dir.path().into(),
+        }, "Cerebro");
+        settle_gone(&mut host, "Cerebro");
+    }
+
+    /// The navigator's rule, and `triage_tell`'s deliberate divergence from Emacs: nothing is
+    /// typed, recorded or clocked unless the line went into a session this view hosts.
+    #[test]
+    fn a_cerebro_this_view_does_not_host_gets_no_sweep_clock() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let mut logger = Logger::new(dir.path());
+        logger.set_enabled(true);
+        let mut host = SessionHost::default();
+        let mut swept = cerebro_tui::lifecycle::SweepLedger::default();
+        swept.note_marked("Cerebro", now - chrono::Duration::seconds(30_000));
+        swept.note_pending("Cerebro");
+        let mut app = sweep_app(cerebro_tui::model::RowState::Idle, now);
+
+        sweep_tell(&mut app, &mut host, &mut swept, &mut logger, now, Instant::now());
+
+        assert_eq!(app.notice, None);
+        assert!(log_lines(dir.path(), "decisions").is_empty());
+        assert_eq!(swept.mark("Cerebro"), None, "the mark is dropped with the session");
+        assert!(!swept.pending("Cerebro"), "and so is the queued line");
+    }
+
     /// An empty set is forgotten, so the same set coming back is a `tell` and not a `repeat`.
     #[test]
     fn an_empty_board_forgets_what_it_told() {
@@ -4564,7 +4893,7 @@ mod main_tests {
 
         supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
             &mut logger, &paths, now, Instant::now());
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &BTreeMap::new(), 1, &roster, now);
         logger.error("work", "bd: database is locked", now);
 
         assert!(log_lines(dir.path(), "decisions").is_empty(), "not a decision");
@@ -4762,7 +5091,7 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(),
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1,
                   &outside_roster("Moira", "user-feedback"), now);
 
         assert!(host.is_live("Moira"), "the standby row was started");
@@ -4787,7 +5116,7 @@ mod main_tests {
         // No `gh` answer at all, and nothing on the board: the clock is its whole trigger.
         ledger.note_ended("Forge", now - chrono::Duration::minutes(60));
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(),
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1,
                   &outside_roster("Forge", "architect"), now);
 
         assert!(host.is_live("Forge"));
@@ -4815,7 +5144,7 @@ mod main_tests {
 
         let mut roster = outside_roster("Moira", "user-feedback");
         roster.extend(outside_roster("Forge", "architect"));
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(),
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1,
                   &roster, now);
 
         assert!(!host.is_live("Moira"), "nothing moved and the floor is not due");
@@ -4868,7 +5197,7 @@ mod main_tests {
         // back.
         let (mut app, mut ledger) = backing_off(1, 100, short_buffer(), now);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
         assert!(host.is_live("Xavier"), "one failure waits nothing at all");
         assert_eq!(ledger.failures("Xavier"), 2, "counted before the launch");
         host.kill(&paths, "Xavier");
@@ -4880,7 +5209,7 @@ mod main_tests {
             Ok(vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)]),
             later,
         );
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, later);
         assert!(!host.is_live("Xavier"), "the second failure is backed off");
         assert_eq!(ledger.failures("Xavier"), 2, "and the count is not advanced by a skip");
         assert_eq!(
@@ -4921,7 +5250,7 @@ mod main_tests {
         // An empty board: the planner's condition is false, and the countdown wins anyway.
         let (mut app, mut ledger) = backing_off(3, 60, empty_board(), now);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
 
         assert_eq!(
             app.standby_labels.get("Xavier").map(String::as_str),
@@ -4941,7 +5270,7 @@ mod main_tests {
         // Four failures behind it and the fourth's ten minutes counted out.
         let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
 
         assert!(!host.is_live("Xavier"), "no sixth start is attempted");
         assert!(!app.armed.contains("Xavier"), "the name left the armed set");
@@ -4962,7 +5291,7 @@ mod main_tests {
 
         // And it stays given up: a later tick starts nothing, the row being disarmed.
         let later = now + chrono::Duration::seconds(600);
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, later);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, later);
         assert!(!host.is_live("Xavier"));
     }
 
@@ -4976,7 +5305,7 @@ mod main_tests {
         let (mut app, mut ledger) = backing_off(4, 700, short_buffer(), now);
         assert_eq!(app.fleet_rows()[0].state, cerebro_tui::model::RowState::Standby);
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
 
         // No fleet read in between: a row promising a retry the view has just decided against is
         // the one thing this must never leave on the screen.
@@ -4994,7 +5323,7 @@ mod main_tests {
         // A pass ran and ended: the three before it do not count.
         ledger.note_ended("Xavier", now - chrono::Duration::seconds(50));
 
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &BTreeMap::new(), 1, &roster, now);
 
         assert!(host.is_live("Xavier"), "nothing is owed after a pass that ran");
         assert_eq!(ledger.failures("Xavier"), 0);

@@ -71,6 +71,11 @@ pub enum Event {
     /// into a session this view hosts (the navigator's choice, round three): the view must not
     /// record something it did not do.
     Triage,
+    /// One sweep line typed into an idle orchestrator whose two hours are up. `Sweep` is taken
+    /// by the `x`-on-a-finding decision, and two decisions sharing one `event` value makes the
+    /// log unreadable for exactly the diagnosis it exists for. Written only when the line
+    /// actually went into a session this view hosts, exactly as `Triage` is.
+    SweepTell,
     Error,
 }
 
@@ -89,6 +94,7 @@ impl Event {
             Self::Sweep => "sweep",
             Self::Priority => "priority",
             Self::Triage => "triage",
+            Self::SweepTell => "sweep-tell",
             Self::Error => "error",
         }
     }
@@ -437,6 +443,12 @@ mod tests {
     /// decisions log and is written at every verbosity.
     #[test]
     fn triage_is_a_decision_not_an_error() {
+        assert_eq!(Event::SweepTell.as_str(), "sweep-tell");
+        assert_ne!(Event::SweepTell.as_str(), Event::Sweep.as_str(), "two decisions, two names");
+        assert_eq!(Event::SweepTell.basename(), "decisions");
+        assert!(log_event_p(Event::SweepTell, Verbosity::Decisions));
+        assert!(log_event_p(Event::SweepTell, Verbosity::Evaluations));
+        assert!(!log_event_p(Event::SweepTell, Verbosity::None));
         assert_eq!(Event::Triage.as_str(), "triage");
         assert_eq!(Event::Triage.basename(), "decisions");
         assert!(log_event_p(Event::Triage, Verbosity::Decisions));

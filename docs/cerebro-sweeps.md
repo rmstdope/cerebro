@@ -22,6 +22,9 @@ to do at all.
 leave a residue and points here for the rest. Change a guard here and change the Lisp function and
 its ERT case with it; they are one rule in two places, and this is the half that explains itself.
 
+`sweep-paused.sh`'s non-board cases are not decided here — they are Cerebro's, in
+`agents/orchestrator.md`, *The paused beads are yours to walk*.
+
 ## Keeping the worktrees tidy
 
 **The fleet view runs this sweep for you now**, automatically, on every `M-x cerebro` and

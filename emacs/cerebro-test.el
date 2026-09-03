@@ -3999,7 +3999,12 @@ Run as CI runs ERT, from the repository root."
                    (sort (process-lines "bash" script "--print-excluded-labels") #'string<)))
     (should (equal cerebro-planner-buffer-floor
                    (string-to-number
-                    (car (process-lines "bash" script "--print-floor")))))))
+                    (car (process-lines "bash" script "--print-floor")))))
+    ;; The drift this can actually catch: two implementations reading DIFFERENT
+    ;; keys would both find "absent" and both answer 1, which looks correct
+    ;; until a project declares one.
+    (should (equal cerebro--planner-multiple-key
+                   (car (process-lines "bash" script "--print-multiple-key"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 3: turning a sweep's facts into a decision
@@ -6478,6 +6483,92 @@ by being derived from the unplanned list."
           (cerebro--triage-tell (list agent) "/tmp/nowhere" now)
           (should (null (assoc "Cerebro" cerebro--triage-told))))))))
 
+
+(ert-deftest cerebro-test/sweep-tell-types-marks-and-logs ()
+  "The clock starts silently, the line is typed once when it runs out, and a
+mark that passes while Cerebro is working is queued rather than lost."
+  (let* ((typed nil) (logged nil)
+         (agent (cerebro-test--cerebro 'idle))
+         (now (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))
+         (cerebro-sweep-interval 7200))
+    (cl-letf (((symbol-function 'cerebro--session) (lambda (_name) (current-buffer)))
+              ((symbol-function 'cerebro--type-into-session)
+               (lambda (a m) (push (cons (cerebro-agent-name a) m) typed)))
+              ((symbol-function 'cerebro--log)
+               (lambda (_root event fields) (push (cons event fields) logged))))
+      (with-temp-buffer
+        ;; The first tick starts the clock and says nothing: a Cerebro that has just
+        ;; started has just swept.
+        (cerebro--sweep-tell (list agent) "/tmp/nowhere" now)
+        (should (null typed))
+        (should (null logged))
+        (should (equal (car (cdr (assoc "Cerebro" cerebro--sweep-marks))) (float-time now)))
+        ;; Inside the window, nothing.
+        (cerebro--sweep-tell (list agent) "/tmp/nowhere" (time-add now 7199))
+        (should (null typed))
+        ;; Two hours: typed once, and the clock resets with it.
+        (let ((later (time-add now 7200)))
+          (cerebro--sweep-tell (list agent) "/tmp/nowhere" later)
+          (should (equal typed (list (cons "Cerebro" cerebro--sweep-message))))
+          (should (equal (car (cdr (assoc "Cerebro" cerebro--sweep-marks))) (float-time later)))
+          (should (equal (length logged) 1))
+          (should (eq (car (car logged)) 'sweep-tell))
+          (should (null (alist-get 'queued (cdr (car logged)))))
+          ;; The next tick is inside the new window: one line per window, not one per tick.
+          (cerebro--sweep-tell (list agent) "/tmp/nowhere" later)
+          (should (equal (length typed) 1)))))))
+
+(ert-deftest cerebro-test/a-sweep-mark-that-passes-while-cerebro-works-is-queued ()
+  "The whole reason this is not the triage rule: a mark is an EDGE that
+passes, so one falling while Cerebro works is queued and typed at the first
+idle tick after it - once, however many marks passed meanwhile."
+  (let* ((typed nil) (logged nil)
+         (busy (cerebro-test--cerebro 'working))
+         (free (cerebro-test--cerebro 'idle))
+         (now (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))
+         (cerebro-sweep-interval 7200))
+    (cl-letf (((symbol-function 'cerebro--session) (lambda (_name) (current-buffer)))
+              ((symbol-function 'cerebro--type-into-session)
+               (lambda (a m) (push (cons (cerebro-agent-name a) m) typed)))
+              ((symbol-function 'cerebro--log)
+               (lambda (_root event fields) (push (cons event fields) logged))))
+      (with-temp-buffer
+        (cerebro--sweep-tell (list busy) "/tmp/nowhere" now)
+        (cerebro--sweep-tell (list busy) "/tmp/nowhere" (time-add now 7200))
+        (should (null typed))
+        (should (cdr (cdr (assoc "Cerebro" cerebro--sweep-marks))))
+        (should (equal (car (cdr (assoc "Cerebro" cerebro--sweep-marks))) (float-time now)))
+        ;; A second mark passing while the flag is set changes nothing: a flag, not a count.
+        (cerebro--sweep-tell (list busy) "/tmp/nowhere" (time-add now 14400))
+        (should (null typed))
+        ;; Idle at last: typed once, and said to have been queued.
+        (cerebro--sweep-tell (list free) "/tmp/nowhere" (time-add now 14460))
+        (should (equal (length typed) 1))
+        (should (equal (length logged) 1))
+        (should (eq (alist-get 'queued (cdr (car logged))) t))
+        (should (null (cdr (cdr (assoc "Cerebro" cerebro--sweep-marks)))))))))
+
+(ert-deftest cerebro-test/a-sweep-line-goes-only-into-a-session-this-emacs-holds ()
+  "Nothing is typed, recorded or clocked for a session this Emacs does not
+hold - the divergence from `cerebro--triage-tell', which records even when no
+buffer took the string, and the question both views answer in the table."
+  (let* ((typed nil) (logged nil)
+         (agent (cerebro-test--cerebro 'idle))
+         (now (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))
+         (cerebro-sweep-interval 7200))
+    (cl-letf (((symbol-function 'cerebro--session) (lambda (_name) nil))
+              ((symbol-function 'cerebro--type-into-session)
+               (lambda (a m) (push (cons (cerebro-agent-name a) m) typed)))
+              ((symbol-function 'cerebro--log)
+               (lambda (_root event fields) (push (cons event fields) logged))))
+      (with-temp-buffer
+        (setq cerebro--sweep-marks
+              (list (cons "Cerebro" (cons (- (float-time now) 30000) t))))
+        (cerebro--sweep-tell (list agent) "/tmp/nowhere" now)
+        (should (null typed))
+        (should (null logged))
+        (should (null (assoc "Cerebro" cerebro--sweep-marks)))))))
+
 (ert-deftest cerebro-test/triage-tell-gathers-nothing-when-nobody-could-take-a-line ()
   "The context gather costs a stat per implementer; a fleet with no idle,
 owned Cerebro pays it for nothing."
@@ -6824,6 +6915,27 @@ be a loop at the speed of the end grace."
     (should (null (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
                                     again)))))
 
+(ert-deftest cerebro-test/the-planner-arm-reads-the-declared-multiple ()
+  "The trigger and the standby label both read `planner-multiple\=' from the
+context (cb-3in).  The pure rule is proved elsewhere; this is the wiring: with
+three implementers and three planned beads a multiple of 1 is satisfied, and a
+multiple of 2 wants six and starts."
+  (let ((satisfied (cerebro-test--context '(planned . 3) '(implementers . 3)
+                                          '(actionable-ids "cb-new")
+                                          '(planner-multiple . 1)))
+        (short (cerebro-test--context '(planned . 3) '(implementers . 3)
+                                      '(actionable-ids "cb-new")
+                                      '(planner-multiple . 2))))
+    (should (null (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                    satisfied)))
+    (should (equal (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                     short)
+                   "buffer 3 of 6"))
+    ;; And the row's own label names the same number.
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "planner" 'standby) short)
+                   "→ buffer < 6"))))
+
 (ert-deftest cerebro-test/work-that-moved-starts-the-next-pass-at-once ()
   "The guard is a comparison, not a clock: the moment anything the trigger
 measures changes - a bead arrives, one is planned, an implementer comes up -
@@ -7119,6 +7231,34 @@ to spell, so `scripts/planner-buffer' can be held to it."
   (let ((cerebro-planner-buffer-floor 4))
     (should (equal (cerebro--planner-want 3) 4))
     (should (equal (cerebro--planner-want 6) 6))))
+
+(ert-deftest cerebro-test/a-planner-multiple-is-a-whole-number-above-zero ()
+  "The pure parser behind `planner_buffer_multiple' (cb-3in).
+nil is \"the project declared none\", which is 1; `bad' is a declaration this
+view refuses to act on - zero included, since a zero taken at face value
+would pin the wanted number to the floor for ever."
+  (should (equal (cerebro--planner-multiple-value nil) nil))
+  (should (equal (cerebro--planner-multiple-value "") nil))
+  (should (equal (cerebro--planner-multiple-value "  ") nil))
+  (should (equal (cerebro--planner-multiple-value "3") 3))
+  (should (equal (cerebro--planner-multiple-value " 3\n") 3))
+  (should (equal (cerebro--planner-multiple-value "01") 1))
+  (should (equal (cerebro--planner-multiple-value "0") 'bad))
+  (should (equal (cerebro--planner-multiple-value "-1") 'bad))
+  (should (equal (cerebro--planner-multiple-value "1.5") 'bad))
+  (should (equal (cerebro--planner-multiple-value "2x") 'bad)))
+
+(ert-deftest cerebro-test/planner-want-scales-with-the-declared-multiple ()
+  "`planner_buffer_multiple' multiplies the per-implementer number (cb-3in).
+An absent multiple is 1 - today's rule - so a consumer that predates the key
+is untouched, and the floor still wins."
+  (should (equal (cerebro--planner-want 3 2) 6))
+  (should (equal (cerebro--planner-want 3 nil) 3))
+  (should (equal (cerebro--planner-want 3) 3))
+  (should (equal (cerebro--planner-want 1 1) 2))
+  (let ((cerebro-planner-buffer-floor 4))
+    (should (equal (cerebro--planner-want 3 2) 6))
+    (should (equal (cerebro--planner-want 1 2) 4))))
 
 (ert-deftest cerebro-test/the-planners-have-no-floor ()
   "The floor was the only thing damping a trigger a pass could not clear, and
@@ -9307,3 +9447,59 @@ here rather than taken from whatever the running fleet is customised to."
                             now)))
         (should (equal (cons (if action (symbol-name action) "none") row)
                        (cons expect row)))))))
+
+(defconst cerebro-test--sweep-cases-file
+  (expand-file-name "tests/lib/sweep-tell.cases" cerebro-test--repo-root)
+  "The sweep table both implementations of the decision run.
+`fleet-view/src/lifecycle.rs' runs the same rows against `sweep_action'.")
+
+(defun cerebro-test--sweep-cases ()
+  "The rows of `cerebro-test--sweep-cases-file' as plain lists.
+Each is (ROLE KIND STATE HOSTED SINCE-MARK PENDING EXPECT).  A malformed
+row is an error, not a skipped case."
+  (let (rows)
+    (with-temp-buffer
+      (insert-file-contents cerebro-test--sweep-cases-file)
+      (dolist (line (split-string (buffer-string) "\n" t))
+        (unless (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" line)
+          (let ((fields (split-string (string-trim line) "[ \t]+" t)))
+            (unless (= (length fields) 7)
+              (error "sweep-tell.cases: malformed row: %s" line))
+            (push fields rows)))))
+    (nreverse rows)))
+
+(ert-deftest cerebro-test/the-sweep-table-is-answered-by-the-action ()
+  "Every row of `tests/lib/sweep-tell.cases', answered here as well as in Rust.
+
+A row the two answer differently is a Cerebro told to sweep twice in one
+window or never told at all - and neither failure announces itself,
+because a typed line is fire-and-forget and Cerebro writes nothing back
+to say it heard.
+
+The rows assume `cerebro-sweep-interval' 7200, so it is bound here rather
+than taken from whatever the running fleet is customised to."
+  (let ((rows (cerebro-test--sweep-cases))
+        (cerebro-sweep-interval 7200))
+    (should (>= (length rows) 20))
+    (dolist (row rows)
+      (pcase-let* ((`(,role ,kind ,state ,hosted ,since-mark ,pending ,expect) row)
+                   (agent (make-cerebro-agent
+                           :name "Cerebro" :role role :kind (intern kind)
+                           :state (intern state)
+                           :since "2026-08-14T09:00:00Z"))
+                   (action (cerebro--sweep-action
+                            agent
+                            (equal hosted "yes")
+                            (cerebro-test--triage-number since-mark row)
+                            (equal pending "yes"))))
+        (should (equal (cons (if action (symbol-name action) "none") row)
+                       (cons expect row)))))))
+
+(ert-deftest cerebro-test/the-sweep-line-says-what-cerebro-reads ()
+  "The exact bytes Cerebro reads.  `lifecycle::SWEEP_MESSAGE' is pinned
+against the same literal in Rust; there is no cross-language check of the
+two, exactly as `cerebro--triage-message' has none."
+  (should (equal cerebro--sweep-message
+                 (concat "[cerebro] Two hours since your last sweep. Run the two sweeps that are "
+                         "yours - the claims, and the worktrees the pruner declined - and bring "
+                         "the navigator anything that needs a judgement."))))

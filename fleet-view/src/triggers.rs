@@ -23,6 +23,26 @@ pub const WAKE_INTERVAL_DEFAULT: i64 = 600;
 /// standby row per five-second tick and may not fork.
 pub const PLANNER_BUFFER_FLOOR: usize = 2;
 
+/// The project.conf key that scales the planner buffer (cb-3in). The shell copy is
+/// `scripts/planner-buffer --print-multiple-key`; the elisp copy is
+/// `cerebro--planner-multiple-key`. ABSENT means 1 - the rule every consumer had before the key
+/// existed.
+pub const PLANNER_MULTIPLE_KEY: &str = "planner_buffer_multiple";
+
+/// RAW as a buffer multiple: `Ok(None)` for a project that declares none, `Ok(Some(n))` for a
+/// whole number above zero, `Err(raw)` for anything else - zero included, since a zero taken at
+/// face value would pin `planner_want` to the floor for ever.
+pub fn parse_planner_multiple(raw: &str) -> Result<Option<usize>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    match trimmed.parse::<usize>() {
+        Ok(n) if n > 0 => Ok(Some(n)),
+        _ => Err(trimmed.to_string()),
+    }
+}
+
 /// `cerebro-parked-labels`: a bead wearing one of these is the navigator's rather than a
 /// planner's, and counting it starts a session to find nothing to do.
 pub const PARKED_LABELS: [&str; 2] = ["human", "triage:declined"];
@@ -231,6 +251,10 @@ pub struct TriggerFacts {
     /// read: a builder between beads has no session (cb-1or.1), so `standby`, `dead`, `idle` and
     /// `working` all count.
     pub implementers: usize,
+    /// The buffer multiple this project declares (`PLANNER_MULTIPLE_KEY`), 1 when it declares
+    /// none. Read once at startup, never per tick - so it is deliberately absent from
+    /// `Fingerprint::Planner`, which compares only what can move under a running view.
+    pub planner_multiple: usize,
     /// What the `gh` reader has to say this tick, for the whole fleet. Per-role filtering happens
     /// in `trigger`, because "what moved" is measured against the role's own last pass - which is
     /// why `M-x cerebro` has to pass a closure here (`emacs/cerebro.el:5955`) and this does not.
@@ -276,6 +300,7 @@ impl TriggerFacts {
         roster: &[RosterEntry],
         flagged: impl Fn(&str) -> bool,
         gh: GhAnswer,
+        planner_multiple: usize,
     ) -> Self {
         let unplanned: Vec<_> = buckets
             .unplanned
@@ -328,15 +353,18 @@ impl TriggerFacts {
                 .iter()
                 .filter(|entry| entry.kind == AgentKind::Implementer && !flagged(&entry.name))
                 .count(),
+            planner_multiple,
             gh,
             linked: buckets.linked.clone(),
         }
     }
 
-    /// How many planned, unclaimed beads the fleet wants: one per implementer, never fewer than
-    /// `PLANNER_BUFFER_FLOOR` (`cerebro--planner-want`).
+    /// How many planned, unclaimed beads the fleet wants: `planner_multiple` per implementer,
+    /// never fewer than `PLANNER_BUFFER_FLOOR` (`cerebro--planner-want`).
     pub fn planner_want(&self) -> usize {
-        self.implementers.max(PLANNER_BUFFER_FLOOR)
+        // Saturating, so an absurd declaration cannot wrap to a number BELOW the floor - which
+        // would silently pin the buffer - where elisp would have grown a bignum.
+        self.implementers.saturating_mul(self.planner_multiple).max(PLANNER_BUFFER_FLOOR)
     }
 }
 
@@ -888,7 +916,7 @@ mod tests {
             ("Storm", "implementer"),
         ]);
         // Storm has been told to finish: it takes no further bead, so it is not counted.
-        let facts = TriggerFacts::derive(&buckets, &roster, |name| name == "Storm", GhAnswer::Unanswered);
+        let facts = TriggerFacts::derive(&buckets, &roster, |name| name == "Storm", GhAnswer::Unanswered, 1);
 
         assert_eq!(facts.p0_unplanned, vec!["cb-9zz".to_string()]);
         assert_eq!(facts.planned, 2);
@@ -916,7 +944,7 @@ mod tests {
         let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
         let facts_of = |priority: u8| {
             let buckets = partition_beads(vec![bead("cb-agg", "open", &[], priority)]);
-            TriggerFacts::derive(&buckets, &roster, |_| false, GhAnswer::Unanswered)
+            TriggerFacts::derive(&buckets, &roster, |_| false, GhAnswer::Unanswered, 1)
         };
         let unranked = facts_of(4);
         let ranked = facts_of(2);
@@ -954,6 +982,38 @@ mod tests {
         assert_eq!(facts.planner_want(), 4);
     }
 
+    #[test]
+    fn a_declared_multiple_scales_the_buffer() {
+        let mut facts = empty_facts();
+        facts.planner_multiple = 2;
+        facts.implementers = 4;
+        assert_eq!(facts.planner_want(), 8);
+        facts.implementers = 0;
+        assert_eq!(facts.planner_want(), PLANNER_BUFFER_FLOOR);
+        facts.planner_multiple = 1;
+        facts.implementers = 4;
+        assert_eq!(facts.planner_want(), 4);
+        // An absurd declaration saturates rather than wrapping below the floor.
+        facts.planner_multiple = usize::MAX;
+        facts.implementers = 2;
+        assert_eq!(facts.planner_want(), usize::MAX);
+    }
+
+    #[test]
+    fn a_planner_multiple_is_a_whole_number_above_zero() {
+        assert_eq!(parse_planner_multiple("1"), Ok(Some(1)));
+        assert_eq!(parse_planner_multiple("  3  "), Ok(Some(3)));
+        assert_eq!(parse_planner_multiple("01"), Ok(Some(1)));
+        assert_eq!(parse_planner_multiple(""), Ok(None));
+        assert_eq!(parse_planner_multiple("   "), Ok(None));
+        // Zero is refused rather than taken at face value: it would pin the
+        // wanted number to the floor for ever.
+        assert_eq!(parse_planner_multiple("0"), Err("0".to_string()));
+        assert_eq!(parse_planner_multiple("-1"), Err("-1".to_string()));
+        assert_eq!(parse_planner_multiple("1.5"), Err("1.5".to_string()));
+        assert_eq!(parse_planner_multiple("2x"), Err("2x".to_string()));
+    }
+
     fn empty_facts() -> TriggerFacts {
         TriggerFacts {
             p0_unplanned: Vec::new(),
@@ -964,6 +1024,7 @@ mod tests {
             merged_unverified: 0,
             stale_verdicts: 0,
             implementers: 4,
+            planner_multiple: 1,
             gh: GhAnswer::Unanswered,
             linked: Vec::new(),
         }
@@ -1311,7 +1372,7 @@ mod tests {
     }
 
     fn cadence_facts(gh: GhAnswer) -> TriggerFacts {
-        let mut facts = TriggerFacts::derive(&WorkBuckets::default(), &[], |_| false, gh);
+        let mut facts = TriggerFacts::derive(&WorkBuckets::default(), &[], |_| false, gh, 1);
         facts.linked = Vec::new();
         facts
     }

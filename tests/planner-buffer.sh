@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Proves `scripts/planner-buffer`: the one place the harness answers "how much planned, claimable
-# work is there, and how much is wanted" - the wanted number being one bead per implementer on the
-# roster, minus any told to finish, never fewer than the floor. That question used to be answered twice, in two languages
+# work is there, and how much is wanted" - the wanted number being `planner_buffer_multiple' beads
+# per implementer on the roster (absent means one each), minus any told to finish, never fewer than
+# the floor. That question used to be answered twice, in two languages
 # - `cerebro--trigger`'s planner arm in `emacs/cerebro.el` and a hand-written `bd list` in
 # `skills/plan-bead/SKILL.md` - and the two drifted, each time costing sessions: a trigger counting
 # beads the skill excluded started a planner to find nothing to do (de05dc3), and one rule change
@@ -39,6 +40,10 @@ pass "prints the excluded labels for the fleet view to check itself against"
 floor="$(run_decl --print-floor)"
 [ "$floor" = "2" ] || fail "--print-floor printed '$floor', not 2"
 pass "prints the buffer floor"
+
+key="$(run_decl --print-multiple-key)"
+[ "$key" = "planner_buffer_multiple" ] || fail "--print-multiple-key printed '$key'"
+pass "prints the project.conf key the multiple is declared in"
 
 # --- an unknown flag is a usage error, and prints nothing on stdout ------------------------------
 set +e
@@ -187,12 +192,15 @@ set_stub "$beads"
 # and the stop flags, never off a session.
 want_fixture() {
   local tmp name
-  tmp="$(consumer_new "$(fixture_name pb)" --link roster consumer-root work-beads planner-buffer)"
+  tmp="$(consumer_new "$(fixture_name pb)" --link roster consumer-root work-beads planner-buffer project-conf)"
   mkdir -p "$tmp/.cerebro/state"
   printf 'Xavier planner\n' > "$tmp/.cerebro/roster.conf"
   for name in "$@"; do printf '%s implementer\n' "$name" >> "$tmp/.cerebro/roster.conf"; done
   echo "$tmp"
 }
+
+# Declares the buffer multiple in the fixture's own project.conf.
+declare_multiple() { printf 'planner_buffer_multiple %s\n' "$2" > "$1/.cerebro/project.conf"; }
 
 run_want() {
   local tmp="$1"
@@ -223,6 +231,48 @@ tmp="$(want_fixture Cyclops)"
 want="$(run_want "$tmp" --want)"
 [ "$want" = "2" ] || fail "--want with one implementer on the roster printed '$want', not the floor"
 pass "wants the floor with a roster of one"
+
+# --- a declared multiple scales the wanted number ------------------------------------------------
+tmp="$(want_fixture Cyclops Storm Wolverine)"
+declare_multiple "$tmp" 2
+want="$(run_want "$tmp" --want)"
+[ "$want" = "6" ] || fail "--want with three implementers and multiple 2 printed '$want'"
+pass "scales the wanted number by the declared multiple"
+
+# --- a stop flag still subtracts before the multiple applies -------------------------------------
+touch "$tmp/.cerebro/state/Storm.stop"
+want="$(run_want "$tmp" --want)"
+[ "$want" = "4" ] || fail "--want with one of three told to finish and multiple 2 printed '$want'"
+pass "an implementer told to finish is subtracted before the multiple applies"
+
+# --- multiple 1 is today's rule, floor and all ---------------------------------------------------
+tmp="$(want_fixture Cyclops)"
+declare_multiple "$tmp" 1
+want="$(run_want "$tmp" --want)"
+[ "$want" = "2" ] || fail "--want with one implementer and multiple 1 printed '$want', not the floor"
+pass "the floor still wins over a declared multiple"
+
+# --- a bad multiple is loud, and 1 is used -------------------------------------------------------
+# Never 0: a zero taken at face value would pin the wanted number to the floor for ever.
+for bad in 0 two 01x -1; do
+  tmp="$(want_fixture Cyclops Storm Wolverine)"
+  declare_multiple "$tmp" "$bad"
+  set +e
+  want="$(run_want "$tmp" --want 2>"$work_dir/bad-multiple-err")"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail "--want with multiple '$bad': expected exit 0, got $status"
+  [ "$want" = "3" ] || fail "--want with multiple '$bad' printed '$want', not the fallback 3"
+  [ -s "$work_dir/bad-multiple-err" ] || fail "--want with multiple '$bad' said nothing on stderr"
+done
+pass "a multiple that is not a whole number above zero is announced, and 1 is used"
+
+# --- a leading zero is parsed as digits, then checked ---------------------------------------------
+tmp="$(want_fixture Cyclops Storm Wolverine)"
+declare_multiple "$tmp" 01
+want="$(run_want "$tmp" --want)"
+[ "$want" = "3" ] || fail "--want with multiple '01' printed '$want'"
+pass "a leading zero is a number, not a bad value"
 
 # --- a session is not what is counted ------------------------------------------------------------
 # The pid check moved out of this script with the rule that needed it: `--want' no longer asks

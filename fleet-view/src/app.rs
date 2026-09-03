@@ -3248,6 +3248,15 @@ mod tests {
                 assert_eq!(app.on_key(key(KeyCode::F(n)), 10, at(0)), AppAction::None);
                 assert_eq!(app.focus, expected, "F{n} from {start:?}");
             }
+            // And a function key that names no pane falls through to the default arm: `on_key`
+            // acts on exactly the set `is_pane_key` withholds, which is what the invariant on
+            // `from_function_key` claims.
+            for n in [0, 4, 12] {
+                let mut app = App::new();
+                app.focus = start;
+                assert_eq!(app.on_key(key(KeyCode::F(n)), 10, at(0)), AppAction::None);
+                assert_eq!(app.focus, start, "F{n} names no pane and moves no focus");
+            }
         }
     }
 

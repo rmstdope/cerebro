@@ -2412,8 +2412,10 @@ mod main_tests {
             cerebro_tui::app::PaneFocus::Session,
             "F4 names no pane, so focus does not move"
         );
-        let text = echoed(&mut state.host, &app, "^[");
-        assert!(text.contains("^["), "F4's escape sequence reached the child: {text:?}");
+        // `^[OS` and not merely `^[`: every escape-producing key would satisfy the looser
+        // assertion, so it would pass with F4 mis-routed as any other escape.
+        let text = echoed(&mut state.host, &app, "^[OS");
+        assert!(text.contains("^[OS"), "F4's own escape sequence reached the child: {text:?}");
     }
 
     #[test]

@@ -1,0 +1,130 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+table{border-collapse:collapse;background:#2a2a2a;color:#ddd;margin-top:10px}
+td,th{border:1px solid #555;padding:4px 10px;text-align:left;font-size:12px}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}
+</style>
+<meta charset="utf-8"><title>cb-d31 — the agreed surface</title>
+
+<h1>cb-d31 &mdash; the surface the navigator approved, 2026-09-03</h1>
+<p class="lede">Two rounds. This file is the specification for what <code>Enter</code> does under
+<b>Fleet</b> focus in <code>cerebro-tui</code>, and for every sentence the header says while doing
+it. Where this file and the bead&rsquo;s plan disagree, this file is right. It changes nothing any
+earlier file in the <code>cb-kcs</code> family decided: not a fleet row, not a lifecycle key, not
+the Work pane&rsquo;s own <code>Enter</code>, not the header&rsquo;s title.</p>
+
+<h2>1. The rule</h2>
+<p class="lede"><b>Under Fleet focus, <code>Enter</code> moves focus to the Session pane for the
+selected agent &mdash; but only when that pane is holding something.</b> When it is empty, focus
+stays on Fleet and the header says so in gold. It is &ldquo;Tab twice&rdquo; in one key, and it is
+the navigator&rsquo;s own act, not the supervisor&rsquo;s: it moves focus and nothing else.</p>
+
+<table>
+<tr><th>Session pane holds</th><th><code>Enter</code> under Fleet focus</th></tr>
+<tr><td>a live session</td><td>focus moves; the session takes the keyboard at once</td></tr>
+<tr><td><code>Starting <i>Name</i>&hellip;</code></td><td>focus moves</td></tr>
+<tr><td>an ended pass (retained transcript)</td><td>focus moves</td></tr>
+<tr><td>a refused launch (red pane)</td><td>focus moves</td></tr>
+<tr><td>nothing &mdash; <code>No live session.</code></td><td><b>refuses</b>: gold <code>Rogue has no session</code>, focus stays on Fleet</td></tr>
+<tr><td>the read-only explanation</td><td><b>refuses</b>, the same sentence &mdash; the pane holds no session</td></tr>
+<tr><td>no agent selected at all</td><td>does nothing and says nothing</td></tr>
+</table>
+<p class="note"><b>Rejected:</b> &ldquo;<code>Enter</code> always goes there, whatever the pane
+holds&rdquo;. It is the simpler rule and it was turned down because a navigator walking the roster
+with <code>↓</code> and pressing <code>Enter</code> on each row would be thrown into an empty pane
+and have to <code>Shift-Tab</code> back on every standby agent. The cost accepted in exchange:
+<code>Enter</code> is a key whose effect depends on what the row is doing.</p>
+
+<h2>2. The ordinary case</h2>
+<div class="screen"><pre><span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k agent | </span><span class="y">Enter session</span><span class="d"> | g refresh | q quit</span>
+<span class="b">┏━ Fleet 6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>   <span class="d">┌ Beast — plan cb-d31  [Tab to focus] ─┐</span>
+<span class="b">┃</span>  Xavier    <span class="g">working</span>  plan  cb-a54  3m <span class="b">┃</span>   <span class="d">│</span> Now researching the code.            <span class="d">│</span>
+<span class="b">┃</span><span class="sel">▸ Beast     <span class="g">working</span>  plan  cb-d31  1m </span><span class="b">┃</span>   <span class="d">│</span> ● Bash(grep -n "fn on_key" …)        <span class="d">│</span>
+<span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span>   <span class="d">└──────────────────────────────────────┘</span></pre></div>
+<h3>&hellip; and after <code>Enter</code>, which is byte for byte what <code>Tab Tab</code> leaves</h3>
+<div class="screen"><pre><span class="d">Beast has the keyboard | Shift-Tab leaves the session</span>
+<span class="d">┌ Fleet 6 ────────────────────────────┐</span>   <span class="b">┏━ Beast — plan cb-d31 [Shift-Tab leaves] ━┓</span>
+<span class="d">│</span>  Xavier    <span class="g">working</span>  plan  cb-a54  3m <span class="d">│</span>   <span class="b">┃</span> Now researching the code.            <span class="b">┃</span>
+<span class="d">│</span><span class="sel">▸ Beast     <span class="g">working</span>  plan  cb-d31  1m </span><span class="d">│</span>   <span class="b">┃</span> ● Bash(grep -n "fn on_key" …)        <span class="b">┃</span>
+<span class="d">└─────────────────────────────────────┘</span>   <span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span></pre></div>
+<p class="note">The selection does not move, the Session pane keeps whatever scroll offset it had,
+and the live session takes the keyboard &mdash; so the very next key is the child&rsquo;s and
+<code>Shift-Tab</code> is the way out, exactly as it is after two presses of <code>Tab</code>.</p>
+
+<h2>3. The refusal &mdash; the whole of the difference</h2>
+<div class="screen"><pre><span class="d">Cerebro[tui supervises] | </span><span class="y">Rogue has no session</span><span class="d"> | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k agent | g refresh | q quit</span>
+<span class="b">┏━ Fleet 6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>   <span class="d">┌ Rogue ───────────────────────────────┐</span>
+<span class="b">┃</span>  Beast     <span class="g">working</span>  plan  cb-d31  1m <span class="b">┃</span>   <span class="d">│</span> <span class="dim">No live session.</span>                     <span class="d">│</span>
+<span class="b">┃</span><span class="sel">▸ Rogue     <span class="d">standby</span>                  </span><span class="b">┃</span>   <span class="d">│</span>                                      <span class="d">│</span>
+<span class="b">┃</span>  Cerebro   <span class="d">standby</span>                  <span class="b">┃</span>   <span class="d">│</span> <span class="dim">Press s to start Rogue.</span>              <span class="d">│</span>
+<span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span>   <span class="d">└──────────────────────────────────────┘</span></pre></div>
+<p class="note">The sentence is <b><code>Rogue has no session</code></b> &mdash; the agent&rsquo;s
+name, no full stop, no ASCII dash, in the house style of this pane&rsquo;s existing refusals
+(<code>Xavier is already up</code>, <code>Rogue is not running</code>). <b>Gold</b>, like every
+notice that is news rather than a fault, and transient: the next keystroke clears it.
+<b>Rejected:</b> <code>Rogue has no session — press s to start one.</code>, because the same
+sentence has to serve a read-only view where <code>s</code> refuses and its hint is not even
+offered; and <code>Nothing to show for Rogue</code>, which is about the pane rather than the agent.
+Note the hint: <b>no <code>Enter session</code> clause here</b>, because the key would not act.</p>
+
+<h3>The read-only view uses that same sentence</h3>
+<div class="screen"><pre><span class="d">Cerebro[read-only: Emacs supervises] | </span><span class="y">Rogue has no session</span><span class="d"> | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | g refresh | q quit</span>
+<span class="b">┏━ Fleet 6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>   <span class="d">┌ Rogue ───────────────────────────────┐</span>
+<span class="b">┃</span><span class="sel">▸ Rogue     <span class="g">working</span>  build cb-x3u  4m </span><span class="b">┃</span>   <span class="d">│</span> <span class="dim">Sessions are hosted by the view that</span> <span class="d">│</span>
+<span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span>   <span class="d">│</span> <span class="dim">supervises this checkout. This one</span>   <span class="d">│</span>
+                                          <span class="d">│</span> <span class="dim">does not.</span>                            <span class="d">│</span>
+                                          <span class="d">└──────────────────────────────────────┘</span></pre></div>
+<p class="note">Same rule as everywhere else, the navigator&rsquo;s own choice over a second
+sentence naming the real cause. Rogue is genuinely working; <i>this view</i> holds nothing for it,
+and the pane already says why in its own words. No new vocabulary is spent on a case the pane
+explains.</p>
+
+<h2>4. The two panes <code>Enter</code> also goes to</h2>
+<div class="screen"><pre><span class="b">┏━ Xavier — ended 14:02 [retained until next start] ━┓</span>
+<span class="b">┃</span> cb-a54 planned; buffer 2 of 4.                   <span class="b">┃</span>
+<span class="b">┃</span> <span class="d">Pass ended.</span>                                      <span class="b">┃</span>
+<span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span>
+<span class="d">The record of the last pass, one key away instead of two — the case that makes Enter worth having</span>
+<span class="d">on a quiet fleet. Scrolls with ↑/↓/PgUp/PgDn like any other pane; no key is forwarded anywhere.</span></pre></div>
+<div class="screen"><pre><span class="b" style="color:#f14c4c">┏━ Rogue — launch refused 14:07 ━━━━━━━━━━━━━━━━━━━┓</span>
+<span class="b" style="color:#f14c4c">┃</span> <span class="e">launch-preflight: agents/implementer.md missing</span>  <span class="b" style="color:#f14c4c">┃</span>
+<span class="b" style="color:#f14c4c">┃</span> <span class="d">Press s to try again.</span>                            <span class="b" style="color:#f14c4c">┃</span>
+<span class="b" style="color:#f14c4c">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span>
+<span class="d">Error text worth scrolling. The border stays red — focus never repaints it, which is the rule</span>
+<span class="d">render_bordered_pane already follows for a focused stale pane.</span></pre></div>
+<p class="note">A <b>starting</b> session counts too, on the same rule: it is one dim line
+(<code>Starting Cerebro…</code>) that is about to become a live one, and refusing focus on a pane
+that will be live within a second is a refusal that ages badly.</p>
+
+<h2>5. The header hint</h2>
+<p class="lede"><code> | Enter session</code>, dim, <b>only while <code>Enter</code> would act</b> —
+so it appears and disappears as the navigator walks the roster.</p>
+<div class="screen"><pre><span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k agent | </span><span class="y">Enter session</span><span class="d"> | g refresh | q quit</span>
+<span class="d">Fleet focused, the selected agent has a session</span>
+
+<span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k agent | g refresh | q quit</span>
+<span class="d">Fleet focused, the selected agent has none — the clause is gone</span>
+
+<span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k agent | </span><span class="y">0-4/+/-/u priority</span><span class="d"> | g refresh | q quit</span>
+<span class="d">Work focused — unchanged; the Enter clause is Fleet's alone</span></pre></div>
+<p class="note">Exactly the rule <code>x act</code> and the priority keys already follow: a clause
+is shown only while its key acts on what is under the cursor. It rides with those two in the
+header&rsquo;s shortening order, so a narrow terminal drops the movement hints first and keeps this
+one. It is never shown under Work or Session focus &mdash; Work&rsquo;s own <code>Enter show
+all</code> is a different key on a different row and is untouched.</p>
+
+<h2>6. What does not change</h2>
+<p class="note"><b>The Emacs view.</b> <code>M-x cerebro</code> keeps <code>RET</code> meaning
+&ldquo;focus the detail window&rdquo;. It has no Session pane to focus, so there is nothing here to
+mirror; this is a <code>cerebro-tui</code> bead alone, and the navigator said so. <b>Work&rsquo;s
+<code>Enter</code></b> still opens and closes a <code>+N more</code> section. <b>A focused live
+session</b> still receives <code>Enter</code> as a carriage return like any other key.
+<b><code>Tab</code> and <code>Shift-Tab</code></b> still cycle all three panes in both directions;
+this key is a shortcut, not a replacement.</p>

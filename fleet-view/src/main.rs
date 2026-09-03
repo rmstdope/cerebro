@@ -1406,7 +1406,11 @@ fn write_priority(
         | lifecycle::PriorityOutcome::Failed { text } => text.clone(),
     });
     if let lifecycle::PriorityOutcome::Failed { .. } = outcome {
-        app.notice_urgent = true;
+        app.set_error_notice(match &outcome {
+            lifecycle::PriorityOutcome::Ran { text }
+            | lifecycle::PriorityOutcome::Pushed { text }
+            | lifecycle::PriorityOutcome::Failed { text } => text.clone(),
+        });
     }
     if wrote && !undo {
         app.last_priority_change = Some((id.to_string(), from));
@@ -1446,7 +1450,7 @@ fn route_key(
     // has to be true of the keys these two panes consume as well - or a gold line outlives the
     // keystroke that should have cleared it and reappears when the pane closes.
     if app.quit_refusal.is_some() {
-        app.notice = None;
+        app.clear_notice();
         app.quit_refusal = None;
         return AppAction::None;
     }
@@ -1549,8 +1553,7 @@ fn route_key(
             _ => None,
         };
         if let Some(requested) = requested {
-            app.notice = None;
-            app.notice_urgent = false;
+            app.clear_notice();
             let Some(bead) = app.selected_bead(now) else {
                 return AppAction::None;
             };
@@ -1567,16 +1570,14 @@ fn route_key(
             };
         }
         if key.code == KeyCode::Char('u') {
-            app.notice = None;
-            app.notice_urgent = false;
+            app.clear_notice();
             // Spent by USING it, and by nothing else: one step back rather than a stack, so a
             // second `u` has nothing to do rather than quietly redoing the change.
             // READ, never taken: an entry is spent by an undo that actually wrote, not by one
             // `bd` refused. A rescue that a failed write throws away is not there when it is
             // reached for a second time, which is the whole case `u` exists for.
             let Some((id, previous)) = app.last_priority_change.clone() else {
-                app.set_notice("nothing to undo".to_string());
-                app.notice_urgent = true;
+                app.set_error_notice("nothing to undo".to_string());
                 return AppAction::None;
             };
             let Some(previous) = previous else {
@@ -1598,7 +1599,7 @@ fn route_key(
         if let KeyCode::Char(c @ ('s' | 'f' | 'k')) = key.code {
             // A notice is transient exactly as it is under `on_key`: the keystroke that reads it
             // is the one that clears it, and this key may then write its own.
-            app.notice = None;
+            app.clear_notice();
             return lifecycle_key(c, app, host, ledger, logger, paths, now);
         }
     }
@@ -4325,7 +4326,7 @@ mod main_tests {
             app.notice.as_deref(),
             Some("Cerebro was asked to rank 2 unranked beads.")
         );
-        assert!(!app.notice_urgent, "a triage line is news, not a fault");
+        assert_ne!(app.notice_tone, app::NoticeTone::Urgent, "a triage line is news, not a fault");
         let line = one_line(dir.path(), "decisions", "triage");
         assert!(line.contains(r#""agent":"Cerebro","role":"orchestrator""#), "{line}");
         assert!(line.contains(r#""ids":["cb-1","cb-2"],"repeat":false"#), "{line}");
@@ -4483,7 +4484,7 @@ mod main_tests {
         let at = Instant::now();
         prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(), at);
 
-        assert!(app.notice_urgent, "a fault, not news");
+        assert_eq!(app.notice_tone, app::NoticeTone::Urgent, "a fault, not news");
         let notice = app.notice.clone().expect("a notice");
         assert!(
             notice.starts_with("Worktree pruning stopped: No such file or directory"),
@@ -4496,7 +4497,7 @@ mod main_tests {
         // Five seconds later it is retried and still fails - and says nothing more, on screen or
         // in the log: the header is inside its ten-minute gate and the fault is the same one.
         app.notice = None;
-        app.notice_urgent = false;
+        app.notice_tone = app::NoticeTone::News;
         prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(),
               at + std::time::Duration::from_secs(5));
         assert_eq!(app.notice, None, "not a strobe");
@@ -5245,7 +5246,7 @@ mod main_tests {
             "the two argvs, in order"
         );
         assert_eq!(app.notice.as_deref(), Some("cb-x: P1 → P0"));
-        assert!(!app.notice_urgent);
+        assert_ne!(app.notice_tone, app::NoticeTone::Urgent);
         // So the row's P1 becomes P0 at once rather than up to thirty seconds later.
         assert_eq!(action, AppAction::RefreshWork);
     }
@@ -5335,7 +5336,7 @@ mod main_tests {
         let action = drive_with(&mut app, &mut host, &paths, &programs, &fake, vec![ch('0')]);
         assert_eq!(argv(&fake), vec!["update cb-x --priority 0"], "and no push");
         assert_eq!(app.notice.as_deref(), Some("bd would not set cb-x to P0"));
-        assert!(app.notice_urgent, "a refusal is red");
+        assert_eq!(app.notice_tone, app::NoticeTone::Urgent, "a refusal is red");
         assert_eq!(app.last_priority_change, None);
         assert_eq!(action, AppAction::None);
     }

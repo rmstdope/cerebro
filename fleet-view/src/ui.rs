@@ -618,8 +618,13 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     } else if let Some(notice) = &app.notice {
         // Gold for news, red for a fault: the pruner's failure is the first thing this slot has
         // ever carried that is not something the view did (cb-kcs.5.2, the navigator's choice).
-        let colour = if app.notice_urgent { RED } else { GOLD };
-        spans.push(Span::styled(format!(" | {notice}"), Style::default().fg(colour)));
+        // Gold for news, red for a fault, dim for a board write still running (cb-21g).
+        let style = match app.notice_tone {
+            app::NoticeTone::News => Style::default().fg(GOLD),
+            app::NoticeTone::Urgent => Style::default().fg(RED),
+            app::NoticeTone::Pending => dim(),
+        };
+        spans.push(Span::styled(format!(" | {notice}"), style));
     } else if app.fleet.refreshing || app.work.refreshing {
         spans.push(Span::styled(" | refreshing...", dim()));
     } else if let Some((failed_at, stale)) = newest_failure(app) {

@@ -835,6 +835,18 @@ pub enum AppAction {
     Quit,
 }
 
+/// How the header's notice slot is coloured, and whether a keystroke clears it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeTone {
+    /// Gold. Something happened. Cleared by the next keystroke.
+    News,
+    /// Red. Something is broken. Cleared by the next keystroke.
+    Urgent,
+    /// Dim. A board write is still running. NOT cleared by a keystroke: a line that says work is
+    /// happening stays true while the work is happening (cb-21g).
+    Pending,
+}
+
 /// Everything one frame is drawn from.
 #[derive(Debug)]
 pub struct App {
@@ -847,15 +859,13 @@ pub struct App {
     /// successful fleet read, or when the fleet is empty.
     pub selected: Option<String>,
     /// A one-line message shown in the header in place of the refresh/stale span, and cleared by
-    /// the next key press. Gold, unless `notice_urgent`.
+    /// the next key press, unless its tone is `Pending`. Coloured by `notice_tone`.
     pub notice: Option<String>,
-    /// Is the notice a FAULT rather than news? Red when it is (cb-kcs.5.2, the navigator's choice
-    /// in round one: the pruner is the first thing in this slot that is not something the view
-    /// did but something that has stopped working).
+    /// How the notice slot is coloured, and whether a keystroke clears it.
     ///
-    /// Cleared wherever `notice` is cleared and set by whichever writer put the line there: a
-    /// stale colour is a worse lie than a stale line.
-    pub notice_urgent: bool,
+    /// Set by whichever writer put the line there: a stale colour is a worse lie than a stale
+    /// line. `Pending` is the one tone a keystroke does not clear (cb-21g).
+    pub notice_tone: NoticeTone,
     /// Each name's last abnormal exit, as of the last frame. Copied from `SessionHost` by the
     /// event loop, never read from it here: `ui::draw` is pure over `App`, and a renderer that
     /// could reach the host could reach a `vt100::Parser` and a child process with it.
@@ -1029,7 +1039,7 @@ impl App {
             session: SessionPane::default(),
             selected: None,
             notice: None,
-            notice_urgent: false,
+            notice_tone: NoticeTone::News,
             exits: BTreeMap::new(),
             standby_labels: BTreeMap::new(),
             armed: BTreeSet::new(),
@@ -1147,13 +1157,29 @@ impl App {
     /// remains the one place it is cleared.
     pub fn set_notice(&mut self, text: String) {
         self.notice = Some(text);
-        self.notice_urgent = false;
+        self.notice_tone = NoticeTone::News;
     }
 
     /// Put TEXT in the notice slot, in red: something is broken rather than something happened.
     pub fn set_error_notice(&mut self, text: String) {
         self.notice = Some(text);
-        self.notice_urgent = true;
+        self.notice_tone = NoticeTone::Urgent;
+    }
+
+    /// Put TEXT in the notice slot, dim: a board write is still running (cb-21g). Not cleared by
+    /// a keystroke - see `clear_notice`.
+    pub fn set_pending_notice(&mut self, text: String) {
+        self.notice = Some(text);
+        self.notice_tone = NoticeTone::Pending;
+    }
+
+    /// The ONE place the notice slot is cleared. A `Pending` notice survives, because the write
+    /// it describes has not finished; every other tone goes.
+    pub fn clear_notice(&mut self) {
+        if self.notice_tone != NoticeTone::Pending {
+            self.notice = None;
+            self.notice_tone = NoticeTone::News;
+        }
     }
 
     /// Every roster name, in fleet order, for `SessionHost::live_names` to ORDER its answer by.
@@ -1229,8 +1255,7 @@ impl App {
         }
         // A notice is transient by design: it survives exactly until the navigator touches the
         // keyboard, whatever they press.
-        self.notice = None;
-        self.notice_urgent = false;
+        self.clear_notice();
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quit = true;
@@ -2988,14 +3013,32 @@ mod tests {
     #[test]
     fn an_error_notice_is_urgent_and_a_plain_one_is_not() {
         let mut app = App::new();
-        assert!(!app.notice_urgent, "nothing is urgent before anything is said");
+        assert_ne!(app.notice_tone, NoticeTone::Urgent, "nothing is urgent before anything is said");
         app.set_error_notice("Worktree pruning stopped: exit status 2".into());
         assert_eq!(app.notice.as_deref(), Some("Worktree pruning stopped: exit status 2"));
-        assert!(app.notice_urgent);
+        assert_eq!(app.notice_tone, NoticeTone::Urgent);
         // A plain notice after an urgent one is not urgent: a stale colour is a worse lie than a
         // stale line.
         app.set_notice("Cerebro was asked to rank 2 unranked beads.".into());
-        assert!(!app.notice_urgent);
+        assert_ne!(app.notice_tone, NoticeTone::Urgent);
+    }
+
+    /// A dim line that says a board write is running must stay true while the write is running:
+    /// clearing it on the next keystroke would make the screen briefly say nothing is happening
+    /// while something is (cb-21g, the navigator's choice in round two).
+    #[test]
+    fn a_pending_notice_survives_a_keystroke() {
+        let mut app = App::new();
+        app.set_pending_notice("cb-x: P2 \u{2192} P0\u{2026}".into());
+        assert_eq!(app.notice_tone, NoticeTone::Pending);
+        app.on_key(key(KeyCode::Down), 10, at(0));
+        assert_eq!(app.notice.as_deref(), Some("cb-x: P2 \u{2192} P0\u{2026}"));
+        assert_eq!(app.notice_tone, NoticeTone::Pending);
+
+        // Every other tone goes on the next key, exactly as it always has.
+        app.set_notice("cb-x: P2 \u{2192} P0".into());
+        app.on_key(key(KeyCode::Down), 10, at(0));
+        assert_eq!(app.notice, None);
     }
 
     #[test]
@@ -3004,7 +3047,7 @@ mod tests {
         app.set_error_notice("Worktree pruning stopped: exit status 2".into());
         app.on_key(key(KeyCode::Tab), 10, at(0));
         assert_eq!(app.notice, None);
-        assert!(!app.notice_urgent);
+        assert_ne!(app.notice_tone, NoticeTone::Urgent);
     }
 
     /// When the board was ASKED, not when it answered. The triage guard proves the figures
@@ -3061,7 +3104,7 @@ mod tests {
         app.finish_refresh(Ok(vec![row("Cyclops")]), Utc::now());
 
         assert!(app.notice.as_deref().is_some_and(|n| n.contains("no longer on the roster")));
-        assert!(!app.notice_urgent, "a roster change is news, not a fault");
+        assert_ne!(app.notice_tone, NoticeTone::Urgent, "a roster change is news, not a fault");
     }
 
     #[test]
@@ -3652,7 +3695,7 @@ mod tests {
         assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::None);
         assert_eq!(app.focus, PaneFocus::Fleet);
         assert_eq!(app.notice.as_deref(), Some("Rogue has no session"));
-        assert!(!app.notice_urgent, "news, not a fault");
+        assert_ne!(app.notice_tone, NoticeTone::Urgent, "news, not a fault");
 
         app.set_supervision(SupervisionMode::Supervising);
         app.on_key(key(KeyCode::Enter), 10, at(0));

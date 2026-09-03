@@ -2870,6 +2870,23 @@ mod tests {
         assert_eq!(style_where(&buffer, "Cerebro was asked").fg, Some(GOLD));
     }
 
+    /// The third tone: a board write still running is dim rather than gold or red, so the line
+    /// reads as provisional (cb-21g, approved round two).
+    #[test]
+    fn a_write_still_running_is_dim() {
+        let mut app = populated();
+        app.set_pending_notice("cb-x: P2 \u{2192} P0\u{2026}".into());
+        let buffer = render(&app, 160, 30);
+        assert!(lines(&buffer)[0].contains("cb-x: P2 \u{2192} P0\u{2026}"));
+        let style = style_where(&buffer, "cb-x: P2");
+        assert_ne!(style.fg, Some(GOLD), "not news");
+        assert_ne!(style.fg, Some(RED), "and not a fault");
+        assert!(
+            style.add_modifier.contains(Modifier::DIM),
+            "the write is still running: {style:?}"
+        );
+    }
+
     #[test]
     fn a_wide_screen_splits_into_a_left_column_and_a_session_pane() {
         let app = supervising();

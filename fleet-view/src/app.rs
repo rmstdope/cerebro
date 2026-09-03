@@ -821,7 +821,7 @@ pub struct Metrics {
 /// pane's own `begin_*_refresh`, and a `false` from one says nothing about the others. It was
 /// `RefreshAll` until cb-kcs.5.1 gave the screen a third reader; the doc above is what it always
 /// meant, so this is a rename rather than a third meaning for a word that says "two".
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppAction {
     None,
     RefreshFleet,
@@ -832,6 +832,9 @@ pub enum AppAction {
     RefreshAll,
     /// Read the bead `App::bead_detail` now names. What `Enter` on a bead row asks for.
     ReadBead,
+    /// Send this board write to the write worker (cb-21g). `App` still starts no process: it says
+    /// what is wanted and `dispatch` does it, off the drawing thread.
+    Write(WriteRequest),
     Quit,
 }
 
@@ -2136,6 +2139,16 @@ impl<T: Send + 'static, Req: Send + 'static> Worker<T, Req> {
         self.requests.send(request).is_ok()
     }
 
+    /// A worker whose thread is already gone: every `request_with` is refused.
+    ///
+    /// The one shape a caller cannot build by hand - the channels are private - and the only way
+    /// a case can exercise the undeliverable path without racing a real thread's death.
+    pub fn stopped() -> Self {
+        let (requests, _) = mpsc::channel();
+        let (_, results) = mpsc::channel();
+        Self { requests, results, handle: None }
+    }
+
     /// The finished read, if one is waiting. Never blocks.
     pub fn poll(&self) -> Option<Result<T, ReadError>> {
         match self.results.try_recv() {
@@ -2342,31 +2355,33 @@ pub type WriteWorker = Worker<WriteAnswer, WriteRequest>;
 
 impl Worker<WriteAnswer, WriteRequest> {
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
+        // The outer `Result` only ever succeeds: a write's failure is inside the answer.
         Self::spawn_reader(move |request: WriteRequest| {
-            // The outer `Result` only ever succeeds: a write's failure is inside the answer.
-            Ok(match request {
-                WriteRequest::Priority { id, from, to, undo } => {
-                    let outcome = crate::lifecycle::set_priority(
-                        &paths,
-                        &programs,
-                        commands.as_ref(),
-                        &id,
-                        from,
-                        to,
-                        undo,
-                    );
-                    WriteAnswer::Priority { id, from, to, undo, outcome }
-                }
-                WriteRequest::Finding { finding } => WriteAnswer::Finding {
-                    outcome: crate::lifecycle::run_finding(
-                        &paths,
-                        &programs,
-                        commands.as_ref(),
-                        &finding,
-                    ),
-                },
-            })
+            Ok(run_write(&paths, &programs, commands.as_ref(), request))
         })
+    }
+}
+
+/// One board write, with its request echoed into the answer.
+///
+/// A free function rather than a closure inside `Worker::spawn`, so a test can run exactly what
+/// the worker thread runs without starting one.
+pub fn run_write(
+    paths: &ReaderPaths,
+    programs: &Programs,
+    commands: &dyn crate::readers::CommandRunner,
+    request: WriteRequest,
+) -> WriteAnswer {
+    match request {
+        WriteRequest::Priority { id, from, to, undo } => {
+            let outcome = crate::lifecycle::set_priority(
+                paths, programs, commands, &id, from, to, undo,
+            );
+            WriteAnswer::Priority { id, from, to, undo, outcome }
+        }
+        WriteRequest::Finding { finding } => WriteAnswer::Finding {
+            outcome: crate::lifecycle::run_finding(paths, programs, commands, &finding),
+        },
     }
 }
 

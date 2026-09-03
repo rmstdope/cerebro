@@ -60,7 +60,8 @@ pub fn wait_until(bound: Duration, mut ready: impl FnMut() -> bool) -> bool {
 ///
 /// There IS a window between finding it and taking it - anything on the machine may bind it in
 /// between - so every caller retries rather than treating one refusal as final. That race is the
-/// cb-kcs.1 flake, and it is a property of the machine rather than of this function.
+/// cb-kcs.1 flake, and it is a property of the machine rather than of this function - which is
+/// why this function's own test retries too, rather than binding the released address once.
 pub fn free_endpoint() -> SocketAddr {
     let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind probe");
     probe.local_addr().expect("probe addr")
@@ -242,12 +243,99 @@ mod tests {
         assert!(!wait_until(Duration::from_millis(50), || false));
     }
 
+    /// Bind an address from NEXT, asking it for another whenever the last one was taken in the
+    /// window between it being released and this binding it.
+    ///
+    /// `AddrInUse` is the lost race and is retried; every other bind error is returned at once,
+    /// because spending the whole bound on a fault that will never clear turns a broken machine
+    /// into a five-second timeout with no diagnosis.
+    fn bind_first_free(
+        bound: Duration,
+        mut next: impl FnMut() -> SocketAddr,
+    ) -> std::io::Result<TcpListener> {
+        let mut last: Option<std::io::Error> = None;
+        let bound_listener = wait_for(bound, || match TcpListener::bind(next()) {
+            Ok(listener) => Some(Ok(listener)),
+            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
+                last = Some(err);
+                None
+            }
+            // Not a lost race: answer now rather than spending the bound on it.
+            Err(err) => Some(Err(err)),
+        });
+        match bound_listener {
+            Some(result) => result,
+            None => Err(last.unwrap_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::AddrInUse, "no attempt was made")
+            })),
+        }
+    }
+
+    #[test]
+    fn a_lost_race_is_retried_rather_than_failing() {
+        // Occupy an address and keep it occupied for the whole test: this is the port somebody
+        // else grabbed in the window, made deterministic.
+        let occupied = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("occupy a port");
+        let taken = occupied.local_addr().expect("occupied addr");
+        let mut calls = 0;
+        let listener = bind_first_free(POLL_BOUND, || {
+            calls += 1;
+            if calls == 1 { taken } else { free_endpoint() }
+        })
+        .expect("a lost race is retried, not reported as a failure");
+        assert!(calls >= 2, "the taken address was refused and another was asked for");
+        assert_ne!(
+            listener.local_addr().expect("bound addr").port(),
+            taken.port(),
+            "and the listener it answers is not the one somebody else is holding"
+        );
+    }
+
+    #[test]
+    fn a_bind_error_that_is_not_a_lost_race_is_answered_at_once() {
+        // 192.0.2.0/24 is TEST-NET-1 (RFC 5737): documentation-only, so no interface carries it and
+        // binding it fails with something that is not AddrInUse, on macOS and Linux alike.
+        let unroutable =
+            SocketAddr::V4(std::net::SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 9));
+        let started = Instant::now();
+        let err = bind_first_free(POLL_BOUND, || unroutable)
+            .expect_err("an address no interface carries cannot be bound");
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::AddrInUse,
+            "a fault that will never clear must not be reported as a lost race"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "and it must not spend the whole bound on it: took {:?}",
+            started.elapsed()
+        );
+    }
+
     #[test]
     fn free_endpoint_answers_a_bindable_loopback_address() {
-        let addr = free_endpoint();
-        assert_eq!(addr.ip(), std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
-        assert_ne!(addr.port(), 0, "the port was read back after the probe bound it");
-        TcpListener::bind(addr).expect("the address a probe just released is bindable");
+        let mut seen = 0;
+        // Two statements, not one chain: the closure holds `seen` mutably for as long as the
+        // expression it lives in, so the panic arm below must be outside that expression.
+        let bound = bind_first_free(POLL_BOUND, || {
+            seen += 1;
+            let addr = free_endpoint();
+            assert_eq!(addr.ip(), std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
+            assert_ne!(addr.port(), 0, "the port was read back after the probe bound it");
+            addr
+        });
+        let listener = match bound {
+            Ok(listener) => listener,
+            Err(err) => panic!(
+                "no address free_endpoint answered stayed free long enough to bind within {:?} \
+                 ({} tried); last refusal: {}",
+                POLL_BOUND, seen, err
+            ),
+        };
+        assert_eq!(
+            listener.local_addr().expect("bound addr").ip(),
+            std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
+        );
     }
 
     #[test]

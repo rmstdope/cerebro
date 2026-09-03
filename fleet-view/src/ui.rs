@@ -594,7 +594,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     if app.session_has_keyboard() {
         let name = app.selected.clone().unwrap_or_else(|| "The session".to_string());
         return Line::from(Span::raw(format!(
-            "{name} has the keyboard | Shift-Tab leaves the session"
+            "{name} has the keyboard | Tab leaves to Fleet, Shift-Tab to Work"
         )));
     }
     let mut spans = vec![Span::raw(supervision_title(&app.supervision))];
@@ -700,7 +700,7 @@ fn plain_title_style(focused: bool) -> Style {
 /// | View                     | Title                     | Hint                          |
 /// |--------------------------|---------------------------|-------------------------------|
 /// | Live/Starting, unfocused | `<Name> — <phase> <bead>` | `[Tab to focus]`              |
-/// | Live/Starting, focused   | `<Name> — <phase> <bead>` | `[Shift-Tab leaves]`          |
+/// | Live/Starting, focused   | `<Name> — <phase> <bead>` | `[Tab/Shift-Tab leave]`       |
 /// | Ended                    | `<Name> — ended HH:MM`    | `[retained until next start]` |
 /// | None                     | `<Name>`, or `Session`    | none                          |
 ///
@@ -714,7 +714,7 @@ fn session_title(app: &App, focused: bool) -> Line<'static> {
         SessionView::None => (name, None),
         SessionView::Live { .. } | SessionView::Starting => (
             live_title(app, &name),
-            Some(if focused { "[Shift-Tab leaves]" } else { "[Tab to focus]" }),
+            Some(if focused { "[Tab/Shift-Tab leave]" } else { "[Tab to focus]" }),
         ),
         SessionView::Ended { at, .. } => (
             // A standby row and its pane use one word for one agent (Q1 of cb-kcs.4.1).
@@ -1833,13 +1833,38 @@ mod tests {
         app.focus = PaneFocus::Session;
         live(&mut app, &["building"]);
         let rendered = lines(&render(&app, 120, 20));
-        assert_eq!(rendered[0], "Xavier has the keyboard | Shift-Tab leaves the session");
+        assert_eq!(
+            rendered[0],
+            "Xavier has the keyboard | Tab leaves to Fleet, Shift-Tab to Work"
+        );
 
         // Unfocused, the ordinary header is back untouched - ownership span, hints and all.
         app.focus = PaneFocus::Fleet;
         let rendered = lines(&render(&app, 120, 20));
         assert!(rendered[0].starts_with("Cerebro — supervising"), "{:?}", rendered[0]);
         assert!(rendered[0].contains("q/Esc/Ctrl-C quit"), "{:?}", rendered[0]);
+    }
+
+    #[test]
+    fn a_focused_session_title_names_both_exit_keys() {
+        let mut app = supervising();
+        app.selected = Some("Xavier".to_string());
+        live(&mut app, &["building"]);
+
+        app.focus = PaneFocus::Session;
+        let rendered = lines(&render(&app, 120, 20));
+        assert!(
+            rendered.iter().any(|line| line.contains("[Tab/Shift-Tab leave]")),
+            "{rendered:?}"
+        );
+        assert!(
+            !rendered.iter().any(|line| line.contains("[Shift-Tab leaves]")),
+            "{rendered:?}"
+        );
+
+        app.focus = PaneFocus::Fleet;
+        let rendered = lines(&render(&app, 120, 20));
+        assert!(rendered.iter().any(|line| line.contains("[Tab to focus]")), "{rendered:?}");
     }
 
     #[test]

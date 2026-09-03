@@ -3999,7 +3999,12 @@ Run as CI runs ERT, from the repository root."
                    (sort (process-lines "bash" script "--print-excluded-labels") #'string<)))
     (should (equal cerebro-planner-buffer-floor
                    (string-to-number
-                    (car (process-lines "bash" script "--print-floor")))))))
+                    (car (process-lines "bash" script "--print-floor")))))
+    ;; The drift this can actually catch: two implementations reading DIFFERENT
+    ;; keys would both find "absent" and both answer 1, which looks correct
+    ;; until a project declares one.
+    (should (equal cerebro--planner-multiple-key
+                   (car (process-lines "bash" script "--print-multiple-key"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; ah-4ao increment 3: turning a sweep's facts into a decision
@@ -6824,6 +6829,27 @@ be a loop at the speed of the end grace."
     (should (null (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
                                     again)))))
 
+(ert-deftest cerebro-test/the-planner-arm-reads-the-declared-multiple ()
+  "The trigger and the standby label both read `planner-multiple\=' from the
+context (cb-3in).  The pure rule is proved elsewhere; this is the wiring: with
+three implementers and three planned beads a multiple of 1 is satisfied, and a
+multiple of 2 wants six and starts."
+  (let ((satisfied (cerebro-test--context '(planned . 3) '(implementers . 3)
+                                          '(actionable-ids "cb-new")
+                                          '(planner-multiple . 1)))
+        (short (cerebro-test--context '(planned . 3) '(implementers . 3)
+                                      '(actionable-ids "cb-new")
+                                      '(planner-multiple . 2))))
+    (should (null (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                    satisfied)))
+    (should (equal (cerebro--trigger (cerebro-test--interactive "X" "planner" 'standby)
+                                     short)
+                   "buffer 3 of 6"))
+    ;; And the row's own label names the same number.
+    (should (equal (cerebro--standby-label
+                    (cerebro-test--interactive "X" "planner" 'standby) short)
+                   "→ buffer < 6"))))
+
 (ert-deftest cerebro-test/work-that-moved-starts-the-next-pass-at-once ()
   "The guard is a comparison, not a clock: the moment anything the trigger
 measures changes - a bead arrives, one is planned, an implementer comes up -
@@ -7119,6 +7145,34 @@ to spell, so `scripts/planner-buffer' can be held to it."
   (let ((cerebro-planner-buffer-floor 4))
     (should (equal (cerebro--planner-want 3) 4))
     (should (equal (cerebro--planner-want 6) 6))))
+
+(ert-deftest cerebro-test/a-planner-multiple-is-a-whole-number-above-zero ()
+  "The pure parser behind `planner_buffer_multiple' (cb-3in).
+nil is \"the project declared none\", which is 1; `bad' is a declaration this
+view refuses to act on - zero included, since a zero taken at face value
+would pin the wanted number to the floor for ever."
+  (should (equal (cerebro--planner-multiple-value nil) nil))
+  (should (equal (cerebro--planner-multiple-value "") nil))
+  (should (equal (cerebro--planner-multiple-value "  ") nil))
+  (should (equal (cerebro--planner-multiple-value "3") 3))
+  (should (equal (cerebro--planner-multiple-value " 3\n") 3))
+  (should (equal (cerebro--planner-multiple-value "01") 1))
+  (should (equal (cerebro--planner-multiple-value "0") 'bad))
+  (should (equal (cerebro--planner-multiple-value "-1") 'bad))
+  (should (equal (cerebro--planner-multiple-value "1.5") 'bad))
+  (should (equal (cerebro--planner-multiple-value "2x") 'bad)))
+
+(ert-deftest cerebro-test/planner-want-scales-with-the-declared-multiple ()
+  "`planner_buffer_multiple' multiplies the per-implementer number (cb-3in).
+An absent multiple is 1 - today's rule - so a consumer that predates the key
+is untouched, and the floor still wins."
+  (should (equal (cerebro--planner-want 3 2) 6))
+  (should (equal (cerebro--planner-want 3 nil) 3))
+  (should (equal (cerebro--planner-want 3) 3))
+  (should (equal (cerebro--planner-want 1 1) 2))
+  (let ((cerebro-planner-buffer-floor 4))
+    (should (equal (cerebro--planner-want 3 2) 6))
+    (should (equal (cerebro--planner-want 1 2) 4))))
 
 (ert-deftest cerebro-test/the-planners-have-no-floor ()
   "The floor was the only thing damping a trigger a pass could not clear, and

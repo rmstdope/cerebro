@@ -261,8 +261,8 @@ planner`), which is the one place a name and a role stop being interchangeable:
   plans a Sonnet agent could build unattended. Decide architecture themselves, and the detail inside an interaction the human ("the navigator") has
   already agreed — recorded in the plan's *Decided by me* — while the shape of every new interaction
   goes to them. Keep a buffer of planned beads ahead of the
-  builders, sized from the roster's implementers minus any told to finish (one each, never fewer
-  than two) and refilled one bead per pass, with no wake interval to wait out — the rule itself lives in `scripts/planner-buffer`,
+  builders, sized from the roster's implementers minus any told to finish (`planner_buffer_multiple`
+  each — absent means one each — and never fewer than two) and refilled one bead per pass, with no wake interval to wait out — the rule itself lives in `scripts/planner-buffer`,
   which the skill calls and `cerebro-test/the-trigger-counts-what-planner-buffer-counts` holds the
   fleet view to. They divide
   the work through the `planning:<name>` label alone, and a whole split family through a

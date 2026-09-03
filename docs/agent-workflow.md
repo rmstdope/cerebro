@@ -218,7 +218,8 @@ than more plans. If he is mostly `working`, the second one buys you throughput d
 
 A pass runs in this order: free abandoned labels, plan every unplanned P0 whatever the queue looks
 like, then — if the planned, unclaimed count is below the number of implementers on the roster
-(minus any told to finish), and never fewer than two — plan **one** bead, and end the pass. There is no interval to wait out: if the buffer
+(minus any told to finish) times the project's `planner_buffer_multiple` — absent means one each —
+and never fewer than two — plan **one** bead, and end the pass. There is no interval to wait out: if the buffer
 is still short the fleet view starts the next session within seconds, against a board that has moved
 rather than a planner's memory of it.
 

@@ -213,8 +213,8 @@ Then go on to the buffer.
 ## You keep a buffer sized to the fleet
 
 You keep the implementers fed, and the measure of that is a **buffer of planned, open, unclaimed
-beads** — ready for anyone to pick up — whose size follows the implementers on the roster: **one
-each, and never fewer than two**. A pass plans **one bead** and ends; the fleet view starts the next pass the moment the buffer
+beads** — ready for anyone to pick up — whose size follows the implementers on the roster:
+**`planner_buffer_multiple` each — absent means one each — and never fewer than two**. A pass plans **one bead** and ends; the fleet view starts the next pass the moment the buffer
 is short again, which on a moving fleet is seconds later.
 
 ```bash
@@ -268,8 +268,10 @@ one bead built when the navigator next presses `s`; the buffer is a floor, not a
 .claude/cerebro/scripts/planner-buffer --want
 ```
 
-**There is one number, `m = max(2, n)`** — `scripts/planner-buffer --want` computes it, and
-`--print-floor` is where the 2 is declared: the buffer is short whenever the planned, unclaimed count
+**There is one number, `m = max(2, multiple × n)`** — `scripts/planner-buffer --want` computes it,
+`--print-floor` is where the 2 is declared, and `--print-multiple-key` names the
+`.cerebro/project.conf` key the multiple is declared in; a project that declares none has a
+multiple of 1, which is the rule every consumer had before the key existed: the buffer is short whenever the planned, unclaimed count
 is **below `m`**, and a pass that finds it short plans **one bead**. Three implementers want three
 planned beads; four want four. **Two is the floor whatever the fleet looks like**, including a
 roster of one — the navigator starting a second builder by hand expects it to have something to

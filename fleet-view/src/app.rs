@@ -2085,6 +2085,151 @@ impl Worker<(String, Result<BeadDetailFields, ReadError>), String> {
     }
 }
 
+/// A board write, decided on the UI thread and run on the write worker's.
+///
+/// It carries what `lifecycle::set_priority` and `lifecycle::run_finding` need and nothing more:
+/// the decision (`lifecycle::priority_action`) is still made on the UI thread, so a keystroke that
+/// writes nothing - `AlreadyThere`, `Nothing` - never reaches the worker at all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriteRequest {
+    /// `bd update <id> --priority <to>`, then `bd dolt push`.
+    Priority { id: String, from: Option<u8>, to: u8, undo: bool },
+    /// A sweep finding's own command, then `bd dolt push`.
+    Finding { finding: Finding },
+}
+
+impl WriteRequest {
+    /// The dim line shown from the keystroke until this write answers. BD is `Programs::bd`, the
+    /// same path `sweeps::finding_command` is given, so the two lines name the same command.
+    pub fn pending_text(&self, bd: &std::path::Path) -> String {
+        match self {
+            // The finished sentences' own spelling (`lifecycle::set_priority`), with an ellipsis:
+            // the colour alone carries too little (approved round two).
+            WriteRequest::Priority { id, from, to, undo } => {
+                if *undo {
+                    format!("{id}: back to P{to}\u{2026}")
+                } else {
+                    let from = from.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string());
+                    format!("{id}: P{from} \u{2192} P{to}\u{2026}")
+                }
+            }
+            WriteRequest::Finding { finding } => {
+                format!("running {}\u{2026}", crate::sweeps::finding_command(finding, bd).join(" "))
+            }
+        }
+    }
+}
+
+/// What a write did, with its request echoed beside it.
+///
+/// The echo is the `DetailWorker` rule and it is load-bearing for two things: the overlay entry
+/// this answer settles, and the undo entry a failure revokes. Without it a late answer would be
+/// applied to whatever the navigator has since pressed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriteAnswer {
+    Priority {
+        id: String,
+        from: Option<u8>,
+        to: u8,
+        undo: bool,
+        outcome: crate::lifecycle::PriorityOutcome,
+    },
+    Finding { outcome: crate::lifecycle::FindingOutcome },
+}
+
+impl WriteAnswer {
+    /// The header sentence - already exact in both outcome enums, so nothing is re-spelled here.
+    pub fn text(&self) -> &str {
+        match self {
+            WriteAnswer::Priority { outcome, .. } => match outcome {
+                crate::lifecycle::PriorityOutcome::Ran { text }
+                | crate::lifecycle::PriorityOutcome::Pushed { text }
+                | crate::lifecycle::PriorityOutcome::Failed { text } => text,
+            },
+            WriteAnswer::Finding { outcome } => match outcome {
+                crate::lifecycle::FindingOutcome::Ran { text }
+                | crate::lifecycle::FindingOutcome::Pushed { text }
+                | crate::lifecycle::FindingOutcome::Failed { text } => text,
+            },
+        }
+    }
+
+    /// Whether `bd` refused. A push that failed is NOT a failure by this test: the write happened,
+    /// and its own sentence already says the other machines cannot see it yet.
+    pub fn failed(&self) -> bool {
+        match self {
+            WriteAnswer::Priority { outcome, .. } => {
+                matches!(outcome, crate::lifecycle::PriorityOutcome::Failed { .. })
+            }
+            WriteAnswer::Finding { outcome } => {
+                matches!(outcome, crate::lifecycle::FindingOutcome::Failed { .. })
+            }
+        }
+    }
+
+    /// The answer for a write that could never be sent, because the worker thread has stopped.
+    /// Its sentence names that rather than blaming `bd`, which never ran.
+    pub fn undeliverable(request: &WriteRequest) -> Self {
+        let text = UNDELIVERABLE.to_string();
+        match request {
+            WriteRequest::Priority { id, from, to, undo } => WriteAnswer::Priority {
+                id: id.clone(),
+                from: *from,
+                to: *to,
+                undo: *undo,
+                outcome: crate::lifecycle::PriorityOutcome::Failed { text },
+            },
+            WriteRequest::Finding { .. } => WriteAnswer::Finding {
+                outcome: crate::lifecycle::FindingOutcome::Failed { text },
+            },
+        }
+    }
+}
+
+/// The write path's counterpart of `main::worker_gone`'s `the reader thread has stopped`.
+const UNDELIVERABLE: &str = "the write worker has stopped \u{2014} nothing was written";
+
+/// The board writer's worker: `lifecycle::set_priority` and `lifecycle::run_finding` on their own
+/// thread.
+///
+/// An eighth thread rather than a call on the UI thread, for the reason the other seven exist: a
+/// `bd dolt push` is a network call bounded at thirty seconds, and running it here froze the
+/// screen - keys and all - for as long as the remote took (cb-21g).
+///
+/// ONE worker, and one write at a time, deliberately: writes to the shared board must run in the
+/// order the navigator pressed them, and a pool would let `3` overtake `0` on the same bead.
+pub type WriteWorker = Worker<WriteAnswer, WriteRequest>;
+
+impl Worker<WriteAnswer, WriteRequest> {
+    pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
+        Self::spawn_reader(move |request: WriteRequest| {
+            // The outer `Result` only ever succeeds: a write's failure is inside the answer.
+            Ok(match request {
+                WriteRequest::Priority { id, from, to, undo } => {
+                    let outcome = crate::lifecycle::set_priority(
+                        &paths,
+                        &programs,
+                        commands.as_ref(),
+                        &id,
+                        from,
+                        to,
+                        undo,
+                    );
+                    WriteAnswer::Priority { id, from, to, undo, outcome }
+                }
+                WriteRequest::Finding { finding } => WriteAnswer::Finding {
+                    outcome: crate::lifecycle::run_finding(
+                        &paths,
+                        &programs,
+                        commands.as_ref(),
+                        &finding,
+                    ),
+                },
+            })
+        })
+    }
+}
+
 impl Worker<Result<SupervisorKind, String>> {
     pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
         Self::spawn_reader(move |()| read_configured_supervisor(&paths, commands.as_ref()))
@@ -3021,6 +3166,65 @@ mod tests {
         // stale line.
         app.set_notice("Cerebro was asked to rank 2 unranked beads.".into());
         assert_ne!(app.notice_tone, NoticeTone::Urgent);
+    }
+
+    /// The four dim lines a write shows from the keystroke until it answers, verbatim (cb-21g,
+    /// approved round two): the same words as the finished sentence, with a trailing ellipsis.
+    #[test]
+    fn a_write_request_says_what_it_is_doing() {
+        let bd = std::path::Path::new("/usr/local/bin/bd");
+        let digit = WriteRequest::Priority {
+            id: "cb-21g".into(),
+            from: Some(2),
+            to: 0,
+            undo: false,
+        };
+        assert_eq!(digit.pending_text(bd), "cb-21g: P2 \u{2192} P0\u{2026}");
+        let no_priority = WriteRequest::Priority {
+            id: "cb-21g".into(),
+            from: None,
+            to: 0,
+            undo: false,
+        };
+        assert_eq!(no_priority.pending_text(bd), "cb-21g: P? \u{2192} P0\u{2026}");
+        let undo = WriteRequest::Priority {
+            id: "cb-21g".into(),
+            from: None,
+            to: 2,
+            undo: true,
+        };
+        assert_eq!(undo.pending_text(bd), "cb-21g: back to P2\u{2026}");
+        let finding = WriteRequest::Finding {
+            finding: crate::sweeps::Finding::Reclaim { id: "cb-9f2".into() },
+        };
+        assert_eq!(
+            finding.pending_text(bd),
+            "running /usr/local/bin/bd reclaim --id cb-9f2 --older-than 10m\u{2026}"
+        );
+    }
+
+    /// A write that could never be sent names the worker, not `bd` - which never ran.
+    #[test]
+    fn a_write_answer_carries_its_own_request() {
+        let request = WriteRequest::Priority {
+            id: "cb-21g".into(),
+            from: Some(2),
+            to: 0,
+            undo: false,
+        };
+        let answer = WriteAnswer::undeliverable(&request);
+        assert!(answer.failed());
+        assert_eq!(answer.text(), "the write worker has stopped \u{2014} nothing was written");
+        match &answer {
+            WriteAnswer::Priority { id, to, .. } => {
+                assert_eq!((id.as_str(), *to), ("cb-21g", 0));
+            }
+            other => panic!("a priority request answers as a priority write: {other:?}"),
+        }
+        let finding = WriteRequest::Finding {
+            finding: crate::sweeps::Finding::Reclaim { id: "cb-9f2".into() },
+        };
+        assert!(WriteAnswer::undeliverable(&finding).failed());
     }
 
     /// A dim line that says a board write is running must stay true while the write is running:

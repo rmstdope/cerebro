@@ -453,8 +453,9 @@ means nothing at all, which is what the suite binds.
 
 **`.cerebro/state/decisions.jsonl`** is the loud one: a line per decision —
 start (with the trigger that fired), end, retire, nudge, sweep run, sweep line typed
-(`sweep-tell`), abnormal exit — and, at `cerebro-log-verbosity` `evaluations` (the default), a line per trigger evaluation per tick carrying
-what the trigger read and whether `cerebro--unless-unchanged` is what held it. That last is the only
+(`sweep-tell`), abnormal exit — and, at `cerebro-log-verbosity` `evaluations` (the default), a
+line per trigger evaluation per tick carrying what the trigger read and whether
+`cerebro--unless-unchanged` is what held it. That last is the only
 observable trace of a decision *not* to start, which is otherwise indistinguishable from a bug.
 `changes` logs an evaluation only when its answer differs from that agent's last; `decisions` logs
 none. Both files rotate on `cerebro-log-max-bytes` × `cerebro-log-generations` — one policy, since

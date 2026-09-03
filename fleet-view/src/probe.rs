@@ -86,7 +86,6 @@ pub fn view_text(view: &SessionView) -> Vec<String> {
     }
 }
 
-
 /// This checkout's `emacs/` directory, for `emacs -L`.
 ///
 /// `CARGO_MANIFEST_DIR` is `fleet-view/` for every target in this package - the library, the

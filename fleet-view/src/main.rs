@@ -5554,7 +5554,8 @@ mod main_tests {
     ///
     /// A released listener is not instantly rebindable: anything on the machine sitting between
     /// `fork` and `exec` holds a copy of every descriptor until its own exec
-    /// (`supervisor.rs:546-553`), which is why `acquire_once_free` exists. Asserting on one
+    /// (`acquire_once_free`'s own doc comment in `supervisor.rs`), which is why it exists. Named
+    /// rather than cited by line: this reference had already gone stale once. Asserting on one
     /// attempt is a flake by construction.
     fn apply_until(
         controller: &mut SupervisorController,

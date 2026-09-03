@@ -700,8 +700,9 @@ second copy.
 
 Session can hold a real child since cb-kcs.2.2: `scripts/launch <Name>` in a pty (`portable-pty`),
 its screen drawn from a `vt100::Parser` this crate owns — which is why a killed child's screen is
-still drawable — and every key of a focused live session forwarded to it, `Tab` and `Shift-Tab`
-alone held back as the two ways out — `Tab` to Fleet, `Shift-Tab` to Work. A pass that ends is kept as a scrollable transcript of at most ten thousand
+still drawable — and every key of a focused live session forwarded to it, with `Tab` and
+`Shift-Tab` both held back as the two ways out — `Tab` to Fleet, `Shift-Tab` to
+Work. A pass that ends is kept as a scrollable transcript of at most ten thousand
 lines, until that agent starts again. **Nothing a navigator can press starts one**: `SessionHost::spawn`
 is reached by test code alone, and `s`/`f`/`k` are cb-kcs.2.3's, so the pane still says why there is
 no session in it and the header hint still names no key that does not exist. The rule that pays for

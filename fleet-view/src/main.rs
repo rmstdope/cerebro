@@ -1379,8 +1379,8 @@ fn write_priority(
 }
 
 /// In branch 3, `Tab` and `Shift-Tab` are BOTH held back and handed to `App::on_key`, which runs
-/// the plain focus cycle: from Session that is `Tab` -> Fleet and `Shift-Tab` -> Work (Q8, and
-/// cb-3v5 for the second of them), which is the reason the child can never receive either;
+/// the plain focus cycle: from Session that is `Tab` -> Fleet and `Shift-Tab` -> Work (cb-3v5 for the
+/// first of them, Q8 for the second), which is the reason the child can never receive either;
 /// everything else goes to
 /// `session::key_bytes`, and a `None` is dropped without a word (Q1), because the pane is a window
 /// onto the child rather than a commentary on it. So `q`, `Esc`, `Ctrl-C` and `g` do NOT quit or

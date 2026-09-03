@@ -1240,8 +1240,7 @@ impl App {
     /// Supervision is not part of the question: a view that drained to read-only still holds the
     /// retained transcripts of the sessions it hosted, so the same rule serves both, which is the
     /// navigator's own choice. The one place this question is answered: the key below and the
-    /// header's own hint
-    /// both read it, so the clause and the key can never disagree. Matching `None` and negating -
+    /// header's own hint both read it, so the clause and the key can never disagree. Matching `None` and negating -
     /// rather than listing the four positive variants - is deliberate: a fifth `SessionView`
     /// added later is content by default, which is the safe direction for a key that only moves
     /// focus.

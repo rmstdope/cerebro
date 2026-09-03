@@ -274,8 +274,9 @@ planner`), which is the one place a name and a role stop being interchangeable:
 - **Cerebro** (`orchestrator`, Opus/medium) — stops implementers on request by writing their stop
   flag; it cannot start one, since that means starting a session. Ranks the P4 backlog with the
   navigator (the triage pass that was the first planner's until cb-5lx.1). **Starts nothing on its
-  own** — and is itself started by the fleet view, or typed a line by it, for one thing: an unranked
-  bead (cb-5lx.2). The
+  own** — and is itself started by the fleet view for one thing, an unranked bead (cb-5lx.2), and
+  typed a line by it for two: that same unranked bead, and, since cb-7nx, a two-hourly reminder to
+  run the two sweeps that need a judgement no decision table makes. The
   worktree, claims and epics sweeps it used to run on a timer now run from the fleet view itself
   (`ah-4ao`; see `docs/cerebro-jobs.md` for the decision and `docs/cerebro-sweeps.md` for what each
   sweep looks for and the guards it runs under); what is left for a Cerebro session is the claims
@@ -613,7 +614,23 @@ is typed, recorded and throttled **only when it went into a session this view ho
 deliberate divergence from `cerebro--triage-tell`: that one records and logs even when no buffer
 took the string, so its throttle then holds for a line that never left the building.
 `tests/lib/triage.cases` is the table both implementations answer, for `supervise.cases`' reason —
-both views go on triaging until the declaration moves. The pruner writes **no** decision event:
+both views go on triaging until the declaration moves.
+
+Since cb-7nx a **second** line goes into an idle orchestrator on the same mechanism: every two hours
+(`cerebro-sweep-interval` / `SWEEP_INTERVAL_SECONDS`, both 7200) it is asked to run the claims sweep
+and the worktrees the pruner declined, the two that need a judgement no table makes — an orchestrator
+has no cadence of its own, so without it Cerebro sweeps once at startup and never again.
+`tests/lib/sweep-tell.cases` is its own table, answered by both implementations, and it is separate
+from `triage.cases` for the reason its header gives: triage's trigger is a condition that stays true,
+so a busy Cerebro needs no queue, while a two-hour mark is an **edge** that passes — one falling
+mid-pass is queued and typed at the first idle tick after it, at most one at a time, so six hours of
+work is followed by one sweep. The clock resets when the line is typed rather than when a sweep
+completes (the navigator's choice: the alternative needs a new signal from the agent back to the
+view), and it is dropped entirely for a name this view holds no session for, which is what keeps a
+restarted Cerebro from being told to sweep seconds after its own startup sweep. The event is
+`sweep-tell` in both writers, `sweep` being the `x`-on-a-finding decision. `triggers::cadence` is
+deliberately untouched: an orchestrator gets no wake trigger, since a two-hour *cadence* would have
+the view starting Opus sessions round the clock. The pruner writes **no** decision event:
 starting and stopping a watcher is not a fleet decision, and its failures reach `errors.jsonl`
 under the context `prune` and nowhere else. Its surface was approved over three interview rounds
 on 2026-09-02 and arrives, like cb-kcs.2's, in a docs-only pull request of its own — so no path

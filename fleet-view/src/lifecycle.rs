@@ -398,6 +398,127 @@ impl TriageLedger {
     }
 }
 
+/// Seconds between one sweep line and the next.
+///
+/// `cerebro-sweep-interval`'s default, a constant here for `END_GRACE_SECONDS`' reason: this
+/// crate has no place to declare a customisation and must not invent one.
+/// `tests/lib/sweep-tell.cases` names the number in its header, so both implementations answer
+/// one table.
+pub const SWEEP_INTERVAL_SECONDS: i64 = 7200;
+
+/// What the view types into an idle orchestrator when its two hours are up.
+///
+/// Byte-identical to `cerebro--sweep-message` (`emacs/cerebro.el`), which is what Cerebro
+/// actually reads; two literal-pinning tests are what keep them so, exactly as
+/// `triage_message`'s pair does. It names the pass rather than any ids, because there are none,
+/// and "the two sweeps that are yours" is `agents/orchestrator.md`'s own phrase, so the agent
+/// finds the section it means.
+pub const SWEEP_MESSAGE: &str = "[cerebro] Two hours since your last sweep. Run the two sweeps \
+                                 that are yours - the claims, and the worktrees the pruner \
+                                 declined - and bring the navigator anything that needs a \
+                                 judgement.";
+
+/// Type it, queue it, drop the clock, or start it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sweep {
+    /// The mark has passed (or a line is queued) and this Cerebro is idle: type it now.
+    Tell,
+    /// The mark has passed while Cerebro was not idle. A flag, not a count: a second and third
+    /// mark passing while it is set change nothing, so six hours of work is followed by ONE
+    /// sweep.
+    Queue,
+    /// No session this view hosts. Drop the mark and any queued line - a mark that passed while
+    /// Cerebro was down is not delivered when it comes back, since Cerebro sweeps at startup.
+    Forget,
+    /// A hosted session this view holds no mark for: start the clock, silently. So a Cerebro the
+    /// view has just started is told two hours after it came up rather than at once, which is
+    /// right, because a Cerebro that has just started has just swept.
+    Mark,
+}
+
+/// Everything the sweep decision reads, and nothing else - `Triaged`'s shape.
+#[derive(Clone, Copy, Debug)]
+pub struct Sweeping<'a> {
+    pub role: &'a str,
+    pub kind: AgentKind,
+    pub state: &'a RowState,
+    /// `SessionHost::supervisable` - hosted here and not already ending. Emacs's
+    /// `cerebro--session' answering a live buffer, and NOT the weaker `external' test its triage
+    /// teller uses.
+    pub ours: bool,
+    /// Seconds since this name's mark: the last sweep line typed into it, or the first tick this
+    /// view saw a session for it. `None` when this view holds no mark for it.
+    pub since_mark: Option<i64>,
+    /// A mark has already passed while this name was not idle.
+    pub pending: bool,
+}
+
+/// The port of `cerebro--sweep-action`. Held to `tests/lib/sweep-tell.cases`.
+///
+/// `Tell` fires on `pending` REGARDLESS of how recently the mark moved: a queued line waits for
+/// idle however long that takes. Writing the rule as `since_mark >= INTERVAL && (idle ||
+/// pending)` passes most of the table and drops exactly the case the navigator asked for.
+pub fn sweep_action(agent: Sweeping<'_>) -> Option<Sweep> {
+    if agent.role != "orchestrator" || agent.kind != AgentKind::Interactive {
+        return None;
+    }
+    if !agent.ours {
+        return Some(Sweep::Forget);
+    }
+    let Some(since_mark) = agent.since_mark else {
+        return Some(Sweep::Mark);
+    };
+    if !agent.pending && since_mark < SWEEP_INTERVAL_SECONDS {
+        return None;
+    }
+    Some(if agent.state == &RowState::Idle { Sweep::Tell } else { Sweep::Queue })
+}
+
+/// The gold header notice for a sweep line that went into a session.
+///
+/// Beside `triage_notice`, whose line this one sits next to. The name comes from the roster and
+/// is not always the word `Cerebro`.
+pub fn sweep_notice(name: &str) -> String {
+    format!("{name} was asked to sweep.")
+}
+
+/// Each name's mark and pending flag.
+///
+/// Memory only, lost with the process - one silent restart of the clock rather than a line typed
+/// into a Cerebro that has just swept, exactly as `TriageLedger` accepts its own loss.
+#[derive(Debug, Default)]
+pub struct SweepLedger {
+    marks: BTreeMap<String, (DateTime<Utc>, bool)>,
+}
+
+impl SweepLedger {
+    pub fn mark(&self, name: &str) -> Option<DateTime<Utc>> {
+        self.marks.get(name).map(|(at, _)| *at)
+    }
+
+    pub fn pending(&self, name: &str) -> bool {
+        self.marks.get(name).is_some_and(|(_, pending)| *pending)
+    }
+
+    /// Sets the mark to NOW and clears the pending flag. Both "the clock starts" and "a line was
+    /// typed" are this one call - see `Sweep::Mark` and `Sweep::Tell`.
+    pub fn note_marked(&mut self, name: &str, now: DateTime<Utc>) {
+        self.marks.insert(name.to_string(), (now, false));
+    }
+
+    /// Sets the pending flag without moving the mark. A name with no mark cannot queue a line:
+    /// `Sweep::Mark` is what the decision answers there.
+    pub fn note_pending(&mut self, name: &str) {
+        if let Some(entry) = self.marks.get_mut(name) {
+            entry.1 = true;
+        }
+    }
+
+    pub fn forget(&mut self, name: &str) {
+        self.marks.remove(name);
+    }
+}
+
 /// Everything the three decisions read, and nothing else.
 #[derive(Clone, Copy, Debug)]
 pub struct Situation<'a> {
@@ -1564,6 +1685,96 @@ mod tests {
             rows += 1;
         }
         assert!(rows >= 15, "triage.cases: only {rows} rows ran");
+    }
+
+    fn sweep_expect(word: &str) -> Option<Sweep> {
+        match word {
+            "tell" => Some(Sweep::Tell),
+            "queue" => Some(Sweep::Queue),
+            "forget" => Some(Sweep::Forget),
+            "mark" => Some(Sweep::Mark),
+            "none" => None,
+            other => panic!("sweep-tell.cases: unknown expectation {other}"),
+        }
+    }
+
+    /// Every row of `tests/lib/sweep-tell.cases`, which `cerebro--sweep-action` answers too. A row
+    /// the two answer differently is a Cerebro told to sweep twice in one window, or never told.
+    #[test]
+    fn the_shared_sweep_table_is_answered_here() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/sweep-tell.cases");
+        let text =
+            std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+        let mut rows = 0;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let fields: Vec<&str> = trimmed.split_whitespace().collect();
+            assert_eq!(fields.len(), 7, "sweep-tell.cases: malformed row: {line}");
+            let state = table_state(fields[2]);
+            let agent = Sweeping {
+                role: fields[0],
+                kind: table_kind(fields[1]),
+                state: &state,
+                ours: table_flag(fields[3]),
+                since_mark: triage_number(fields[4], line),
+                pending: table_flag(fields[5]),
+            };
+            assert_eq!(sweep_action(agent), sweep_expect(fields[6]), "row: {line}");
+            rows += 1;
+        }
+        assert!(rows >= 20, "sweep-tell.cases: only {rows} rows ran");
+    }
+
+    #[test]
+    fn the_sweep_ledger_marks_queues_and_forgets() {
+        let now = Utc::now();
+        let mut ledger = SweepLedger::default();
+        assert_eq!(ledger.mark("Cerebro"), None, "an unknown name holds no mark");
+        assert!(!ledger.pending("Cerebro"), "an unknown name has nothing queued");
+
+        // A name with no mark cannot queue: `Sweep::Mark` is what the decision answers there.
+        ledger.note_pending("Cerebro");
+        assert!(!ledger.pending("Cerebro"));
+
+        ledger.note_marked("Cerebro", now);
+        assert_eq!(ledger.mark("Cerebro"), Some(now));
+        assert!(!ledger.pending("Cerebro"));
+
+        ledger.note_pending("Cerebro");
+        assert!(ledger.pending("Cerebro"));
+        assert_eq!(ledger.mark("Cerebro"), Some(now), "queueing does not move the mark");
+
+        let later = now + chrono::Duration::seconds(30);
+        ledger.note_marked("Cerebro", later);
+        assert_eq!(ledger.mark("Cerebro"), Some(later));
+        assert!(!ledger.pending("Cerebro"), "typing the line clears the queued flag");
+
+        ledger.note_pending("Cerebro");
+        ledger.forget("Cerebro");
+        assert_eq!(ledger.mark("Cerebro"), None);
+        assert!(!ledger.pending("Cerebro"));
+    }
+
+    /// The exact bytes Cerebro reads. `cerebro--sweep-message` is pinned against the same
+    /// literal in `emacs/cerebro-test.el`; there is no cross-language check of the two, exactly
+    /// as `triage_message` has none.
+    #[test]
+    fn the_sweep_line_says_what_cerebro_reads() {
+        assert_eq!(
+            SWEEP_MESSAGE,
+            "[cerebro] Two hours since your last sweep. Run the two sweeps that are yours - the \
+             claims, and the worktrees the pruner declined - and bring the navigator anything \
+             that needs a judgement."
+        );
+    }
+
+    #[test]
+    fn the_sweep_notice_names_the_agent() {
+        assert_eq!(sweep_notice("Cerebro"), "Cerebro was asked to sweep.");
+        assert_eq!(sweep_notice("Xavier"), "Xavier was asked to sweep.");
     }
 
     #[test]

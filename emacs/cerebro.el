@@ -4183,6 +4183,121 @@ Errors are demoted per agent, as `cerebro--supervise\=' demotes its own."
                                         (cons 'ids ids)
                                         (cons 'repeat (eq action 'repeat))))))))))))))
 
+
+;;; cb-7nx: telling an idle Cerebro to run the two sweeps that are its own
+
+(defcustom cerebro-sweep-interval 7200
+  "Seconds between one sweep line typed into an orchestrator and the next.
+
+An orchestrator has no cadence and its only trigger is an unranked bead,
+so without this Cerebro sweeps once at startup and never again unless the
+navigator types something.  The timer is held here rather than by the
+agent, and the clock resets when the LINE IS TYPED rather than when a
+sweep completes - the navigator settled that at triage: resetting on a
+completed sweep needs a new signal from the agent back to the view, for a
+benefit that is only tidiness.  The accepted cost is that a sweep which
+happens for another reason - Cerebro\='s startup sweep, or one the
+navigator asks for in conversation - is invisible to this clock, so
+Cerebro may sweep twice inside one window.  A sweep is read-only except
+for the two judgements it brings (cb-7nx)."
+  :type 'integer
+  :group 'cerebro)
+
+(defconst cerebro--sweep-message
+  (concat "[cerebro] Two hours since your last sweep. Run the two sweeps that are "
+          "yours - the claims, and the worktrees the pruner declined - and bring "
+          "the navigator anything that needs a judgement.")
+  "The line typed into an idle Cerebro when its two hours are up.
+
+Byte-identical to `lifecycle::SWEEP_MESSAGE\=' in `fleet-view/\=', which is
+the same line from the other view; two literal-pinning tests are what
+keep them so, exactly as `cerebro--triage-message\=' and `triage_message\='
+are kept.  It names the pass rather than any ids, because there are none,
+and \"the two sweeps that are yours\" is `agents/orchestrator.md\='s own
+phrase, so the agent finds the section it means.")
+
+(defvar-local cerebro--sweep-marks nil
+  "Per orchestrator name, (AT . PENDING): the `float-time\=' of this name\='s
+mark - the last sweep line typed into it, or the first tick this Emacs saw a
+session for it - and whether a mark has since passed while it was not idle.
+
+What `cerebro--sweep-action\=' compares against.  Dropped for a name this
+Emacs holds no live session for, so a session that appears later starts
+its clock from scratch: a Cerebro that has just started has just swept.")
+
+(defun cerebro--sweep-action (agent hosted since-mark pending)
+  "Pure.  `tell\=', `queue\=', `forget\=', `mark\=', or nil for AGENT now.
+
+HOSTED is non-nil when this Emacs holds a live session buffer for AGENT
+\(`cerebro--session\=') - passed in rather than looked up, so this stays
+pure.  SINCE-MARK is seconds since AGENT\='s mark, nil when there is none.
+PENDING is its queued flag.
+
+Nil unless AGENT\='s role is \"orchestrator\" and its kind `interactive\=':
+nothing is recorded and nothing is forgotten for a row this rule has no
+business touching.  Then `forget\=' when this Emacs hosts no session -
+which is what keeps a restarted Cerebro from being told to sweep seconds
+after its own startup sweep; `mark\=' for a hosted session with no mark,
+starting the clock silently; and once the mark has passed, or a line is
+queued, `tell\=' when the state is exactly `idle\=' - never `working\=' or
+`asking\=', where the line would land inside a question or bury output,
+never `up\=' or `unknown\=', where there is no state file to say a line is
+safe - and `queue\=' otherwise.
+
+`tell\=' fires on PENDING regardless of how recently the mark moved: a
+queued line waits for idle however long that takes.  And PENDING is a
+FLAG rather than a count, so six hours of work is followed by one sweep."
+  (cond ((not (and (equal (cerebro-agent-role agent) "orchestrator")
+                   (eq (cerebro-agent-kind agent) 'interactive)))
+         nil)
+        ((not hosted) 'forget)
+        ((null since-mark) 'mark)
+        ((not (or pending (>= since-mark cerebro-sweep-interval))) nil)
+        ((eq (cerebro-agent-state agent) 'idle) 'tell)
+        (t 'queue)))
+
+(defun cerebro--sweep-tell (agents repo-root now)
+  "Type the sweep line into every orchestrator in AGENTS whose two hours are up.
+
+The impure half: asks `cerebro--session\=' whether this Emacs holds a live
+buffer for each name, decides with `cerebro--sweep-action\=', types through
+`cerebro--type-into-session\=', keeps each name\='s mark and queued flag in
+`cerebro--sweep-marks\=', and logs a `sweep-tell\=' event per line typed -
+`sweep\=' being taken by the `x\='-on-a-finding decision.
+
+Nothing is typed, recorded or clocked for a session this Emacs does not
+hold: unlike `cerebro--triage-tell\=', which records even when no buffer
+took the string, this teller asks the same question both views answer in
+`tests/lib/sweep-tell.cases\='.  Errors are demoted per agent, as
+`cerebro--supervise\=' demotes its own."
+  (let ((now-float (float-time now)))
+    (dolist (agent agents)
+      (let ((name (cerebro-agent-name agent)))
+        (cerebro--with-logged-errors (format "sweep %s" name)
+          (let* ((entry (cdr (assoc name cerebro--sweep-marks)))
+                 (queued (and entry (cdr entry)))
+                 (action (cerebro--sweep-action
+                          agent
+                          (and (cerebro--session name) t)
+                          (and entry (- now-float (car entry)))
+                          queued)))
+            (pcase action
+              ('forget (setq cerebro--sweep-marks
+                             (assoc-delete-all name cerebro--sweep-marks)))
+              ('mark (setf (alist-get name cerebro--sweep-marks nil nil #'equal)
+                           (cons now-float nil)))
+              ('queue (when entry (setcdr entry t)))
+              ('tell
+               ;; The line FIRST, then the mark, then the record: `hosted' has already
+               ;; established the session is there to take it.
+               (cerebro--type-into-session agent cerebro--sweep-message)
+               (setf (alist-get name cerebro--sweep-marks nil nil #'equal)
+                     (cons now-float nil))
+               (cerebro--log repo-root 'sweep-tell
+                             (list (cons 'agent name)
+                                   (cons 'role (cerebro-agent-role agent))
+                                   (cons 'queued (and queued t))))))))))))
+
 (defun cerebro--forget-session (agent)
   "Kill AGENT's session buffer, without asking and without refreshing.
 
@@ -4351,13 +4466,16 @@ of days at `evaluations\=' and months at `changes\='."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire nudge standby arm refused exit give-up sweep triage error)
+  '(start end retire nudge standby arm refused exit give-up sweep sweep-tell triage error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 
 `triage\=' is a line typed into an idle Cerebro naming unranked beads
 \(cb-5lx.2) - a decision the view took, so it is written at every verbosity
-like `nudge\='.
+like `nudge\='.  `sweep-tell\=' is the two-hourly line asking it to run the
+sweeps that are its own (cb-7nx); `sweep\=' is the `x\='-on-a-finding decision,
+and two decisions sharing one event name makes the log unreadable for exactly
+the diagnosis it exists for.
 
 `error\=' is on this list rather than behind a level of its own because an
 error is not a level of detail: a navigator who sets `decisions\=' is asking
@@ -6541,7 +6659,9 @@ left and runs every `cerebro-system-scan-seconds'."
             (cerebro--start-due repo-root now)
             ;; And a line into an idle Cerebro, on the same freshly derived rows
             ;; (cb-5lx.2).
-            (cerebro--triage-tell cerebro--agents repo-root now))
+            (cerebro--triage-tell cerebro--agents repo-root now)
+            ;; And the two-hourly sweep line, on the same rows (cb-7nx).
+            (cerebro--sweep-tell cerebro--agents repo-root now))
           ;; The pruner is a writer too, so it runs only while this view owns
           ;; the checkout.
           (if (cerebro--supervision-may-act-p mode)

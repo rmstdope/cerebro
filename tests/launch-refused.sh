@@ -88,17 +88,37 @@ pass "with no jq the refusal is still printed and nothing is written"
 # --- outside a consumer it prints and writes nothing ----------------------------------------------
 #
 # The launchers run from a standalone clone in the tests, where there is no root to write to.
+#
+# This case must NOT run the script from $repo_root: since cb-i3l.1 this repository is a consumer of
+# itself (.claude/cerebro is a committed symlink back to the checkout), so `consumer-root --shared`
+# succeeds there and the refusal is written into the navigator's live errors.jsonl. That wrote 244
+# false "launch Storm" refusals into it before this fixture existed. The fixture below is genuinely
+# outside every consumer, and the guard proves it rather than hoping.
+rootless="$work_dir/rootless"
+"$repo_root/tests/lib/place-scripts" "$rootless/bin" launch-refused consumer-root
+
 set +e
-out="$(bash "$repo_root/scripts/launch-refused" Storm "nowhere to write this" 2>&1 >/dev/null)"
+"$rootless/bin/consumer-root" --shared >/dev/null 2>&1
+guard=$?
+set -e
+[[ $guard -ne 0 ]] \
+  || fail "rootless: $rootless/bin resolved a consumer root; the refusal would be written into it"
+
+before="$(find "$rootless" | sort)"
+set +e
+out="$(bash "$rootless/bin/launch-refused" Storm "nowhere to write this" 2>&1 >/dev/null)"
 status=$?
 set -e
+after="$(find "$rootless" | sort)"
 [[ $status -eq 0 ]] || fail "rootless: expected exit 0, got $status"
 [[ "$out" == "cerebro: nowhere to write this" ]] || fail "rootless: expected the refusal on stderr, got: $out"
+[[ "$before" == "$after" ]] \
+  || fail "rootless: the refusal created files under $rootless: $(comm -13 <(echo "$before") <(echo "$after") | tr '\n' ' ')"
 pass "with no consumer root the refusal is still printed"
 
 # --- usage ----------------------------------------------------------------------------------------
 set +e
-out="$(bash "$repo_root/scripts/launch-refused" Storm 2>&1 >/dev/null)"
+out="$(bash "$rootless/bin/launch-refused" Storm 2>&1 >/dev/null)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "usage: expected exit 2, got $status"

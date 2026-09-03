@@ -395,22 +395,11 @@ impl WorkBodyLine<'_> {
     }
 }
 
-/// The whole Work document, in order: the Sweeps section, the six queues, then History.
-///
-/// The Sweeps section is FIRST on the screen (the navigator's choice: this pane shows about
-/// fourteen rows of a forty-one row document, and a section below the fold is one nobody
-/// presses), and History is LAST - the `M-x cerebro` order, so the two views read alike.
-///
-/// Nothing at all for Sweeps - not even a blank - when there are no findings and no error. That
-/// is deliberately unlike the six queues, which print `(none)`: an empty Sweeps section is the
-/// ORDINARY result of every render but one. A FAILED sweep with nothing to keep still draws its
-/// header, because a clean fleet and a fleet nobody could look at must not draw the same blank.
-///
-/// History is the one section that does NOT follow that rule: a first failure draws no section at
-/// all, because a machine that has never run the fleet has no transitions log and the script
-/// exiting 1 there is the ordinary state rather than news.
 /// A bead pinned in the Session pane: the row as it was when `Enter` was pressed, and what
 /// `bd show` has said about it so far.
+///
+/// `PartialEq` without `Eq`, deliberately: `Bead::metadata` is a `serde_json::Value`, which is
+/// not `Eq`. Restoring the derive the plan named does not compile.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BeadDetail {
     pub bead: Bead,
@@ -467,52 +456,58 @@ fn wrap_cells(text: &str, width: usize) -> Vec<String> {
     if text.is_empty() {
         return vec![String::new()];
     }
-    let mut lines = Vec::new();
+    // Walked as alternating runs of whitespace and non-whitespace rather than `split(' ')`, so a
+    // line's own indentation survives: this pane exists to read design fields, and those are
+    // markdown with indented code blocks and nested bullets. A `split` drops every empty token,
+    // which turned `  - b` into a sibling of the bullet above it.
+    let mut tokens: Vec<String> = Vec::new();
+    for ch in text.chars() {
+        let same = tokens
+            .last()
+            .is_some_and(|last| last.ends_with(' ') == (ch == ' '));
+        if same {
+            tokens.last_mut().expect("checked above").push(ch);
+        } else {
+            tokens.push(ch.to_string());
+        }
+    }
+    let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut current_width = 0usize;
-    for word in text.split(' ') {
-        let word_width = UnicodeWidthStr::width(word);
-        if current.is_empty() {
-            // A token longer than the pane is broken mid-word rather than overflowing it.
-            if word_width > width {
-                let mut piece = String::new();
-                let mut piece_width = 0usize;
-                for ch in word.chars() {
-                    let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                    if piece_width + cw > width {
-                        lines.push(std::mem::take(&mut piece));
-                        piece_width = 0;
-                    }
-                    piece.push(ch);
-                    piece_width += cw;
-                }
-                current = piece;
-                current_width = piece_width;
-            } else {
-                current.push_str(word);
-                current_width = word_width;
-            }
-        } else if current_width + 1 + word_width <= width {
-            current.push(' ');
-            current.push_str(word);
-            current_width += 1 + word_width;
-        } else {
+    for token in tokens {
+        let token_width = UnicodeWidthStr::width(token.as_str());
+        if current_width + token_width <= width {
+            current.push_str(&token);
+            current_width += token_width;
+            continue;
+        }
+        // The whitespace a break falls on is the break, and is dropped with it.
+        if token.starts_with(' ') {
             lines.push(std::mem::take(&mut current));
             current_width = 0;
-            if word_width > width {
-                for ch in word.chars() {
-                    let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                    if current_width + cw > width {
-                        lines.push(std::mem::take(&mut current));
-                        current_width = 0;
-                    }
-                    current.push(ch);
-                    current_width += cw;
-                }
-            } else {
-                current.push_str(word);
-                current_width = word_width;
+            continue;
+        }
+        if !current.is_empty() {
+            // Trailing whitespace goes with the break it fell on, so a wrapped line never carries
+            // a space the pane has to account for.
+            let broken = std::mem::take(&mut current);
+            lines.push(broken.trim_end().to_string());
+            current_width = 0;
+        }
+        if token_width <= width {
+            current.push_str(&token);
+            current_width = token_width;
+            continue;
+        }
+        // A token longer than the pane is broken mid-word rather than overflowing it.
+        for ch in token.chars() {
+            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+            if current_width + cw > width {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
             }
+            current.push(ch);
+            current_width += cw;
         }
     }
     lines.push(current);
@@ -590,6 +585,20 @@ pub fn bead_body(detail: &BeadDetail, width: usize) -> Vec<BeadBodyLine> {
     body
 }
 
+/// The whole Work document, in order: the Sweeps section, the six queues, then History.
+///
+/// The Sweeps section is FIRST on the screen (the navigator's choice: this pane shows about
+/// fourteen rows of a forty-one row document, and a section below the fold is one nobody
+/// presses), and History is LAST - the `M-x cerebro` order, so the two views read alike.
+///
+/// Nothing at all for Sweeps - not even a blank - when there are no findings and no error. That
+/// is deliberately unlike the six queues, which print `(none)`: an empty Sweeps section is the
+/// ORDINARY result of every render but one. A FAILED sweep with nothing to keep still draws its
+/// header, because a clean fleet and a fleet nobody could look at must not draw the same blank.
+///
+/// History is the one section that does NOT follow that rule: a first failure draws no section at
+/// all, because a machine that has never run the fleet has no transitions log and the script
+/// exiting 1 there is the ordinary state rather than news.
 pub fn work_body(app: &App, now: DateTime<Utc>) -> Vec<WorkBodyLine<'_>> {
     let mut body = Vec::new();
     body.extend(sweeps_body(app));
@@ -1622,13 +1631,10 @@ impl App {
             self.bead_detail = None;
             return AppAction::None;
         }
-        let Some(bead) = work_body(self, now)
-            .into_iter()
-            .find_map(|line| match line {
-                WorkBodyLine::Bead { bead, .. } if bead.id == id => Some(bead.clone()),
-                _ => None,
-            })
-        else {
+        // `selected_bead` is the one place "find the cursor's bead in the document" is answered;
+        // the id always comes from the cursor, so this is the same question. The clone ends the
+        // immutable borrow before the mutation below.
+        let Some(bead) = self.selected_bead(now).cloned() else {
             return AppAction::None;
         };
         self.bead_detail = Some(BeadDetail { bead, body: DetailBody::Reading });
@@ -2026,14 +2032,18 @@ impl Worker<GhSnapshot> {
 /// The pinned bead's worker: `read_bead_detail` on its own thread, for the reason the other six
 /// exist - a `bd` that will not answer must not freeze the screen, keys and all.
 ///
-/// It answers with the id BESIDE the fields, which is what lets a late answer be dropped rather
-/// than landed on whatever bead is pinned by then.
-pub type DetailWorker = Worker<(String, BeadDetailFields), String>;
+/// It answers with the id BESIDE the answer, which is what lets a late answer be dropped rather
+/// than landed on whatever bead is pinned by then - and the FAILURE carries it too. `request_with`
+/// sends into an unbounded channel, so `Enter` on A and then on B before A answers queues two
+/// reads: an error without an id would say `bd show cb-B failed` about a bead still being read.
+/// The inner `Result` is that answer; the outer one only ever succeeds.
+pub type DetailWorker = Worker<(String, Result<BeadDetailFields, ReadError>), String>;
 
-impl Worker<(String, BeadDetailFields), String> {
+impl Worker<(String, Result<BeadDetailFields, ReadError>), String> {
     pub fn spawn(paths: ReaderPaths, programs: Programs, commands: Commands) -> Self {
         Self::spawn_reader(move |id: String| {
-            read_bead_detail(&paths, &programs, commands.as_ref(), &id).map(|fields| (id, fields))
+            let answer = read_bead_detail(&paths, &programs, commands.as_ref(), &id);
+            Ok((id, answer))
         })
     }
 }
@@ -4114,5 +4124,30 @@ mod tests {
         });
         assert_eq!(app.restart_bead_read().as_deref(), Some("cb-41r"));
         assert_eq!(app.bead_detail.as_ref().unwrap().body, DetailBody::Reading);
+    }
+
+    /// Indentation is what a design field is made of - nested bullets and code blocks - and a
+    /// `split(' ')` wrapper dropped every leading empty token, making `  - b` a sibling of the
+    /// bullet above it.
+    #[test]
+    fn an_indented_body_line_keeps_its_indentation() {
+        let lines = body_lines("```\n    let x = 1;\n- a\n  - b\n```", 40);
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|line| match line {
+                BeadBodyLine::Body { text, .. } => text.clone(),
+                other => panic!("not a body line: {other:?}"),
+            })
+            .collect();
+        assert_eq!(texts, vec!["```", "    let x = 1;", "- a", "  - b", "```"]);
+    }
+
+    #[test]
+    fn an_indented_line_that_wraps_keeps_the_indent_on_its_first_piece() {
+        let lines = wrap_cells("    a bb ccc dddd", 8);
+        assert_eq!(lines.first().map(String::as_str), Some("    a bb"));
+        for line in &lines {
+            assert!(UnicodeWidthStr::width(line.as_str()) <= 8, "{line:?}");
+        }
     }
 }

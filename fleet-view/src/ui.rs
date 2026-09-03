@@ -3999,4 +3999,36 @@ mod tests {
         let on_fleet = lines(&render(&app, 160, 30));
         assert!(!on_fleet[0].contains("Enter bead"), "{:?}", on_fleet[0]);
     }
+
+    /// The third shortening step: when even the shortened hints do not fit, the cursor clauses go
+    /// too and the lifecycle keys, refresh and quit survive — the rule the shortening states.
+    /// cb-41r's `Enter bead` is what made a hundred-column header need it.
+    #[test]
+    fn the_cursor_clauses_are_the_last_thing_to_give_way() {
+        let mut app = work_app(WorkBuckets {
+            claimed: vec![bead("cb-41r", Some(2), "Enter on a bead opens it")],
+            ..WorkBuckets::default()
+        });
+        app.selected = Some("Rogue".to_string());
+        app.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(
+            SupervisorKind::Tui,
+        )));
+        app.focus = PaneFocus::Work;
+        while !matches!(app.work_cursor, Some(app::WorkCursor::Bead(_))) {
+            app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, at(86_400));
+        }
+
+        // Wide: everything, the cursor clauses included.
+        let wide = lines(&render(&app, 200, 20));
+        assert!(wide[0].contains("Enter bead"), "{:?}", wide[0]);
+        assert!(wide[0].contains("Tab/Shift-Tab pane"), "{:?}", wide[0]);
+
+        // Narrow enough that even the shortened form will not fit: the clauses go, and the two
+        // keys a navigator cannot guess from the screen stay.
+        let narrow = lines(&render(&app, 100, 20));
+        assert!(!narrow[0].contains("Enter bead"), "{:?}", narrow[0]);
+        assert!(!narrow[0].contains("0-4/+/-/u priority"), "{:?}", narrow[0]);
+        assert!(narrow[0].contains("g refresh"), "{:?}", narrow[0]);
+        assert!(narrow[0].contains("q/Esc/Ctrl-C quit"), "{:?}", narrow[0]);
+    }
 }

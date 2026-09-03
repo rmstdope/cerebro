@@ -1225,21 +1225,16 @@ where
         // about the fleet or the board, and its only sign on screen is the red line in its own
         // pane. A late answer names its own bead, which is what lets `App` drop one for a bead
         // the navigator has since unpinned.
-        if let Some(result) = detail_worker.poll() {
-            match result {
-                Ok((id, fields)) => {
-                    logger.clear_error("bead");
-                    app.finish_bead_read(&id, Ok(fields));
-                }
+        // The answer names its own bead whether it succeeded or failed, so a queued read that
+        // fails can never report about the bead pinned by the time it answers.
+        if let Some(Ok((id, answer))) = detail_worker.poll() {
+            match &answer {
+                Ok(_) => logger.clear_error("bead"),
                 Err(error) => {
-                    logger.error(&log::reader_context("bead", &error), &error.to_string(), clock());
-                    // An `Err` carries no id, so it is about the bead pinned now - the only bead
-                    // a failure can be about, since one read is ever in flight.
-                    if let Some(id) = app.bead_detail.as_ref().map(|d| d.bead.id.clone()) {
-                        app.finish_bead_read(&id, Err(error));
-                    }
+                    logger.error(&log::reader_context("bead", error), &error.to_string(), clock())
                 }
             }
+            app.finish_bead_read(&id, answer);
         }
         // The `gh` answer draws nothing; it is polled for the same reason it is read at all, so
         // that the two cadence triggers see a current one.
@@ -6032,5 +6027,37 @@ mod main_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("g never asked for the pinned bead");
+    }
+
+    /// A queued read that fails must report about ITS bead, never the one pinned by the time it
+    /// answers: `request_with` is an unbounded channel, so two `Enter`s queue two reads.
+    #[test]
+    fn a_failed_read_names_its_own_bead() {
+        let mut app = App::new();
+        app.bead_detail = Some(cerebro_tui::app::BeadDetail {
+            bead: cerebro_tui::model::Bead {
+                id: "cb-b".into(),
+                title: "the second bead".into(),
+                status: "open".into(),
+                issue_type: "feature".into(),
+                labels: Vec::new(),
+                priority: Some(2),
+                updated_at: None,
+                assignee: None,
+                metadata: serde_json::Value::Null,
+                external_ref: None,
+            },
+            body: cerebro_tui::app::DetailBody::Reading,
+        });
+        // cb-a's read failing after cb-b was pinned leaves cb-b's pane alone.
+        app.finish_bead_read(
+            "cb-a",
+            Err(ReadError::Invalid { source: "bd".into(), message: "boom".into() }),
+        );
+        assert_eq!(
+            app.bead_detail.as_ref().unwrap().body,
+            cerebro_tui::app::DetailBody::Reading,
+            "the failure belonged to a bead nobody is reading"
+        );
     }
 }

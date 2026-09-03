@@ -1,0 +1,87 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+</style>
+<meta charset="utf-8"><title>cb-hzl — a childless epic in the Work pane</title>
+
+<h1>cb-hzl — where a childless epic shows up, and how it reads</h1>
+<p class="lede">Today both views skip <b>every</b> epic before any bucket is considered. That is right for an
+epic with children — it is bookkeeping over them, and listing it beside them double-counts the same
+work. It is wrong for an epic <b>with no children</b>: nobody has broken it down yet, so it is exactly
+as unplanned as any other unplanned bead — and because the Unplanned bucket also feeds the planner
+trigger, no planner is ever started for it. It is not merely unseen; it is unreachable.</p>
+
+<h2>1. Today — the defect</h2>
+<div class="screen"><pre><span class="hd">Unplanned 2</span>
+  cb-441   P1 Zooming out no longer shrinks the grid lines with it
+  cb-902   P2 Row limit settable from the list pane
+
+<span class="dim">cb-hzl, an open epic with no children and P2, is on none of the six sections.</span>
+<span class="e">Planner trigger: "nothing to plan". No planner is started.</span></pre></div>
+
+<h2>2. Option A — it appears, marked</h2>
+<p class="lede">A childless epic goes through the ordinary precedence, like any other bead, and carries a
+right-aligned <code>epic</code> in the same column the <span class="hd">Waiting on you</span> section
+uses for its age. The marker says <i>this one wants splitting, not planning</i>.</p>
+<div class="screen"><pre><span class="hd">Unplanned 3</span>
+  cb-441   P1 Zooming out no longer shrinks the grid lines with it
+  cb-hzl   P2 An unplanned epic with no children is invisible          <span class="y">epic</span>
+  cb-902   P2 Row limit settable from the list pane
+
+<span class="g">Planner trigger: "buffer 0 of 4". A planner starts, and splits it.</span></pre></div>
+
+<h2>3. Option B — it appears, unmarked</h2>
+<p class="lede">Identical behaviour, no marker. The row looks like any other unplanned bead; the planner
+finds out it is an epic when it reads the bead, and splits it then.</p>
+<div class="screen"><pre><span class="hd">Unplanned 3</span>
+  cb-441   P1 Zooming out no longer shrinks the grid lines with it
+  cb-hzl   P2 An unplanned epic with no children is invisible in the Work pane
+  cb-902   P2 Row limit settable from the list pane</pre></div>
+
+<h2>4. The other three states, under either option</h2>
+<p class="lede">The marker (if any) rides on the bead, not on the section, so a childless epic reads the
+same wherever it lands. An epic <b>with</b> children is skipped exactly as it is today, in every
+section.</p>
+<div class="screen"><pre><span class="hd">Claimed 1</span>
+  cb-hzl   P2 An unplanned epic with no children is invisible          <span class="y">epic</span>
+
+<span class="hd">Waiting on you 1</span>
+  cb-hzl   P2 An unplanned epic with no children is invisible            <span class="d">3h</span>   <span class="dim">← age wins this column</span>
+
+<span class="hd">Merged, unverified 1</span>
+  cb-hzl   P2 An unplanned epic with no children is invisible          <span class="y">epic</span>   <span class="dim">← question 2</span></pre></div>
+
+<h2>5. Question 2 — does a <i>closed</i> childless epic reach Psylocke?</h2>
+<p class="lede">The uniform rule ("a childless epic is an ordinary bead") sends a closed one to
+<span class="hd">Merged, unverified</span>, which is the verifier's queue and her start trigger. No epic
+on this board is childless today, so this is about what happens later.</p>
+<div class="screen"><pre><span class="dim">Uniform — every status</span>
+<span class="hd">Merged, unverified 1</span>
+  cb-hzl   P2 An unplanned epic with no children is invisible          <span class="y">epic</span>
+<span class="dim">Psylocke starts, reads it, judges it shipped no code, labels it
+verification:not-needed. One cheap pass.</span>
+
+<span class="dim">Open-only — a childless epic joins the partition only while it is open</span>
+<span class="hd">Merged, unverified 0</span>
+  <span class="d">(none)</span>
+<span class="dim">A closed childless epic stays invisible, as today. One rule with an
+exception in it.</span></pre></div>
+
+<h2>6. The consequence of "uniform", found while planning</h2>
+<p class="lede">The <span class="hd">Merged, unverified</span> section is the verifier's <i>trigger</i>, but her
+own work list is a different query — <code>scripts/work-beads --status closed</code>, which excludes
+every epic outright. Left alone, a closed childless epic would start Psylocke, show her nothing, and
+sit in that section for ever. So "uniform" means <code>work-beads</code> learns the same rule: an epic
+is real work exactly while it has no children, asked of <code>bd children</code> per epic, which is
+what <code>scripts/sweep-epics.sh</code> already does. Epics are rare enough in a closed-since-yesterday
+list that the extra call costs nothing.</p>
+<p class="note">Nothing about the screen changes here — this is what the chosen answer commits to
+underneath it. Say so if that price is not worth §5's first block, and the open-only rule is the
+alternative.</p>

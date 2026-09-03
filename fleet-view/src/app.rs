@@ -878,6 +878,12 @@ pub struct App {
     /// give-up and a view that may not supervise disarm; a pass that merely ends does not, which
     /// is the whole point of the set. `docs/ui/cb-op0-arming.html` §6 is the table.
     pub armed: BTreeSet<String>,
+    /// The names whose stop flag is set, as of the last frame. Copied in by the event loop from
+    /// `lifecycle::stop_flag_set`, never read from the filesystem here: `ui::draw` is pure over
+    /// `App`. The twin of `App::exits` and `App::standby_labels`, set the same way, once per
+    /// iteration — and unconditionally, because a flag is true whoever set it and this view draws
+    /// it whether or not it may supervise.
+    pub flagged: BTreeSet<String>,
     /// Names already nudged for the question they are asking now.
     ///
     /// The poll runs every five seconds; without this the line would be typed on every tick,
@@ -1027,6 +1033,7 @@ impl App {
             exits: BTreeMap::new(),
             standby_labels: BTreeMap::new(),
             armed: BTreeSet::new(),
+            flagged: BTreeSet::new(),
             nudged: BTreeSet::new(),
             focus: PaneFocus::default(),
             supervision,
@@ -1129,6 +1136,11 @@ impl App {
     /// Replace the verdicts. One call per loop iteration, beside `set_session_view`.
     pub fn set_exits(&mut self, exits: BTreeMap<String, LastExit>) {
         self.exits = exits;
+    }
+
+    /// Replace the set of stop-flagged names. One call per loop iteration, beside `set_exits`.
+    pub fn set_flagged(&mut self, flagged: BTreeSet<String>) {
+        self.flagged = flagged;
     }
 
     /// Put TEXT in the notice slot. The one writer other than `reconcile_selection`; `on_key`

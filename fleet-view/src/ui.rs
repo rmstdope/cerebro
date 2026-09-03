@@ -17,7 +17,7 @@
 //! guessed - there is no `standby` row here and no stop-flag mark, because neither is in this
 //! reader's normalized model, and inventing one would show supervisor intent as observed fact.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use ratatui::layout::{Constraint, Layout, Position, Rect};
@@ -891,6 +891,7 @@ fn fleet_document(
                 selected,
                 &app.exits,
                 &app.standby_labels,
+                &app.flagged,
             )
         })
         .collect()
@@ -907,6 +908,7 @@ fn fleet_body_line(
     selected: Option<usize>,
     exits: &BTreeMap<String, LastExit>,
     standby_labels: &BTreeMap<String, String>,
+    flagged: &BTreeSet<String>,
 ) -> Line<'static> {
     match entry {
         FleetBodyLine::Loading => Line::from(Span::styled("Loading fleet...", dim())),
@@ -934,6 +936,7 @@ fn fleet_body_line(
                 (row.state == RowState::Standby)
                     .then(|| standby_labels.get(&row.name).map(String::as_str))
                     .flatten(),
+                flagged.contains(&row.name),
             );
             if selected == Some(*index) {
                 // Padded across the pane's whole inner width so the highlight is a band rather
@@ -1251,6 +1254,22 @@ fn glyph(state: &RowState) -> Span<'static> {
 /// The State column's word, from `cerebro--state-label`: a working agent shows its phase, an
 /// `asking` one always shows `asking`, and a word this view does not know is shown verbatim
 /// rather than translated into a lie.
+/// Which states show the stop-flag marker. `cerebro--in-flight-p`'s two, plus `Standby`.
+///
+/// `Working` and `Asking` because a bead is in flight for the flag to be waiting on; `Standby`
+/// because that is a row this view would otherwise start, so the flag is doing something visible
+/// on it (a flagged name is never started, whatever its trigger says). That third arm is a named
+/// divergence from `M-x cerebro`, which shows the marker on the first two and puts the words
+/// `■ told to finish` in a standby row's BEAD cell instead; here the BEAD cell is left exactly as
+/// it was, so a backing-off row keeps saying how many starts had failed.
+///
+/// Every other state is bare, and truthfully rather than by omission: `Idle`, `Waiting` and
+/// `Dead` have nothing in flight and nothing armed, and `Up` and `Unknown` cannot tell this view
+/// whether a bead is in flight at all.
+fn flag_shows_for(state: &RowState) -> bool {
+    matches!(state, RowState::Working | RowState::Asking | RowState::Standby)
+}
+
 fn state_label(row: &FleetRow) -> String {
     match &row.state {
         RowState::Unknown(raw) => truncate(raw, 10),
@@ -1358,6 +1377,7 @@ fn row_line(
     columns: &Columns,
     exit: Option<LastExit>,
     standby_label: Option<&str>,
+    flagged: bool,
 ) -> Line<'static> {
     // Bold is the row-level signal, and it is spent on exactly one state: an agent waiting for an
     // answer from the navigator (`cerebro--wants-attention-p`).
@@ -1380,7 +1400,7 @@ fn row_line(
             emphasized(Style::default(), attention),
         ));
     }
-    spans.extend(state_spans(row, columns, invalid, attention));
+    spans.extend(state_spans(row, columns, invalid, attention, flagged));
     // The BEAD column carries a bead id or a verdict and never both: an agent with a bead in
     // flight is not one that has exited. The verdict is red on a row that is otherwise dim, and a
     // span of its own, so the selection band sits beneath it and the colour survives being
@@ -1409,6 +1429,7 @@ fn state_spans(
     columns: &Columns,
     invalid: bool,
     attention: bool,
+    flagged: bool,
 ) -> Vec<Span<'static>> {
     let label = state_label(row);
     let unverified = row.diagnostic.is_some() && !invalid;
@@ -1422,6 +1443,15 @@ fn state_spans(
     let mut spans = vec![Span::styled(label, emphasized(word_style, attention))];
     if unverified {
         spans.push(Span::styled(" ?", dim()));
+        used += 2;
+    }
+    // The gold `■`: this agent was told to finish. Between the dim `?` and the gold `×N` because
+    // the three answer different questions — `?` qualifies the state word, `■` is about the bead
+    // in flight, `×N` about the sessions running it (`cerebro--entry`). One char and one cell:
+    // U+25A0 is East Asian ambiguous, which `unicode-width` counts as one, so `chars().count()`
+    // and `.width()` agree and this may follow the ` ?` branch's arithmetic exactly.
+    if flagged && flag_shows_for(&row.state) {
+        spans.push(Span::styled(" \u{25a0}", Style::default().fg(GOLD)));
         used += 2;
     }
     if row.sessions > 1 {
@@ -2109,6 +2139,112 @@ mod tests {
         assert!(style_of(&buffer, "?").add_modifier.contains(Modifier::DIM));
         assert_eq!(style_of(&buffer, "●").fg, Some(GREEN));
         assert!(!style_of(&buffer, "l").add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn a_flagged_working_row_carries_a_gold_marker() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![working("Cyclops", "implementer", "build", "cb-21g")]),
+            at(86_400),
+        );
+        app.flagged = ["Cyclops".to_string()].into_iter().collect();
+
+        let buffer = render(&app, 99, 40);
+        let rendered = lines(&buffer);
+        let cyclops = line_with(&rendered, "Cyclops");
+        assert!(
+            cyclops.contains("build \u{25a0}"),
+            "the marker follows the state word: {cyclops:?}"
+        );
+        assert_eq!(
+            style_of(&buffer, "\u{25a0}").fg,
+            Some(GOLD),
+            "the marker is gold, as the navigator chose"
+        );
+        assert!(cyclops.contains("cb-21g"), "the row is kept whole: {cyclops:?}");
+    }
+
+    #[test]
+    fn the_marker_shows_only_where_a_flag_can_be_waiting_on_something() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![
+                working("Cyclops", "implementer", "build", "cb-21g"),
+                row("Psylocke", "verifier", RowState::Asking),
+                row("Rogue", "implementer", RowState::Idle),
+                row("Storm", "implementer", RowState::Waiting),
+                row("Beast", "planner", RowState::Dead),
+                row("Cypher", "reviewer", RowState::Up),
+                row("Moira", "user-feedback", RowState::Unknown("reticulating".into())),
+            ]),
+            at(86_400),
+        );
+        app.flagged = ["Cyclops", "Psylocke", "Rogue", "Storm", "Beast", "Cypher", "Moira"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+
+        let rendered = lines(&render(&app, 99, 40));
+        for name in ["Cyclops", "Psylocke"] {
+            let line = line_with(&rendered, name);
+            assert!(line.contains(" \u{25a0}"), "{name} has a bead in flight: {line:?}");
+        }
+        for name in ["Rogue", "Storm", "Beast", "Cypher", "Moira"] {
+            let line = line_with(&rendered, name);
+            assert!(
+                !line.contains("\u{25a0}"),
+                "{name} has nothing in flight for the flag to wait on: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_flagged_standby_row_keeps_its_countdown() {
+        let mut app = App::new();
+        app.armed = ["Rogue"].into_iter().map(String::from).collect();
+        app.finish_refresh(Ok(vec![row("Rogue", "implementer", RowState::Dead)]), at(86_400));
+        app.set_standby_labels(
+            [("Rogue".to_string(), "\u{21bb} retry in 30s, 2 failed".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        app.flagged = ["Rogue".to_string()].into_iter().collect();
+
+        // Below `SPLIT_COLUMNS` the panes stack, so the Fleet pane is wide enough for the whole
+        // standby condition rather than truncating it at the split.
+        let buffer = render(&app, 99, 40);
+        let rendered = body(&buffer);
+        let line = line_with(&rendered, "Rogue");
+        assert!(
+            line.contains("standby \u{25a0}"),
+            "a row this view would otherwise start says the flag took effect: {line:?}"
+        );
+        assert!(
+            line.contains("\u{21bb} retry in 30s, 2 failed"),
+            "the BEAD cell is left exactly as it was: {line:?}"
+        );
+    }
+
+    #[test]
+    fn all_three_state_qualifications_keep_their_order() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![FleetRow {
+                diagnostic: Some("pid 4242 names Cyclops but not this consumer's root".into()),
+                sessions: 2,
+                ..working("Cyclops", "implementer", "build", "cb-21g")
+            }]),
+            at(86_400),
+        );
+        app.flagged = ["Cyclops".to_string()].into_iter().collect();
+
+        let rendered = lines(&render(&app, 99, 40));
+        let line = line_with(&rendered, "Cyclops");
+        assert!(
+            line.contains("build ? \u{25a0} ×2"),
+            "the state word, then the pid, the flag and the session count: {line:?}"
+        );
     }
 
     #[test]

@@ -1,0 +1,162 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+table{border-collapse:collapse;background:#2a2a2a;color:#ddd;margin-top:10px}
+td,th{border:1px solid #555;padding:4px 10px;text-align:left;font-size:12px}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}
+</style>
+<meta charset="utf-8"><title>cb-41r — the agreed surface</title>
+
+<h1>cb-41r &mdash; the surface the navigator approved, 2026-09-03</h1>
+<p class="lede">Three rounds. This file is the specification for what <code>Enter</code> does on a
+bead row in the Work pane of <code>cerebro-tui</code>, for everything the Session pane draws while
+a bead is in it, and for every sentence the screen says. Where this file and the bead&rsquo;s plan
+disagree, this file is right. It changes nothing any earlier file in the <code>cb-kcs</code> family
+decided: not a fleet row, not a lifecycle key, not a pane&rsquo;s borders, not the priority keys,
+not <code>Enter</code> on a <code>+N more</code> row. It is the third of the three navigation beads,
+beside cb-d31 (<code>Enter</code> into a session) and cb-3v5 (<code>Tab</code> out of one), and it
+agrees with both.</p>
+
+<h2>1. The rule</h2>
+<p class="lede"><b>Under Work focus, <code>Enter</code> on a bead row pins that bead&rsquo;s detail
+in the Session pane and moves focus there.</b> It stays pinned until it is dismissed: it survives
+moving the Work cursor, moving the fleet selection, a session starting or ending on its own, and
+the thirty-second board refresh. The selected agent&rsquo;s session goes on running underneath
+&mdash; it is not killed, not paused, not scrolled; it is simply not what this pane is drawing.</p>
+<table>
+<tr><th>Cursor is on</th><th><code>Enter</code> under Work focus</th></tr>
+<tr><td>a bead row, no bead pinned</td><td>pins that bead, focus moves to the Session pane</td></tr>
+<tr><td>a bead row, a <b>different</b> bead pinned</td><td>replaces it with this one, focus moves to the Session pane</td></tr>
+<tr><td>a bead row, <b>this</b> bead already pinned</td><td>unpins it &mdash; the session comes back and focus <b>stays on Work</b></td></tr>
+<tr><td>a <code>+N more</code> row</td><td>opens/closes that section (cb-kcs.5.4) &mdash; unchanged, focus does not move</td></tr>
+<tr><td>a sweep finding</td><td><b>nothing, and it says nothing.</b> <code>x</code> is the finding&rsquo;s key and it already asks its own question</td></tr>
+</table>
+<p class="note"><b>Rejected, round one:</b> a pane that <i>follows the Work cursor</i>, showing
+whichever bead the cursor rests on with <code>Enter</code> only moving focus. Nothing to dismiss and
+no mode &mdash; turned down because the Work list and a running session could then never be on the
+screen together, and because it spawns a read per rested cursor position rather than per key press.
+<b>Also rejected:</b> opening the bead <i>in place</i> in the Work pane, like a <code>+N more</code>
+section. It keeps one meaning for <code>Enter</code> in that pane and leaves the agent on screen
+beside what you are reading &mdash; turned down on width: the left column is a fixed 40 cells, so a
+design field would be read at 36 columns while the Session pane beside it has everything else on
+the screen.</p>
+
+<h2>2. What the pane shows</h2>
+<div class="screen"><pre><span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn scroll | s/f/k agent | </span><span class="y">Enter session</span><span class="d"> | g refresh | q/Esc/Ctrl-C quit</span>
+<span class="d">┌ Fleet 6 ───────────────────────────┐</span>   <span class="b">┏━ cb-41r — P2 feature [Shift-Tab leaves] ━━━━━━━━━━━━┓</span>
+<span class="d">│</span><span class="sel">▸ Rogue     <span class="g">working</span> build cb-x3u  4m </span><span class="d">│</span>   <span class="b">┃</span> <span class="hd">Enter on a bead in the Work pane shows that bead in</span> <span class="b">┃</span>
+<span class="d">│</span>  Xavier    <span class="g">working</span> plan  cb-a54  3m <span class="d">│</span>   <span class="b">┃</span> <span class="hd">the Session pane and moves focus there</span>             <span class="b">┃</span>
+<span class="d">└────────────────────────────────────┘</span>   <span class="b">┃</span>                                                     <span class="b">┃</span>
+<span class="d">┌ Work ──────────────────────────────┐</span>   <span class="b">┃</span> <span class="d">open · feature · P2 · planned · updated 14:02</span>       <span class="b">┃</span>
+<span class="d">│</span> <span class="hd">Planned, unclaimed 2</span>              <span class="d">│</span>   <span class="b">┃</span>                                                     <span class="b">┃</span>
+<span class="d">│</span><span class="sel">▸ cb-41r P2 Enter on a bead in the… </span><span class="d">│</span>   <span class="b">┃</span> <span class="hd">## Context</span>                                          <span class="b">┃</span>
+<span class="d">│</span>   cb-a54 P2 Refactoring: every re… <span class="d">│</span>   <span class="b">┃</span> Today Enter on a bead row does nothing, and there    <span class="b">┃</span>
+<span class="d">└────────────────────────────────────┘</span>   <span class="b">┃</span> is no way to read a bead's detail in the view.       <span class="b">┃</span>
+                                         <span class="b">┃</span> <span class="d">Rows 1–11 of 96</span>                                     <span class="b">┃</span>
+                                         <span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span></pre></div>
+<p class="lede">Four parts, in this order, and nothing else:</p>
+<table>
+<tr><th>Part</th><th>What it is</th></tr>
+<tr><td><b>the title</b></td><td><code>cb-41r &mdash; P2 feature</code>: the id, an em dash, the priority, the type. The shape the live title already uses (<code>Rogue &mdash; build cb-x3u</code>). A bead with no priority is <code>cb-41r &mdash; feature</code>. <b>Rejected:</b> <code>cb-41r &mdash; open &middot; P2 feature</code> (status costs width on the line that has least of it) and <code>Bead cb-41r</code> (names the mode and says nothing about the bead).</td></tr>
+<tr><td><b>the title, wrapped</b></td><td>the bead&rsquo;s own title, in full, over as many lines as it takes. It is the one thing the id does not tell you.</td></tr>
+<tr><td><b>one dim line</b></td><td><code>open &middot; feature &middot; P2 &middot; planned &middot; Rogue &middot; gh-212 &middot; updated 14:02</code> &mdash; status, type, priority, labels, assignee, issue, time. <b>A field the bead has not got is dropped with its separator</b>, so an unclaimed, unlabelled, unlinked bead reads <code>open &middot; feature &middot; P2 &middot; updated 14:02</code>. <b>Rejected:</b> two lines, the second holding labels, assignee and issue &mdash; it never runs long, at the price of a row on most beads.</td></tr>
+<tr><td><b>the description, then the design</b></td><td>both in full, exactly as stored, wrapped at the pane&rsquo;s width. Any line beginning <code>#</code> is drawn <b>bold</b>; nothing else about Markdown is interpreted &mdash; no reflowing, no bullet glyphs, no code fences turned into anything. <b>Rejected:</b> plain text throughout, which is what <code>bd show</code> in a terminal looks like &mdash; turned down because bolding the headings is what makes the eight sections findable while scrolling a three-hundred-line plan.</td></tr>
+</table>
+<p class="note"><b>Rejected, round one:</b> showing only the header fields the panel already holds, with no subprocess at all; and showing the description but never the design. The design field <i>is</i> the plan, and reading it is the reason the key exists.</p>
+
+<h2>3. Getting back to the session</h2>
+<table>
+<tr><th>Key</th><th>Where</th><th>What it does</th></tr>
+<tr><td><code>Enter</code></td><td>Fleet focus</td><td>cb-d31&rsquo;s key, unchanged: the bead is dropped, the selected agent&rsquo;s session is shown, focus moves to it. <b>When that agent has no session it still refuses</b> &mdash; gold <code>Rogue has no session</code>, focus stays on Fleet, and <b>the bead stays pinned</b>, because the key did not act.</td></tr>
+<tr><td><code>Enter</code></td><td>Work focus, same bead row</td><td>unpins it; focus stays on Work</td></tr>
+<tr><td><code>s</code></td><td>any focus</td><td><b>drops the bead</b>, whatever the outcome of the start &mdash; a navigator pressing <code>s</code> has asked to look at that agent</td></tr>
+<tr><td><code>k</code>, <code>f</code></td><td>any focus</td><td>the bead stays</td></tr>
+<tr><td><code>Tab</code>, <code>Shift-Tab</code></td><td>anywhere</td><td>move focus and nothing else &mdash; the bead stays</td></tr>
+</table>
+<p class="note"><b>No new key is spent</b>, and no key changes meaning: <code>Enter</code> already
+means &ldquo;act on the thing under the cursor&rdquo; in both panes. <code>q</code> and
+<code>Esc</code> still quit the program and are <b>not</b> repurposed as a dismissal &mdash; a
+navigator who has learned that <code>Esc</code> quits must not have it mean two things.
+<b>Rejected:</b> <code>s</code>, <code>k</code> and <code>f</code> all dropping the bead (one rule
+for the three lifecycle keys, at the price of <code>k</code> throwing away what you were reading);
+and nothing but the two <code>Enter</code>s dropping it, which is simpler still and lets
+<code>s</code> start an agent while the pane refuses to show it.</p>
+
+<h2>4. Nothing else takes it away, and only <code>g</code> re-reads it</h2>
+<table>
+<tr><th>What happens</th><th>The pinned bead</th></tr>
+<tr><td><code>↑/↓</code> under Fleet &mdash; another agent is selected</td><td>unchanged</td></tr>
+<tr><td><code>↑/↓</code> under Work &mdash; the cursor moves to another bead</td><td>unchanged</td></tr>
+<tr><td>the agent&rsquo;s session starts or ends on its own (supervision)</td><td>unchanged &mdash; the pane never jumps to a session with nothing pressed</td></tr>
+<tr><td>the 30s board refresh: the bead is claimed, reranked, closed, or leaves the queues</td><td><b>unchanged.</b> Everything on screen is a snapshot taken when <code>Enter</code> was pressed</td></tr>
+<tr><td><code>g</code></td><td><b>re-read</b>, alongside the fleet and the board</td></tr>
+<tr><td>quitting and starting the view again</td><td>gone &mdash; memory only, like an opened section</td></tr>
+</table>
+<p class="note"><b>Rejected:</b> re-reading the pinned bead every thirty seconds with the work pane.
+It keeps a label or a claim current within half a minute, at the price of a subprocess every thirty
+seconds for a pane nobody may be looking at &mdash; and of the text moving under somebody who is
+reading it.</p>
+
+<h2>5. The header</h2>
+<div class="screen"><pre><span class="hd">Work focused, cursor on a bead row</span>
+<span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k agent | 0-4/+/-/u priority | </span><span class="y">Enter bead</span><span class="d"> | g refresh | q/Esc/Ctrl-C quit</span></pre></div>
+<p class="note">One new clause, <b><code>Enter bead</code></b>, joining the priority clause on a bead
+row and following the rule every existing clause follows: a clause is shown only while its key
+would act. It is <code>Enter session</code>&rsquo;s shape exactly &mdash; key, then what it acts on.
+<b>Rejected:</b> <code>Enter read</code> (says what you get; the only clause shaped that way) and
+<code>Enter show bead</code> (matches <code>Enter show all</code>, at three words). A
+<code>+N more</code> row keeps <code>Enter show all</code>, and Fleet focus keeps
+<code>Enter session</code>; nothing else in the header changes.</p>
+
+<h2>6. The states that are not the happy path</h2>
+<h3>While the read is in flight</h3>
+<div class="screen"><pre><span class="b">┏━ cb-41r — P2 feature [Shift-Tab leaves] ━━━━━━━━━━━━┓</span>
+<span class="b">┃</span> <span class="hd">Enter on a bead in the Work pane shows that bead in</span> <span class="b">┃</span>
+<span class="b">┃</span> <span class="hd">the Session pane and moves focus there</span>             <span class="b">┃</span>
+<span class="b">┃</span>                                                     <span class="b">┃</span>
+<span class="b">┃</span> <span class="d">open · feature · P2 · planned · updated 14:02</span>       <span class="b">┃</span>
+<span class="b">┃</span>                                                     <span class="b">┃</span>
+<span class="b">┃</span> <span class="d">Reading cb-41r…</span>                                     <span class="b">┃</span>
+<span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span></pre></div>
+<p class="note">The title and the three heading lines are drawn <b>at once</b>, from the row the
+Work pane already holds; only the description and the design wait. So the pane is never blank and
+the key never feels slow.</p>
+
+<h3>When the read fails</h3>
+<div class="screen"><pre><span class="b">┃</span> <span class="e">bd show cb-41r failed</span>                               <span class="b">┃</span>
+<span class="b">┃</span> <span class="d">Press g to retry.</span>                                   <span class="b">┃</span></pre></div>
+<p class="note">One word for all three causes &mdash; a non-zero exit, a timeout, output that is not
+the JSON it promised &mdash; because the next move is the same for all three. The cause is not lost:
+it goes to <code>errors.jsonl</code> like every other failed read.</p>
+
+<h3>A bead with neither field</h3>
+<div class="screen"><pre><span class="b">┃</span> <span class="d">No description.</span>                                     <span class="b">┃</span>
+<span class="b">┃</span> <span class="d">No design.</span>                                          <span class="b">┃</span></pre></div>
+<p class="note">Two flat sentences, always both, whatever labels the bead carries.
+<b>Rejected:</b> <code>Not planned: no design yet.</code> on a bead with no <code>planned</code>
+label &mdash; it tells an empty field from a failed read, at a second sentence and a rule about
+labels.</p>
+
+<h3>A closed bead, opened from Merged, unverified</h3>
+<div class="screen"><pre><span class="b">┏━ cb-d31 — P2 feature [Shift-Tab leaves] ━━━━━━━━━━━━┓</span>
+<span class="b">┃</span> <span class="hd">Enter under Fleet focus jumps to that agent's session</span> <span class="b">┃</span>
+<span class="b">┃</span>                                                     <span class="b">┃</span>
+<span class="b">┃</span> <span class="d">closed · feature · P2 · planned · updated 11:40</span>     <span class="b">┃</span></pre></div>
+
+<h2>7. Two rules carried over rather than decided</h2>
+<p class="note"><b>The keyboard.</b> A pinned bead is not a live session, so no key is forwarded
+anywhere: <code>↑/↓/PgUp/PgDn</code> scroll it, <code>Tab</code>/<code>Shift-Tab</code> leave,
+<code>q</code>/<code>Esc</code> quit. Exactly the retained-transcript rules, and the header keeps
+its own line rather than being replaced by <code>&hellip; has the keyboard</code>. The hint after
+the title follows the live pane&rsquo;s own spelling: <code>[Shift-Tab leaves]</code> focused,
+<code>[Tab to focus]</code> unfocused.<br>
+<b>The lease.</b> This is the navigator&rsquo;s own act and it reads the shared board, so it works
+on a <b>read-only</b> view exactly as it does on a supervising one &mdash; like <code>x</code>, like
+the priority keys, like cb-d31&rsquo;s <code>Enter</code>. There the way back is <code>Tab</code> or
+a second <code>Enter</code> on the bead row, since that pane holds no session to return to.</p>

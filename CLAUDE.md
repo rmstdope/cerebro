@@ -628,7 +628,7 @@ Since cb-21g the write itself runs on the **write worker**: the keystroke leaves
 line (`cb-x: P1 → P0…`) that no other keystroke clears, the row shows the priority it was asked to
 have until a board read that began after the write settled lands, and the sentence above arrives
 when the write answers — a refused one in red, and in `errors.jsonl` under the context `write`.
-`u` is one step, spent only by using it, surviving a refresh and overwritten by the next change;
+`u` is one step, spent only by using it, surviving a refresh and overwritten by the next change.
 They are the second write in this crate that does not pass `--readonly`, beside `x`, and the one key
 set in this view that is **not** "from any focus": Work focus only, because a
 digit is far more ordinary than `x` and from Fleet focus `3` would silently rerank a bead in a pane
@@ -791,7 +791,11 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   long as the remote took. **One** worker and one write at a time, deliberately: writes to the
   shared board must run in the order the navigator pressed them, and a pool would let `3` overtake
   `0` on the same bead. The UI thread decides (`lifecycle::priority_action`), records
-  (`App::begin_write`) and looks (`App::finish_write`); it starts nothing.
+  (`App::begin_write`) and looks (`App::finish_write`); it starts nothing. A write the worker
+  never received is answered by `WriteAnswer::undeliverable`, and one it received and can no
+  longer answer — its thread gone — by `App::abandon_outstanding_writes`, because `Worker::poll`
+  answers `None` for "nothing yet" and for "never" alike and only the second is news
+  (`Worker::is_dead`).
 - `ui.rs` — pure over `App` plus an injected `DateTime<Utc>`. It never reads a file, runs a
   program or asks the clock, which is what makes its `TestBackend` cases assertions about the
   screen rather than about the machine. Widths are **terminal cells** (`unicode-width`), never

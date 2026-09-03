@@ -1290,13 +1290,15 @@ where
         // next frame, and `clear_error` on a successful one is what stops `Logger::error`'s
         // one-per-fault dedupe from swallowing an identical failure minutes later.
         if let Some(Ok(answer)) = write_worker.poll() {
-            if answer.failed() {
-                logger.error("write", answer.text(), clock());
-            } else {
-                logger.clear_error("write");
-            }
+            log_write(logger, &answer, clock());
             let action = app.finish_write(answer);
             dispatch(action, app, fleet_worker, work_worker, detail_worker, gh_worker, sweep_worker, history_worker, &clock);
+        }
+        // A request that was ACCEPTED and whose answer will never come: the other half of
+        // `dispatch_write`'s refusal. Without it one dead thread leaves the dim line up for ever,
+        // the newest-write rule permanently false and an overlay entry outliving the session.
+        if write_worker.is_dead() {
+            app.abandon_outstanding_writes();
         }
         // History fails apart from the two panes as well: a script that would not run says
         // nothing about the fleet or the board, and its only sign on screen is the red word
@@ -1712,12 +1714,24 @@ fn lifecycle_key(
     }
 }
 
-/// Turn one `AppAction` into requests.
+/// A board write's answer, in `errors.jsonl` (the navigator's choice, cb-21g round one): the
+/// header is painted over by the next frame, and a refused board write is worth a line that
+/// survives it.
 ///
-/// Seven workers and a clock: the crate's own precedent for this is `lifecycle_key`'s allow, and a
-/// parameter struct invented here would be a shape nothing else in the loop uses. `RefreshAll` asks each pane in turn and never as a set:
-/// a fleet read already in flight must not swallow the work retry the navigator pressed `g` for.
-#[allow(clippy::too_many_arguments)]
+/// `clear_error` on a successful write is what stops `Logger::error`'s own one-per-fault dedupe
+/// from swallowing the second occurrence of an identical failure minutes later. A FAILED PUSH is
+/// not a failure by `WriteAnswer::failed`'s test - the write happened - so it writes no line.
+///
+/// Its own function, and not inlined into the poll, so a case can exercise it: `run`'s loop is
+/// not somewhere a test reaches (found in review).
+fn log_write(logger: &mut Logger, answer: &app::WriteAnswer, now: DateTime<Utc>) {
+    if answer.failed() {
+        logger.error("write", answer.text(), now);
+    } else {
+        logger.clear_error("write");
+    }
+}
+
 /// Send a board write to the eighth worker, off the drawing thread (cb-21g).
 ///
 /// Its own function rather than an arm of `dispatch`: a write is the only action that does not
@@ -1732,6 +1746,12 @@ fn dispatch_write(action: AppAction, app: &mut App, write_worker: &WriteWorker) 
     }
 }
 
+/// Turn one `AppAction` into requests.
+///
+/// Seven workers and a clock: the crate's own precedent for this is `lifecycle_key`'s allow, and a
+/// parameter struct invented here would be a shape nothing else in the loop uses. `RefreshAll` asks each pane in turn and never as a set:
+/// a fleet read already in flight must not swallow the work retry the navigator pressed `g` for.
+#[allow(clippy::too_many_arguments)]
 fn dispatch(
     action: AppAction,
     app: &mut App,
@@ -5271,13 +5291,67 @@ mod main_tests {
         }
     }
 
-    /// THE REGRESSION TEST FOR THE FREEZE (cb-21g): the keystroke path spawns nothing at all.
+    /// Q4: a refused board write survives the next frame, under the context `write`. A failed
+    /// PUSH does not - the write happened, and its own sentence already says so.
+    #[test]
+    fn a_refused_write_is_written_to_the_error_log_under_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = Logger::new(&paths.shared_root);
+        logger.set_enabled(true);
+        let errors = paths.shared_root.join(".cerebro/state/errors.jsonl");
+
+        let refused = cerebro_tui::app::WriteAnswer::Priority {
+            id: "cb-x".into(),
+            from: Some(1),
+            to: 0,
+            undo: false,
+            outcome: lifecycle::PriorityOutcome::Failed {
+                text: "bd would not set cb-x to P0".into(),
+            },
+        };
+        log_write(&mut logger, &refused, Utc::now());
+        let written = std::fs::read_to_string(&errors).unwrap();
+        let line: serde_json::Value =
+            serde_json::from_str(written.lines().next().expect("one line")).unwrap();
+        assert_eq!(line["context"], "write");
+        assert_eq!(line["message"], "bd would not set cb-x to P0");
+
+        // A push that failed is not a failure by this test, and clears the context - so an
+        // identical refusal minutes later is not swallowed by the one-per-fault dedupe.
+        let pushed = cerebro_tui::app::WriteAnswer::Priority {
+            id: "cb-x".into(),
+            from: Some(1),
+            to: 0,
+            undo: false,
+            outcome: lifecycle::PriorityOutcome::Pushed { text: "cb-x: P1 → P0, but…".into() },
+        };
+        log_write(&mut logger, &pushed, Utc::now());
+        assert_eq!(
+            std::fs::read_to_string(&errors).unwrap().lines().count(),
+            1,
+            "a failed push writes no error line"
+        );
+        log_write(&mut logger, &refused, Utc::now());
+        assert_eq!(
+            std::fs::read_to_string(&errors).unwrap().lines().count(),
+            2,
+            "and the same refusal again is written, because the success cleared the context"
+        );
+    }
+
+    /// THE REGRESSION TEST FOR THE FREEZE (cb-21g): the keystroke ASKS for the write and returns,
+    /// leaving the dim line behind it.
+    ///
+    /// That it starts no process is guaranteed by `route_key`'s signature rather than asserted
+    /// here - it takes no `CommandRunner` at all, so a command on this path is a compile error,
+    /// which is stronger than any case. A `FakeCommands` here would be unreachable from the code
+    /// under test and could not fail for any implementation (found in review).
     #[test]
     fn a_priority_keystroke_runs_no_command_and_asks_for_a_write() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let programs = Programs::default();
-        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
         let mut host = SessionHost::default();
 
@@ -5291,17 +5365,16 @@ mod main_tests {
                 undo: false,
             })
         );
-        assert!(fake.calls().is_empty(), "the drawing thread ran no command");
         assert_eq!(app.notice.as_deref(), Some("cb-x: P2 → P0…"));
         assert_eq!(app.notice_tone, app::NoticeTone::Pending);
     }
 
+    /// The same for `x`, and the same guarantee: `route_key` cannot run a command.
     #[test]
     fn x_on_a_finding_asks_for_a_write_rather_than_running_one() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
         let programs = Programs::default();
-        let fake = cerebro_tui::readers::testing::FakeCommands::always("");
         let mut app = app_with_finding(SupervisionMode::Supervising);
         let mut host = SessionHost::default();
 
@@ -5311,7 +5384,6 @@ mod main_tests {
             matches!(action, AppAction::Write(cerebro_tui::app::WriteRequest::Finding { .. })),
             "x asks for a write rather than running one: {action:?}"
         );
-        assert!(fake.calls().is_empty(), "the drawing thread ran no command");
         assert_eq!(app.notice_tone, app::NoticeTone::Pending);
     }
 

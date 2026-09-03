@@ -6531,9 +6531,8 @@ idle tick after it - once, however many marks passed meanwhile."
         (cerebro--sweep-tell (list busy) "/tmp/nowhere" now)
         (cerebro--sweep-tell (list busy) "/tmp/nowhere" (time-add now 7200))
         (should (null typed))
-        (should (cdr (cdr (assoc "Cerebro" cerebro--sweep-marks))) )
-        (should (equal (car (cdr (assoc "Cerebro" cerebro--sweep-marks))) (float-time now))
-                )
+        (should (cdr (cdr (assoc "Cerebro" cerebro--sweep-marks))))
+        (should (equal (car (cdr (assoc "Cerebro" cerebro--sweep-marks))) (float-time now)))
         ;; A second mark passing while the flag is set changes nothing: a flag, not a count.
         (cerebro--sweep-tell (list busy) "/tmp/nowhere" (time-add now 14400))
         (should (null typed))

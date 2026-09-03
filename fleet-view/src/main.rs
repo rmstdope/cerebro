@@ -695,6 +695,12 @@ fn triage_tell(
 ///
 /// It reads no board at all - no `WorkBuckets`, no `panel_age` - so unlike `triage_tell` it has
 /// no "no board, no line" guard.
+///
+/// A mark FREEZES across a drain rather than advancing, because a view that may not supervise
+/// never reaches this function at all - so a view that regains supervision after a long
+/// read-only spell finds the mark already past and types at once. That is deliberate and both
+/// views do it: nobody swept during the handover, so a sweep is exactly what is owed.
+/// `cerebro--sweep-tell` is gated the same way, by `cerebro--supervision-may-act-p'.
 fn sweep_tell(
     app: &mut App,
     host: &mut SessionHost,

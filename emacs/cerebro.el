@@ -4269,7 +4269,13 @@ Nothing is typed, recorded or clocked for a session this Emacs does not
 hold: unlike `cerebro--triage-tell\=', which records even when no buffer
 took the string, this teller asks the same question both views answer in
 `tests/lib/sweep-tell.cases\='.  Errors are demoted per agent, as
-`cerebro--supervise\=' demotes its own."
+`cerebro--supervise\=' demotes its own.
+
+A mark FREEZES across a drain rather than advancing, because `cerebro--tick\='
+reaches this only under `cerebro--supervision-may-act-p\=' - so a view that
+regains supervision after a long read-only spell finds the mark already past
+and types at once.  That is deliberate and both views do it: nobody swept
+during the handover, so a sweep is exactly what is owed."
   (let ((now-float (float-time now)))
     (dolist (agent agents)
       (let ((name (cerebro-agent-name agent)))

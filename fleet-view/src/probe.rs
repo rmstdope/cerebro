@@ -86,6 +86,90 @@ pub fn view_text(view: &SessionView) -> Vec<String> {
     }
 }
 
+
+/// This checkout's `emacs/` directory, for `emacs -L`.
+///
+/// `CARGO_MANIFEST_DIR` is `fleet-view/` for every target in this package - the library, the
+/// binary and the integration targets alike - so it resolves the same from all three.
+pub fn emacs_lisp_dir() -> PathBuf {
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../emacs"))
+}
+
+fn which_emacs() -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).map(|dir| dir.join("emacs")).find(|candidate| {
+        // Executable, not merely present: a file named `emacs` that cannot be run would fail a
+        // case for a reason that has nothing to do with what it is proving.
+        std::fs::metadata(candidate)
+            .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    })
+}
+
+/// A real `emacs --batch` this crate spawned, killed and reaped when it drops.
+///
+/// `Drop` is what makes the kill unconditional: it runs on an unwind, an early return and a
+/// normal end alike, which is why the cases using this need no `catch_unwind` and report a panic
+/// at the failing assertion rather than at `resume_unwind`.
+pub struct RealEmacs {
+    child: std::process::Child,
+}
+
+impl RealEmacs {
+    /// Spawn `emacs --batch -L <emacs_lisp_dir> [-l LOAD] --eval PROGRAM`, with both pipes null.
+    ///
+    /// `None` means emacs is not on `PATH` and the calling case must `return` without asserting
+    /// anything. Before answering `None` it FAILS when `CI` is set, naming PROOF: the Rust job
+    /// installs Emacs, so a missing one there is a broken setup step, and skipping would turn the
+    /// named proof into a green no-op.
+    ///
+    /// Both pipes are null deliberately. `emacs --batch` buffers its stdout, so a `princ` before a
+    /// `sleep-for` arrives when the process ends - which is how one of these cases came to take
+    /// two minutes to fail. A case that needs a readiness signal reports it through a FILE.
+    pub fn batch(proof: &str, load: Option<&str>, program: &str) -> Option<Self> {
+        let Some(emacs) = which_emacs() else {
+            // CI installs Emacs in the Rust job FOR these cases. If it is missing there, the setup
+            // step has broken and this would otherwise pass as a green no-op.
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "emacs is not on PATH and CI is set: the Rust job's setup-emacs step has broken, \
+                 and skipping here would turn {proof} into a green no-op. (If you exported CI by \
+                 hand on a machine without Emacs, that is what this is telling you.)"
+            );
+            eprintln!("emacs is not on PATH: skipping {proof}");
+            return None;
+        };
+        let mut command = std::process::Command::new(emacs);
+        command.arg("--batch").arg("-L").arg(emacs_lisp_dir());
+        if let Some(load) = load {
+            command.arg("-l").arg(load);
+        }
+        let child = command
+            .arg("--eval")
+            .arg(program)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn the Emacs child");
+        Some(Self { child })
+    }
+
+    /// The child's pid, for a case that must watch it die.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+}
+
+impl Drop for RealEmacs {
+    fn drop(&mut self) {
+        // Reaped, not merely signalled: the kernel closes a listener as the process is reaped, and
+        // a case that takes the lease back depends on that having happened.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,88 +286,5 @@ mod tests {
                 "a dead child's transcript must not satisfy a wait for something to reach a live one"
             );
         }
-    }
-}
-
-/// This checkout's `emacs/` directory, for `emacs -L`.
-///
-/// `CARGO_MANIFEST_DIR` is `fleet-view/` for every target in this package - the library, the
-/// binary and the integration targets alike - so it resolves the same from all three.
-pub fn emacs_lisp_dir() -> PathBuf {
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../emacs"))
-}
-
-fn which_emacs() -> Option<PathBuf> {
-    use std::os::unix::fs::PermissionsExt;
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|dir| dir.join("emacs")).find(|candidate| {
-        // Executable, not merely present: a file named `emacs` that cannot be run would fail a
-        // case for a reason that has nothing to do with what it is proving.
-        std::fs::metadata(candidate)
-            .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    })
-}
-
-/// A real `emacs --batch` this crate spawned, killed and reaped when it drops.
-///
-/// `Drop` is what makes the kill unconditional: it runs on an unwind, an early return and a
-/// normal end alike, which is why the cases using this need no `catch_unwind` and report a panic
-/// at the failing assertion rather than at `resume_unwind`.
-pub struct RealEmacs {
-    child: std::process::Child,
-}
-
-impl RealEmacs {
-    /// Spawn `emacs --batch -L <emacs_lisp_dir> [-l LOAD] --eval PROGRAM`, with both pipes null.
-    ///
-    /// `None` means emacs is not on `PATH` and the calling case must `return` without asserting
-    /// anything. Before answering `None` it FAILS when `CI` is set, naming PROOF: the Rust job
-    /// installs Emacs, so a missing one there is a broken setup step, and skipping would turn the
-    /// named proof into a green no-op.
-    ///
-    /// Both pipes are null deliberately. `emacs --batch` buffers its stdout, so a `princ` before a
-    /// `sleep-for` arrives when the process ends - which is how one of these cases came to take
-    /// two minutes to fail. A case that needs a readiness signal reports it through a FILE.
-    pub fn batch(proof: &str, load: Option<&str>, program: &str) -> Option<Self> {
-        let Some(emacs) = which_emacs() else {
-            // CI installs Emacs in the Rust job FOR these cases. If it is missing there, the setup
-            // step has broken and this would otherwise pass as a green no-op.
-            assert!(
-                std::env::var_os("CI").is_none(),
-                "emacs is not on PATH and CI is set: the Rust job's setup-emacs step has broken, \
-                 and skipping here would turn {proof} into a green no-op. (If you exported CI by \
-                 hand on a machine without Emacs, that is what this is telling you.)"
-            );
-            eprintln!("emacs is not on PATH: skipping {proof}");
-            return None;
-        };
-        let mut command = std::process::Command::new(emacs);
-        command.arg("--batch").arg("-L").arg(emacs_lisp_dir());
-        if let Some(load) = load {
-            command.arg("-l").arg(load);
-        }
-        let child = command
-            .arg("--eval")
-            .arg(program)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn the Emacs child");
-        Some(Self { child })
-    }
-
-    /// The child's pid, for a case that must watch it die.
-    pub fn pid(&self) -> u32 {
-        self.child.id()
-    }
-}
-
-impl Drop for RealEmacs {
-    fn drop(&mut self) {
-        // Reaped, not merely signalled: the kernel closes a listener as the process is reaped, and
-        // a case that takes the lease back depends on that having happened.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }

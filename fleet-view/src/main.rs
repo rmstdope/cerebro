@@ -5562,7 +5562,12 @@ mod main_tests {
         want: &SupervisionMode,
     ) -> SupervisionMode {
         let mut mode = SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned);
-        probe::wait_for(Duration::from_secs(2), || {
+        // `probe::POLL_BOUND`, NOT the plan's count x interval (40 x 50ms = 2s). That identity
+        // holds only when an attempt is free, and each attempt here FORKS `fleet-supervisor`, so
+        // 2s of wall clock buys far fewer attempts than the old loop had. This is the case
+        // cb-kcs.5.3 spent 25 minutes diagnosing for being one attempt short; shrinking its
+        // budget is the opposite of what this bead is for.
+        probe::wait_for(probe::POLL_BOUND, || {
             mode = controller.apply(readers::read_configured_supervisor(paths, &RealCommands));
             (&mode == want).then_some(())
         });

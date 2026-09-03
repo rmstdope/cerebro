@@ -1390,11 +1390,18 @@ mod tests {
     fn a_finished_session_becomes_a_retained_pass_and_starting_again_replaces_it() {
         let mut host = SessionHost::default();
         host.insert("Cyclops", shell(r#"printf "first pass\r\n""#, 24, 80));
+        // `last` is kept for the panic below: on a timeout the message must say what the view
+        // actually was, which is the whole point of it.
+        let mut last = SessionView::None;
         let view = probe::wait_for(probe::POLL_BOUND, || {
             let view = host.sync(Some("Cyclops"), 24, 80, at("2026-09-01T15:42:00Z"));
-            matches!(view, SessionView::Ended { .. }).then_some(view)
+            if matches!(view, SessionView::Ended { .. }) {
+                return Some(view);
+            }
+            last = view;
+            None
         })
-        .unwrap_or(SessionView::None);
+        .unwrap_or(last);
         let SessionView::Ended { lines, at: ended_at } = view else {
             panic!("expected a retained pass, got {view:?}");
         };

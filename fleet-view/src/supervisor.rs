@@ -511,8 +511,6 @@ mod tests {
 
     // --- the lease itself -----------------------------------------------------------------------
 
-    /// A free loopback port, found by binding one and letting it go.
-    ///
     // Between a probe closing and the caller binding, anything on the machine may take the port -
     // so NOTHING below asserts on a bind that used `probe::free_endpoint` directly. Setting up a
     // lease goes through `acquire_on_a_free_port`, which retries, and a test that needs a foreign
@@ -555,7 +553,10 @@ mod tests {
         owner: SupervisorKind,
     ) -> SupervisorLease {
         let mut last = None;
-        let lease = probe::wait_for(std::time::Duration::from_secs(4), || {
+        // `probe::POLL_BOUND` rather than the plan's count x interval (200 x 20ms = 4s): that
+        // identity only holds when an attempt is free, and this one binds a socket. The bound is
+        // the wall clock the case gets, not an attempt budget.
+        let lease = probe::wait_for(probe::POLL_BOUND, || {
             match SupervisorLease::try_acquire(addr, record, identity, owner) {
                 Ok(lease) => Some(lease),
                 Err(error) => {
@@ -717,7 +718,6 @@ mod tests {
             .map(|status| status.success())
             .unwrap_or(false)
     }
-
 
     #[test]
     fn a_record_from_another_checkout_is_a_collision_not_a_takeover() {

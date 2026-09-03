@@ -255,6 +255,28 @@ lost, not a second set of beads, and a pass that finds nothing to ask about says
 goes back to `idle`. It is never typed while you are `working` or `asking`, so a bead that arrives
 mid-pass is one this pass's re-run of the query already covers.
 
+### The second line the fleet view types
+
+Every two hours the view types a second line into this session:
+
+    [cerebro] Two hours since your last sweep. Run the two sweeps that are yours - the claims, and the worktrees the pruner declined - and bring the navigator anything that needs a judgement.
+
+It is the signal *The claims sweep is yours to run*, below, depends on: an orchestrator has no
+cadence of its own and no way to notice a round has come, so this line is how one arrives. Write
+`working --phase sweep`, run the two sweeps that need a judgement no decision table makes — the
+claims, and the worktrees the pruner declined — bring the navigator anything that needs one, and
+write `idle` again when the pass is over.
+
+Like the triage line it arrives **only while you are idle**. Unlike it, a mark that falls while you
+are `working` or `asking` is **queued**, and the line arrives at the first moment you go idle — a
+two-hour mark is an edge that passes rather than a condition that stays true, so it would otherwise
+be lost. At most one is queued: six hours of work is followed by one sweep, never three.
+
+The clock resets when the line is **typed**, not when you finish sweeping. So a sweep you ran for
+some other reason — the one at startup, or one the navigator asked for in conversation — is
+invisible to it, and you may be asked to sweep again inside a window you have already swept. That is
+known and accepted: a sweep is read-only except for the two judgements it brings.
+
 ## Where the work is
 
 Beads. `bd ready --label planned --exclude-label human --exclude-type epic` is the queue the
@@ -507,7 +529,8 @@ because you act on them.
 
 The fleet view detects the same candidates, and `x` closes one on the navigator's confirmation. But
 a claim does not have to wait for somebody to press a key: whenever you sweep — on startup, and each
-time you notice the ten-minute round has come — **sweep the claims too. It is three commands and it
+time the fleet view types the two-hourly sweep line described in *The second line the fleet view
+types* above — **sweep the claims too. It is three commands and it
 is yours to run, not the script's**, because closing a bead needs a judgement the script cannot
 make.
 

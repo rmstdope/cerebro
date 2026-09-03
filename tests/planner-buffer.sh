@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Proves `scripts/planner-buffer`: the one place the harness answers "how much planned, claimable
-# work is there, and how much is wanted" - the wanted number being one bead per implementer on the
-# roster, minus any told to finish, never fewer than the floor. That question used to be answered twice, in two languages
+# work is there, and how much is wanted" - the wanted number being `planner_buffer_multiple' beads
+# per implementer on the roster (absent means one each), minus any told to finish, never fewer than
+# the floor. That question used to be answered twice, in two languages
 # - `cerebro--trigger`'s planner arm in `emacs/cerebro.el` and a hand-written `bd list` in
 # `skills/plan-bead/SKILL.md` - and the two drifted, each time costing sessions: a trigger counting
 # beads the skill excluded started a planner to find nothing to do (de05dc3), and one rule change

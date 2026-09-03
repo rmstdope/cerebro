@@ -102,7 +102,8 @@ planned_count() {
   fi
 }
 
-# How many beads the fleet wants: one per implementer ON THE ROSTER, minus those told to finish.
+# How many beads the fleet wants: `planner_buffer_multiple' beads per implementer ON THE ROSTER
+# (absent means one each - cb-3in), minus those told to finish.
 # Sessions are not counted at all. Since cb-1or.1 an implementer ends its pass with `waiting', the
 # fleet view ends the session, and a fresh one is started *by* a planned bead - so on a quiet board
 # no builder is running, a count of sessions is the floor, and a four-builder fleet plans two beads

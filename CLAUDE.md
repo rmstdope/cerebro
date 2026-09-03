@@ -751,7 +751,9 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   nobody drains is a deadlock — and `Child::try_wait` is what keeps a dead watcher from being a
   zombie that reads as live for ever.
 - `model.rs` — pure parsing and derivation (roster, state files, the marker sentence, the process
-  tree, `partition_beads`). It is the Rust copy of the elisp rules, held to the same
+  tree, `partition_beads` — which since cb-hzl skips an epic only while it HAS a direct child,
+  answered from the ids the one board read already holds, so a childless epic partitions like any
+  other bead; `scripts/work-beads`, whose list is scoped to one status, asks `bd children` instead). It is the Rust copy of the elisp rules, held to the same
   `tests/lib/session-args.cases` table as every other reader of the marker sentence.
 - `supervisor.rs` — ownership: the pure `reconcile_supervision`, held to
   `tests/lib/supervisor.cases` the way `model.rs` is held to its own table, and `SupervisorLease`,

@@ -1004,13 +1004,19 @@ a row and break the column the eye follows down the panel."
   "Lines for one section: TITLE with its count, then up to MAX of BEADS.
 
 SORT is the ordering function, `cerebro--sort-beads' by default.
-SUFFIX-FN, when given, is a pure (BEAD) -> string-or-nil whose answer is
-right-aligned on each row (see `cerebro--bead-line').
+SUFFIX-FN is a pure (BEAD) -> string-or-nil whose answer is right-aligned on
+each row (see `cerebro--bead-line'), and defaults to `cerebro--epic-suffix'
+- so every section marks a childless epic, and the one section that passes
+its own (Waiting on you, whose age is the whole reason that column exists)
+keeps the age instead (cb-hzl).  The default lives here rather than at five
+call sites, which is the elisp spelling of the Rust `match' on the section
+kind in `fleet-view/src/app.rs'.
 
 The count is on the header rather than implied by the rows, because the rows
 are the part that gets capped - and a section whose remainder is hidden
 still has to say how much work is really in it."
-  (let* ((sorted (funcall (or sort #'cerebro--sort-beads) beads))
+  (let* ((suffix-fn (or suffix-fn #'cerebro--epic-suffix))
+         (sorted (funcall (or sort #'cerebro--sort-beads) beads))
          (shown (seq-take sorted max))
          (hidden (- (length sorted) (length shown))))
     (append
@@ -1019,7 +1025,7 @@ still has to say how much work is really in it."
          (list (propertize "  (none)" 'face 'shadow))
        (mapcar (lambda (bead)
                  (cerebro--bead-line bead width
-                                     (and suffix-fn (funcall suffix-fn bead))))
+                                     (funcall suffix-fn bead)))
                shown))
      (when (> hidden 0)
        (list (propertize (format "  +%d more" hidden) 'face 'shadow))))))
@@ -5176,6 +5182,10 @@ other way sets its own here."
 
 (defcustom cerebro-skipped-issue-types '("epic" "event")
   "Issue types that are bookkeeping rather than work, and so never shown.
+Every type on the list is skipped outright EXCEPT `epic', whose arm is
+conditional: `cerebro--bookkeeping-p' skips one exactly while it has a
+direct child (cb-hzl).  Adding a type here still excludes it, which is what
+keeps this a setting rather than a comment.
 The shell has the same list, in `scripts/work-beads', which is where the
 reasoning is written down for every reader of closed beads (ah-cg1);
 `cerebro-test/the-panel-skips-exactly-what-work-beads-excludes' holds the
@@ -5237,6 +5247,58 @@ excluded by that and by diverging from the word anyway."
                     (string-prefix-p held label)))
               labels)))
 
+(defun cerebro--parent-ids (beads)
+  "The id of every bead in BEADS that another bead names as its direct parent.
+
+A child's id is <parent>.<n>, the convention `bd create --parent' writes.
+Everything before an id's LAST `.' is that bead's direct parent, so this is
+exactly the set of ids with at least one direct child - `cb-1or.1.1' puts
+`cb-1or.1' in it and says nothing about `cb-1or', which `cb-1or.1' puts in
+it instead.
+
+The id is the only route to the question from the panel's one board read:
+`bd list --json' carries no `parent' field, `--brief' or not, and
+`dependency_count'/`dependent_count' count `blocks' edges alone.  A second
+`bd' call per five-second tick is not affordable (cb-boc).
+`scripts/work-beads', which is not on a tick and whose list is
+status-scoped, asks `bd children' instead."
+  (delete-dups
+   (delq nil
+         (mapcar (lambda (bead)
+                   (let ((id (alist-get 'id bead)))
+                     (when (and id (string-match "\\`\\(.*\\)\\.[^.]*\\'" id))
+                       (match-string 1 id))))
+                 beads))))
+
+(defun cerebro--bookkeeping-p (bead parent-ids)
+  "Whether BEAD is bookkeeping rather than work, and so appears in no section.
+
+PARENT-IDS is `cerebro--parent-ids' over the same list.  An `event' always
+is - bd's own audit record of a state change, carrying the very labels the
+buckets key on.  An `epic' is bookkeeping over its CHILDREN, so it is
+skipped exactly while it has some: a split epic listed beside its children
+double-counts the same work, and it closes when its last child does.  A
+childless epic is bookkeeping over nothing - nobody has broken it down yet
+- so it is work, and it partitions like any other bead at any status
+\(cb-hzl\)."
+  (let ((type (alist-get 'issue_type bead)))
+    (and (member type cerebro-skipped-issue-types)
+         ;; `epic' is the ONE conditional arm.  Every other type on the list is
+         ;; skipped outright, so a navigator who adds one to the defcustom still
+         ;; gets it excluded - the list is what decides, and this qualifies it.
+         (or (not (equal type "epic"))
+             (and (member (alist-get 'id bead) parent-ids) t))
+         t)))
+
+(defun cerebro--epic-suffix (bead)
+  "The right-aligned `epic' marker for BEAD, or nil.
+
+A bead of type `epic' that reaches any section is CHILDLESS, by
+`cerebro--partition-beads' - so the row says so, which is the only thing
+distinguishing \"wants splitting\" from \"wants planning\" at a glance
+\(cb-hzl\)."
+  (when (equal (alist-get 'issue_type bead) "epic") "epic"))
+
 (defun cerebro--partition-beads (beads)
   "Split BEADS into a named association list, one entry per section.
 
@@ -5250,7 +5312,9 @@ its bucket is empty.  The association order is descriptive only - a
 consumer reads a value by its key with `alist-get', never by position, so
 adding or reordering a bucket cannot retarget what another one reads
 \(ah-vcof\).  Not every bead lands in one, deliberately: verified work is
-finished, epics are parents rather than work, bd's own `event' records are
+finished, an epic that has children is bookkeeping over them rather than
+work of its own (a CHILDLESS one is neither, and partitions like any other
+bead - cb-hzl), bd's own `event' records are
 bookkeeping, and blocked or deferred beads cannot be picked up.  A panel is
 a list of what to do about something, so what there is nothing to do about
 is left out.
@@ -5260,7 +5324,8 @@ is what keeps those exclusions in one readable place instead of spread
 across five `bd' invocations - an `event' in particular carries the very
 labels these rules key on, and would otherwise arrive looking like merged
 work."
-  (let (claimed planned being-planned unplanned paused merged)
+  (let ((parents (cerebro--parent-ids beads))
+        claimed planned being-planned unplanned paused merged)
     (dolist (bead beads)
       (let ((status (alist-get 'status bead)))
         (cond
@@ -5270,7 +5335,7 @@ work."
          ;; these rules key on, so without this three of them appeared as
          ;; merged work - one per verification ever recorded.
          ;; `scripts/work-beads' owns the same list on the shell side.
-         ((member (alist-get 'issue_type bead) cerebro-skipped-issue-types) nil)
+         ((cerebro--bookkeeping-p bead parents) nil)
          ((equal status "in_progress") (push bead claimed))
          ((equal status "open")
           (let ((labels (cerebro--bead-labels bead)))

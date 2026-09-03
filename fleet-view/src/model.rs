@@ -720,7 +720,13 @@ pub struct WorkBuckets {
     pub linked: Vec<LinkedBead>,
 }
 
+/// The issue types that are bookkeeping rather than work. Every one is skipped outright EXCEPT
+/// `epic`, whose arm is conditional - see `is_bookkeeping`, which skips an epic exactly while it
+/// has a direct child (cb-hzl). `emacs/cerebro.el`'s `cerebro-skipped-issue-types` holds the same
+/// two words, and `cerebro-test/the-panel-skips-exactly-what-work-beads-excludes` holds that list
+/// to `scripts/work-beads --print-excluded-types`.
 const SKIPPED_ISSUE_TYPES: [&str; 2] = ["epic", "event"];
+const CONDITIONAL_ISSUE_TYPE: &str = "epic";
 const PAUSED_LABEL: &str = "human";
 const PLANNED_LABEL: &str = "planned";
 const PLANNING_LABEL: &str = "planning";
@@ -736,18 +742,52 @@ fn is_holding_label(labels: &[String]) -> bool {
     })
 }
 
+/// The id of every bead in BEADS that another bead names as its direct parent.
+///
+/// A child's id is `<parent>.<n>`, the convention `bd create --parent` writes and every reader in
+/// this repository already walks. Everything before an id's LAST `.` is that bead's direct parent,
+/// so this is exactly the set of ids with at least one direct child - `cb-1or.1.1` puts
+/// `cb-1or.1` in it and says nothing about `cb-1or`, which `cb-1or.1` puts in it instead.
+///
+/// The id is the only route to the question from this read: `bd list --json` carries no `parent`
+/// field, `--brief` or not, and `dependency_count`/`dependent_count` count `blocks` edges alone
+/// (`cb-kcs` has 45 descendants and `dependent_count` 0). A second `bd` call per five-second
+/// refresh is not affordable (cb-boc). `scripts/work-beads`, which is not on a tick and whose list
+/// is status-scoped, asks `bd children` instead.
+fn parent_ids(beads: &[Bead]) -> BTreeSet<String> {
+    beads
+        .iter()
+        .filter_map(|bead| bead.id.rsplit_once('.').map(|(parent, _)| parent.to_string()))
+        .collect()
+}
+
+/// Whether BEAD is bookkeeping rather than work, and so appears in no section.
+///
+/// An `event` always is - bd's own audit record of a state change, carrying the very labels the
+/// buckets key on. An `epic` is bookkeeping over its CHILDREN, so it is skipped exactly while it
+/// has some: a split epic listed beside its children double-counts the same work, and it closes
+/// when its last child does. A childless epic is bookkeeping over nothing - nobody has broken it
+/// down yet, so it is work, and it partitions like any other bead at any status (cb-hzl).
+fn is_bookkeeping(bead: &Bead, parents: &BTreeSet<String>) -> bool {
+    let issue_type = bead.issue_type.as_str();
+    SKIPPED_ISSUE_TYPES.contains(&issue_type)
+        && (issue_type != CONDITIONAL_ISSUE_TYPE || parents.contains(&bead.id))
+}
+
 /// Split BEADS into the fleet panel's six buckets.
 ///
-/// Exact precedence, matching `emacs/cerebro.el:4652-4764`: `epic` and `event` are skipped
-/// outright; `in_progress` is always claimed; for `open`, `human` wins over exact `planned`,
+/// Exact precedence, matching `emacs/cerebro.el:4652-4764`: an `event`, and an `epic` that has at
+/// least one direct child, are skipped outright (`is_bookkeeping`), while a CHILDLESS epic
+/// partitions like any other bead; `in_progress` is always claimed; for `open`, `human` wins over exact `planned`,
 /// exact `planned` wins over a hold (`planning` or `planning:<name>`), and anything else open is
 /// unplanned; `closed` is merged unless it carries a settled verification label; every other
 /// status (blocked, deferred, an unknown future status) appears in no bucket.
 pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
     let mut buckets = WorkBuckets::default();
     buckets.linked = linked_beads(&beads);
+    let parents = parent_ids(&beads);
     for bead in beads {
-        if SKIPPED_ISSUE_TYPES.contains(&bead.issue_type.as_str()) {
+        if is_bookkeeping(&bead, &parents) {
             continue;
         }
         match bead.status.as_str() {
@@ -1220,6 +1260,7 @@ mod tests {
             bead("settled-passed", "closed", "feature", &["verification:passed"]),
             bead("settled-not-needed", "closed", "feature", &["verification:not-needed"]),
             bead("skipped-epic", "open", "epic", &[]),
+            bead("skipped-epic.1", "in_progress", "feature", &[]),
             bead("skipped-event", "closed", "event", &[]),
             bead("blocked-1", "blocked", "feature", &[]),
             bead("deferred-1", "deferred", "feature", &[]),
@@ -1229,7 +1270,7 @@ mod tests {
 
         assert_eq!(
             buckets.claimed.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
-            vec!["claimed-1"]
+            vec!["claimed-1", "skipped-epic.1"]
         );
         assert_eq!(
             buckets.planned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
@@ -1255,6 +1296,58 @@ mod tests {
         assert_eq!(
             buckets.merged.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
             vec!["merged-1"]
+        );
+    }
+
+    /// An epic is bookkeeping over its CHILDREN, so it is skipped exactly while it has some. A
+    /// childless epic is bookkeeping over nothing - nobody has broken it down yet - so it
+    /// partitions like any other bead, at every status (cb-hzl). An `event` never does.
+    #[test]
+    fn a_childless_epic_is_work_and_a_parented_one_is_not() {
+        let beads = vec![
+            bead("cb-p", "open", "epic", &[]),
+            bead("cb-p.1", "open", "feature", &["planned"]),
+            bead("cb-lone", "open", "epic", &[]),
+            bead("cb-c", "closed", "epic", &[]),
+            bead("cb-c.1", "closed", "feature", &[]),
+            bead("cb-done", "closed", "epic", &[]),
+            bead("cb-ev", "closed", "event", &[]),
+            bead("cb-ord", "open", "feature", &[]),
+        ];
+        let buckets = partition_beads(beads);
+
+        assert_eq!(
+            buckets.unplanned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+            vec!["cb-lone", "cb-ord"],
+            "a childless epic is unplanned work; a parented one appears nowhere"
+        );
+        assert_eq!(
+            buckets.merged.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+            vec!["cb-c.1", "cb-done"],
+            "a closed childless epic reaches Merged, unverified; a parented one does not"
+        );
+        assert_eq!(
+            buckets.planned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+            vec!["cb-p.1"]
+        );
+        for bucket in [&buckets.claimed, &buckets.being_planned, &buckets.paused] {
+            assert!(bucket.is_empty());
+        }
+    }
+
+    /// The set is DIRECT parents, not ancestors: everything before an id's LAST dot. A
+    /// `starts_with("cb-p.")` spelling would call `cb-p` parented by its grandchild and skip it.
+    #[test]
+    fn a_grandchild_names_only_its_own_parent() {
+        let beads = vec![
+            bead("cb-p", "open", "epic", &[]),
+            bead("cb-p.1.1", "open", "feature", &[]),
+        ];
+        let buckets = partition_beads(beads);
+        assert_eq!(
+            buckets.unplanned.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+            vec!["cb-p", "cb-p.1.1"],
+            "cb-p.1.1's direct parent is cb-p.1, which is not in the list, so cb-p is childless"
         );
     }
 

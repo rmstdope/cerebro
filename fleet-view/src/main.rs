@@ -5562,13 +5562,10 @@ mod main_tests {
         want: &SupervisionMode,
     ) -> SupervisionMode {
         let mut mode = SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned);
-        for _ in 0..40 {
+        probe::wait_for(Duration::from_secs(2), || {
             mode = controller.apply(readers::read_configured_supervisor(paths, &RealCommands));
-            if &mode == want {
-                return mode;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
+            (&mode == want).then_some(())
+        });
         mode
     }
 
@@ -5650,19 +5647,8 @@ mod main_tests {
     /// skips, and CI without it fails loudly rather than passing as a green no-op.
     #[test]
     fn a_real_emacs_releases_on_the_declaration_and_this_process_takes_it() {
-        let Some(emacs) = which_emacs() else {
-            assert!(
-                std::env::var_os("CI").is_none(),
-                "emacs is not on PATH and CI is set: the Rust job's setup-emacs step has broken, \
-                 and skipping here would turn the cutover's only cross-implementation proof into \
-                 a green no-op."
-            );
-            eprintln!("emacs is not on PATH: skipping the cross-implementation cutover test");
-            return;
-        };
         let (dir, paths) = supervisor_consumer(Some("emacs"));
         let root = dir.path().to_path_buf();
-        let emacs_lisp = concat!(env!("CARGO_MANIFEST_DIR"), "/../emacs");
         // Readiness through a FILE, never stdout: Emacs's batch stdout is buffered, so a `princ`
         // before a `sleep-for` arrives when the process ends (`supervisor.rs:637-639`).
         let ready = root.join("emacs-ready");
@@ -5677,93 +5663,63 @@ mod main_tests {
             root = format!("{:?}", root.display().to_string()),
             ready = format!("{:?}", ready.display().to_string()),
         );
-        let mut child = std::process::Command::new(emacs)
-            .args(["--batch", "-L", emacs_lisp, "-l", "cerebro", "--eval", &program])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn the Emacs supervisor");
+        // `RealEmacs` kills and reaps on Drop, which runs on an unwind as well as a normal end -
+        // so this case needs no `catch_unwind`, and a failing assertion reports at itself.
+        let Some(_child) = probe::RealEmacs::batch(
+            "the cutover's only cross-implementation proof",
+            Some("cerebro"),
+            &program,
+        ) else {
+            return;
+        };
 
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            for _ in 0..400 {
-                if ready.exists() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            assert!(ready.exists(), "the Emacs supervisor never reported itself up");
+        assert!(
+            probe::wait_until(Duration::from_secs(20), || ready.exists()),
+            "the Emacs supervisor never reported itself up"
+        );
 
-            // While the declaration says `emacs`, this process is read-only BECAUSE OF THE
-            // DECLARATION and never reaches for the lease at all - `ConfiguredFor`, not
-            // `OwnedBy`. (The plan predicted `OwnedBy` here; that answer needs a declaration of
-            // `tui` racing an Emacs that has not released yet, which is a transient
-            // `emacs_and_tui_share_one_crash_released_lease` already covers with a real bound
-            // listener. Deviation recorded in the pull request.) What proves the Emacs really
-            // holds it is its own record, written by the real `cerebro--acquire-supervision`.
-            let mut controller = SupervisorController::new(&paths, &RealCommands);
-            let record = reported_record(&controller);
-            assert_eq!(
-                apply_until(
-                    &mut controller,
-                    &paths,
-                    &SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(
-                        SupervisorKind::Emacs
-                    )),
-                ),
-                SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
-                "the declaration alone keeps this process read-only"
-            );
-            // POLLED, not read once. The readiness file is written after the FIRST
-            // reconciliation returns, and that first one may not be the one that acquires: a
-            // released listener is not instantly rebindable, so Emacs retries on its own loop.
-            // Reading the record on one attempt failed here roughly one run in four.
-            let mut held = String::new();
-            for _ in 0..100 {
-                held = std::fs::read_to_string(&record).unwrap_or_default();
-                if held.contains("\"owner\":\"emacs\"") {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            assert!(
-                held.contains("\"owner\":\"emacs\""),
-                "the record names Emacs as the live owner, not {held:?}"
-            );
+        // While the declaration says `emacs`, this process is read-only BECAUSE OF THE
+        // DECLARATION and never reaches for the lease at all - `ConfiguredFor`, not
+        // `OwnedBy`. (The plan predicted `OwnedBy` here; that answer needs a declaration of
+        // `tui` racing an Emacs that has not released yet, which is a transient
+        // `emacs_and_tui_share_one_crash_released_lease` already covers with a real bound
+        // listener. Deviation recorded in the pull request.) What proves the Emacs really
+        // holds it is its own record, written by the real `cerebro--acquire-supervision`.
+        let mut controller = SupervisorController::new(&paths, &RealCommands);
+        let record = reported_record(&controller);
+        assert_eq!(
+            apply_until(
+                &mut controller,
+                &paths,
+                &SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(
+                    SupervisorKind::Emacs
+                )),
+            ),
+            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs)),
+            "the declaration alone keeps this process read-only"
+        );
+        // POLLED, not read once. The readiness file is written after the FIRST
+        // reconciliation returns, and that first one may not be the one that acquires: a
+        // released listener is not instantly rebindable, so Emacs retries on its own loop.
+        // Reading the record on one attempt failed here roughly one run in four.
+        let mut held = String::new();
+        let named = probe::wait_until(probe::POLL_BOUND, || {
+            held = std::fs::read_to_string(&record).unwrap_or_default();
+            held.contains("\"owner\":\"emacs\"")
+        });
+        assert!(named, "the record names Emacs as the live owner, not {held:?}");
 
-            // The cutover: one line in one file, and nothing restarted.
-            write_declaration(&root, "tui");
-            assert_eq!(
-                apply_until(&mut controller, &paths, &SupervisionMode::Supervising),
-                SupervisionMode::Supervising,
-                "Emacs released on the declaration and this process took the lease"
-            );
-            let written = std::fs::read_to_string(&record).expect("the record exists");
-            assert!(
-                written.contains("\"owner\":\"tui\""),
-                "the record names the new owner, not {written}"
-            );
-        }));
-
-        let _ = child.kill();
-        let _ = child.wait();
-        if let Err(panic) = outcome {
-            std::panic::resume_unwind(panic);
-        }
-    }
-
-    /// `supervisor.rs`'s test module has this and is not public; twelve lines, no `unsafe` and no
-    /// crate, so it is copied rather than exported. A `pub mod testing` on the model of
-    /// `readers::testing` would be the alternative and is not worth a public surface for one
-    /// helper used twice - do not "fix" this duplication.
-    fn which_emacs() -> Option<std::path::PathBuf> {
-        use std::os::unix::fs::PermissionsExt;
-        let path = std::env::var_os("PATH")?;
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("emacs"))
-            .find(|candidate| {
-                std::fs::metadata(candidate)
-                    .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-                    .unwrap_or(false)
-            })
+        // The cutover: one line in one file, and nothing restarted.
+        write_declaration(&root, "tui");
+        assert_eq!(
+            apply_until(&mut controller, &paths, &SupervisionMode::Supervising),
+            SupervisionMode::Supervising,
+            "Emacs released on the declaration and this process took the lease"
+        );
+        let written = std::fs::read_to_string(&record).expect("the record exists");
+        assert!(
+            written.contains("\"owner\":\"tui\""),
+            "the record names the new owner, not {written}"
+        );
     }
 }

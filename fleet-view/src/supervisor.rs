@@ -613,25 +613,9 @@ mod tests {
     /// run it, and the assertion is skipped there rather than failing for the wrong reason.
     #[test]
     fn emacs_and_tui_share_one_crash_released_lease() {
-        let Some(emacs) = which_emacs() else {
-            // CI installs Emacs in the Rust job FOR this test. If it is missing there, the setup
-            // step has broken and this would otherwise pass as a green no-op - which would leave
-            // the fleet's only cross-language lock proof silently unrun, the exact failure this
-            // test exists to rule out.
-            assert!(
-                std::env::var_os("CI").is_none(),
-                "emacs is not on PATH and CI is set: the Rust job's setup-emacs step has broken, \
-                 and skipping here would turn the only cross-implementation lock proof into a \
-                 green no-op. (If you exported CI by hand on a machine without Emacs, that is \
-                 what this is telling you.)"
-            );
-            eprintln!("emacs is not on PATH: skipping the cross-implementation lease test");
-            return;
-        };
         let dir = tempfile::tempdir().expect("tempdir");
         let record = dir.path().join("supervisor.json");
         let identity = "/repos/shared-checkout";
-        let emacs_lisp = concat!(env!("CARGO_MANIFEST_DIR"), "/../emacs");
 
         // Bind on port 0, then report the port through a FILE rather than through stdout:
         // Emacs's batch stdout is buffered, so a `princ` before a `sleep-for` arrives two minutes
@@ -661,29 +645,19 @@ mod tests {
             port_file = format!("{:?}", port_file.display().to_string()),
         );
 
-        let mut child = std::process::Command::new(emacs)
-            .args(["--batch", "-L", emacs_lisp, "--eval", &program])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn the Emacs owner");
+        let Some(child) = probe::RealEmacs::batch(
+            "the only cross-implementation lock proof",
+            None,
+            &program,
+        ) else {
+            return;
+        };
 
         // The port file appears only once the listener is bound and the record written.
-        let mut port = None;
-        for _ in 0..400 {
-            if let Ok(text) = std::fs::read_to_string(&port_file) {
-                if let Ok(parsed) = text.trim().parse::<u16>() {
-                    port = Some(parsed);
-                    break;
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        let Some(port) = port else {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("the Emacs owner never reported a bound port");
-        };
+        let port = probe::wait_for(std::time::Duration::from_secs(20), || {
+            std::fs::read_to_string(&port_file).ok()?.trim().parse::<u16>().ok()
+        })
+        .expect("the Emacs owner never reported a bound port");
         let addr = endpoint(port);
 
         // Refused, and told who holds it - across two languages, one record, one port.
@@ -707,9 +681,8 @@ mod tests {
             .expect("a pid");
 
         // The owner dies without cleaning up. Its session does not: a SIGKILLed Emacs orphans its
-        // children rather than taking them with it.
-        let _ = child.kill();
-        let _ = child.wait();
+        // children rather than taking them with it. `Drop` kills and reaps.
+        drop(child);
         assert!(
             alive(session_pid),
             "the owner's session must outlive it, or this proves nothing about inherited \
@@ -745,19 +718,6 @@ mod tests {
             .unwrap_or(false)
     }
 
-    fn which_emacs() -> Option<std::path::PathBuf> {
-        use std::os::unix::fs::PermissionsExt;
-        let path = std::env::var_os("PATH")?;
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("emacs"))
-            .find(|candidate| {
-                // Executable, not merely present: a file named `emacs` that cannot be run would
-                // fail this test for a reason that has nothing to do with the lease.
-                std::fs::metadata(candidate)
-                    .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-                    .unwrap_or(false)
-            })
-    }
 
     #[test]
     fn a_record_from_another_checkout_is_a_collision_not_a_takeover() {

@@ -95,7 +95,8 @@ buffer (see *Leftover worktrees*), and it ends an implementer that reports `wait
 kept — and starts a fresh one when a planned bead exists, at most one implementer every 30 seconds.
 It runs the **interactive roles** exactly the same way: a role that writes `waiting` is ended half a
 minute later — its buffer kept, `RET` shows it — and started fresh when its trigger fires: a planner
-when the planned buffer is short or a P0 is unplanned;
+when the planned buffer is short and a **ranked** bead is unplanned, or a P0 is unplanned — a
+board of nothing but unranked beads starts Cerebro to rank them and no planner (cb-zgg);
 Psylocke when a merged bead is unverified or a verdict is stale; Moira when an issue moved on GitHub
 or a bead linked to one (`gh-<n>` in its `external_ref`) changed since her last pass, Cypher when an
 outside PR moved, both hourly regardless; Forge hourly too; an implementer when a planned,

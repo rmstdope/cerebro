@@ -212,7 +212,9 @@ pub struct TriggerFacts {
     pub p0_unplanned: Vec<String>,
     /// How many planned, unclaimed, unparked beads there are.
     pub planned: usize,
-    /// Ids of every unplanned, unparked bead - what a planner may actually take.
+    /// Ids of the unplanned, unparked beads a planner may actually take: P4s excluded, since an
+    /// unranked bead is Cerebro's to rank and not a planner's to plan. Feeds both the buffer
+    /// condition and the planner fingerprint, and the second is why ranking releases the guard.
     pub actionable_ids: Vec<String>,
     /// Ids of the planned, unclaimed, unparked beads - what an implementer may actually claim.
     pub planned_ids: Vec<String>,
@@ -305,7 +307,19 @@ impl TriggerFacts {
                 .map(|bead| bead.id.clone())
                 .collect(),
             planned: planned.len(),
-            actionable_ids: unplanned.iter().map(|bead| bead.id.clone()).collect(),
+            // What a planner may actually TAKE, which is narrower than what is unplanned: a P4
+            // is not a low priority, it is a bead nobody has ranked, and `skills/plan-bead`
+            // forbids planning one. Excluding them here does two jobs at once. It keeps the
+            // buffer condition from starting a planner that can only come up and end
+            // (`condition`, the `planner` arm), and it makes RANKING a bead move this set -
+            // which is what the unchanged-work guard compares. Carrying P4s made a P4 -> P2
+            // ranking a no-op to the fingerprint, and the newly plannable bead sat unplanned
+            // until some unrelated board change happened to break it (cb-zgg).
+            actionable_ids: unplanned
+                .iter()
+                .filter(|bead| bead.priority != Some(4))
+                .map(|bead| bead.id.clone())
+                .collect(),
             planned_ids: planned.iter().map(|bead| bead.id.clone()).collect(),
             unranked_ids,
             merged_unverified: buckets.merged.len(),
@@ -439,7 +453,10 @@ fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
             let want = facts.planner_want();
             // The `actionable_ids` test is not decoration: a short buffer is a reason to plan
             // only while there is something to plan, and without it the second planner is started
-            // to find an empty queue every time the first one takes the last bead.
+            // to find an empty queue every time the first one takes the last bead. Since cb-zgg
+            // the set excludes P4s, so a board of nothing but unranked beads starts no planner
+            // either - that board is Cerebro's to rank, and the orchestrator arm below is what
+            // fires for it.
             (facts.planned < want && !facts.actionable_ids.is_empty())
                 .then(|| format!("buffer {} of {want}", facts.planned))
         }
@@ -875,11 +892,9 @@ mod tests {
 
         assert_eq!(facts.p0_unplanned, vec!["cb-9zz".to_string()]);
         assert_eq!(facts.planned, 2);
-        // `triage:declined` and `human` are the navigator's, and never a planner's.
-        assert_eq!(
-            facts.actionable_ids,
-            vec!["cb-9zz".to_string(), "cb-rank".to_string()]
-        );
+        // `triage:declined` and `human` are the navigator's, and never a planner's - and neither
+        // is an unranked P4: `cb-rank` is in `unranked_ids` below and nowhere else (cb-zgg).
+        assert_eq!(facts.actionable_ids, vec!["cb-9zz".to_string()]);
         assert_eq!(
             facts.planned_ids,
             vec!["cb-p1".to_string(), "cb-p2".to_string()]
@@ -890,6 +905,29 @@ mod tests {
         assert_eq!(facts.stale_verdicts, 1);
         assert_eq!(facts.implementers, 2);
         assert_eq!(facts.planner_want(), 2);
+    }
+
+    /// Ranking a bead is what Cerebro does when the fleet view wakes it, and it has to be able to
+    /// wake a planner. Before cb-zgg `actionable_ids` carried every unplanned bead, so a P4 -> P2
+    /// ranking left the whole planner fingerprint identical and the unchanged-work guard held the
+    /// start - observed holding for 45 minutes over one ranked bead.
+    #[test]
+    fn ranking_a_bead_moves_the_planner_fingerprint() {
+        let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
+        let facts_of = |priority: u8| {
+            let buckets = partition_beads(vec![bead("cb-agg", "open", &[], priority)]);
+            TriggerFacts::derive(&buckets, &roster, |_| false, GhAnswer::Unanswered)
+        };
+        let unranked = facts_of(4);
+        let ranked = facts_of(2);
+
+        // Unranked: nothing a planner may take, so the buffer rule does not fire at all.
+        assert!(unranked.actionable_ids.is_empty());
+        assert_eq!(ranked.actionable_ids, vec!["cb-agg".to_string()]);
+        assert_ne!(
+            fingerprint("planner", &unranked),
+            fingerprint("planner", &ranked)
+        );
     }
 
     /// The unranked rule, extracted so the triage path and `TriggerFacts::derive` cannot drift

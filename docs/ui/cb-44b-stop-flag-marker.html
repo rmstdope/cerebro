@@ -1,0 +1,90 @@
+<!doctype html><meta charset="utf-8"><title>cb-44b — the stop-flag marker in cerebro-tui</title><style>body{background:#1e1e1e;color:#d4d4d4;font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px}h1{font-size:16px;color:#fff}h2{font-size:14px;color:#9cdcfe;margin-top:26px}pre{background:#111;padding:14px;border:1px solid #333;line-height:1.35;white-space:pre}.g{color:#4ec94e}.y{color:#d7ba7d}.bl{color:#569cd6}.r{color:#f14c4c}.d{color:#777}.hd{color:#fff;font-weight:bold}.note{color:#aaa;max-width:88ch}.hdr{background:#000;color:#ddd;padding:6px 14px;border:1px solid #333;margin-top:-1px}</style>
+<h1>cb-44b — a stop-flagged agent in <code>cerebro-tui</code>'s State column</h1>
+<p class="note">Approved over two interview rounds on 2026-09-03. The State cell gains a one-glyph
+<span class="y"><b>■</b></span> suffix in <b>gold</b> — this view's colour for "not the ordinary case", the colour the
+<span class="y">×N</span> session count and the <span class="bl">gh?</span> suffix already use. It sits between the dim <b>?</b> and the gold
+<span class="y">×N</span>, which is <code>cerebro--entry</code>'s order: <b>?</b> qualifies the state word, <b>■</b> is about the bead in
+flight, <b>×N</b> about the sessions running it.</p>
+<p class="note">Three states carry it — <b>working</b>, <b>asking</b> and <b>standby</b>. The first two because a bead is in
+flight for the flag to be waiting on; <b>standby</b> because that is a row this view would otherwise start, so
+the flag is doing something visible on it. That third state is a deliberate divergence from
+<code>M-x cerebro</code>, which shows <b>working</b>/<b>asking</b> only and replaces a standby row's BEAD cell with
+the words <span class="bl">■ told to finish</span>. Here the BEAD cell is left exactly as it was.</p>
+
+<h2>1. Fleet pane, split layout (40 columns) — nothing flagged</h2>
+<pre>┌─ Fleet ──────────────────────────────┐
+│  <span class="hd">AGENT        STATE       BEAD</span>       │
+│<span class="g">●</span> Xavier       plan        cb-44b     │
+│<span class="y">◐</span> Beast        waiting                │
+│<span class="bl">◆</span> Cerebro      idle                   │
+│<span class="g">●</span> Psylocke     verify      cb-41r     │
+│<span class="g">●</span> Cyclops      build       cb-21g     │
+│<span class="bl">◌</span> Rogue        standby     <span class="bl">→ buffer&lt;4</span> │
+└──────────────────────────────────────┘</pre>
+
+<h2>2. Cyclops told to finish, and Rogue told not to come back</h2>
+<pre>┌─ Fleet ──────────────────────────────┐
+│  <span class="hd">AGENT        STATE       BEAD</span>       │
+│<span class="g">●</span> Xavier       plan        cb-44b     │
+│<span class="y">◐</span> Beast        waiting                │
+│<span class="bl">◆</span> Cerebro      idle                   │
+│<span class="g">●</span> Psylocke     verify      cb-41r     │
+│<span class="g">●</span> Cyclops      build <span class="y">■</span>     cb-21g     │
+│<span class="bl">◌</span> Rogue        standby <span class="y">■</span>   <span class="bl">→ buffer&lt;4</span> │
+└──────────────────────────────────────┘</pre>
+<div class="hdr">cerebro · supervising | <span class="y">Cyclops will finish after this pass.</span></div>
+<p class="note">The transient gold header notice on <b>f</b> stays, unchanged, in both its spellings
+(<i>"Cyclops will finish after this pass."</i> and <i>"Cyclops will keep going."</i>): the notice says what just
+happened and is also the only confirmation that the keystroke landed on the row the navigator meant, where the
+marker says what is still true. The row carries the marker in the same frame as the notice.</p>
+
+<h2>3. The states that carry no marker</h2>
+<pre>┌─ Fleet ──────────────────────────────┐
+│  <span class="hd">AGENT        STATE       BEAD</span>       │
+│<span class="y">?</span> <b>Psylocke     asking <span class="y">■</span>    cb-41r</b>     │
+│<span class="bl">◆</span> Storm        idle                   │
+│<span class="y">◐</span> Rogue        waiting                │
+│<span class="d">○</span> <span class="d">Jubilee      dead        </span><span class="r">✗ refused</span>  │
+│<span class="g">●</span> Cypher       up                     │
+│<span class="y">●</span> Iceman       <span class="y">reticulat…</span>  cb-9su     │
+└──────────────────────────────────────┘</pre>
+<p class="note"><b>asking</b> carries it, and the row stays bold, which is what bold has always meant here.
+<b>idle</b>, <b>waiting</b> and <b>dead</b> do not: nothing is in flight and nothing is armed, so the glyph would
+claim something untrue. <b>up</b> — a live session with no state file — and an unrecognised state word do not
+either: neither row can tell this view whether a bead is in flight, and the glyph's whole meaning is that the
+flag took effect while one is still running. The marker is truthful rather than complete.</p>
+<p class="note">There is no row-level treatment beyond the glyph. Bold is spent on exactly one state
+(<b>asking</b>) so that it keeps meaning that, and dim already means <b>dead</b>; a third row-level signal would
+make the row itself the message across eighteen rows.</p>
+
+<h2>4. Both qualifications at once, wide layout (100+ columns)</h2>
+<pre>┌─ Fleet ────────────────────────────────────────────────────────────────┐
+│  <span class="hd">AGENT        ROLE         STATE       BEAD       FOR</span>                    │
+│<span class="g">●</span> Cyclops      implementer  build <span class="d">?</span> <span class="y">■</span> <span class="y">×2</span> cb-21g     41m 12m             │
+│<span class="g">●</span> Rogue        implementer  build <span class="y">■</span>     cb-44b     8m 8m               │
+└────────────────────────────────────────────────────────────────────────┘</pre>
+<p class="note">All three qualifications together is fourteen cells against a twelve-cell State column, so the
+BEAD column shifts two cells right on that one row. That is what <code>M-x cerebro</code> does too, and it is
+rare enough not to be worth widening every fleet's table for: the column floor is unchanged.</p>
+
+<h2>5. A flagged standby row that is also backing off</h2>
+<pre>┌─ Fleet ────────────────────────────────────────┐
+│  <span class="hd">AGENT        STATE       BEAD</span>                 │
+│<span class="bl">◌</span> Rogue        standby <span class="y">■</span>   <span class="bl">→ buffer&lt;4</span>           │
+│<span class="bl">◌</span> Storm        standby <span class="y">■</span>   <span class="bl">↻ retry in 30s, 2 failed</span> │
+└────────────────────────────────────────────────┘</pre>
+<p class="note">Storm's cell counts down to a retry the flag guarantees will not happen, and it keeps counting.
+The countdown is the state of the backoff and the glyph is the state of the flag: both are true, and the glyph
+is what says the countdown is moot. Replacing the cell would have hidden how many starts had failed.</p>
+
+<h2>6. A read-only view</h2>
+<pre>┌─ Fleet ──────────────────────────────┐
+│  <span class="hd">AGENT        STATE       BEAD</span>       │
+│<span class="g">●</span> Cyclops      build <span class="y">■</span>     cb-21g     │
+│<span class="g">●</span> Rogue        build       cb-44b     │
+└──────────────────────────────────────┘</pre>
+<div class="hdr">cerebro · <span class="y">read-only: Emacs supervises</span> | g retry</div>
+<p class="note">The marker is drawn on a view that may supervise nothing. The flag is a fact about the fleet,
+written to a file both views read, and it is true whoever set it; <b>f</b> still refuses here, so the marker is a
+thing to read rather than a thing to press. It joins <b>x</b>, the priority keys and <b>Enter</b> in being outside
+the supervision lease.</p>

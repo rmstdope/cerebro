@@ -1129,15 +1129,16 @@ fn startup_notice(started: &[String], standby: &[String], complaints: &[String])
 /// Everything the loop MUTATES that is not `App` and is not the terminal.
 ///
 /// The field order reproduces the drop order these values have as locals in `start` today
-/// (pruner, then told, then host, then the ledger, then the logger, then the controller):
-/// struct fields drop in declaration order, and reproducing the existing order is cheaper
-/// than proving that none of these `Drop`s interact.
+/// (pruner, then told, then host, then the logger, then the ledger, then the controller -
+/// the reverse of the order they were declared in): struct fields drop in declaration
+/// order, and reproducing the existing order is cheaper than proving that none of these
+/// `Drop`s interact.
 struct LoopState {
     pruner: Pruner,
     told: lifecycle::TriageLedger,
     host: SessionHost,
-    ledger: StartLedger,
     logger: Logger,
+    ledger: StartLedger,
     controller: SupervisorController,
 }
 
@@ -1314,6 +1315,10 @@ where
         if let Some(Ok(answer)) = workers.write.poll() {
             log_write(&mut state.logger, &answer, clock());
             let action = app.finish_write(answer);
+            // Neither of the two `dispatch` calls off the keystroke path may carry a `Write`:
+            // `App::finish_write` and `App::on_tick` return refresh actions and `None` alone, and
+            // a third producer would make this one re-entrant (review finding 4).
+            debug_assert!(!matches!(action, AppAction::Write(_)));
             dispatch(action, app, workers, &clock);
         }
         // A request that was ACCEPTED and whose answer will never come: the other half of the
@@ -1366,7 +1371,9 @@ where
             state.controller.requested(Instant::now());
         }
 
-        dispatch(app.on_tick(Instant::now()), app, workers, &clock);
+        let ticked = app.on_tick(Instant::now());
+        debug_assert!(!matches!(ticked, AppAction::Write(_)));
+        dispatch(ticked, app, workers, &clock);
 
         if events.poll(POLL_INTERVAL)? {
             match events.read()? {
@@ -2347,6 +2354,9 @@ mod main_tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events =
             ReplayedEvents::new(vec![Event::Paste("ignored".into()), key(KeyCode::Char('q'))]);
+        // Its own worker set, as each `run` had before cb-agg: two loop runs sharing one set
+        // would let an answer queued by the first be polled by the second (review finding 1).
+        let workers = test_workers();
         let mut state = test_state();
         let config = test_config();
         run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now)
@@ -5364,8 +5374,6 @@ mod main_tests {
     /// rather than lost (cb-agg).
     #[test]
     fn dispatch_sends_a_write_and_reports_an_undeliverable_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
         let mut app = app_with_bead(SupervisionMode::Supervising, Some(2));
         let request = cerebro_tui::app::WriteRequest::Priority {
             id: "cb-x".into(),
@@ -5382,7 +5390,6 @@ mod main_tests {
             Some("the write worker has stopped — nothing was written")
         );
         assert_eq!(app.notice_tone, app::NoticeTone::Urgent);
-        drop(paths);
     }
 
     #[test]

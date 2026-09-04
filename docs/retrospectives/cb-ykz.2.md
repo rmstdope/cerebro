@@ -32,3 +32,23 @@ saying "a pid of a live process" — and should say to pick a name `scripts/agen
 dead, since fabricating over a live session's name interferes with the running fleet.
 **Seen before.** None found; `cb-d59.3` and `cb-d89` are about readers of the same sentence
 disagreeing, not about fabricating a row with it.
+
+## A mutation check restored in the same second left cargo running the mutated binary
+
+**What happened.** To prove a new guard was load-bearing I did the usual mutation check —
+`cp src/main.rs /tmp/main.bak`, `sed -i ''` the guard out, `cargo test <one test>` (red, as wanted),
+`cp /tmp/main.bak src/main.rs` — all inside one shell command. The next two `cargo test` runs, in
+`tests/gate` and on its own, failed that same test with the *mutated* behaviour, against source
+that plainly carried the guard. Adding one `eprintln!` made it green, and it has been green over
+seven full runs since. Cargo compares mtimes at second granularity: the restore landed in the same
+second as the mutated build's fingerprint, so the stale binary was reused, and the next edit of any
+kind forced the real rebuild.
+**Why.** Established: nothing else touched the file, and the failure moved exactly with a rebuild
+rather than with any source state.
+**Cost.** About twenty minutes, spent looking for a race in supervision-mode handling that was
+never there. It also read as a flaky test, which would have been the wrong thing to conclude.
+**Prevent by.** After restoring a mutated file, force the rebuild rather than trusting mtimes:
+`touch` the file (or `cargo test` twice) before believing a red result. Worth a line in
+`skills/implement-bead`'s *Traps this fleet has already paid for* if it is seen a second time —
+"a green gate that then goes red with no edit between" is otherwise indistinguishable from a flake.
+**Seen before.** None found for cargo; `.cerebro/traps.md` has no entry for it.

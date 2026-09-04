@@ -564,8 +564,9 @@ state file of every session it ends, and types one line into a session whose que
 answered — an implementer past `ANSWER_TIMEOUT_SECONDS`, and since cb-2e9 an interactive role past
 `INTERACTIVE_ANSWER_TIMEOUT_SECONDS` (`cerebro-interactive-answer-timeout`, twice the
 implementer's), each in its own words. Held to `tests/lib/supervise.cases`, which
-`cerebro--supervise-action` answers too. An interactive role is nudged, never retired: a nudge asks
-the agent to finish, where a retire ends its session under it.
+`cerebro--supervise-action` answers too. On that clock an interactive role is nudged and never
+retired: a nudge asks the agent to finish, where a retire ends its session under it. (A stop flag on
+an idle one still retires it — that is the flag's arm, not the clock's.)
 Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart`/`standby`
 declaration is honoured as the view comes up, and the board-backed triggers for the planner,
 implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a

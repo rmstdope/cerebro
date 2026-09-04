@@ -6613,9 +6613,14 @@ is where that is said."
                  ;; this very loop already sees the first.
                  (spacing (cerebro--role-start-spacing (cerebro-agent-role agent)
                                                        project-spacing))
-                 ;; Each guard is asked only when the ones before it let the
-                 ;; row through, so the evaluation line names ONE reason a row
-                 ;; started nothing - the same order `start_due' asks them in.
+                 ;; Headroom is asked before this one, so a row whose work is
+                 ;; already spoken for does not ALSO read `spaced_out' where
+                 ;; `start_due' reads null (cb-cz7).  The rest of this chain is
+                 ;; not yet ordered that way - `backed-off' does not defer to
+                 ;; `too-soon', and neither defers to `flagged' - so the two
+                 ;; views can still name different guards for one row under a
+                 ;; stop flag or a backoff.  Log-only, and nobody's planned
+                 ;; work: left as it was rather than widened here.
                  (too-soon (and reason (not no-headroom)
                                 (cerebro--role-start-too-soon-p
                                  (cerebro--role-peers agent cerebro--agents)

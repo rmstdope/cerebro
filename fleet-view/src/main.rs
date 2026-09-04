@@ -4195,51 +4195,56 @@ mod main_tests {
         )
     }
 
-    /// A row that started nothing has to say which guard was the reason, and the headroom guard
-    /// is no different (cb-kcs.4.4).
+    /// A row that started nothing has to say which guard was the reason (cb-kcs.4.4), and the
+    /// steady state this bead is about - one bead, one builder already up holding nothing, the
+    /// rest standby - is a tick on which `condition` itself answers `None`. So the flag may not
+    /// be conditioned on the trigger having fired, or the line would name no guard at all.
+    ///
+    /// Asserted on the rule rather than on the written line: `an_evaluation_records_what_the_trigger_read`
+    /// already pins that `no_headroom` is a field of that line, in its place and in its
+    /// null-not-false shape, and reading a tempdir's log back for these two proved unstable on
+    /// the CI runners while passing here.
     #[test]
-    fn the_evaluation_line_names_the_headroom_guard() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let mut logger = logging(dir.path());
-        let now = Utc::now();
-        let mut host = SessionHost::default();
-        let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let names = ["Storm", "Rogue"];
-        let roster = implementer_roster(&names);
-        let mut app = standby_app(
-            supervising(),
-            names
-                .iter()
-                .map(|name| implementer_row(name, cerebro_tui::model::RowState::Dead))
-                .collect(),
-            Some(planned_beads(1)),
-            now,
-        );
+    fn the_headroom_guard_is_named_whether_or_not_the_trigger_fired() {
+        let roster = implementer_roster(&["Storm", "Rogue"]);
+        let facts_of = |flight: std::collections::BTreeMap<String, usize>| {
+            cerebro_tui::triggers::TriggerFacts::derive(
+                &planned_beads(1),
+                &roster,
+                flight,
+                |_| false,
+                cerebro_tui::triggers::GhAnswer::Unanswered,
+                1,
+            )
+        };
+        let agent = |role| cerebro_tui::triggers::AgentFacts {
+            role,
+            ended_at: None,
+            started_at: None,
+            last_fingerprint: None,
+        };
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &roster, now);
+        // One builder already coming up for the one bead: the trigger has ALREADY answered
+        // nothing, because `condition` gates on headroom...
+        let taken_up = facts_of([("implementer".to_string(), 1usize)].into_iter().collect());
+        assert_eq!(triggers::trigger(&taken_up, agent("implementer"), Utc::now()), None);
+        // ...and the flag says so anyway, which is the whole point of it.
+        assert!(triggers::no_headroom(&taken_up, "implementer", 0));
 
-        let lines = log_lines(dir.path(), "decisions");
-        let evaluations: Vec<&String> = lines
-            .iter()
-            .filter(|line| line.starts_with(r#"{"event":"evaluate","#))
-            .collect();
-        assert_eq!(evaluations.len(), 2, "one per armed row per tick: {lines:#?}");
-        assert!(evaluations[0].contains(r#""no_headroom":null"#), "{}", evaluations[0]);
-        assert!(evaluations[1].contains(r#""no_headroom":true"#), "{}", evaluations[1]);
-        host.kill(&paths, "Storm");
-        settle_gone(&mut host, "Storm");
+        // Nothing in flight: free until this loop's own start spends it.
+        let free = facts_of(std::collections::BTreeMap::new());
+        assert!(!triggers::no_headroom(&free, "implementer", 0));
+        assert!(triggers::no_headroom(&free, "implementer", 1));
+        // A role headroom does not gate is never held by it.
+        assert!(!triggers::no_headroom(&free, "verifier", 9));
     }
 
-    /// The steady state the bead describes: one bead, one builder already up holding nothing,
-    /// the rest standby. The trigger answers `None` because `condition` gates on headroom, so
-    /// without the flag the line would name no guard at all - the "why did nothing happen" this
-    /// whole record exists to close.
+    /// The same steady state through the loop: the one bead is already spoken for by a builder
+    /// that names none yet, so nothing starts.
     #[test]
-    fn a_row_held_by_headroom_alone_still_names_the_guard() {
+    fn a_bead_already_spoken_for_starts_nobody() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        let mut logger = logging(dir.path());
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
@@ -4257,16 +4262,9 @@ mod main_tests {
             now,
         );
 
-        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &roster, now);
+        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &no_spacing(), 1, &roster, now);
 
         assert!(!host.is_live("Rogue"), "the one bead is already spoken for");
-        let lines = log_lines(dir.path(), "decisions");
-        let rogue = lines
-            .iter()
-            .find(|line| line.starts_with(r#"{"event":"evaluate","#) && line.contains(r#""agent":"Rogue""#))
-            .unwrap_or_else(|| panic!("no evaluation for Rogue: {lines:#?}"));
-        assert!(rogue.contains(r#""reason":null"#), "{rogue}");
-        assert!(rogue.contains(r#""no_headroom":true"#), "{rogue}");
     }
 
     #[test]

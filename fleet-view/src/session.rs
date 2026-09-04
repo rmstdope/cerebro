@@ -329,6 +329,14 @@ fn screen_message(session: &Session, rows: u16, cols: u16) -> String {
     text.join("\n")
 }
 
+/// The last non-blank line of MESSAGE, or `None` when the child painted nothing at all.
+///
+/// `screen_message` has already dropped blank lines and trimmed the rest, so this is its last
+/// entry. One line, not a tail: `errors.jsonl` is read by opening it.
+fn last_screen_line(message: &str) -> Option<String> {
+    message.lines().next_back().map(str::to_string)
+}
+
 /// A refusal, as the lines the pane draws: the launcher's own words in red, then what to do.
 ///
 /// `scripts/launch-refused` writes exactly `cerebro: $message` to stderr, and the approved pane
@@ -627,8 +635,9 @@ pub struct SessionHost {
     exits: BTreeMap<String, crate::lifecycle::LastExit>,
     /// Carriage returns owed to sessions that have been typed a line, and when each is due.
     pending: Vec<(String, Instant)>,
-    /// Children reaped since `take_reaped` was last called. See it.
-    reaped: Vec<(String, Ended)>,
+    /// Children reaped since `take_reaped` was last called, and the last line each painted.
+    /// See it.
+    reaped: Vec<(String, Ended, Option<String>)>,
 }
 
 impl SessionHost {
@@ -703,7 +712,7 @@ impl SessionHost {
     /// and runs once per frame, so a host nobody drains keeps one entry per session it ever
     /// reaped. That is every bare `SessionHost` in the tests, where it is a handful of entries and
     /// the host is dropped with the case.
-    pub fn take_reaped(&mut self) -> Vec<(String, Ended)> {
+    pub fn take_reaped(&mut self) -> Vec<(String, Ended, Option<String>)> {
         std::mem::take(&mut self.reaped)
     }
 
@@ -837,14 +846,26 @@ impl SessionHost {
             .filter_map(|(name, session)| session.poll_exit().map(|ended| (name.clone(), ended)))
             .collect();
         for (name, end) in ended {
-            let Some(session) = self.live.remove(&name) else { continue };
+            let Some(mut session) = self.live.remove(&name) else { continue };
             // This view knows what it signalled; the pty crate cannot say. See `KILL_SIGNAL`.
             let end = match self.ending.remove(&name) {
                 Some(Deliberate::Killed(signal)) => Ended::Signal(signal),
                 Some(Deliberate::ByView) => Ended::ByView,
                 None => end,
             };
-            self.reaped.push((name.clone(), end));
+            // The reader thread is joined BEFORE the screen is read: `Child::try_wait` answers
+            // as soon as the child is gone, which can be before the parser has seen its last
+            // bytes. `stop` is idempotent, so `into_transcript`'s own call below is a no-op.
+            //
+            // `Session::signal` avoids this join on purpose - it runs on a KEYSTROKE, and the
+            // master's EOF waits for every process holding the slave, a shim's grandchild
+            // included. Here the child is already REAPED, so the only bytes left are ones
+            // already written, and the transcript path has always joined at exactly this point.
+            // The refusal branch below is the one that did not, which is the defect cured.
+            session.stop();
+            let (child_rows, child_cols) = session.size;
+            let message = screen_message(&session, child_rows, child_cols);
+            self.reaped.push((name.clone(), end, last_screen_line(&message)));
             match crate::lifecycle::classify_exit(end) {
                 Some(exit) => {
                     self.exits.insert(name.clone(), exit);
@@ -853,7 +874,6 @@ impl SessionHost {
                     self.exits.remove(&name);
                 }
             }
-            let (child_rows, child_cols) = session.size;
             // `scripts/launch-preflight` and `scripts/launch` refuse with exit 2 and one line on
             // stderr in every one of their refusal paths; `launch` then EXECS the agent CLI, so
             // every other non-zero status belongs to the CLI rather than to the launcher.
@@ -863,7 +883,6 @@ impl SessionHost {
             // by their wording would make the refusal pane quote the exit line back at the
             // navigator the day that sentence changed.
             if end == Ended::Status(2) {
-                let message = screen_message(&session, child_rows, child_cols);
                 self.note_refusal(&name, &message, now);
                 continue;
             }

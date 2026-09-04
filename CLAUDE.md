@@ -488,7 +488,8 @@ evaluations a day would make useless. An error is written at every verbosity but
 means nothing at all, which is what the suite binds.
 
 **`.cerebro/state/decisions.jsonl`** is the record of what the view actually did: a line per
-decision — start (with the trigger that fired), end, retire, nudge, stuck, sweep run, sweep line
+decision — start (with the trigger that fired), end, retire, nudge, stuck, disarm (`k` and the
+standby disarm, which said nothing at all until cb-yv9), sweep run, sweep line
 typed (`sweep-tell`), abnormal exit. Since cb-xhu.2 that is *all* it holds, and it therefore keeps
 months: it was 99.7% evaluation lines and rotated a start or an exit away within four days, which
 is exactly the window cb-nc8 needed and did not have.
@@ -628,7 +629,7 @@ refusal is parked from the first failure, where a silent crash is retried. Since
 three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own
 cadence and an hourly floor each. Since cb-kcs.4.4 all of it is written down, in the same three
 append-only files `M-x cerebro` writes: `decisions.jsonl` — a line per start (with the trigger that
-fired), end, retire, nudge, stuck, arm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
+fired), end, retire, nudge, stuck, arm, disarm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
 keeps months; `evaluations.jsonl` — at the verbosity this view compiles in, a
 line per trigger evaluation per armed row per tick carrying what the trigger read and which guard
 held it; and `errors.jsonl`, one line per outage rather than per failed read, naming the pane or

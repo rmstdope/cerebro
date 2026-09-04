@@ -63,6 +63,14 @@ for _n in $(compgen -e || true); do
 done
 unset _n
 
+# The environment is only half of it: `cerebro_cargo_config_env_names' also reads
+# ${CARGO_HOME:-$HOME/.cargo}/config.toml, so a navigator whose own cargo config declares an [env]
+# table - with that key exported, which is exactly what a session under `cargo run' has - would see
+# the launcher clear it and the "says nothing" case below fail. Point CARGO_HOME at an empty
+# directory, as tests/cargo-env.sh does, so every case here is about its own fixture.
+export CARGO_HOME="$work_dir/empty-cargo-home"
+mkdir -p "$CARGO_HOME"
+
 # A stub `claude` on PATH ahead of the real one, so a launcher's `exec claude ...` runs this instead
 # of starting a real session. It prints the environment and args it was handed, which is exactly what
 # these assertions need and nothing a real session would do.

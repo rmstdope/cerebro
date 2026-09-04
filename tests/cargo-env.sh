@@ -147,20 +147,6 @@ grep -q '<unset>' <<<"${out#*--$'\n'}" && fail "cargo_env: a [env] table must no
 pass "cargo_env: an [env] table naming PATH or HOME cannot break a session"
 
 ( set -euo pipefail
-  # THE SUITE RUNS INSIDE A POLLUTED SESSION. An implementer running this is itself a session the
-# fleet view started, so its own environment already carries cargo's eighteen variables - and an
-# assertion counting what the strip removed would count those too, green in CI and red on the
-# navigator's machine (the exact shape ah-dy4x cost). Clear them here; each case exports what it
-# needs.
-for _n in $(compgen -e || true); do
-  case "$_n" in
-    CARGO_HOME|CARGO_TARGET_DIR) ;;
-    CARGO|CARGO_*|TS_RS_EXPORT_DIR) unset "$_n" ;;
-  esac
-done
-unset _n
-
-source "$repo_root/scripts/cargo-env.sh"
   unset CARGO_MANIFEST_DIR CARGO_PKG_NAME TS_RS_EXPORT_DIR 2>/dev/null || true
   out="$(cerebro_strip_cargo_env "$empty_dir")"
   [ -z "$out" ] || exit 1

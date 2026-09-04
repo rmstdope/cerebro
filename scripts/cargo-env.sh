@@ -20,6 +20,12 @@
 # spawn, and correct whoever the parent was - including a `launch' typed by hand in a shell that has
 # run cargo. Putting it in the views would be two copies of one decision.
 #
+# ONE FORK, and it is deliberate: `cerebro_cargo_config_env_names' normalises its argument with
+# `$(cd "$dir" && pwd)', which is a subshell. The walk would work on the given path, but a relative
+# or symlinked one would then climb a different chain of ancestors than cargo itself did, and a
+# reader that finds the wrong config is worse than a reader that costs one fork. So "builtins alone"
+# is about what this library needs ON PATH - nothing but bash - rather than about forking never.
+#
 # ITS LIMITATION, stated rather than discovered: the `[env]' reader needs key NAMES only, never
 # values, which is what makes a builtins-only parser adequate. A key whose value spans several lines,
 # or one written as a dotted key outside the table (`env.FOO = ...'), is not seen. Neither shape is

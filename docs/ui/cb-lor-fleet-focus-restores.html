@@ -1,0 +1,112 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+table{border-collapse:collapse;background:#2a2a2a;color:#ddd;margin-top:10px}
+td,th{border:1px solid #555;padding:4px 10px;text-align:left;font-size:12px}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}
+</style>
+<meta charset="utf-8"><title>cb-lor — the agreed surface</title>
+
+<h1>cb-lor &mdash; the surface the navigator approved, 2026-09-04</h1>
+<p class="lede">One round. This file is the specification for what happens to a bead pinned in the
+Session pane of <code>cerebro-tui</code> when focus arrives at the Fleet pane. It is the fourth of
+the navigation beads, beside cb-d31 (<code>Enter</code> into a session), cb-3v5 (<code>Tab</code>
+out of one) and cb-5kk (<code>F1</code>/<code>F2</code>/<code>F3</code>), and it agrees with all
+three. <b>It supersedes two rows of <code>docs/ui/cb-41r-bead-detail.html</code></b> &mdash; the
+<code>Tab</code>/<code>Shift-Tab</code> row of its &sect;3 and the <code>↑/↓</code>-under-Fleet row
+of its &sect;4, both of which said the pinned bead survives. Everything else that file decided
+stands, and this one changes nothing any <code>cb-kcs</code> file decided: not a fleet row, not a
+lifecycle key, not a pane's borders, not the priority keys, not <code>Enter</code> on a
+<code>+N more</code> row.</p>
+
+<h2>1. The rule</h2>
+<p class="lede"><b>The moment focus lands on the Fleet pane, a pinned bead is dropped and the
+Session pane draws the selected agent again</b> &mdash; its live session, one starting, its
+retained pass, its refused launch, or its ordinary empty body. Every way in does it:
+<code>Tab</code> from Session, <code>Shift-Tab</code> from Work, and <code>F1</code> from anywhere.
+There is then <b>no state in which Fleet is focused and a bead is pinned</b>, so the arrow keys
+under Fleet never meet one and there is nothing left to decide about them.</p>
+<p class="note"><b>Rejected:</b> Fleet focus as a <i>glance</i> &mdash; the bead covered rather
+than dropped, and drawn again on the way back to the Session pane at the offset it had. It makes
+looking at the fleet free, at the price of a title hint (<code>[Tab twice for cb-a54]</code>)
+without which the rule is unlearnable, a second rule for <code>Enter</code> under Fleet, and this
+becoming the only pane in the view whose <b>content</b> depends on which pane is focused.
+<b>Also rejected:</b> the selection rather than the focus &mdash; arriving at Fleet leaves the bead
+alone and only <code>↑</code>/<code>↓</code> drops it, which answers half the complaint and leaves
+a navigator who tabs over, looks, and tabs back still holding a bead over the agent they were just
+looking at. <b>And:</b> a dismissal key. The return is implicit by request, and <code>Esc</code>
+already quits.</p>
+
+<h2>2. Before &mdash; the bead is pinned, focus is on Session (cb-41r)</h2>
+<div class="screen"><pre><span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn scroll | g refresh | q/Esc/Ctrl-C quit</span>
+<span class="d">┌ Fleet 6 ───────────────────────────┐</span>   <span class="b">┏━ cb-a54 — P2 task [Shift-Tab leaves] ━━━━━━━━━━━━━━━━━━━━┓</span>
+<span class="d">│</span><span class="sel">▸ Rogue     <span class="g">working</span> build cb-x3u  4m </span><span class="d">│</span>   <span class="b">┃</span> <span class="hd">Refactoring: every reader spells the root climb itself</span>  <span class="b">┃</span>
+<span class="d">│</span>  Xavier    <span class="g">working</span> plan  cb-lor  3m <span class="d">│</span>   <span class="b">┃</span>                                                          <span class="b">┃</span>
+<span class="d">└────────────────────────────────────┘</span>   <span class="b">┃</span> <span class="d">open · task · P2 · updated 14:02</span>                         <span class="b">┃</span>
+<span class="d">┌ Work ──────────────────────────────┐</span>   <span class="b">┃</span>                                                          <span class="b">┃</span>
+<span class="d">│</span> <span class="hd">Planned, unclaimed 2</span>              <span class="d">│</span>   <span class="b">┃</span> <span class="hd">## Context</span>                                               <span class="b">┃</span>
+<span class="d">│</span>▸ cb-a54 P2 Refactoring: every re…  <span class="d">│</span>   <span class="b">┃</span> Six scripts climb to the consumer root by hand.          <span class="b">┃</span>
+<span class="d">└────────────────────────────────────┘</span>   <span class="b">┃</span> <span class="d">Rows 12–20 of 96</span>                                         <span class="b">┃</span>
+                                         <span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span></pre></div>
+
+<h2>3. After one <code>Tab</code> &mdash; Fleet is focused, the bead is gone</h2>
+<div class="screen"><pre><span class="d">Cerebro[tui supervises] | Tab/Shift-Tab pane | ↑/↓/PgUp/PgDn move | s/f/k agent | </span><span class="y">Enter session</span><span class="d"> | g refresh | q/Esc/Ctrl-C quit</span>
+<span class="b">┏━ Fleet 6 ━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>   <span class="d">┌ Rogue — build cb-x3u [Tab to focus] ─────────────────────┐</span>
+<span class="b">┃</span><span class="sel">▸ Rogue     <span class="g">working</span> build cb-x3u  4m </span><span class="b">┃</span>   <span class="d">│</span> <span class="g">●</span> Rogue of the cerebro fleet. Claiming cb-x3u…            <span class="d">│</span>
+<span class="b">┃</span>  Xavier    <span class="g">working</span> plan  cb-lor  3m <span class="b">┃</span>   <span class="d">│</span>   Running the gate…                                      <span class="d">│</span>
+<span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span>   <span class="d">│</span>   <span class="g">✓</span> 41 suites passed                                      <span class="d">│</span>
+<span class="d">┌ Work ──────────────────────────────┐</span>   <span class="d">│</span>                                                          <span class="d">│</span>
+<span class="d">│</span> <span class="hd">Planned, unclaimed 2</span>              <span class="d">│</span>   <span class="d">│</span>                                                          <span class="d">│</span>
+<span class="d">│</span>▸ cb-a54 P2 Refactoring: every re…  <span class="d">│</span>   <span class="d">│</span>                                                          <span class="d">│</span>
+<span class="d">└────────────────────────────────────┘</span>   <span class="d">└──────────────────────────────────────────────────────────┘</span></pre></div>
+<p class="note"><b>Nothing is announced.</b> No gold notice, no clause in the header &mdash; the
+pane changing <i>is</i> the feedback, and a notice would fire on every <code>Tab</code> round the
+cycle and be cleared by the next keystroke anyway. The Work cursor has not moved, so
+<code>Shift-Tab</code> then <code>Enter</code> puts the same bead back.</p>
+
+<h2>4. The selected agent has no session</h2>
+<div class="screen"><pre><span class="b">┏━ Fleet 6 ━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>   <span class="d">┌ Bishop ──────────────────────────────────────────────────┐</span>
+<span class="b">┃</span>  Rogue     <span class="g">working</span> build cb-x3u  4m <span class="b">┃</span>   <span class="d">│</span> <span class="d">No live session.</span>                                         <span class="d">│</span>
+<span class="b">┃</span><span class="sel">▸ Bishop    <span class="d">standby</span>                </span><span class="b">┃</span>   <span class="d">│</span>                                                          <span class="d">│</span>
+<span class="b">┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛</span>   <span class="d">│</span> <span class="d">Press s to start Bishop.</span>                                 <span class="d">│</span>
+                                         <span class="d">│</span> <span class="d">The last completed pass is not available.</span>                <span class="d">│</span>
+                                         <span class="d">└──────────────────────────────────────────────────────────┘</span></pre></div>
+<p class="note">The pane's ordinary empty body, word for word as it already reads &mdash; the bead
+is <b>not</b> left in place as something better to draw. On a read-only view it is that view's own
+two lines instead (<code>Sessions are hosted by the view that supervises this / checkout. This one
+does not.</code>), unchanged. <b>Rejected:</b> keeping the bead when there is no session to show,
+which would make the same keystroke do two different things depending on the agent.</p>
+
+<h2>5. What each key does, once this lands</h2>
+<table>
+<tr><th>Key</th><th>Where</th><th>The pinned bead</th></tr>
+<tr><td><code>Tab</code> / <code>Shift-Tab</code> <b>arriving at Fleet</b></td><td>anywhere, including out of a focused live session (cb-3v5)</td><td><b>dropped</b>, the agent is drawn</td></tr>
+<tr><td><code>F1</code></td><td>anywhere</td><td><b>dropped</b>, the agent is drawn</td></tr>
+<tr><td><code>Tab</code> / <code>Shift-Tab</code> not landing on Fleet, <code>F2</code>, <code>F3</code></td><td>anywhere</td><td>stays &mdash; unchanged from cb-41r</td></tr>
+<tr><td><code>↑</code>/<code>↓</code>/<code>PgUp</code>/<code>PgDn</code></td><td>Fleet focus</td><td><b>cannot arise</b> &mdash; arriving at Fleet already dropped it</td></tr>
+<tr><td><code>Enter</code></td><td>Fleet focus</td><td>cb-d31's key, unchanged in every way, including its gold <code>Rogue has no session</code> refusal. Its own drop of a pinned bead is now unreachable through the keyboard and is kept as the invariant it states</td></tr>
+<tr><td><code>Enter</code></td><td>Work focus, the same bead row</td><td>unpins it, focus stays on Work &mdash; unchanged from cb-41r</td></tr>
+<tr><td><code>s</code></td><td>any focus</td><td>drops it &mdash; unchanged from cb-41r</td></tr>
+<tr><td><code>k</code>, <code>f</code>, <code>x</code>, <code>0</code>-<code>4</code>/<code>+</code>/<code>-</code>/<code>u</code>, <code>g</code></td><td>any focus</td><td>stays &mdash; unchanged from cb-41r</td></tr>
+</table>
+
+<h2>6. Getting the bead back</h2>
+<p class="note"><b><code>Enter</code> on its row in the Work pane</b>, which pins it again, moves
+focus to the Session pane and re-reads it &mdash; exactly as opening it the first time.
+<b>It opens at the top:</b> a dropped bead keeps nothing, and neither does the Session pane's
+scroll offset, which returns to zero on every drop so a retained transcript is never handed the
+offset the bead was left at. The navigator who was three hundred lines into a plan pays for the
+glance at the fleet; that is the accepted cost of the one rule in &sect;1.</p>
+
+<h2>7. Two rules carried over rather than decided</h2>
+<p class="note"><b>The keyboard.</b> A pinned bead never gives the child the keyboard, so a
+<code>Tab</code> pressed over one was never going to reach an agent and does not begin to now.<br>
+<b>The lease.</b> Moving focus is the navigator's own act and touches no session, so this works on
+a <b>read-only</b> view exactly as it does on a supervising one &mdash; like <code>x</code>, like
+the priority keys, like cb-d31's <code>Enter</code>.</p>

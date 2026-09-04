@@ -4847,6 +4847,61 @@ opposite (cb-op0).  The Ratatui view answers the same rule in
               (should (null cerebro--armed))))
         (kill-buffer list-buffer)))))
 
+(ert-deftest cerebro-test/an-unreadable-declaration-leaves-the-armed-set-alone ()
+  "A view that could not find out who supervises keeps what it armed (cb-nc8).
+
+One transient `project-conf' failure used to empty the armed set for good, so
+every name became permanently ineligible and only `s' brought one back.  Only a
+handover - somebody else having or taking the checkout - may disarm anything.
+The Ratatui counterpart is `an_unreadable_declaration_leaves_the_armed_set_alone'."
+  (cl-letf (((symbol-function 'cerebro--list-render) #'ignore)
+            ((symbol-function 'cerebro--supervise) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--start-due) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+            ((symbol-function 'cerebro--reconcile-supervision-safely)
+             (lambda (&rest _) '(read-only reconcile-failed "boom")))
+            ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore))
+    (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-unreadable*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer list-buffer
+              (cerebro-mode)
+              (setq cerebro--armed '("Xavier" "Beast")))
+            (cerebro--tick list-buffer (seconds-to-time 1000))
+            (with-current-buffer list-buffer
+              (should (equal cerebro--armed '("Xavier" "Beast")))))
+        (kill-buffer list-buffer)))))
+
+(ert-deftest cerebro-test/a-handover-tick-says-how-many-names-it-disarmed ()
+  "And a real handover disarms, and says so (cb-nc8, Q3).
+
+The Ratatui counterpart is `a_handover_says_how_many_names_it_disarmed'."
+  (let ((said nil))
+    (cl-letf (((symbol-function 'cerebro--list-render) #'ignore)
+              ((symbol-function 'cerebro--supervise) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--start-due) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+              ((symbol-function 'cerebro--reconcile-supervision-safely)
+               (lambda (&rest _) '(read-only configured-for tui)))
+              ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore)
+              ((symbol-function 'message)
+               (lambda (format &rest args) (push (apply #'format format args) said))))
+      (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-handover*")))
+        (unwind-protect
+            (progn
+              (with-current-buffer list-buffer
+                (cerebro-mode)
+                (setq cerebro--armed '("Xavier" "Beast")))
+              (cerebro--tick list-buffer (seconds-to-time 1000))
+              (with-current-buffer list-buffer
+                (should (null cerebro--armed)))
+              (should (member "Handing supervision over; 2 names disarmed." said))
+              ;; And once: a read-only view ticks every five seconds for hours.
+              (setq said nil)
+              (cerebro--tick list-buffer (seconds-to-time 1005))
+              (should (null said)))
+          (kill-buffer list-buffer))))))
+
 (ert-deftest cerebro-test/a-supervising-tick-leaves-the-armed-set-alone ()
   "And the clear is conditional: a view that may act keeps what it armed,
 since a pass that merely ends does not disarm (cb-op0)."
@@ -8884,6 +8939,48 @@ every real one (cb-os4), so the reader's own output is what is fed in here."
                          "read-only: invalid fleet_supervisor \"rat\"")))
       (delete-directory tmp t))))
 
+(ert-deftest cerebro-test/a-fleet-supervisor-that-could-not-read-is-not-a-declaration ()
+  "A reader's own failure is never an answer about the project (cb-nc8).
+
+`scripts/fleet-supervisor' exits 3 when `project-conf' itself failed, and an
+exit 2 always prints the raw offending value: an exit 2 carrying nothing is the
+script failing to say why.  Either is `(unreadable . DETAIL)', and neither is
+CACHED - the cache is keyed on project.conf's mtime, so a failure pinned there
+would survive until somebody touched the file, which is the same permanent
+consequence from a transient condition this bead is about."
+  (let ((answer nil))
+    (cl-letf (((symbol-function 'cerebro--supervisor-value) (lambda (&rest _) answer))
+              ((symbol-function 'cerebro--project-conf-mtime) (lambda (&rest _) 'absent)))
+      (with-temp-buffer
+        (setq cerebro--configured-supervisor-cache nil)
+        (dolist (status '(3 2))
+          (setq answer (cons status ""))
+          (should (eq (car-safe (cerebro--configured-supervisor "/r")) 'unreadable))
+          (should (null cerebro--configured-supervisor-cache)))
+        ;; A value that WAS read and refused is still an answer, and still cached.
+        (setq answer '(2 . "tui2"))
+        (should (equal (cerebro--configured-supervisor "/r") '(invalid . "tui2")))
+        (should (equal (cdr cerebro--configured-supervisor-cache) '(invalid . "tui2")))))))
+
+(ert-deftest cerebro-test/an-unreadable-declaration-is-read-only-and-keeps-the-lease ()
+  "An unreadable declaration short-circuits before the shared decision table.
+
+`tests/lib/supervisor.cases' gains no fourth `configured' value: what failed is
+working out WHOSE the checkout is, which is not a row of that table.  Ratatui's
+`DeclarationUnreadable' is the same answer from the other side."
+  (cl-letf (((symbol-function 'cerebro--configured-supervisor)
+             (lambda (&rest _) '(unreadable . "boom")))
+            ((symbol-function 'cerebro--owned) (lambda (&rest _) nil))
+            ((symbol-function 'cerebro--supervision-decision)
+             (lambda (&rest _) (error "the decision table must not be consulted")))
+            ((symbol-function 'cerebro--release-supervision)
+             (lambda (&rest _) (error "an outage must not release the lease")))
+            ((symbol-function 'cerebro--apply-supervision-mode-line) #'ignore)
+            ((symbol-function 'cerebro--report-supervision-error) #'ignore))
+    (with-temp-buffer
+      (should (equal (cerebro--reconcile-supervision "/r")
+                     '(read-only reconcile-failed "boom"))))))
+
 (ert-deftest cerebro-test/the-endpoint-identity-and-record-come-from-the-shared-root ()
   "The three diagnostic values, read for real."
   (let ((tmp (cerebro-test--supervisor-consumer "emacs")))
@@ -9181,12 +9278,16 @@ plain cache is what keeps a changed declaration obeyed on the next tick."
       (delete-directory tmp t))))
 
 (ert-deftest cerebro-test/a-reader-that-did-not-run-is-never-cached ()
-  "A transient failure must not pin `emacs' for the life of the buffer.
+  "A transient failure must not be pinned for the life of the buffer.
 
-The fallback is right - a consumer whose submodule predates this script keeps
-supervising - but caching it turns one fork failure into this Emacs supervising
-a checkout the project declares for Ratatui, until somebody touches
-project.conf. Before the cache the next tick recovered, and it still must."
+Caching it turns one fork failure into this Emacs answering for a checkout the
+project declares for Ratatui, until somebody touches project.conf. Before the
+cache the next tick recovered, and it still must.
+
+The script is THERE in this fixture and could not answer, so the failure reads
+as `unreadable\=' rather than as the `emacs\=' degrade (cb-nc8): that degrade is
+for a consumer whose submodule was never checked out, which is a different
+fact.  Either way it is not cached, which is what this pins."
   (let ((tmp (cerebro-test--supervisor-consumer "tui")))
     (unwind-protect
         (with-temp-buffer
@@ -9197,8 +9298,8 @@ project.conf. Before the cache the next tick recovered, and it still must."
                           (if (and fail (= (length args) 1))
                               (error "the reader could not run")
                             (apply real args)))))
-              ;; The transient failure falls back, and is NOT remembered.
-              (should (eq (cerebro--configured-supervisor tmp) 'emacs))
+              ;; The transient failure answers `unreadable', and is NOT remembered.
+              (should (eq (car-safe (cerebro--configured-supervisor tmp)) 'unreadable))
               (setq fail nil)
               ;; The very next call sees what the project actually declares.
               (should (eq (cerebro--configured-supervisor tmp) 'tui)))))

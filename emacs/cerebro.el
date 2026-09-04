@@ -4541,7 +4541,8 @@ of days at `evaluations\=' and months at `changes\='."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire nudge standby arm refused exit give-up sweep sweep-tell triage error)
+  '(start end retire nudge standby arm refused exit give-up sweep sweep-tell triage disarm-all
+    error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 
@@ -4906,6 +4907,21 @@ One mode says yes, and every caller asks through this rather than matching the
 list itself - which is what keeps a new mode from silently gaining permissions."
   (eq (car mode) 'supervising))
 
+(defun cerebro--supervision-hands-over-p (mode)
+  "Non-nil when MODE means somebody ELSE has, or is taking, this checkout.
+
+The one question the armed set is answered from (cb-nc8).
+`cerebro--supervision-may-act-p\=' asks whether this view may act NOW, which is
+false for a transient failure too - and disarming on one of those is a permanent
+consequence drawn from a recoverable condition, which is what left a whole fleet
+grey and unreplaced.  Ratatui\='s `SupervisionMode::hands_over\=' is the same
+predicate; `docs/ui/cb-op0-arming.html\=' §6 is the table both follow."
+  (pcase mode
+    (`(draining . ,_) t)
+    (`(read-only configured-for . ,_) t)
+    (`(read-only owned-by . ,_) t)
+    (_ nil)))
+
 (defun cerebro--supervision-may-end-p (mode)
   "Non-nil when MODE may end, retire or kill a session it already hosts.
 
@@ -5022,13 +5038,23 @@ such file - a cached key of its own, so a consumer that declares nothing costs a
     (if attributes (file-attribute-modification-time attributes) 'absent)))
 
 (defun cerebro--configured-supervisor (repo-root)
-  "Which implementation REPO-ROOT declares: `emacs\=', `tui\=', or (invalid . RAW).
+  "Which implementation REPO-ROOT declares.
+
+`emacs\=', `tui\=', (invalid . RAW), or (unreadable . DETAIL).
 
 A script that cannot be run at all is `emacs\=', the documented default, for the
 reason `cerebro--autostart-names\=' gives: a consumer with no submodule checked
 out degrades to the built-in behaviour rather than taking the render down.  A
 script that RAN and refused is never rounded that way - that is the fail-closed
-half, and it is the whole point of the typed reader."
+half, and it is the whole point of the typed reader.
+
+And a script that ran and could not ANSWER is neither (cb-nc8).  Exit 3 is
+`project-conf\=' itself having failed, and an exit 2 always prints the raw
+offending value, so an exit 2 carrying nothing is the script failing to say why.
+Both are (unreadable . DETAIL): a reader\='s failure is not a fact about the
+project, and reading one as a declaration is what drained a whole fleet for
+good.  It is never cached, for the same reason the `emacs\=' fallback below is
+not."
   (let ((mtime (cerebro--project-conf-mtime repo-root)))
     (if (and cerebro--configured-supervisor-cache
              (equal (car cerebro--configured-supervisor-cache) mtime))
@@ -5040,11 +5066,30 @@ half, and it is the whole point of the typed reader."
                           (cond ((and (eq status 0) (member output '("emacs" "tui")))
                                  (intern output))
                                 ((eq status 0) (cons 'invalid output))
-                                ((eq status 2) (cons 'invalid output))
+                                ((and (eq status 2) (not (string-empty-p output)))
+                                 (cons 'invalid output))
+                                ;; Exit 3, or an exit 2 with no value: the script ran and could
+                                ;; not answer (cb-nc8). Not an answer about this project, and
+                                ;; not cached.
+                                ((memq status '(2 3))
+                                 (setq answered nil)
+                                 (cons 'unreadable "fleet_supervisor could not be read"))
                                 ;; A status that is neither: a signal, a shell that could not
-                                ;; run it. Not an answer about this project.
-                                (t (setq answered nil) 'emacs)))
-                      (error (setq answered nil) 'emacs))))
+                                ;; run it. A script that is not THERE is the documented degrade
+                                ;; for a consumer whose submodule predates ownership; one that
+                                ;; is there and failed is an outage, which is a different fact.
+                                (t (setq answered nil)
+                                   (if (file-exists-p
+                                        (expand-file-name (cerebro--script "fleet-supervisor")
+                                                          repo-root))
+                                       (cons 'unreadable "fleet_supervisor could not be read")
+                                     'emacs))))
+                      (error
+                       (setq answered nil)
+                       (if (file-exists-p
+                            (expand-file-name (cerebro--script "fleet-supervisor") repo-root))
+                           (cons 'unreadable "fleet_supervisor could not be read")
+                         'emacs)))))
         ;; ONLY A REAL ANSWER IS CACHED. The `emacs' above is a fallback for a reader that did
         ;; not run, and caching it would pin one transient fork failure for the life of the
         ;; buffer - which, on a project declaring `tui', is this Emacs supervising a checkout
@@ -5182,6 +5227,21 @@ first autostart.  Returns the mode it settled on and leaves it in
 
 An acquisition is quiet by the navigator\='s choice: taking the lease starts and
 arms nothing, because changing the owner must not itself launch processes."
+  (if (eq (car-safe (cerebro--configured-supervisor repo-root)) 'unreadable)
+      ;; Keep whatever lease this buffer holds and claim nothing about ownership: what failed is
+      ;; working out WHOSE the checkout is (cb-nc8). Ratatui's `DeclarationUnreadable' is the same
+      ;; answer from the other side, and this mode already has its mode-line sentence, its refusal
+      ;; sentence and its once-per-distinct-message error report.
+      (let ((mode (list 'read-only 'reconcile-failed
+                        (cdr (cerebro--configured-supervisor repo-root)))))
+        (setq cerebro--supervision mode)
+        (cerebro--apply-supervision-mode-line mode)
+        (cerebro--report-supervision-error mode)
+        mode)
+    (cerebro--reconcile-supervision-1 repo-root)))
+
+(defun cerebro--reconcile-supervision-1 (repo-root)
+  "The ownership decision itself, once the declaration has been read (cb-nc8)."
   (let* ((configured (cerebro--configured-supervisor repo-root))
          (hosted (length (cerebro--owned)))
          ;; `process-live-p', not merely non-nil: a server process deleted by hand (or by
@@ -6723,14 +6783,27 @@ left and runs every `cerebro-system-scan-seconds'."
                ;; declaration that moved supervision to Ratatui has to be
                ;; obeyed on this tick, not after one more round of starts.
                (mode (cerebro--reconcile-supervision-safely repo-root)))
-          ;; A view that may not act arms nobody: every armed name is a promise
-          ;; it will not keep, and a blue `standby\=' row in a read-only view says
-          ;; the opposite (cb-op0).  The Ratatui view already does this
-          ;; (`main.rs\=' `supervise\='); `docs/cerebro-supervision.md\=' step 3 already
-          ;; tells the navigator BOTH views come back with an empty armed set,
-          ;; which this makes true.
-          (unless (cerebro--supervision-may-act-p mode)
-            (setq cerebro--armed nil))
+          ;; A view HANDING OVER arms nobody: every armed name is a promise it
+          ;; will not keep, and a blue `standby\=' row in a view somebody else
+          ;; supervises says the opposite (cb-op0).  The Ratatui view already
+          ;; does this (`main.rs\=' `supervise\='); `docs/cerebro-supervision.md\='
+          ;; step 3 already tells the navigator BOTH views come back with an
+          ;; empty armed set, which this makes true.
+          ;;
+          ;; `hands-over\=', not `may-act\=' (cb-nc8): a mode that means "I could
+          ;; not find out whose checkout this is" recovers on the next
+          ;; five-second poll, and the armed set does not.
+          (when (and (cerebro--supervision-hands-over-p mode) cerebro--armed)
+            (let ((names (copy-sequence cerebro--armed)))
+              (setq cerebro--armed nil)
+              (cerebro--log repo-root 'disarm-all
+                            (list :mode (symbol-name (car mode))
+                                  :reason (if (eq (car mode) 'read-only)
+                                              (symbol-name (nth 1 mode))
+                                            "-")
+                                  :agents (vconcat names)))
+              (message "Handing supervision over; %d name%s disarmed."
+                       (length names) (if (= (length names) 1) "" "s"))))
           ;; Ending and retiring survive a drain; starting, nudging and
           ;; triaging do not. That is the graceful handover: the sessions this
           ;; Emacs already hosts stay usable and are allowed to finish, and

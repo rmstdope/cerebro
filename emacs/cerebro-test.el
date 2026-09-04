@@ -6936,6 +6936,23 @@ transition log, and the generations shift when the file passes its size."
             (should (string-match-p "\"by\":\"standby\"" (car lines)))))
       (delete-directory root t))))
 
+(ert-deftest cerebro-test/a-name-that-was-never-armed-writes-no-disarm-line ()
+  "A false positive in the file that answers \"why did this row stop\" is worse
+than the silence cb-yv9 is ending: a second `k' disarmed nothing."
+  (let* ((cerebro--sessions nil)
+         (cerebro-log-verbosity 'decisions)
+         (cerebro--armed nil)
+         (root (make-temp-file "cerebro-test-" t))
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working))
+         (standby (cerebro-test--agent "Xavier" "planner" 'interactive 'standby)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'revert-buffer) #'ignore)
+                  ((symbol-function 'cerebro--show-detail) #'ignore))
+          (cerebro--kill-session-buffer agent root)
+          (cerebro--disarm-name standby root)
+          (should (null (cerebro-test--disarm-lines root))))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/a-log-that-cannot-be-written-is-not-an-error ()
   "The fleet must never be brought down by a full disk - the same rule
 `scripts/agent-state' states about its own log."

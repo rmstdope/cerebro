@@ -856,6 +856,12 @@ impl SessionHost {
             // The reader thread is joined BEFORE the screen is read: `Child::try_wait` answers
             // as soon as the child is gone, which can be before the parser has seen its last
             // bytes. `stop` is idempotent, so `into_transcript`'s own call below is a no-op.
+            //
+            // `Session::signal` avoids this join on purpose - it runs on a KEYSTROKE, and the
+            // master's EOF waits for every process holding the slave, a shim's grandchild
+            // included. Here the child is already REAPED, so the only bytes left are ones
+            // already written, and the transcript path has always joined at exactly this point.
+            // The refusal branch below is the one that did not, which is the defect cured.
             session.stop();
             let (child_rows, child_cols) = session.size;
             let message = screen_message(&session, child_rows, child_cols);

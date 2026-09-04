@@ -7202,8 +7202,9 @@ REPO-ROOT is passed in rather than looked up here, so `cerebro--repo-root'
 and its buffer-local `default-directory' work stay out of the unit under
 test - `cerebro-kill' computes it once for all its branches."
   (cerebro--end-session agent repo-root)
-  (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
-  (cerebro--log-disarm agent repo-root "kill")
+  (when (member (cerebro-agent-name agent) cerebro--armed)
+    (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
+    (cerebro--log-disarm agent repo-root "kill"))
   (revert-buffer)
   (cerebro--show-detail agent))
 
@@ -7213,7 +7214,11 @@ test - `cerebro-kill' computes it once for all its branches."
 `retire\=', `give-up\=' and `disarm-all\=' each already say a name left the set;
 `k\=' and the standby disarm beside it said nothing at all, so a row that had
 gone grey and a row never armed read identically in the file that answers
-\"why did this row stop\" (cb-yv9)."
+\"why did this row stop\" (cb-yv9).
+
+Called only when the name actually LEFT the set: a second `k\=', or one on a
+session started outside this view, disarmed nothing, and a line saying it did
+is a false positive in the file being read for exactly that question."
   (cerebro--log repo-root 'disarm
                 (list (cons 'agent (cerebro-agent-name agent))
                       (cons 'role (cerebro-agent-role agent))
@@ -7224,9 +7229,10 @@ gone grey and a row never armed read identically in the file that answers
 
 Its own function so the `disarm\=' branch of `cerebro-kill\=' is testable
 without `y-or-n-p\='."
-  (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
+  (when (member (cerebro-agent-name agent) cerebro--armed)
+    (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
+    (cerebro--log-disarm agent repo-root "standby"))
   (cerebro--forget-parked (cerebro-agent-name agent))
-  (cerebro--log-disarm agent repo-root "standby")
   (revert-buffer))
 
 (defun cerebro-kill ()

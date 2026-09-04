@@ -1692,15 +1692,22 @@ fn route_key(
                 // `k` means stay gone at every state, not only on a standby row: a name still
                 // armed is started again by its own trigger within five seconds, on the bead the
                 // kill just stranded (cb-op0). The stop flag is left alone - `k` is not a retire.
-                app.armed.remove(&name);
-                log_disarm(&mut state.logger, app, &name, "kill", now);
+                let disarmed = app.armed.remove(&name);
+                // Only when the name actually left the set: `k` on a session started outside
+                // this view, or a second `k` on the same row, disarmed nothing, and a line
+                // saying it did is a false positive in the file read to answer "why did this
+                // row stop".
+                if disarmed {
+                    log_disarm(&mut state.logger, app, &name, "kill", now);
+                }
                 state.host.kill(&config.paths, &name);
                 // A killed agent must not wait up to five seconds to disappear from the fleet.
                 AppAction::RefreshFleet
             }
             app::Prompt::Disarm { name, .. } => {
-                app.armed.remove(&name);
-                log_disarm(&mut state.logger, app, &name, "standby", now);
+                if app.armed.remove(&name) {
+                    log_disarm(&mut state.logger, app, &name, "standby", now);
+                }
                 app.set_notice(lifecycle::disarm_notice(&name));
                 // So the row goes grey at once rather than up to five seconds later.
                 AppAction::RefreshFleet
@@ -4742,6 +4749,42 @@ mod main_tests {
         assert_eq!(lines[0]["agent"], "Xavier");
         assert_eq!(lines[0]["role"], "planner");
         assert_eq!(lines[0]["by"], "standby");
+    }
+
+    #[test]
+    fn a_name_that_was_never_armed_writes_no_disarm_line() {
+        // A false positive in the file being read to answer "why did this row stop" is worse
+        // than the silence cb-yv9 is ending: `k` on a session started outside this view, or a
+        // second `k` on the same row, did not disarm anything.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = standby_app(
+            supervising(),
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+            None,
+            Utc::now(),
+        );
+        app.selected = Some("Cyclops".to_string());
+        app.armed.remove("Cyclops");
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+
+        let config = LoopConfig { paths: paths.clone(), ..test_config() };
+        for key in [ch('k'), ch('y')] {
+            let mut logger = Logger::new(&paths.shared_root);
+            logger.set_enabled(true);
+            let mut state = LoopState { host: std::mem::take(&mut host), logger, ..test_state() };
+            route_key(key, &mut app, &mut state, &config, 10, Utc::now());
+            host = std::mem::take(&mut state.host);
+        }
+
+        let written =
+            std::fs::read_to_string(paths.shared_root.join(".cerebro/state/decisions.jsonl"))
+                .unwrap_or_default();
+        assert!(
+            !written.contains(r#""event":"disarm""#),
+            "nothing left the armed set, so nothing says it did: {written}"
+        );
     }
 
     #[test]

@@ -62,9 +62,9 @@ cerebro_jsonl_protected_path() {
 #
 # Returns non-zero WITHOUT WRITING ANYTHING when <path> is empty, when <line> is empty or does not
 # begin with `{', when <path> is protected (see above), or when the append itself fails. It never
-# exits and never writes a diagnostic: a refusal is the caller's to notice. Both callers today sit inside `|| true' groups, so a non-zero
-# return cannot kill them - a future caller OUTSIDE such a group, under `set -e', would die on a
-# refusal, and wants `|| true' or a test of its own.
+# exits and never writes a diagnostic: a refusal is the caller's to notice. Both callers today sit
+# inside `|| true' groups, so a non-zero return cannot kill them - a future caller OUTSIDE such a
+# group, under `set -e', would die on a refusal, and wants `|| true' or a test of its own.
 #
 # The `{' test rather than a full parse: both callers write a JSON object, `scripts/fleet-history'
 # does `fromjson' on every non-empty line and fails loudly on garbage, and this test is one glob

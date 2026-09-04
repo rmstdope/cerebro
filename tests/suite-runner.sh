@@ -737,17 +737,26 @@ printf '%s' "\${CEREBRO_PROTECTED_STATE_DIR-UNSET}" >"$work_dir/seen-guard"
 exit 0
 EOF
 
+# The probe file is removed first and its existence asserted: an empty expectation is also what a
+# missing file yields, so without this the case would read green on a run in which the fixture never
+# executed at all - and "it passed without testing anything" is this case's entire history.
+rm -f "$work_dir/seen-guard"
 run --guard "" "$work_dir/guard-probe"
 [[ $status -eq 0 ]] || fail "an empty guard: expected exit 0, got $status
+$both"
+[[ -f "$work_dir/seen-guard" ]] || fail "the guard probe never ran
 $both"
 [[ "$(cat "$work_dir/seen-guard")" == "" ]] \
   || fail "an empty guard was replaced by '$(cat "$work_dir/seen-guard")' rather than left off"
 pass "an empty guard variable turns the guard off"
 
-# --- 21. a guard the caller did not set is computed and exported ---
+# --- 21. a guard the caller set is exported to every suite ---
 #
-# The other half of case 20: a run with no guard in its environment resolves one, so the two cases
-# together pin `${VAR+set}' from both sides.
+# The passthrough half of case 20, and only that: `run' always puts a guard in the child's
+# environment, so this never reaches the runner's compute-a-default branch and says nothing about
+# it. That branch forks `consumer-root --shared' and is deliberately left uncovered - a case for it
+# would have to make the script resolve a root, and the only root it could resolve here is the
+# navigator's own.
 
 run "$work_dir/guard-probe"
 [[ $status -eq 0 ]] || fail "a default guard: expected exit 0, got $status

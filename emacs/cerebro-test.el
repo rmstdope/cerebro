@@ -6889,6 +6889,53 @@ transition log, and the generations shift when the file passes its size."
                          1)))
       (delete-directory root t))))
 
+(defun cerebro-test--disarm-lines (root)
+  "Every `disarm' line in ROOT's decisions log, as strings."
+  (let ((file (expand-file-name ".cerebro/state/decisions.jsonl" root)))
+    (when (file-exists-p file)
+      (seq-filter (lambda (line) (string-match-p "\"event\":\"disarm\"" line))
+                  (with-temp-buffer
+                    (insert-file-contents file)
+                    (split-string (buffer-string) "\n" t))))))
+
+(ert-deftest cerebro-test/a-kill-writes-a-disarm-line ()
+  "`k' removes a name from the armed set and says so in the file that answers
+\"why did this row stop\" (cb-yv9)."
+  (let* ((cerebro--sessions nil)
+         (cerebro-log-verbosity 'decisions)
+         (cerebro--armed (list "Cyclops"))
+         (root (make-temp-file "cerebro-test-" t))
+         (agent (cerebro-test--agent "Cyclops" "implementer" 'implementer 'working)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'revert-buffer) #'ignore)
+                  ((symbol-function 'cerebro--show-detail) #'ignore))
+          (cerebro--kill-session-buffer agent root)
+          (should-not (member "Cyclops" cerebro--armed))
+          (let ((lines (cerebro-test--disarm-lines root)))
+            (should (equal (length lines) 1))
+            (should (string-match-p "\"agent\":\"Cyclops\"" (car lines)))
+            (should (string-match-p "\"role\":\"implementer\"" (car lines)))
+            (should (string-match-p "\"by\":\"kill\"" (car lines)))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/a-standby-disarm-writes-a-disarm-line ()
+  "And the standby disarm beside it, which said nothing at all either."
+  (let* ((cerebro--sessions nil)
+         (cerebro-log-verbosity 'decisions)
+         (cerebro--armed (list "Xavier"))
+         (root (make-temp-file "cerebro-test-" t))
+         (agent (cerebro-test--agent "Xavier" "planner" 'interactive 'standby)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'revert-buffer) #'ignore))
+          (cerebro--disarm-name agent root)
+          (should-not (member "Xavier" cerebro--armed))
+          (let ((lines (cerebro-test--disarm-lines root)))
+            (should (equal (length lines) 1))
+            (should (string-match-p "\"agent\":\"Xavier\"" (car lines)))
+            (should (string-match-p "\"role\":\"planner\"" (car lines)))
+            (should (string-match-p "\"by\":\"standby\"" (car lines)))))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/a-log-that-cannot-be-written-is-not-an-error ()
   "The fleet must never be brought down by a full disk - the same rule
 `scripts/agent-state' states about its own log."

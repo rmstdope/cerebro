@@ -1095,7 +1095,7 @@ fn log_exits(logger: &mut Logger, host: &mut SessionHost, now: DateTime<Utc>) {
     // An `exit` line only for an ending this view did NOT cause: `end` has already said
     // what happened when it did, and `exit` keeps meaning what it means in Emacs's file.
     // `classify_exit` is the same test the verdict column uses rather than a second one.
-    for (name, ended) in host.take_reaped() {
+    for (name, ended, last_line) in host.take_reaped() {
         if matches!(ended, session::Ended::Signal(_) | session::Ended::ByView) {
             continue;
         }
@@ -1110,7 +1110,7 @@ fn log_exits(logger: &mut Logger, host: &mut SessionHost, now: DateTime<Utc>) {
             now,
             &[
                 ("agent", serde_json::Value::from(name.as_str())),
-                ("code", serde_json::Value::from(code)),
+                ("code", serde_json::Value::from(code.as_str())),
                 // `true` or null, never `false`: a clean exit is not an abnormal one, and
                 // a boolean would quietly change the shape a reader splits on.
                 (
@@ -1121,13 +1121,45 @@ fn log_exits(logger: &mut Logger, host: &mut SessionHost, now: DateTime<Utc>) {
                         serde_json::Value::Null
                     },
                 ),
-                // This crate keeps the last line on the retained screen rather than in a
-                // field, which is what cb-kcs.3 decided when it dropped `LastExit`'s
-                // `:line`.
-                ("last_line", serde_json::Value::Null),
+                // The last line the child painted, taken from its own screen after the
+                // reader thread was joined. Null means it painted nothing at all, which is
+                // what makes "and printed nothing" below mean something.
+                (
+                    "last_line",
+                    last_line
+                        .as_deref()
+                        .map_or(serde_json::Value::Null, serde_json::Value::from),
+                ),
             ],
         );
+        // An abnormal exit the launcher did not explain reaches the file the navigator is told
+        // to open. Not one it DID explain - `scripts/launch-refused` has already written that
+        // line, and a second is the duplicate. The same carve-out `cerebro.el` makes.
+        if lifecycle::classify_exit(ended).is_some() && ended != session::Ended::Status(2) {
+            let message = match last_line.as_deref() {
+                Some(line) => format!("exited with code {code}: {line}"),
+                None => format!("exited with code {code} and printed nothing"),
+            };
+            logger.error(&format!("session {name}"), &message, now);
+        }
     }
+}
+
+/// One `disarm` line: the name, its role, and which act disarmed it - `kill` or `standby`.
+///
+/// `by` because `log_start` already spells "who asked for this" as `by`, and `standby` because
+/// that is the word the row itself carries. A retire, a give-up and a handover write their own
+/// lines and gain none of these: two lines for one decision makes the file's own counting wrong.
+fn log_disarm(logger: &mut Logger, app: &App, name: &str, by: &str, now: DateTime<Utc>) {
+    logger.write(
+        log::Event::Disarm,
+        now,
+        &[
+            ("agent", serde_json::Value::from(name)),
+            ("role", serde_json::Value::from(role_of(app, name))),
+            ("by", serde_json::Value::from(by)),
+        ],
+    );
 }
 
 /// One `start` line. `by` is `"trigger"` when a trigger's reason produced it and `"navigator"`
@@ -1661,12 +1693,14 @@ fn route_key(
                 // armed is started again by its own trigger within five seconds, on the bead the
                 // kill just stranded (cb-op0). The stop flag is left alone - `k` is not a retire.
                 app.armed.remove(&name);
+                log_disarm(&mut state.logger, app, &name, "kill", now);
                 state.host.kill(&config.paths, &name);
                 // A killed agent must not wait up to five seconds to disappear from the fleet.
                 AppAction::RefreshFleet
             }
             app::Prompt::Disarm { name, .. } => {
                 app.armed.remove(&name);
+                log_disarm(&mut state.logger, app, &name, "standby", now);
                 app.set_notice(lifecycle::disarm_notice(&name));
                 // So the row goes grey at once rather than up to five seconds later.
                 AppAction::RefreshFleet
@@ -4636,6 +4670,81 @@ mod main_tests {
     }
 
     #[test]
+    fn a_kill_and_a_standby_disarm_each_write_a_disarm_line() {
+        // A `drive` of its own, because the general one uses `test_state()`, whose logger points
+        // at `/nonexistent` and writes nothing: a case that reads the file back must build its
+        // own `LoopState`, exactly as `a_priority_change_is_written_to_the_decisions_log` does.
+        fn press(
+            app: &mut App,
+            host: &mut SessionHost,
+            paths: &ReaderPaths,
+            keys: Vec<crossterm::event::KeyEvent>,
+        ) {
+            let config = LoopConfig { paths: paths.clone(), ..test_config() };
+            for key in keys {
+                let mut logger = Logger::new(&paths.shared_root);
+                logger.set_enabled(true);
+                let mut state =
+                    LoopState { host: std::mem::take(host), logger, ..test_state() };
+                route_key(key, app, &mut state, &config, 10, Utc::now());
+                *host = std::mem::take(&mut state.host);
+            }
+        }
+
+        fn disarm_lines(paths: &ReaderPaths) -> Vec<serde_json::Value> {
+            let written =
+                std::fs::read_to_string(paths.shared_root.join(".cerebro/state/decisions.jsonl"))
+                    .unwrap_or_default();
+            written
+                .lines()
+                .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+                .filter(|v| v["event"] == "disarm")
+                .collect()
+        }
+
+        // `k` on a live session.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = standby_app(
+            supervising(),
+            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
+            None,
+            Utc::now(),
+        );
+        app.selected = Some("Cyclops".to_string());
+        let mut host = SessionHost::default();
+        host.insert("Cyclops", forever());
+        press(&mut app, &mut host, &paths, vec![ch('k'), ch('y')]);
+
+        assert!(!app.armed.contains("Cyclops"), "the name left the armed set");
+        let lines = disarm_lines(&paths);
+        assert_eq!(lines.len(), 1, "one line for one disarm: {lines:?}");
+        assert_eq!(lines[0]["agent"], "Cyclops");
+        assert_eq!(lines[0]["role"], "implementer");
+        assert_eq!(lines[0]["by"], "kill");
+
+        // The standby disarm beside it.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut app = standby_app(
+            supervising(),
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            None,
+            Utc::now(),
+        );
+        app.selected = Some("Xavier".to_string());
+        let mut host = SessionHost::default();
+        press(&mut app, &mut host, &paths, vec![ch('k'), ch('y')]);
+
+        assert!(!app.armed.contains("Xavier"), "the name left the armed set");
+        let lines = disarm_lines(&paths);
+        assert_eq!(lines.len(), 1, "one line for one disarm: {lines:?}");
+        assert_eq!(lines[0]["agent"], "Xavier");
+        assert_eq!(lines[0]["role"], "planner");
+        assert_eq!(lines[0]["by"], "standby");
+    }
+
+    #[test]
     fn a_confirmed_disarm_greys_the_row_and_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
@@ -4950,6 +5059,64 @@ mod main_tests {
             "the child that died on its own, with `abnormal` true and never false: {exit}"
         );
         assert!(!exit.contains("Storm"), "and nothing at all for the one this view ended");
+
+        let error = one_line(dir.path(), "errors", "error");
+        assert!(
+            error.contains(r#""context":"session Rogue""#)
+                && error.contains("exited with code 3 and printed nothing"),
+            "a child that painted nothing says so in the file the navigator opens: {error}"
+        );
+        assert!(!error.contains("Storm"), "and nothing for the one this view ended");
+    }
+
+    #[test]
+    fn an_abnormal_exit_carries_the_last_line_of_its_own_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+
+        let paths = scratch(dir.path(), "echo 'thread panicked at src/main.rs'; exit 3");
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false).unwrap();
+        settle_gone(&mut host, "Rogue");
+
+        log_exits(&mut logger, &mut host, now);
+
+        let exit = one_line(dir.path(), "decisions", "exit");
+        assert!(
+            exit.contains(r#""last_line":"thread panicked at src/main.rs""#),
+            "the child's own last line is the field: {exit}"
+        );
+        let error = one_line(dir.path(), "errors", "error");
+        assert!(
+            error.contains(r#""context":"session Rogue""#)
+                && error.contains("exited with code 3: thread panicked at src/main.rs"),
+            "and Emacs's own sentence in errors.jsonl: {error}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_writes_no_second_error_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+
+        let paths = scratch(dir.path(), "echo 'cerebro: no claude on PATH' >&2; exit 2");
+        cerebro_tui::lifecycle::start(&mut host, &paths, "Rogue", false).unwrap();
+        settle_gone(&mut host, "Rogue");
+
+        log_exits(&mut logger, &mut host, now);
+
+        let exit = one_line(dir.path(), "decisions", "exit");
+        assert!(
+            exit.contains(r#""last_line":"cerebro: no claude on PATH""#),
+            "a refusal fills the field like any other exit: {exit}"
+        );
+        assert!(
+            log_lines(dir.path(), "errors").is_empty(),
+            "`scripts/launch-refused` owns that line; a second is the duplicate"
+        );
     }
 
     #[test]

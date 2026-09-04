@@ -47,10 +47,9 @@ pub const GENERATIONS: u32 = 3;
 ///
 /// `triage` joined in cb-kcs.5.2, when the view began typing that line itself; `sweep` in
 /// cb-kcs.5.1, when the view gained an `x` of its own.
-/// There is no per-name `disarm` and no second `arm`: where ONE
-/// name LEFT the armed set is already readable from the `retire` or `give-up` line that put it
-/// there. `DisarmAll` is the exception cb-nc8 found, and it is the exception for exactly that
-/// reason: a handover empties the whole set at once and leaves no such line behind it.
+/// `Disarm` joined in cb-yv9: `retire`, `give-up` and `disarm-all` each already say a name left
+/// the armed set, but `k` and the standby disarm beside it said nothing at all, so a row that had
+/// gone grey and a row never armed read identically in the file that answers "why did this stop".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     Start,
@@ -81,6 +80,10 @@ pub enum Event {
     /// One `working` row whose turn ended past `STUCK_CEILING_SECONDS`, once per occurrence and
     /// not per tick (cb-ykz.2). The view acts on none of them - it says so and records it.
     Stuck,
+    /// One name leaving the armed set with no other line to say so: `k`, and the standby
+    /// disarm beside it. `retire` and `give-up` already say it for the paths they cover, and
+    /// `disarm-all` for a handover - this is the two that said nothing at all.
+    Disarm,
     /// One handover emptying the whole armed set: the mode, the reason and the names (cb-nc8).
     /// The one decision that disarms without a `retire` or `give-up` line per name, which is what
     /// made the incident it is named for invisible.
@@ -100,6 +103,7 @@ impl Event {
             Self::Exit => "exit",
             Self::GiveUp => "give-up",
             Self::Evaluate => "evaluate",
+            Self::Disarm => "disarm",
             Self::Sweep => "sweep",
             Self::Stuck => "stuck",
             Self::Priority => "priority",

@@ -4678,8 +4678,8 @@ half out of it."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire nudge standby arm refused exit give-up sweep sweep-tell triage disarm-all
-    stuck error)
+  '(start end retire nudge standby arm refused exit give-up sweep sweep-tell triage disarm
+    disarm-all stuck error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 
@@ -7203,8 +7203,31 @@ and its buffer-local `default-directory' work stay out of the unit under
 test - `cerebro-kill' computes it once for all its branches."
   (cerebro--end-session agent repo-root)
   (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
+  (cerebro--log-disarm agent repo-root "kill")
   (revert-buffer)
   (cerebro--show-detail agent))
+
+(defun cerebro--log-disarm (agent repo-root by)
+  "Say in REPO-ROOT's log that AGENT left the armed set, and what did it (BY).
+
+`retire\=', `give-up\=' and `disarm-all\=' each already say a name left the set;
+`k\=' and the standby disarm beside it said nothing at all, so a row that had
+gone grey and a row never armed read identically in the file that answers
+\"why did this row stop\" (cb-yv9)."
+  (cerebro--log repo-root 'disarm
+                (list (cons 'agent (cerebro-agent-name agent))
+                      (cons 'role (cerebro-agent-role agent))
+                      (cons 'by by))))
+
+(defun cerebro--disarm-name (agent repo-root)
+  "Forget AGENT's kept buffer, drop it from the armed set, and say so in the log.
+
+Its own function so the `disarm\=' branch of `cerebro-kill\=' is testable
+without `y-or-n-p\='."
+  (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
+  (cerebro--forget-parked (cerebro-agent-name agent))
+  (cerebro--log-disarm agent repo-root "standby")
+  (revert-buffer))
 
 (defun cerebro-kill ()
   "Kill the agent at point (`k'), confirming first.
@@ -7237,9 +7260,7 @@ kept buffer and start nothing more under that name until `s' says so
            (cerebro--kill-session-buffer agent repo-root)))
         ('disarm
          (when (y-or-n-p (format "Disarm %s? " (cerebro-agent-name agent)))
-           (setq cerebro--armed (delete (cerebro-agent-name agent) cerebro--armed))
-           (cerebro--forget-parked (cerebro-agent-name agent))
-           (revert-buffer)))
+           (cerebro--disarm-name agent repo-root)))
         ('duplicate
          (message "%s" (cerebro--duplicate-message-for agent repo-root)))
         ('external

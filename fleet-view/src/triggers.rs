@@ -870,9 +870,24 @@ impl StartLedger {
         }
     }
 
+    /// Forget the failures behind NAME once a pass has actually run.
+    ///
+    /// An end later than the start it followed is a start that produced a pass. A name this
+    /// view never started is left alone: `start_failed` answers `false` for it, but there is no
+    /// start here for a pass to have survived. Without this the count is only
+    /// rewritten at the NEXT start decision, so a standby row's `failed_starts` stands in
+    /// `evaluations.jsonl` for as long as the row stays asleep - hours, saying a name is backing
+    /// off when it is not.
+    fn clear_failures_if_a_pass_ran(&mut self, name: &str, at: DateTime<Utc>) {
+        if self.started_at.get(name).is_some_and(|started| at > *started) {
+            self.failures.remove(name);
+        }
+    }
+
     /// Record that the view ended NAME's pass - the authoritative `ended_at`.
     pub fn note_ended(&mut self, name: &str, at: DateTime<Utc>) {
         self.parked_at.insert(name.to_string(), at);
+        self.clear_failures_if_a_pass_ran(name, at);
     }
 
     /// Record that a successful fleet read saw NAME up. The FALLBACK `ended_at`, and it is
@@ -881,6 +896,7 @@ impl StartLedger {
     /// day (cb-b4m).
     pub fn note_seen_up(&mut self, name: &str, at: DateTime<Utc>) {
         self.seen_up_at.insert(name.to_string(), at);
+        self.clear_failures_if_a_pass_ran(name, at);
     }
 
     /// The park if there is one, else the last tick that saw it up.
@@ -1566,6 +1582,36 @@ mod tests {
         assert_eq!(fresh.ended_at("Beast"), Some(at(500)));
         // Armed is not started.
         assert_eq!(fresh.started_at("Beast"), None);
+    }
+
+    #[test]
+    fn the_failure_ledger_forgets_a_start_a_pass_has_survived() {
+        // A pass that ran: the end is later than the start it followed.
+        let mut ledger = StartLedger::default();
+        ledger.set_failures("Xavier", 3);
+        ledger.note_started("Xavier", at(100), None);
+        ledger.note_ended("Xavier", at(160));
+        assert_eq!(ledger.failures("Xavier"), 0);
+
+        // A launch that never became a session leaves the PREVIOUS pass's end behind it.
+        let mut stale = StartLedger::default();
+        stale.set_failures("Xavier", 3);
+        stale.note_started("Xavier", at(100), None);
+        stale.note_ended("Xavier", at(40));
+        assert_eq!(stale.failures("Xavier"), 3);
+
+        // A name this view never started keeps whatever count it was given.
+        let mut unstarted = StartLedger::default();
+        unstarted.set_failures("Xavier", 3);
+        unstarted.note_ended("Xavier", at(160));
+        assert_eq!(unstarted.failures("Xavier"), 3);
+
+        // `note_seen_up` is the fallback end, and clears the same way.
+        let mut seen = StartLedger::default();
+        seen.set_failures("Storm", 2);
+        seen.note_started("Storm", at(100), None);
+        seen.note_seen_up("Storm", at(160));
+        assert_eq!(seen.failures("Storm"), 0);
     }
 
     #[test]

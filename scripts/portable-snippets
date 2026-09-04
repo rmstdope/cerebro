@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#
+# portable-snippets - do this repository's skills and agents contain a shell snippet that only
+# word-splits under bash?
+#
+# An agent pastes the snippets in `skills/' and `agents/' into whatever shell its tool provides. An
+# ALTERNATE-VALUE EXPANSION - a dollar-brace name, a colon, a plus sign, a value, a closing brace -
+# is the one construct in ordinary use that means two different things across those shells: bash
+# splits an unquoted one into several arguments, and zsh does not word-split a parameter expansion
+# at all, so the whole thing arrives as a single argument and the command receives a flag glued to
+# its value. `scripts/model-for' answers that with its usage line and exit 2.
+#
+# Two implementers hit exactly that, at the same line of the same file, diagnosed it identically and
+# wrote the same prevention (cb-i1w 2026-09-02, cb-hz4 2026-09-03); the snippet was byte-identical
+# between the two sightings. This repository's rule is that a class of defect earns a check the
+# second time it happens, and this is the second.
+#
+# WHERE A FLAG IS CONDITIONAL, write an `if [ -n "$var" ]' with two explicit invocations, or build
+# an array and expand it as "${args[@]}" - or, better, do not resolve the value in the prose at all
+# and let the script being called resolve it for itself.
+#
+#   no arguments.
+#   stdout   one line per finding, or nothing at all when portable:
+#              unportable: <path>:<line> (an alternate-value expansion does not word-split under zsh)
+#            paths relative to the repository root.
+#   exit 0   portable.
+#   exit 1   at least one finding.
+#   exit 2   usage.
+#
+# ONLY THE ALTERNATE-VALUE FORM IS MATCHED, not the default-value one (a colon and a minus sign).
+# `"${BD_TIMEOUT:-30}"' is idiomatic, portable and quoted, and flagging it would push authors toward
+# uglier code for no defect. The alternate-value form in argument position exists precisely to emit
+# a VARIABLE NUMBER OF WORDS, which is the thing zsh will not do; that is the class paid for twice.
+#
+# THE WHOLE FILE IS SCANNED, not only fenced blocks. Most fenced blocks under `skills/' carry no
+# info string at all, so a fence-aware scan would miss any snippet in one, and fence parsing is
+# state this script does not otherwise need. An occurrence in prose is either a snippet or
+# documentation of one, and both should be portable.
+#
+# THE PATHSPEC IS PART OF THE DESIGN. Only `skills/' and `agents/' are scanned - the two directories
+# `sync-symlinks.sh' links into a consumer's discovery paths, so they are what an agent actually
+# loads and pastes from. Scanning wider would make this suite read `docs/', `README.md', `LICENSE'
+# or `models.conf.example' - `scripts/ci-needed''s skip list - and a suite that starts reading one
+# of them makes a green pull request that should have been red. Both directories are on ci-needed's
+# `*)' arm, so ci-needed needs no edit for this.
+#
+# `--cached --others --exclude-standard', so a snippet written but not yet `git add'ed is scanned:
+# that is the moment this check exists to fire. `-z' because a path is never quoted under it.
+#
+# THIS SCRIPT IS NOT ITSELF SCANNED - it lives in `scripts/', outside the scan set - the way
+# `marker-readers' is not itself a reader of the marker sentence. That is why its header may spell
+# the construct out and the skills may not.
+#
+# It is a GATE predicate and must never join `launch-preflight''s hot path: the preflight runs before
+# every single session, and a check that refuses there is a fleet that cannot start.
+#
+# NOT under `tests/': the gate's suite loop is `tests/*.sh', and a script whose exit status is an
+# answer must not be picked up as a suite. Its suite is `tests/portable-snippets.sh'.
+
+# Not -e: the answer IS the exit status, and a grep that matches nothing - the clean case - exits 1.
+set -uo pipefail
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: portable-snippets" >&2
+  exit 2
+fi
+
+# -P for `tracked-links'' reason: the subject is the checkout this script lives in, which for a
+# fixture is the fixture.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT" || exit 2
+
+# A dollar, a brace, a name, a colon, a plus. Assembled rather than written whole so that a future
+# widening of the pathspec to include `scripts/' cannot make this file report itself.
+# The plus is escaped: in an ERE it would otherwise be a quantifier over the colon, which matches
+# the default-value form too.
+pattern='\$\{[A-Za-z_][A-Za-z0-9_]*:\'"$(printf '\53')"
+
+findings=0
+
+while IFS= read -r -d '' path; do
+  [[ -f "$path" ]] || continue
+
+  hits="$(grep -nE "$pattern" "$path")"
+  case $? in
+    0) ;;
+    1) continue ;;
+    # grep itself failed: an advisory naming the rule and the step, never silence - `|| true' could
+    # not tell a no-match from a grep that never ran (cb-u5e).
+    *) echo "portable-snippets: grep failed on $path; the alternate-value check did not run" >&2
+       continue ;;
+  esac
+
+  while IFS= read -r hit; do
+    [[ -n "$hit" ]] || continue
+    echo "unportable: $path:${hit%%:*} (an alternate-value expansion does not word-split under zsh)"
+    findings=$((findings + 1))
+  done <<<"$hits"
+done < <(git ls-files --cached --others --exclude-standard -z -- skills agents)
+
+[[ $findings -eq 0 ]] || exit 1
+exit 0

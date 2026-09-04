@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+#
+# Records in an agent's state file the moment its most recent turn ended. Called by hooks, never by
+# an agent:
+#
+#     .claude/cerebro/scripts/agent-turn ended        # Stop: Claude has finished responding
+#     .claude/cerebro/scripts/agent-turn resumed      # UserPromptSubmit: a new turn is starting
+#
+# WHY THIS EXISTS (cb-ykz.1). A session that writes `working' and then ends its turn without writing
+# `waiting' sits as `working' for hours - six stretches of five to thirteen hours were measured on
+# this fleet. Nothing in either fleet view can tell that row from one doing real work, because
+# nothing records the one fact that separates them: the turn ended. This script is that fact and
+# nothing more. Nothing reads `turn_ended' yet; deriving "stuck" from it is cb-ykz.2 and acting on
+# one is cb-ykz.3.
+#
+# WHAT IT WRITES. One key of .cerebro/state/<name>.state.json, an ISO-8601 `...Z' string or null:
+#
+#   turn_ended   the moment this session's most recent turn ended, if it has not started another
+#                since. `null' means a turn is in progress, or none has ever ended. It says nothing
+#                about whether the session is stuck - that needs a ceiling nobody has chosen.
+#
+# Every other key keeps its value. `scripts/agent-state' clears the field on every write, because an
+# agent writing its own state is a session that is still running turns; so a state change IS a
+# clear, and this script's `resumed' mode is the second half of that for a session that was answered
+# without writing anything.
+#
+# WHAT IT NEEDS. `CEREBRO_AGENT_NAME', exported by `scripts/launch' via `agent-hooks-env'. Without
+# it there is nothing to name a file after, so the script does nothing - which is also what happens
+# in an ordinary `claude' session that happens to load these settings. Every other failure is
+# swallowed the same way, and it never creates a state file: one invented here would carry no
+# `state', and both readers would report a row no agent has ever written.
+#
+# WHY IT NEVER FAILS AND NEVER PRINTS. Both differ from `scripts/agent-asking' beside it, which is a
+# PreToolUse/PostToolUse hook and can afford neither mistake. Do not "fix" either back:
+#
+#   * Claude Code adds a `UserPromptSubmit' hook's STDOUT to the model's context on exit 0. One
+#     stray echo here is a sentence prepended to every prompt of every agent in every consumer.
+#   * Exit 2 on `UserPromptSubmit' blocks prompt processing and ERASES THE PROMPT; exit 2 on `Stop'
+#     prevents the session from stopping. So a usage error - `agent-asking''s only non-zero - would
+#     either eat the navigator's typing or spin a session that cannot finish. An unknown mode
+#     therefore prints its usage on stderr and exits 0.
+#
+# Writes atomically (a .tmp file, then mv) for `agent-state''s reason: cerebro--read-state-file and
+# readers::read_states read this file on a five-second clock and must never see a torn one. The tmp
+# name carries this process''s pid, because `agent-state' writes the same file through its own
+# `<file>.tmp' - two writers sharing one scratch path would let each `mv' the other''s half-written
+# object, which is the very atomicity both headers claim.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Nothing below is worth failing a turn over - and under `set -euo pipefail' a failing step ends the
+# script where it stands, so the ERR trap is what makes every `exit 0' below unnecessary.
+exit_quietly() { exit 0; }
+trap exit_quietly ERR
+
+mode="${1:-}"
+case "$mode" in
+  ended|resumed) ;;
+  *)
+    echo "usage: agent-turn <ended|resumed>" >&2
+    exit 0 ;;
+esac
+
+name="${CEREBRO_AGENT_NAME:-}"
+[[ -n "$name" ]] || exit 0
+
+command -v jq >/dev/null 2>&1 || exit 0
+
+repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || exit 0
+state_file="$repo_root/.cerebro/state/$name.state.json"
+
+tmp_file="$state_file.$$.tmp"
+
+[[ -f "$state_file" ]] || exit 0
+
+# A file that does not parse is left exactly as it is - there is nothing to modify.
+jq -e . "$state_file" >/dev/null 2>&1 || exit 0
+
+case "$mode" in
+  ended)
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # The redirection creates the file before jq runs, so a failing jq leaves litter in a directory
+    # two views poll: remove it on the way out rather than exiting over it.
+    jq --arg now "$now" '.turn_ended = $now' "$state_file" > "$tmp_file" 2>/dev/null \
+      || { rm -f "$tmp_file"; exit 0; }
+    mv -f "$tmp_file" "$state_file" 2>/dev/null || { rm -f "$tmp_file"; exit 0; }
+    ;;
+  resumed)
+    # Already clear, or never stamped: do nothing at all, so a session's ordinary turn costs no
+    # write of a file two readers poll every five seconds.
+    current="$(jq -r '.turn_ended // "null"' "$state_file" 2>/dev/null || echo null)"
+    [[ "$current" == "null" ]] && exit 0
+    jq '.turn_ended = null' "$state_file" > "$tmp_file" 2>/dev/null \
+      || { rm -f "$tmp_file"; exit 0; }
+    mv -f "$tmp_file" "$state_file" 2>/dev/null || { rm -f "$tmp_file"; exit 0; }
+    ;;
+esac
+
+exit 0

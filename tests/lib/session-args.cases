@@ -64,7 +64,7 @@ dead   Cyclops  {root}   This session is Cyclopsly of the cerebro fleet rooted a
 alive  Storm    {root}   --remote-control-session-name-prefix Cyclops --name Storm This session is Storm of the cerebro fleet rooted at {root}/.
 # a Claude Code flag is no longer evidence: --name alone proves nothing now
 dead   Cyclops  {root}   --name Cyclops
-dead   Cyclops  {root}   --agent implementer --name Cyclops --remote-control Cyclops --permission-mode auto --settings {root}/.claude/cerebro/hooks/question-state.settings.json
+dead   Cyclops  {root}   --agent implementer --name Cyclops --remote-control Cyclops --permission-mode auto --settings {root}/.claude/cerebro/hooks/session-state.settings.json
 # the root: another consumer, and a sibling checkout whose path merely starts with this one's
 dead   Cyclops  {root}   This session is Cyclops of the cerebro fleet rooted at {other}/.
 alive  Cyclops  {other}  This session is Cyclops of the cerebro fleet rooted at {other}/.

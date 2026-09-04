@@ -1144,7 +1144,7 @@ mod tests {
         std::fs::create_dir_all(&state_dir).unwrap();
         std::fs::write(
             state_dir.join("Parsed.state.json"),
-            r#"{"state":"working","phase":"build","bead":"cb-1","since":"2026-01-01T00:00:00Z","phase_since":null,"pid":42}"#,
+            r#"{"state":"working","phase":"build","bead":"cb-1","since":"2026-01-01T00:00:00Z","phase_since":null,"pid":42,"turn_ended":"2026-01-01T00:05:00Z"}"#,
         )
         .unwrap();
         std::fs::write(state_dir.join("Invalid.state.json"), "{ not json").unwrap();
@@ -1166,6 +1166,11 @@ mod tests {
             StateObservation::Parsed(record) => {
                 assert_eq!(record.state, "working");
                 assert_eq!(record.pid, 42);
+                // The reader's own contract case for cb-ykz.1's field, against a real file.
+                assert_eq!(
+                    record.turn_ended,
+                    Some("2026-01-01T00:05:00Z".parse::<DateTime<Utc>>().unwrap())
+                );
             }
             other => panic!("expected Parsed, got {other:?}"),
         }

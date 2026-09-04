@@ -1553,6 +1553,7 @@ mod tests {
             bead: None,
             since: None,
             phase_since: None,
+            turn_ended: None,
             pid: None,
             sessions: 0,
             diagnostic: None,

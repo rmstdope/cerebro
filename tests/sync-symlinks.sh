@@ -30,7 +30,7 @@ mkdir -p "$cerebro_dir/scripts" "$cerebro_dir/skills/demo" "$cerebro_dir/agents"
 # directly under hooks/, and the provider's own file one level down. Only the latter is ever linked.
 echo '{}' > "$cerebro_dir/hooks/copilot/cerebro-question-state.json"
 echo '# not a hook' > "$cerebro_dir/hooks/copilot/README.md"
-echo '{}' > "$cerebro_dir/hooks/question-state.settings.json"
+echo '{}' > "$cerebro_dir/hooks/session-state.settings.json"
 cp "$repo_root/scripts/sync-symlinks.sh" "$cerebro_dir/scripts/sync-symlinks.sh"
 chmod +x "$cerebro_dir/scripts/sync-symlinks.sh"
 cp "$repo_root/scripts/consumer-root" "$cerebro_dir/scripts/consumer-root"
@@ -113,7 +113,7 @@ entries=("$consumer/.github/hooks"/*)
 [[ "${#entries[@]}" -eq 1 ]] \
   || fail ".github/hooks should hold exactly the one hook link, got: ${entries[*]}"
 for e in "${entries[@]}"; do
-  [[ "$(readlink "$e")" == *question-state.settings.json ]] \
+  [[ "$(readlink "$e")" == *session-state.settings.json ]] \
     && fail "Claude Code's settings file was linked into .github/hooks: $e"
 done
 pass "the claude settings file is not linked into the copilot hook directory"

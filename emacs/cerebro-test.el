@@ -1003,7 +1003,8 @@ shape."
           (make-directory (expand-file-name ".cerebro" tmp) t)
           ;; The sourced libraries come with the scripts, derived by the tool
           ;; rather than named here (cb-u70).
-          (cerebro-test--place-scripts scripts "agent-state" "roster" "consumer-root")
+          (cerebro-test--place-scripts scripts "agent-state" "agent-turn" "roster"
+                                      "consumer-root")
           ;; `agent-state\=' resolves its consumer with `consumer-root --shared\=',
           ;; which asks git for the main working tree - so the fixture is a repo,
           ;; the way `tests/lib/consumer.sh\=' builds one for the bash suites.
@@ -1045,7 +1046,33 @@ shape."
                                                 (list (cons "Cyclops" parsed))
                                                 #'cerebro-test--always-alive nil nil))))
               (should (eq (cerebro-agent-state agent) 'waiting))
-              (should (eq (cerebro-agent-bead agent) nil)))))
+              (should (eq (cerebro-agent-bead agent) nil))))
+          ;; and the cross-script contract for `turn_ended' (cb-ykz.1): the real
+          ;; `scripts/agent-turn\=' stamps it and the real `agent-state\=' clears it.
+          (let ((agent-state (expand-file-name "agent-state" scripts))
+                (agent-turn (expand-file-name "agent-turn" scripts))
+                (process-environment (cons "CEREBRO_AGENT_NAME=Cyclops"
+                                           process-environment)))
+            (should (eq 0 (call-process agent-state nil nil nil
+                                        "Cyclops" "working" "--bead" "cb-ykz.1"
+                                        "--phase" "build" "--pid" "4242")))
+            (should (eq 0 (call-process agent-turn nil nil nil "ended")))
+            (let* ((parsed (cerebro--read-state-file
+                            (cerebro--state-file-path tmp "Cyclops")))
+                   (agent (car (cerebro--derive '("Cyclops") nil
+                                                (list (cons "Cyclops" parsed))
+                                                #'cerebro-test--always-alive nil nil))))
+              (should (stringp (cerebro-agent-turn-ended agent))))
+            ;; an agent writing its own state is a session still running turns
+            (should (eq 0 (call-process agent-state nil nil nil
+                                        "Cyclops" "working" "--bead" "cb-ykz.1"
+                                        "--phase" "gate" "--pid" "4242")))
+            (let* ((parsed (cerebro--read-state-file
+                            (cerebro--state-file-path tmp "Cyclops")))
+                   (agent (car (cerebro--derive '("Cyclops") nil
+                                                (list (cons "Cyclops" parsed))
+                                                #'cerebro-test--always-alive nil nil))))
+              (should (eq (cerebro-agent-turn-ended agent) nil)))))
       (delete-directory tmp t))))
 
 (ert-deftest cerebro-test/project-conf-declares-the-role-spacing-the-view-uses ()

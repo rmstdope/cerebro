@@ -938,7 +938,7 @@ fn fleet_document(
     let body = crate::app::fleet_body(&app.fleet.content);
     let empty: Vec<FleetRow> = Vec::new();
     let rows = app.fleet.content.value().unwrap_or(&empty);
-    let columns = columns(rows, width, &app.standby_labels, &app.exits);
+    let columns = columns(rows, width, &app.standby_labels, &app.exits, now);
     let inner_width = (width as usize).saturating_sub(2);
     body.iter()
         .map(|entry| {
@@ -1219,7 +1219,11 @@ fn columns(
     width: u16,
     standby_labels: &BTreeMap<String, String>,
     exits: &BTreeMap<String, LastExit>,
+    now: DateTime<Utc>,
 ) -> Columns {
+    // Before `natural_bead`: in a narrow pane the BEAD cell carries a stuck row's `stuck 11h30`,
+    // eleven cells against `BEAD_FLOOR`, and the column must be sized for what it draws.
+    let wide = width >= WIDE_COLUMNS;
     let longest = |values: Vec<usize>| values.into_iter().max().unwrap_or(0);
     let natural_agent = AGENT_FLOOR.max(2 + longest(rows.iter().map(|r| r.name.chars().count()).collect()));
     let natural_role = ROLE_FLOOR.max(1 + longest(rows.iter().map(|r| r.role.chars().count()).collect()));
@@ -1234,6 +1238,7 @@ fn columns(
                         r,
                         exits.get(&r.name).copied(),
                         standby_labels.get(&r.name).map(String::as_str),
+                        stuck_text(r, now, wide).as_deref(),
                     )
                     .text()
                     .width()
@@ -1241,7 +1246,6 @@ fn columns(
                 .collect(),
         ),
     );
-    let wide = width >= WIDE_COLUMNS;
     let fixed = if wide { STATE_FLOOR + natural_role + 4 } else { STATE_FLOOR + 1 };
     let agent = natural_agent.min((width as usize).saturating_sub(fixed + natural_bead).max(AGENT_FLOOR));
     let bead = natural_bead.min((width as usize).saturating_sub(fixed + agent).max(BEAD_FLOOR));
@@ -1295,7 +1299,13 @@ fn truncate(text: &str, width: usize) -> String {
 }
 
 /// The glyph and its colour, straight from `cerebro--glyph`.
-fn glyph(state: &RowState) -> Span<'static> {
+///
+/// STUCK first, so a stuck row is `✗` whatever else it is - a glyph of its own rather than
+/// sharing `Invalid`'s `!`, which is the rule this vocabulary follows (cb-ykz.2).
+fn glyph(state: &RowState, stuck: bool) -> Span<'static> {
+    if stuck {
+        return Span::styled("✗", Style::default().fg(RED));
+    }
     match state {
         RowState::Working | RowState::Up => Span::styled("●", Style::default().fg(GREEN)),
         RowState::Asking => Span::styled("?", Style::default().fg(GOLD).add_modifier(Modifier::BOLD)),
@@ -1350,7 +1360,13 @@ pub(crate) fn elapsed(since: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Strin
     let Some(since) = since else {
         return String::new();
     };
-    let seconds = (now - since).num_seconds().max(0);
+    elapsed_secs((now - since).num_seconds())
+}
+
+/// `elapsed`'s renderer, given the seconds directly: a stuck row already has its duration from
+/// `lifecycle::stuck_for` and must not spell `8h49` a second way (cb-ykz.2).
+pub(crate) fn elapsed_secs(seconds: i64) -> String {
+    let seconds = seconds.max(0);
     if seconds < 3600 {
         format!("{}m", seconds / 60)
     } else if seconds < 86_400 {
@@ -1370,6 +1386,18 @@ fn for_column(row: &FleetRow, now: DateTime<Utc>) -> String {
         (true, false) => phase_time,
         (false, false) => format!("{bead_time} {phase_time}"),
     }
+}
+
+/// The BEAD cell's stuck text, and `None` unless this row is stuck AND the pane is narrow.
+///
+/// One function, so `columns` and `row_line` cannot disagree about whether the BEAD cell carries
+/// it - which is what `bead_cell`'s own doc comment is about (cb-ykz.2).
+fn stuck_text(row: &FleetRow, now: DateTime<Utc>, wide: bool) -> Option<String> {
+    if wide {
+        return None;
+    }
+    lifecycle::stuck_for(&row.state, row.turn_ended, now)
+        .map(|stood| format!("stuck {}", elapsed_secs(stood)))
 }
 
 fn emphasized(style: Style, attention: bool) -> Style {
@@ -1396,7 +1424,14 @@ fn bead_cell<'a>(
     row: &'a FleetRow,
     exit: Option<LastExit>,
     standby_label: Option<&'a str>,
+    stuck: Option<&'a str>,
 ) -> BeadCell {
+    // First: a stuck row is `Working`, so it can hold neither a standby label nor an exit record,
+    // and putting the arm here keeps that fact stated once. `Some` only in a narrow pane, where
+    // there is no FOR column to carry the text (cb-ykz.2).
+    if let Some(text) = stuck {
+        return BeadCell::Stuck(text.to_string());
+    }
     if row.state == RowState::Standby {
         if let Some(label) = standby_label {
             return BeadCell::Standby(label.to_string());
@@ -1413,12 +1448,17 @@ enum BeadCell {
     Bead(String),
     Verdict(String),
     Standby(String),
+    /// Only ever in a narrow pane, where there is no FOR column to carry it (cb-ykz.2).
+    Stuck(String),
 }
 
 impl BeadCell {
     fn text(&self) -> &str {
         match self {
-            BeadCell::Bead(text) | BeadCell::Verdict(text) | BeadCell::Standby(text) => text,
+            BeadCell::Bead(text)
+            | BeadCell::Verdict(text)
+            | BeadCell::Standby(text)
+            | BeadCell::Stuck(text) => text,
         }
     }
 
@@ -1427,6 +1467,7 @@ impl BeadCell {
             BeadCell::Bead(_) => Style::default(),
             BeadCell::Verdict(_) => Style::default().fg(RED),
             BeadCell::Standby(_) => Style::default().fg(BLUE),
+            BeadCell::Stuck(_) => Style::default().fg(RED),
         }
     }
 }
@@ -1449,7 +1490,8 @@ fn row_line(
         Style::default()
     };
 
-    let mut spans = vec![glyph(&row.state), Span::raw(" ")];
+    let stuck = lifecycle::stuck_for(&row.state, row.turn_ended, now);
+    let mut spans = vec![glyph(&row.state, stuck.is_some()), Span::raw(" ")];
     spans.push(Span::styled(
         pad(&row.name, columns.agent - 2),
         emphasized(name_style, attention),
@@ -1467,16 +1509,22 @@ fn row_line(
     // selected - the rule the state glyph already follows.
     // `bead_cell` is the one place the three are chosen between; a verdict and a standby
     // condition each get a span of their own so the selection band sits beneath the colour.
-    let cell = bead_cell(row, exit, standby_label);
+    let cell = bead_cell(row, exit, standby_label, stuck_text(row, now, columns.wide).as_deref());
     spans.push(Span::styled(
         pad(cell.text(), columns.bead),
         emphasized(cell.colour(), attention),
     ));
     if columns.wide {
-        spans.push(Span::styled(
-            for_column(row, now),
-            emphasized(Style::default(), attention),
-        ));
+        // How long the turn has been over, which is the number that decides whether to act and
+        // the one the elapsed pair does not give (cb-ykz.2).
+        let (text, style) = match stuck {
+            Some(stood) => (
+                format!("stuck {}", elapsed_secs(stood)),
+                Style::default().fg(RED),
+            ),
+            None => (for_column(row, now), Style::default()),
+        };
+        spans.push(Span::styled(text, emphasized(style, attention)));
     }
     Line::from(spans)
 }
@@ -3720,12 +3768,12 @@ mod tests {
             [("Xavier".to_string(), LastExit::GaveUp { failures: 5 })]
                 .into_iter()
                 .collect();
-        let columns = columns(&rows, 80, &BTreeMap::new(), &exits);
+        let columns = columns(&rows, 80, &BTreeMap::new(), &exits, now());
         assert_eq!(columns.bead, 18, "seventeen cells and the column's own gap");
 
         // A pane too narrow to spare them cuts the cell - the clamp below the measurement,
         // unchanged - rather than widening the column past the pane.
-        let narrow = self::columns(&rows, 40, &BTreeMap::new(), &exits);
+        let narrow = self::columns(&rows, 40, &BTreeMap::new(), &exits, now());
         assert!(narrow.bead < 18, "the clamp still bites: {}", narrow.bead);
         let mut app = App::new();
         app.finish_refresh(Ok(rows), at(86_400));
@@ -4532,4 +4580,101 @@ mod tests {
             "the kept clauses survive, in order and unaltered"
         );
     }
+
+    // --- stuck rows (cb-ykz.2) ---------------------------------------------------------------
+
+    /// A `working` row whose turn ended 8h49 ago. `now()` is `at(86_400)`.
+    fn stuck_row() -> FleetRow {
+        FleetRow {
+            turn_ended: Some(now() - chrono::Duration::minutes(529)),
+            ..working("Storm", "implementer", "ci", "cb-ykz.2")
+        }
+    }
+
+    #[test]
+    fn a_stuck_row_says_stuck_in_the_for_column() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![stuck_row()]), now());
+
+        // Below `SPLIT_COLUMNS`, so the Fleet pane has the whole width and the FOR column is drawn.
+        let buffer = render(&app, 80, 24);
+        let rendered = body(&buffer);
+        let line = line_with(&rendered, "Storm");
+        assert!(line.contains("stuck 8h49"), "{rendered:?}");
+        assert!(!line.contains("18m 18m"), "the elapsed pair is gone: {rendered:?}");
+        assert!(line.contains("cb-ykz.2"), "the BEAD cell still holds the id: {rendered:?}");
+        assert!(line.starts_with('✗'), "{line:?}");
+        assert_eq!(style_where(&buffer, "stuck 8h49").fg, Some(RED));
+        assert_eq!(style_where(&buffer, "✗").fg, Some(RED));
+    }
+
+    #[test]
+    fn a_narrow_stuck_row_says_stuck_in_the_bead_column() {
+        // `LEFT_COLUMN`: the ordinary split-screen Fleet pane, where no FOR column is drawn.
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![stuck_row()]), now());
+
+        let buffer = render(&app, 40, 24);
+        let rendered = body(&buffer);
+        let line = line_with(&rendered, "Storm");
+        assert!(line.contains("stuck 8h49"), "{rendered:?}");
+        assert!(!line.contains("cb-ykz.2"), "the bead id stands aside: {rendered:?}");
+        assert!(line.contains("ci"), "the STATE cell is untouched: {rendered:?}");
+        assert_eq!(style_where(&buffer, "stuck 8h49").fg, Some(RED));
+    }
+
+    #[test]
+    fn the_bead_column_is_sized_for_a_stuck_row() {
+        let rows = vec![stuck_row()];
+        let narrow = columns(&rows, 40, &BTreeMap::new(), &BTreeMap::new(), now());
+        assert!(
+            narrow.bead >= "stuck 11h30".width(),
+            "sized for the cell it draws, not for the bead id: {}",
+            narrow.bead
+        );
+    }
+
+    #[test]
+    fn a_stuck_row_keeps_its_state_markers() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![FleetRow {
+                sessions: 2,
+                ..stuck_row()
+            }]),
+            now(),
+        );
+        app.set_flagged(["Storm".to_string()].into_iter().collect());
+
+        let rendered = body(&render(&app, 80, 24));
+        let line = line_with(&rendered, "Storm");
+        assert!(line.contains("ci ■ ×2"), "the STATE cell is this bead's business: {line:?}");
+    }
+
+    #[test]
+    fn an_ordinary_working_row_is_unchanged() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![working("Storm", "implementer", "ci", "cb-ykz.2")]), now());
+
+        let buffer = render(&app, 80, 24);
+        let rendered = body(&buffer);
+        let line = line_with(&rendered, "Storm");
+        assert!(line.starts_with('●'), "{line:?}");
+        assert!(line.contains("18m 18m"), "{rendered:?}");
+        assert!(!line.contains("stuck"), "{rendered:?}");
+        assert_eq!(style_where(&buffer, "●").fg, Some(GREEN));
+    }
+
+    #[test]
+    fn a_selected_stuck_row_keeps_its_red() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(vec![stuck_row()]), now());
+        app.selected = Some("Storm".to_string());
+
+        let buffer = render(&app, 80, 24);
+        let cell = style_where(&buffer, "stuck 8h49");
+        assert_eq!(cell.fg, Some(RED));
+        assert_eq!(cell.bg, Some(SELECTED_BG), "red survives the selection band");
+    }
+
 }

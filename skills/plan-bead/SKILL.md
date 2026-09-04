@@ -121,13 +121,8 @@ Check at the top of every pass, **before you count the buffer**, because the buf
 matter here:
 
 ```bash
-bd list --status open --exclude-label planned --exclude-label human \
-        --exclude-type epic --json \
-  | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
-              | select((.labels // []) | (index("verification:failed") | not)
-                                         or (index("plan:revise") != null))
-              | select(((.labels // []) | index("verdict:stale")) | not)
-              | select(.priority==0) | "\(.id)\t\(.title)"'
+.claude/cerebro/scripts/plan-candidates \
+  | jq -r '.[] | select(.priority==0) | "\(.id)\t\(.title)"'
 ```
 
 **A failed verification is a candidate only when it carries `plan:revise`** — that is what the second
@@ -142,8 +137,14 @@ found nothing left to build, is waiting for Psylocke's second look and is not yo
 filter it comes back every pass. A brand-new P0 that was never planned carries neither label and is
 unaffected, which is why the test is on `verification:failed` rather than on `planned`.
 
-**The held beads are filtered in `jq`, not by `--exclude-label`.** A hold is not one exact string,
-so `bd` cannot express it as an exclusion — see *How two planners stay off each other's work*.
+**The mechanical filters all live in `scripts/plan-candidates`.** Open, not `planned`, not `human`,
+not held by a `planning` label in either spelling, `verification:failed` only when it also carries
+`plan:revise`, never `verdict:stale`, and an epic only while nothing is under it — that is what the
+script answers, and it is where those rules are written down once, with a suite under them. They
+used to be two hand-written `jq` blocks on this page and they drifted from cb-hzl inside a day of it
+merging. What stays at the call site is the **priority**, because that is the policy this section
+explains. (A hold is also not one exact string, so `bd`'s own `--exclude-label` could never have
+expressed it — see *How two planners stay off each other's work*.)
 
 **A P0 is planned even inside a family somebody else owns.** Family ownership — *One planner owns a
 whole family*, under *How two planners stay off each other's work* — is a way of dividing an
@@ -369,19 +370,14 @@ what follows here is which bead to take.
 bd dolt pull
 # Candidates: never a P4. Unranked is not a rank, and planning one takes the navigator's
 # decision by default.
-bd list --exclude-label planned --exclude-label human \
-        --exclude-type epic --sort priority --json \
-  | jq '[.[] | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
-             | select((.labels // []) | (index("verification:failed") | not)
-                                        or (index("plan:revise") != null))
-             | select(((.labels // []) | index("verdict:stale")) | not)
-             | select(.priority != 4)]'
-# ... a failed verification is a candidate only when it carries plan:revise; without that label
+.claude/cerebro/scripts/plan-candidates | jq '[.[] | select(.priority != 4)]'
+# ... the script drops a failed verification unless it also carries plan:revise; without that label
 # it is waiting for Psylocke, not for you. See *A reopened bead is a P0 with a plan already*.
-# ... and never one carrying verdict:stale: main has moved past the commit that verdict was formed
-# against, so the finding may not hold and the plan may be sound. It is Psylocke's to settle.
+# ... and the script never lists one carrying verdict:stale: main has moved past the commit that
+# verdict was formed against, so the finding may not hold and the plan may be sound. It is
+# Psylocke's to settle.
 # ... and skip any candidate whose family another planner owns: see *How two planners
-# stay off each other's work*, which is what the jq filter here and the order of the three
+# stay off each other's work*, which is what the script's own filters and the order of the three
 # commands below obey.
 .claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase plan --pid $PPID
 bd update <id> --add-label planning:<your-name>
@@ -414,8 +410,8 @@ Several at the same priority is not a decision — take any of them and move on 
 them against each other. Priority orders the *candidates*; it never overrides the dependency rule
 below.
 
-**Plan beads whose blockers are unbuilt.** `bd list` is used here rather than `bd ready` precisely
-because `bd ready` hides anything waiting on an unimplemented dependency, and those are often the
+**Plan beads whose blockers are unbuilt.** `plan-candidates` is a `bd list` underneath rather than a
+`bd ready`, precisely because `bd ready` hides anything waiting on an unimplemented dependency, and those are often the
 ones most worth having planned. Dependency blocking is not a stored status, so a plain `bd list`
 picks them up: on the day this was written it returned seven candidates where `bd ready` returned
 five.
@@ -481,6 +477,39 @@ describing an interface somebody has committed to, instead of guessing at one.
 
 No heartbeats. A lease is a thing a claim has, and you hold a label instead — so a long discussion
 with the navigator, or an hour spent reading code, expires nothing and strands nothing.
+
+### An epic with no children is a bead nobody split
+
+A candidate whose type is `epic` is one nothing has been broken out of. `plan-candidates` shows it
+to you **because** it has no children — `work-beads` skips an epic exactly while it has a direct
+child (cb-hzl), and that is also why the fleet view woke you for it. An epic with children is not a
+candidate and never reaches you.
+
+**Repair it before you plan anything.** Two outcomes and no third:
+
+- **Too big for one increment** — split it, exactly as *Too big for one increment* below describes,
+  including the `planner:<your-name>` label on the parent and taking your `planning:` hold off the
+  children. The parent is already `epic`, so the `bd update <id> --type epic` step at the end of
+  that section is a no-op here; everything else applies unchanged. This is the ordinary case — a
+  bead filed as an epic is usually genuinely big — and it *is* the pass's one bead.
+- **One increment's work** — retype it and plan it in place, in that order:
+
+  ```bash
+  bd update <id> --type feature     # `task` for a chore, `bug` for a defect
+  ```
+
+  then plan it like any other bead. This is the repair the navigator made by hand on `ah-lyg6`.
+
+**Never leave an epic carrying `planned`.** Two things go wrong at once and neither is visible. The
+implementer's pickup is `bd ready … --exclude-type epic --claim`, so no implementer can ever claim
+it; and `scripts/planner-buffer` counts it as buffer, because it counts what `work-beads --status
+open` returns and that list carries a childless epic since cb-hzl. The buffer then reads one higher
+than the work an implementer can actually take, for ever, and the fleet stops starting planners for
+a queue that is short.
+
+**Say what you did**, in the line that reports the bead: `cb-391 was an epic with nothing under it;
+retyped to feature and planned.`, or `… split into three children.` A bead's type changing under the
+navigator is worth a sentence.
 
 ### A bead from an issue: go and read the issue
 

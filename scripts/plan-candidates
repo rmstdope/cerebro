@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+#
+# The one place the harness answers: "which beads may a planner take at all?" Prints a JSON array
+# on stdout, sorted by priority ascending then by id, so a caller pipes it into `jq` exactly as it
+# pipes `bd list --json` today.
+#
+#     .claude/cerebro/scripts/plan-candidates
+#
+# No modes and no flags: it answers exactly one question and its name is the question. (`work-beads`
+# and `planner-buffer` require an explicit mode because each answers several.) Any argument at all
+# is a usage error.
+#
+# It exists because these rules lived only in `skills/plan-bead/SKILL.md`, as two hand-written `jq`
+# blocks, and they drifted from cb-hzl inside a day of it merging: the fleet view started a planner
+# for a childless epic that the planner's own `--exclude-type epic` then excluded, so the planner
+# reported "nothing to plan", ended its pass, and was woken again by the same bead. That is the
+# defect `scripts/second-look-beads` records in its own header - "an untested query living only in
+# prose - stated, believed, and never run".
+#
+# It answers the MECHANICAL half of the rule: what is takeable at all. It deliberately does NOT
+# filter by priority. WHICH candidate, and in what order, is policy `skills/plan-bead/SKILL.md`
+# explains at length (P0 pre-empts the buffer; P4 is unranked and is never a candidate), and moving
+# it here would hide the explanation from the paragraph that gives the reason. Both call sites keep
+# their one-line `jq` priority filter.
+#
+# `work-beads --status open` is where the whole EPIC question is answered, and routing through it is
+# the entire point: since cb-hzl it skips an epic exactly while it has a direct child, it already
+# excludes `event` beads belt-and-brace, and it already resolves the board through
+# `consumer-root --shared` so a planner running from a worktree still reads the fleet's board. This
+# script must add NO epic logic of its own; a second copy of that rule is what this script exists
+# to end.
+#
+# Two traps, each of which fails silently if it is got wrong:
+#
+#   1. `index(...)` returns the POSITION, null when absent; in jq only null and false are falsy, so
+#      a label at position 0 yields 0, which is TRUTHY. `index(x)` and `index(x) | not` are the
+#      correct tests; a `has`/`contains` spelling is not. (`scripts/second-look-beads`' header
+#      records the same trap.)
+#   2. A hold is not one exact string: `planning` and `planning:<name>` are both live, so the test
+#      is `any(. == "planning" or startswith("planning:"))`. `bd`'s own `--exclude-label` matches
+#      one exact string and cannot express it. The `:` is required rather than a bare prefix, so an
+#      unrelated label starting with the same letters is not read as a hold.
+#
+# It fails LOUDLY - non-zero, a message on stderr, nothing on stdout - when `work-beads` fails or
+# prints something this script cannot filter. An empty array that really means "the query broke"
+# would tell a planner the backlog is empty, and a planner that believes it ends its pass.
+
+set -euo pipefail
+
+if [[ $# -gt 0 ]]; then
+  echo "usage: plan-candidates" >&2
+  exit 2
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Captured before the pipe rather than piped straight into `jq`, for the reason
+# `scripts/planner-buffer`'s `planned_count` gives about the same call: under `pipefail` a
+# `work-beads` failure inside a pipeline is this script's failure too, but this script must leave
+# stdout EMPTY on a failure, and a pipeline that has already started writing cannot promise that.
+if ! raw="$("$script_dir/work-beads" --status open)"; then
+  echo "plan-candidates: work-beads failed - cannot list the candidates" >&2
+  exit 1
+fi
+
+if ! out="$(printf '%s' "$raw" | jq '[ .[]
+      | select((.labels // []) | index("planned")       | not)
+      | select((.labels // []) | index("human")         | not)
+      | select((.labels // []) | index("verdict:stale") | not)
+      | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
+      | select(((.labels // []) | index("verification:failed") | not)
+               or ((.labels // []) | index("plan:revise")))
+    ] | sort_by(.priority, .id)' 2>/dev/null)"; then
+  echo "plan-candidates: the bead list is not JSON this script can filter" >&2
+  exit 1
+fi
+
+printf '%s\n' "$out"

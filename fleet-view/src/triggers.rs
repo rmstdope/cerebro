@@ -952,6 +952,7 @@ mod tests {
             pid: None,
             sessions: 1,
             diagnostic: None,
+            turn_ended: None,
         }
     }
 

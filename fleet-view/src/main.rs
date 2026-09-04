@@ -4261,10 +4261,48 @@ mod main_tests {
         logger.evaluation(now, &line(true));
         logger.evaluation(now, &line(false));
 
-        let lines = log_lines(dir.path(), "decisions");
+        // The loud half lives in its own file since the three-way split.
+        let lines = log_lines(dir.path(), "evaluations");
         assert_eq!(lines.len(), 2, "{lines:#?}");
         assert!(lines[0].contains(r#""no_headroom":true"#), "{}", lines[0]);
         assert!(lines[1].contains(r#""no_headroom":null"#), "{}", lines[1]);
+    }
+
+    /// And the guard reaches the written line from the loop itself: `flag(no_headroom)` is one
+    /// call, and a field dropped or misspelt there is a row that says nothing about why it
+    /// started nothing. The steady state is the case, because `condition` gates on headroom and
+    /// so the trigger has already answered `None` - the flag is the only thing left to say it.
+    #[test]
+    fn a_row_the_loop_held_on_headroom_says_so_on_its_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = implementer_roster(&["Storm", "Rogue"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![
+                cerebro_tui::model::FleetRow {
+                    bead: None,
+                    ..implementer_row("Storm", cerebro_tui::model::RowState::Working)
+                },
+                implementer_row("Rogue", cerebro_tui::model::RowState::Dead),
+            ],
+            Some(planned_beads(1)),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &roster, now);
+
+        let lines = log_lines(dir.path(), "evaluations");
+        let rogue = lines
+            .iter()
+            .find(|line| line.contains(r#""agent":"Rogue""#))
+            .unwrap_or_else(|| panic!("no evaluation for Rogue: {lines:#?}"));
+        assert!(rogue.contains(r#""reason":null"#), "{rogue}");
+        assert!(rogue.contains(r#""no_headroom":true"#), "{rogue}");
     }
 
     /// The same steady state through the loop: the one bead is already spoken for by a builder

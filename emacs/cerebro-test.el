@@ -7899,7 +7899,8 @@ than absent when the guard did not fire - the shape `spaced_out\=' and
         (cerebro-log-verbosity 'evaluations)
         (cerebro--log-seen nil))
     (unwind-protect
-        (let ((file (expand-file-name ".cerebro/state/decisions.jsonl" root))
+        ;; The loud half lives in its own file since the three-way split.
+        (let ((file (expand-file-name ".cerebro/state/evaluations.jsonl" root))
               (agent (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby)))
           (make-directory (expand-file-name ".cerebro/state" root) t)
           (cerebro--log-evaluation root agent nil '((no-headroom . t)))

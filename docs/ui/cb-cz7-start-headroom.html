@@ -1,0 +1,119 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#3a3a3a}.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+table{border-collapse:collapse;margin:10px 0;background:#333;color:#eee}
+td,th{border:1px solid #555;padding:5px 9px;text-align:left;font-size:12px}
+</style>
+<meta charset="utf-8"><title>cb-cz7 — three ways to stop the empty starts</title>
+
+<h1>cb-cz7 — three ways to stop implementers booting to find nothing</h1>
+<p class="lede"><b>Chosen, 2026-09-04: option A, the headroom cap</b>, with the held row reading
+<code>→ 0 free</code> and the rule landing in <i>both</i> fleet views, held to one case table. Sections B
+and C are kept as the record of what was rejected and why.</p>
+<p class="lede">Of 129 implementer passes in <code>decisions.jsonl</code> (2026-08-25 → 2026-09-04),
+<b>77 ended within five minutes having claimed nothing</b>. The log shows exactly why: the
+implementer condition is <code>!planned_ids.is_empty()</code> — a <i>count-blind</i> test, true for
+every standby builder on the same tick. One planned bead therefore starts as many implementers as the
+roster has, thirty seconds apart, and all but one boot, run <code>bd ready --claim</code>, find
+nothing and end.</p>
+
+<div class="screen"><pre><span class="dim">from decisions.jsonl — one bead, four starts</span>
+2026-09-04T00:39:09Z  start  Cyclops    <span class="y">1 planned, unclaimed</span>
+2026-09-04T00:39:39Z  start  Storm      <span class="y">1 planned, unclaimed</span>   <span class="e">← nothing left to claim</span>
+2026-09-04T00:41:10Z  start  Storm      <span class="y">1 planned, unclaimed</span>   <span class="e">← nothing left to claim</span>
+2026-09-04T00:41:40Z  start  Wolverine  <span class="y">1 planned, unclaimed</span>   <span class="e">← nothing left to claim</span></pre></div>
+
+<p class="lede">The planners have the same shape: both boot on <code>buffer 0 of 4</code> and one finds
+the <code>planning:</code> label already taken. Below are three ways to fix it. They differ in what the
+fleet does when there are <b>four</b> planned beads and four idle builders — which is the case that
+must not get slower.</p>
+
+<h2>A — Headroom: start only while there is work nobody is already going for</h2>
+<p class="lede">The condition stops being "is there any work" and becomes "is there work left over".
+Available work is <code>planned beads − implementers already in flight</code>, where in flight means a
+session is up and its state file names no bead yet. The 30s peer spacing stays, so four beads still
+staff four builders, thirty seconds apart. One bead starts exactly one.</p>
+
+<div class="screen"><pre><span class="dim">four planned beads, four idle builders — unchanged from today</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-a1b      <span class="b">│</span>
+<span class="b">│</span><span class="g">●</span> Storm       build       cb-c2d      <span class="b">│</span>
+<span class="b">│</span><span class="g">●</span> Rogue       build       cb-e3f      <span class="b">│</span>
+<span class="b">│</span><span class="g">●</span> Wolverine   build       cb-g4h      <span class="b">│</span></pre></div>
+
+<div class="screen"><pre><span class="dim">ONE planned bead — Cyclops takes it, the rest are held and say so</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-a1b      <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Storm       <span class="b">standby</span>     <span class="b">→ 0 free</span>    <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">→ 0 free</span>    <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Wolverine   <span class="b">standby</span>     <span class="b">→ 0 free</span>    <span class="b">│</span>
+
+<span class="dim">a second bead is planned; one more builder comes up</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-a1b      <span class="b">│</span>
+<span class="b">│</span><span class="g">●</span> Storm       build       cb-c2d      <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">→ 0 free</span>    <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Wolverine   <span class="b">standby</span>     <span class="b">→ 0 free</span>    <span class="b">│</span></pre></div>
+
+<p class="note"><b>What it costs.</b> The standby cell changes from <code>→ planned</code> to a count of
+free beads — <code>→ 2 free</code>, <code>→ 0 free</code> — which is a new thing to read on the row,
+and the planner's <code>→ buffer&lt;4</code> gains the same treatment. The in-flight count is read from
+the fleet rows this view already draws, so nothing new is read from disk. One residual: a builder that
+came up, claimed, and merged inside the 5s fleet cadence is invisible for one tick — worth one extra
+start at most, where today it is three.</p>
+
+<h2>B — Just widen the spacing: 30s → 120s</h2>
+<p class="lede">One constant. A peer is held for two minutes rather than thirty seconds, which is
+roughly the observed time from launch to a claim landing on the board. Nothing else changes; the row
+still reads <code>→ planned</code>.</p>
+
+<div class="screen"><pre><span class="dim">ONE planned bead — Cyclops claims it inside the two minutes, so the trigger goes false</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-a1b      <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Storm       <span class="b">standby</span>     <span class="b">→ planned</span>   <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">→ planned</span>   <span class="b">│</span>
+
+<span class="dim">FOUR planned beads — the fleet now takes six minutes to staff, not ninety seconds</span>
+00:00  Cyclops    starts
+02:00  Storm      starts
+04:00  Rogue      starts
+06:00  Wolverine  starts   <span class="e">← four and a half minutes of idle builder, every time</span></pre></div>
+
+<p class="note"><b>What it costs.</b> It is one line and no new surface, and the log says it would have
+prevented most of the 77 empty passes. But it is a guess at a latency that varies with how busy Dolt
+is, it does not fix the planners' own race (a <code>planning:</code> label takes about a minute to
+reach the remote), and it makes the case we care about — a full queue — four minutes slower. It treats
+the symptom.</p>
+
+<h2>C — Readiness: hold the next peer until the last starter has claimed or given up</h2>
+<p class="lede">Spacing stops being a clock. A peer is held until the last-started builder's state file
+shows a <code>bead</code> or the word <code>waiting</code> — i.e. until it has actually taken something
+or actually found nothing — with the 120s clock kept only as a backstop for a session that writes
+neither.</p>
+
+<div class="screen"><pre><span class="dim">ONE planned bead — exact, with no count to compute</span>
+<span class="b">│</span><span class="g">●</span> Cyclops     build       cb-a1b      <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Storm       <span class="b">standby</span>     <span class="b">→ Cyclops</span>   <span class="b">│</span>
+<span class="b">│</span><span class="b">◌</span> Rogue       <span class="b">standby</span>     <span class="b">→ Cyclops</span>   <span class="b">│</span>
+
+<span class="dim">FOUR planned beads — strictly serialised, one boot at a time</span>
+00:00  Cyclops    starts
+00:50  Storm      starts   <span class="dim">(Cyclops's state file named a bead)</span>
+01:40  Rogue      starts
+02:30  Wolverine  starts</pre></div>
+
+<p class="note"><b>What it costs.</b> The most precise of the three and the slowest to fill a queue: it
+serialises every start, so a fleet that has just been given four beads staffs itself over two and a
+half minutes instead of ninety seconds. It also needs a per-name "waiting for" record the view does not
+keep today.</p>
+
+<h2>Where each one lands</h2>
+<table>
+<tr><th></th><th>1 bead, 4 idle builders</th><th>4 beads, 4 idle builders</th><th>Fixes the planners too</th><th>New surface</th></tr>
+<tr><td><b>A — headroom</b></td><td>1 start</td><td>4 starts over 90s</td><td>yes</td><td><code>→ 0 free</code> on the row</td></tr>
+<tr><td><b>B — 120s spacing</b></td><td>1–2 starts</td><td>4 starts over 6 min</td><td>partly</td><td>none</td></tr>
+<tr><td><b>C — readiness</b></td><td>1 start</td><td>4 starts over 2½ min</td><td>yes</td><td><code>→ Cyclops</code> on the row</td></tr>
+</table>

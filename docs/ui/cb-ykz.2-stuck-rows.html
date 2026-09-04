@@ -1,0 +1,168 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:inline-block;vertical-align:top;margin:0 14px 10px 0}
+.note{color:#eee;max-width:104ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:104ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.hd{font-weight:bold;color:#ddd}.dim{color:#888}b.k{color:#fff}
+.chosen{background:#2d4a2d;color:#cfe8cf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+.rejected{background:#4a2d2d;color:#e8cfcf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+</style>
+<meta charset="utf-8"><title>cb-ykz.2 — the agreed surface</title>
+
+<h1>cb-ykz.2 — the surface the navigator approved, 2026-09-04</h1>
+<p class="lede">Two rounds. This file is the specification for <b>how a stopped session reads on its
+row</b>, in both fleet views. Where this file and the bead's plan disagree, this file is right.
+It specifies appearance only: <b>supervision still does nothing about a stuck row</b> — that is
+cb-ykz.3, and what to do about a stuck <i>implementer</i>, which holds a claim, a worktree and
+possibly an open pull request, is its own interview.</p>
+
+<p class="lede">The fact behind all of it is cb-ykz.1's: a <code>Stop</code> hook stamps
+<code>turn_ended</code> into the state file, and every <code>agent-state</code> write clears it. A
+row is <b>stuck</b> when its state is <code>working</code>, its turn has ended, and that has stood
+past the ceiling.</p>
+
+<h2>1. What was wrong</h2>
+<p class="lede">A session that writes <code>working</code> and then ends its turn without writing
+<code>waiting</code> sits as <code>working</code> for hours, drawn exactly like a row doing real
+work. Six observed stretches of five to thirteen hours; each was noticed half a day later, if at
+all.</p>
+<div class="screen"><pre><span class="dim">Moira, 698 minutes into a sweep that ended eleven hours ago</span>
+<span class="g">●</span> Moira        user-feedbk  sweep                 11h38 11h38</pre></div>
+
+<h2>2. The chosen row <span class="chosen">chosen — variant C</span></h2>
+<p class="lede">The State column keeps the phase word untouched. The Bead/Phase column — which today
+shows the elapsed pair — reads <code>stuck 8h49</code> in red: <b>how long the turn has been
+over</b>, which is the number that decides whether to act and the one the elapsed pair does not
+give. The glyph is a red <code>✗</code>.</p>
+
+<h3>M-x cerebro — the fleet list</h3>
+<div class="screen"><pre><span class="hd">Agent          Role         State       Bead      Bead/Phase</span>
+<span class="g">●</span> Cyclops      implementer  build       cb-4xz    2h11 47m
+<span class="e">✗</span> Wolverine    implementer  ci          cb-d59.4  <span class="e">stuck 8h49</span>
+<span class="g">●</span> Storm        implementer  review      cb-vyp.2  1h02 14m
+<span class="e">✗</span> Moira        user-feedbk  sweep                 <span class="e">stuck 11h30</span>
+<span class="y">?</span> <b>Psylocke     verifier     asking      cb-7nx    3h04 12m</b>
+<span class="b">◌</span> Xavier       planner      <span class="b">standby</span>               <span class="b">→ buffer&lt;4</span></pre></div>
+
+<h3>The states it has to get right</h3>
+<div class="screen"><pre><span class="dim">1. ordinary work — turn in progress, nothing changes</span>
+<span class="g">●</span> Cyclops      implementer  build       cb-4xz    2h11 47m
+
+<span class="dim">2. an implementer waiting on its own review sub-agent: the turn HAS ended,</span>
+<span class="dim">   and that is legitimate and documented. Under the ceiling, so nothing shows.</span>
+<span class="g">●</span> Storm        implementer  review      cb-vyp.2  1h02 14m
+
+<span class="dim">3. the same row once the ceiling has passed. 1h02 in the phase, 32m of it</span>
+<span class="dim">   since the turn ended — the second figure is the new one.</span>
+<span class="e">✗</span> Storm        implementer  review      cb-vyp.2  <span class="e">stuck 32m</span>
+
+<span class="dim">4. flagged and duplicated as well — those markers are in the State cell and</span>
+<span class="dim">   are untouched, so nothing has to be cut.</span>
+<span class="e">✗</span> Wolverine    implementer  ci <span class="y">■ ×2</span>    cb-d59.4  <span class="e">stuck 8h49</span>
+
+<span class="dim">5. an `asking' row is NEVER stuck — see §5</span>
+<span class="y">?</span> <b>Psylocke     verifier     asking      cb-7nx    3h04 12m</b>
+
+<span class="dim">6. no state file, no session — unchanged</span>
+<span class="d">○</span> Rogue        implementer  <span class="d">dead</span>
+
+<span class="dim">7. a fleet with nothing stuck — the ordinary case, and it looks like today</span>
+<span class="g">●</span> Cyclops      implementer  build       cb-4xz    2h11 47m
+<span class="b">◌</span> Xavier       planner      <span class="b">standby</span>               <span class="b">→ buffer&lt;4</span></pre></div>
+
+<p class="note"><b>What it costs.</b> The elapsed pair goes for as long as the row is stuck, so the
+time on the bead is not on the row. That column already yields to other text for a
+<code>standby</code> row (its trigger) and a <code>dead</code> one (its exit line), so this is the
+established use of it rather than a new one.</p>
+
+<h2>3. The two rejected rows</h2>
+<h3>A — the word replaces the phase <span class="rejected">rejected</span></h3>
+<div class="screen"><pre><span class="e">!</span> Wolverine    implementer  <span class="e">stuck</span>       cb-d59.4  <span class="e">8h52 8h52</span>
+<span class="e">!</span> Moira        user-feedbk  <span class="e">stuck</span>                 <span class="e">11h38 11h38</span></pre></div>
+<p class="note">Loudest across eighteen rows, and the reason it was declined: the row that most needs
+explaining stops saying what it was doing. You could no longer tell a stuck <code>ci</code> from a
+stuck <code>build</code> without pressing <b class="k">RET</b>.</p>
+
+<h3>B — a marker beside the phase <span class="rejected">rejected</span></h3>
+<div class="screen"><pre><span class="e">!</span> Wolverine    implementer  ci <span class="e">▲</span>        cb-d59.4  8h52 8h52
+<span class="e">!</span> Wolverine    implementer  ci <span class="y">■ ×2</span> <span class="e">▲</span> cb-d59.4  8h52 8h52  <span class="dim">← 14 cells in a 12-cell column</span></pre></div>
+<p class="note">Nothing is lost, which is what recommended it. Declined because the State column is
+twelve cells and already has to fit <code>working ■ ×2</code>; a fully-marked row loses something.
+It was also the quietest of the three — one small triangle in a column that already carries two
+other markers.</p>
+
+<h2>4. The narrow pane, and the correction <span class="chosen">chosen — C2</span></h2>
+<p class="lede">Round one's Ratatui mockup was wrong, and was corrected to the navigator in round
+two. <b>On any screen 100 cells or wider the Fleet pane is a fixed 40-cell left column</b> — below
+the 64 that the ROLE and FOR columns need — so <b>the FOR column is not drawn in the TUI's ordinary
+layout</b>, and variant C would have been invisible exactly where the navigator looks.</p>
+
+<div class="screen"><pre><span class="dim">the TUI as it actually looks at 120 cells — Fleet is 40 wide, no ROLE, no FOR</span>
+<span class="b">┌─</span><span class="b">Fleet</span><span class="b">──────────────────────────────┐</span><span class="d">┌─Session───────</span>
+<span class="b">│</span> <span class="dim">AGENT        STATE       BEAD</span>       <span class="b">│</span><span class="d">│</span>
+<span class="b">│</span><span class="g">●</span> Cyclops      build       cb-4xz     <span class="b">│</span><span class="d">│</span>
+<span class="b">│</span><span class="g">●</span> Wolverine    ci          cb-d59.4   <span class="b">│</span><span class="d">│</span>  <span class="e">← stuck 8h49, and nothing said so</span>
+<span class="b">│</span><span class="g">●</span> Storm        review      cb-vyp.2   <span class="b">│</span><span class="d">│</span>
+<span class="b">└────────────────────────────────────────┘</span><span class="d">└───────────────</span></pre></div>
+
+<p class="lede">So where the FOR column is not drawn, the <b>BEAD cell</b> carries it. Variant C is
+unchanged wherever FOR <i>is</i> drawn — the Emacs list always, and the TUI's stacked layout below
+100 cells.</p>
+
+<div class="screen"><pre><span class="dim">the 40-cell Fleet pane, as agreed</span>
+<span class="b">┌─</span><span class="b">Fleet</span><span class="b">──────────────────────────────┐</span>
+<span class="b">│</span> <span class="dim">AGENT        STATE       BEAD</span>       <span class="b">│</span>
+<span class="b">│</span><span class="g">●</span> Cyclops      build       cb-4xz     <span class="b">│</span>
+<span class="b">│</span><span class="e">✗</span> Wolverine    ci          <span class="e">stuck 8h49</span> <span class="b">│</span>
+<span class="b">│</span><span class="g">●</span> Storm        review      cb-vyp.2   <span class="b">│</span>
+<span class="b">│</span><span class="e">✗</span> Moira        sweep       <span class="e">stuck 11h30</span><span class="b">│</span>
+<span class="b">└────────────────────────────────────────┘</span>
+
+<span class="dim">and the stacked layout, below 100 cells — variant C, unchanged</span>
+<span class="b">│</span> <span class="dim">AGENT        ROLE         STATE     BEAD      FOR</span> <span class="b">│</span>
+<span class="b">│</span><span class="e">✗</span> Wolverine    implementer  ci        cb-d59.4  <span class="e">stuck 8h49</span> <span class="b">│</span></pre></div>
+
+<p class="note"><b>Why the BEAD cell.</b> It already stands aside for a standby row's trigger
+(<code>→ buffer&lt;4</code>, blue) and a dead row's exit verdict (red). This is that same rule with a
+fourth thing it can be, and it is the one cell in a 40-cell pane wide enough for a sentence. It
+costs the bead id while the row is stuck; <b class="k">RET</b> and the Work pane still have it.
+<b>The column must be sized for it</b> — <code>stuck 11h30</code> is eleven cells where the column's
+floor is ten.</p>
+
+<p class="note"><b>Rejected in round two.</b> <i>The red glyph alone</i> in the narrow pane — nothing
+given up, but no duration without widening the terminal. <i>The STATE cell saying <code>stuck</code></i>
+— it draws one condition two different ways depending on pane width <i>and</i> loses the phase word.</p>
+
+<h2>5. The rules the row obeys</h2>
+<p class="lede"><b>The glyph is <code>✗</code> (U+2717), red, in both views.</b> Red <code>!</code>
+was in every round-one mockup and is already <code>RowState::Invalid</code> in the Ratatui view — a
+roster line that would not parse. Sharing it, and keeping the green <code>●</code> and letting the
+red text carry the signal alone, were both declined: the vocabulary stays one glyph per condition,
+which is the rule the existing set follows and has paid for twice.</p>
+<div class="screen"><pre><span class="dim">invalid — a roster line that would not parse. Name is red too.</span>
+<span class="e">!</span> <span class="e">Jubilee</span>      <span class="e">invalid</span>
+
+<span class="dim">stuck — a glyph of its own</span>
+<span class="e">✗</span> Wolverine    ci          <span class="e">stuck 8h49</span></pre></div>
+
+<p class="lede"><b>The ceiling is 30 minutes, one number for every role and phase.</b> What it has to
+separate: an implementer waiting on its own review sub-agent legitimately ends its turn — the one
+documented exception to the never-end-a-turn rule — and those waits are minutes, where every
+observed stuck stretch was five hours or more. Thirty minutes is an order of magnitude under the
+shortest of them and well over any observed review wait. Sixty minutes and a per-phase table were
+both offered; the single knob was chosen.</p>
+
+<p class="lede"><b>Only a <code>working</code> row is ever stuck.</b> An <code>asking</code> row was
+offered and declined: it is already bold with a gold <code>?</code> and is a question waiting for the
+navigator rather than a session that is never coming back — and an implementer's unanswered question
+is already nudged on its own timeout. Every other state has no turn to have ended.</p>
+
+<p class="lede"><b>Row and log only.</b> One <code>stuck</code> line goes into
+<code>decisions.jsonl</code> per occurrence — not per tick — carrying the phase and how long it has
+stood. A Sweeps-style finding in the Work pane was offered and declined: findings, and any action at
+all, belong to cb-ykz.3. A read-only view draws the red row and writes no line, because looking at a
+fleet is not supervising it.</p>

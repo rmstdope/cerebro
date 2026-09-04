@@ -165,3 +165,22 @@ fn arguments_and_the_working_directory_reach_the_child() {
     assert!(lines[0].ends_with("tests/fixtures"), "the cwd reached the child: {lines:?}");
     assert_eq!(lines[1], "an-argument");
 }
+
+/// The real runner names the argv it actually spawned, in the log line and never on screen
+/// (cb-xhu.3). Both fixtures ignore the extra argument; what is asserted is where it appears.
+#[test]
+fn a_timed_out_child_names_its_arguments() {
+    let err = RealCommands
+        .run(&fixture("slow"), &["--marker"], None, Duration::from_millis(200))
+        .unwrap_err();
+    assert!(err.log_message().contains("--marker"), "{}", err.log_message());
+    assert!(!err.to_string().contains("--marker"), "the screen line carries no argv: {err}");
+    assert_no_leaked_zombie("the timed-out child with an argument");
+
+    let err = RealCommands
+        .run(&fixture("boom"), &["--marker"], None, Duration::from_secs(60))
+        .unwrap_err();
+    assert!(matches!(err, ReadError::Exit { .. }), "{err:?}");
+    assert!(err.log_message().contains("--marker"), "{}", err.log_message());
+    assert!(!err.to_string().contains("--marker"), "the screen line carries no argv: {err}");
+}

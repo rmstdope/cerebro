@@ -1342,7 +1342,7 @@ where
                     state.logger.clear_error("roster");
                 }
                 Err(error) => {
-                    state.logger.error(&log::reader_context("fleet", error), &error.to_string(), clock())
+                    state.logger.error(&log::reader_context("fleet", error), &error.log_message(), clock())
                 }
             }
             app.finish_refresh(result, clock());
@@ -1375,7 +1375,7 @@ where
             match &result {
                 Ok(_) => state.logger.clear_error("work"),
                 Err(error) => {
-                    state.logger.error(&log::reader_context("work", error), &error.to_string(), clock())
+                    state.logger.error(&log::reader_context("work", error), &error.log_message(), clock())
                 }
             }
             app.finish_work_refresh(result, clock());
@@ -1390,7 +1390,7 @@ where
             match &answer {
                 Ok(_) => state.logger.clear_error("bead"),
                 Err(error) => {
-                    state.logger.error(&log::reader_context("bead", error), &error.to_string(), clock())
+                    state.logger.error(&log::reader_context("bead", error), &error.log_message(), clock())
                 }
             }
             app.finish_bead_read(&id, answer);
@@ -1410,11 +1410,9 @@ where
                 // The CAUSE, not the Display: the header shows one word by the navigator's own
                 // choice, and this is the only place the non-zero exit, the timeout or the parse
                 // error is written down.
-                Err(error) => state.logger.error(
-                    "sweep",
-                    error.cause().unwrap_or(&error.to_string()),
-                    clock(),
-                ),
+                // `log_message` answers the cause for `Sweep` and the argv for every other
+                // variant, so this stays what it was and gains what cb-xhu.3 added.
+                Err(error) => state.logger.error("sweep", &error.log_message(), clock()),
             }
             app.finish_sweep_refresh(result, clock());
         }
@@ -1448,7 +1446,7 @@ where
                 Ok(_) => state.logger.clear_error("history"),
                 Err(error) => state.logger.error(
                     &log::reader_context("history", error),
-                    &error.to_string(),
+                    &error.log_message(),
                     clock(),
                 ),
             }

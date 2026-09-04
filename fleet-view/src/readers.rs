@@ -1057,6 +1057,45 @@ mod tests {
         assert_eq!(sweep.log_message(), "bd exited 1");
     }
 
+    /// The argv in the log came from the READER, not from the runner: each error below is built by
+    /// the reader's own parse arm, over a `FakeCommands` that answered successfully (cb-xhu.3).
+    #[test]
+    fn each_reader_names_its_own_arguments() {
+        let paths = paths_at(Path::new("/consumer"));
+        let programs = Programs::default();
+        let garbage = FakeCommands::always("not json");
+
+        let beads = read_beads(&paths, &programs, &garbage).unwrap_err().log_message();
+        assert!(beads.contains("--status open,in_progress,blocked,deferred,closed"), "{beads}");
+        assert!(beads.contains("--readonly"), "{beads}");
+
+        let detail =
+            read_bead_detail(&paths, &programs, &garbage, "cb-1").unwrap_err().log_message();
+        assert!(detail.contains("show cb-1 --json"), "{detail}");
+
+        let history = read_history(&paths, &garbage).unwrap_err().log_message();
+        assert!(history.contains("--summary"), "{history}");
+
+        let mut me = Some("nav".to_string());
+        let gh = read_gh(&paths, &programs, &mut me, &garbage).unwrap_err().log_message();
+        assert!(gh.contains(GH_ISSUES_ARGV[0]), "{gh}");
+        assert!(
+            !gh.contains(GH_PRS_ARGV[5]),
+            "the issues call must not be named as the pull request call: {gh}"
+        );
+
+        // `parse_processes` refuses this, so the error is `read_processes`' own.
+        let ps_broken = FakeCommands::always("not a process table at all");
+        let ps = read_processes(&programs, &ps_broken).unwrap_err().log_message();
+        assert!(ps.contains("-axo"), "{ps}");
+        assert!(ps.contains("pid=,ppid=,args="), "{ps}");
+
+        // The roster takes no arguments, so its log line has no `running:` half at all.
+        let roster_broken = FakeCommands::always("Rogue implementer extra fourth word");
+        let roster = read_roster(&paths, &roster_broken).unwrap_err();
+        assert_eq!(roster.log_message(), roster.to_string());
+    }
+
     fn ids(beads: &[Bead]) -> Vec<&str> {
         beads.iter().map(|b| b.id.as_str()).collect()
     }

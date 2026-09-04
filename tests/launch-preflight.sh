@@ -113,6 +113,83 @@ grep -q "my edit" "$c/other.txt" || fail "nonoverlap: the edit was lost"
   || fail "nonoverlap: the healed path wrote to errors.jsonl: $(cat "$c/.cerebro/state/errors.jsonl")"
 pass "dirt the fast-forward cannot touch does not stop it"
 
+# --- a glob in a filename does not over-match ------------------------------------------------------
+#
+# A path is a pathspec, and a pathspec is a glob: `we[i]rd.txt` passed bare would match `werd.txt`
+# and friends, so every pathspec is written `:(literal)<path>`. Without it this launch is refused
+# for an overlap that does not exist.
+c="$(make_consumer globby)"
+up="$work_dir/globby-up"
+echo weird > "$up/we[i]rd.txt"
+git_q -C "$up" add "we[i]rd.txt"
+git_q -C "$up" commit -q -m weird
+git_q -C "$up" push -q origin HEAD
+git_q -C "$c" fetch -q origin main
+git_q -C "$c" merge -q --ff-only origin/main
+advance_origin globby 1              # touches file.txt, and only file.txt
+echo "my edit" >> "$c/we[i]rd.txt"
+run_preflight "$c" || fail "globby: expected exit 0"
+[[ "$(head_of "$c")" == "$(origin_head_of "$c")" ]] || fail "globby: expected a fast-forward"
+grep -q "my edit" "$c/we[i]rd.txt" || fail "globby: the edit was lost"
+pass "a glob in a filename does not over-match"
+
+# --- a path git would quote is still seen -----------------------------------------------------------
+#
+# `core.quotePath` is on by default, so without `-z` a modified non-ASCII path prints as
+# "\303\244xel.txt", the pathspec matches nothing, the guard reads empty and the launch walks into
+# an ff-merge that then fails - the imprecise refusal instead of the one that names the file.
+c="$(make_consumer quoted)"
+up="$work_dir/quoted-up"
+printf 'x\n' > "$up/axel-ä.txt"
+git_q -C "$up" add "axel-ä.txt"
+git_q -C "$up" commit -q -m accented
+git_q -C "$up" push -q origin HEAD
+git_q -C "$c" fetch -q origin main
+git_q -C "$c" merge -q --ff-only origin/main
+printf 'upstream\n' >> "$up/axel-ä.txt"
+git_q -C "$up" commit -q -am "upstream edits it"
+git_q -C "$up" push -q origin HEAD
+printf 'my edit\n' >> "$c/axel-ä.txt"
+before="$(head_of "$c")"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "quoted: expected exit 2, got $status"
+grep -q "uncommitted changes to files" <<<"$out" \
+  || fail "quoted: expected the precise overlap refusal, got: $out"
+grep -q "axel-ä.txt" <<<"$out" || fail "quoted: expected the message to name the file, got: $out"
+[[ "$(head_of "$c")" == "$before" ]] || fail "quoted: HEAD moved"
+pass "a path git would quote is still seen"
+
+# --- an upstream rename of a locally edited file is an overlap --------------------------------------
+#
+# With rename detection on, `--name-only` prints only a rename's NEW path, so the old one - the file
+# the navigator has edited - would not appear in the incoming list and the intersection would read
+# empty. `--no-renames` on both diffs is what makes it complete.
+c="$(make_consumer renamed)"
+up="$work_dir/renamed-up"
+echo movable > "$up/movable.txt"
+git_q -C "$up" add movable.txt
+git_q -C "$up" commit -q -m movable
+git_q -C "$up" push -q origin HEAD
+git_q -C "$c" fetch -q origin main
+git_q -C "$c" merge -q --ff-only origin/main
+git_q -C "$up" mv movable.txt moved.txt
+git_q -C "$up" commit -q -m "rename it"
+git_q -C "$up" push -q origin HEAD
+echo "my edit" >> "$c/movable.txt"
+before="$(head_of "$c")"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "renamed: expected exit 2, got $status"
+grep -q "movable.txt" <<<"$out" || fail "renamed: expected the message to name the file, got: $out"
+[[ "$(head_of "$c")" == "$before" ]] || fail "renamed: HEAD moved"
+grep -q "my edit" "$c/movable.txt" || fail "renamed: the edit was lost"
+pass "an upstream rename of a locally edited file is an overlap"
+
 # --- a dirty checkout is refused, and left exactly as it was ---------------------------------------
 c="$(make_consumer dirty)"
 advance_origin dirty 1

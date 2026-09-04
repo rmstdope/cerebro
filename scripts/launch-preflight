@@ -121,28 +121,33 @@ if [[ -n "$target" && -n "$head" && "$head" != "$target" ]]; then
   # not the mere presence of changes - is the refusal. Staged and unstaged alike: `diff HEAD` covers
   # both, which is what `status --porcelain --untracked-files=no` covered before. `--no-renames` on
   # both diffs, or an upstream rename would print only its new path and the intersection would read
-  # empty; `:(literal)` on every pathspec, or a filename containing `[`, `*` or `?` is a glob.
+  # empty; `:(literal)` on every pathspec, or a filename containing `[`, `*` or `?` is a glob; and
+  # `-z` on both, or `core.quotePath` (on by default) prints a non-ASCII path as `"\303\244xel.txt"`,
+  # which then matches nothing and the whole guard silently reads empty.
   dirty=()
-  while IFS= read -r changed_path; do
+  while IFS= read -r -d '' changed_path; do
     [[ -n "$changed_path" ]] && dirty+=(":(literal)$changed_path")
-  done < <(git -C "$consumer" diff --name-only --no-renames HEAD)
-  overlap=""
+  done < <(git -C "$consumer" diff -z --name-only --no-renames HEAD)
+  # The intersection is read into an array rather than captured with `$(...)`: command substitution
+  # strips NUL bytes, which is exactly what `-z` separates the paths with.
+  overlap=()
   if (( ${#dirty[@]} )); then
-    overlap="$(git -C "$consumer" diff --name-only --no-renames HEAD "$target" -- "${dirty[@]}")"
+    while IFS= read -r -d '' overlap_path; do
+      [[ -n "$overlap_path" ]] && overlap+=("$overlap_path")
+    done < <(git -C "$consumer" diff -z --name-only --no-renames HEAD "$target" -- "${dirty[@]}")
   fi
-  if [[ -n "$overlap" ]]; then
+  if (( ${#overlap[@]} )); then
     overlap_names=""
     shown=0
     more=0
-    while IFS= read -r overlap_path; do
-      [[ -n "$overlap_path" ]] || continue
+    for overlap_path in "${overlap[@]}"; do
       if (( shown < 5 )); then
         overlap_names="${overlap_names:+$overlap_names, }$overlap_path"
         shown=$((shown + 1))
       else
         more=$((more + 1))
       fi
-    done <<<"$overlap"
+    done
     (( more )) && overlap_names="$overlap_names and $more more"
     "$script_dir/launch-refused" "$name" "the checkout is $behind commits behind origin/$branch_name and has uncommitted changes to files those commits also change ($overlap_names) - commit or stash them, then git merge --ff-only origin/$branch_name, before starting $name"
     exit 2
@@ -162,6 +167,10 @@ if [[ -n "$target" && -n "$head" && "$head" != "$target" ]]; then
   # (exit 2, parked from the first failure) rather than a crash (exit 1, retried with backoff). Both
   # sit outside any `{ ... } || true` group, and nothing stands between `launch-refused` and the
   # `exit 2` - under `set -euo pipefail` a step that fails there eats the status that follows it.
+  # Both capture stderr, which is what puts git's own reason (the offending filename, on its second
+  # line) into the refusal; the cost is that these two commands no longer print to the terminal as
+  # they run, so a submodule fetch that stalls is silent until it fails. `--quiet` already made them
+  # nearly so, and git's askpass goes to the tty rather than through this pipe.
   if ! merge_err="$(git -C "$consumer" merge --ff-only "$target" --quiet 2>&1)"; then
     merge_flat="${merge_err//$'\n'/; }"
     [[ ${#merge_flat} -gt 300 ]] && merge_flat="${merge_flat:0:300} ..."

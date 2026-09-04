@@ -4906,4 +4906,28 @@ mod tests {
             assert!(rendered[0].contains(hint), "{hint} survives it: {:?}", rendered[0]);
         }
     }
+
+    /// The narrowest screen this view draws at all - 40 columns, the stacked layout - keeps every
+    /// section header whole, note and all.
+    ///
+    /// This is the honest half of the finding-4 fix. Truncating `HealthBodyLine::Section` makes it
+    /// consistent with every other line of the pane, but it CANNOT be exercised: ratatui clips a
+    /// line to its area whatever we hand it, and the longest header (`Starts per name` plus
+    /// `  ceiling 8`, 26 cells) fits the narrowest pane this view will draw. So what is asserted
+    /// here is the opposite risk - that the truncation does not fire where it should not.
+    #[test]
+    fn the_narrowest_pane_keeps_a_health_section_header_whole() {
+        let mut app = healthy_screen_app();
+        app.on_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 10, at(86_400));
+        for width in [40_u16, 60, 140] {
+            let rendered = lines(&render(&app, width, 40));
+            assert!(
+                rendered.iter().any(|l| l.contains("Starts per name") && l.contains("ceiling 8")),
+                "at {width}: {rendered:?}"
+            );
+            for line in &rendered {
+                assert!(line.width() <= width as usize, "at {width}: {line:?}");
+            }
+        }
+    }
 }

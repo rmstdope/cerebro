@@ -91,7 +91,12 @@ was open, and a startup that re-ran them would be a second sweeper with a worse 
 facts.
 
 1. **Read the fleet.** Who is running and what they are on — see *Who is actually running* below.
-   A planner and at least two implementers is the shape to notice.
+   A planner and at least two implementers is the shape to notice. Run
+   `.claude/cerebro/scripts/fleet-health` as part of the same read: it turns the logs the fleet
+   already writes into four sections and one last line, and it reads only — nothing is written,
+   started or stopped, so it is as silent as the rest of the startup. Bring whatever that last line
+   names to the greeting beside the shape you already noticed — a name the view keeps restarting,
+   or one that has been in a single state for an hour.
 2. **Sweep the claims, the beads parked on the navigator, and the worktrees the watcher declined.**
    Those three are yours, with the judgement each needs — see *The sweeps, and the three that are
    yours* below. Silent, like the other three steps: gather the facts and do the unparks that need
@@ -285,7 +290,9 @@ It is the signal *The claims sweep is yours to run*, below, depends on: an orche
 cadence of its own and no way to notice a round has come, so this line is how one arrives. Write
 `working --phase sweep`, run the two sweeps that need a judgement no decision table makes — the
 claims, and the worktrees the pruner declined — bring the navigator anything that needs one, and
-write `idle` again when the pass is over.
+write `idle` again when the pass is over. Run `.claude/cerebro/scripts/fleet-health` in the same
+round, for the same reason the line exists at all: you have no cadence of your own, and a name that
+has been restarting all afternoon is exactly the judgement no decision table makes.
 
 Like the triage line it arrives **only while you are idle**. Unlike it, a mark that falls while you
 are `working` or `asking` is **queued**, and the line arrives at the first moment you go idle — a

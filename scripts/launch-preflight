@@ -119,9 +119,11 @@ if [[ -n "$target" && -n "$head" && "$head" != "$target" ]]; then
   # Dirt an --ff-only cannot touch is dirt it keeps. `git merge --ff-only` refuses only when a
   # locally modified TRACKED file is also changed by the incoming commits, so that intersection -
   # not the mere presence of changes - is the refusal. Staged and unstaged alike: `diff HEAD` covers
-  # both, which is what `status --porcelain --untracked-files=no` covered before. `--no-renames` on
-  # both diffs, or an upstream rename would print only its new path and the intersection would read
-  # empty; `:(literal)` on every pathspec, or a filename containing `[`, `*` or `?` is a glob; and
+  # both, which is what `status --porcelain --untracked-files=no` covered before. `--no-renames`,
+  # because a staged local rename otherwise prints its NEW path alone - and it is the old path that
+  # upstream may change and the ff-merge then refuse to overwrite (on the incoming diff the flag
+  # buys nothing, a pathspec-limited diff printing the old path either way, and is passed there for
+  # symmetry); `:(literal)` on every pathspec, or a name containing `[`, `*` or `?` is a glob; and
   # `-z` on both, or `core.quotePath` (on by default) prints a non-ASCII path as `"\303\244xel.txt"`,
   # which then matches nothing and the whole guard silently reads empty.
   dirty=()

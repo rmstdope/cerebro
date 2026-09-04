@@ -115,9 +115,10 @@ pass "dirt the fast-forward cannot touch does not stop it"
 
 # --- a glob in a filename does not over-match ------------------------------------------------------
 #
-# A path is a pathspec, and a pathspec is a glob: `we[i]rd.txt` passed bare would match `werd.txt`
-# and friends, so every pathspec is written `:(literal)<path>`. Without it this launch is refused
-# for an overlap that does not exist.
+# A path is a pathspec, and a pathspec is a glob: `we[i]rd.txt` passed bare matches `weird.txt`, so
+# every pathspec is written `:(literal)<path>`. The upstream commit here changes `weird.txt` while
+# the local edit is to `we[i]rd.txt` - one file the glob matches and the literal does not - so
+# without the flag this launch is refused for an overlap that does not exist.
 c="$(make_consumer globby)"
 up="$work_dir/globby-up"
 echo weird > "$up/we[i]rd.txt"
@@ -126,7 +127,10 @@ git_q -C "$up" commit -q -m weird
 git_q -C "$up" push -q origin HEAD
 git_q -C "$c" fetch -q origin main
 git_q -C "$c" merge -q --ff-only origin/main
-advance_origin globby 1              # touches file.txt, and only file.txt
+echo weird > "$up/weird.txt"          # what the bare glob `we[i]rd.txt` would match
+git_q -C "$up" add weird.txt
+git_q -C "$up" commit -q -m "upstream touches the glob match, not the literal"
+git_q -C "$up" push -q origin HEAD
 echo "my edit" >> "$c/we[i]rd.txt"
 run_preflight "$c" || fail "globby: expected exit 0"
 [[ "$(head_of "$c")" == "$(origin_head_of "$c")" ]] || fail "globby: expected a fast-forward"
@@ -162,11 +166,13 @@ grep -q "axel-ä.txt" <<<"$out" || fail "quoted: expected the message to name th
 [[ "$(head_of "$c")" == "$before" ]] || fail "quoted: HEAD moved"
 pass "a path git would quote is still seen"
 
-# --- an upstream rename of a locally edited file is an overlap --------------------------------------
+# --- a locally renamed file upstream also changes is an overlap ------------------------------------
 #
-# With rename detection on, `--name-only` prints only a rename's NEW path, so the old one - the file
-# the navigator has edited - would not appear in the incoming list and the intersection would read
-# empty. `--no-renames` on both diffs is what makes it complete.
+# `--no-renames` is load-bearing on the LOCAL diff. With rename detection on, `diff --name-only HEAD`
+# prints a staged rename's NEW path only, so the old path - which upstream changes, and which the
+# ff-merge therefore refuses to overwrite - never reaches the pathspec list and the intersection
+# reads empty. (On the incoming diff the flag buys nothing: a pathspec-limited diff prints the old
+# path either way. It is passed there for symmetry and determinism, not for this.)
 c="$(make_consumer renamed)"
 up="$work_dir/renamed-up"
 echo movable > "$up/movable.txt"
@@ -175,20 +181,22 @@ git_q -C "$up" commit -q -m movable
 git_q -C "$up" push -q origin HEAD
 git_q -C "$c" fetch -q origin main
 git_q -C "$c" merge -q --ff-only origin/main
-git_q -C "$up" mv movable.txt moved.txt
-git_q -C "$up" commit -q -m "rename it"
+printf 'upstream\n' >> "$up/movable.txt"
+git_q -C "$up" commit -q -am "upstream edits it"
 git_q -C "$up" push -q origin HEAD
-echo "my edit" >> "$c/movable.txt"
+git_q -C "$c" mv movable.txt moved.txt          # staged locally, so `diff HEAD` sees a rename
 before="$(head_of "$c")"
 set +e
 out="$(run_preflight "$c" 2>&1)"
 status=$?
 set -e
 [[ $status -eq 2 ]] || fail "renamed: expected exit 2, got $status"
+grep -q "uncommitted changes to files" <<<"$out" \
+  || fail "renamed: expected the precise overlap refusal, got: $out"
 grep -q "movable.txt" <<<"$out" || fail "renamed: expected the message to name the file, got: $out"
 [[ "$(head_of "$c")" == "$before" ]] || fail "renamed: HEAD moved"
-grep -q "my edit" "$c/movable.txt" || fail "renamed: the edit was lost"
-pass "an upstream rename of a locally edited file is an overlap"
+[[ -f "$c/moved.txt" ]] || fail "renamed: the local rename was lost"
+pass "a locally renamed file upstream also changes is an overlap"
 
 # --- a dirty checkout is refused, and left exactly as it was ---------------------------------------
 c="$(make_consumer dirty)"

@@ -1,0 +1,65 @@
+# The start-headroom decision, run by BOTH implementations of the rule:
+#
+#   triggers::condition / triggers::standby_label  (Rust, fleet-view/)
+#   cerebro--trigger / cerebro--standby-label      (emacs/cerebro.el) via emacs/cerebro-test.el
+#
+# WHY IT IS ONE FILE. It is `tests/lib/supervise.cases`' reason: one decision with two
+# implementations in two languages, and a row they answer differently is a builder started for a
+# bead that is gone, or a queue left unstaffed. Read that file's header for the conventions this
+# one copies deliberately.
+#
+# THE RULE THE ROWS ENCODE, stated once so a new row can be checked against intent:
+#
+#   * HEADROOM is the work of a role that no in-flight session will take: available minus
+#     in_flight, saturating at zero. `available' is `actionable_ids' for a planner and
+#     `planned_ids' for an implementer; `in_flight' is the live sessions of that role holding no
+#     bead. A row that NAMES a bead is not in flight - that bead has already left the available
+#     set, so subtracting the row too would count it twice.
+#   * Zero headroom -> the role's condition does not fire at all, whichever arm it would have
+#     been, and the standby cell reads `→ 0 free'.
+#   * A start made in the caller's OWN loop this tick counts too: the fleet read that would show
+#     it up is five seconds away. That half has no column here - it is `triggers::no_headroom'
+#     and `cerebro--no-headroom-p', each with its own test in its own language, since the table
+#     speaks about one tick's facts and not about a loop over them.
+#   * Above zero -> the role's own condition decides as it always did, and the standby cell is
+#     the role's own existing one. Headroom GATES the condition; it does not replace it.
+#   * One number covers BOTH planner arms. A P0 is unplanned and not P4, so `p0_unplanned' is a
+#     subset of `actionable_ids', and a planner in flight takes the P0 first because
+#     `skills/plan-bead' plans every P0 before it looks at the buffer.
+#
+# THE COLUMNS, tab- or space-separated, in order:
+#
+#   role        `planner' or `implementer'.
+#   available   `actionable_ids' for a planner, `planned_ids' for an implementer - the count.
+#   in_flight   live sessions of that role holding no bead.
+#   p0          `yes' when the first actionable bead is a P0, `-' for an implementer row.
+#   planned     the buffer count, `-' for an implementer row.
+#   want        `planner_want()', `-' for an implementer row.
+#   arm         which arm fired: `p0' `buffer' `planned' or `none'. NOT the reason string - the
+#               two views spell those differently and always have.
+#   cell        `zero' when the standby cell is `→ 0 free', `role' when it is the role's own
+#               existing cell.
+
+# role         available in_flight p0   planned want arm      cell
+planner        5         0         no   0       4    buffer   role
+planner        5         2         no   0       4    buffer   role
+planner        5         5         no   0       4    none     zero
+# Saturating, not wrapping: more sessions in flight than candidates.
+planner        1         3         no   0       4    none     zero
+planner        1         1         no   0       4    none     zero
+planner        1         1         yes  0       4    none     zero
+planner        1         0         yes  0       4    p0       role
+# A P0 with a peer in flight AND headroom left: the P0 arm is gated by the number and by nothing
+# else, which is what "one number covers both arms" means.
+planner        5         2         yes  0       4    p0       role
+planner        1         0         yes  4       4    p0       role
+planner        0         0         no   0       4    none     zero
+# A full buffer with candidates left: headroom is three and the answer is still `none' - headroom
+# gates the condition, it does not replace it - with the cell `role', because the row is waiting
+# for the buffer and not for headroom.
+planner        3         0         no   4       4    none     role
+implementer    1         0         -    -       -    planned  role
+implementer    1         1         -    -       -    none     zero
+implementer    4         2         -    -       -    planned  role
+implementer    4         9         -    -       -    none     zero
+implementer    0         0         -    -       -    none     zero

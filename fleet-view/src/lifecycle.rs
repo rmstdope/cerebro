@@ -605,7 +605,7 @@ pub enum KillOutcome {
 /// there is no process anywhere under that name. Without it here, `s` on a backing-off row -
 /// which is the row a navigator most wants to start by hand, the backoff being the whole reason
 /// it is not starting itself - refuses with `is running outside this view`.
-fn row_is_alive(row: &FleetRow) -> bool {
+pub fn row_is_alive(row: &FleetRow) -> bool {
     !matches!(row.state, RowState::Dead | RowState::Invalid | RowState::Standby)
 }
 

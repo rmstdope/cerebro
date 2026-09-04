@@ -6443,12 +6443,19 @@ session - so it goes before the fresh one starts."
 ;; --- triggers: why a standby role should start now ------------------------
 
 (defun cerebro-test--context (&rest overrides)
-  "The trigger context, with nothing to do, plus OVERRIDES."
+  "The trigger context, with nothing to do, plus OVERRIDES.
+
+`actionable-ids\=' and `planned-ids\=' each carry one bead and nothing is in
+flight, so the headroom gate (cb-cz7) lets every role\='s own condition
+answer; a test about headroom overrides them.  A P0 is in `actionable-ids\='
+by construction, which is why a fixture that names one must have work here
+too.  The buffer is FULL, so the planner\='s own arm is what says nothing to
+do."
   (append overrides
           '((now . 1000000.0) (ended-at . 999000.0) (started-at . 990000.0)
             (floor . 600) (implementers . 2)
             (planned . 4) (p0-unplanned) (p4-unranked . 0) (unranked-ids)
-            (actionable-ids)
+            (actionable-ids "cb-free") (planned-ids "cb-free") (in-flight)
             (merged-unverified . 0) (stale-verdicts . 0) (gh) (linked-moved))))
 
 (defun cerebro-test--trigger (role &rest overrides)
@@ -6468,7 +6475,12 @@ The taking is what makes it fire, which is why the no-progress guard cannot
 help: it holds a trigger naming what the role\='s OWN last pass was started for,
 and a bead moving from unplanned to held changes the fingerprint. So the rule
 itself has to ask whether there is work, the way the P0 and P4 rules already do
-by being derived from the unplanned list."
+by being derived from the unplanned list.
+
+Since cb-cz7 that asking is the headroom gate ahead of every arm rather than a
+clause inside the buffer one: with nothing actionable there is no headroom, so
+no arm fires.  The behaviour these rows pin is unchanged, which is why they are
+still here."
   (let ((held '(planned . 0)) (want '(implementers . 2)))
     ;; Nothing unplanned: short buffer or not, a pass has nothing to take.
     (should (null (cerebro-test--trigger "planner" held want '(actionable-ids))))
@@ -7879,6 +7891,27 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
           (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000010.0)))
         (should (null launched))))))
 
+(ert-deftest cerebro-test/an-evaluation-records-the-headroom-that-held-a-row ()
+  "`no_headroom: true\=' is what a held row says on the line, and `null\=' rather
+than absent when the guard did not fire - the shape `spaced_out\=' and
+`backed_off\=' beside it already write (cb-cz7)."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-log-verbosity 'evaluations)
+        (cerebro--log-seen nil))
+    (unwind-protect
+        ;; The loud half lives in its own file since the three-way split.
+        (let ((file (expand-file-name ".cerebro/state/evaluations.jsonl" root))
+              (agent (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby)))
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (cerebro--log-evaluation root agent nil '((no-headroom . t)))
+          (cerebro--log-evaluation root agent nil nil)
+          (let ((lines (with-temp-buffer
+                         (insert-file-contents file)
+                         (split-string (buffer-string) "\n" t))))
+            (should (string-match-p "\"no_headroom\":true" (nth 0 lines)))
+            (should (string-match-p "\"no_headroom\":null" (nth 1 lines)))))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/an-evaluation-records-the-spacing-in-force ()
   "`spaced_out: true\=' beside no number is a line that says a start was held and
 leaves the reader to guess by how much - and with the value declared per
@@ -7944,8 +7977,11 @@ the built-in 30 would have let it through."
               ((symbol-function 'message) #'ignore)
               ((symbol-function 'cerebro--trigger-context)
                (lambda (&rest _)
+                 ;; Two candidates, so both planners have headroom and what is
+                 ;; being measured is the declared spacing (cb-cz7).
                  '((now . 1000000.0) (implementers . 2) (planned . 0)
-                   (planned-ids) (p0-unplanned) (actionable-ids "cb-x") (p4-unranked . 0)
+                   (planned-ids) (p0-unplanned) (actionable-ids "cb-x" "cb-y")
+                   (p4-unranked . 0) (in-flight)
                    (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
       (with-temp-buffer
         (setq cerebro--agents
@@ -7973,10 +8009,89 @@ the built-in 30 would have let it through."
         (cl-letf (((symbol-function 'cerebro--trigger-context)
                    (lambda (&rest _)
                      '((now . 1000035.0) (implementers . 2) (planned . 0)
-                       (planned-ids) (p0-unplanned) (actionable-ids "cb-x") (p4-unranked . 0)
+                       (planned-ids) (p0-unplanned) (actionable-ids "cb-x" "cb-y")
+                       (p4-unranked . 0) (in-flight)
                        (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
           (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000035.0)))
         (should (null launched))))))
+
+(ert-deftest cerebro-test/one-planned-bead-starts-one-builder-on-a-tick ()
+  "The whole loop, with the peer spacing declared 0 so nothing but the headroom
+can hold the second builder (cb-cz7).
+
+`fleet-view/src/main.rs' answers this with its own `taken\=' map, and
+`four_standby_builders_and_one_bead_start_one' is its case."
+  (let ((launched nil))
+    (cl-letf (((symbol-function 'cerebro--launch)
+               (lambda (a) (push (cerebro-agent-name a) launched)))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'message) #'ignore)
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _)
+                 '((now . 1000000.0) (implementers . 4) (planned . 1)
+                   (planned-ids "cb-p1") (p0-unplanned) (actionable-ids)
+                   (p4-unranked . 0) (in-flight)
+                   (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+      (with-temp-buffer
+        (setq cerebro--agents
+              (list (cerebro-test--agent "Storm" "implementer" 'implementer 'standby)
+                    (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby)
+                    (cerebro-test--agent "Gambit" "implementer" 'implementer 'standby))
+              cerebro--armed '("Storm" "Rogue" "Gambit")
+              cerebro--parked nil cerebro--seen-up nil cerebro--started-at nil
+              cerebro--start-fingerprints nil cerebro--failed-starts nil
+              cerebro--project-spacing-cache '(("implementer" . 0)))
+        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
+        (should (equal launched '("Storm")))))))
+
+(ert-deftest cerebro-test/the-guard-that-held-a-row-is-the-first-one-that-fired ()
+  "One reason per line: a row held by the headroom does not ALSO read
+`spaced_out\=', even when a peer did start microseconds earlier.
+
+`start_due\=' asks each guard only when the ones before it let the row through,
+and the record of WHICH guard held a row is the thing cb-kcs.4.4\='s line
+exists for - so the two views must not name different ones for the same
+situation.
+
+The line is captured rather than read back off disk: what is being pinned is
+which fields `cerebro--start-due\=' hands the logger, and a temporary directory
+is one more thing that can differ between this machine and CI."
+  (let (logged)
+    (cl-letf (((symbol-function 'cerebro--launch)
+               (lambda (a)
+                 (setf (alist-get (cerebro-agent-name a) cerebro--started-at
+                                  nil nil #'equal)
+                       1000000.0)))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
+              ((symbol-function 'message) #'ignore)
+              ((symbol-function 'cerebro--log-evaluation)
+               (lambda (_root agent _reason context)
+                 (push (cons (cerebro-agent-name agent) context) logged)))
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _)
+                 '((now . 1000000.0) (implementers . 2) (planned . 1)
+                   (planned-ids "cb-p1") (p0-unplanned) (actionable-ids)
+                   (p4-unranked . 0) (in-flight)
+                   (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+      (with-temp-buffer
+        (setq cerebro--agents
+              (list (cerebro-test--agent "Storm" "implementer" 'implementer 'standby)
+                    (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby))
+              cerebro--armed '("Storm" "Rogue")
+              cerebro--parked nil cerebro--seen-up nil cerebro--started-at nil
+              cerebro--start-fingerprints nil cerebro--failed-starts nil
+              ;; The spacing WOULD hold Rogue as well; the headroom got there first.
+              cerebro--project-spacing-cache '(("implementer" . 30)))
+        ;; A root nothing may create: `cerebro--log' would make the directory,
+        ;; and no test may hand a writer a path it did not make itself.
+        (cerebro--start-due "/nonexistent/cb-cz7" (seconds-to-time 1000000.0))))
+    (let ((rogue (alist-get "Rogue" logged nil nil #'equal)))
+      (should rogue)
+      (should (alist-get 'no-headroom rogue))
+      (should (null (alist-get 'spaced-out rogue)))
+      ;; And the row that DID start is held by nothing at all.
+      (should (null (alist-get 'no-headroom (alist-get "Storm" logged nil nil #'equal)))))))
 
 (ert-deftest cerebro-test/start-due-does-nothing-without-vterm ()
   "There is nothing to run a session in, and a trigger firing once every five
@@ -8011,7 +8126,10 @@ while 30.1 passed on the same commit."
                              (push (cerebro-agent-name a) launched))))
               ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
               ((symbol-function 'cerebro--trigger) (lambda (&rest _) "because"))
-              ((symbol-function 'cerebro--trigger-context) (lambda (&rest _) nil))
+              ;; One candidate per planner, so the headroom gate (cb-cz7) is not
+              ;; what this test measures.
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _) '((actionable-ids "cb-x") (in-flight))))
               ((symbol-function 'message) #'ignore))
       (with-temp-buffer
         (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)
@@ -8907,6 +9025,141 @@ and neither failure is visible until a session is started twice or never."
         (should (equal (cons (cerebro--supervision-mode-word (car decision))
                              (symbol-name (cdr decision)))
                        (cons mode-word action-word)))))))
+
+(defconst cerebro-test--start-headroom-cases-file
+  (expand-file-name "tests/lib/start-headroom.cases" cerebro-test--repo-root)
+  "The start-headroom table both implementations of the start rule run.
+`fleet-view/src/triggers.rs' runs the same rows against `condition' and
+`standby_label'.")
+
+(defun cerebro-test--start-headroom-cases ()
+  "The rows of `cerebro-test--start-headroom-cases-file' as plain lists.
+Each is (ROLE AVAILABLE IN-FLIGHT P0 PLANNED WANT ARM CELL).  A malformed row
+is an error, not a skipped case."
+  (let (rows)
+    (with-temp-buffer
+      (insert-file-contents cerebro-test--start-headroom-cases-file)
+      (dolist (line (split-string (buffer-string) "\n" t))
+        (unless (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" line)
+          (let ((fields (split-string (string-trim line) "[ \t]+" t)))
+            (unless (= (length fields) 8)
+              (error "start-headroom.cases: malformed row: %s" line))
+            (push fields rows)))))
+    (nreverse rows)))
+
+(defun cerebro-test--headroom-context (role available in-flight p0 planned want)
+  "A trigger context shaped by one row of the start-headroom table."
+  (let ((ids (lambda (prefix)
+               (let (out)
+                 (dotimes (n available) (push (format "%s%d" prefix n) out))
+                 (nreverse out)))))
+    (list (cons 'now 1000.0)
+          (cons 'floor 0)
+          (cons 'started-at nil)
+          (cons 'ended-at nil)
+          (cons 'failed-starts 0)
+          (cons 'last-fingerprint nil)
+          (cons 'beads-read-at nil)
+          (cons 'gh nil)
+          (cons 'linked nil)
+          (cons 'linked-moved nil)
+          (cons 'p4-unranked 0)
+          (cons 'unranked-ids nil)
+          (cons 'merged-unverified 0)
+          (cons 'stale-verdicts 0)
+          (cons 'planner-multiple 1)
+          (cons 'implementers want)
+          (cons 'in-flight (list (cons role in-flight)))
+          (cons 'planned (if (equal role "planner") planned 0))
+          (cons 'actionable-ids
+                (if (equal role "planner") (funcall ids "cb-a") nil))
+          (cons 'p0-unplanned
+                (if (and (equal role "planner") (equal p0 "yes"))
+                    (list "cb-a0")
+                  nil))
+          (cons 'planned-ids
+                (if (equal role "implementer") (funcall ids "cb-p") nil)))))
+
+(ert-deftest cerebro-test/the-start-headroom-table-is-answered-here ()
+  "Every row of `tests/lib/start-headroom.cases', answered here as well as in Rust.
+
+A row the two answer differently is a builder started for a bead that is
+gone, or a queue left unstaffed."
+  (let ((rows (cerebro-test--start-headroom-cases)))
+    (should (>= (length rows) 15))
+    (dolist (row rows)
+      (pcase-let* ((`(,role ,available ,in-flight ,p0 ,planned ,want ,arm ,cell) row)
+                   (available (string-to-number available))
+                   (in-flight (string-to-number in-flight))
+                   (planned (if (equal planned "-") 0 (string-to-number planned)))
+                   (want (if (equal want "-") 0 (string-to-number want)))
+                   (context (cerebro-test--headroom-context
+                             role available in-flight p0 planned want))
+                   (agent (make-cerebro-agent :name "Storm" :role role
+                                              :kind (if (equal role "implementer")
+                                                        'implementer 'interactive)
+                                              :state 'standby))
+                   (reason (cerebro--trigger agent context))
+                   (got (cond ((null reason) "none")
+                              ((string-prefix-p "P0 " reason) "p0")
+                              ((string-prefix-p "buffer " reason) "buffer")
+                              ((string-suffix-p " planned, unclaimed" reason) "planned")
+                              (t (error "unclassifiable reason %s" reason)))))
+        ;; `want' is derived, so the row's column is asserted rather than injected.
+        (when (equal role "planner")
+          (should (equal (cerebro--planner-want want 1) want)))
+        (should (equal (list row got) (list row arm)))
+        (let ((label (cerebro--standby-label agent context)))
+          (should (equal (list row (equal label "→ 0 free"))
+                         (list row (equal cell "zero")))))))))
+
+(ert-deftest cerebro-test/a-start-made-this-tick-is-subtracted-from-the-headroom ()
+  "The within-tick half of the rule, which `fleet-view/src/main.rs' answers with
+its own `taken\=' map.
+
+The fleet read that would show the first builder up is five seconds away, so a
+row judged against the context alone sees the same headroom as the row before
+it and four standby builders still start four for one bead.  The 30s peer
+spacing is not what this leans on: a consumer may declare it 0."
+  (let ((context (cerebro-test--context '(planned-ids "cb-p1"))))
+    ;; Nothing started yet: the one bead is free.
+    (should (null (cerebro--no-headroom-p "implementer" context nil)))
+    ;; One start made in this very loop, and it is not.
+    (should (cerebro--no-headroom-p "implementer" context '(("implementer" . 1))))
+    ;; A role headroom does not gate is never held by it.
+    (should (null (cerebro--no-headroom-p "verifier" context '(("verifier" . 9)))))
+    ;; And zero headroom to begin with is the steady state: held, even though the
+    ;; trigger itself already answered nil, which is what makes the evaluation
+    ;; line name a guard rather than nothing at all.
+    (should (cerebro--no-headroom-p
+             "implementer"
+             (cerebro-test--context '(planned-ids "cb-p1")
+                                    '(in-flight ("implementer" . 1)))
+             nil))))
+
+(ert-deftest cerebro-test/in-flight-counts-live-sessions-holding-no-bead ()
+  "The elisp twin of `triggers::in_flight': live sessions naming no bead.
+
+`waiting' is excluded and every other live state counted, `unknown'
+included; a row that names a bead is not counted, since that bead has
+already left the available set."
+  (let* ((agent (lambda (name role state bead)
+                  (make-cerebro-agent :name name :role role
+                                      :kind (if (equal role "implementer")
+                                                'implementer 'interactive)
+                                      :state state :bead bead)))
+         (agents (list (funcall agent "Cyclops" "implementer" 'working "cb-1")
+                       (funcall agent "Storm" "implementer" 'working nil)
+                       (funcall agent "Rogue" "implementer" 'up nil)
+                       (funcall agent "Gambit" "implementer" 'waiting nil)
+                       (funcall agent "Jubilee" "implementer" 'standby nil)
+                       (funcall agent "Bishop" "implementer" 'dead nil)
+                       (funcall agent "Iceman" "implementer" 'unknown nil)
+                       (funcall agent "Xavier" "planner" 'working nil)))
+         (counts (cerebro--in-flight agents)))
+    (should (equal (alist-get "implementer" counts 0 nil #'equal) 3))
+    (should (equal (alist-get "planner" counts 0 nil #'equal) 1))
+    (should (equal (alist-get "verifier" counts 0 nil #'equal) 0))))
 
 (defconst cerebro-test--supervise-cases-file
   (expand-file-name "tests/lib/supervise.cases" cerebro-test--repo-root)

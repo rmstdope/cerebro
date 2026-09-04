@@ -4239,6 +4239,34 @@ mod main_tests {
         assert!(!triggers::no_headroom(&free, "verifier", 9));
     }
 
+    /// `"no_headroom":true` is what a held row writes, and `null` rather than absent when the
+    /// guard did not fire - the shape `spaced_out` and `backed_off` beside it already have.
+    /// Written straight through the logger, so the assertion is about the line and not about
+    /// what a loop happened to decide.
+    #[test]
+    fn an_evaluation_line_carries_a_headroom_that_held_a_row() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".cerebro/state")).unwrap();
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let line = |set: bool| {
+            [
+                ("agent", serde_json::Value::from("Rogue")),
+                (
+                    "no_headroom",
+                    if set { serde_json::Value::Bool(true) } else { serde_json::Value::Null },
+                ),
+            ]
+        };
+        logger.evaluation(now, &line(true));
+        logger.evaluation(now, &line(false));
+
+        let lines = log_lines(dir.path(), "decisions");
+        assert_eq!(lines.len(), 2, "{lines:#?}");
+        assert!(lines[0].contains(r#""no_headroom":true"#), "{}", lines[0]);
+        assert!(lines[1].contains(r#""no_headroom":null"#), "{}", lines[1]);
+    }
+
     /// The same steady state through the loop: the one bead is already spoken for by a builder
     /// that names none yet, so nothing starts.
     #[test]

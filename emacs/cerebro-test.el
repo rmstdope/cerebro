@@ -7891,6 +7891,26 @@ spacing the planners answer to, applied to the implementers since cb-1or.1."
           (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000010.0)))
         (should (null launched))))))
 
+(ert-deftest cerebro-test/an-evaluation-records-the-headroom-that-held-a-row ()
+  "`no_headroom: true\=' is what a held row says on the line, and `null\=' rather
+than absent when the guard did not fire - the shape `spaced_out\=' and
+`backed_off\=' beside it already write (cb-cz7)."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-log-verbosity 'evaluations)
+        (cerebro--log-seen nil))
+    (unwind-protect
+        (let ((file (expand-file-name ".cerebro/state/decisions.jsonl" root))
+              (agent (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby)))
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (cerebro--log-evaluation root agent nil '((no-headroom . t)))
+          (cerebro--log-evaluation root agent nil nil)
+          (let ((lines (with-temp-buffer
+                         (insert-file-contents file)
+                         (split-string (buffer-string) "\n" t))))
+            (should (string-match-p "\"no_headroom\":true" (nth 0 lines)))
+            (should (string-match-p "\"no_headroom\":null" (nth 1 lines)))))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/an-evaluation-records-the-spacing-in-force ()
   "`spaced_out: true\=' beside no number is a line that says a start was held and
 leaves the reader to guess by how much - and with the value declared per
@@ -8062,7 +8082,9 @@ is one more thing that can differ between this machine and CI."
               cerebro--start-fingerprints nil cerebro--failed-starts nil
               ;; The spacing WOULD hold Rogue as well; the headroom got there first.
               cerebro--project-spacing-cache '(("implementer" . 30)))
-        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))))
+        ;; A root nothing may create: `cerebro--log' would make the directory,
+        ;; and no test may hand a writer a path it did not make itself.
+        (cerebro--start-due "/nonexistent/cb-cz7" (seconds-to-time 1000000.0))))
     (let ((rogue (alist-get "Rogue" logged nil nil #'equal)))
       (should rogue)
       (should (alist-get 'no-headroom rogue))

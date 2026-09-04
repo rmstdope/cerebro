@@ -95,13 +95,72 @@ impl Default for Programs {
     }
 }
 
+/// The exact child a reader ran, in the words a person would type into a shell.
+///
+/// `ReadError` used to carry the program alone, so a line reading `bd did not answer within 30s`
+/// could have come from any of four readers with four different argument lists. The screen still
+/// shows the program alone (`Display` on `ReadError` is unchanged); this is what the LOG says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invocation {
+    program: String,
+    args: Vec<String>,
+}
+
+impl Invocation {
+    /// The program and the exact argument slice a reader passed to `CommandRunner::run`.
+    pub fn new(program: &Path, args: &[&str]) -> Self {
+        Self {
+            program: program.display().to_string(),
+            args: args.iter().map(|a| (*a).to_string()).collect(),
+        }
+    }
+
+    /// The program alone - the discriminator `log::reader_context` matches the roster on, and
+    /// what `ReadError`'s `Display` shows.
+    pub fn program(&self) -> &str {
+        &self.program
+    }
+}
+
+/// `program`, then every argument, single-space separated. An argument that is empty or contains
+/// whitespace is wrapped in single quotes; nothing else is quoted or escaped - this is a
+/// diagnostic string, not a shell serialiser.
+impl std::fmt::Display for Invocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.program)?;
+        for arg in &self.args {
+            if arg.is_empty() || arg.chars().any(char::is_whitespace) {
+                write!(f, " '{arg}'")?;
+            } else {
+                write!(f, " {arg}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A source that is not a program with arguments - `format!("the stop flag for {name}")` in
+/// `lifecycle.rs`, and every test that writes `source: "bd".into()`. No arguments, so `Display`
+/// is the string itself.
+impl From<&str> for Invocation {
+    fn from(source: &str) -> Self {
+        Self { program: source.to_string(), args: Vec::new() }
+    }
+}
+
+impl From<String> for Invocation {
+    fn from(source: String) -> Self {
+        Self { program: source, args: Vec::new() }
+    }
+}
+
 /// One impure read gone wrong. Each variant keeps enough to diagnose it: which program or path,
 /// and what it said.
 #[derive(Debug)]
 pub enum ReadError {
-    Spawn { source: String, message: String },
+    Spawn { source: Invocation, message: String },
     Exit {
-        source: String,
+        source: Invocation,
         status: Option<i32>,
         stderr: String,
         /// What the program printed before it failed. Carried because one reader's refusal is
@@ -111,8 +170,8 @@ pub enum ReadError {
         /// script failing to read the declaration (cb-nc8). Everywhere else this is simply empty.
         stdout: String,
     },
-    Invalid { source: String, message: String },
-    Timeout { source: String, seconds: u64 },
+    Invalid { source: Invocation, message: String },
+    Timeout { source: Invocation, seconds: u64 },
     /// A sweep script that did not answer, in the words the header shows: `sweep-claims failed`.
     ///
     /// Its `Display` is deliberately shorter than every other variant's. The navigator chose one
@@ -126,13 +185,15 @@ pub enum ReadError {
 impl std::fmt::Display for ReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Spawn { source, message } => write!(f, "could not run {source}: {message}"),
+            Self::Spawn { source, message } => {
+                write!(f, "could not run {}: {message}", source.program())
+            }
             Self::Exit { source, status, stderr, .. } =>
-                write!(f, "{source} exited with status {status:?}: {stderr}"),
+                write!(f, "{} exited with status {status:?}: {stderr}", source.program()),
             Self::Invalid { source, message } =>
-                write!(f, "{source} produced invalid output: {message}"),
+                write!(f, "{} produced invalid output: {message}", source.program()),
             Self::Timeout { source, seconds } =>
-                write!(f, "{source} did not answer within {seconds}s"),
+                write!(f, "{} did not answer within {seconds}s", source.program()),
             Self::Sweep { script, .. } => write!(f, "{script} failed"),
         }
     }
@@ -147,6 +208,26 @@ impl ReadError {
         match self {
             Self::Sweep { cause, .. } => Some(cause),
             _ => None,
+        }
+    }
+
+    /// What goes in `errors.jsonl` - the one place the argv is said (cb-xhu.3).
+    ///
+    /// `Sweep` answers with its `cause`, which is what `main`'s sweep branch already writes; every
+    /// other variant answers with its `Display` followed by `, running: <invocation>` when the
+    /// invocation has arguments, and with the `Display` alone when it has none.
+    pub fn log_message(&self) -> String {
+        let source = match self {
+            Self::Sweep { .. } => return self.cause().unwrap_or_default().to_string(),
+            Self::Spawn { source, .. }
+            | Self::Exit { source, .. }
+            | Self::Invalid { source, .. }
+            | Self::Timeout { source, .. } => source,
+        };
+        if source.args.is_empty() {
+            self.to_string()
+        } else {
+            format!("{self}, running: {source}")
         }
     }
 }
@@ -194,9 +275,9 @@ impl CommandRunner for RealCommands {
         cwd: Option<&Path>,
         timeout: Duration,
     ) -> Result<Vec<u8>, ReadError> {
-    let program_name = program.display().to_string();
+    let invocation = Invocation::new(program, args);
     let spawn_failed = |e: std::io::Error| ReadError::Spawn {
-        source: program_name.clone(),
+        source: invocation.clone(),
         message: e.to_string(),
     };
 
@@ -235,7 +316,7 @@ impl CommandRunner for RealCommands {
             // A descendant may still hold either pipe open. Dropping the join handles lets the
             // worker return at the timeout boundary instead of waiting for that unrelated process.
             return Err(ReadError::Timeout {
-                source: program_name,
+                source: invocation,
                 seconds: timeout.as_secs(),
             });
         }
@@ -245,7 +326,7 @@ impl CommandRunner for RealCommands {
     let stderr = stderr_reader.join().unwrap_or_default();
     if !status.success() {
         return Err(ReadError::Exit {
-            source: program_name,
+            source: invocation,
             status: status.code(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
@@ -262,13 +343,14 @@ pub fn read_roster(
     commands: &dyn CommandRunner,
 ) -> Result<Vec<RosterEntry>, ReadError> {
     let program = paths.scripts_dir.join("roster");
-    let stdout = commands.run(&program, &[], Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
+    let args: &[&str] = &[];
+    let stdout = commands.run(&program, args, Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
     let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
-        source: program.display().to_string(),
+        source: Invocation::new(&program, args),
         message: e.to_string(),
     })?;
     model::parse_roster(&text).map_err(|e| ReadError::Invalid {
-        source: program.display().to_string(),
+        source: Invocation::new(&program, args),
         message: e.to_string(),
     })
 }
@@ -300,9 +382,10 @@ fn read_roster_names(
     commands: &dyn CommandRunner,
 ) -> Result<Vec<String>, ReadError> {
     let program = paths.scripts_dir.join("roster");
-    let stdout = commands.run(&program, &[flag], Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
+    let args = [flag];
+    let stdout = commands.run(&program, &args, Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
     let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
-        source: program.display().to_string(),
+        source: Invocation::new(&program, &args),
         message: e.to_string(),
     })?;
     Ok(text
@@ -431,10 +514,11 @@ pub fn read_supervisor_endpoint(
     commands: &dyn CommandRunner,
 ) -> Result<SocketAddr, ReadError> {
     let program = paths.scripts_dir.join("fleet-supervisor");
-    let stdout = commands.run(&program, &["--endpoint"], Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
+    let args = ["--endpoint"];
+    let stdout = commands.run(&program, &args, Some(&paths.consumer_root), COMMAND_TIMEOUT)?;
     let text = String::from_utf8_lossy(&stdout).trim().to_string();
     text.parse().map_err(|e: std::net::AddrParseError| ReadError::Invalid {
-        source: program.display().to_string(),
+        source: Invocation::new(&program, &args),
         message: format!("{text:?} is not an address: {e}"),
     })
 }
@@ -490,14 +574,14 @@ pub fn read_processes(
     programs: &Programs,
     commands: &dyn CommandRunner,
 ) -> Result<Vec<ProcessRow>, ReadError> {
-    let stdout =
-        commands.run(&programs.ps, &["-axo", "pid=,ppid=,args="], None, COMMAND_TIMEOUT)?;
+    let args = ["-axo", "pid=,ppid=,args="];
+    let stdout = commands.run(&programs.ps, &args, None, COMMAND_TIMEOUT)?;
     let text = String::from_utf8(stdout).map_err(|e| ReadError::Invalid {
-        source: programs.ps.display().to_string(),
+        source: Invocation::new(&programs.ps, &args),
         message: e.to_string(),
     })?;
     model::parse_processes(&text).map_err(|e| ReadError::Invalid {
-        source: programs.ps.display().to_string(),
+        source: Invocation::new(&programs.ps, &args),
         message: e.to_string(),
     })
 }
@@ -513,23 +597,19 @@ pub fn read_beads(
     commands: &dyn CommandRunner,
 ) -> Result<Vec<Bead>, ReadError> {
     let root = paths.shared_root.to_string_lossy().into_owned();
-    let stdout = commands.run(
-        &programs.bd,
-        &[
-            "--readonly",
-            "-C",
-            &root,
-            "list",
-            "--status",
-            "open,in_progress,blocked,deferred,closed",
-            "--json",
-            "--brief",
-        ],
-        None,
-        BD_TIMEOUT,
-    )?;
+    let args = [
+        "--readonly",
+        "-C",
+        &root,
+        "list",
+        "--status",
+        "open,in_progress,blocked,deferred,closed",
+        "--json",
+        "--brief",
+    ];
+    let stdout = commands.run(&programs.bd, &args, None, BD_TIMEOUT)?;
     serde_json::from_slice(&stdout).map_err(|e| ReadError::Invalid {
-        source: programs.bd.display().to_string(),
+        source: Invocation::new(&programs.bd, &args),
         message: e.to_string(),
     })
 }
@@ -549,14 +629,10 @@ pub fn read_bead_detail(
     id: &str,
 ) -> Result<BeadDetailFields, ReadError> {
     let root = paths.shared_root.to_string_lossy().into_owned();
-    let stdout = commands.run(
-        &programs.bd,
-        &["--readonly", "-C", &root, "show", id, "--json"],
-        None,
-        BD_TIMEOUT,
-    )?;
+    let args = ["--readonly", "-C", &root, "show", id, "--json"];
+    let stdout = commands.run(&programs.bd, &args, None, BD_TIMEOUT)?;
     model::parse_bead_detail(&stdout).map_err(|message| ReadError::Invalid {
-        source: programs.bd.display().to_string(),
+        source: Invocation::new(&programs.bd, &args),
         message,
     })
 }
@@ -615,16 +691,20 @@ pub fn read_gh(
     commands: &dyn CommandRunner,
 ) -> Result<GhSnapshot, ReadError> {
     let cwd = Some(paths.consumer_root.as_path());
-    let invalid = |e: serde_json::Error| ReadError::Invalid {
-        source: programs.gh.display().to_string(),
-        message: e.to_string(),
+    // One closure per argv, not one shared by two calls with different arguments: a log line that
+    // confidently names the wrong call is worse than one that names neither (cb-xhu.3).
+    let invalid = |argv: &'static [&'static str]| {
+        move |e: serde_json::Error| ReadError::Invalid {
+            source: Invocation::new(&programs.gh, argv),
+            message: e.to_string(),
+        }
     };
     let issues: Vec<GhIssue> =
         serde_json::from_slice(&commands.run(&programs.gh, &GH_ISSUES_ARGV, cwd, GH_TIMEOUT)?)
-            .map_err(invalid)?;
+            .map_err(invalid(&GH_ISSUES_ARGV))?;
     let prs: Vec<GhPull> =
         serde_json::from_slice(&commands.run(&programs.gh, &GH_PRS_ARGV, cwd, GH_TIMEOUT)?)
-            .map_err(invalid)?;
+            .map_err(invalid(&GH_PRS_ARGV))?;
     if me.is_none() {
         if let Ok(stdout) = commands.run(&programs.gh, &GH_ME_ARGV, cwd, GH_TIMEOUT) {
             let login = String::from_utf8_lossy(&stdout).trim().to_string();
@@ -703,14 +783,15 @@ pub fn read_history(
     commands: &dyn CommandRunner,
 ) -> Result<Vec<model::HistoryRow>, ReadError> {
     let program = paths.scripts_dir.join("fleet-history");
+    let args = ["--summary"];
     let stdout = commands.run(
         &program,
-        &["--summary"],
+        &args,
         Some(&paths.consumer_root),
         HISTORY_TIMEOUT,
     )?;
     serde_json::from_slice(&stdout).map_err(|error| ReadError::Invalid {
-        source: program.display().to_string(),
+        source: Invocation::new(&program, &args),
         message: error.to_string(),
     })
 }
@@ -738,11 +819,15 @@ pub fn read_sweeps(
     for sweep in Sweep::ALL {
         let program = paths.scripts_dir.join(sweep.script());
         let failed = |cause: String| ReadError::Sweep { script: sweep.key().to_string(), cause };
+        let args = ["--json"];
         let stdout = commands
-            .run(&program, &["--json"], Some(&paths.consumer_root), SWEEP_TIMEOUT)
-            .map_err(|error| failed(error.to_string()))?;
-        let candidates: Vec<Candidate> = serde_json::from_slice(&stdout)
-            .map_err(|error| failed(format!("{program}: {error}", program = program.display())))?;
+            .run(&program, &args, Some(&paths.consumer_root), SWEEP_TIMEOUT)
+            // `log_message`, not `Display`: a sweep script that timed out or exited non-zero names
+            // its argv in the log like every other reader (cb-xhu.3).
+            .map_err(|error| failed(error.log_message()))?;
+        let candidates: Vec<Candidate> = serde_json::from_slice(&stdout).map_err(|error| {
+            failed(format!("{invocation}: {error}", invocation = Invocation::new(&program, &args)))
+        })?;
         outputs.push((sweep, candidates));
     }
     let snapshot = read_sweep_snapshot(paths, programs, commands, Utc::now())?;
@@ -924,6 +1009,107 @@ mod tests {
             stderr: stderr.into(),
             stdout: String::new(),
         }
+    }
+
+    /// `Invocation` renders the exact command line a reader ran, in the words a person could
+    /// paste into a shell. The screen never shows it (cb-xhu.3); `errors.jsonl` does.
+    #[test]
+    fn invocation_renders_the_command_line() {
+        assert_eq!(
+            Invocation::new(Path::new("bd"), &["list", "--json"]).to_string(),
+            "bd list --json"
+        );
+        assert_eq!(Invocation::new(Path::new("/x/roster"), &[]).to_string(), "/x/roster");
+        assert_eq!(
+            Invocation::new(Path::new("bd"), &["-C", "/a b/c"]).to_string(),
+            "bd -C '/a b/c'"
+        );
+        assert_eq!(Invocation::new(Path::new("bd"), &[""]).to_string(), "bd ''");
+        assert_eq!(Invocation::from("bd").program(), "bd");
+        assert_eq!(Invocation::from("bd").to_string(), "bd");
+        assert_eq!(Invocation::new(Path::new("bd"), &["list"]).program(), "bd");
+    }
+
+    /// The argv goes in the LOG and never on the screen (cb-xhu.3). `Display` is what a 40-column
+    /// pane shows; `log_message` is what `errors.jsonl` gets.
+    #[test]
+    fn a_failed_read_names_its_argv_in_the_log_and_not_on_screen() {
+        let timeout = ReadError::Timeout {
+            source: Invocation::new(
+                Path::new("bd"),
+                &["--readonly", "-C", "/repo", "list", "--json"],
+            ),
+            seconds: 30,
+        };
+        assert_eq!(timeout.to_string(), "bd did not answer within 30s");
+        assert_eq!(
+            timeout.log_message(),
+            "bd did not answer within 30s, running: bd --readonly -C /repo list --json"
+        );
+
+        let flag = ReadError::Spawn {
+            source: "the stop flag for Rogue".into(),
+            message: "denied".into(),
+        };
+        assert_eq!(flag.log_message(), flag.to_string());
+
+        let sweep = ReadError::Sweep {
+            script: "sweep-claims".into(),
+            cause: "bd exited 1".into(),
+        };
+        assert_eq!(sweep.log_message(), "bd exited 1");
+    }
+
+    /// The argv in the log came from the READER, not from the runner: each error below is built by
+    /// the reader's own parse arm, over a `FakeCommands` that answered successfully (cb-xhu.3).
+    #[test]
+    fn each_reader_names_its_own_arguments() {
+        let paths = paths_at(Path::new("/consumer"));
+        let programs = Programs::default();
+        let garbage = FakeCommands::always("not json");
+
+        let beads = read_beads(&paths, &programs, &garbage).unwrap_err().log_message();
+        assert!(beads.contains("--status open,in_progress,blocked,deferred,closed"), "{beads}");
+        assert!(beads.contains("--readonly"), "{beads}");
+
+        let detail =
+            read_bead_detail(&paths, &programs, &garbage, "cb-1").unwrap_err().log_message();
+        assert!(detail.contains("show cb-1 --json"), "{detail}");
+
+        let history = read_history(&paths, &garbage).unwrap_err().log_message();
+        assert!(history.contains("--summary"), "{history}");
+
+        let mut me = Some("nav".to_string());
+        let gh = read_gh(&paths, &programs, &mut me, &garbage).unwrap_err().log_message();
+        assert!(gh.contains(GH_ISSUES_ARGV[0]), "{gh}");
+        assert!(
+            !gh.contains(GH_PRS_ARGV[5]),
+            "the issues call must not be named as the pull request call: {gh}"
+        );
+
+        // `parse_processes` refuses this, so the error is `read_processes`' own.
+        let ps_broken = FakeCommands::always("not a process table at all");
+        let ps = read_processes(&programs, &ps_broken).unwrap_err().log_message();
+        assert!(ps.contains("-axo"), "{ps}");
+        assert!(ps.contains("pid=,ppid=,args="), "{ps}");
+
+        let endpoint = read_supervisor_endpoint(&paths, &garbage).unwrap_err().log_message();
+        assert!(endpoint.contains("--endpoint"), "{endpoint}");
+
+        let standby = read_standby_names(&paths, &FakeCommands::always(vec![0xff]))
+            .unwrap_err()
+            .log_message();
+        assert!(standby.contains("--standby"), "{standby}");
+
+        // A sweep's `Display` is one word by the navigator's choice, so its argv reaches the log
+        // through `cause` rather than through the `, running:` half.
+        let sweep = read_sweeps(&paths, &programs, &garbage).unwrap_err().log_message();
+        assert!(sweep.contains("--json"), "{sweep}");
+
+        // The roster takes no arguments, so its log line has no `running:` half at all.
+        let roster_broken = FakeCommands::always("Rogue implementer extra fourth word");
+        let roster = read_roster(&paths, &roster_broken).unwrap_err();
+        assert_eq!(roster.log_message(), roster.to_string());
     }
 
     fn ids(beads: &[Bead]) -> Vec<&str> {
@@ -1271,7 +1457,7 @@ mod tests {
         let roster_broken = FakeCommands::new(|call: &Call| {
             if call.program.ends_with("roster") {
                 Err(ReadError::Exit {
-                    source: call.program.display().to_string(),
+                    source: Invocation::new(&call.program, &[]),
                     status: Some(2),
                     stderr: "roster: refusing".into(),
                     stdout: String::new(),
@@ -1283,7 +1469,7 @@ mod tests {
         match read_fleet(&paths, &Programs::default(), &roster_broken) {
             Err(ReadError::Exit { status, source, .. }) => {
                 assert_eq!(status, Some(2));
-                assert!(source.ends_with("roster"), "expected the roster to be named: {source}");
+                assert!(source.program().ends_with("roster"), "expected the roster to be named: {source}");
             }
             other => panic!("expected the roster failure, got {other:?}"),
         }
@@ -1360,7 +1546,7 @@ mod tests {
         match read_work(&paths, &Programs::default(), &fake) {
             Err(ReadError::Timeout { seconds, source }) => {
                 assert_eq!(seconds, 5);
-                assert!(source.ends_with("bd"), "the failure names the program: {source}");
+                assert!(source.program().ends_with("bd"), "the failure names the program: {source}");
             }
             other => panic!("expected Timeout, got {other:?}"),
         }
@@ -1742,7 +1928,9 @@ mod tests {
         let garbage = FakeCommands::always("not json");
         let error = read_history(&paths_at(Path::new("/consumer")), &garbage).unwrap_err();
         match error {
-            ReadError::Invalid { source, .. } => assert!(source.ends_with("fleet-history"), "{source}"),
+            ReadError::Invalid { source, .. } => {
+                assert!(source.program().ends_with("fleet-history"), "{source}")
+            }
             other => panic!("{other:?}"),
         }
     }

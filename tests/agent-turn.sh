@@ -75,9 +75,11 @@ pass "resumed-clears-it"
 tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
 f="$(state_file "$tmp" Cyclops)"
-run_turn "$tmp" Cyclops resumed
+out="$(run_turn "$tmp" Cyclops resumed)"
+[[ -z "$out" ]] || fail "resumed-on-a-clear-file-is-a-no-op: wrote to stdout: $out"
 first="$(cat "$f")"
-run_turn "$tmp" Cyclops resumed
+out="$(run_turn "$tmp" Cyclops resumed)"
+[[ -z "$out" ]] || fail "resumed-on-a-clear-file-is-a-no-op: wrote to stdout: $out"
 [[ "$first" == "$(cat "$f")" ]] || fail "resumed-on-a-clear-file-is-a-no-op: the file changed"
 rm -rf "$tmp"
 pass "resumed-on-a-clear-file-is-a-no-op"
@@ -86,10 +88,12 @@ pass "resumed-on-a-clear-file-is-a-no-op"
 tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
 f="$(state_file "$tmp" Cyclops)"
-run_turn "$tmp" Cyclops ended
+out="$(run_turn "$tmp" Cyclops ended)"
+[[ -z "$out" ]] || fail "a-second-ended-overwrites: wrote to stdout: $out"
 first="$(jq -r '.turn_ended' "$f")"
 sleep 1.1
-run_turn "$tmp" Cyclops ended
+out="$(run_turn "$tmp" Cyclops ended)"
+[[ -z "$out" ]] || fail "a-second-ended-overwrites: wrote to stdout: $out"
 second="$(jq -r '.turn_ended' "$f")"
 grep -qE "$iso_z" <<<"$second" || fail "a-second-ended-overwrites: not ISO-8601 Z: $second"
 [[ "$second" > "$first" ]] || fail "a-second-ended-overwrites: $second is not later than $first"
@@ -102,7 +106,8 @@ pass "a-second-ended-overwrites"
 tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
 f="$(state_file "$tmp" Cyclops)"
-run_turn "$tmp" Cyclops ended
+out="$(run_turn "$tmp" Cyclops ended)"
+[[ -z "$out" ]] || fail "agent-state-clears-it: wrote to stdout: $out"
 [[ "$(jq -r '.turn_ended' "$f")" != "null" ]] || fail "agent-state-clears-it: nothing was stamped"
 run_state "$tmp" Cyclops working --bead cb-1 --phase gate --pid 42
 [[ "$(jq -r '.turn_ended' "$f")" == "null" ]] \
@@ -183,12 +188,17 @@ run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
 f="$(state_file "$tmp" Cyclops)"
 before="$(cat "$f")"
 stub_dir="$(mktemp -d "$work_dir/jq-stub-XXXXXX")"
-cat > "$stub_dir/jq" <<'STUB'
+# The real jq is resolved HERE, before the stub shadows it, rather than assumed to be at a path:
+# a pass-through that cannot find jq would make agent-turn's parse guard exit 0 early and this
+# case pass without ever reaching the write path it exists to test - green for the wrong reason.
+real_jq="$(command -v jq)"
+[[ -n "$real_jq" ]] || fail "a-failing-jq-leaves-no-tmp-behind: no real jq to pass through to"
+cat > "$stub_dir/jq" <<STUB
 #!/usr/bin/env bash
 # Parses (so the guard passes), then fails on the write.
-case "$*" in
+case "\$*" in
   *turn_ended*) exit 1 ;;
-  *) exec /usr/bin/env -i PATH=/usr/bin:/bin jq "$@" ;;
+  *) exec "$real_jq" "\$@" ;;
 esac
 STUB
 chmod +x "$stub_dir/jq"

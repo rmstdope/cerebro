@@ -4110,6 +4110,24 @@ session, and how a work item is handed back is the agent\='s own instructions
 to state, not the fleet view\='s.  Saying it in cerebro\='s words would be a
 second, quieter copy of a policy that must have exactly one owner.")
 
+(defconst cerebro--interactive-nudge-message
+  (concat "[cerebro] Nobody answered within the timeout. Do not keep waiting: "
+          "record the question and everything you have found where your own "
+          "instructions say an unanswered question goes, then finish the run.")
+  "What an interactive role is told when its question goes unanswered.
+
+Its own line rather than `cerebro--nudge-message\=', because that one says
+*hand it back for a person to decide* and an interactive role has no bead to
+hand back - `agents/verifier.md\=' forbids Psylocke adding a `human\=' label at
+all.  So this one defers entirely to the role\='s own instructions, for the
+reason its sibling\='s docstring gives.")
+
+(defun cerebro--nudge-message-for (kind)
+  "The line typed into a session of KIND whose question nobody answered."
+  (if (eq kind 'implementer)
+      cerebro--nudge-message
+    cerebro--interactive-nudge-message))
+
 (defcustom cerebro-return-delay 0.3
   "Seconds between typing a line into a session and sending its return.
 
@@ -4144,8 +4162,11 @@ are needed - a timer fires with no buffer current."
                          (vterm-send-return))))))))
 
 (defun cerebro--nudge (agent)
-  "Type `cerebro--nudge-message' into AGENT's session."
-  (cerebro--type-into-session agent cerebro--nudge-message))
+  "Type the nudge for AGENT\='s kind into AGENT\='s session.
+
+Which of the two lines it is comes from `cerebro--nudge-message-for\='."
+  (cerebro--type-into-session
+   agent (cerebro--nudge-message-for (cerebro-agent-kind agent))))
 
 ;;; cb-5lx.2: telling an idle Cerebro about an unranked bead
 

@@ -571,7 +571,7 @@ fn supervise(
                     continue;
                 }
                 app.nudged.insert(name.clone());
-                host.type_line(&name, lifecycle::NUDGE_MESSAGE, at);
+                host.type_line(&name, lifecycle::nudge_message(kind), at);
                 app.set_notice(lifecycle::supervision_notice(action, &name));
             }
         }

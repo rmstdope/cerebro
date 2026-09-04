@@ -273,6 +273,25 @@ pub const NUDGE_MESSAGE: &str =
      everything you have found into the work item, hand it back for a person to decide, exactly \
      as your own instructions describe, and finish the run.";
 
+/// What the view types into an interactive role's session whose question nobody answered.
+///
+/// Byte-identical to `cerebro--interactive-nudge-message`. It is its own line rather than the
+/// implementer's because an interactive role has no bead to hand back - `agents/verifier.md` in
+/// particular forbids adding a `human` label - so it defers entirely to the role's own
+/// instructions, for `NUDGE_MESSAGE`'s reason.
+pub const INTERACTIVE_NUDGE_MESSAGE: &str =
+    "[cerebro] Nobody answered within the timeout. Do not keep waiting: record the question and \
+     everything you have found where your own instructions say an unanswered question goes, then \
+     finish the run.";
+
+/// The line typed into a session of KIND whose question nobody answered.
+pub fn nudge_message(kind: AgentKind) -> &'static str {
+    match kind {
+        AgentKind::Implementer => NUDGE_MESSAGE,
+        AgentKind::Interactive => INTERACTIVE_NUDGE_MESSAGE,
+    }
+}
+
 /// How many bead ids the triage line names before saying `and N more`.
 /// `cerebro--triage-ids-shown` (`emacs/cerebro.el:4067`).
 pub const TRIAGE_IDS_SHOWN: usize = 8;
@@ -1011,6 +1030,23 @@ mod tests {
             "[cerebro] Nobody answered within the timeout. Do not keep waiting: put the question \
              and everything you have found into the work item, hand it back for a person to \
              decide, exactly as your own instructions describe, and finish the run."
+        );
+    }
+
+    /// The interactive roles are nudged in their own words, and the implementer's line is
+    /// untouched. Both pinned against literals, for the reason above.
+    #[test]
+    fn the_interactive_nudge_is_the_words_emacs_types() {
+        assert_eq!(
+            nudge_message(AgentKind::Interactive),
+            "[cerebro] Nobody answered within the timeout. Do not keep waiting: record the \
+             question and everything you have found where your own instructions say an \
+             unanswered question goes, then finish the run."
+        );
+        assert_eq!(nudge_message(AgentKind::Implementer), NUDGE_MESSAGE);
+        assert_ne!(
+            nudge_message(AgentKind::Interactive),
+            nudge_message(AgentKind::Implementer)
         );
     }
 

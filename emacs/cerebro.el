@@ -2404,15 +2404,15 @@ floor that has half a minute left to run is not worth a different word."
         (and (> left 0)
              (format "↻ retry in %s%s" (cerebro--retry-figure left)
                      (if (> failures 0) (format ", %d failed" failures) "")))))
-     ;; An implementer on standby is one between beads, so what it waits for
-     ;; is a condition, named the way a planner's row names its buffer rule
-     ;; (cb-1or.1).
      ;; Work that is already spoken for: the row is waiting for MORE work,
      ;; not for its own condition.  Shown only at exactly zero - above it the
      ;; row starts on the next tick, so `→ 2 free' is a string almost nobody
      ;; would ever see.  Spelt identically in both views (cb-cz7), unlike the
      ;; cells below it, which have their own histories.
      ((equal (cerebro--headroom role context) 0) "→ 0 free")
+     ;; An implementer on standby is one between beads, so what it waits for
+     ;; is a condition, named the way a planner's row names its buffer rule
+     ;; (cb-1or.1).
      ((equal role "implementer") "→ planned bead")
      ((equal role "planner")
       (format "→ buffer < %d" (cerebro--planner-want
@@ -4816,6 +4816,12 @@ trigger read as well as what it decided."
              ;; this the line reads "reason: buffer 0 of 2" with no start
              ;; beside it, which is the same unanswerable "why did nothing
              ;; happen" the rest of this record exists to close.
+             ;; And the guard the same condition is held by when the work is
+             ;; already spoken for - by a session in flight, or by a start this
+             ;; very loop has already made (cb-cz7).  Not conditioned on the
+             ;; reason: `cerebro--trigger' answers nil at zero headroom, so the
+             ;; steady state would otherwise name no guard at all.
+             (cons 'no_headroom (and (alist-get 'no-headroom context) t))
              (cons 'spaced_out (and (alist-get 'spaced-out context) t))
              ;; And the number that produced it. Forge found cb-3m0 by reading
              ;; `spaced_out: true' here and having to guess what number was in
@@ -6344,7 +6350,11 @@ The Rust copy is `triggers::in_flight\=', and both answer
 `tests/lib/start-headroom.cases\='."
   (let (counts)
     (dolist (agent agents)
-      (when (and (not (memq (cerebro-agent-state agent) '(dead standby waiting)))
+      ;; The liveness rule is `cerebro--alive-p's, minus `waiting': one home for
+      ;; "is a session up", so a state word added later cannot mean one thing
+      ;; there and another here.
+      (when (and (cerebro--alive-p agent)
+                 (not (eq (cerebro-agent-state agent) 'waiting))
                  (null (cerebro-agent-bead agent)))
         (let* ((role (cerebro-agent-role agent))
                (cell (assoc role counts)))
@@ -6384,6 +6394,23 @@ planned for it is planned for nobody.  The shell copy is
                (and (eq (cerebro-agent-kind agent) 'implementer)
                     (not (funcall flagged-p (cerebro-agent-name agent)))))
              agents))
+
+(defun cerebro--no-headroom-p (role context taken)
+  "Pure.  Is ROLE\='s work already spoken for, counting TAKEN starts made this tick?
+
+TAKEN is an alist of ROLE . COUNT - the starts `cerebro--start-due\=' has
+already made in its own loop, which the fleet read that would show them up is
+five seconds behind.  Without it four standby builders and one bead still
+start four, since every row is judged against the same context.
+
+Nil for a role headroom does not gate.  Deliberately NOT conditioned on the
+trigger having fired: `cerebro--trigger\=' already answers nil at zero
+headroom, so a row held in the steady state would otherwise log no guard at
+all - the \"why did nothing happen\" the evaluation line exists to close.
+
+The Rust copy is `triggers::no_headroom\='."
+  (let ((free (cerebro--headroom role context)))
+    (and free (>= (or (alist-get role taken 0 nil #'equal) 0) free))))
 
 (defun cerebro--trigger-context (repo-root now)
   "What every standby role\='s trigger is judged against, at NOW.
@@ -6558,7 +6585,14 @@ is where that is said."
                      (cerebro--project-spacing
                       repo-root
                       (delete-dups (mapcar #'cerebro-agent-role cerebro--agents))))
-             cerebro--project-spacing-cache)))
+             cerebro--project-spacing-cache))
+          ;; Starts made in THIS loop, by role.  `cerebro--agents' - and so
+          ;; the `in-flight' count in CONTEXT - was derived before any of
+          ;; them, and the read that would show them up is five seconds
+          ;; away, so a row judged against the context alone sees the same
+          ;; headroom as the row before it (cb-cz7).  The peer spacing is
+          ;; not what this leans on: a project may declare it 0.
+          (taken nil))
       (dolist (agent cerebro--agents)
         (when (eq (cerebro-agent-state agent) 'standby)
           (let* ((agent-context (cerebro--agent-context agent context))
@@ -6599,6 +6633,8 @@ is where that is said."
                  ;; `retire' for a flagged standby implementer and leaves a
                  ;; role's flag to this loop; before this it was read here by
                  ;; nobody, so the trigger started a whole pass under a flag.
+                 (no-headroom (cerebro--no-headroom-p (cerebro-agent-role agent)
+                                                      agent-context taken))
                  (flagged (cerebro--stop-flag-p repo-root name))
                  ;; The rule itself is `cerebro--flag-start-action', which
                  ;; every start path reads; `flagged' stays bound because the
@@ -6613,14 +6649,15 @@ is where that is said."
                  ;; (`cerebro--agent-context'), which is where the row reads
                  ;; it too - one source, so the label and the decision cannot
                  ;; disagree about how far into the backoff this name is.
-                 (agent-context (append (list (cons 'spaced-out too-soon)
+                 (agent-context (append (list (cons 'no-headroom no-headroom)
+                                              (cons 'spaced-out too-soon)
                                               (cons 'spacing spacing)
                                               (cons 'backed-off backed-off)
                                               (cons 'flagged flagged)
                                               (cons 'disarmed disarmed))
                                         agent-context)))
             (cerebro--log-evaluation repo-root agent reason agent-context)
-            (when (and reason (not too-soon) (not backed-off)
+            (when (and reason (not no-headroom) (not too-soon) (not backed-off)
                        (not held) (not disarmed))
               (if (cerebro--give-up-p failed failures)
                   ;; Nothing is coming back on its own from here: the record
@@ -6659,6 +6696,9 @@ is where that is said."
                 (cerebro--with-logged-errors (format "start %s" name)
                   (let ((cerebro--log-start-reason reason))
                     (cerebro--launch agent))
+                  (let ((role (cerebro-agent-role agent)))
+                    (setf (alist-get role taken 0 nil #'equal)
+                          (1+ (alist-get role taken 0 nil #'equal))))
                   (message "%s" (cerebro--start-message
                                  (cerebro-agent-name agent) reason)))))))))))
 

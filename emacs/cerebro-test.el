@@ -6475,7 +6475,12 @@ The taking is what makes it fire, which is why the no-progress guard cannot
 help: it holds a trigger naming what the role\='s OWN last pass was started for,
 and a bead moving from unplanned to held changes the fingerprint. So the rule
 itself has to ask whether there is work, the way the P0 and P4 rules already do
-by being derived from the unplanned list."
+by being derived from the unplanned list.
+
+Since cb-cz7 that asking is the headroom gate ahead of every arm rather than a
+clause inside the buffer one: with nothing actionable there is no headroom, so
+no arm fires.  The behaviour these rows pin is unchanged, which is why they are
+still here."
   (let ((held '(planned . 0)) (want '(implementers . 2)))
     ;; Nothing unplanned: short buffer or not, a pass has nothing to take.
     (should (null (cerebro-test--trigger "planner" held want '(actionable-ids))))
@@ -7951,8 +7956,11 @@ the built-in 30 would have let it through."
               ((symbol-function 'message) #'ignore)
               ((symbol-function 'cerebro--trigger-context)
                (lambda (&rest _)
+                 ;; Two candidates, so both planners have headroom and what is
+                 ;; being measured is the declared spacing (cb-cz7).
                  '((now . 1000000.0) (implementers . 2) (planned . 0)
-                   (planned-ids) (p0-unplanned) (actionable-ids "cb-x") (p4-unranked . 0)
+                   (planned-ids) (p0-unplanned) (actionable-ids "cb-x" "cb-y")
+                   (p4-unranked . 0) (in-flight)
                    (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
       (with-temp-buffer
         (setq cerebro--agents
@@ -7980,10 +7988,40 @@ the built-in 30 would have let it through."
         (cl-letf (((symbol-function 'cerebro--trigger-context)
                    (lambda (&rest _)
                      '((now . 1000035.0) (implementers . 2) (planned . 0)
-                       (planned-ids) (p0-unplanned) (actionable-ids "cb-x") (p4-unranked . 0)
+                       (planned-ids) (p0-unplanned) (actionable-ids "cb-x" "cb-y")
+                       (p4-unranked . 0) (in-flight)
                        (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
           (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000035.0)))
         (should (null launched))))))
+
+(ert-deftest cerebro-test/one-planned-bead-starts-one-builder-on-a-tick ()
+  "The whole loop, with the peer spacing declared 0 so nothing but the headroom
+can hold the second builder (cb-cz7).
+
+`fleet-view/src/main.rs' answers this with its own `taken\=' map, and
+`four_standby_builders_and_one_bead_start_one' is its case."
+  (let ((launched nil))
+    (cl-letf (((symbol-function 'cerebro--launch)
+               (lambda (a) (push (cerebro-agent-name a) launched)))
+              ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+              ((symbol-function 'message) #'ignore)
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _)
+                 '((now . 1000000.0) (implementers . 4) (planned . 1)
+                   (planned-ids "cb-p1") (p0-unplanned) (actionable-ids)
+                   (p4-unranked . 0) (in-flight)
+                   (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+      (with-temp-buffer
+        (setq cerebro--agents
+              (list (cerebro-test--agent "Storm" "implementer" 'implementer 'standby)
+                    (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby)
+                    (cerebro-test--agent "Gambit" "implementer" 'implementer 'standby))
+              cerebro--armed '("Storm" "Rogue" "Gambit")
+              cerebro--parked nil cerebro--seen-up nil cerebro--started-at nil
+              cerebro--start-fingerprints nil cerebro--failed-starts nil
+              cerebro--project-spacing-cache '(("implementer" . 0)))
+        (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
+        (should (equal launched '("Storm")))))))
 
 (ert-deftest cerebro-test/start-due-does-nothing-without-vterm ()
   "There is nothing to run a session in, and a trigger firing once every five
@@ -8018,7 +8056,10 @@ while 30.1 passed on the same commit."
                              (push (cerebro-agent-name a) launched))))
               ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
               ((symbol-function 'cerebro--trigger) (lambda (&rest _) "because"))
-              ((symbol-function 'cerebro--trigger-context) (lambda (&rest _) nil))
+              ;; One candidate per planner, so the headroom gate (cb-cz7) is not
+              ;; what this test measures.
+              ((symbol-function 'cerebro--trigger-context)
+               (lambda (&rest _) '((actionable-ids "cb-x") (in-flight))))
               ((symbol-function 'message) #'ignore))
       (with-temp-buffer
         (setq cerebro--agents (list (cerebro-test--interactive "Psylocke" "verifier" 'standby)
@@ -9001,6 +9042,30 @@ gone, or a queue left unstaffed."
         (let ((label (cerebro--standby-label agent context)))
           (should (equal (list row (equal label "→ 0 free"))
                          (list row (equal cell "zero")))))))))
+
+(ert-deftest cerebro-test/a-start-made-this-tick-is-subtracted-from-the-headroom ()
+  "The within-tick half of the rule, which `fleet-view/src/main.rs' answers with
+its own `taken\=' map.
+
+The fleet read that would show the first builder up is five seconds away, so a
+row judged against the context alone sees the same headroom as the row before
+it and four standby builders still start four for one bead.  The 30s peer
+spacing is not what this leans on: a consumer may declare it 0."
+  (let ((context (cerebro-test--context '(planned-ids "cb-p1"))))
+    ;; Nothing started yet: the one bead is free.
+    (should (null (cerebro--no-headroom-p "implementer" context nil)))
+    ;; One start made in this very loop, and it is not.
+    (should (cerebro--no-headroom-p "implementer" context '(("implementer" . 1))))
+    ;; A role headroom does not gate is never held by it.
+    (should (null (cerebro--no-headroom-p "verifier" context '(("verifier" . 9)))))
+    ;; And zero headroom to begin with is the steady state: held, even though the
+    ;; trigger itself already answered nil, which is what makes the evaluation
+    ;; line name a guard rather than nothing at all.
+    (should (cerebro--no-headroom-p
+             "implementer"
+             (cerebro-test--context '(planned-ids "cb-p1")
+                                    '(in-flight ("implementer" . 1)))
+             nil))))
 
 (ert-deftest cerebro-test/in-flight-counts-live-sessions-holding-no-bead ()
   "The elisp twin of `triggers::in_flight': live sessions naming no bead.

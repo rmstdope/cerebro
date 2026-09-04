@@ -763,15 +763,28 @@ pub fn standby_label(
 pub fn in_flight(rows: &[FleetRow]) -> BTreeMap<String, usize> {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for row in rows {
-        let live = matches!(
-            row.state,
-            RowState::Working | RowState::Asking | RowState::Idle | RowState::Up | RowState::Unknown(_)
-        );
+        // The liveness rule is `lifecycle::row_is_alive`'s, minus `Waiting`: a positive list of
+        // variants here would silently leave a NEW `RowState` out of flight, which is headroom
+        // too high and a session started for work already taken - the defect this rule fixes.
+        let live = crate::lifecycle::row_is_alive(row) && row.state != RowState::Waiting;
         if live && row.bead.is_none() {
             *counts.entry(row.role.clone()).or_default() += 1;
         }
     }
     counts
+}
+
+/// Is ROLE's work already spoken for - by sessions in flight, plus TAKEN starts made in the
+/// caller's own loop this tick?
+///
+/// Stated here rather than inline in `start_due` so the rule has one home per language
+/// (`cerebro--no-headroom-p` is the elisp copy). `false` for a role headroom does not gate.
+///
+/// **Deliberately not conditioned on the trigger having fired.** `condition` already gates on
+/// headroom, so a row whose tick STARTS at zero headroom answers `None` there and would log no
+/// guard at all - which is the "why did nothing happen" cb-kcs.4.4's line exists to close.
+pub fn no_headroom(facts: &TriggerFacts, role: &str, taken: usize) -> bool {
+    facts.headroom(role).is_some_and(|free| taken >= free)
 }
 
 /// The other holders of ROLE, excluding NAME itself - who a start could race with

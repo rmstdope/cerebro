@@ -378,12 +378,15 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
-- **A role more than one agent holds is started one at a time, and only for work nobody is
-  already coming for.** Since cb-cz7 the planner and implementer conditions subtract the live
+- **A session is started only for work nobody is already coming for.** Since cb-cz7 the planner
+  and implementer conditions subtract the live
   sessions of their own role that name no bead (`triggers::in_flight`, `cerebro--in-flight`) from
   the work they read, and a headroom of zero starts nobody and shows `→ 0 free` on the row. Both
-  views answer `tests/lib/start-headroom.cases`. The spacing below it stays, staggering the boots
-  a real queue does justify.
+  views answer `tests/lib/start-headroom.cases`, and each carries its own half of the within-tick
+  rule (`triggers::no_headroom`, `cerebro--no-headroom-p`): a start made in one pass of the start
+  loop is subtracted from the headroom the next row is judged against, since the fleet read that
+  would show it up is five seconds away. The spacing in the bullet below stays, staggering the
+  boots a real queue does justify.
 - **A role more than one agent holds is started one at a time.** The planners answer the same buffer
   rule off the same panel, so a tick where it is true is true for both, and the view started Xavier and
   Beast in one breath. They then race for one candidate over the startup window the planner bullet

@@ -885,10 +885,10 @@ fn start_due(
         // question from the one that used to be asked.
         let reason = triggers::trigger(&facts, agent, now);
         let held_by_guard = reason.is_none() && triggers::held_by_unchanged_work(&facts, agent);
-        let no_headroom = reason.is_some()
-            && facts
-                .headroom(role)
-                .is_some_and(|free| *taken.get(role).unwrap_or(&0) >= free);
+        // Not conditioned on `reason`: `condition` already gates on headroom, so a row whose
+        // tick starts at zero headroom answers `None` there, and a line naming no guard at all
+        // is exactly what this record exists to close.
+        let no_headroom = triggers::no_headroom(&facts, role, *taken.get(role).unwrap_or(&0));
         let spacing_value = triggers::spacing_for(role, spacing);
         // Inside the loop, not before it, because `note_started` writes into the same map - so
         // the second planner in this very pass already sees the first.
@@ -4229,6 +4229,44 @@ mod main_tests {
         assert!(evaluations[1].contains(r#""no_headroom":true"#), "{}", evaluations[1]);
         host.kill(&paths, "Storm");
         settle_gone(&mut host, "Storm");
+    }
+
+    /// The steady state the bead describes: one bead, one builder already up holding nothing,
+    /// the rest standby. The trigger answers `None` because `condition` gates on headroom, so
+    /// without the flag the line would name no guard at all - the "why did nothing happen" this
+    /// whole record exists to close.
+    #[test]
+    fn a_row_held_by_headroom_alone_still_names_the_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let mut logger = logging(dir.path());
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mut ledger = cerebro_tui::triggers::StartLedger::default();
+        let roster = implementer_roster(&["Storm", "Rogue"]);
+        let mut app = standby_app(
+            supervising(),
+            vec![
+                cerebro_tui::model::FleetRow {
+                    bead: None,
+                    ..implementer_row("Storm", cerebro_tui::model::RowState::Working)
+                },
+                implementer_row("Rogue", cerebro_tui::model::RowState::Dead),
+            ],
+            Some(planned_beads(1)),
+            now,
+        );
+
+        start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &no_spacing(), 1, &roster, now);
+
+        assert!(!host.is_live("Rogue"), "the one bead is already spoken for");
+        let lines = log_lines(dir.path(), "decisions");
+        let rogue = lines
+            .iter()
+            .find(|line| line.starts_with(r#"{"event":"evaluate","#) && line.contains(r#""agent":"Rogue""#))
+            .unwrap_or_else(|| panic!("no evaluation for Rogue: {lines:#?}"));
+        assert!(rogue.contains(r#""reason":null"#), "{rogue}");
+        assert!(rogue.contains(r#""no_headroom":true"#), "{rogue}");
     }
 
     #[test]

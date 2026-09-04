@@ -2205,6 +2205,17 @@ is merely waiting for it."
        (cerebro--unless-unchanged
         role context
         (pcase role
+         ;; Headroom first for both gated roles: a role's condition asks
+         ;; whether there is work NOBODY ALREADY COMING UP will take, and
+         ;; zero is a reason not to start whichever arm would have fired.
+         ;; It subsumes the `actionable-ids' test the planner arm used to
+         ;; carry - two planners over one bead is what found that, Beast
+         ;; taking the last one while Xavier was started to find an empty
+         ;; queue - and covers the P0 arm too: a planner in flight plans
+         ;; every P0 before it looks at the buffer.  The Rust copy is
+         ;; `triggers::condition', and both answer
+         ;; `tests/lib/start-headroom.cases' (cb-cz7).
+         ((guard (equal (cerebro--headroom role context) 0)) nil)
          ("planner"
           (let ((p0 (alist-get 'p0-unplanned context))
                 (planned (alist-get 'planned context))
@@ -2238,7 +2249,7 @@ is merely waiting for it."
              ;; The P4 rule is deliberately NOT derived from this list: it is
              ;; built from the un-narrowed `unplanned' (`cerebro--trigger-context'),
              ;; since narrowing it would silence Cerebro's own trigger.
-             ((and (< planned want) (alist-get 'actionable-ids context))
+             ((< planned want)
               (format "buffer %d of %d" planned want)))))
          ("verifier"
           (let ((stale (alist-get 'stale-verdicts context))
@@ -2396,6 +2407,12 @@ floor that has half a minute left to run is not worth a different word."
      ;; An implementer on standby is one between beads, so what it waits for
      ;; is a condition, named the way a planner's row names its buffer rule
      ;; (cb-1or.1).
+     ;; Work that is already spoken for: the row is waiting for MORE work,
+     ;; not for its own condition.  Shown only at exactly zero - above it the
+     ;; row starts on the next tick, so `→ 2 free' is a string almost nobody
+     ;; would ever see.  Spelt identically in both views (cb-cz7), unlike the
+     ;; cells below it, which have their own histories.
+     ((equal (cerebro--headroom role context) 0) "→ 0 free")
      ((equal role "implementer") "→ planned bead")
      ((equal role "planner")
       (format "→ buffer < %d" (cerebro--planner-want
@@ -6313,6 +6330,46 @@ gathered once a tick: see `cerebro--trigger-context'."
      ((null as-of) nil)
      (t (lambda (ended-at) (cerebro--gh-moved issues prs me ended-at))))))
 
+(defun cerebro--in-flight (agents)
+  "Pure.  How many of AGENTS of each role hold no bead - an alist of ROLE . COUNT.
+
+The ones a start would be racing.  `waiting\=' is excluded and every other
+live state counted, `unknown\=' included: a pass that is over will claim
+nothing, and a live session whose state word this view does not understand
+might.  `dead\=' and `standby\=' host no session at all.  An agent that NAMES a
+bead is not counted: that bead has already left the available set, so
+subtracting the agent too would count it twice.
+
+The Rust copy is `triggers::in_flight\=', and both answer
+`tests/lib/start-headroom.cases\='."
+  (let (counts)
+    (dolist (agent agents)
+      (when (and (not (memq (cerebro-agent-state agent) '(dead standby waiting)))
+                 (null (cerebro-agent-bead agent)))
+        (let* ((role (cerebro-agent-role agent))
+               (cell (assoc role counts)))
+          (if cell (setcdr cell (1+ (cdr cell)))
+            (push (cons role 1) counts)))))
+    (nreverse counts)))
+
+(defun cerebro--headroom (role context)
+  "Pure.  The work of ROLE that no in-flight session will take, or nil.
+
+Available minus in flight, never negative.  Available is `actionable-ids\='
+for a planner and `planned-ids\=' for an implementer; nil for every other
+role, which this rule does not gate.
+
+One number covers BOTH planner arms: a P0 is unplanned and not P4, so
+`p0-unplanned\=' is a subset of `actionable-ids\=', and a planner in flight
+takes the P0 first because `skills/plan-bead\=' plans every P0 before it
+looks at the buffer."
+  (let ((available (cond ((equal role "planner")
+                          (length (alist-get 'actionable-ids context)))
+                         ((equal role "implementer")
+                          (length (alist-get 'planned-ids context)))))
+        (flight (or (alist-get role (alist-get 'in-flight context) 0 nil #'equal) 0)))
+    (and available (max 0 (- available flight)))))
+
 (defun cerebro--implementer-count (agents flagged-p)
   "Pure.  How many of AGENTS are implementers the fleet should have beads
 planned for: every implementer on the roster, minus those told to finish.
@@ -6417,6 +6474,10 @@ was a failure, are both plain values: neither depends on whose pass it is."
                     (setq cerebro--planner-multiple-cache
                           (cerebro--planner-multiple repo-root))
                   cerebro--planner-multiple-cache))
+          ;; The sessions of each role already coming up with no bead: what a
+          ;; start would be racing.  No new read - `cerebro--agents' is the
+          ;; fleet list this tick has already gathered.
+          (cons 'in-flight (cerebro--in-flight cerebro--agents))
           (cons 'gh (cerebro--gh-resolver))
           ;; The linked beads as the panel last saw them; which of them moved
           ;; is measured against the role's own pass, so that part is

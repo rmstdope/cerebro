@@ -378,6 +378,12 @@ These are load-bearing; changing them changes how the fleet behaves in every con
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
+- **A role more than one agent holds is started one at a time, and only for work nobody is
+  already coming for.** Since cb-cz7 the planner and implementer conditions subtract the live
+  sessions of their own role that name no bead (`triggers::in_flight`, `cerebro--in-flight`) from
+  the work they read, and a headroom of zero starts nobody and shows `→ 0 free` on the row. Both
+  views answer `tests/lib/start-headroom.cases`. The spacing below it stays, staggering the boots
+  a real queue does justify.
 - **A role more than one agent holds is started one at a time.** The planners answer the same buffer
   rule off the same panel, so a tick where it is true is true for both, and the view started Xavier and
   Beast in one breath. They then race for one candidate over the startup window the planner bullet
@@ -582,7 +588,12 @@ an idle one still retires it — that is the flag's arm, not the clock's.)
 Since cb-kcs.4.1 it also **starts** sessions on its own: the roster's `autostart`/`standby`
 declaration is honoured as the view comes up, and the board-backed triggers for the planner,
 implementer, verifier and orchestrator roles bring a blue `standby` row back — held back by a
-per-role wake floor, the unchanged-work fingerprint and role-start spacing. Every successful
+per-role wake floor, the unchanged-work fingerprint, role-start spacing and, since cb-cz7, the
+**start headroom**: available work minus the live sessions of that role that name no bead yet, so
+one planned bead starts exactly one builder and four still staff four. A row held by it reads
+`→ 0 free`, and a start made inside one tick reduces the headroom the next row in the same loop is
+judged against — the fleet read that would show the first one up is five seconds away.
+`tests/lib/start-headroom.cases` is the table both views answer, for `supervise.cases`' reason. Every successful
 launch arms, whoever asked for it — `s`, an autostart and a trigger alike — and a retire, a `k`
 (at every row state, not only standby), a give-up and a tick on which somebody else has or is
 taking the checkout all disarm; a pass that merely ends does not, which is the whole point of the

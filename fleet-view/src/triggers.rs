@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::model::{AgentKind, GhSnapshot, LinkedBead, RosterEntry, WorkBuckets};
+use crate::model::{AgentKind, FleetRow, GhSnapshot, LinkedBead, RosterEntry, RowState, WorkBuckets};
 
 #[cfg(test)]
 use crate::model::{GhAuthor, GhIssue, GhPull};
@@ -262,6 +262,13 @@ pub struct TriggerFacts {
     /// The linked beads as the work reader last saw them (`WorkBuckets::linked`). Filtered per
     /// role by `linked_moved`, for the same reason.
     pub linked: Vec<LinkedBead>,
+    /// Live sessions of each role that name no bead yet - the ones about to take something,
+    /// counted by `in_flight`. Keyed by role; a role absent from the map has none.
+    ///
+    /// Deliberately NOT in `Fingerprint`: the fingerprint compares *work*, and a session coming
+    /// up or going down is not work. Adding it there would make the unchanged-work guard fire on
+    /// session churn.
+    pub in_flight: BTreeMap<String, usize>,
 }
 
 fn parked(labels: &[String]) -> bool {
@@ -298,6 +305,7 @@ impl TriggerFacts {
     pub fn derive(
         buckets: &WorkBuckets,
         roster: &[RosterEntry],
+        in_flight: BTreeMap<String, usize>,
         flagged: impl Fn(&str) -> bool,
         gh: GhAnswer,
         planner_multiple: usize,
@@ -356,6 +364,7 @@ impl TriggerFacts {
             planner_multiple,
             gh,
             linked: buckets.linked.clone(),
+            in_flight,
         }
     }
 
@@ -365,6 +374,24 @@ impl TriggerFacts {
         // Saturating, so an absurd declaration cannot wrap to a number BELOW the floor - which
         // would silently pin the buffer - where elisp would have grown a bignum.
         self.implementers.saturating_mul(self.planner_multiple).max(PLANNER_BUFFER_FLOOR)
+    }
+
+    /// The work of ROLE that no in-flight session will take, or `None` for a role this rule does
+    /// not gate. Never negative: `saturating_sub`.
+    ///
+    ///   planner     -> actionable_ids.len() - in_flight["planner"]
+    ///   implementer -> planned_ids.len()    - in_flight["implementer"]
+    ///
+    /// One number covers BOTH planner arms: a P0 is unplanned and not P4, so `p0_unplanned` is a
+    /// subset of `actionable_ids`, and a planner in flight takes the P0 first because
+    /// `skills/plan-bead` plans every P0 before it looks at the buffer.
+    pub fn headroom(&self, role: &str) -> Option<usize> {
+        let available = match role {
+            "planner" => self.actionable_ids.len(),
+            "implementer" => self.planned_ids.len(),
+            _ => return None,
+        };
+        Some(available.saturating_sub(*self.in_flight.get(role).unwrap_or(&0)))
     }
 }
 
@@ -475,18 +502,21 @@ pub fn trigger(
 fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
     match agent.role {
         "planner" => {
+            // Headroom is a reason to plan only while there is something no already-starting
+            // peer will take. It subsumes the `actionable_ids` test this arm used to carry: a
+            // short buffer is a reason to plan only while there is something to plan, and
+            // without it the second planner is started to find an empty queue every time the
+            // first one takes the last bead. Since cb-zgg the set excludes P4s, so a board of
+            // nothing but unranked beads starts no planner either - that board is Cerebro's to
+            // rank, and the orchestrator arm below is what fires for it.
+            if facts.headroom("planner") == Some(0) {
+                return None;
+            }
             if let Some(first) = facts.p0_unplanned.first() {
                 return Some(format!("P0 {first} unplanned"));
             }
             let want = facts.planner_want();
-            // The `actionable_ids` test is not decoration: a short buffer is a reason to plan
-            // only while there is something to plan, and without it the second planner is started
-            // to find an empty queue every time the first one takes the last bead. Since cb-zgg
-            // the set excludes P4s, so a board of nothing but unranked beads starts no planner
-            // either - that board is Cerebro's to rank, and the orchestrator arm below is what
-            // fires for it.
-            (facts.planned < want && !facts.actionable_ids.is_empty())
-                .then(|| format!("buffer {} of {want}", facts.planned))
+            (facts.planned < want).then(|| format!("buffer {} of {want}", facts.planned))
         }
         // Stale first: a stale verdict is a bead the fleet cannot act on until she looks again.
         "verifier" => {
@@ -500,7 +530,7 @@ fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
             (facts.merged_unverified > 0)
                 .then(|| format!("{} merged, unverified", facts.merged_unverified))
         }
-        "implementer" => (!facts.planned_ids.is_empty())
+        "implementer" => (facts.headroom("implementer").unwrap_or(0) > 0)
             .then(|| format!("{} planned, unclaimed", facts.planned_ids.len())),
         "orchestrator" => (!facts.unranked_ids.is_empty())
             .then(|| format!("{} unranked", facts.unranked_ids.len())),
@@ -698,6 +728,12 @@ pub fn standby_label(
     agent: AgentFacts<'_>,
     now: DateTime<Utc>,
 ) -> Option<String> {
+    // Headroom first, for both gated roles: a row whose work is already spoken for is waiting
+    // for more work, not for its own condition. Shown only at exactly zero - above it the row
+    // starts on the next tick, so `→ 2 free` is a string almost nobody would ever see.
+    if facts.headroom(role) == Some(0) {
+        return Some("→ 0 free".to_string());
+    }
     match role {
         "planner" => Some(format!("→ buffer<{}", facts.planner_want())),
         "implementer" => Some("→ planned".to_string()),
@@ -713,6 +749,29 @@ pub fn standby_label(
             Some(if blind { format!("{cell} gh?") } else { cell })
         }
     }
+}
+
+/// How many live sessions of each role hold no bead - the ones a start would be racing.
+///
+/// `Waiting` is excluded and every other live state counted, `Unknown` included: a pass that is
+/// over will claim nothing, and a live session whose state word this view does not understand
+/// might. `Dead`, `Standby` and `Invalid` host no session at all. A row that NAMES a bead is not
+/// counted: that bead has already left `planned_ids`, so subtracting the row too would count it
+/// twice.
+///
+/// A role absent from the map has none.
+pub fn in_flight(rows: &[FleetRow]) -> BTreeMap<String, usize> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for row in rows {
+        let live = matches!(
+            row.state,
+            RowState::Working | RowState::Asking | RowState::Idle | RowState::Up | RowState::Unknown(_)
+        );
+        if live && row.bead.is_none() {
+            *counts.entry(row.role.clone()).or_default() += 1;
+        }
+    }
+    counts
 }
 
 /// The other holders of ROLE, excluding NAME itself - who a start could race with
@@ -863,6 +922,232 @@ mod tests {
     use super::*;
     use crate::model::{partition_beads, AgentKind, Bead, RosterEntry};
 
+    fn row(name: &str, role: &str, state: RowState, bead: Option<&str>) -> FleetRow {
+        FleetRow {
+            name: name.into(),
+            role: role.into(),
+            kind: if role == "implementer" {
+                AgentKind::Implementer
+            } else {
+                AgentKind::Interactive
+            },
+            state,
+            phase: None,
+            bead: bead.map(str::to_string),
+            since: None,
+            phase_since: None,
+            pid: None,
+            sessions: 1,
+            diagnostic: None,
+        }
+    }
+
+    fn facts_for(beads: Vec<Bead>, flight: &[(&str, usize)]) -> TriggerFacts {
+        let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
+        TriggerFacts::derive(
+            &partition_beads(beads),
+            &roster,
+            flight.iter().map(|(r, n)| ((*r).to_string(), *n)).collect(),
+            |_| false,
+            GhAnswer::Unanswered,
+            1,
+        )
+    }
+
+    fn agent_of(role: &str) -> AgentFacts<'_> {
+        AgentFacts { role, ended_at: None, started_at: None, last_fingerprint: None }
+    }
+
+    #[test]
+    fn one_planned_bead_starts_one_implementer() {
+        let beads = || vec![bead("cb-p1", "open", &["planned"], 2)];
+        let free = facts_for(beads(), &[]);
+        let taken = facts_for(beads(), &[("implementer", 1)]);
+
+        assert_eq!(
+            condition(&free, &agent_of("implementer")),
+            Some("1 planned, unclaimed".to_string())
+        );
+        assert_eq!(condition(&taken, &agent_of("implementer")), None);
+    }
+
+    #[test]
+    fn a_planner_already_coming_up_holds_the_second_off_the_last_candidate() {
+        let buffer = || vec![bead("cb-b1", "open", &[], 2)];
+        let p0 = || vec![bead("cb-z0", "open", &[], 0)];
+
+        assert_eq!(
+            condition(&facts_for(buffer(), &[]), &agent_of("planner")),
+            Some("buffer 0 of 2".to_string())
+        );
+        assert_eq!(condition(&facts_for(buffer(), &[("planner", 1)]), &agent_of("planner")), None);
+        // The P0 arm is gated too: an in-flight planner plans every P0 before it looks at the
+        // buffer, so a second started for it would find the `planning:` label taken.
+        assert_eq!(
+            condition(&facts_for(p0(), &[]), &agent_of("planner")),
+            Some("P0 cb-z0 unplanned".to_string())
+        );
+        assert_eq!(condition(&facts_for(p0(), &[("planner", 1)]), &agent_of("planner")), None);
+    }
+
+    /// Every row of `tests/lib/start-headroom.cases`, which `cerebro--trigger` and
+    /// `cerebro--standby-label` answer too. A row the two answer differently is a builder started
+    /// for a bead that is gone, or a queue left unstaffed.
+    #[test]
+    fn the_start_headroom_table_is_answered_here() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/start-headroom.cases");
+        let text =
+            std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+        let mut rows = 0;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let fields: Vec<&str> = trimmed.split_whitespace().collect();
+            assert_eq!(fields.len(), 8, "start-headroom.cases: malformed row: {line}");
+            let role = fields[0];
+            let number = |field: &str| -> usize {
+                field
+                    .parse::<usize>()
+                    .unwrap_or_else(|_| panic!("start-headroom.cases: bad number: {line}"))
+            };
+            let available = number(fields[1]);
+            let ids = |prefix: &str| -> Vec<String> {
+                (0..available).map(|n| format!("{prefix}{n}")).collect()
+            };
+
+            let mut facts = empty_facts();
+            facts.in_flight =
+                [(role.to_string(), number(fields[2]))].into_iter().collect();
+            match role {
+                "planner" => {
+                    facts.actionable_ids = ids("cb-a");
+                    facts.p0_unplanned = match fields[3] {
+                        "yes" => vec![facts.actionable_ids[0].clone()],
+                        "no" => Vec::new(),
+                        other => panic!("start-headroom.cases: bad p0: {other}"),
+                    };
+                    facts.planned = number(fields[4]);
+                    // `want` is derived, so the row's column is asserted rather than injected.
+                    facts.implementers = number(fields[5]);
+                    facts.planner_multiple = 1;
+                    assert_eq!(facts.planner_want(), number(fields[5]), "row: {line}");
+                }
+                "implementer" => facts.planned_ids = ids("cb-p"),
+                other => panic!("start-headroom.cases: unknown role {other}"),
+            }
+
+            let reason = condition(&facts, &agent_of(role));
+            let arm = match reason.as_deref() {
+                None => "none",
+                Some(text) if text.starts_with("P0 ") => "p0",
+                Some(text) if text.starts_with("buffer ") => "buffer",
+                Some(text) if text.ends_with(" planned, unclaimed") => "planned",
+                Some(other) => panic!("start-headroom.cases: unclassifiable reason {other}"),
+            };
+            assert_eq!(arm, fields[6], "row: {line}");
+
+            let cell = standby_label(role, &facts, agent_of(role), at(0))
+                .unwrap_or_else(|| panic!("start-headroom.cases: no cell: {line}"));
+            let expected_zero = match fields[7] {
+                "zero" => true,
+                "role" => false,
+                other => panic!("start-headroom.cases: bad cell {other}"),
+            };
+            assert_eq!(cell == "\u{2192} 0 free", expected_zero, "row: {line}");
+            rows += 1;
+        }
+        assert!(rows >= 15, "start-headroom.cases: only {rows} rows ran");
+    }
+
+    #[test]
+    fn a_row_held_by_headroom_reads_zero_free() {
+        let now = at(0);
+        let planned = || vec![bead("cb-p1", "open", &["planned"], 2)];
+        let unplanned = || vec![bead("cb-b1", "open", &[], 2)];
+
+        for (role, beads) in [
+            ("implementer", planned as fn() -> Vec<Bead>),
+            ("planner", unplanned as fn() -> Vec<Bead>),
+        ] {
+            let free = facts_for(beads(), &[]);
+            let taken = facts_for(beads(), &[(role, 1)]);
+            let agent = agent_of(role);
+
+            assert_eq!(
+                standby_cell(role, &taken, agent_of(role), now, 0, 0).as_deref(),
+                Some("\u{2192} 0 free")
+            );
+            assert_ne!(
+                standby_cell(role, &free, agent, now, 0, 0).as_deref(),
+                Some("\u{2192} 0 free")
+            );
+            // The retry clock still wins over both.
+            assert_eq!(
+                standby_cell(role, &taken, agent_of(role), now, 3, 120),
+                Some(retry_label(3, 120))
+            );
+        }
+    }
+
+    #[test]
+    fn headroom_is_available_work_minus_the_sessions_going_for_it() {
+        let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
+        let buckets = partition_beads(vec![
+            bead("cb-p1", "open", &["planned"], 2),
+            bead("cb-p2", "open", &["planned"], 2),
+            bead("cb-p3", "open", &["planned"], 2),
+            bead("cb-p4", "open", &["planned"], 2),
+            bead("cb-u1", "open", &[], 2),
+        ]);
+        let facts_with = |flight: &[(&str, usize)]| {
+            TriggerFacts::derive(
+                &buckets,
+                &roster,
+                flight.iter().map(|(r, n)| ((*r).to_string(), *n)).collect(),
+                |_| false,
+                GhAnswer::Unanswered,
+                1,
+            )
+        };
+
+        assert_eq!(facts_with(&[]).headroom("implementer"), Some(4));
+        assert_eq!(
+            facts_with(&[("implementer", 2)]).headroom("implementer"),
+            Some(2)
+        );
+        // Saturating, not wrapping: more sessions in flight than work.
+        assert_eq!(
+            facts_with(&[("implementer", 9)]).headroom("implementer"),
+            Some(0)
+        );
+        assert_eq!(facts_with(&[]).headroom("planner"), Some(1));
+        assert_eq!(facts_with(&[("planner", 1)]).headroom("planner"), Some(0));
+        // A role this rule does not gate.
+        assert_eq!(facts_with(&[]).headroom("verifier"), None);
+    }
+
+    #[test]
+    fn in_flight_counts_live_sessions_holding_no_bead() {
+        let rows = vec![
+            row("Cyclops", "implementer", RowState::Working, Some("cb-1")),
+            row("Storm", "implementer", RowState::Working, None),
+            row("Rogue", "implementer", RowState::Up, None),
+            row("Gambit", "implementer", RowState::Waiting, None),
+            row("Jubilee", "implementer", RowState::Standby, None),
+            row("Bishop", "implementer", RowState::Dead, None),
+            row("Iceman", "implementer", RowState::Unknown("weird".into()), None),
+            row("Xavier", "planner", RowState::Working, None),
+        ];
+
+        let counts = in_flight(&rows);
+
+        assert_eq!(counts.get("implementer"), Some(&3));
+        assert_eq!(counts.get("planner"), Some(&1));
+        assert_eq!(counts.get("verifier"), None);
+    }
+
     fn bead(id: &str, status: &str, labels: &[&str], priority: u8) -> Bead {
         Bead {
             id: id.into(),
@@ -916,7 +1201,7 @@ mod tests {
             ("Storm", "implementer"),
         ]);
         // Storm has been told to finish: it takes no further bead, so it is not counted.
-        let facts = TriggerFacts::derive(&buckets, &roster, |name| name == "Storm", GhAnswer::Unanswered, 1);
+        let facts = TriggerFacts::derive(&buckets, &roster, BTreeMap::new(), |name| name == "Storm", GhAnswer::Unanswered, 1);
 
         assert_eq!(facts.p0_unplanned, vec!["cb-9zz".to_string()]);
         assert_eq!(facts.planned, 2);
@@ -944,7 +1229,7 @@ mod tests {
         let roster = roster(&[("Xavier", "planner"), ("Cyclops", "implementer")]);
         let facts_of = |priority: u8| {
             let buckets = partition_beads(vec![bead("cb-agg", "open", &[], priority)]);
-            TriggerFacts::derive(&buckets, &roster, |_| false, GhAnswer::Unanswered, 1)
+            TriggerFacts::derive(&buckets, &roster, BTreeMap::new(), |_| false, GhAnswer::Unanswered, 1)
         };
         let unranked = facts_of(4);
         let ranked = facts_of(2);
@@ -1027,6 +1312,7 @@ mod tests {
             planner_multiple: 1,
             gh: GhAnswer::Unanswered,
             linked: Vec::new(),
+            in_flight: BTreeMap::new(),
         }
     }
 
@@ -1178,7 +1464,12 @@ mod tests {
 
     #[test]
     fn the_standby_label_is_a_closed_vocabulary() {
-        let facts = empty_facts();
+        // Work nobody is coming for, so the headroom arm above does not fire and every role's
+        // own cell is what is being read here.
+        let mut facts = empty_facts();
+        facts.actionable_ids = vec!["cb-a".to_string()];
+        facts.planned_ids = vec!["cb-p".to_string()];
+        let facts = facts;
         assert_eq!(standby_label("planner", &facts, agent("planner"), at(0)).as_deref(), Some("→ buffer<4"));
         assert_eq!(standby_label("implementer", &facts, agent("implementer"), at(0)).as_deref(), Some("→ planned"));
         assert_eq!(standby_label("verifier", &facts, agent("verifier"), at(0)).as_deref(), Some("→ merged"));
@@ -1372,7 +1663,7 @@ mod tests {
     }
 
     fn cadence_facts(gh: GhAnswer) -> TriggerFacts {
-        let mut facts = TriggerFacts::derive(&WorkBuckets::default(), &[], |_| false, gh, 1);
+        let mut facts = TriggerFacts::derive(&WorkBuckets::default(), &[], BTreeMap::new(), |_| false, gh, 1);
         facts.linked = Vec::new();
         facts
     }

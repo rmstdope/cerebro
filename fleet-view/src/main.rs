@@ -666,17 +666,23 @@ fn supervise(
                 host.type_line(&name, lifecycle::nudge_message(kind), at);
                 app.set_notice(lifecycle::supervision_notice(action, &name, false));
             }
-            // Gated on `may_supervise` and not merely `may_end`: a resume is a NEW instruction,
-            // and a view handing supervision over issues none. No `nudged`-style set is needed -
-            // the `resumed` map is what stops a second line, since a name in it answers
-            // `End`/`None` rather than `Resume`.
+            // Gated on `may_supervise` and not merely `may_end` - a resume is a NEW instruction,
+            // and a view handing supervision over issues none - which is decided above, with the
+            // once-per-stretch guard, so that neither writes a line saying it happened.
+            //
+            // TWO sets, answering two different questions. `resumed_this_stretch` is "have I
+            // already told this name within this stretch", and it is what stops a second line;
+            // `resumed` is "was it told and has it done nothing since", which is the escalation
+            // and which survives the row being un-stuck. The first alone could never escalate;
+            // the second alone leaves a row with no `since` - never recorded there - told on
+            // every tick for ever.
             lifecycle::Supervision::Resume => {
                 app.resumed_this_stretch.insert(name.clone());
                 host.type_line(&name, lifecycle::resume_message(kind), at);
                 // Recorded only when there is a timestamp to compare against later: a missing
                 // one is not evidence that nothing happened.
-                if row.since.is_some() {
-                    app.resumed.insert(name.clone(), (row.since, row.phase_since));
+                if since.is_some() {
+                    app.resumed.insert(name.clone(), (since, phase_since));
                 }
                 app.set_notice(lifecycle::supervision_notice(action, &name, true));
             }

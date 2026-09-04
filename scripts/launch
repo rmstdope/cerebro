@@ -51,6 +51,52 @@ if hints="$("$here/consumer-root" --hints 2>/dev/null)"; then
   export CEREBRO_CONSUMER_ROOT CEREBRO_CONSUMER_SHARED_ROOT CEREBRO_CONSUMER_MOUNT
 fi
 
+# The environment cargo left behind, cleared before anything else runs (cb-6fu).
+#
+# `scripts/cerebro-tui' execs `cargo run', so the Ratatui fleet view is a CHILD OF CARGO and hands
+# its own environment to every session it spawns - cargo's eighteen injected variables, plus every
+# key of the `[env]' table in whatever .cargo/config.toml cargo discovered from the CONSUMER's root.
+# In atlantis-hud that meant TS_RS_EXPORT_DIR pointing at the navigator's shared checkout, so every
+# agent's `cargo test' wrote its generated bindings there (ah-79ca, ah-16pb). An agent's own cargo
+# re-applies every one of those the moment it runs, from the config in ITS worktree, which is where
+# the values were always supposed to come from.
+#
+# HERE, and not lower down, so everything this launcher itself spawns - `roster', `launch-preflight'
+# and through it `project-conf', `agent-cli', `model-for' and `sync-symlinks.sh' - is already running
+# in the cleaned environment, not only the agent CLI. `scripts/cargo-env.sh' is the whole of the rule
+# (which names, and which are protected); this is its only caller.
+source "$here/cargo-env.sh"
+# NOT `$(...)' and NOT `while read ... < <(...)': `unset' takes effect in the shell that runs it, so
+# consuming this function's stdout would run the whole strip in a subshell and clear nothing, while
+# printing a convincing list of what it had not done. The arrays are how a caller in this shell
+# learns what went; see the library's header.
+cerebro_strip_cargo_env "${CEREBRO_CONSUMER_SHARED_ROOT:-}" >/dev/null
+
+# One line on stderr, only when something went - this file's own habit, for the reason it gives
+# about models.conf: a session behaving oddly three days later is otherwise a mystery. The CARGO_*
+# family is counted rather than spelled out (eighteen lines of noise on every launch); the config
+# names are listed, because that is the half a navigator cannot guess.
+_cleared_cargo=${#cerebro_cargo_stripped_injected[@]}
+_cleared_names=""
+for _name in ${cerebro_cargo_stripped_config+"${cerebro_cargo_stripped_config[@]}"}; do
+  _cleared_names="${_cleared_names:+$_cleared_names, }$_name"
+done
+unset _name
+if [[ $_cleared_cargo -gt 0 || -n $_cleared_names ]]; then
+  _clause=""
+  if [[ $_cleared_cargo -eq 1 ]]; then
+    _clause="1 CARGO_* variable"
+  elif [[ $_cleared_cargo -gt 1 ]]; then
+    _clause="$_cleared_cargo CARGO_* variables"
+  fi
+  if [[ -n $_cleared_names ]]; then
+    _clause="${_clause:+$_clause and }$_cleared_names"
+  fi
+  echo "launch: cleared $_clause from the environment cargo left behind." >&2
+  unset _clause
+fi
+unset _cleared_cargo _cleared_names
+
 # The listing is a courtesy; the exit status is the contract. Under `set -euo pipefail' a failing
 # `roster' here would end the script AT the listing and the `exit 2' below would never run, leaving
 # a refusal with status 1 where it documents 2 - a difference no output shows, which is why it read

@@ -1002,6 +1002,24 @@ and the key hint stays `g retry` until both panes are fresh.
   Since cb-ue0 it also answers all three at once: `consumer-root --hints` prints the enclosing root,
   the shared root (empty when git cannot say) and the mount, on three lines, so one fork can do what
   three used to.
+- **`scripts/cargo-env.sh` is the one place bash answers which variables cargo put in this
+  process's environment** (cb-6fu) — `cerebro_cargo_injected_name_p`,
+  `cerebro_cargo_config_env_names`, `cerebro_cargo_protected_name_p` and `cerebro_strip_cargo_env`,
+  sourced never executed, builtins alone for the narrowed PATH, in the shape of
+  `scripts/session-marker.sh` and `scripts/root-hints.sh` beside it. Its one caller is
+  `scripts/launch`, its suite is `tests/cargo-env.sh`, and the launch path's own cases are in
+  `tests/launchers.sh`. It exists because `scripts/cerebro-tui` execs `cargo run`, so the fleet view
+  is a **child of cargo** and hands its environment to every session it spawns — cargo's eighteen
+  injected variables plus every key of the `[env]` table in the **consumer's** `.cargo/config.toml`.
+  In atlantis-hud that meant `TS_RS_EXPORT_DIR` pointing at the navigator's shared checkout, so
+  every agent's `cargo test` wrote its generated bindings there with no cwd mistake required
+  (ah-79ca, ah-16pb). It is a **denylist and deliberately not the prefix `CARGO_*`**: `CARGO_HOME`
+  and `CARGO_TARGET_DIR` are the navigator's own settings, and clearing the second costs a full
+  rebuild per session. `PATH`, `HOME`, `CEREBRO_*`, `BEADS_*` and the shell's own bookkeeping names
+  are protected against an `[env]` table that names them. **`unset` takes effect in the shell that
+  runs it**, so `cerebro_strip_cargo_env` reports through two arrays as well as stdout: a caller
+  reading its printed lines through `$(...)` or `< <(...)` strips nothing at all and prints a
+  convincing list of what it did not do.
 - **`scripts/jsonl-log.sh` is the one place bash appends a line to an append-only JSONL log**
   (cb-ge0) — `cerebro_jsonl_append <path> <line>`, builtins only for the narrowed PATH, refusing a
   line that is empty or does not begin with `{` rather than trusting its caller to have checked one.

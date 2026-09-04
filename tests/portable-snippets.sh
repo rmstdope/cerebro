@@ -147,6 +147,18 @@ run "$fix/scripts/portable-snippets"
   || fail "expected two findings, got: $out"
 pass "two occurrences in one file are two findings"
 
+# --- a positional parameter is the same class ------------------------------------------------------
+
+fix="$(new_fixture)"
+printf 'launch %s\n' '${1'":+--name \"\$1\"}" >>"$fix/skills/thing/SKILL.md"
+git_q -C "$fix" add -A
+git_q -C "$fix" commit -q -m init
+run "$fix/scripts/portable-snippets"
+[[ $status -eq 1 ]] || fail "a positional-parameter expansion must exit 1, got $status: $out"
+grep -q "^unportable: skills/thing/SKILL.md:" <<<"$out" \
+  || fail "expected a finding for the positional parameter, got: $out"
+pass "an alternate-value expansion on a positional parameter is a finding too"
+
 # --- an argument is a usage error, and prints no findings -----------------------------------------
 
 run "$script" --all

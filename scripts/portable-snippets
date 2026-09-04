@@ -70,11 +70,11 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT" || exit 2
 
-# A dollar, a brace, a name, a colon, a plus. Assembled rather than written whole so that a future
-# widening of the pathspec to include `scripts/' cannot make this file report itself.
-# The plus is escaped: in an ERE it would otherwise be a quantifier over the colon, which matches
-# the default-value form too.
-pattern='\$\{[A-Za-z_][A-Za-z0-9_]*:\'"$(printf '\53')"
+# A dollar, a brace, a name or a positional parameter, a colon, a plus. Assembled rather than
+# written whole so that a future widening of the pathspec to include `scripts/' cannot make this
+# file report itself. The plus is escaped: in an ERE it would otherwise be a quantifier over the
+# colon, and would match the default-value form too.
+pattern='\$\{[A-Za-z0-9_]+:\'"$(printf '\53')"
 
 findings=0
 

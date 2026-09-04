@@ -4535,8 +4535,10 @@ survives, so it is paired with `cerebro-log-generations\='."
 (defcustom cerebro-log-generations 3
   "How many rotated generations of the view\='s log are kept.
 
-`decisions.1.jsonl\=' and so on, oldest discarded.  Three at 25 MB is a couple
-of days at `evaluations\=' and months at `changes\='."
+`evaluations.1.jsonl\=' and so on, oldest discarded.  Three at 25 MB is a couple
+of days of the evaluations log at `evaluations\=' and months of it at `changes\='.
+The decisions log keeps years at any verbosity, since cb-xhu.2 moved the loud
+half out of it."
   :type 'integer
   :group 'cerebro)
 
@@ -4651,9 +4653,10 @@ and `.cerebro/state\=' is already what `.gitignore\=' names and what
 
 Generations shift up and the oldest is discarded, which is the whole of the
 retention policy: `cerebro-log-generations\=' files of `cerebro-log-max-bytes\='.
-One policy for both files rather than two settings: the error log is written
-when something goes wrong, so in a healthy fleet it never reaches the size at
-all, and a second pair of settings would only be a second thing to explain."
+One policy for all three files rather than a pair of settings each: only the
+evaluations log ever reaches the size at all - the error log is written when
+something goes wrong, and the decisions log is a couple of hundred lines a day
+since cb-xhu.2 - and more settings would only be more to explain."
   (let ((file (cerebro--log-file repo-root nil base)))
     (when (cerebro--log-rotate-p (file-attribute-size (file-attributes file))
                                  cerebro-log-max-bytes)

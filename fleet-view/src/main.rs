@@ -4429,7 +4429,7 @@ mod main_tests {
         }
     }
 
-    // --- cb-kcs.4.4: the two logs -------------------------------------------------------------
+    // --- cb-kcs.4.4: the logs (three of them since cb-xhu.2) ----------------------------------
     //
     // Every case here builds its own root and points the logger at it. NONE of them may reach the
     // repository's own `.cerebro/state`.

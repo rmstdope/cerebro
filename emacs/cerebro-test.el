@@ -6846,6 +6846,10 @@ file, under the same rotation policy, and the two never bleed into each other."
           (let ((cerebro-log-verbosity 'decisions))
             (cerebro--log root 'evaluate '((agent . "Beast"))))
           (should (= 1 (with-temp-buffer (insert-file-contents evaluations)
+                                (count-lines (point-min) (point-max)))))
+          ;; And it did not fall back into the decisions log either: a
+          ;; suppressed evaluation is written nowhere at all.
+          (should (= 1 (with-temp-buffer (insert-file-contents decisions)
                                 (count-lines (point-min) (point-max))))))
       (delete-directory root t))))
 

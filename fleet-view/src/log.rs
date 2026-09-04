@@ -1,12 +1,13 @@
-//! The two append-only JSONL files this view writes: what it decided, and what went wrong.
+//! The three append-only JSONL files this view writes: what it decided, what it evaluated, and
+//! what went wrong.
 //!
-//! The port of `emacs/cerebro.el`'s own log (`cerebro--log` and its neighbours). The SAME two
+//! The port of `emacs/cerebro.el`'s own log (`cerebro--log` and its neighbours). The SAME three
 //! files, in the same directory, in the same shapes: the lease guarantees exactly one supervisor,
 //! so the two views can never write at once, and a navigator who switches supervisor keeps one
 //! continuous history.
 //!
 //! Split the way the rest of the crate is: a pure half that is a total function of plain data and
-//! is tested over literals, and one small impure half - `Logger` - which owns the two files.
+//! is tested over literals, and one small impure half - `Logger` - which owns the three files.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -256,7 +257,7 @@ pub fn reader_context(pane: &str, error: &ReadError) -> String {
     pane.to_string()
 }
 
-/// The two files, and the memory that keeps each of them short.
+/// The three files, and the memory that keeps each of them short.
 ///
 /// Impure, and the ONLY thing in this crate that writes either. Held by `main` beside the
 /// `SessionHost`, because every call site is in the loop or in what the loop calls.

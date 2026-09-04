@@ -50,3 +50,30 @@ the race, and both implementations retry on their own tick instead.
 
 Sightings: cb-gln (a prose-only pull request reddened by `AddrInUse` in the `Rust tests` job),
 cb-3da (the fix).
+
+## A process started under `cargo run` hands cargo's environment to everything it starts
+
+`scripts/cerebro-tui` execs `cargo run`, so the Ratatui fleet view is a child of cargo, and cargo
+gives its child eighteen variables — `CARGO`, `CARGO_MANIFEST_DIR`, the whole `CARGO_PKG_*` family —
+**plus every key of the `[env]` table in whatever `.cargo/config.toml` cargo discovered from its
+working directory**, which is the consumer's. The view then spawns sessions with its own
+environment, so every agent inherits the lot.
+
+A `[env]` entry written without `force = true` **loses to an inherited value**, in every worktree.
+So in atlantis-hud every agent's `cargo test` wrote its generated TypeScript bindings into the
+navigator's shared checkout, with no `cd` mistake required, and `export_bindings_stay_inside_this_workspace`
+went red in any session carrying the variable.
+
+Dealt with in `scripts/launch`, via `scripts/cargo-env.sh`, which clears cargo's own injections and
+the consumer's `[env]` keys before the launcher spawns anything — the navigator's `CARGO_HOME` and
+`CARGO_TARGET_DIR` excepted. Two consequences worth knowing:
+
+- **A suite that asserts on the environment or on `scripts/launch`'s stderr runs inside a polluted
+  session.** `tests/launchers.sh` and `tests/cargo-env.sh` clear the variables in their own preambles
+  for that reason; without it a suite is green in CI and red on the navigator's machine.
+- **`unset` takes effect in the shell that runs it.** A caller reading the strip's printed names
+  through `$(...)` or `< <(...)` runs the whole thing in a subshell, clears nothing, and prints a
+  perfectly convincing list of what it did not do.
+
+Sightings: cb-6fu, and ah-79ca / ah-16pb in atlantis-hud.
+

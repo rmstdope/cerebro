@@ -384,6 +384,12 @@ impl Session {
     /// Spawn `<scripts_dir>/launch <name>` in a fresh pty, with the consumer root as its working
     /// directory and this process's environment.
     ///
+    /// That environment is cleaned by the launcher rather than here: this view is a `cargo run`
+    /// child, so it carries cargo's own injections and the consumer's `.cargo/config.toml` `[env]`
+    /// table, and `scripts/launch` clears both before it execs the agent CLI (cb-6fu). No
+    /// `env_remove` in this file - the strip belongs in the one thing BOTH views spawn, or it
+    /// exists twice and the two copies drift.
+    ///
     /// The command is the launcher and the agent's name and nothing else - the same two tokens
     /// `cerebro--launch-command` builds in Emacs. No model flag, no provider flag, no prompt:
     /// every one of those is the launcher's own business, and a second opinion here is a second

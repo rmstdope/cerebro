@@ -6597,6 +6597,12 @@ is where that is said."
         (when (eq (cerebro-agent-state agent) 'standby)
           (let* ((agent-context (cerebro--agent-context agent context))
                  (reason (cerebro--trigger agent agent-context))
+                 ;; Work already spoken for - by a session in flight, or by a
+                 ;; start this very loop has made (cb-cz7).  Ahead of the
+                 ;; guards below, which defer to it, so the evaluation line
+                 ;; names one reason a row started nothing.
+                 (no-headroom (cerebro--no-headroom-p (cerebro-agent-role agent)
+                                                      agent-context taken))
                  ;; A true condition is not yet a start: a role two agents
                  ;; hold answers it for both at once, and two planners racing
                  ;; for one candidate is what that costs
@@ -6607,7 +6613,10 @@ is where that is said."
                  ;; this very loop already sees the first.
                  (spacing (cerebro--role-start-spacing (cerebro-agent-role agent)
                                                        project-spacing))
-                 (too-soon (and reason
+                 ;; Each guard is asked only when the ones before it let the
+                 ;; row through, so the evaluation line names ONE reason a row
+                 ;; started nothing - the same order `start_due' asks them in.
+                 (too-soon (and reason (not no-headroom)
                                 (cerebro--role-start-too-soon-p
                                  (cerebro--role-peers agent cerebro--agents)
                                  cerebro--started-at
@@ -6626,15 +6635,13 @@ is where that is said."
                  ;; The same arithmetic the standby row counts down, so the
                  ;; row and the decision cannot disagree about when a retry
                  ;; is due (`cerebro--retry-wait').
-                 (backed-off (and reason failed
+                 (backed-off (and reason (not no-headroom) failed
                                   (> (cerebro--retry-wait failures started now-float) 0)))
                  ;; A name told to finish takes no further pass, whatever its
                  ;; kind (cb-sxf).  `cerebro--supervise-action' answers
                  ;; `retire' for a flagged standby implementer and leaves a
                  ;; role's flag to this loop; before this it was read here by
                  ;; nobody, so the trigger started a whole pass under a flag.
-                 (no-headroom (cerebro--no-headroom-p (cerebro-agent-role agent)
-                                                      agent-context taken))
                  (flagged (cerebro--stop-flag-p repo-root name))
                  ;; The rule itself is `cerebro--flag-start-action', which
                  ;; every start path reads; `flagged' stays bound because the

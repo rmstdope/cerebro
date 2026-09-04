@@ -8023,6 +8023,54 @@ can hold the second builder (cb-cz7).
         (cerebro--start-due "/tmp/nowhere" (seconds-to-time 1000000.0))
         (should (equal launched '("Storm")))))))
 
+(ert-deftest cerebro-test/the-guard-that-held-a-row-is-the-first-one-that-fired ()
+  "One reason per line: a row held by the headroom does not ALSO read
+`spaced_out\=', even when a peer did start microseconds earlier.
+
+`start_due\=' asks each guard only when the ones before it let the row through,
+and the record of WHICH guard held a row is the thing cb-kcs.4.4\='s line
+exists for - so the two views must not name different ones for the same
+situation."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-log-verbosity 'evaluations)
+        (cerebro--log-seen nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--launch)
+                   (lambda (a)
+                     (setf (alist-get (cerebro-agent-name a) cerebro--started-at
+                                      nil nil #'equal)
+                           1000000.0)))
+                  ((symbol-function 'cerebro--vterm-available-p) (lambda () t))
+                  ((symbol-function 'cerebro--stop-flag-p) (lambda (&rest _) nil))
+                  ((symbol-function 'message) #'ignore)
+                  ((symbol-function 'cerebro--trigger-context)
+                   (lambda (&rest _)
+                     '((now . 1000000.0) (implementers . 2) (planned . 1)
+                       (planned-ids "cb-p1") (p0-unplanned) (actionable-ids)
+                       (p4-unranked . 0) (in-flight)
+                       (merged-unverified . 0) (stale-verdicts . 0) (gh)))))
+          (make-directory (expand-file-name ".cerebro/state" root) t)
+          (with-temp-buffer
+            (setq cerebro--agents
+                  (list (cerebro-test--agent "Storm" "implementer" 'implementer 'standby)
+                        (cerebro-test--agent "Rogue" "implementer" 'implementer 'standby))
+                  cerebro--armed '("Storm" "Rogue")
+                  cerebro--parked nil cerebro--seen-up nil cerebro--started-at nil
+                  cerebro--start-fingerprints nil cerebro--failed-starts nil
+                  ;; The spacing WOULD hold Rogue as well; the headroom got there first.
+                  cerebro--project-spacing-cache '(("implementer" . 30)))
+            (cerebro--start-due root (seconds-to-time 1000000.0)))
+          (let* ((lines (with-temp-buffer
+                          (insert-file-contents
+                           (expand-file-name ".cerebro/state/decisions.jsonl" root))
+                          (split-string (buffer-string) "\n" t)))
+                 (rogue (seq-find (lambda (line) (string-match-p "\"agent\":\"Rogue\"" line))
+                                  lines)))
+            (should rogue)
+            (should (string-match-p "\"no_headroom\":true" rogue))
+            (should (string-match-p "\"spaced_out\":null" rogue))))
+      (delete-directory root t))))
+
 (ert-deftest cerebro-test/start-due-does-nothing-without-vterm ()
   "There is nothing to run a session in, and a trigger firing once every five
 seconds into a `user-error' is not a way to say so."

@@ -106,6 +106,56 @@ set -e
 pass "an invalid value is never rounded to the default"
 
 # ---------------------------------------------------------------------------
+# 3b. A declaration that could not be READ is exit 3, not exit 2 (cb-nc8).
+#
+# Exit 2 means a value was read and refused, and section 3 above pins that it always prints that
+# value alone on stdout. So an exit 2 carrying NOTHING is a lie the caller cannot detect: the
+# Ratatui reader took it as an authoritative "the navigator declared something that is not us",
+# went to Draining for one tick, and emptied the armed set for good. A reader's own failure is not
+# a fact about the project, so it gets a status of its own.
+# ---------------------------------------------------------------------------
+stub_consumer="$(consumer_new stubbed --link fleet-supervisor project-conf consumer-root)"
+stub_supervisor="$stub_consumer/.claude/cerebro/scripts/fleet-supervisor"
+mkdir -p "$stub_consumer/.cerebro"
+printf 'fleet_supervisor tui\n' > "$stub_consumer/.cerebro/project.conf"
+
+# `place-scripts' LINKS the real scripts in, so the stub has to replace the link rather than write
+# through it into this repository's own scripts/project-conf.
+rm -f "$stub_consumer/.claude/cerebro/scripts/project-conf"
+cat > "$stub_consumer/.claude/cerebro/scripts/project-conf" <<'STUB'
+#!/usr/bin/env bash
+echo "project-conf: boom" >&2
+exit 1
+STUB
+chmod +x "$stub_consumer/.claude/cerebro/scripts/project-conf"
+
+set +e
+out="$("$stub_supervisor" 2>/dev/null)"; status=$?
+err="$("$stub_supervisor" 2>&1 >/dev/null)"
+set -e
+[[ $status -eq 3 ]] || fail "project-conf failed: expected exit 3, got $status"
+[[ -z "$out" ]] || fail "project-conf failed: expected nothing on stdout, got '$out'"
+grep -q "project-conf: boom" <<<"$err" \
+  || fail "project-conf failed: its own diagnosis did not reach the caller: $err"
+pass "a project-conf that fails is exit 3 with nothing on stdout"
+
+# The same shape with the REAL reader: a declaration left at the retired path and none at the new
+# one. project-conf refuses with its migration sentence, and that refusal is still not a
+# declaration.
+retired_consumer="$(consumer_new retired --link fleet-supervisor project-conf consumer-root)"
+retired_supervisor="$retired_consumer/.claude/cerebro/scripts/fleet-supervisor"
+rm -rf "$retired_consumer/.cerebro"
+printf 'fleet_supervisor tui\n' > "$retired_consumer/.claude/cerebro-project.conf"
+set +e
+out="$("$retired_supervisor" 2>/dev/null)"; status=$?
+err="$("$retired_supervisor" 2>&1 >/dev/null)"
+set -e
+[[ $status -eq 3 ]] || fail "retired declaration path: expected exit 3, got $status"
+[[ -z "$out" ]] || fail "retired declaration path: expected nothing on stdout, got '$out'"
+[[ -n "$err" ]] || fail "retired declaration path: project-conf's own sentence never reached stderr"
+pass "a real project-conf refusal is exit 3, and carries its own sentence"
+
+# ---------------------------------------------------------------------------
 # 4. Usage errors are exit 2 as well, and say so without touching the declaration.
 # ---------------------------------------------------------------------------
 declare_supervisor "emacs"

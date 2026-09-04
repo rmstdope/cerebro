@@ -124,6 +124,37 @@ impl SupervisionMode {
             SupervisionMode::Supervising | SupervisionMode::Draining { .. }
         )
     }
+
+    /// Does this mode mean somebody ELSE has, or is taking, this checkout?
+    ///
+    /// The one question the armed set is answered from (cb-nc8). [`may_supervise`] asks whether
+    /// this view may act NOW, which is false for a transient failure too - and disarming on one of
+    /// those is what cb-nc8 was: a permanent consequence drawn from a recoverable condition. Three
+    /// modes hand over, and every other one leaves the armed set exactly as it was.
+    ///
+    /// [`may_supervise`]: SupervisionMode::may_supervise
+    pub fn hands_over(&self) -> bool {
+        match self {
+            SupervisionMode::Draining { .. } => true,
+            SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(_)) => true,
+            SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(_)) => true,
+            SupervisionMode::ReadOnly(_) | SupervisionMode::Supervising => false,
+        }
+    }
+}
+
+impl ReadOnlyReason {
+    /// The log's word for this reason, spelled as `emacs/cerebro.el`'s own reason symbols are.
+    pub fn word(&self) -> &'static str {
+        match self {
+            ReadOnlyReason::ConfiguredFor(_) => "configured-for",
+            ReadOnlyReason::OwnedBy(_) => "owned-by",
+            ReadOnlyReason::InvalidDeclaration(_) => "invalid",
+            ReadOnlyReason::LockError(_) => "lock-error",
+            ReadOnlyReason::DeclarationUnreadable(_) => "declaration-unreadable",
+            ReadOnlyReason::NotOwned => "not-owned",
+        }
+    }
 }
 
 /// What to do about the lease this tick.
@@ -394,6 +425,53 @@ mod tests {
     fn kind(word: &str) -> SupervisorKind {
         SupervisorKind::parse(word)
             .unwrap_or_else(|| panic!("supervisor.cases: unknown kind {word}"))
+    }
+
+    /// Which modes empty the armed set, exhaustively (cb-nc8).
+    ///
+    /// Only a handover - somebody else has, or is taking, this checkout - may have the permanent
+    /// consequence of disarming every name. Everything else, including "I could not find out",
+    /// leaves the set alone and recovers on the next good poll with no keystroke.
+    ///
+    /// The elisp counterpart is `cerebro-test/an-unreadable-declaration-leaves-the-armed-set-alone'.
+    #[test]
+    fn only_a_handover_hands_over() {
+        use ReadOnlyReason::*;
+
+        let hands_over = [
+            SupervisionMode::Draining {
+                configured_for: Some(SupervisorKind::Emacs),
+                live_sessions: 2,
+            },
+            SupervisionMode::ReadOnly(ConfiguredFor(SupervisorKind::Emacs)),
+            SupervisionMode::ReadOnly(OwnedBy(SupervisorKind::Tui)),
+        ];
+        for mode in hands_over {
+            assert!(mode.hands_over(), "{mode:?} is a handover");
+        }
+
+        let keeps = [
+            SupervisionMode::ReadOnly(InvalidDeclaration("tui2".into())),
+            SupervisionMode::ReadOnly(LockError("bind refused".into())),
+            SupervisionMode::ReadOnly(DeclarationUnreadable("boom".into())),
+            SupervisionMode::ReadOnly(NotOwned),
+            SupervisionMode::Supervising,
+        ];
+        for mode in keeps {
+            assert!(!mode.hands_over(), "{mode:?} must not disarm anything");
+        }
+    }
+
+    /// Each reason's log word, so a `disarm-all` line names why in the same vocabulary Emacs uses.
+    #[test]
+    fn every_read_only_reason_has_a_log_word() {
+        use ReadOnlyReason::*;
+        assert_eq!(ConfiguredFor(SupervisorKind::Emacs).word(), "configured-for");
+        assert_eq!(OwnedBy(SupervisorKind::Tui).word(), "owned-by");
+        assert_eq!(InvalidDeclaration("rat".into()).word(), "invalid");
+        assert_eq!(LockError("x".into()).word(), "lock-error");
+        assert_eq!(DeclarationUnreadable("x".into()).word(), "declaration-unreadable");
+        assert_eq!(NotOwned.word(), "not-owned");
     }
 
     #[test]

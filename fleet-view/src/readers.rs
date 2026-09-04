@@ -413,8 +413,13 @@ pub fn read_configured_supervisor(
             let word = String::from_utf8_lossy(&stdout).trim().to_string();
             Ok(SupervisorKind::parse(&word).ok_or(word))
         }
-        // Exit 2 with the raw value on stdout is the documented invalid-declaration answer.
-        Err(ReadError::Exit { status: Some(2), stdout, .. }) => Ok(Err(stdout.trim().to_string())),
+        // Exit 2 with the raw value on stdout is the documented invalid-declaration answer - and
+        // the value is what makes it one. An exit 2 carrying NOTHING is the script failing to say
+        // why (cb-nc8): read it as unreadable, which keeps the lease and claims nothing about
+        // ownership, rather than as a declaration of the empty string.
+        Err(ReadError::Exit { status: Some(2), stdout, .. }) if !stdout.trim().is_empty() => {
+            Ok(Err(stdout.trim().to_string()))
+        }
         Err(other) => Err(other),
     }
 }
@@ -1069,6 +1074,29 @@ mod tests {
         let calls = refused.calls();
         assert!(calls[0].program.ends_with("fleet-supervisor"), "{:?}", calls[0].program);
         assert_eq!(calls[0].cwd.as_deref(), Some(paths.consumer_root.as_path()));
+    }
+
+    /// An exit 2 that carries no value is the SCRIPT failing, not a declaration (cb-nc8).
+    ///
+    /// Exit 2 is documented as a value that was read and refused, and it always prints that value
+    /// alone on stdout. Reading a valueless exit 2 as `Ok(Err(""))` made an authoritative answer
+    /// out of an outage, which drained the view for one tick and emptied its armed set for good.
+    #[test]
+    fn an_exit_2_with_no_value_is_unreadable_not_an_empty_declaration() {
+        let paths = paths_at(Path::new("/consumer"));
+
+        for status in [2, 3] {
+            let broken = FakeCommands::failing(move || ReadError::Exit {
+                source: "fleet-supervisor".into(),
+                status: Some(status),
+                stderr: "project-conf: boom".into(),
+                stdout: "\n".into(),
+            });
+            assert!(
+                read_configured_supervisor(&paths, &broken).is_err(),
+                "exit {status} with no value must be unreadable, not a declaration"
+            );
+        }
     }
 
     /// A reader that cannot run at all is an error, never `emacs`. Fail-open here is the one

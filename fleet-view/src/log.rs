@@ -46,9 +46,10 @@ pub const GENERATIONS: u32 = 3;
 ///
 /// `triage` joined in cb-kcs.5.2, when the view began typing that line itself; `sweep` in
 /// cb-kcs.5.1, when the view gained an `x` of its own.
-/// There is no `disarm` and no second `arm`: where a
+/// There is no per-name `disarm` and no second `arm`: where ONE
 /// name LEFT the armed set is already readable from the `retire` or `give-up` line that put it
-/// there.
+/// there. `DisarmAll` is the exception cb-nc8 found, and it is the exception for exactly that
+/// reason: a handover empties the whole set at once and leaves no such line behind it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     Start,
@@ -76,6 +77,10 @@ pub enum Event {
     /// log unreadable for exactly the diagnosis it exists for. Written only when the line
     /// actually went into a session this view hosts, exactly as `Triage` is.
     SweepTell,
+    /// One handover emptying the whole armed set: the mode, the reason and the names (cb-nc8).
+    /// The one decision that disarms without a `retire` or `give-up` line per name, which is what
+    /// made the incident it is named for invisible.
+    DisarmAll,
     Error,
 }
 
@@ -95,6 +100,7 @@ impl Event {
             Self::Priority => "priority",
             Self::Triage => "triage",
             Self::SweepTell => "sweep-tell",
+            Self::DisarmAll => "disarm-all",
             Self::Error => "error",
         }
     }
@@ -462,6 +468,9 @@ mod tests {
         assert_eq!(Event::Start.basename(), "decisions");
         assert_eq!(Event::Evaluate.basename(), "decisions");
         assert_eq!(Event::GiveUp.as_str(), "give-up");
+        // cb-nc8: the one decision that disarms without a per-name line.
+        assert_eq!(Event::DisarmAll.as_str(), "disarm-all");
+        assert_eq!(Event::DisarmAll.basename(), "decisions");
 
         let live = log_file(Path::new("/r"), "errors", None);
         assert!(live.ends_with(".cerebro/state/errors.jsonl"), "{live:?}");
@@ -469,7 +478,8 @@ mod tests {
         assert!(rotated.ends_with(".cerebro/state/errors.2.jsonl"), "{rotated:?}");
     }
 
-    const EVERY: [Event; 9] = [
+    const EVERY: [Event; 10] = [
+        Event::DisarmAll,
         Event::Start,
         Event::End,
         Event::Retire,

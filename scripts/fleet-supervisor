@@ -10,6 +10,10 @@
 #   exit 0  answered
 #   exit 2  a usage error, an invalid declaration, an unresolvable root, or a root that cannot be
 #           written into the diagnostic record
+#   exit 3  the declaration could not be READ - `project-conf' itself failed. Distinct from 2
+#           because a reader's failure is not a fact about the project: 2 means a value was read
+#           and refused, and always prints that value on stdout, so an exit 2 carrying nothing is
+#           a lie a caller cannot detect (cb-nc8).
 #
 # THE ONE PLACE either implementation answers this. `emacs/cerebro.el' and `fleet-view/' both call
 # this script rather than parsing project.conf or hashing a root themselves. That is the whole
@@ -153,7 +157,7 @@ case "${1:---declaration}" in
     set -e
     if [[ $status -ne 0 ]]; then
       "$here/project-conf" fleet_supervisor emacs >/dev/null || true
-      exit 2
+      exit 3
     fi
     case "$value" in
       emacs|tui) printf '%s\n' "$value" ;;

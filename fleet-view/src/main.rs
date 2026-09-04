@@ -4685,7 +4685,7 @@ mod main_tests {
 
         start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &spacing, 1, &roster, now);
 
-        let lines = log_lines(dir.path(), "decisions");
+        let lines = log_lines(dir.path(), "evaluations");
         let evaluations: Vec<&String> = lines
             .iter()
             .filter(|line| line.starts_with(r#"{"event":"evaluate","#))

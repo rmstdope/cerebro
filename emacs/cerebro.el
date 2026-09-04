@@ -4613,15 +4613,20 @@ view\='s state, and lost with the buffer - which costs one redundant line per
 role after `M-x cerebro\=', not a wrong one.")
 
 (defun cerebro--log-basename (event)
-  "Pure.  Which log EVENT belongs in: \"errors\" or \"decisions\".
+  "Pure.  Which log EVENT belongs in: \"errors\", \"evaluations\" or \"decisions\".
 
-Two files, not one, and the reason is the question each answers.  The
-decisions log is a hundred thousand lines a day at `evaluations\=' and is read
-by searching it for an agent; the error log is read by opening it, because
-the navigator has been pointed at it by a message that said something went
-wrong.  An error buried in the first is a file nobody can be sent
-to."
-  (if (eq event 'error) "errors" "decisions"))
+Three files, not one, and the reason is the question each answers.  The
+error log is read by opening it, because the navigator has been pointed at it
+by a message that said something went wrong; an error buried among a hundred
+thousand other lines is a file nobody can be sent to.  The evaluations log is
+the loud one - one line per armed row per tick at `evaluations\=' - and is read
+by searching it for one agent over the last hour.  The decisions log is what
+is left once the loud half moved out: starts, ends, retires, arms, exits and
+give-ups, a couple of hundred lines a day, so it keeps months of them rather
+than the four days the evaluations used to rotate it down to."
+  (cond ((eq event 'error) "errors")
+        ((eq event 'evaluate) "evaluations")
+        (t "decisions")))
 
 (defun cerebro--log-file (repo-root &optional generation base)
   "The BASE log under REPO-ROOT, or its GENERATIONth rotated copy.

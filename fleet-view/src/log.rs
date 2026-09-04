@@ -105,17 +105,20 @@ impl Event {
         }
     }
 
-    /// Which log this event belongs in: `"errors"` or `"decisions"`.
+    /// Which log this event belongs in: `"errors"`, `"evaluations"` or `"decisions"`.
     ///
-    /// The port of `cerebro--log-basename`. Two files, not one, and the reason is the question
-    /// each answers: the decisions log is tens of thousands of lines a day and is read by
-    /// searching it; the error log is read by OPENING it, because somebody was pointed at it. An
-    /// error buried in the first is a file nobody can be sent to.
+    /// The port of `cerebro--log-basename`. Three files, not one, and the reason is the question
+    /// each answers: the error log is read by OPENING it, because somebody was pointed at it, and
+    /// an error buried among a hundred thousand other lines is a file nobody can be sent to; the
+    /// evaluations log is the loud one - one line per armed row per tick - and is read by
+    /// searching it for one agent over the last hour; the decisions log is what is left once the
+    /// loud half moved out, a couple of hundred lines a day, so it keeps months of starts and
+    /// exits rather than the four days the evaluations used to rotate it down to.
     pub fn basename(self) -> &'static str {
-        if matches!(self, Self::Error) {
-            "errors"
-        } else {
-            "decisions"
+        match self {
+            Self::Error => "errors",
+            Self::Evaluate => "evaluations",
+            _ => "decisions",
         }
     }
 }
@@ -466,7 +469,7 @@ mod tests {
     fn an_error_is_logged_beside_the_decisions_not_among_them() {
         assert_eq!(Event::Error.basename(), "errors");
         assert_eq!(Event::Start.basename(), "decisions");
-        assert_eq!(Event::Evaluate.basename(), "decisions");
+        assert_eq!(Event::Evaluate.basename(), "evaluations");
         assert_eq!(Event::GiveUp.as_str(), "give-up");
         // cb-nc8: the one decision that disarms without a per-name line.
         assert_eq!(Event::DisarmAll.as_str(), "disarm-all");
@@ -476,6 +479,34 @@ mod tests {
         assert!(live.ends_with(".cerebro/state/errors.jsonl"), "{live:?}");
         let rotated = log_file(Path::new("/r"), "errors", Some(2));
         assert!(rotated.ends_with(".cerebro/state/errors.2.jsonl"), "{rotated:?}");
+    }
+
+    /// cb-xhu.2: the loud half moves out, so a start or an exit is not rotated away in four days.
+    #[test]
+    fn evaluations_are_written_to_a_log_of_their_own() {
+        assert_eq!(Event::Evaluate.basename(), "evaluations");
+        assert_eq!(Event::Error.basename(), "errors");
+        assert_eq!(Event::Start.basename(), "decisions");
+
+        let live = log_file(Path::new("/r"), "evaluations", None);
+        assert!(live.ends_with(".cerebro/state/evaluations.jsonl"), "{live:?}");
+        let rotated = log_file(Path::new("/r"), "evaluations", Some(1));
+        assert!(rotated.ends_with(".cerebro/state/evaluations.1.jsonl"), "{rotated:?}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut logger = enabled(root, 1_000_000, 3);
+        logger.write(
+            Event::Evaluate,
+            Utc::now(),
+            &[("agent", serde_json::json!("Xavier"))],
+        );
+        assert_eq!(lines(root, "evaluations").len(), 1);
+        assert!(!log_file(root, "decisions", None).exists());
+
+        note(&mut logger, "Xavier");
+        assert!(log_file(root, "decisions", None).exists());
+        assert_eq!(lines(root, "evaluations").len(), 1, "the two do not bleed");
     }
 
     const EVERY: [Event; 10] = [
@@ -765,10 +796,10 @@ mod tests {
 
         evaluate(&mut logger, serde_json::json!("buffer 0 of 2"));
         evaluate(&mut logger, serde_json::json!("buffer 0 of 2"));
-        assert_eq!(lines(root, "decisions").len(), 1, "the same answer twice is one line");
+        assert_eq!(lines(root, "evaluations").len(), 1, "the same answer twice is one line");
 
         evaluate(&mut logger, serde_json::json!("buffer 1 of 2"));
-        assert_eq!(lines(root, "decisions").len(), 2, "and a new answer is written");
+        assert_eq!(lines(root, "evaluations").len(), 2, "and a new answer is written");
     }
 
     /// The same rule as `error`'s, for the same reason: `seen` is the memory of what was written,
@@ -789,13 +820,13 @@ mod tests {
         };
 
         evaluate(&mut logger);
-        assert!(lines(root, "decisions").is_empty(), "read-only writes nothing");
+        assert!(lines(root, "evaluations").is_empty(), "read-only writes nothing");
 
         logger.set_enabled(true);
         evaluate(&mut logger);
-        assert_eq!(lines(root, "decisions").len(), 1, "and remembered nothing to hold it back");
+        assert_eq!(lines(root, "evaluations").len(), 1, "and remembered nothing to hold it back");
 
         evaluate(&mut logger);
-        assert_eq!(lines(root, "decisions").len(), 1, "the same answer twice is still one line");
+        assert_eq!(lines(root, "evaluations").len(), 1, "the same answer twice is still one line");
     }
 }

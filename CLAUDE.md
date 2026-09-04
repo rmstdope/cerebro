@@ -889,6 +889,18 @@ and the key hint stays `g retry` until both panes are fresh.
   running — it takes no further bead — which is one of the two drifts the split had already caused.
   Since cb-1or.3 it counts the roster's implementers rather than running sessions — a builder
   between beads has no session (cb-1or.1) — so `agent-alive` is no longer part of the rule.
+- **`scripts/plan-candidates` is the one place "which beads may a planner take at all" is answered**
+  (cb-391). It is `work-beads --status open` plus five label rules — not `planned`, not `human`, not
+  held by a `planning` label in either spelling, `verification:failed` only with `plan:revise`,
+  never `verdict:stale` — and a sort by priority then id. It takes no arguments: one question, and
+  its name is the question. It owns **no epic logic of its own**, because `work-beads` has owned
+  that since cb-hzl, and a second copy of that rule is what it exists to end. It exists because
+  those rules lived only in `skills/plan-bead/SKILL.md`, as two hand-written `jq` blocks, and they
+  drifted from cb-hzl inside a day of it merging: the fleet view started a planner for a childless
+  epic that the planner's own `--exclude-type epic` then excluded, so the planner reported nothing
+  to plan and was woken again by the same bead. Priority stays at the two call sites, because
+  *which* candidate and in what order is policy the skill explains at length. `tests/plan-candidates.sh`
+  is its suite.
 - `scripts/app-paths` is the one place "which paths are this project's application" is answered
   (ah-qled.6) — the `app_paths` key, and `--classify <path>...` over changed paths. Unlike every
   other reader here it **fails when it does not know**: no declaration means exit 3 and a line on

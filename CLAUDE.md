@@ -441,7 +441,7 @@ abbreviated path, a relative path, a formatted time — is normalised by the rea
 (`cerebro--repo-root` through `cerebro--canonical-root`), never assumed canonical by a comparator,
 and a new reader is not done until its contract case exists.
 
-It writes two of its own beside them. **`.cerebro/state/errors.jsonl`** is the short one and the
+It writes three of its own beside them. **`.cerebro/state/errors.jsonl`** is the short one and the
 one to be pointed at: a line per thing that went wrong — `{event, ts, context, message}`, where
 `context` names the part of the view it came from (`autostart`, `roster`, `launch`, `sweep`,
 `supervise <Name>`). Every path that used to demote an error to a message goes through
@@ -452,17 +452,21 @@ one reason that matters: the navigator is sent to it by opening it, which a hund
 evaluations a day would make useless. An error is written at every verbosity but `none` — `none`
 means nothing at all, which is what the suite binds.
 
-**`.cerebro/state/decisions.jsonl`** is the loud one: a line per decision —
-start (with the trigger that fired), end, retire, nudge, sweep run, sweep line typed
-(`sweep-tell`), abnormal exit — and, at `cerebro-log-verbosity` `evaluations` (the default), a
-line per trigger evaluation per tick carrying what the trigger read and whether
-`cerebro--unless-unchanged` is what held it. That last is the only
+**`.cerebro/state/decisions.jsonl`** is the record of what the view actually did: a line per
+decision — start (with the trigger that fired), end, retire, nudge, sweep run, sweep line typed
+(`sweep-tell`), abnormal exit. Since cb-xhu.2 that is *all* it holds, and it therefore keeps
+months: it was 99.7% evaluation lines and rotated a start or an exit away within four days, which
+is exactly the window cb-nc8 needed and did not have.
+
+**`.cerebro/state/evaluations.jsonl`** is the loud one that left it: at `cerebro-log-verbosity`
+`evaluations` (the default), a line per trigger evaluation per tick carrying what the trigger read
+and whether `cerebro--unless-unchanged` is what held it. That is the only
 observable trace of a decision *not* to start, which is otherwise indistinguishable from a bug.
 `changes` logs an evaluation only when its answer differs from that agent's last; `decisions` logs
-none. Both files rotate on `cerebro-log-max-bytes` × `cerebro-log-generations` — one policy, since
+none. All three files rotate on `cerebro-log-max-bytes` × `cerebro-log-generations` — one policy, since
 a healthy fleet never fills the error log at all. The pure half is `cerebro--log-line`,
 `cerebro--log-event-p`, `cerebro--log-evaluation-p`, `cerebro--log-rotate-p` and
-`cerebro--log-basename` (which of the two files an event belongs in); the writer is silent and
+`cerebro--log-basename` (which of the three files an event belongs in); the writer is silent and
 unable to fail, for the reason `scripts/agent-state` gives about its own log — and the error writer
 more so, being the one path that runs when something has already gone wrong.
 
@@ -577,13 +581,14 @@ in place of its condition — and is abandoned after five consecutive starts
 that produced no pass, which disarms the name and leaves `s` as the only way back; a launcher
 refusal is parked from the first failure, where a silent crash is retried. Since cb-kcs.4.3 the
 three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own
-cadence and an hourly floor each. Since cb-kcs.4.4 all of it is written down, in the same two
+cadence and an hourly floor each. Since cb-kcs.4.4 all of it is written down, in the same three
 append-only files `M-x cerebro` writes: `decisions.jsonl` — a line per start (with the trigger that
-fired), end, retire, nudge, arm, exit and give-up, plus, at the verbosity this view compiles in, a
+fired), end, retire, nudge, arm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
+keeps months; `evaluations.jsonl` — at the verbosity this view compiles in, a
 line per trigger evaluation per armed row per tick carrying what the trigger read and which guard
-held it — and `errors.jsonl`, one line per outage rather than per failed read, naming the pane or
-the name it came from. One policy rotates both; the writer is silent and unable to fail; and a
-read-only view writes neither file, since it decides nothing.
+held it; and `errors.jsonl`, one line per outage rather than per failed read, naming the pane or
+the name it came from. One policy rotates all three; the writer is silent and unable to fail; and a
+read-only view writes none of them, since it decides nothing.
 
 Since cb-kcs.5.1 it runs **the six sweeps** as well, on their own ten-minute cadence and their own
 in-flight slot, and draws what they found as the Work pane's **first** section — `Sweeps {n}`, one
@@ -806,9 +811,9 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   work arrives from outside the fleet. Its pane is never drawn: its four content states are exactly
   what tells a trigger "no answer yet" (no suffix) from "the last request failed" (`gh?` on Moira's
   and Cypher's rows, and their hourly floor alone).
-- `log.rs` — the two JSONL files, split the same way: the pure half (`Event::basename`,
+- `log.rs` — the three JSONL files, split the same way: the pure half (`Event::basename`,
   `log_event_p`, `log_evaluation_p`, `log_rotate_p`, `log_line`, `log_file`, `reader_context`) and
-  one impure `Logger` that owns them. It is the ONLY thing in the crate that writes either, its
+  one impure `Logger` that owns them. It is the ONLY thing in the crate that writes any of them, its
   root is a constructor parameter and never resolved — a logger that found its own root would make
   every test append to the navigator's live log — and it starts disabled, so a view that comes up
   read-only has written nothing by its first frame.

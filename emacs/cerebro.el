@@ -4535,8 +4535,10 @@ survives, so it is paired with `cerebro-log-generations\='."
 (defcustom cerebro-log-generations 3
   "How many rotated generations of the view\='s log are kept.
 
-`decisions.1.jsonl\=' and so on, oldest discarded.  Three at 25 MB is a couple
-of days at `evaluations\=' and months at `changes\='."
+`evaluations.1.jsonl\=' and so on, oldest discarded.  Three at 25 MB is a couple
+of days of the evaluations log at `evaluations\=' and months of it at `changes\='.
+The decisions log keeps years at any verbosity, since cb-xhu.2 moved the loud
+half out of it."
   :type 'integer
   :group 'cerebro)
 
@@ -4613,15 +4615,20 @@ view\='s state, and lost with the buffer - which costs one redundant line per
 role after `M-x cerebro\=', not a wrong one.")
 
 (defun cerebro--log-basename (event)
-  "Pure.  Which log EVENT belongs in: \"errors\" or \"decisions\".
+  "Pure.  Which log EVENT belongs in: \"errors\", \"evaluations\" or \"decisions\".
 
-Two files, not one, and the reason is the question each answers.  The
-decisions log is a hundred thousand lines a day at `evaluations\=' and is read
-by searching it for an agent; the error log is read by opening it, because
-the navigator has been pointed at it by a message that said something went
-wrong.  An error buried in the first is a file nobody can be sent
-to."
-  (if (eq event 'error) "errors" "decisions"))
+Three files, not one, and the reason is the question each answers.  The
+error log is read by opening it, because the navigator has been pointed at it
+by a message that said something went wrong; an error buried among a hundred
+thousand other lines is a file nobody can be sent to.  The evaluations log is
+the loud one - one line per armed row per tick at `evaluations\=' - and is read
+by searching it for one agent over the last hour.  The decisions log is what
+is left once the loud half moved out: starts, ends, retires, arms, exits and
+give-ups, a couple of hundred lines a day, so it keeps months of them rather
+than the four days the evaluations used to rotate it down to."
+  (cond ((eq event 'error) "errors")
+        ((eq event 'evaluate) "evaluations")
+        (t "decisions")))
 
 (defun cerebro--log-file (repo-root &optional generation base)
   "The BASE log under REPO-ROOT, or its GENERATIONth rotated copy.
@@ -4646,9 +4653,10 @@ and `.cerebro/state\=' is already what `.gitignore\=' names and what
 
 Generations shift up and the oldest is discarded, which is the whole of the
 retention policy: `cerebro-log-generations\=' files of `cerebro-log-max-bytes\='.
-One policy for both files rather than two settings: the error log is written
-when something goes wrong, so in a healthy fleet it never reaches the size at
-all, and a second pair of settings would only be a second thing to explain."
+One policy for all three files rather than a pair of settings each: only the
+evaluations log ever reaches the size at all - the error log is written when
+something goes wrong, and the decisions log is a couple of hundred lines a day
+since cb-xhu.2 - and more settings would only be more to explain."
   (let ((file (cerebro--log-file repo-root nil base)))
     (when (cerebro--log-rotate-p (file-attribute-size (file-attributes file))
                                  cerebro-log-max-bytes)

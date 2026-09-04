@@ -4429,7 +4429,7 @@ mod main_tests {
         }
     }
 
-    // --- cb-kcs.4.4: the two logs -------------------------------------------------------------
+    // --- cb-kcs.4.4: the logs (three of them since cb-xhu.2) ----------------------------------
     //
     // Every case here builds its own root and points the logger at it. NONE of them may reach the
     // repository's own `.cerebro/state`.
@@ -4685,7 +4685,7 @@ mod main_tests {
 
         start_due(&mut app, &mut host, &mut ledger, &mut logger, &paths, &spacing, 1, &roster, now);
 
-        let lines = log_lines(dir.path(), "decisions");
+        let lines = log_lines(dir.path(), "evaluations");
         let evaluations: Vec<&String> = lines
             .iter()
             .filter(|line| line.starts_with(r#"{"event":"evaluate","#))

@@ -4,8 +4,9 @@
 //! `gh` and `scripts/fleet-supervisor`. Since cb-kcs.2.3 it also WRITES to two of the
 //! fleet's contracts, and only through `lifecycle`: it creates and removes an
 //! agent's stop flag, and it deletes the state file of a session it is ending
-//! or replacing, and it appends to the two JSONL logs beside them
-//! (`decisions.jsonl` and `errors.jsonl`, cb-kcs.4.4). Since cb-kcs.5.1 it also
+//! or replacing, and it appends to the three JSONL logs beside them
+//! (`decisions.jsonl` and `errors.jsonl`, cb-kcs.4.4; `evaluations.jsonl`,
+//! cb-xhu.2). Since cb-kcs.5.1 it also
 //! writes to the BOARD, in one place and only on a confirmed keystroke:
 //! `lifecycle::run_finding` runs the `bd` a sweep finding names and then `bd
 //! dolt push`, both through `readers::CommandRunner` like every other

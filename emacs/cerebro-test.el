@@ -6818,13 +6818,49 @@ transition log, and the generations shift when the file passes its size."
 ;; ---------------------------------------------------------------------------
 ;; The error log: what went wrong, in a file the navigator can be pointed at
 
-(ert-deftest cerebro-test/an-error-is-logged-beside-the-decisions-not-among-them ()
-  "The question this answers is \"where do I look\" - so the answer is one
-short file rather than a needle in a hundred thousand evaluations.  Every
-other event keeps the file it has always had."
+(ert-deftest cerebro-test/trigger-evaluations-are-written-to-a-log-of-their-own ()
+  "An evaluation line is 99.7% of everything the view writes, so it rotates the
+starts and the exits out of the decisions log inside a week.  It gets its own
+file, under the same rotation policy, and the two never bleed into each other."
+  (should (equal (cerebro--log-basename 'evaluate) "evaluations"))
   (should (equal (cerebro--log-basename 'error) "errors"))
   (should (equal (cerebro--log-basename 'start) "decisions"))
-  (should (equal (cerebro--log-basename 'evaluate) "decisions"))
+  (should (string-suffix-p ".cerebro/state/evaluations.jsonl"
+                           (cerebro--log-file "/r" nil "evaluations")))
+  (should (string-suffix-p ".cerebro/state/evaluations.3.jsonl"
+                           (cerebro--log-file "/r" 3 "evaluations")))
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (cerebro-log-verbosity 'evaluations))
+    (unwind-protect
+        (let ((evaluations (expand-file-name ".cerebro/state/evaluations.jsonl" root))
+              (decisions (expand-file-name ".cerebro/state/decisions.jsonl" root)))
+          (cerebro--log root 'evaluate '((agent . "Xavier") (reason . "buffer 0 of 4")))
+          (should (file-exists-p evaluations))
+          (should-not (file-exists-p decisions))
+          (cerebro--log root 'start '((agent . "Xavier")))
+          (should (file-exists-p decisions))
+          (should (= 1 (with-temp-buffer (insert-file-contents evaluations)
+                                (count-lines (point-min) (point-max)))))
+          ;; The verbosity gate is untouched by the split: at `decisions' no
+          ;; evaluation is written at all, so no file grows.
+          (let ((cerebro-log-verbosity 'decisions))
+            (cerebro--log root 'evaluate '((agent . "Beast"))))
+          (should (= 1 (with-temp-buffer (insert-file-contents evaluations)
+                                (count-lines (point-min) (point-max)))))
+          ;; And it did not fall back into the decisions log either: a
+          ;; suppressed evaluation is written nowhere at all.
+          (should (= 1 (with-temp-buffer (insert-file-contents decisions)
+                                (count-lines (point-min) (point-max))))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/an-error-is-logged-beside-the-decisions-not-among-them ()
+  "The question this answers is \"where do I look\" - so the answer is one
+short file rather than a needle in a hundred thousand evaluations.  The
+evaluations have a file of their own too, and every other event keeps the
+file it has always had."
+  (should (equal (cerebro--log-basename 'error) "errors"))
+  (should (equal (cerebro--log-basename 'start) "decisions"))
+  (should (equal (cerebro--log-basename 'evaluate) "evaluations"))
   (should (string-suffix-p ".cerebro/state/errors.jsonl"
                            (cerebro--log-file "/r" nil "errors")))
   (should (string-suffix-p ".cerebro/state/errors.2.jsonl"
@@ -7782,7 +7818,7 @@ seven ticks\" answerable as \"it held because the number in force was 30\"."
         (cerebro-log-verbosity 'evaluations)
         (cerebro--log-seen nil))
     (unwind-protect
-        (let ((file (expand-file-name ".cerebro/state/decisions.jsonl" root)))
+        (let ((file (expand-file-name ".cerebro/state/evaluations.jsonl" root)))
           (make-directory (expand-file-name ".cerebro/state" root) t)
           (cerebro--log-evaluation
            root (cerebro-test--interactive "Beast" "planner" 'standby)
@@ -7803,7 +7839,7 @@ already write for a guard that did not fire."
         (cerebro-log-verbosity 'evaluations)
         (cerebro--log-seen nil))
     (unwind-protect
-        (let ((file (expand-file-name ".cerebro/state/decisions.jsonl" root))
+        (let ((file (expand-file-name ".cerebro/state/evaluations.jsonl" root))
               (agent (cerebro-test--interactive "Beast" "planner" 'standby)))
           (make-directory (expand-file-name ".cerebro/state" root) t)
           (cerebro--log-evaluation root agent "buffer 0 of 4" '((flagged . t)))

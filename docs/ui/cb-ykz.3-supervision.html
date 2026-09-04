@@ -1,0 +1,116 @@
+<style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#8a8a8a;color:#111}
+h1{font-size:16px;color:#fff;margin:0 0 2px}h2{font-size:14px;margin:26px 0 8px;color:#fff}
+h3{font-size:13px;margin:14px 0 6px;color:#eee;font-weight:normal}
+pre{margin:0;line-height:1.45;white-space:pre-wrap}
+.screen{background:#1e1e1e;color:#d4d4d4;padding:10px 12px;border:1px solid #333;display:block;margin:0 0 10px 0;max-width:112ch}
+.note{color:#eee;max-width:108ch;background:#333;padding:9px 13px;margin-top:12px;line-height:1.5}
+.lede{color:#fff;max-width:108ch;margin:0 0 14px;line-height:1.5}
+.g{color:#6a9955}.d{color:#777}.b{color:#569cd6}.y{color:gold}.e{color:#f14c4c}
+.hd{font-weight:bold;color:#ddd}.dim{color:#888}
+.chosen{background:#2d4a2d;color:#cfe8cf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+.rejected{background:#4a2d2d;color:#e8cfcf;padding:2px 8px;display:inline-block;margin-left:8px;font-size:12px}
+code{color:#ffd479}
+</style>
+<meta charset="utf-8"><title>cb-ykz.3 — the agreed surface</title>
+
+<h1>cb-ykz.3 — what supervision does about a stuck row</h1>
+<p class="lede">Two interview rounds, 2026-09-04. This file is the specification for <b>what the fleet
+view does about a session that stopped mid-work</b>, in both views. Where this file and the bead's
+plan disagree, this file is right. It refines nothing about how the row looks: that is
+<code>cb-ykz.2-stuck-rows.html</code>, and it is unchanged.</p>
+
+<p class="lede">A row is <b>stuck</b> when its state is <code>working</code>, its turn has ended, and
+that has stood past the ceiling — thirty minutes, one number for every role and phase. The session
+is sitting at a prompt doing nothing, so <b>typing one line into it restarts it</b>, and that is
+what makes this different from every existing supervision arm.</p>
+
+<h2>1. The fact that decides the shape</h2>
+<p class="note">Typing a line into a session fires the <code>UserPromptSubmit</code> hook, which runs
+<code>agent-turn resumed</code> and <b>clears the recorded turn-end</b>. So the line always un-sticks
+the row, whether or not the agent does anything with it; if the agent simply stops again, the
+<code>Stop</code> hook re-stamps the turn-end and the thirty minutes start over. There is therefore
+no such thing as "still stuck from the same stretch" — only "stuck again".</p>
+
+<h2>2. A stuck interactive role <span class="chosen">chosen — resume, then end</span></h2>
+<p class="lede">Xavier, Beast, Cerebro, Moira, Psylocke, Cypher, Forge. Each holds no claim, no
+worktree and no pull request, so ending one costs a pass and its own trigger starts a fresh session
+within seconds.</p>
+<div class="screen"><pre><span class="dim">t+30m  stuck. One line typed. `since' on the row reads 09:12Z.</span>
+<span class="e">✗</span> Moira        user-feedbk  sweep                 <span class="e">stuck 30m</span>
+<span class="y">[cerebro] Your turn ended while your state file still said you were working…</span>
+<span class="dim">header:</span> <span class="y">Moira's turn had ended; it was asked to carry on.</span>
+
+<span class="dim">t+31m  the typed line cleared the turn-end: an ordinary working row again.</span>
+<span class="g">●</span> Moira        user-feedbk  sweep                 3h44 3h44
+
+<span class="dim">t+61m  stuck again — AND `since' is still 09:12Z, so between the line landing</span>
+<span class="dim">       and now the agent wrote nothing at all. The line did not take.</span>
+<span class="e">✗</span> Moira        user-feedbk  sweep                 <span class="e">stuck 30m</span>
+<span class="dim">       → the session is ended, its buffer kept as the record of the pass,</span>
+<span class="dim">         and its own trigger starts a fresh one.</span>
+<span class="b">◌</span> Moira        user-feedbk  <span class="b">standby</span>               <span class="b">→ 2 issues</span>
+<span class="dim">header:</span> <span class="y">Moira was stuck and did not answer; its session was ended.</span>
+
+<span class="dim">The case that must NOT end: the line took, the agent worked and stopped</span>
+<span class="dim">again — `since' moved, so this is a first occurrence again and it is</span>
+<span class="dim">resumed a second time rather than ended.</span></pre></div>
+<p class="note"><b>Under a stop flag</b> the same moment <b>retires</b> it instead: the flag says
+<i>no further pass</i>, so ending-and-restarting would start the very pass the flag exists to
+prevent. The flag is cleared with it and the name is disarmed — the shape the <code>waiting</code>
+arm already has.
+<br>Header: <span class="y">Forge was stuck and did not answer; it was retired and its stop flag is
+cleared.</span></p>
+<p class="note"><b>Rejected:</b> <i>resume once and nothing more</i> — Moira's observed 698 minutes
+would still have been 698 minutes. <i>End it straight away with no line typed</i> — cheapest to
+build, and it throws away a pass a single typed line might have finished, transcript and all.
+<i>A second wall-clock ceiling</i> instead of "the state file never moved" — a second constant in
+each language, and it fires on a legitimately long unbroken pass that happened to go stuck once
+near the end of it.</p>
+
+<h2>3. A stuck implementer <span class="chosen">chosen — resume once, and no more</span></h2>
+<p class="lede">It holds a claim, a worktree and possibly an open pull request. <b>Nothing here ends
+its session</b>, and if the typed line does not take, nothing further is done about it here.</p>
+<div class="screen"><pre><span class="dim">t+30m  one line typed into the session, once.</span>
+<span class="e">✗</span> Wolverine    implementer  ci          cb-d59.4  <span class="e">stuck 30m</span>
+<span class="y">[cerebro] Your turn ended while your state file still said you were working…</span>
+
+<span class="dim">t+62m  if it never woke, the escalation that already exists is the one that</span>
+<span class="dim">       fires: any in_progress bead a live session has not committed to for</span>
+<span class="dim">       sixty minutes is offered as stalled, and `x' asks before running it.</span>
+<span class="hd">Sweeps 1</span>
+  <span class="y">cb-d59.4 stalled 62m with Wolverine — unclaim?</span></pre></div>
+<p class="note"><b>Rejected:</b> <i>a Sweeps finding of its own</i> — it would list the same bead
+twice beside the stalled row, because a stuck implementer is precisely one that has stopped
+committing; and it would be the first sweep computed from the fleet snapshot rather than from a
+script, so the sweeps table would grow a row that fits none of its columns. <i>Nothing at all</i> —
+three of the six observed stretches were implementers, and the hours would stay hours.</p>
+
+<h2>4. The clock <span class="chosen">chosen — one number</span></h2>
+<div class="screen"><pre><span class="dim">t+30m</span>  row turns red  <span class="d">and</span>  line typed        <span class="d">— one ceiling, thirty minutes</span>
+<span class="dim">t+61m</span>  <span class="d">(interactive only)</span> ended, if the state file never moved</pre></div>
+<p class="note">One knob rather than two, so the row and the act cannot disagree about what a red row
+means. <b>Rejected:</b> a quiet window — red at thirty minutes, typed at forty-five — which costs a
+second constant in each language and a red row that means two different things fifteen minutes
+apart.</p>
+
+<h2>5. The words typed into a stuck session</h2>
+<p class="lede">Two lines, the same implementer/interactive split the existing unanswered-question
+pair has: an implementer has work it may hand back, an interactive role has none.</p>
+<div class="screen"><pre><span class="dim">implementer</span>
+<span class="y">[cerebro] Your turn ended while your state file still said you were working.
+If you are waiting on a review sub-agent, say so in one line and go on waiting.
+Otherwise do not stop here: write your state file, carry on from where you left
+off, or hand the work back for a person to decide exactly as your own
+instructions describe, and finish the run.</span>
+
+<span class="dim">interactive role</span>
+<span class="y">[cerebro] Your turn ended while your state file still said you were working.
+Do not stop here: write your state file, carry on from where you left off, or
+record where you got to where your own instructions say, and finish the run.</span></pre></div>
+<p class="note">The implementer's line names the review wait because that is the one ended turn that
+is <b>not</b> a failure — the single documented exception to the never-end-a-turn rule — and this is
+the only line an implementer ever gets. Neither line names a tracker label, a skill or a bead: the
+words go into a live session in every consumer, so how work is handed back is the agent's own
+instructions to state, not the fleet view's. That is the reason the two existing nudge lines already
+give.</p>

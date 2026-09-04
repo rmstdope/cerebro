@@ -78,12 +78,16 @@ pub enum Event {
     /// actually went into a session this view hosts, exactly as `Triage` is.
     SweepTell,
     /// One `working` row whose turn ended past `STUCK_CEILING_SECONDS`, once per occurrence and
-    /// not per tick (cb-ykz.2). The view acts on none of them - it says so and records it.
+    /// not per tick (cb-ykz.2). The observation alone: what was DONE about it is the `resume`,
+    /// `end` or `retire` line beside it (cb-ykz.3).
     Stuck,
     /// One stuck row asked to carry on (cb-ykz.3). Its own event rather than `nudge`'s, for
     /// `SweepTell`'s reason: two decisions sharing one value makes the log unreadable for the
     /// diagnosis it exists for. A stuck row this view hosts writes two lines per occurrence -
-    /// `stuck`, the observation, and `resume`, what was done about it.
+    /// `stuck`, the observation, and `resume`, what was done about it. Written only when the line
+    /// actually went into a session, exactly as `Triage` is: a resume the view suppressed - a
+    /// draining view, or a row already told within this stuck stretch - is not a decision it
+    /// carried out.
     Resume,
     /// One name leaving the armed set with no other line to say so: `k`, and the standby
     /// disarm beside it. `retire` and `give-up` already say it for the paths they cover, and

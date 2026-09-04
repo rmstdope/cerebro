@@ -421,6 +421,21 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     result
 }
 
+/// One row, projected out of the fleet snapshot so the borrow of `app` ends before the loop acts
+/// on it. Every field is what the supervision decision or its record needs, and nothing else.
+struct SupervisedRow {
+    name: String,
+    role: String,
+    kind: AgentKind,
+    state: RowState,
+    bead: Option<String>,
+    phase: Option<String>,
+    since: Option<DateTime<Utc>>,
+    phase_since: Option<DateTime<Utc>>,
+    stood: Option<i64>,
+    stuck: Option<i64>,
+}
+
 /// Act on what `lifecycle::supervise_action` says about each row of the fleet snapshot that was
 /// just applied - the three things this view does on its own, from what a hosted agent wrote in
 /// its state file.
@@ -437,21 +452,6 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
 /// One agent's failure never stops the others: each row's work is fallible and a failure sets the
 /// notice, exactly as an `f` that could not write its flag does.
 #[allow(clippy::too_many_arguments)]
-/// One row, projected out of the fleet snapshot so the borrow of `app` ends before the loop acts
-/// on it. Every field is what the supervision decision or its record needs, and nothing else.
-struct SupervisedRow {
-    name: String,
-    role: String,
-    kind: AgentKind,
-    state: RowState,
-    bead: Option<String>,
-    phase: Option<String>,
-    since: Option<DateTime<Utc>>,
-    phase_since: Option<DateTime<Utc>>,
-    stood: Option<i64>,
-    stuck: Option<i64>,
-}
-
 fn supervise(
     app: &mut App,
     host: &mut SessionHost,
@@ -515,9 +515,18 @@ fn supervise(
         })
         .unwrap_or_default();
     for row in rows {
-        let SupervisedRow { ref name, ref role, kind, ref state, ref bead, ref phase, stood, stuck, .. } =
-            row;
-        let (name, role, state, bead, phase) = (name.clone(), role.clone(), state.clone(), bead.clone(), phase.clone());
+        let SupervisedRow {
+            name,
+            role,
+            kind,
+            state,
+            bead,
+            phase,
+            since,
+            phase_since,
+            stood,
+            stuck,
+        } = row;
         // Before any action is decided, and for every row: a name that asked, was nudged, was
         // answered and asks again is nudgeable again.
         if state != RowState::Asking {
@@ -554,14 +563,21 @@ fn supervise(
         // itself what un-stuck it - and is dropped only by evidence that the agent did something:
         // its state file moved, or it left `Working` altogether.
         match app.resumed.get(&name) {
-            Some(&recorded)
-                if state == RowState::Working && recorded == (row.since, row.phase_since) => {}
+            Some(&recorded) if state == RowState::Working && recorded == (since, phase_since) => {}
             Some(_) => {
                 app.resumed.remove(&name);
             }
             None => {}
         }
         let resume_stale = app.resumed.contains_key(&name);
+        // The other half of the memory, and a different question: `resumed` is "was this name
+        // told and has it done nothing since", which survives the row being un-stuck;
+        // `resumed_this_stretch` is "has it already been told within THIS stretch", which does
+        // not. Without it a row with no `since` - never recorded above - would be told on every
+        // tick for ever.
+        if stuck.is_none() {
+            app.resumed_this_stretch.remove(&name);
+        }
         let agent = lifecycle::Supervised {
             kind,
             state: &state,
@@ -575,6 +591,16 @@ fn supervise(
             resume_stale,
         };
         let Some(action) = lifecycle::supervise_action(agent) else { continue };
+        // A resume the view will not carry out is not a decision, and must not be recorded as
+        // one: `decisions.jsonl` keeps months because it holds what was DONE (cb-xhu.2), and a
+        // draining view or a row already told within this stretch would otherwise write a line
+        // every five seconds while nothing at all was typed. Decided before the record for that
+        // reason, where every other suppression sits after it.
+        if action == lifecycle::Supervision::Resume
+            && (!app.supervision.may_supervise() || app.resumed_this_stretch.contains(&name))
+        {
+            continue;
+        }
         // The record of the decision, before it is carried out and whatever it is: the five
         // fields elisp writes, in its order. `state` is the ROW's own word, so an `Unknown(w)`
         // contributes `w`; `stop_flag` is the string `"set"` or null, never a boolean.
@@ -620,6 +646,7 @@ fn supervise(
                 host.end(paths, &name);
                 ledger.note_ended(&name, now);
                 app.resumed.remove(&name);
+                app.resumed_this_stretch.remove(&name);
                 app.set_notice(lifecycle::supervision_notice(action, &name, stuck.is_some()));
             }
             lifecycle::Supervision::End => {
@@ -628,6 +655,7 @@ fn supervise(
                 // what the unchanged-work guard measures a start against.
                 ledger.note_ended(&name, now);
                 app.resumed.remove(&name);
+                app.resumed_this_stretch.remove(&name);
                 app.set_notice(lifecycle::supervision_notice(action, &name, stuck.is_some()));
             }
             lifecycle::Supervision::Nudge => {
@@ -643,9 +671,7 @@ fn supervise(
             // the `resumed` map is what stops a second line, since a name in it answers
             // `End`/`None` rather than `Resume`.
             lifecycle::Supervision::Resume => {
-                if !app.supervision.may_supervise() {
-                    continue;
-                }
+                app.resumed_this_stretch.insert(name.clone());
                 host.type_line(&name, lifecycle::resume_message(kind), at);
                 // Recorded only when there is a timestamp to compare against later: a missing
                 // one is not evidence that nothing happened.
@@ -3823,7 +3849,14 @@ mod main_tests {
         tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
         assert!(app.resumed.contains_key("Moira"));
 
+        // The un-stuck tick the typed line itself produces, then stuck again - but with the
+        // state file moved, which is the whole difference from the test above.
         let moved = now - chrono::Duration::seconds(60);
+        app.finish_refresh(
+            Ok(vec![stuck_row_at("Moira", AgentKind::Interactive, None, moved, moved, now)]),
+            now,
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
         app.finish_refresh(
             Ok(vec![stuck_row_at("Moira", AgentKind::Interactive, Some(1_800), moved, moved, now)]),
             now,
@@ -3930,8 +3963,27 @@ mod main_tests {
         tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
         assert!(app.resumed.is_empty(), "nothing to compare against later is nothing recorded");
 
+        // And it is NOT told again while the same stretch runs: nothing records it in `resumed`,
+        // so without `resumed_this_stretch` this is a line typed every five seconds for ever - at
+        // the row least able to answer one.
+        for _ in 0..3 {
+            app.finish_refresh(Ok(vec![no_since.clone()]), now);
+            app.notice = None;
+            tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+            assert_eq!(app.notice, None, "one line per stuck stretch, not one per tick");
+        }
+        // The stretch ending is what makes it tellable again.
+        app.finish_refresh(
+            Ok(vec![cerebro_tui::model::FleetRow {
+                since: None,
+                phase_since: None,
+                turn_ended: None,
+                ..fleet_row("Psylocke", AgentKind::Interactive, RowState::Working)
+            }]),
+            now,
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
         app.finish_refresh(Ok(vec![no_since]), now);
-        app.notice = None;
         tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
         assert!(host.supervisable("Psylocke"), "it is resumed again rather than ended");
         assert_eq!(
@@ -3984,13 +4036,22 @@ mod main_tests {
             configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
             live_sessions: 1,
         };
+        let log_root = dir.path().join("logs");
+        std::fs::create_dir_all(&log_root).unwrap();
+        let mut logger = logging(&log_root);
         let mut app = lifecycle_app(
             draining,
             vec![stuck_row_at("Psylocke", AgentKind::Interactive, Some(1_800), since, since, now)],
         );
-        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        tick(&mut app, &mut host, &paths, &mut logger, now, at);
         assert!(app.resumed.is_empty(), "a draining view types nothing");
         assert!(host.supervisable("Psylocke"));
+        // And records nothing either: a decision the view will not carry out is not a decision,
+        // and `decisions.jsonl` keeps months because it holds what was done.
+        assert!(
+            !log_lines(&log_root, "decisions").iter().any(|line| line.contains("\"resume\"")),
+            "a suppressed resume writes no line"
+        );
 
         // A row already stale when the drain began is still ended: ending is what ends the drain.
         app.resumed.insert("Psylocke".to_string(), (Some(since), Some(since)));

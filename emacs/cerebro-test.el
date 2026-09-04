@@ -2609,8 +2609,11 @@ change of state or bead."
     (cl-letf (((symbol-function 'cerebro--park-session)
                (lambda (a &rest _) (push (cerebro-agent-name a) parked))))
       (with-temp-buffer
+        ;; The un-stuck tick the typed line itself produces sits between the two,
+        ;; as it does in life: the stretch ends, and the second one is a new one.
         (should (equal (cerebro-test--resume-run
                         (list (cerebro-test--stuck 'interactive 1800)
+                              (cerebro-test--stuck 'interactive nil)
                               (cerebro-test--stuck 'interactive 1800
                                                    "2026-08-14T09:29:00Z"
                                                    "2026-08-14T09:29:00Z")))
@@ -2619,6 +2622,7 @@ change of state or bead."
       (with-temp-buffer
         (should (equal (cerebro-test--resume-run
                         (list (cerebro-test--stuck 'interactive 1800)
+                              (cerebro-test--stuck 'interactive nil)
                               (cerebro-test--stuck 'interactive 1800 nil
                                                    "2026-08-14T09:29:00Z")))
                        '("Cyclops" "Cyclops")))
@@ -2652,9 +2656,19 @@ change of state or bead."
                       :turn-ended (format-time-string
                                    "%Y-%m-%dT%H:%M:%SZ"
                                    (time-subtract cerebro-test--now 1800) t))))
-          (should (equal (cerebro-test--resume-run (list agent agent))
-                         '("Cyclops" "Cyclops")))
+          ;; Told once, and NOT again while the same stretch runs: nothing records
+          ;; it in `cerebro--resumed', so without `cerebro--resumed-this-stretch'
+          ;; this is a line typed every five seconds for ever, at the row least
+          ;; able to answer one.
+          (should (equal (cerebro-test--resume-run (make-list 4 agent)) '("Cyclops")))
           (should (null cerebro--resumed))
+          (should (null parked))
+          ;; The stretch ending is what makes it tellable again.
+          (should (equal (cerebro-test--resume-run
+                          (list (make-cerebro-agent :name "Cyclops" :role "verifier"
+                                                    :kind 'interactive :state 'working)
+                                agent))
+                         '("Cyclops")))
           (should (null parked)))))))
 
 (ert-deftest cerebro-test/a-stuck-implementer-is-resumed-and-never-ended ()
@@ -2701,9 +2715,12 @@ very pass it exists to prevent.  It is retired, its flag cleared with it."
   "A resume is a new instruction, and a view handing supervision over issues
 none - but it must still finish the sessions it hosts."
   (let ((cerebro-stuck-ceiling 1800)
+        (logged nil)
         (parked nil))
     (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
               ((symbol-function 'cerebro--resume) (lambda (_a) (error "typed")))
+              ((symbol-function 'cerebro--log)
+               (lambda (_root event &rest _) (push event logged)))
               ((symbol-function 'cerebro--park-session)
                (lambda (a &rest _) (push (cerebro-agent-name a) parked))))
       (with-temp-buffer
@@ -2711,6 +2728,10 @@ none - but it must still finish the sessions it hosts."
                             "/fake/repo" cerebro-test--now '(draining tui 1))
         (should (null cerebro--resumed))
         (should (null parked))
+        ;; And records nothing either: a decision the view will not carry out is
+        ;; not a decision, and `decisions.jsonl' keeps months because it holds
+        ;; what was done.
+        (should-not (memq 'resume logged))
         ;; A row already stale when the drain began is still ended.
         (setf (alist-get "Cyclops" cerebro--resumed nil nil #'equal)
               (cons "2026-08-14T08:00:00Z" "2026-08-14T08:00:00Z"))

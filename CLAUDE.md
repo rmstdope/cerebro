@@ -475,7 +475,8 @@ how long the turn has been over — where its elapsed pair would be, keeping its
 bead untouched, and one `stuck` line per occurrence goes into `decisions.jsonl` (gated on
 supervision, like the nudge; the drawing is gated on nothing, since looking at a fleet is not
 supervising it). **Since cb-ykz.3 supervision acts on it**: a stuck row is asked, once, to carry
-on — one line typed into the session, `resume` in the log and a `resume` arm on
+on — one line typed into the session per stuck stretch, `resume` in the log when one actually
+was, and a `resume` arm on
 `cerebro--supervise-action`, with the stop flag making no difference. The typed line itself clears
 `turn_ended` (`scripts/agent-turn`), so the row is un-stuck on the very next tick; the escalation
 is therefore built on the state file not having moved rather than on a second clock

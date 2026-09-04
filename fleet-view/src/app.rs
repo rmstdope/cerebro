@@ -1009,6 +1009,15 @@ pub struct App {
     /// Only ever recorded for a row whose `since` is `Some`: a missing timestamp is not evidence
     /// that nothing happened, exactly as `stood: None` is never an expired grace.
     pub resumed: BTreeMap<String, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>,
+
+    /// Names already told to carry on within the stuck stretch they are in now.
+    ///
+    /// `resumed` cannot do this job: a row whose `since` is absent is never recorded there (a
+    /// missing timestamp is not evidence), so without this set such a row would be told again on
+    /// every five-second tick for ever - and it is exactly the row least able to answer. Cleared
+    /// the moment the row stops being stuck, the shape `stuck_logged` and `nudged` have, which is
+    /// why it is a second set rather than a field of the first.
+    pub resumed_this_stretch: BTreeSet<String>,
     /// Which widget the keyboard currently acts on. Fleet by default.
     pub focus: PaneFocus,
     /// What this process is allowed to do with the checkout it is drawing (cb-kcs.1).
@@ -1170,6 +1179,7 @@ impl App {
             nudged: BTreeSet::new(),
             stuck_logged: BTreeSet::new(),
             resumed: BTreeMap::new(),
+            resumed_this_stretch: BTreeSet::new(),
             focus: PaneFocus::default(),
             supervision,
             confirm: None,

@@ -4191,6 +4191,16 @@ Only ever recorded for a row whose `since\=' is non-nil: a missing timestamp is
 not evidence that nothing happened, exactly as a nil `stood\=' is never an
 expired grace.")
 
+(defvar-local cerebro--resumed-this-stretch nil
+  "Names already told to carry on within the stuck stretch they are in now.
+
+`cerebro--resumed\=' cannot do this job: a row whose `since\=' is absent is never
+recorded there (a missing timestamp is not evidence), so without this set such
+a row would be told again on every five-second tick for ever - and it is
+exactly the row least able to answer.  Cleared the moment the row stops being
+stuck, the shape `cerebro--stuck-logged\=' and `cerebro--nudged\=' have, which is
+why it is a second set rather than a field of the first.")
+
 (defun cerebro--autostart (buffer repo-root)
   "Start every declared autostart agent in BUFFER that is dead, once.
 
@@ -5017,6 +5027,9 @@ nudge is a new instruction, and a view handing supervision over issues none."
       ;; nothing; the DRAWING is gated on nothing, since looking at a fleet
       ;; is not supervising it (cb-ykz.2).
       (let ((stuck (cerebro--stuck-for agent now)))
+        (unless stuck
+          (setq cerebro--resumed-this-stretch
+                (delete name cerebro--resumed-this-stretch)))
         (if (not stuck)
             (setq cerebro--stuck-logged (delete name cerebro--stuck-logged))
           (when (and (cerebro--supervision-may-act-p mode)
@@ -5043,6 +5056,16 @@ nudge is a new instruction, and a view handing supervision over issues none."
         (pcase (let ((action (cerebro--supervise-action
                               agent (cerebro--stop-flag-p repo-root name) now
                               (and (assoc name cerebro--resumed) t))))
+                 ;; A resume this view will not carry out is not a decision and
+                 ;; must not be recorded as one: `decisions.jsonl' keeps months
+                 ;; because it holds what was DONE (cb-xhu.2), and a draining
+                 ;; view or a row already told within this stretch would
+                 ;; otherwise write a line every five seconds while nothing at
+                 ;; all was typed.
+                 (when (and (eq action 'resume)
+                            (or (not (cerebro--supervision-may-act-p mode))
+                                (member name cerebro--resumed-this-stretch)))
+                   (setq action nil))
                  (when action
                    (cerebro--log repo-root action
                                  (list (cons 'agent name)
@@ -5075,6 +5098,8 @@ nudge is a new instruction, and a view handing supervision over issues none."
                (progn (cerebro--clear-stop-flag repo-root name)
                       (setq cerebro--armed (delete name cerebro--armed))
                       (setq cerebro--resumed (assoc-delete-all name cerebro--resumed))
+                      (setq cerebro--resumed-this-stretch
+                            (delete name cerebro--resumed-this-stretch))
                       (cerebro--park-session agent repo-root now))
              ;; An implementer is armed too now, so retiring one has to
              ;; disarm it: the flag ends this session, and armed is what
@@ -5083,8 +5108,12 @@ nudge is a new instruction, and a view handing supervision over issues none."
              ;; `cerebro--end-session' keeps its own ownership of the flag.
              (progn (setq cerebro--armed (delete name cerebro--armed))
                     (setq cerebro--resumed (assoc-delete-all name cerebro--resumed))
+                    (setq cerebro--resumed-this-stretch
+                          (delete name cerebro--resumed-this-stretch))
                     (cerebro--end-session agent repo-root 'clear-stop-flag))))
           ('end (setq cerebro--resumed (assoc-delete-all name cerebro--resumed))
+          (setq cerebro--resumed-this-stretch
+                (delete name cerebro--resumed-this-stretch))
                 (cerebro--park-session agent repo-root now))
           ('nudge (when (and (cerebro--supervision-may-act-p mode)
                              (not (member name cerebro--nudged)))
@@ -5095,14 +5124,15 @@ nudge is a new instruction, and a view handing supervision over issues none."
           ;; `cerebro--nudged'-style set is needed - `cerebro--resumed' is what
           ;; stops a second line, since a name in it answers `end'/nil rather
           ;; than `resume'.
-          ('resume (when (cerebro--supervision-may-act-p mode)
-                     ;; Recorded only when there is a timestamp to compare
-                     ;; against later: a missing one is not evidence.
-                     (when (cerebro-agent-since agent)
-                       (setf (alist-get name cerebro--resumed nil nil #'equal)
-                             (cons (cerebro-agent-since agent)
-                                   (cerebro-agent-phase-since agent))))
-                     (cerebro--resume agent))))))))
+          ('resume
+           (push name cerebro--resumed-this-stretch)
+           ;; Recorded only when there is a timestamp to compare against later:
+           ;; a missing one is not evidence.
+           (when (cerebro-agent-since agent)
+             (setf (alist-get name cerebro--resumed nil nil #'equal)
+                   (cons (cerebro-agent-since agent)
+                         (cerebro-agent-phase-since agent))))
+           (cerebro--resume agent)))))))
 
 ;;; Supervision ownership (cb-kcs.1)
 

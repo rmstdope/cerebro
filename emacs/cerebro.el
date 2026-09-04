@@ -5111,19 +5111,28 @@ nudge is a new instruction, and a view handing supervision over issues none."
                     (setq cerebro--resumed-this-stretch
                           (delete name cerebro--resumed-this-stretch))
                     (cerebro--end-session agent repo-root 'clear-stop-flag))))
-          ('end (setq cerebro--resumed (assoc-delete-all name cerebro--resumed))
-          (setq cerebro--resumed-this-stretch
-                (delete name cerebro--resumed-this-stretch))
-                (cerebro--park-session agent repo-root now))
+          ('end
+           (setq cerebro--resumed (assoc-delete-all name cerebro--resumed))
+           (setq cerebro--resumed-this-stretch
+                 (delete name cerebro--resumed-this-stretch))
+           (cerebro--park-session agent repo-root now))
           ('nudge (when (and (cerebro--supervision-may-act-p mode)
                              (not (member name cerebro--nudged)))
                     (push name cerebro--nudged)
                     (cerebro--nudge agent)))
-          ;; Gated on the mode and not merely on ending: a resume is a NEW
-          ;; instruction, and a view handing supervision over issues none.  No
-          ;; `cerebro--nudged'-style set is needed - `cerebro--resumed' is what
-          ;; stops a second line, since a name in it answers `end'/nil rather
-          ;; than `resume'.
+          ;; Gated on the mode and not merely on ending - a resume is a NEW
+          ;; instruction, and a view handing supervision over issues none -
+          ;; which is decided above, with the once-per-stretch guard, so that
+          ;; neither writes a line saying it happened.
+          ;;
+          ;; TWO sets, answering two different questions.
+          ;; `cerebro--resumed-this-stretch' is "have I already told this name
+          ;; within this stretch", and it is what stops a second line;
+          ;; `cerebro--resumed' is "was it told and has it done nothing since",
+          ;; which is the escalation and which survives the row being un-stuck.
+          ;; The first alone could never escalate; the second alone leaves a row
+          ;; with no `since' - never recorded there - told on every tick for
+          ;; ever.
           ('resume
            (push name cerebro--resumed-this-stretch)
            ;; Recorded only when there is a timestamp to compare against later:

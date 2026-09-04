@@ -419,6 +419,35 @@ run_state "$tmp" Cyclops idle --pid 42
 rm -rf "$tmp"
 pass "transition-log-rotates"
 
+# --- transition-log: a protected log is neither rotated nor appended to (cb-xhu.1) ---
+#
+# The rotation `mv' lives outside `cerebro_jsonl_append', so the guard has to be tested against
+# `agent-state' itself: a suite that reached the real shared root and found transitions.jsonl over
+# 5 MB would rotate the navigator's live log. The state file must still be written and the exit
+# status must still be 0 - logging is never the reason a transition fails.
+#
+# `export' and `unset' around the call rather than a `VAR=x run_state ...' prefix: an assignment
+# prefix on a FUNCTION persists after the function returns in bash, and the next case would
+# inherit it.
+tmp="$(new_fixture)"
+mkdir -p "$tmp/.cerebro/state"
+l="$(log_file "$tmp")"
+head -c 6000000 /dev/zero | tr '\0' 'x' > "$l"
+before_size="$(wc -c < "$l" | tr -d ' ')"
+export CEREBRO_PROTECTED_STATE_DIR="$tmp/.cerebro/state"
+status=0
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 42 || status=$?
+unset CEREBRO_PROTECTED_STATE_DIR
+[[ "$status" -eq 0 ]] || fail "transition-log-protected: agent-state exited $status"
+[[ ! -f "$tmp/.cerebro/state/transitions.1.jsonl" ]] \
+  || fail "transition-log-protected: a protected log was rotated"
+[[ "$(wc -c < "$l" | tr -d ' ')" == "$before_size" ]] \
+  || fail "transition-log-protected: the protected log changed size"
+[[ -f "$(state_file "$tmp" Cyclops)" ]] \
+  || fail "transition-log-protected: no state file was written"
+rm -rf "$tmp"
+pass "transition-log-protected"
+
 # --- ah-hiib.3: `waiting` - a role that has ended its turn and expects to be woken ---
 
 # --- waiting-records-no-wake-at ---

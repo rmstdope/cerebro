@@ -21,6 +21,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
+# This suite refuses writes on purpose, so it must never record them into the run that is running
+# it: `scripts/suite-runner' exports a report file and a suite name, and an inherited report would
+# make the outer gate red for cases that are doing exactly what they are meant to (cb-xhu.1). Each
+# case that wants a report names its own.
+unset CEREBRO_PROTECTED_STATE_DIR CEREBRO_PROTECTED_STATE_REPORT CEREBRO_SUITE_NAME
+
 source "$repo_root/scripts/jsonl-log.sh"
 
 # --- appends one line and returns 0 -------------------------------------------------------------
@@ -80,5 +86,85 @@ cerebro_jsonl_append "" '{"a":1}' || status=$?
 [ "$status" -ne 0 ] || fail "an empty path was accepted"
 [ "$(ls -A "$work_dir" | sort)" = "$before" ] || fail "an empty path wrote something into $work_dir"
 pass "refuses an empty path"
+
+# --- the guard: a path under CEREBRO_PROTECTED_STATE_DIR is refused ------------------------------
+#
+# cb-xhu.1. The gate's suites must build every fixture under their own $work_dir; one that resolves
+# the real shared root and appends there writes into the fleet's live logs, which is what the
+# navigator is sent to by name. `scripts/suite-runner' sets the guard for the whole run; here the
+# function is exercised directly, because in production both callers sit inside `{ ... } || true'
+# groups that would swallow a mistake in it.
+
+mkdir -p "$work_dir/guarded" "$work_dir/guardedX"
+
+status=0
+CEREBRO_PROTECTED_STATE_DIR="$work_dir/guarded" \
+  cerebro_jsonl_append "$work_dir/guarded/errors.jsonl" '{"a":1}' || status=$?
+[ "$status" -ne 0 ] || fail "a write under the guard was accepted"
+if [ -e "$work_dir/guarded/errors.jsonl" ]; then fail "a guarded write created the file"; fi
+pass "a path under CEREBRO_PROTECTED_STATE_DIR is refused and nothing is written"
+
+# The `/' in the `"$guard"/*' pattern is what makes this a path-component test rather than a string
+# prefix one: a sibling directory whose name starts with the guard's is not protected.
+status=0
+CEREBRO_PROTECTED_STATE_DIR="$work_dir/guarded" \
+  cerebro_jsonl_append "$work_dir/guardedX/errors.jsonl" '{"a":1}' || status=$?
+[ "$status" -eq 0 ] || fail "a sibling sharing the guard's prefix was refused ($status)"
+[ "$(cat "$work_dir/guardedX/errors.jsonl")" = '{"a":1}' ] || fail "the sibling's line was not written"
+pass "a path outside the guard is written as before"
+
+status=0
+( unset CEREBRO_PROTECTED_STATE_DIR
+  cerebro_jsonl_append "$work_dir/unset-guard.jsonl" '{"a":1}' ) || status=$?
+[ "$status" -eq 0 ] || fail "an unset guard refused a write ($status)"
+[ -f "$work_dir/unset-guard.jsonl" ] || fail "an unset guard wrote nothing"
+pass "an unset guard writes as before"
+
+status=0
+CEREBRO_PROTECTED_STATE_DIR="" \
+  cerebro_jsonl_append "$work_dir/empty-guard.jsonl" '{"a":1}' || status=$?
+[ "$status" -eq 0 ] || fail "an empty guard refused a write ($status)"
+[ -f "$work_dir/empty-guard.jsonl" ] || fail "an empty guard wrote nothing"
+pass "an empty guard writes as before"
+
+# The guard covers the directory itself, not only what is under it.
+status=0
+CEREBRO_PROTECTED_STATE_DIR="$work_dir/guarded/" \
+  cerebro_jsonl_append "$work_dir/guarded/trailing.jsonl" '{"a":1}' || status=$?
+[ "$status" -ne 0 ] || fail "a guard with a trailing slash did not protect its directory"
+pass "a guard with a trailing slash protects the same directory"
+
+# --- the refusal is recorded with the suite that caused it ---------------------------------------
+
+report="$work_dir/report"
+status=0
+CEREBRO_PROTECTED_STATE_DIR="$work_dir/guarded" \
+CEREBRO_PROTECTED_STATE_REPORT="$report" \
+CEREBRO_SUITE_NAME="tests/fake.sh" \
+  cerebro_jsonl_append "$work_dir/guarded/errors.jsonl" '{"a":1}' || status=$?
+[ "$status" -ne 0 ] || fail "the recorded write was not refused"
+[ "$(cat "$report")" = "$(printf 'tests/fake.sh\t%s' "$work_dir/guarded/errors.jsonl")" ] \
+  || fail "the report holds '$(cat "$report")'"
+pass "a refused write is recorded as <suite> tab <path> when a report file is named"
+
+before="$(ls -A "$work_dir" | sort)"
+status=0
+( unset CEREBRO_PROTECTED_STATE_REPORT
+  CEREBRO_PROTECTED_STATE_DIR="$work_dir/guarded" \
+    cerebro_jsonl_append "$work_dir/guarded/errors.jsonl" '{"a":1}' ) || status=$?
+[ "$status" -ne 0 ] || fail "a refused write with no report named was accepted"
+[ "$(ls -A "$work_dir" | sort)" = "$before" ] || fail "a refused write with no report named wrote something"
+pass "a refused write with no report file named is still refused"
+
+report2="$work_dir/report2"
+status=0
+( unset CEREBRO_SUITE_NAME
+  CEREBRO_PROTECTED_STATE_DIR="$work_dir/guarded" \
+  CEREBRO_PROTECTED_STATE_REPORT="$report2" \
+    cerebro_jsonl_append "$work_dir/guarded/errors.jsonl" '{"a":1}' ) || status=$?
+[ "$status" -ne 0 ] || fail "a refused write with no suite name was accepted"
+[ "$(cat "$report2")" = "$(printf 'unknown\t%s' "$work_dir/guarded/errors.jsonl")" ] \
+  || fail "the report holds '$(cat "$report2")' rather than an unknown suite"
+pass "a refused write with no suite name is recorded as unknown"
 
 suite_passed

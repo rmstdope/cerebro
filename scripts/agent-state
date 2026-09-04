@@ -208,6 +208,12 @@ mv -f "$tmp_file" "$out_file"
 log_file="$out_dir/transitions.jsonl"
 log_max_bytes=5242880          # 5 MB, then one generation is kept as transitions.1.jsonl
 
+# The whole block is skipped when the log lies in the protected directory (cb-xhu.1). The append
+# below would be refused by the library anyway, but the rotation `mv` is OUTSIDE it: a suite that
+# reached the real shared root and found transitions.jsonl over 5 MB would rotate the navigator's
+# live log. The predicate sits in the `if` condition, where errexit is suspended - as a bare
+# statement it would become this script's exit status whenever it is false.
+if ! cerebro_jsonl_protected_path "$log_file"; then
 {
   log_size="$(wc -c < "$log_file" 2>/dev/null | tr -d ' ' || true)"
   if [[ -n "${log_size:-}" && "$log_size" -gt "$log_max_bytes" ]]; then
@@ -241,3 +247,4 @@ log_max_bytes=5242880          # 5 MB, then one generation is kept as transition
 
   cerebro_jsonl_append "$log_file" "$line"
 } 2>/dev/null || true
+fi

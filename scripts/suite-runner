@@ -118,6 +118,20 @@ case "$log_dir" in
    *) log_dir="$PWD/$log_dir" ;;
 esac
 
+# The protected directory (cb-xhu.1): the fleet's own append-only logs, which no suite may write.
+# `scripts/jsonl-log.sh' refuses a write here and records it; this is the only thing that turns the
+# guard on, and the block at the end of this file is what makes a recorded attempt a red run.
+#
+# `${VAR+set}' rather than `${VAR:-}': an explicitly EMPTY value means "guard off" and must not be
+# overwritten by the computed one - otherwise the runner's own suite could not test the off case
+# without deleting `consumer-root'. Outside a consumer that resolution fails, the variable stays
+# empty and the guard is off, which is right: there is nothing there to protect. One fork per run.
+if [[ -z "${CEREBRO_PROTECTED_STATE_DIR+set}" ]]; then
+  protected_root="$("$(dirname "${BASH_SOURCE[0]}")/consumer-root" --shared 2>/dev/null || true)"
+  [[ -z "$protected_root" ]] || CEREBRO_PROTECTED_STATE_DIR="$protected_root/.cerebro/state"
+fi
+export CEREBRO_PROTECTED_STATE_DIR="${CEREBRO_PROTECTED_STATE_DIR:-}"
+
 [[ $# -eq 1 ]] || { echo "$usage" >&2; exit 2; }
 dir="$1"
 [[ -d "$dir" ]] || { echo "suite-runner: not a directory: $dir" >&2; exit 2; }
@@ -179,6 +193,11 @@ if ((durable)); then
   fi
 fi
 
+# Where `scripts/jsonl-log.sh' records a refused write, one `<suite>\t<path>' line each. Under
+# $tmp, which the EXIT trap removes: it is read at the summary below and is not evidence anything
+# later needs, so it deliberately does NOT go under $run_dir.
+export CEREBRO_PROTECTED_STATE_REPORT="$tmp/protected-writes"
+
 # A token pipe as the semaphore. bash 3.2 - what macOS ships and what the gate runs on locally -
 # has no `wait -n', and running batches of N with a `wait' between them would idle every core but
 # one while the slowest suite of a batch finished. Each job takes a token before it starts and puts
@@ -195,6 +214,7 @@ while [[ $i -lt $jobs ]]; do echo >&3; i=$((i+1)); done
 # one short write, which is what keeps two jobs ending at the same moment from splitting a line.
 run_one() {
   local t="$1" slot="$2" rc
+  export CEREBRO_SUITE_NAME="$t"     # what a refused write is recorded against
   echo "-- $t"
   SECONDS=0
   bash "$t" >"$run_dir/${t##*/}.log" 2>&1
@@ -232,9 +252,27 @@ while IFS= read -r t; do
   i=$((i+1))
 done <<<"$paths"
 
+# A recorded write into the fleet's live logs is a red run on its own (cb-xhu.1) - the write was
+# already refused, and the point of the block is that the suite is named rather than the breakage
+# being found weeks later in a log the navigator is sent to. `set -e' is off here, so nothing is
+# assumed about the report existing.
+violations=""
+if [[ -s "$CEREBRO_PROTECTED_STATE_REPORT" ]]; then
+  violations="$(sort -u "$CEREBRO_PROTECTED_STATE_REPORT" 2>/dev/null)"
+fi
+if [[ -n "$violations" ]]; then
+  echo "suite-runner: these suites wrote to the fleet's live logs under $CEREBRO_PROTECTED_STATE_DIR:" >&2
+  while IFS="$(printf '\t')" read -r vs vp; do
+    [[ -n "$vs" ]] || continue
+    echo "  $vs -> $vp" >&2
+  done <<<"$violations"
+  echo "Every suite builds its fixtures under its own \$work_dir (tests/lib/consumer.sh); the write was refused, and the run is red." >&2
+fi
+
 if [[ -n "$failed" ]]; then
   echo "FAILED:$failed" >&2
   ((durable)) && echo "logs kept (last $keep_runs runs): $run_dir" >&2
   exit 1
 fi
+[[ -z "$violations" ]] || exit 1
 echo "all suites passed"

@@ -1096,7 +1096,12 @@ and the key hint stays `g retry` until both panes are fresh.
   then silently `dead` when the file was missing (ah-bri). Every launcher calls it right before
   `exec claude`, so a submodule bump is usable the moment something is started rather than only after
   someone runs `sync-symlinks.sh` by hand (ah-cuc); this is what the git hooks in `githooks/` would
-  otherwise be for, and why they stay optional.
+  otherwise be for, and why they stay optional. Since cb-4qq a **dirty** checkout is refused only
+  when the incoming commits change a file that has uncommitted changes — `git merge --ff-only` keeps
+  every other local edit, and refusing on all of them closed a loop where each merged bead left the
+  shared checkout one commit behind and one edited file then refused every launch of every name —
+  and a merge or submodule update that cannot be done is a **refusal** (exit 2, naming the paths)
+  rather than a bare exit 1 the fleet view reads as a crash.
 - **`.claude/cerebro/scripts/` is a hard-coded path in two places that must agree**:
   `cerebro--script-directory` in `cerebro.el`, and every doc that tells someone what to type. The
   launchers themselves take no view — they are `exec claude …` and work from anywhere — so a wrong

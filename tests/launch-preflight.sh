@@ -90,6 +90,29 @@ run_preflight "$c" || fail "untracked: expected exit 0"
 [[ -f "$c/scratch.txt" ]] || fail "untracked: the untracked file was removed"
 pass "an untracked file does not stop it"
 
+# --- dirt the fast-forward cannot touch does not stop it ------------------------------------------
+#
+# `git merge --ff-only` keeps a local modification to a file the incoming commits do not change.
+# Refusing on it is what closed the loop in cb-4qq: every merged bead left the shared checkout one
+# commit behind, and one edited file then refused every launch of every name.
+c="$(make_consumer nonoverlap)"
+up="$work_dir/nonoverlap-up"
+echo other > "$up/other.txt"
+git_q -C "$up" add other.txt
+git_q -C "$up" commit -q -m other
+git_q -C "$up" push -q origin HEAD
+git_q -C "$c" fetch -q origin main
+git_q -C "$c" merge -q --ff-only origin/main
+advance_origin nonoverlap 1          # touches file.txt, and only file.txt
+echo "my edit" >> "$c/other.txt"
+run_preflight "$c" || fail "nonoverlap: expected exit 0"
+[[ "$(head_of "$c")" == "$(origin_head_of "$c")" ]] \
+  || fail "nonoverlap: expected HEAD to be fast-forwarded to origin/main"
+grep -q "my edit" "$c/other.txt" || fail "nonoverlap: the edit was lost"
+[[ ! -f "$c/.cerebro/state/errors.jsonl" ]] \
+  || fail "nonoverlap: the healed path wrote to errors.jsonl: $(cat "$c/.cerebro/state/errors.jsonl")"
+pass "dirt the fast-forward cannot touch does not stop it"
+
 # --- a dirty checkout is refused, and left exactly as it was ---------------------------------------
 c="$(make_consumer dirty)"
 advance_origin dirty 1
@@ -101,6 +124,7 @@ status=$?
 set -e
 [[ $status -eq 2 ]] || fail "dirty: expected exit 2, got $status"
 grep -q "uncommitted changes" <<<"$out" || fail "dirty: expected a message naming the changes, got: $out"
+grep -q "file.txt" <<<"$out" || fail "dirty: expected the message to name the file, got: $out"
 [[ "$(head_of "$c")" == "$before" ]] || fail "dirty: HEAD moved"
 grep -q "my edit" "$c/file.txt" || fail "dirty: the edit was lost"
 pass "a dirty checkout is refused, and the edit survives"
@@ -115,6 +139,8 @@ log="$c/.cerebro/state/errors.jsonl"
   || fail "dirty: expected context='launch Xavier', got: $(tail -n1 "$log")"
 grep -q "uncommitted changes" <<<"$(tail -n1 "$log" | jq -r .message)" \
   || fail "dirty: expected the logged message to name the changes, got: $(tail -n1 "$log")"
+grep -q "file.txt" <<<"$(tail -n1 "$log" | jq -r .message)" \
+  || fail "dirty: expected the logged message to name the file, got: $(tail -n1 "$log")"
 pass "a refused launch is recorded in errors.jsonl"
 
 # --- a diverged checkout is refused ----------------------------------------------------------------
@@ -168,6 +194,34 @@ grep -q "uncommitted changes" <<<"$out" || fail "submodule: expected a message n
 grep -q "work in progress" "$c/.claude/cerebro/scripts/launch-preflight" \
   || fail "submodule: the in-progress edit was lost"
 pass "a dirty submodule is refused, and its work survives"
+
+# --- a merge that cannot be done is refused, and says so -------------------------------------------
+#
+# `status --porcelain --untracked-files=no` cannot see an untracked file that the incoming commits
+# ADD, so the guards pass and the ff-merge itself fails. Under `set -euo pipefail` that was exit 1
+# with git's raw stderr and nothing in errors.jsonl - which the fleet view reads as a crash rather
+# than as a refusal.
+c="$(make_consumer collision)"
+up="$work_dir/collision-up"
+echo upstream > "$up/added.txt"
+git_q -C "$up" add added.txt
+git_q -C "$up" commit -q -m added
+git_q -C "$up" push -q origin HEAD
+echo "local" > "$c/added.txt"        # untracked, standing where the incoming file lands
+before="$(head_of "$c")"
+set +e
+out="$(run_preflight "$c" 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] || fail "collision: expected exit 2, got $status"
+grep -q "added.txt" <<<"$out" || fail "collision: expected the message to name the file, got: $out"
+[[ "$(head_of "$c")" == "$before" ]] || fail "collision: HEAD moved"
+grep -q "^local$" "$c/added.txt" || fail "collision: the local file was overwritten"
+log="$c/.cerebro/state/errors.jsonl"
+[[ -f "$log" ]] || fail "collision: expected the refusal at $log"
+[[ "$(tail -n1 "$log" | jq -r .context)" == "launch Xavier" ]] \
+  || fail "collision: expected context='launch Xavier', got: $(tail -n1 "$log")"
+pass "a merge that cannot be done is refused, and says so"
 
 # --- no remote is not a failure ----------------------------------------------------------------------
 #

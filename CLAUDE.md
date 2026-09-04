@@ -740,6 +740,29 @@ the ordinary state of a machine that has never run the fleet. Both are **outside
 lease**, exactly as `x` is, and both hint clauses are shown on a read-only view where `s`/`f`/`k`
 are not.
 
+Since cb-xhu.4.2 the Work pane's **first** section — above Sweeps — is `Health {n}`, one line per
+thing `scripts/fleet-health` says is stuck right now: a name running long (red), a name started more
+often than the script's own ceiling, and a name more than half of whose completed passes held no
+bead (both gold). Findings only, hidden entirely when there is nothing to report, on its own
+five-minute reader and its own in-flight slot, with `h report` dim beside the header. It follows
+**History's** failure rule and not the Sweeps': a run that fails with rows worth keeping says
+`Health 4  fleet-health failed` in red beside the header, and a *first* failure draws no section at
+all, which is the ordinary state of a machine that has never run the fleet. A Health row is never
+selectable — no key acts on one — so the cursor walks past them exactly as it walks past History
+rows. **`h`** pins the whole four-section report in the Session pane, titled `Fleet health`, from
+any focus; `h` again unpins and leaves focus where it is; a pinned bead replaces it and it replaces
+a pinned bead, `App::pin` holding exactly one tenant by construction; and arriving at Fleet by
+`Tab`, `Shift-Tab` or `F1` drops it exactly as a pinned bead is dropped (cb-lor), while `F2` and
+`F3` leave it alone. `h` starts no read — the report is whatever the five-minute reader last got, so
+it can never fail and never blocks, and `g` is what refreshes it. All of it is **outside the
+supervision lease**, as `x` and the priority keys are: it reads logs and decides nothing, so a
+read-only view shows it. The hint clause `h health` is offered unconditionally, at a rank
+(`HintRank::Optional`) below the movement hints and dropped first and alone — the ordinary
+hundred-column screen has one cell of slack, so an unconditional clause at any higher rank drops a
+whole tier of hints the navigator asked by name to keep. **`emacs/cerebro.el` is deliberately given
+none of this**, on the navigator's own instruction — so, unlike the sweeps, the triage line and
+supervision, there is no `tests/lib/` table here and no second implementation.
+
 With it the Work **cursor** widened from findings to findings, bead rows and `+N more` rows —
 never a header, a blank, `(none)` or a History row, so a grey row always means a key will do
 something here — and it is on the first selectable row from the first frame. `Enter` on a `+N more`
@@ -881,7 +904,11 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   bounded at thirty seconds because these are network calls — and it is what starts the roles whose
   work arrives from outside the fleet. Its pane is never drawn: its four content states are exactly
   what tells a trigger "no answer yet" (no suffix) from "the last request failed" (`gh?` on Moira's
-  and Cypher's rows, and their hourly floor alone).
+  and Cypher's rows, and their hourly floor alone). Since cb-xhu.4.2 `read_health` is the ninth —
+  `scripts/fleet-health --json` on a thirty-second bound, `read_history`'s shape and its reason: a
+  `jq` walk over logs that grow without limit, and not a network call. `Ok(FleetHealth::default())`
+  would draw a fleet in perfect health that nobody could look at, so a failure is never an empty
+  answer here either.
 - `log.rs` — the three JSONL files, split the same way: the pure half (`Event::basename`,
   `log_event_p`, `log_evaluation_p`, `log_rotate_p`, `log_line`, `log_file`, `reader_context`) and
   one impure `Logger` that owns them. It is the ONLY thing in the crate that writes any of them, its

@@ -36,7 +36,7 @@ use crate::app::{
     self, App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics,
 };
 use crate::lifecycle;
-use crate::model::{Bead, FleetRow, RowState};
+use crate::model::{Bead, FleetRow, HealthTone, RowState};
 #[cfg(test)]
 use crate::model::WorkBuckets;
 use crate::session::SessionView;
@@ -593,7 +593,13 @@ fn lifecycle_hint(mode: &SupervisionMode) -> Option<&'static str> {
 /// replaces dropped in exactly these groups.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum HintRank {
-    /// Moving around the screen. The first thing to go: a navigator can find `Tab` and the arrow
+    /// A clause offered on every screen whatever is on it, and therefore paid for on every
+    /// screen. The first thing to go, and it goes ALONE: the ordinary hundred-column screen has
+    /// one cell of slack (cb-xhu.4.2), so an unconditional clause at any higher rank drops a
+    /// whole tier of hints the navigator asked by name to keep
+    /// (`the_ordinary_screen_keeps_every_hint_at_a_hundred_columns`).
+    Optional,
+    /// Moving around the screen. The second thing to go: a navigator can find `Tab` and the arrow
     /// keys by pressing them.
     Movement,
     /// Keys that act on what the cursor is on, and `x`. Shown only while their key acts on
@@ -626,7 +632,7 @@ fn fit_hints(clauses: &[HintClause], used: usize, width: usize) -> String {
             .map(|clause| format!(" | {}", clause.text))
             .collect()
     };
-    for floor in [HintRank::Movement, HintRank::Cursor] {
+    for floor in [HintRank::Optional, HintRank::Movement, HintRank::Cursor] {
         let text = join(floor);
         // Cells, not chars: `·` and the arrows are one cell each here, but the rule is the measure.
         if used + text.width() <= width {
@@ -655,6 +661,21 @@ fn hint_clauses(app: &App) -> Vec<HintClause> {
     if !app.work_findings().is_empty() {
         clauses.push(HintClause { text: "x act", rank: HintRank::Cursor });
     }
+    // UNCONDITIONAL, unlike every clause around it: the Health section is hidden on a healthy
+    // fleet, so the header hint alone would leave `h` undiscoverable exactly when the fleet is
+    // fine - and `h` always does something, pinning whatever the pane holds including
+    // `Reading fleet health…`. Outside the supervision lease, as `x` is: it reads logs and
+    // decides nothing.
+    //
+    // `Optional` and not the `Cursor` rank cb-xhu.4.2's plan named: the ordinary hundred-column
+    // screen has ONE cell of slack, so an unconditional clause at `Cursor` - or at `Movement` -
+    // drops the whole movement tier with it, which
+    // `the_ordinary_screen_keeps_every_hint_at_a_hundred_columns` exists to forbid by the
+    // navigator's own request. `Optional` keeps the plan's stated intent (it gives way before
+    // the keys a navigator cannot guess) and costs no existing hint anything: it is dropped
+    // first and alone, so the key is offered wherever there is room and nowhere it would push
+    // something else off.
+    clauses.push(HintClause { text: "h health", rank: HintRank::Optional });
     // The two clauses of cb-kcs.5.4, by the same rule and for the same reason: both write to the
     // shared board rather than to this checkout's sessions, so both are shown on a read-only
     // view. Each only while the cursor is on a row that key acts on. cb-41r's `Enter bead` rides
@@ -783,8 +804,19 @@ fn plain_title_style(focused: bool) -> Style {
 fn session_title(app: &App, focused: bool) -> Line<'static> {
     let name = app.selected.clone().unwrap_or_else(|| "Session".to_string());
     let style = plain_title_style(focused);
-    // A pinned bead is what the pane is drawing, whatever the session behind it is doing.
-    if let Some(detail) = &app.bead_detail {
+    // A pin is what the pane is drawing, whatever the session behind it is doing.
+    // `Fleet health` and not the mockup's `Session — fleet health`: the pinned bead replaces the
+    // title entirely, and one pin pattern is better than two.
+    if app.health_pinned() {
+        return Line::from(vec![
+            Span::styled("Fleet health".to_string(), style),
+            Span::styled(
+                format!(" {}", if focused { "[Shift-Tab leaves]" } else { "[Tab to focus]" }),
+                dim(),
+            ),
+        ]);
+    }
+    if let Some(detail) = app.bead_detail() {
         return Line::from(vec![
             Span::styled(
                 format!("{} — {}", detail.bead.id, app::bead_title(&detail.bead)),
@@ -866,7 +898,51 @@ fn session_document(app: &App, width: usize) -> std::borrow::Cow<'_, [Line<'stat
     let line = |text: &str| Line::from(Span::styled(text.to_string(), dim()));
     // The pinned bead, wrapped in `app::bead_body` - never by a `.wrap` here, which
     // `render_bordered_pane` deliberately does not set.
-    if let Some(detail) = &app.bead_detail {
+    // The pinned health report, built at its natural width and truncated to cells here - never
+    // wrapped, because these are columns and a wrapped column is unreadable.
+    if app.health_pinned() {
+        return std::borrow::Cow::Owned(
+            app::health_body(&app.health)
+                .into_iter()
+                .map(|body_line| match body_line {
+                    app::HealthBodyLine::Title(text) => Line::from(Span::styled(
+                        truncate_cells(&text, width),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    app::HealthBodyLine::Window(text) | app::HealthBodyLine::Dim(text) => {
+                        Line::from(Span::styled(truncate_cells(&text, width), dim()))
+                    }
+                    app::HealthBodyLine::Blank => Line::from(Span::raw(String::new())),
+                    app::HealthBodyLine::Section { title, note } => {
+                        // Truncated like every other variant, and measured across BOTH spans:
+                        // the note rides on the same row, so a title fitted alone would still
+                        // push the pane border off it.
+                        let mut spans = vec![Span::styled(
+                            truncate_cells(&title, width),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        )];
+                        if let Some(note) = note {
+                            let room = width.saturating_sub(title.width());
+                            let note = truncate_cells(&format!("  {note}"), room);
+                            if !note.is_empty() {
+                                spans.push(Span::styled(note, dim()));
+                            }
+                        }
+                        Line::from(spans)
+                    }
+                    app::HealthBodyLine::Row { text, tone } => Line::from(Span::styled(
+                        truncate_cells(&text, width),
+                        tone.map(health_tone_style).unwrap_or_default(),
+                    )),
+                    app::HealthBodyLine::Error(text) => Line::from(Span::styled(
+                        truncate_cells(&text, width),
+                        Style::default().fg(RED),
+                    )),
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    if let Some(detail) = app.bead_detail() {
         return std::borrow::Cow::Owned(
             app::bead_body(detail, width)
                 .into_iter()
@@ -1127,9 +1203,37 @@ fn work_document(app: &App, now: DateTime<Utc>, width: usize) -> Vec<Line<'stati
                 let style = if *long { Style::default().fg(GOLD) } else { Style::default() };
                 Line::from(Span::styled(truncate_cells(text, width), style))
             }
+            app::WorkBodyLine::HealthHeader { count, failed } => {
+                let mut spans = vec![Span::styled(
+                    format!("Health {count}"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )];
+                // History's rule: rows hours old would read as current, so the script is named
+                // in red beside the header while they are kept.
+                if *failed {
+                    spans.push(Span::styled("  fleet-health failed", Style::default().fg(RED)));
+                }
+                // The approved mockup's own hint, two cells after the header text rather than
+                // right-aligned - where Sweeps and History already put their notes.
+                spans.push(Span::styled("  h report", dim()));
+                Line::from(spans)
+            }
+            // Never a selected background: a Health row is not selectable.
+            app::WorkBodyLine::HealthRow { text, tone } => Line::from(Span::styled(
+                format!("  {}", truncate_cells(text, width.saturating_sub(2))),
+                health_tone_style(*tone),
+            )),
         });
     }
     lines
+}
+
+/// The colour one Health tone reads in. `model.rs` owns the words; this owns the colour.
+fn health_tone_style(tone: HealthTone) -> Style {
+    match tone {
+        HealthTone::Alert => Style::default().fg(RED),
+        HealthTone::Warn => Style::default().fg(GOLD),
+    }
 }
 
 /// One bead row, fitted to WIDTH terminal cells.
@@ -4436,10 +4540,14 @@ mod tests {
         let quit = HintClause { text: "q/Esc/Ctrl-C quit", rank: HintRank::Kept };
         let pane = HintClause { text: "Tab/Shift-Tab/F1-F3 pane", rank: HintRank::Movement };
         let scroll = HintClause { text: "↑/↓/PgUp/PgDn move", rank: HintRank::Movement };
+        // Unconditional (cb-xhu.4.2): the Health section is hidden on a healthy fleet, so the
+        // header hint alone would leave `h` undiscoverable exactly when the fleet is fine. Its
+        // own rank, dropped first and alone, so it costs no other clause anything.
+        let health = HintClause { text: "h health", rank: HintRank::Optional };
 
         assert_eq!(
             hint_clauses(&populated()),
-            vec![pane, scroll, refresh, quit],
+            vec![pane, scroll, health, refresh, quit],
             "read-only, no findings, no cursor, no reachable session"
         );
         assert_eq!(
@@ -4448,6 +4556,7 @@ mod tests {
                 pane,
                 scroll,
                 HintClause { text: "s/f/k start·finish·kill", rank: HintRank::Kept },
+                health,
                 refresh,
                 quit
             ],
@@ -4459,6 +4568,7 @@ mod tests {
                 pane,
                 scroll,
                 HintClause { text: "f finish | k kill", rank: HintRank::Kept },
+                health,
                 refresh,
                 quit
             ],
@@ -4469,7 +4579,7 @@ mod tests {
         failed.finish_refresh(Err(failure()), at(86_400));
         assert_eq!(
             hint_clauses(&failed),
-            vec![pane, scroll, retry, quit],
+            vec![pane, scroll, health, retry, quit],
             "a failed pane asks for a retry rather than a refresh"
         );
 
@@ -4490,6 +4600,7 @@ mod tests {
             vec![
                 pane,
                 scroll,
+                health,
                 HintClause { text: "0-4/+/-/u priority", rank: HintRank::Cursor },
                 HintClause { text: "Enter bead", rank: HintRank::Cursor },
                 refresh,
@@ -4506,6 +4617,7 @@ mod tests {
             vec![
                 pane,
                 scroll,
+                health,
                 HintClause { text: "Enter show all", rank: HintRank::Cursor },
                 refresh,
                 quit
@@ -4522,6 +4634,7 @@ mod tests {
             vec![
                 pane,
                 scroll,
+                health,
                 HintClause { text: "Enter session", rank: HintRank::Cursor },
                 refresh,
                 quit
@@ -4564,9 +4677,16 @@ mod tests {
         let full = fit_hints(&clauses, used, 1000);
         assert!(full.contains("Ctrl-r reload"), "at a width that fits everything: {full:?}");
 
-        // One cell too narrow for the full join: the movement rank gave way first, and the new
-        // clause is still there.
-        let no_movement = fit_hints(&clauses, used, used + full.width() - 1);
+        // One cell too narrow for the full join: the OPTIONAL rank gave way first and alone
+        // (cb-xhu.4.2), so both the movement hints and the new clause are still there.
+        let no_optional = fit_hints(&clauses, used, used + full.width() - 1);
+        assert!(no_optional.contains("Ctrl-r reload"), "{no_optional:?}");
+        assert!(no_optional.contains("Tab/Shift-Tab/F1-F3 pane"), "{no_optional:?}");
+        assert!(!no_optional.contains("h health"), "{no_optional:?}");
+
+        // One cell narrower again: the movement rank gives way, and the new clause is still
+        // there.
+        let no_movement = fit_hints(&clauses, used, used + no_optional.width() - 1);
         assert!(no_movement.contains("Ctrl-r reload"), "{no_movement:?}");
         assert!(!no_movement.contains("Tab/Shift-Tab/F1-F3 pane"), "{no_movement:?}");
 
@@ -4675,5 +4795,115 @@ mod tests {
         let cell = style_where(&buffer, "stuck 8h49");
         assert_eq!(cell.fg, Some(RED));
         assert_eq!(cell.bg, Some(SELECTED_BG), "red survives the selection band");
+    }
+
+    // --- fleet health on the screen (cb-xhu.4.2) -------------------------------------------------
+
+    /// A Work pane whose health reader has answered with the approved mockup's own report.
+    fn healthy_screen_app() -> App {
+        let mut app = work_app(WorkBuckets {
+            claimed: vec![bead("cb-41r", Some(2), "Enter on a bead opens it")],
+            ..WorkBuckets::default()
+        });
+        app.selected = Some("Rogue".to_string());
+        app.begin_health_refresh(std::time::Instant::now());
+        app.finish_health_refresh(Ok(crate::model::mockup_report()), at(86_400));
+        app
+    }
+
+    #[test]
+    fn the_health_section_is_drawn_above_sweeps() {
+        let app = healthy_screen_app();
+        let rendered = lines(&render(&app, 140, 40));
+        let header = rendered
+            .iter()
+            .position(|l| l.contains("Health 4"))
+            .unwrap_or_else(|| panic!("{rendered:?}"));
+        assert!(rendered[header].contains("h report"), "{:?}", rendered[header]);
+        assert!(
+            rendered[header + 1].contains("Psylocke asking 74m — cb-5kk"),
+            "{:?}",
+            rendered[header + 1]
+        );
+        // Above the six queues, which is what `Claimed` heads.
+        let claimed = rendered
+            .iter()
+            .position(|l| l.contains("Claimed"))
+            .unwrap_or_else(|| panic!("{rendered:?}"));
+        assert!(header < claimed, "{rendered:?}");
+    }
+
+    #[test]
+    fn a_failed_health_read_with_rows_is_named_in_red_beside_its_header() {
+        let mut app = healthy_screen_app();
+        app.begin_health_refresh(std::time::Instant::now());
+        app.finish_health_refresh(
+            Err(crate::readers::ReadError::Invalid {
+                source: "fleet-health".into(),
+                message: "nope".into(),
+            }),
+            at(86_401),
+        );
+        let rendered = lines(&render(&app, 140, 40));
+        assert!(
+            rendered.iter().any(|l| l.contains("Health 4") && l.contains("fleet-health failed")),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn the_pinned_health_report_fills_the_session_pane() {
+        let mut app = healthy_screen_app();
+        app.on_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 10, at(86_400));
+        assert_eq!(app.focus, PaneFocus::Session);
+
+        let rendered = lines(&render(&app, 140, 40));
+        assert!(
+            rendered.iter().any(|l| l.contains("Fleet health") && l.contains("[Shift-Tab leaves]")),
+            "the pane's own title: {rendered:?}"
+        );
+        for text in [
+            "Fleet health — last 24h",
+            "2026-09-03T13:20:00Z → 2026-09-04T13:20:00Z",
+            "Starts per name",
+            "ceiling 8",
+            "Xavier      15",
+            "not counted (these roles hold no bead): Cerebro, Forge, Moira",
+            "Running now",
+            "long > 60m",
+            "Disarmed or given up on",
+            "nothing in the window",
+        ] {
+            assert!(rendered.iter().any(|l| l.contains(text)), "{text:?} in {rendered:?}");
+        }
+    }
+
+    /// The stacked layout, where the whole screen is forty cells wide: no line pushes the pane
+    /// border off its row.
+    #[test]
+    fn the_pinned_health_report_fits_a_narrow_pane() {
+        let mut app = healthy_screen_app();
+        app.on_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 10, at(86_400));
+        let buffer = render(&app, 60, 40);
+        for line in lines(&buffer) {
+            assert!(line.width() <= 60, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn the_health_hint_is_offered_and_gives_way_before_the_kept_keys() {
+        // Offered on every screen, whatever the fleet's health: the section is hidden when the
+        // fleet is fine, so the header hint alone would leave `h` undiscoverable exactly then.
+        assert!(
+            hint_clauses(&populated())
+                .contains(&HintClause { text: "h health", rank: HintRank::Optional }),
+            "a healthy fleet still offers it"
+        );
+        // And it costs the ordinary hundred-column screen nothing, which is the whole reason it
+        // is `Optional` rather than the `Cursor` rank the plan named.
+        let rendered = lines(&render(&populated(), 100, 20));
+        for hint in ["Tab/Shift-Tab/F1-F3 pane", "↑/↓/PgUp/PgDn move", "g refresh"] {
+            assert!(rendered[0].contains(hint), "{hint} survives it: {:?}", rendered[0]);
+        }
     }
 }

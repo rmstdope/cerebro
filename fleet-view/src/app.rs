@@ -21,11 +21,15 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
-use crate::model::{self, Bead, BeadDetailFields, FleetRow, GhSnapshot, HistoryRow, RowState, WorkBuckets};
+use crate::model::{
+    self, Bead, BeadDetailFields, FleetHealth, FleetRow, GhSnapshot, HealthFinding, HealthTone,
+    HistoryRow, RowState, WorkBuckets,
+};
 use crate::lifecycle::LastExit;
 use crate::session::SessionView;
 use crate::readers::{
-    read_bead_detail, read_configured_supervisor, read_fleet, read_gh, read_history, read_sweeps, read_work,
+    read_bead_detail, read_configured_supervisor, read_fleet, read_gh, read_health, read_history,
+    read_sweeps, read_work,
     Commands, Judged, Programs, ReaderPaths, ReadError,
 };
 use crate::sweeps::Finding;
@@ -59,6 +63,13 @@ pub const SWEEP_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
 /// where it is - which does not change meaningfully inside five minutes. Never on the five-second
 /// tick.
 pub const HISTORY_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+
+/// How often `scripts/fleet-health` is asked what the logs say (cb-xhu.4.2).
+///
+/// Five minutes, `HISTORY_REFRESH_INTERVAL`'s own value and for its reason: a `jq` walk over logs
+/// that grow without limit, feeding lines that do not change meaningfully inside five minutes.
+/// Never on the five-second tick.
+pub const HEALTH_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 
 /// What a pane has to show, and how sure it is of it.
 ///
@@ -411,11 +422,16 @@ pub enum WorkBodyLine<'a> {
     More { section: &'static str, hidden: usize, expanded: bool },
     HistoryHeader { count: usize, failed: bool },
     HistoryRow { text: String, long: bool },
+    /// `Health {n}`, and `fleet-health failed` beside it when the last run failed.
+    HealthHeader { count: usize, failed: bool },
+    /// One finding, already worded by `model::health_findings`. Named `HealthRow` and not
+    /// `HealthFinding` so it does not read as the `model::HealthFinding` it carries.
+    HealthRow { text: String, tone: HealthTone },
 }
 
 impl WorkBodyLine<'_> {
     /// What the cursor would be on this line, or `None` for a line no key acts on - a header, a
-    /// blank, `(none)`, a notice or a History row. A grey row therefore always means a key will
+    /// blank, `(none)`, a notice, a History row or a Health row. A grey row therefore always means a key will
     /// do something here.
     pub fn cursor(&self) -> Option<WorkCursor> {
         match self {
@@ -425,6 +441,22 @@ impl WorkBodyLine<'_> {
             _ => None,
         }
     }
+}
+
+/// What the Session pane is drawing INSTEAD of the selected agent's session.
+///
+/// At most one, by construction: two `Option` fields would need a precedence rule in
+/// `session_title`, `session_document`, `session_has_keyboard`, `set_session_view` and
+/// `drop_pin`, and a path that set one without clearing the other would be a silent two-tenant
+/// pane.
+///
+/// `PartialEq` without `Eq`, for `BeadDetail`'s own reason.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SessionPin {
+    Bead(BeadDetail),
+    /// The whole `fleet-health` report, drawn from `App::health` — there is nothing to hold here,
+    /// because `h` starts no read of its own.
+    Health,
 }
 
 /// A bead pinned in the Session pane: the row as it was when `Enter` was pressed, and what
@@ -583,6 +615,179 @@ fn body_lines(text: &str, width: usize) -> Vec<BeadBodyLine> {
     lines
 }
 
+/// One drawn line of the pinned health report, saying what that line IS rather than how it looks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HealthBodyLine {
+    /// `Fleet health — last 24h`. Bold.
+    Title(String),
+    /// `2026-09-03T13:20:00Z → 2026-09-04T13:20:00Z`. Dim.
+    Window(String),
+    Blank,
+    /// `Starts per name`, with `ceiling 8` as a dim note two cells after it.
+    Section { title: String, note: Option<String> },
+    Row { text: String, tone: Option<HealthTone> },
+    /// `nothing in the window`, `not counted (…)`, `Reading fleet health…`, `Press g to retry.`
+    Dim(String),
+    /// `fleet-health failed`. Red.
+    Error(String),
+}
+
+/// The clock a `disarmed` row is drawn with: `HH:MM`, or the raw `ts` when it will not parse.
+///
+/// The raw string rather than a `??:??` placeholder: a writer that changed shape should be
+/// visible, not hidden.
+fn health_clock(ts: &str) -> String {
+    match DateTime::parse_from_rfc3339(ts) {
+        Ok(when) => when.with_timezone(&Utc).format("%H:%M").to_string(),
+        Err(_) => ts.to_string(),
+    }
+}
+
+/// The words an empty section says. One spelling, one assertion: a section that is empty and one
+/// that is missing must not look alike.
+const HEALTH_NOTHING: &str = "  nothing in the window";
+
+/// The four sections of the report itself, in the script's own order and spelling.
+fn health_sections(value: &FleetHealth) -> Vec<HealthBodyLine> {
+    let mut body = Vec::new();
+    let mut section = |title: &str, note: Option<String>, rows: Vec<HealthBodyLine>| {
+        if !body.is_empty() {
+            body.push(HealthBodyLine::Blank);
+        }
+        body.push(HealthBodyLine::Section { title: title.to_string(), note });
+        if rows.is_empty() {
+            body.push(HealthBodyLine::Dim(HEALTH_NOTHING.into()));
+        } else {
+            body.extend(rows);
+        }
+    };
+
+    section(
+        "Starts per name",
+        Some(format!("ceiling {}", value.start_ceiling)),
+        value
+            .starts
+            .iter()
+            .map(|row| HealthBodyLine::Row {
+                text: format!("  {:<10.10} {:>3}", row.agent, row.count),
+                tone: row.over.then_some(HealthTone::Alert),
+            })
+            .collect(),
+    );
+
+    // Only the roles that hold beads are rows; the rest are named on one trailing line, so a
+    // Forge with three no-op passes never reads as a fault.
+    let mut passes: Vec<HealthBodyLine> = value
+        .passes
+        .iter()
+        .filter(|row| row.holds_beads)
+        .map(|row| HealthBodyLine::Row {
+            text: format!("  {:<10.10} {} of {}", row.agent, row.noop, row.total),
+            tone: model::health_passes_finding(row).then_some(HealthTone::Warn),
+        })
+        .collect();
+    let mut uncounted: Vec<&str> = value
+        .passes
+        .iter()
+        .filter(|row| !row.holds_beads)
+        .map(|row| row.agent.as_str())
+        .collect();
+    uncounted.sort_unstable();
+    let uncounted_line = (!uncounted.is_empty()).then(|| {
+        HealthBodyLine::Dim(format!(
+            "  not counted (these roles hold no bead): {}",
+            uncounted.join(", ")
+        ))
+    });
+    if passes.is_empty() {
+        // An empty section says so first, and the uncounted names follow it.
+        passes.push(HealthBodyLine::Dim(HEALTH_NOTHING.into()));
+    }
+    passes.extend(uncounted_line);
+    section("Passes that held no bead", None, passes);
+
+    section(
+        "Running now",
+        Some(format!("long > {}m", value.long_minutes)),
+        value
+            .running
+            .iter()
+            .map(|row| {
+                let what = match &row.phase {
+                    Some(phase) => format!("{}/{}", row.state, phase),
+                    None => row.state.clone(),
+                };
+                HealthBodyLine::Row {
+                    text: format!(
+                        "  {:<10.10} {:<16.16} {:>3}m  {}",
+                        row.agent,
+                        what,
+                        row.minutes.round() as i64,
+                        row.bead.as_deref().unwrap_or("-")
+                    ),
+                    tone: row.long.then_some(HealthTone::Alert),
+                }
+            })
+            .collect(),
+    );
+
+    section(
+        "Disarmed or given up on",
+        None,
+        value
+            .disarmed
+            .iter()
+            .map(|row| HealthBodyLine::Row {
+                text: format!(
+                    "  {:<5} {:<10.10} {}",
+                    health_clock(&row.ts),
+                    row.agent.as_deref().unwrap_or("-"),
+                    row.detail
+                ),
+                tone: None,
+            })
+            .collect(),
+    );
+    body
+}
+
+/// Every line of the pinned health report, from whatever `App::health` is holding.
+///
+/// It takes no width: the lines are built at their natural width and `ui.rs` truncates them to
+/// cells, exactly as it truncates a sweep finding. NOT wrapped like `bead_body`, because these
+/// are columns and a wrapped column is unreadable.
+pub fn health_body(health: &Pane<FleetHealth>) -> Vec<HealthBodyLine> {
+    let report = |value: &FleetHealth| {
+        let mut body = vec![
+            HealthBodyLine::Title(format!("Fleet health — last {}", model::health_span(value))),
+            HealthBodyLine::Window(format!("{} → {}", value.since, value.until)),
+            HealthBodyLine::Blank,
+        ];
+        body.extend(health_sections(value));
+        body
+    };
+    match &health.content {
+        PaneContent::Loading => vec![HealthBodyLine::Dim("Reading fleet health…".into())],
+        PaneContent::Fresh { value, .. } => report(value),
+        PaneContent::Stale { value, .. } => {
+            let mut body = vec![
+                HealthBodyLine::Error("fleet-health failed".into()),
+                HealthBodyLine::Blank,
+            ];
+            body.extend(report(value));
+            body.push(HealthBodyLine::Blank);
+            body.push(HealthBodyLine::Dim(
+                "The last successful health report remains visible.".into(),
+            ));
+            body
+        }
+        PaneContent::Unavailable { .. } => vec![
+            HealthBodyLine::Error("fleet-health failed".into()),
+            HealthBodyLine::Dim("Press g to retry.".into()),
+        ],
+    }
+}
+
 /// Every line of the pinned bead, in order: title, blank, fields, blank, description, blank,
 /// design. WIDTH is the pane's inner width in terminal cells.
 ///
@@ -617,7 +822,8 @@ pub fn bead_body(detail: &BeadDetail, width: usize) -> Vec<BeadBodyLine> {
     body
 }
 
-/// The whole Work document, in order: the Sweeps section, the six queues, then History.
+/// The whole Work document, in order: the Health section, the Sweeps section, the six queues,
+/// then History.
 ///
 /// The Sweeps section is FIRST on the screen (the navigator's choice: this pane shows about
 /// fourteen rows of a forty-one row document, and a section below the fold is one nobody
@@ -633,6 +839,7 @@ pub fn bead_body(detail: &BeadDetail, width: usize) -> Vec<BeadBodyLine> {
 /// exiting 1 there is the ordinary state rather than news.
 pub fn work_body(app: &App, now: DateTime<Utc>) -> Vec<WorkBodyLine<'_>> {
     let mut body = Vec::new();
+    body.extend(health_section_body(app));
     body.extend(sweeps_body(app));
     body.extend(queues_body(app, now));
     body.extend(history_body(app));
@@ -657,6 +864,31 @@ fn sweeps_body(app: &App) -> Vec<WorkBodyLine<'static>> {
     let mut body = vec![WorkBodyLine::SweepHeader { count: findings.len(), error }];
     for (index, judged) in findings.iter().enumerate() {
         body.push(WorkBodyLine::Finding { index, key: judged.finding.key() });
+    }
+    body.push(WorkBodyLine::Blank);
+    body
+}
+
+/// The Health section: one line per finding worth interrupting the navigator for (cb-xhu.4.2).
+///
+/// FIRST on the screen, above Sweeps: a fleet that is stuck is the thing a navigator most needs
+/// told without asking.
+///
+/// It follows HISTORY's rule and not the Sweeps': nothing at all - no header - when there are no
+/// findings, and **a first failure draws no section either**, because a machine that has never
+/// run the fleet has no logs and `fleet-health` exits non-zero there, which is ordinary rather
+/// than news. A failure that has rows to keep draws the header with `failed: true`.
+///
+/// A trailing `Blank` and never a leading one, since it is first.
+fn health_section_body(app: &App) -> Vec<WorkBodyLine<'static>> {
+    let findings = app.health_findings();
+    if findings.is_empty() {
+        return Vec::new();
+    }
+    let failed = pane_error(&app.health.content).is_some();
+    let mut body = vec![WorkBodyLine::HealthHeader { count: findings.len(), failed }];
+    for finding in findings {
+        body.push(WorkBodyLine::HealthRow { text: finding.text, tone: finding.tone });
     }
     body.push(WorkBodyLine::Blank);
     body
@@ -1099,13 +1331,13 @@ pub struct App {
     /// began after a write settled is a read that saw it, and only such a read may drop the
     /// entry; a read already in flight when the key was pressed may not.
     work_settled_at_request: Vec<(String, u8)>,
-    /// The bead the Session pane is showing instead of a session, or `None` for the ordinary day.
+    /// What the Session pane is showing instead of a session, or `None` for the ordinary day.
     ///
     /// A SNAPSHOT rather than a live view of the board (the navigator's choice): the row was
     /// copied out of the Work pane when `Enter` was pressed, so the heading never changes under
     /// somebody reading it and the pane goes on drawing after the bead leaves the queues
     /// entirely. `g` is what re-reads it. Memory only, like `expanded`.
-    pub bead_detail: Option<BeadDetail>,
+    pub pin: Option<SessionPin>,
     /// What `scripts/fleet-history --summary` last said, on its own five-minute cadence and its
     /// own in-flight slot. A `Pane<T>` for `finish`'s transitions above all: a failed run must not
     /// destroy rows still worth reading, and the header names the script in red while it holds
@@ -1115,6 +1347,12 @@ pub struct App {
     /// and that is the price of one pane type rather than two.
     pub history: Pane<Vec<HistoryRow>>,
     last_history_request: Option<Instant>,
+    /// What `scripts/fleet-health --json` last said, on its own five-minute cadence and its own
+    /// in-flight slot — `history`'s shape exactly, and for its reasons. Its `scroll` is unused:
+    /// the findings are drawn inside the Work pane and the pinned report inside the Session pane,
+    /// and each of those owns its own offset.
+    pub health: Pane<FleetHealth>,
+    last_health_request: Option<Instant>,
 }
 
 /// A question the screen is waiting on. `k` is the only key that asks (the navigator's choice),
@@ -1201,9 +1439,11 @@ impl App {
             writes_answered: 0,
             pending_priority: BTreeMap::new(),
             work_settled_at_request: Vec::new(),
-            bead_detail: None,
+            pin: None,
             history: Pane::default(),
             last_history_request: None,
+            health: Pane::default(),
+            last_health_request: None,
         }
     }
 
@@ -1496,13 +1736,40 @@ impl App {
                     // when the move actually happened - a refusal keeps what was being read.
                     // Unreachable from the keyboard since cb-lor, because arriving at Fleet
                     // already dropped one; kept as the invariant it states.
-                    self.drop_bead_detail();
+                    self.drop_pin();
                 } else if let Some(name) = self.selected.clone() {
                     // Gold: news, not a fault. `on_key` already cleared the slot above, so this
                     // is the one notice this keystroke leaves, and the next keystroke clears it.
                     self.set_notice(format!("{name} has no session"));
                 }
                 // Nothing selected: silent, exactly as `s`/`f`/`k` are with no row.
+                AppAction::None
+            }
+            // `h`: pin the whole health report in the Session pane, or unpin it.
+            //
+            // Pins from ANY focus and moves focus to the Session pane, exactly as `Enter` on a
+            // bead row does. Pressing `h` again unpins and leaves focus where it is, exactly as
+            // `Enter` on the pinned bead does. It replaces a pinned bead, and a pinned bead
+            // replaces it: `pin` holds one, by construction.
+            //
+            // It starts NO read - the report is whatever the five-minute reader last got - so
+            // `h` can never fail and never blocks, and it still pins while the reader has never
+            // answered, showing `Reading fleet health…`. `g` is what refreshes it.
+            //
+            // In `on_key` and not `main.rs`' `route_key`, unlike `x`, `s`/`f`/`k` and the
+            // priority keys: those write to the board or to sessions, and this moves focus and
+            // sets a field. `route_key` reaches it through its existing `app.on_key` tail, which
+            // is already after the live-session branch, so a focused live session still receives
+            // the byte.
+            KeyCode::Char('h') if key.modifiers.is_empty() => {
+                if self.health_pinned() {
+                    self.drop_pin();
+                } else {
+                    self.pin = Some(SessionPin::Health);
+                    self.set_focus(PaneFocus::Session);
+                    // The report always opens at its top, whatever the pane was scrolled to.
+                    self.session.scroll = 0;
+                }
                 AppAction::None
             }
             // `Enter` opens the section under a `+N more` row, and closes it again. The one way
@@ -1639,18 +1906,31 @@ impl App {
     pub fn set_focus(&mut self, pane: PaneFocus) {
         self.focus = pane;
         if pane == PaneFocus::Fleet {
-            self.drop_bead_detail();
+            self.drop_pin();
         }
     }
 
-    /// Unpin the bead the Session pane is drawing, and return that pane to its top.
+    /// Unpin whatever the Session pane is drawing, and return that pane to its top.
     ///
-    /// The one place `bead_detail` is cleared. The scroll reset is what keeps a retained
-    /// transcript or a refused launch from being drawn at the offset the bead was left at:
-    /// `set_session_view` zeroes the offset only for a `Live` view, so nothing else would.
-    pub fn drop_bead_detail(&mut self) {
-        self.bead_detail = None;
+    /// The one place `pin` is cleared. The scroll reset is what keeps a retained transcript or a
+    /// refused launch from being drawn at the offset the bead was left at: `set_session_view`
+    /// zeroes the offset only for a `Live` view, so nothing else would.
+    pub fn drop_pin(&mut self) {
+        self.pin = None;
         self.session.scroll = 0;
+    }
+
+    /// The pinned bead, or `None` when nothing — or the health report — is pinned.
+    pub fn bead_detail(&self) -> Option<&BeadDetail> {
+        match &self.pin {
+            Some(SessionPin::Bead(detail)) => Some(detail),
+            _ => None,
+        }
+    }
+
+    /// Is the Session pane drawing the whole health report?
+    pub fn health_pinned(&self) -> bool {
+        matches!(self.pin, Some(SessionPin::Health))
     }
 
     /// Does the focused Session pane currently hold the keyboard?
@@ -1662,7 +1942,7 @@ impl App {
         // A pinned bead is what the pane is drawing, so the child is invisible: forwarding keys
         // to it would have the navigator typing into an agent they cannot see, and would replace
         // the header with `<Name> has the keyboard`.
-        self.bead_detail.is_none()
+        self.pin.is_none()
             && self.focus == PaneFocus::Session
             && matches!(self.session.view, SessionView::Live { .. })
     }
@@ -1690,7 +1970,7 @@ impl App {
     pub fn set_session_view(&mut self, view: SessionView) {
         // ...and never while a bead is pinned, or the bead would be unscrollable for exactly as
         // long as the selected agent has a live child.
-        if self.bead_detail.is_none() && matches!(view, SessionView::Live { .. }) {
+        if self.pin.is_none() && matches!(view, SessionView::Live { .. }) {
             self.session.scroll = 0;
         }
         self.session.view = view;
@@ -1802,6 +2082,46 @@ impl App {
         }
     }
 
+    /// Whether the health report is due at NOW. Its own clock, for `history_due`'s reason.
+    pub fn health_due(&self, now: Instant) -> bool {
+        match self.last_health_request {
+            None => true,
+            Some(last) => now.duration_since(last) >= HEALTH_REFRESH_INTERVAL,
+        }
+    }
+
+    /// Claim the health pane's in-flight slot and stamp the request. Its own slot, deliberately.
+    pub fn begin_health_refresh(&mut self, at: Instant) -> bool {
+        if self.health.begin() {
+            self.last_health_request = Some(at);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The health pane's content transition; see `Pane::finish` for the whole rule. It touches
+    /// that pane and nothing else, and it reconciles the Work cursor against what came back —
+    /// the Health section sits above every selectable row, so its arrival moves them all.
+    pub fn finish_health_refresh(
+        &mut self,
+        result: Result<FleetHealth, ReadError>,
+        at: DateTime<Utc>,
+    ) {
+        let previous_index = self.work_cursor_index(at);
+        let succeeded = result.is_ok();
+        self.health.finish(result, at);
+        if succeeded {
+            self.reconcile_work_cursor(previous_index, at);
+        }
+    }
+
+    /// The findings the Work pane is currently showing, `Fresh` and `Stale` alike; empty
+    /// otherwise. One accessor, so the cursor and the renderer cannot disagree.
+    pub fn health_findings(&self) -> Vec<HealthFinding> {
+        self.health.content.value().map(model::health_findings).unwrap_or_default()
+    }
+
     /// The History rows the Work pane is currently showing, `Fresh` and `Stale` alike; empty
     /// otherwise.
     pub fn history_rows(&self) -> &[HistoryRow] {
@@ -1856,8 +2176,8 @@ impl App {
     /// buckets at all (which the cursor rule makes unreachable from the keyboard, and which must
     /// still not panic).
     fn toggle_bead_detail(&mut self, id: &str, now: DateTime<Utc>) -> AppAction {
-        if self.bead_detail.as_ref().is_some_and(|detail| detail.bead.id == id) {
-            self.drop_bead_detail();
+        if self.bead_detail().is_some_and(|detail| detail.bead.id == id) {
+            self.drop_pin();
             return AppAction::None;
         }
         // `selected_bead` is the one place "find the cursor's bead in the document" is answered;
@@ -1866,7 +2186,7 @@ impl App {
         let Some(bead) = self.selected_bead(now).cloned() else {
             return AppAction::None;
         };
-        self.bead_detail = Some(BeadDetail { bead, body: DetailBody::Reading });
+        self.pin = Some(SessionPin::Bead(BeadDetail { bead, body: DetailBody::Reading }));
         self.set_focus(PaneFocus::Session);
         // A bead always opens at its top, whatever the pane was scrolled to before.
         self.session.scroll = 0;
@@ -1878,7 +2198,7 @@ impl App {
     /// Does nothing at all when nothing is pinned or a different bead is - a read that answers
     /// after the navigator unpinned must not put a body back on screen.
     pub fn finish_bead_read(&mut self, id: &str, result: Result<BeadDetailFields, ReadError>) {
-        let Some(detail) = self.bead_detail.as_mut() else {
+        let Some(SessionPin::Bead(detail)) = self.pin.as_mut() else {
             return;
         };
         if detail.bead.id != id {
@@ -1892,7 +2212,9 @@ impl App {
 
     /// Ask for the pinned bead again, from the top: what `g` does when one is pinned.
     pub fn restart_bead_read(&mut self) -> Option<String> {
-        let detail = self.bead_detail.as_mut()?;
+        let Some(SessionPin::Bead(detail)) = self.pin.as_mut() else {
+            return None;
+        };
         detail.body = DetailBody::Reading;
         Some(detail.bead.id.clone())
     }
@@ -2374,6 +2696,19 @@ pub type HistoryWorker = Worker<Vec<HistoryRow>>;
 impl Worker<Vec<HistoryRow>> {
     pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
         Self::spawn_reader(move |()| read_history(&paths, commands.as_ref()))
+    }
+}
+
+/// Health's worker: `read_health` on its own thread (cb-xhu.4.2).
+///
+/// Its own thread rather than a call on the UI thread, for the reason the others exist: it is a
+/// `jq` walk over logs that grow without limit, and a slow one would otherwise freeze the screen
+/// - keys and all - for as long as it took.
+pub type HealthWorker = Worker<FleetHealth>;
+
+impl Worker<FleetHealth> {
+    pub fn spawn(paths: ReaderPaths, commands: Commands) -> Self {
+        Self::spawn_reader(move |()| read_health(&paths, commands.as_ref()))
     }
 }
 
@@ -3344,12 +3679,12 @@ mod tests {
         assert_eq!(app.session.scroll, 7);
         assert_eq!(app.fleet.scroll, 2);
         assert_eq!(app.selected.as_deref(), Some("Storm"));
-        assert!(app.bead_detail.is_some(), "the no-op keeps the pinned bead");
+        assert!(app.bead_detail().is_some(), "the no-op keeps the pinned bead");
         assert!(app.notice.is_none(), "the no-op reports nothing");
 
         assert_eq!(app.on_key(key(KeyCode::F(3)), 10, at(0)), AppAction::None);
         assert_eq!(app.focus, PaneFocus::Session);
-        assert!(app.bead_detail.is_some(), "F3 is Tab-shaped and keeps the pinned bead");
+        assert!(app.bead_detail().is_some(), "F3 is Tab-shaped and keeps the pinned bead");
     }
 
     /// Arrow and page keys act on the focused pane alone; the boundary clamps within it and never
@@ -4409,6 +4744,10 @@ mod tests {
                     format!("history-header {count} {failed}")
                 }
                 WorkBodyLine::HistoryRow { text, long } => format!("history {text} {long}"),
+                WorkBodyLine::HealthHeader { count, failed } => {
+                    format!("health-header {count} {failed}")
+                }
+                WorkBodyLine::HealthRow { text, tone } => format!("health {text} {tone:?}"),
             })
             .collect();
         assert_eq!(
@@ -4917,7 +5256,7 @@ mod tests {
         app.session.scroll = 9;
 
         assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::ReadBead);
-        let detail = app.bead_detail.as_ref().expect("a bead is pinned");
+        let detail = app.bead_detail().expect("a bead is pinned");
         assert_eq!(detail.bead.id, id);
         assert_eq!(detail.body, DetailBody::Reading);
         assert_eq!(app.focus, PaneFocus::Session);
@@ -4932,7 +5271,7 @@ mod tests {
         app.focus = PaneFocus::Work;
 
         assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::None);
-        assert_eq!(app.bead_detail, None);
+        assert_eq!(app.pin, None);
         assert_eq!(app.focus, PaneFocus::Work);
     }
 
@@ -4949,7 +5288,7 @@ mod tests {
         assert_ne!(first, second);
 
         assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::ReadBead);
-        assert_eq!(app.bead_detail.as_ref().unwrap().bead.id, second);
+        assert_eq!(app.bead_detail().unwrap().bead.id, second);
         assert_eq!(app.focus, PaneFocus::Session);
     }
 
@@ -4960,7 +5299,7 @@ mod tests {
         assert!(matches!(app.work_cursor, Some(WorkCursor::Finding(_))));
 
         assert_eq!(app.on_key(key(KeyCode::Enter), 10, at(0)), AppAction::None);
-        assert_eq!(app.bead_detail, None);
+        assert_eq!(app.pin, None);
         assert_eq!(app.focus, PaneFocus::Work);
         assert_eq!(app.notice, None, "silently, the navigator's choice");
     }
@@ -4976,7 +5315,7 @@ mod tests {
 
         app.on_key(key(KeyCode::Enter), 10, at(0));
         assert!(app.expanded.contains("Unplanned"));
-        assert_eq!(app.bead_detail, None, "a `+N more` row pins nothing");
+        assert_eq!(app.pin, None, "a `+N more` row pins nothing");
     }
 
     #[test]
@@ -4987,25 +5326,25 @@ mod tests {
         app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
         assert!(app.session_has_keyboard());
 
-        app.bead_detail = Some(BeadDetail {
+        app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
             body: DetailBody::Reading,
-        });
+        }));
         assert!(!app.session_has_keyboard());
     }
 
     #[test]
     fn a_live_view_does_not_reset_a_pinned_beads_scroll() {
         let mut app = document_app();
-        app.bead_detail = Some(BeadDetail {
+        app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
             body: DetailBody::Reading,
-        });
+        }));
         app.session.scroll = 7;
         app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
         assert_eq!(app.session.scroll, 7, "the bead can be scrolled while an agent is live");
 
-        app.bead_detail = None;
+        app.pin = None;
         app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
         assert_eq!(app.session.scroll, 0);
     }
@@ -5016,14 +5355,14 @@ mod tests {
         app.focus = PaneFocus::Fleet;
         app.selected = Some("Rogue".into());
         app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
-        app.bead_detail = Some(BeadDetail {
+        app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
             body: DetailBody::Reading,
-        });
+        }));
 
         app.on_key(key(KeyCode::Enter), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Session);
-        assert_eq!(app.bead_detail, None);
+        assert_eq!(app.pin, None);
     }
 
     #[test]
@@ -5031,25 +5370,25 @@ mod tests {
         let mut app = document_app();
         app.focus = PaneFocus::Fleet;
         app.selected = Some("Rogue".into());
-        app.bead_detail = Some(BeadDetail {
+        app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
             body: DetailBody::Reading,
-        });
+        }));
         app.set_session_view(SessionView::None);
 
         app.on_key(key(KeyCode::Enter), 10, at(0));
         assert_eq!(app.notice.as_deref(), Some("Rogue has no session"));
         assert_eq!(app.focus, PaneFocus::Fleet);
-        assert!(app.bead_detail.is_some(), "a refusal does not steal the bead");
+        assert!(app.bead_detail().is_some(), "a refusal does not steal the bead");
     }
 
     #[test]
     fn a_finished_read_fills_the_pinned_bead() {
         let mut app = App::default();
-        app.bead_detail = Some(BeadDetail {
+        app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
             body: DetailBody::Reading,
-        });
+        }));
         app.finish_bead_read(
             "cb-41r",
             Ok(crate::model::BeadDetailFields {
@@ -5058,7 +5397,7 @@ mod tests {
             }),
         );
         assert!(matches!(
-            app.bead_detail.as_ref().unwrap().body,
+            app.bead_detail().unwrap().body,
             DetailBody::Ready(_)
         ));
     }
@@ -5066,35 +5405,35 @@ mod tests {
     #[test]
     fn a_read_that_answers_after_it_was_unpinned_is_dropped() {
         let mut app = App::default();
-        app.bead_detail = None;
+        app.pin = None;
         app.finish_bead_read("cb-41r", Ok(crate::model::BeadDetailFields::default()));
-        assert_eq!(app.bead_detail, None);
+        assert_eq!(app.pin, None);
     }
 
     #[test]
     fn a_read_for_a_different_bead_is_dropped() {
         let mut app = App::default();
-        app.bead_detail = Some(BeadDetail {
+        app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
             body: DetailBody::Reading,
-        });
+        }));
         app.finish_bead_read("cb-other", Ok(crate::model::BeadDetailFields::default()));
-        assert_eq!(app.bead_detail.as_ref().unwrap().body, DetailBody::Reading);
+        assert_eq!(app.bead_detail().unwrap().body, DetailBody::Reading);
     }
 
     #[test]
     fn a_failed_read_keeps_its_cause_for_the_log() {
         let mut app = App::default();
-        app.bead_detail = Some(BeadDetail {
+        app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
             body: DetailBody::Reading,
-        });
+        }));
         app.finish_bead_read(
             "cb-41r",
             Err(ReadError::Invalid { source: "bd".into(), message: "boom".into() }),
         );
         assert!(matches!(
-            app.bead_detail.as_ref().unwrap().body,
+            app.bead_detail().unwrap().body,
             DetailBody::Failed(ref cause) if cause.contains("boom")
         ));
     }
@@ -5103,12 +5442,12 @@ mod tests {
     fn g_asks_for_the_pinned_bead_again_from_the_top() {
         let mut app = App::default();
         assert_eq!(app.restart_bead_read(), None, "g with nothing pinned asks nothing");
-        app.bead_detail = Some(BeadDetail {
+        app.pin = Some(SessionPin::Bead(BeadDetail {
             bead: detail_bead(),
             body: DetailBody::Ready(crate::model::BeadDetailFields::default()),
-        });
+        }));
         assert_eq!(app.restart_bead_read().as_deref(), Some("cb-41r"));
-        assert_eq!(app.bead_detail.as_ref().unwrap().body, DetailBody::Reading);
+        assert_eq!(app.bead_detail().unwrap().body, DetailBody::Reading);
     }
 
     /// Indentation is what a design field is made of - nested bullets and code blocks - and a
@@ -5143,8 +5482,8 @@ mod tests {
         app.on_key(key(KeyCode::Enter), 10, at(0));
         app.session.scroll = 7;
 
-        app.drop_bead_detail();
-        assert!(app.bead_detail.is_none());
+        app.drop_pin();
+        assert!(app.bead_detail().is_none());
         assert_eq!(app.session.scroll, 0);
     }
 
@@ -5157,7 +5496,7 @@ mod tests {
         app.focus = PaneFocus::Work;
 
         app.on_key(key(KeyCode::Enter), 10, at(0));
-        assert!(app.bead_detail.is_none());
+        assert!(app.bead_detail().is_none());
         assert_eq!(app.session.scroll, 0);
         assert_eq!(app.focus, PaneFocus::Work);
     }
@@ -5178,7 +5517,7 @@ mod tests {
         let mut app = pinned_and_scrolled();
         app.on_key(key(KeyCode::Tab), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Fleet);
-        assert!(app.bead_detail.is_none());
+        assert!(app.bead_detail().is_none());
         assert_eq!(app.session.scroll, 0);
         assert!(app.notice.is_none(), "the pane changing is the feedback");
     }
@@ -5189,7 +5528,7 @@ mod tests {
         app.focus = PaneFocus::Work;
         app.on_key(key(KeyCode::BackTab), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Fleet);
-        assert!(app.bead_detail.is_none());
+        assert!(app.bead_detail().is_none());
         assert_eq!(app.session.scroll, 0);
         assert!(app.notice.is_none());
     }
@@ -5199,7 +5538,7 @@ mod tests {
         let mut app = pinned_and_scrolled();
         app.on_key(key(KeyCode::F(1)), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Fleet);
-        assert!(app.bead_detail.is_none());
+        assert!(app.bead_detail().is_none());
         assert_eq!(app.session.scroll, 0);
         assert!(app.notice.is_none());
     }
@@ -5210,15 +5549,462 @@ mod tests {
 
         app.on_key(key(KeyCode::F(2)), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Work);
-        assert!(app.bead_detail.is_some());
+        assert!(app.bead_detail().is_some());
 
         app.on_key(key(KeyCode::F(3)), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Session);
-        assert!(app.bead_detail.is_some());
+        assert!(app.bead_detail().is_some());
 
         app.focus = PaneFocus::Work;
         app.on_key(key(KeyCode::Tab), 10, at(0));
         assert_eq!(app.focus, PaneFocus::Session);
-        assert!(app.bead_detail.is_some());
+        assert!(app.bead_detail().is_some());
+    }
+
+    // --- fleet health (cb-xhu.4.2) ---------------------------------------------------------------
+
+    /// A `Fresh` health pane holding the approved mockup's own report.
+    fn health_app() -> App {
+        let mut app = App::default();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Ok(model::mockup_report()), at(0));
+        app
+    }
+
+    fn health_error() -> ReadError {
+        ReadError::Invalid { source: "fleet-health".into(), message: "nope".into() }
+    }
+
+    #[test]
+    fn the_health_cadence_is_its_own() {
+        let mut app = App::default();
+        let start = Instant::now();
+        assert!(app.health_due(start), "nothing has been asked yet");
+        assert!(app.begin_health_refresh(start));
+        assert!(!app.begin_health_refresh(start), "one at a time");
+        // A work, fleet or History read in flight says nothing about Health, and the reverse.
+        assert!(app.begin_work_refresh(start, Utc::now()));
+        assert!(app.begin_refresh(start));
+        assert!(app.begin_history_refresh(start));
+        app.finish_health_refresh(Ok(FleetHealth::default()), at(0));
+        assert!(!app.health_due(start + Duration::from_secs(299)));
+        assert!(app.health_due(start + HEALTH_REFRESH_INTERVAL));
+    }
+
+    #[test]
+    fn a_failed_health_read_keeps_the_report_it_had() {
+        let mut app = health_app();
+        assert!(matches!(app.health.content, PaneContent::Fresh { .. }));
+
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Err(health_error()), at(60));
+        match &app.health.content {
+            PaneContent::Stale { value, read_at, .. } => {
+                assert_eq!(value, &model::mockup_report());
+                assert_eq!(*read_at, at(0), "as old as its read, not as old as the failure");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(app.health_findings().len(), 4, "a stale report is still shown");
+    }
+
+    /// The shape of the Work document's Health section, above everything else.
+    fn work_shape(app: &App) -> Vec<String> {
+        work_body(app, at(0))
+            .iter()
+            .map(|line| match line {
+                WorkBodyLine::HealthHeader { count, failed } => {
+                    format!("health-header {count} {failed}")
+                }
+                WorkBodyLine::HealthRow { text, tone } => format!("health {text} {tone:?}"),
+                WorkBodyLine::SweepHeader { count, .. } => format!("sweep-header {count}"),
+                WorkBodyLine::Blank => "blank".into(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn health_is_the_work_panes_first_section() {
+        let mut app = document_app();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Ok(model::mockup_report()), at(0));
+
+        let shape = work_shape(&app);
+        assert_eq!(
+            &shape[..6],
+            &[
+                "health-header 4 false".to_string(),
+                "health Psylocke asking 74m — cb-5kk Alert".to_string(),
+                "health Xavier started 15× in 24h Warn".to_string(),
+                "health Cyclops started 9× in 24h Warn".to_string(),
+                "health Storm: 5 of 8 passes held no bead Warn".to_string(),
+                "blank".to_string(),
+            ],
+            "{shape:?}"
+        );
+        assert_eq!(shape[6], "sweep-header 2", "Sweeps follows it: {shape:?}");
+    }
+
+    #[test]
+    fn a_health_row_is_never_selectable() {
+        let mut app = document_app();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Ok(model::mockup_report()), at(0));
+
+        for line in work_body(&app, at(0)) {
+            if matches!(
+                line,
+                WorkBodyLine::HealthHeader { .. } | WorkBodyLine::HealthRow { .. }
+            ) {
+                assert_eq!(line.cursor(), None, "{line:?}");
+            }
+        }
+        // The cursor still starts on the first selectable row, which is the first sweep finding.
+        assert_eq!(
+            work_body(&app, at(0)).iter().find_map(WorkBodyLine::cursor),
+            Some(WorkCursor::Finding("unclaim:cb-a".into()))
+        );
+    }
+
+    #[test]
+    fn no_health_findings_draws_no_health_section() {
+        let mut app = document_app();
+        app.begin_health_refresh(Instant::now());
+        // A real report with nothing worth interrupting for: every flag clear.
+        app.finish_health_refresh(
+            Ok(FleetHealth {
+                since: "2026-09-03T13:20:00Z".into(),
+                until: "2026-09-04T13:20:00Z".into(),
+                starts: vec![model::HealthStarts {
+                    agent: "Storm".into(),
+                    count: 3,
+                    over: false,
+                }],
+                ..FleetHealth::default()
+            }),
+            at(0),
+        );
+        assert_eq!(work_shape(&app)[0], "sweep-header 2");
+    }
+
+    /// A machine that has never run the fleet has no logs, and `fleet-health` exits non-zero
+    /// there. Ordinary, not news - so it must not draw the same header a failure with rows does.
+    #[test]
+    fn a_first_health_failure_draws_no_health_section() {
+        let mut app = document_app();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Err(health_error()), at(0));
+        assert!(matches!(app.health.content, PaneContent::Unavailable { .. }));
+        assert_eq!(work_shape(&app)[0], "sweep-header 2");
+    }
+
+    #[test]
+    fn a_failed_health_read_with_rows_names_the_script() {
+        let mut app = document_app();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Ok(model::mockup_report()), at(0));
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Err(health_error()), at(60));
+        assert_eq!(work_shape(&app)[0], "health-header 4 true");
+    }
+
+    // --- the pinned report -----------------------------------------------------------------------
+
+    #[test]
+    fn the_pinned_health_report_is_the_agreed_document() {
+        let row = |text: &str, tone: Option<HealthTone>| HealthBodyLine::Row {
+            text: text.into(),
+            tone,
+        };
+        assert_eq!(
+            health_body(&health_app().health),
+            vec![
+                HealthBodyLine::Title("Fleet health — last 24h".into()),
+                HealthBodyLine::Window(
+                    "2026-09-03T13:20:00Z → 2026-09-04T13:20:00Z".into()
+                ),
+                HealthBodyLine::Blank,
+                HealthBodyLine::Section {
+                    title: "Starts per name".into(),
+                    note: Some("ceiling 8".into()),
+                },
+                row("  Xavier      15", Some(HealthTone::Alert)),
+                row("  Cyclops      9", Some(HealthTone::Alert)),
+                row("  Storm        8", None),
+                row("  Beast        7", None),
+                row("  Wolverine    4", None),
+                row("  Psylocke     3", None),
+                row("  Forge        3", None),
+                row("  Rogue        2", None),
+                row("  Cerebro      2", None),
+                row("  Moira        1", None),
+                HealthBodyLine::Blank,
+                HealthBodyLine::Section {
+                    title: "Passes that held no bead".into(),
+                    note: None,
+                },
+                row("  Storm      5 of 8", Some(HealthTone::Warn)),
+                row("  Cyclops    3 of 9", None),
+                row("  Wolverine  2 of 4", None),
+                row("  Rogue      1 of 2", None),
+                row("  Beast      1 of 7", None),
+                HealthBodyLine::Dim(
+                    "  not counted (these roles hold no bead): Cerebro, Forge, Moira".into()
+                ),
+                HealthBodyLine::Blank,
+                HealthBodyLine::Section {
+                    title: "Running now".into(),
+                    note: Some("long > 60m".into()),
+                },
+                row("  Psylocke   asking/verify     74m  cb-5kk", Some(HealthTone::Alert)),
+                row("  Cyclops    working/build     17m  cb-2e9", None),
+                row("  Storm      working/build     16m  cb-cz7", None),
+                HealthBodyLine::Blank,
+                HealthBodyLine::Section {
+                    title: "Disarmed or given up on".into(),
+                    note: None,
+                },
+                HealthBodyLine::Dim("  nothing in the window".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_health_section_says_nothing_in_the_window() {
+        let mut app = App::default();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(
+            Ok(FleetHealth {
+                since: "2026-09-03T13:20:00Z".into(),
+                until: "2026-09-04T13:20:00Z".into(),
+                ..FleetHealth::default()
+            }),
+            at(0),
+        );
+        let body = health_body(&app.health);
+        let nothing = body
+            .iter()
+            .filter(|line| {
+                matches!(line, HealthBodyLine::Dim(text) if text == "  nothing in the window")
+            })
+            .count();
+        assert_eq!(nothing, 4, "all four sections use the same words: {body:?}");
+    }
+
+    /// A role that holds no bead is never a row and never a finding — it is named once, on one
+    /// trailing line, so a Forge with three no-op passes cannot read as a fault.
+    #[test]
+    fn roles_that_hold_no_bead_are_named_on_one_trailing_line() {
+        let body = health_body(&health_app().health);
+        let named: Vec<&HealthBodyLine> = body
+            .iter()
+            .filter(|line| matches!(line, HealthBodyLine::Dim(text) if text.contains("not counted")))
+            .collect();
+        assert_eq!(
+            named,
+            vec![&HealthBodyLine::Dim(
+                "  not counted (these roles hold no bead): Cerebro, Forge, Moira".into()
+            )],
+            "sorted ascending, once"
+        );
+        for line in &body {
+            if let HealthBodyLine::Row { text, .. } = line {
+                assert!(!text.contains("Forge      3 of 3"), "Forge is not a passes row: {text:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_health_report_that_has_never_answered_says_it_is_reading() {
+        assert_eq!(
+            health_body(&App::default().health),
+            vec![HealthBodyLine::Dim("Reading fleet health…".into())]
+        );
+    }
+
+    #[test]
+    fn a_stale_health_report_keeps_its_rows_under_a_red_line() {
+        let mut app = health_app();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Err(health_error()), at(60));
+        let body = health_body(&app.health);
+        assert_eq!(body[0], HealthBodyLine::Error("fleet-health failed".into()));
+        assert_eq!(body[1], HealthBodyLine::Blank);
+        assert_eq!(body[2], HealthBodyLine::Title("Fleet health — last 24h".into()));
+        assert_eq!(
+            body[body.len() - 1],
+            HealthBodyLine::Dim("The last successful health report remains visible.".into())
+        );
+        assert_eq!(body[body.len() - 2], HealthBodyLine::Blank);
+    }
+
+    #[test]
+    fn an_unavailable_health_report_offers_g() {
+        let mut app = App::default();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Err(health_error()), at(0));
+        assert_eq!(
+            health_body(&app.health),
+            vec![
+                HealthBodyLine::Error("fleet-health failed".into()),
+                HealthBodyLine::Dim("Press g to retry.".into()),
+            ]
+        );
+    }
+
+    /// A `ts` that will not parse renders as the raw string: a writer that changed shape should
+    /// be visible, not hidden behind a placeholder.
+    #[test]
+    fn a_disarm_row_carries_its_clock_its_name_and_its_detail() {
+        let mut app = App::default();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(
+            Ok(FleetHealth {
+                since: "2026-09-03T13:20:00Z".into(),
+                until: "2026-09-04T13:20:00Z".into(),
+                disarmed: vec![
+                    model::HealthDisarmed {
+                        ts: "2026-09-04T09:02:11Z".into(),
+                        event: "give-up".into(),
+                        agent: Some("Xavier".into()),
+                        detail: "5 starts produced no pass".into(),
+                    },
+                    model::HealthDisarmed {
+                        ts: "not a time".into(),
+                        event: "disarm-all".into(),
+                        agent: None,
+                        detail: "every name".into(),
+                    },
+                ],
+                ..FleetHealth::default()
+            }),
+            at(0),
+        );
+        let rows: Vec<String> = health_body(&app.health)
+            .into_iter()
+            .filter_map(|line| match line {
+                HealthBodyLine::Row { text, tone: None } if text.contains("produced")
+                    || text.contains("every name") =>
+                {
+                    Some(text)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                "  09:02 Xavier     5 starts produced no pass".to_string(),
+                "  not a time -          every name".to_string(),
+            ]
+        );
+    }
+
+    // --- the `h` key -----------------------------------------------------------------------------
+
+    fn press(app: &mut App, code: KeyCode) {
+        app.on_key(KeyEvent::new(code, KeyModifiers::NONE), 10, at(86_400));
+    }
+
+    #[test]
+    fn a_pinned_health_report_never_gives_the_child_the_keyboard() {
+        let mut app = document_app();
+        app.selected = Some("Rogue".into());
+        app.focus = PaneFocus::Session;
+        app.set_session_view(SessionView::Live { lines: Vec::new(), cursor: (0, 0) });
+        assert!(app.session_has_keyboard());
+
+        app.pin = Some(SessionPin::Health);
+        assert!(!app.session_has_keyboard());
+    }
+
+    #[test]
+    fn h_pins_the_health_report_and_moves_focus_to_the_session_pane() {
+        for focus in [PaneFocus::Fleet, PaneFocus::Work, PaneFocus::Session] {
+            let mut app = health_app();
+            app.focus = focus;
+            app.session.scroll = 7;
+            press(&mut app, KeyCode::Char('h'));
+            assert!(app.health_pinned(), "from {focus:?}");
+            assert_eq!(app.focus, PaneFocus::Session, "from {focus:?}");
+            assert_eq!(app.session.scroll, 0, "the report opens at its top");
+        }
+    }
+
+    #[test]
+    fn h_again_unpins_and_leaves_focus_alone() {
+        let mut app = health_app();
+        press(&mut app, KeyCode::Char('h'));
+        assert_eq!(app.focus, PaneFocus::Session);
+
+        press(&mut app, KeyCode::Char('h'));
+        assert!(!app.health_pinned());
+        assert_eq!(app.pin, None);
+        assert_eq!(app.focus, PaneFocus::Session, "unpinning leaves focus where it is");
+    }
+
+    /// `h` while the reader has never answered still pins: there is always something true to say
+    /// about it, so it is never refused the way `Enter` under Fleet refuses an empty pane.
+    #[test]
+    fn h_pins_a_report_that_has_never_answered() {
+        let mut app = App::default();
+        press(&mut app, KeyCode::Char('h'));
+        assert!(app.health_pinned());
+        assert_eq!(
+            health_body(&app.health),
+            vec![HealthBodyLine::Dim("Reading fleet health…".into())]
+        );
+    }
+
+    #[test]
+    fn h_replaces_a_pinned_bead_and_enter_replaces_the_report() {
+        let mut app = document_app();
+        app.begin_health_refresh(Instant::now());
+        app.finish_health_refresh(Ok(model::mockup_report()), at(0));
+        app.focus = PaneFocus::Work;
+        while !matches!(app.work_cursor, Some(WorkCursor::Bead(_))) {
+            press(&mut app, KeyCode::Down);
+        }
+        press(&mut app, KeyCode::Enter);
+        let pinned = app.bead_detail().expect("a bead is pinned").bead.id.clone();
+
+        press(&mut app, KeyCode::Char('h'));
+        assert!(app.health_pinned(), "`h` replaces the pinned bead");
+        assert_eq!(app.bead_detail(), None, "one tenant, by construction");
+
+        // And back again: `Enter` on the same row replaces the report with the bead.
+        app.focus = PaneFocus::Work;
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.health_pinned());
+        assert_eq!(app.bead_detail().map(|d| d.bead.id.clone()), Some(pinned));
+    }
+
+    #[test]
+    fn arriving_at_fleet_drops_the_pinned_health_report() {
+        for (label, keys) in [
+            ("Tab", vec![KeyCode::Tab]),
+            ("Shift-Tab", vec![KeyCode::BackTab, KeyCode::BackTab]),
+            ("F1", vec![KeyCode::F(1)]),
+        ] {
+            let mut app = health_app();
+            press(&mut app, KeyCode::Char('h'));
+            assert!(app.health_pinned(), "{label}");
+            for key in keys {
+                app.on_key(KeyEvent::new(key, KeyModifiers::NONE), 10, at(86_400));
+            }
+            assert_eq!(app.focus, PaneFocus::Fleet, "{label}");
+            assert!(!app.health_pinned(), "{label} drops the pinned report (cb-lor)");
+        }
+    }
+
+    #[test]
+    fn f2_and_f3_leave_the_pinned_health_report_alone() {
+        for key in [KeyCode::F(2), KeyCode::F(3)] {
+            let mut app = health_app();
+            press(&mut app, KeyCode::Char('h'));
+            app.on_key(KeyEvent::new(key, KeyModifiers::NONE), 10, at(86_400));
+            assert!(app.health_pinned(), "{key:?} leaves it pinned");
+        }
     }
 }

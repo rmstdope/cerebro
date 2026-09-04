@@ -64,6 +64,16 @@
 //! start, `may_end` to finish or kill) and each refused with a visible line when
 //! it is not. `lifecycle` is where all three decide and where every write lives;
 //! `main::route_key` is the one path a keystroke takes to reach them.
+//!
+//! Since cb-xhu.4.2 it also reads `scripts/fleet-health --json` on its own
+//! five-minute cadence, draws what is worth interrupting the navigator for as
+//! the Work pane's FIRST section - findings only, hidden entirely when there is
+//! nothing to report - and pins the whole four-section report in the Session
+//! pane with `h`, exactly as `Enter` pins a bead. All of it is outside the
+//! supervision lease, as `x` and the priority keys are: it reads logs and
+//! decides nothing. `emacs/cerebro.el` is deliberately given none of it, on the
+//! navigator's own instruction, so there is one implementation and no
+//! `tests/lib/` table for two views to answer.
 
 pub mod app;
 pub mod lifecycle;

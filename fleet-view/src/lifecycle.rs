@@ -132,7 +132,8 @@ pub const INTERACTIVE_ANSWER_TIMEOUT_SECONDS: i64 = 1800;
 ///
 /// It does NOT read the bead or the phase. `emacs/cerebro.el`'s own rule, stated in the root
 /// `CLAUDE.md`: supervision reads `state` alone, so a typo in the phase vocabulary can mislabel a
-/// column and can never break this loop.
+/// column and can never break this loop. What it does read beyond the state is three clocks the
+/// caller computed - `stood`, `stuck` - and one fact the caller remembers, `resume_stale`.
 #[derive(Clone, Copy, Debug)]
 pub struct Supervised<'a> {
     pub kind: AgentKind,
@@ -151,6 +152,13 @@ pub struct Supervised<'a> {
     /// Seconds since the state file's `since`. `None` for a missing or unparseable timestamp, and
     /// `None` is NOT zero: a torn file must never read as an expired grace.
     pub stood: Option<i64>,
+    /// Seconds this row has been stuck, or `None` if it is not: `lifecycle::stuck_for`'s answer,
+    /// computed by the caller exactly as `stood` is. `None` covers every non-`working` state, a
+    /// turn still in progress, and a turn that ended inside `STUCK_CEILING_SECONDS`.
+    pub stuck: Option<i64>,
+    /// Was this name resumed while stuck, with nothing recorded in its state file since? The
+    /// caller's memory (`App::resumed`), not a fact on the row - the pure rule takes the answer.
+    pub resume_stale: bool,
 }
 
 /// What the poll should do about one agent, or `None` for nothing at all.
@@ -162,6 +170,10 @@ pub enum Supervision {
     End,
     /// A question has gone unanswered too long. Type one line into the session.
     Nudge,
+    /// The turn ended while the state file still said `working`. Type one line into the session:
+    /// it is sitting at a prompt, so a line is all it takes to start it again. Unlike `Nudge`
+    /// there is no question outstanding - this row stopped without saying anything at all.
+    Resume,
 }
 
 /// The port of `cerebro--supervise-action` (`emacs/cerebro.el:1624-1712`) and, folded into it,
@@ -213,8 +225,30 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
             // false, so a missing or unparseable `since` never reads as an expired timeout.
             matches!(agent.stood, Some(stood) if stood >= timeout).then_some(Supervision::Nudge)
         }
-        RowState::Working
-        | RowState::Up
+        // The turn ended and the row never said so. `stuck` is `None` for every other `working`
+        // row, which is what keeps this arm from touching the ordinary case.
+        RowState::Working => match agent.stuck {
+            None => None,
+            // The line was typed and the state file has recorded nothing since, so it did not
+            // take.
+            Some(_) if agent.resume_stale => match agent.kind {
+                // It holds a claim, a worktree and possibly an open pull request; ending it
+                // strands all three. `sweep-stalled` already offers the unclaim at sixty minutes.
+                AgentKind::Implementer => None,
+                // It holds none of those. A stop flag says *no further pass*, so
+                // ending-and-restarting would start the very pass the flag exists to prevent.
+                AgentKind::Interactive => Some(if agent.stop_flag {
+                    Supervision::Retire
+                } else {
+                    Supervision::End
+                }),
+            },
+            // The stop flag makes no difference, for the `Asking` arm's reason. Deliberately NOT
+            // `end_decision`: that folds in `END_GRACE_SECONDS`, which is about a pass that
+            // finished cleanly and has nothing to say about a row that stopped mid-work.
+            Some(_) => Some(Supervision::Resume),
+        },
+        RowState::Up
         // Answered above, ahead of the `ours` guard.
         | RowState::Standby
         | RowState::Dead
@@ -295,11 +329,22 @@ pub fn verdict(exit: LastExit) -> String {
 /// The gold header notice for one carried-out action, verbatim from
 /// `docs/ui/cb-kcs.3-lifecycle-from-state.html` (the navigator's choice, Q2.3: the view says all
 /// three, and the third matters most, being the view putting words into a live agent).
-pub fn supervision_notice(action: Supervision, name: &str) -> String {
-    match action {
-        Supervision::Retire => format!("{name} was retired; its stop flag is cleared."),
-        Supervision::End => format!("{name} finished its pass and was ended."),
-        Supervision::Nudge => format!("{name} was asked to hand its question back."),
+///
+/// `stuck` is what tells the two ends apart: "finished its pass and was ended" is untrue of a row
+/// that stopped mid-work, and two `Supervision` variants differing only in a string would be
+/// worse than one boolean.
+pub fn supervision_notice(action: Supervision, name: &str, stuck: bool) -> String {
+    match (action, stuck) {
+        (Supervision::Retire, false) => format!("{name} was retired; its stop flag is cleared."),
+        (Supervision::Retire, true) => format!(
+            "{name} was stuck and did not answer; it was retired and its stop flag is cleared."
+        ),
+        (Supervision::End, false) => format!("{name} finished its pass and was ended."),
+        (Supervision::End, true) => {
+            format!("{name} was stuck and did not answer; its session was ended.")
+        }
+        (Supervision::Nudge, _) => format!("{name} was asked to hand its question back."),
+        (Supervision::Resume, _) => format!("{name}'s turn had ended; it was asked to carry on."),
     }
 }
 
@@ -329,6 +374,35 @@ pub fn nudge_message(kind: AgentKind) -> &'static str {
     match kind {
         AgentKind::Implementer => NUDGE_MESSAGE,
         AgentKind::Interactive => INTERACTIVE_NUDGE_MESSAGE,
+    }
+}
+
+/// What the view types into an implementer whose turn ended while it was still working.
+///
+/// Byte-identical to `cerebro--resume-message`. It names the review sub-agent because an
+/// implementer waiting on one is the single documented exception to the never-end-a-turn rule,
+/// and this is the only line an implementer ever gets for a stuck row.
+pub const RESUME_MESSAGE: &str =
+    "[cerebro] Your turn ended while your state file still said you were working. If you are \
+     waiting on a review sub-agent, say so in one line and go on waiting. Otherwise do not stop \
+     here: write your state file, carry on from where you left off, or hand the work back for a \
+     person to decide exactly as your own instructions describe, and finish the run.";
+
+/// What the view types into an interactive role whose turn ended while it was still working.
+///
+/// Byte-identical to `cerebro--interactive-resume-message`. Its own line rather than the
+/// implementer's for `INTERACTIVE_NUDGE_MESSAGE`'s reason: an interactive role has no bead to
+/// hand back, so it defers to the role's own instructions.
+pub const INTERACTIVE_RESUME_MESSAGE: &str =
+    "[cerebro] Your turn ended while your state file still said you were working. Do not stop \
+     here: write your state file, carry on from where you left off, or record where you got to \
+     where your own instructions say, and finish the run.";
+
+/// The line typed into a session of KIND whose turn ended while it still said `working`.
+pub fn resume_message(kind: AgentKind) -> &'static str {
+    match kind {
+        AgentKind::Implementer => RESUME_MESSAGE,
+        AgentKind::Interactive => INTERACTIVE_RESUME_MESSAGE,
     }
 }
 
@@ -1054,15 +1128,15 @@ mod tests {
     #[test]
     fn the_view_says_what_it_did_and_types_one_line() {
         assert_eq!(
-            supervision_notice(Supervision::Retire, "Storm"),
+            supervision_notice(Supervision::Retire, "Storm", false),
             "Storm was retired; its stop flag is cleared."
         );
         assert_eq!(
-            supervision_notice(Supervision::End, "Cyclops"),
+            supervision_notice(Supervision::End, "Cyclops", false),
             "Cyclops finished its pass and was ended."
         );
         assert_eq!(
-            supervision_notice(Supervision::Nudge, "Cyclops"),
+            supervision_notice(Supervision::Nudge, "Cyclops", false),
             "Cyclops was asked to hand its question back."
         );
         assert_eq!(
@@ -1127,6 +1201,7 @@ mod tests {
             "retire" => Some(Supervision::Retire),
             "end" => Some(Supervision::End),
             "nudge" => Some(Supervision::Nudge),
+            "resume" => Some(Supervision::Resume),
             "none" => None,
             other => panic!("supervise.cases: unknown action {other}"),
         }
@@ -1146,7 +1221,7 @@ mod tests {
                 continue;
             }
             let fields: Vec<&str> = trimmed.split_whitespace().collect();
-            assert_eq!(fields.len(), 7, "supervise.cases: malformed row: {line}");
+            assert_eq!(fields.len(), 9, "supervise.cases: malformed row: {line}");
             let state = table_state(fields[1]);
             let stood = match fields[5] {
                 "none" => None,
@@ -1156,6 +1231,17 @@ mod tests {
                         .unwrap_or_else(|_| panic!("supervise.cases: bad stood: {line}")),
                 ),
             };
+            // Through `stuck_for` rather than straight into `Supervised::stuck`: the ceiling is
+            // then part of what the table proves, which is what makes the `1799` rows mean
+            // anything.
+            let now = Utc::now();
+            let turn_ended = (fields[6] != "none").then(|| {
+                now - chrono::Duration::seconds(
+                    fields[6]
+                        .parse()
+                        .unwrap_or_else(|_| panic!("supervise.cases: bad turn_ended_for: {line}")),
+                )
+            });
             let agent = Supervised {
                 kind: table_kind(fields[0]),
                 state: &state,
@@ -1163,11 +1249,172 @@ mod tests {
                 stop_flag: table_flag(fields[3]),
                 idle_ends_pass: table_flag(fields[4]),
                 stood,
+                stuck: stuck_for(&state, turn_ended, now),
+                resume_stale: table_flag(fields[7]),
             };
-            assert_eq!(supervise_action(agent), table_action(fields[6]), "row: {line}");
+            assert_eq!(supervise_action(agent), table_action(fields[8]), "row: {line}");
             rows += 1;
         }
-        assert!(rows >= 53, "supervise.cases: only {rows} rows ran");
+        assert!(rows >= 82, "supervise.cases: only {rows} rows ran");
+    }
+
+    // --- the stuck arm (cb-ykz.3) --------------------------------------------------------------
+
+    /// Every field but the ones a stuck case is about.
+    fn stuck_row<'a>(
+        kind: AgentKind,
+        state: &'a RowState,
+        stop_flag: bool,
+        stuck: Option<i64>,
+        resume_stale: bool,
+    ) -> Supervised<'a> {
+        Supervised {
+            kind,
+            state,
+            ours: true,
+            stop_flag,
+            idle_ends_pass: false,
+            stood: Some(5_000),
+            stuck,
+            resume_stale,
+        }
+    }
+
+    /// The stop flag makes no difference, for the `Asking` arm's reason: the session is still
+    /// holding work, so it still needs to move or hand back.
+    #[test]
+    fn a_stuck_row_is_resumed_whatever_its_stop_flag() {
+        let state = RowState::Working;
+        for kind in [AgentKind::Implementer, AgentKind::Interactive] {
+            for stop_flag in [false, true] {
+                assert_eq!(
+                    supervise_action(stuck_row(kind, &state, stop_flag, Some(1_800), false)),
+                    Some(Supervision::Resume),
+                    "{kind:?} flag={stop_flag}"
+                );
+            }
+        }
+    }
+
+    /// The regression that keeps a working fleet working: an ordinary `working` row is untouched
+    /// whatever else is true of it.
+    #[test]
+    fn an_ordinary_working_row_is_never_touched() {
+        let state = RowState::Working;
+        for kind in [AgentKind::Implementer, AgentKind::Interactive] {
+            for resume_stale in [false, true] {
+                for stood in [Some(0), Some(5_000), None] {
+                    let mut agent = stuck_row(kind, &state, false, None, resume_stale);
+                    agent.stood = stood;
+                    assert_eq!(supervise_action(agent), None, "{kind:?} stood={stood:?}");
+                }
+            }
+        }
+    }
+
+    /// It holds a claim, a worktree and possibly an open pull request. `sweep-stalled` is the
+    /// escalation that already exists for it.
+    #[test]
+    fn a_stale_resume_never_ends_an_implementer() {
+        let state = RowState::Working;
+        for stop_flag in [false, true] {
+            assert_eq!(
+                supervise_action(stuck_row(
+                    AgentKind::Implementer,
+                    &state,
+                    stop_flag,
+                    Some(9_000),
+                    true
+                )),
+                None,
+                "flag={stop_flag}"
+            );
+        }
+    }
+
+    /// It holds none of those, so the end decision applies - and a stop flag retires rather than
+    /// ends, because ending-and-restarting would start the very pass the flag exists to prevent.
+    #[test]
+    fn a_stale_resume_ends_an_interactive_role() {
+        let state = RowState::Working;
+        assert_eq!(
+            supervise_action(stuck_row(AgentKind::Interactive, &state, false, Some(9_000), true)),
+            Some(Supervision::End)
+        );
+        assert_eq!(
+            supervise_action(stuck_row(AgentKind::Interactive, &state, true, Some(9_000), true)),
+            Some(Supervision::Retire)
+        );
+    }
+
+    /// `END_GRACE_SECONDS` is about a pass that finished cleanly and must not reach this arm: a
+    /// stuck row has finished nothing, and `stood` is a different clock entirely.
+    #[test]
+    fn the_stuck_arm_ignores_the_grace() {
+        let state = RowState::Working;
+        for stood in [Some(0), None] {
+            let mut agent = stuck_row(AgentKind::Interactive, &state, false, Some(1_800), true);
+            agent.stood = stood;
+            assert_eq!(supervise_action(agent), Some(Supervision::End), "stood={stood:?}");
+        }
+    }
+
+    /// The guard that wraps everything but `standby` still wraps this arm.
+    #[test]
+    fn a_stuck_row_that_is_not_ours_is_left_alone() {
+        let state = RowState::Working;
+        for kind in [AgentKind::Implementer, AgentKind::Interactive] {
+            for stop_flag in [false, true] {
+                for resume_stale in [false, true] {
+                    let mut agent = stuck_row(kind, &state, stop_flag, Some(9_000), resume_stale);
+                    agent.ours = false;
+                    assert_eq!(supervise_action(agent), None, "{kind:?}");
+                }
+            }
+        }
+    }
+
+    /// "Finished its pass and was ended" is untrue of a row that stopped mid-work.
+    #[test]
+    fn supervision_notice_says_stuck_when_it_was() {
+        assert_eq!(
+            supervision_notice(Supervision::Retire, "Storm", true),
+            "Storm was stuck and did not answer; it was retired and its stop flag is cleared."
+        );
+        assert_eq!(
+            supervision_notice(Supervision::End, "Storm", true),
+            "Storm was stuck and did not answer; its session was ended."
+        );
+        assert_eq!(
+            supervision_notice(Supervision::Retire, "Storm", false),
+            "Storm was retired; its stop flag is cleared."
+        );
+        assert_eq!(
+            supervision_notice(Supervision::End, "Storm", false),
+            "Storm finished its pass and was ended."
+        );
+        assert_eq!(
+            supervision_notice(Supervision::Nudge, "Storm", true),
+            "Storm was asked to hand its question back."
+        );
+        assert_eq!(
+            supervision_notice(Supervision::Resume, "Storm", true),
+            "Storm's turn had ended; it was asked to carry on."
+        );
+    }
+
+    /// The implementer's line names the review wait, because an implementer waiting on the review
+    /// sub-agent it spawned is the one ended turn that is not a failure.
+    #[test]
+    fn resume_message_differs_by_kind() {
+        let implementer = resume_message(AgentKind::Implementer);
+        let interactive = resume_message(AgentKind::Interactive);
+        assert!(implementer.contains("review sub-agent"), "{implementer}");
+        assert!(!interactive.contains("review sub-agent"), "{interactive}");
+        for line in [implementer, interactive] {
+            assert!(line.starts_with("[cerebro] "), "{line}");
+        }
+        assert_ne!(implementer, interactive);
     }
 
     /// The two things the table cannot carry, both of which end a session that should be left
@@ -1186,6 +1433,8 @@ mod tests {
                 stop_flag: false,
                 idle_ends_pass,
                 stood: None,
+                stuck: None,
+                resume_stale: false,
             };
             assert_eq!(supervise_action(agent), None, "for {state:?}");
         }
@@ -1202,6 +1451,8 @@ mod tests {
                 stop_flag,
                 idle_ends_pass: false,
                 stood: Some(5_000),
+                stuck: None,
+                resume_stale: false,
             };
             assert_eq!(supervise_action(agent), None);
         }

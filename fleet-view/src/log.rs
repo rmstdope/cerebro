@@ -80,6 +80,11 @@ pub enum Event {
     /// One `working` row whose turn ended past `STUCK_CEILING_SECONDS`, once per occurrence and
     /// not per tick (cb-ykz.2). The view acts on none of them - it says so and records it.
     Stuck,
+    /// One stuck row asked to carry on (cb-ykz.3). Its own event rather than `nudge`'s, for
+    /// `SweepTell`'s reason: two decisions sharing one value makes the log unreadable for the
+    /// diagnosis it exists for. A stuck row this view hosts writes two lines per occurrence -
+    /// `stuck`, the observation, and `resume`, what was done about it.
+    Resume,
     /// One name leaving the armed set with no other line to say so: `k`, and the standby
     /// disarm beside it. `retire` and `give-up` already say it for the paths they cover, and
     /// `disarm-all` for a handover - this is the two that said nothing at all.
@@ -106,6 +111,7 @@ impl Event {
             Self::Disarm => "disarm",
             Self::Sweep => "sweep",
             Self::Stuck => "stuck",
+            Self::Resume => "resume",
             Self::Priority => "priority",
             Self::Triage => "triage",
             Self::SweepTell => "sweep-tell",

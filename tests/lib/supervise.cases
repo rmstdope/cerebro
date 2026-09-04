@@ -41,7 +41,12 @@
 #   stood           seconds since the state file's `since', or `none' for a missing or
 #                   unparseable timestamp. `none' is NOT zero: a torn file must never read as an
 #                   expired grace.
-#   action          `retire' `end' `nudge' or `none' - the answer.
+#   turn_ended_for  seconds since the state file's `turn_ended', or `none' for a row whose turn
+#                   has not ended (or whose timestamp is missing). `none' is NOT zero, exactly as
+#                   `stood''s `none' is not.
+#   resume_stale    `yes' when this name was resumed while stuck and its state file has recorded
+#                   nothing since. `no' otherwise, and `no' on every row that was never resumed.
+#   action          `retire' `end' `nudge' `resume' or `none' - the answer.
 #
 # THE RULE THE ROWS ENCODE, stated once so a new row can be checked against intent:
 #
@@ -58,79 +63,133 @@
 #     bead is still in flight, so the question still needs an answer or a hand-back.
 #   * `asking', interactive -> nudge once `stood >= 1800'. The stop flag makes no difference, for
 #     the implementer arm's reason.
+#   * `working', turn ended, stood past the ceiling -> the row is STUCK. Every other `working' row
+#     answers nothing, as before.
+#   * STUCK, not resumed yet -> `resume', both kinds. The stop flag makes NO difference, for the
+#     `asking' arm's reason: the session is still holding work, so it still needs to move or hand
+#     back.
+#   * STUCK, and `resume_stale' -> the typed line did not take.
+#       - implementer  -> nothing. It holds a claim, a worktree and possibly an open pull request,
+#                         so nothing here ends it; `sweep-stalled' already offers `bd unclaim' for
+#                         a bead a live session has not committed to for sixty minutes, and it
+#                         skips only an `asking' session, so a stuck one is already offered there.
+#       - interactive  -> the end decision WITHOUT its grace: a stop flag `retire's, otherwise
+#                         `end'. It holds nothing, its buffer is kept as the record of the pass,
+#                         and its own trigger starts a fresh session.
+#   * `stood' is nothing to do with any of this. The grace it feeds is about a finished pass.
 #   * everything else -> nothing, whatever the flag.
 #
 # Comparisons are `>=' on purpose: `>' delays every end by one tick.
 
-# kind         state     ours stop idle_ends_pass stood  action
+# kind         state     ours stop idle_ends_pass stood  turn   resume action
 
 # Not ours: the guard that wraps everything else.
-implementer   waiting   no   yes  no   100    none
-implementer   waiting   no   no   no   100    none
-implementer   asking    no   no   no   1000   none
-implementer   idle      no   yes  no   5      none
-implementer   working   no   yes  no   100    none
-interactive   waiting   no   yes  no   100    none
-interactive   idle      no   yes  yes  100    none
-interactive   asking    no   no   no   3000   none
+implementer   waiting   no   yes  no   100    none   no   none
+implementer   waiting   no   no   no   100    none   no   none
+implementer   asking    no   no   no   1000   none   no   none
+implementer   idle      no   yes  no   5      none   no   none
+implementer   working   no   yes  no   100    none   no   none
+interactive   waiting   no   yes  no   100    none   no   none
+interactive   idle      no   yes  yes  100    none   no   none
+interactive   asking    no   no   no   3000   none   no   none
 
 # An implementer's idle: a flag retires it, nothing else acts.
-implementer   idle      yes  yes  no   0      retire
-implementer   idle      yes  no   no   5000   none
-implementer   idle      yes  no   no   none   none
+implementer   idle      yes  yes  no   0      none   no   retire
+implementer   idle      yes  no   no   5000   none   no   none
+implementer   idle      yes  no   no   none   none   no   none
 
 # An interactive role whose idle is just a live session with nothing in hand.
-interactive   idle      yes  yes  no   0      retire
-interactive   idle      yes  no   no   5000   none
+interactive   idle      yes  yes  no   0      none   no   retire
+interactive   idle      yes  no   no   5000   none   no   none
 
 # An interactive role whose idle IS the end of a pass: the end decision.
-interactive   idle      yes  yes  yes  0      retire
-interactive   idle      yes  no   yes  30     end
-interactive   idle      yes  no   yes  31     end
-interactive   idle      yes  no   yes  29     none
-interactive   idle      yes  no   yes  none   none
+interactive   idle      yes  yes  yes  0      none   no   retire
+interactive   idle      yes  no   yes  30     none   no   end
+interactive   idle      yes  no   yes  31     none   no   end
+interactive   idle      yes  no   yes  29     none   no   none
+interactive   idle      yes  no   yes  none   none   no   none
 
 # Waiting: the end decision for both kinds.
-implementer   waiting   yes  yes  no   0      retire
-implementer   waiting   yes  yes  no   5000   retire
-implementer   waiting   yes  no   no   30     end
-implementer   waiting   yes  no   no   31     end
-implementer   waiting   yes  no   no   29     none
-implementer   waiting   yes  no   no   0      none
-implementer   waiting   yes  no   no   none   none
-interactive   waiting   yes  yes  no   0      retire
-interactive   waiting   yes  no   no   30     end
-interactive   waiting   yes  no   no   29     none
-interactive   waiting   yes  no   yes  30     end
-interactive   waiting   yes  no   no   none   none
+implementer   waiting   yes  yes  no   0      none   no   retire
+implementer   waiting   yes  yes  no   5000   none   no   retire
+implementer   waiting   yes  no   no   30     none   no   end
+implementer   waiting   yes  no   no   31     none   no   end
+implementer   waiting   yes  no   no   29     none   no   none
+implementer   waiting   yes  no   no   0      none   no   none
+implementer   waiting   yes  no   no   none   none   no   none
+interactive   waiting   yes  yes  no   0      none   no   retire
+interactive   waiting   yes  no   no   30     none   no   end
+interactive   waiting   yes  no   no   29     none   no   none
+interactive   waiting   yes  no   yes  30     none   no   end
+interactive   waiting   yes  no   no   none   none   no   none
 
 # Asking: both kinds, on their own clocks, and the flag makes no difference to either.
-implementer   asking    yes  no   no   900    nudge
-implementer   asking    yes  no   no   901    nudge
-implementer   asking    yes  yes  no   900    nudge
-implementer   asking    yes  no   no   899    none
-implementer   asking    yes  no   no   none   none
-interactive   asking    yes  no   no   1800   nudge
-interactive   asking    yes  no   no   1801   nudge
-interactive   asking    yes  yes  no   1800   nudge
-interactive   asking    yes  no   no   1799   none
-interactive   asking    yes  no   no   none   none
-interactive   asking    yes  no   no   3000   nudge
-interactive   asking    yes  yes  no   3000   nudge
+implementer   asking    yes  no   no   900    none   no   nudge
+implementer   asking    yes  no   no   901    none   no   nudge
+implementer   asking    yes  yes  no   900    none   no   nudge
+implementer   asking    yes  no   no   899    none   no   none
+implementer   asking    yes  no   no   none   none   no   none
+interactive   asking    yes  no   no   1800   none   no   nudge
+interactive   asking    yes  no   no   1801   none   no   nudge
+interactive   asking    yes  yes  no   1800   none   no   nudge
+interactive   asking    yes  no   no   1799   none   no   none
+interactive   asking    yes  no   no   none   none   no   none
+interactive   asking    yes  no   no   3000   none   no   nudge
+interactive   asking    yes  yes  no   3000   none   no   nudge
 
 # Every other state, whatever the flag.
-implementer   working   yes  yes  no   5000   none
-implementer   dead      yes  yes  no   5000   none
-implementer   up        yes  yes  no   5000   none
-implementer   unknown   yes  yes  no   5000   none
-interactive   working   yes  yes  no   5000   none
-interactive   dead      yes  no   no   5000   none
-interactive   up        yes  yes  no   5000   none
+implementer   working   yes  yes  no   5000   none   no   none
+implementer   dead      yes  yes  no   5000   none   no   none
+implementer   up        yes  yes  no   5000   none   no   none
+implementer   unknown   yes  yes  no   5000   none   no   none
+interactive   working   yes  yes  no   5000   none   no   none
+interactive   dead      yes  no   no   5000   none   no   none
+interactive   up        yes  yes  no   5000   none   no   none
 
 # Standby: no session hosted anywhere, so `ours' is `no' - and a flagged implementer is still
 # disarmed rather than retried, because a stop flag written before its session died still says
 # *no further bead* (cb-hzs). An interactive standby row's flag belongs to the start path.
-implementer   standby   no   yes  no   none   retire
-implementer   standby   no   no   no   none   none
-interactive   standby   no   yes  no   none   none
-interactive   standby   no   no   no   none   none
+implementer   standby   no   yes  no   none   none   no   retire
+implementer   standby   no   no   no   none   none   no   none
+interactive   standby   no   yes  no   none   none   no   none
+interactive   standby   no   no   no   none   none   no   none
+
+# A stuck row: `working', the turn has ended, and it has stood past the 30-minute ceiling.
+# Both kinds are asked to carry on, once, and the stop flag makes no difference to that.
+implementer   working   yes  no   no   5000   1800   no   resume
+implementer   working   yes  no   no   5000   1801   no   resume
+implementer   working   yes  yes  no   5000   1800   no   resume
+implementer   working   yes  no   no   none   1800   no   resume
+implementer   working   yes  no   no   0      1800   no   resume
+interactive   working   yes  no   no   5000   1800   no   resume
+interactive   working   yes  no   no   5000   9000   no   resume
+interactive   working   yes  yes  no   5000   1800   no   resume
+interactive   working   yes  no   yes  5000   1800   no   resume
+interactive   working   yes  no   no   none   1800   no   resume
+
+# Under the ceiling, or no turn-end at all: an ordinary working row.
+implementer   working   yes  no   no   5000   1799   no   none
+implementer   working   yes  no   no   5000   none   no   none
+interactive   working   yes  no   no   5000   1799   no   none
+interactive   working   yes  no   no   5000   none   no   none
+
+# Not ours: the guard that wraps everything but `standby'.
+implementer   working   no   no   no   5000   1800   no   none
+interactive   working   no   yes  no   5000   1800   no   none
+
+# The resume did not take. An implementer is never ended from here; an interactive role is.
+implementer   working   yes  no   no   5000   1800   yes  none
+implementer   working   yes  yes  no   5000   9000   yes  none
+interactive   working   yes  no   no   5000   1800   yes  end
+interactive   working   yes  no   no   5000   9000   yes  end
+interactive   working   yes  no   no   none   1800   yes  end
+interactive   working   yes  no   yes  5000   1800   yes  end
+interactive   working   yes  yes  no   5000   1800   yes  retire
+interactive   working   no   no   no   5000   1800   yes  none
+
+# A row that is not `working' is never stuck, whatever its turn-end says.
+interactive   asking    yes  no   no   100    9000   no   none
+interactive   waiting   yes  no   no   0      9000   no   none
+implementer   idle      yes  no   no   100    9000   no   none
+implementer   standby   no   no   no   none   9000   no   none
+interactive   dead      yes  no   no   5000   9000   yes  none

@@ -995,6 +995,20 @@ pub struct App {
     /// when a row stops asking: a set never cleared logs a stopped session once and then never
     /// again, even after it recovers and stops a second time (`cerebro--stuck-logged`).
     pub stuck_logged: BTreeSet<String>,
+
+    /// Names resumed while stuck, and what their state file said when the line was typed:
+    /// `(since, phase_since)`. An entry means *this name has been asked to carry on and has
+    /// recorded nothing since*, which is what turns a second stuck stretch into an end.
+    ///
+    /// NOT cleared when the row stops being stuck - that is the trap this whole memory exists to
+    /// avoid. The typed line itself clears `turn_ended`, so the row is un-stuck on the very next
+    /// tick; a set cleared there would forget every resume it ever made and could never escalate.
+    /// It is cleared when the pair MOVES, when the row leaves `Working`, and when the session
+    /// ends.
+    ///
+    /// Only ever recorded for a row whose `since` is `Some`: a missing timestamp is not evidence
+    /// that nothing happened, exactly as `stood: None` is never an expired grace.
+    pub resumed: BTreeMap<String, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>,
     /// Which widget the keyboard currently acts on. Fleet by default.
     pub focus: PaneFocus,
     /// What this process is allowed to do with the checkout it is drawing (cb-kcs.1).
@@ -1155,6 +1169,7 @@ impl App {
             flagged: BTreeSet::new(),
             nudged: BTreeSet::new(),
             stuck_logged: BTreeSet::new(),
+            resumed: BTreeMap::new(),
             focus: PaneFocus::default(),
             supervision,
             confirm: None,

@@ -715,7 +715,10 @@ jump straight to those three panes from any focus (held back from a focused live
 tabs; `F4` and above still reach the agent) — the focused one draws a
 bright-blue thick-line border and a bold title. From a focused **live** session both are held back
 from the child and run that same cycle (cb-3v5), so `Tab` is the one key back to Fleet and
-`Shift-Tab` the one key to Work. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:
+`Shift-Tab` the one key to Work. Since cb-lor **arriving at the Fleet pane by any of those keys —
+`Tab`, `Shift-Tab` or `F1` — drops a bead pinned in the Session pane** by `Enter` on a Work row
+(cb-41r), so that pane goes back to drawing the selected agent, at its top; `F2` and `F3` leave a
+pinned bead alone, and `Enter` on the same Work row re-opens it. `↑`/`↓`/`PgUp`/`PgDn` move only the focused widget:
 under Work and Session that is its own scroll offset, and **under Fleet it is the selection**, which
 the pane then scrolls to follow. Since cb-d31 **`Enter` under Fleet focus is `Tab` twice in one
 key**: it moves focus straight to the selected agent's Session pane, and only while that pane is

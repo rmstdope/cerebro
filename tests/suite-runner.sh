@@ -92,12 +92,20 @@ run() {
   fi
   args+=("$@")
 
+  # Every call carries a CEREBRO_PROTECTED_STATE_DIR under $work_dir unless the caller set one in
+  # the environment for that call, for the --log-dir paragraph's reason (cb-xhu.1): this suite runs
+  # inside the gate, the outer run exports the REAL protected directory, and an inner call that
+  # inherited it would be asserting against the navigator's own live logs.
+  local guard="${CEREBRO_PROTECTED_STATE_DIR-$work_dir/protected}"
+
   local out_file="$work_dir/run.out" err_file="$work_dir/run.err"
   set +e
   if [[ -n "$ci" ]]; then
-    GITHUB_ACTIONS=true bash "$script" "${args[@]}" >"$out_file" 2>"$err_file"
+    CEREBRO_PROTECTED_STATE_DIR="$guard" GITHUB_ACTIONS=true \
+      bash "$script" "${args[@]}" >"$out_file" 2>"$err_file"
   else
-    env -u GITHUB_ACTIONS bash "$script" "${args[@]}" >"$out_file" 2>"$err_file"
+    CEREBRO_PROTECTED_STATE_DIR="$guard" \
+      env -u GITHUB_ACTIONS bash "$script" "${args[@]}" >"$out_file" 2>"$err_file"
   fi
   status=$?
   set -e
@@ -646,6 +654,86 @@ grep -qF -- "cannot write logs to $work_dir/cwd-blocked/blocked/logs" <<<"$both"
 $both"
 
 pass "the log root that could not be created is named as an absolute path"
+
+# --- 17. a suite that writes into the protected directory makes the run red (cb-xhu.1) ---
+#
+# The rule "every suite builds its fixtures under its own $work_dir" was prose and nothing checked
+# it: `tests/launch-refused.sh' wrote 249 false lines into this checkout's own errors.jsonl, the
+# file the navigator is sent to by name. The guard is refused at `scripts/jsonl-log.sh'; this is
+# where the refusal becomes a red run naming the suite.
+
+mkdir -p "$work_dir/protected" "$work_dir/violating"
+cat >"$work_dir/violating/writes.sh" <<EOF
+#!/usr/bin/env bash
+source "$repo_root/scripts/jsonl-log.sh"
+cerebro_jsonl_append "\$CEREBRO_PROTECTED_STATE_DIR/errors.jsonl" '{"x":1}' || true
+exit 0
+EOF
+
+run "$work_dir/violating"
+[[ $status -eq 1 ]] || fail "a violating suite: expected exit 1, got $status
+$both"
+grep -qF -- "suite-runner: these suites wrote to the fleet's live logs under $work_dir/protected" <<<"$err" \
+  || fail "the violation block's first line is missing from stderr
+$err"
+grep -qF -- "$work_dir/violating/writes.sh -> $work_dir/protected/errors.jsonl" <<<"$err" \
+  || fail "the block does not name the suite and the path it tried to write
+$err"
+grep -qF -- 'the write was refused, and the run is red' <<<"$err" \
+  || fail "the block does not say the write was refused
+$err"
+! grep -q 'all suites passed' <<<"$out" || fail "a violating run still said all suites passed
+$out"
+[[ ! -e "$work_dir/protected/errors.jsonl" ]] || fail "the guarded write was not refused"
+pass "a suite that writes into the protected directory makes the run red and is named"
+
+# --- 18. a violation and a failing suite are both reported ---
+
+mkdir -p "$work_dir/violating-and-red"
+cp "$work_dir/violating/writes.sh" "$work_dir/violating-and-red/a-writes.sh"
+printf '#!/usr/bin/env bash\necho "boom"\nexit 1\n' >"$work_dir/violating-and-red/b-fails.sh"
+
+run "$work_dir/violating-and-red"
+[[ $status -eq 1 ]] || fail "a violation and a failure: expected exit 1, got $status
+$both"
+grep -q 'FAILED:.*b-fails.sh' <<<"$err" || fail "the failing suite was not named
+$err"
+grep -qF -- "these suites wrote to the fleet's live logs" <<<"$err" \
+  || fail "the violation block is missing when a suite also failed
+$err"
+pass "a violation and a failing suite are both reported"
+
+# --- 19. a run with no violation still says all suites passed ---
+
+mkdir -p "$work_dir/protected-empty"
+run "$work_dir/green"
+[[ $status -eq 0 ]] || fail "a clean run: expected exit 0, got $status
+$both"
+grep -q 'all suites passed' <<<"$out" || fail "a clean run did not say all suites passed
+$out"
+! grep -q "wrote to the fleet's live logs" <<<"$err" || fail "a clean run printed the violation block
+$err"
+pass "a run with no violation still says all suites passed"
+
+# --- 20. an empty guard variable turns the guard off ---
+#
+# `${VAR+set}' rather than `${VAR:-}': an explicitly empty value means "guard off" and the runner
+# must not overwrite it with the computed one.
+
+mkdir -p "$work_dir/violating-unguarded"
+cat >"$work_dir/violating-unguarded/writes.sh" <<EOF
+#!/usr/bin/env bash
+source "$repo_root/scripts/jsonl-log.sh"
+cerebro_jsonl_append "$work_dir/unguarded-target.jsonl" '{"x":1}' || exit 1
+exit 0
+EOF
+CEREBRO_PROTECTED_STATE_DIR="" run "$work_dir/violating-unguarded"
+[[ $status -eq 0 ]] || fail "an empty guard: expected exit 0, got $status
+$both"
+! grep -q "wrote to the fleet's live logs" <<<"$err" || fail "an empty guard still reported a violation
+$err"
+[[ -f "$work_dir/unguarded-target.jsonl" ]] || fail "an empty guard refused the write"
+pass "an empty guard variable turns the guard off"
 
 default_runs_after="$(ls "$default_log_root" 2>/dev/null || true)"
 [[ "$default_runs_after" == "$default_runs_before" ]] || fail "a call in this suite wrote to the default log root at $default_log_root.

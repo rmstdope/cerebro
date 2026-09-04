@@ -1036,6 +1036,24 @@ and the key hint stays `g retry` until both panes are fresh.
   `emacs/cerebro.el`'s own writer (`cerebro--log-line`) is a third implementation in a different
   language rather than a copy that was missed — elisp cannot source a bash library, and shelling out
   would be a fork per evaluation in a loop that runs every five seconds.
+  Since cb-xhu.1 it is **also the one place a write to the fleet's live logs is refused**.
+  `CEREBRO_PROTECTED_STATE_DIR` names a directory nothing may append into; a write at or under it
+  returns non-zero, writes nothing, and records `<suite>\t<path>` in
+  `$CEREBRO_PROTECTED_STATE_REPORT` when one is named. `scripts/suite-runner` is the only thing
+  that sets either — it resolves `consumer-root --shared` once per run, names each suite in
+  `CEREBRO_SUITE_NAME`, and turns any recorded attempt into a red run naming the suite and the path
+  (an explicitly empty value is *guard off*, which is why it tests `${VAR+set}`). Production never
+  sets it, so no launcher, session or fleet-view child changes behaviour at all.
+  `scripts/agent-state` skips its whole log block, rotation included, when its own log is protected:
+  the `mv` is outside the library, so a suite that reached the shared root would rotate the
+  navigator's live log. **It is a refusal at the writer and not a before/after snapshot of the
+  files**, because the live fleet appends to `decisions.jsonl` every five seconds and to
+  `transitions.jsonl` on every transition while an implementer's gate runs in a worktree, so a
+  size comparison would be red on essentially every local run. The guard covers the two bash-written
+  `*.jsonl` logs only — a suite that wrote a `<name>.state.json` into the live directory would still
+  not be caught, deliberately, since that write is `agent-state`'s primary job and no suite has ever
+  done it. cb-xhu.1: 249 of the 437 lines of this checkout's `errors.jsonl` were one fixture, in the
+  file the navigator is sent to by name.
 - **`scripts/root-hints.sh` is the root-hint contract**, and the one place the mount round trip
   lives (cb-ue0). `scripts/launch` resolves `consumer-root --hints` once per session start and
   exports `CEREBRO_CONSUMER_ROOT`, `CEREBRO_CONSUMER_SHARED_ROOT` and `CEREBRO_CONSUMER_MOUNT`;

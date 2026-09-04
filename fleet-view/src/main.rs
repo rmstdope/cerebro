@@ -7700,6 +7700,27 @@ mod main_tests {
         assert!(!app.health_pinned());
     }
 
+    /// And `s` drops a pinned health REPORT too, not only a pinned bead (cb-xhu.4.2): `pin` holds
+    /// one tenant, and "the pane is the agent's again" is the rule the navigator chose for this
+    /// key. `f` and `k` leave either alone, and so do `F2` and `F3`.
+    #[test]
+    fn pressing_s_drops_the_pinned_health_report() {
+        let mut app = app_with_a_bead_under_the_cursor();
+        app.pin = Some(cerebro_tui::app::SessionPin::Health);
+        let mut host = SessionHost::default();
+        drive(
+            &mut app,
+            &mut host,
+            &nowhere().0,
+            vec![crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('s'),
+                crossterm::event::KeyModifiers::NONE,
+            )],
+        );
+        assert_eq!(app.pin, None, "s hands the pane back to the agent");
+        assert!(!app.health_pinned());
+    }
+
     /// `g` re-reads the pinned bead, and asks nothing at all when none is pinned.
     #[test]
     fn refresh_all_re_reads_only_a_pinned_bead() {

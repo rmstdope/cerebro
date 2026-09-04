@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use cerebro_tui::model::{self, StateInputs};
-use cerebro_tui::readers::{read_health, read_history, CommandRunner};
+use cerebro_tui::readers::{read_history, CommandRunner};
 use cerebro_tui::{read_roster, ReaderPaths, RealCommands};
 
 /// This repository's root — `fleet-view/`'s parent, which is the same in an integration target.
@@ -151,7 +151,6 @@ fn real_fleet_history_output_feeds_the_history_line() {
     }
 }
 
-
 /// The same contract over the health reader: this checkout's own `scripts/fleet-health --json`,
 /// deserialized into `FleetHealth`, with the REAL object's key set asserted against the struct's
 /// own field names (cb-xhu.4.2).
@@ -171,23 +170,27 @@ fn real_fleet_health_output_matches_the_health_struct() {
         shared_root: root.clone(),
         scripts_dir: root.join("scripts"),
     };
-    let Ok(health) = read_health(&paths, &RealCommands) else {
+    // ONE invocation, deserialized twice - as `FleetHealth` and as an untyped object - rather
+    // than `read_health` plus a second run for the raw keys. A second run is another `jq` walk
+    // over the same growing logs, and the two can disagree: a rotation between them would make
+    // the key comparison a coin toss, which is the History case's own `open_min` reasoning.
+    // What `read_health` adds over this call is its argv, cwd and bound, and those are pinned
+    // exactly by `readers::tests::read_health_asks_fleet_health_for_json` - the same split the
+    // crate already makes between parsing and spawning (cb-x3u).
+    let Ok(stdout) = RealCommands.run(
+        &paths.scripts_dir.join("fleet-health"),
+        &["--json"],
+        Some(&paths.consumer_root),
+        Duration::from_secs(30),
+    ) else {
         // No logs: the script says so on stderr and exits non-zero, and the pane draws no Health
         // section at all. Nothing more to prove here.
         return;
     };
-
-    // The same bytes again, as untyped JSON, so the object's own keys can be compared.
-    let stdout = RealCommands
-        .run(
-            &paths.scripts_dir.join("fleet-health"),
-            &["--json"],
-            Some(&paths.consumer_root),
-            Duration::from_secs(30),
-        )
-        .expect("the script answered a moment ago");
+    let health: model::FleetHealth =
+        serde_json::from_slice(&stdout).expect("what `read_health` deserializes");
     let raw: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_slice(&stdout).expect("the same bytes `read_health` parses");
+        serde_json::from_slice(&stdout).expect("the same bytes, untyped");
 
     let top = [
         "since",

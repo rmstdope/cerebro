@@ -753,7 +753,8 @@ rows. **`h`** pins the whole four-section report in the Session pane, titled `Fl
 any focus; `h` again unpins and leaves focus where it is; a pinned bead replaces it and it replaces
 a pinned bead, `App::pin` holding exactly one tenant by construction; and arriving at Fleet by
 `Tab`, `Shift-Tab` or `F1` drops it exactly as a pinned bead is dropped (cb-lor), while `F2` and
-`F3` leave it alone. `h` starts no read — the report is whatever the five-minute reader last got, so
+`F3` leave it alone; `s` drops it too, by the same rule that already drops a pinned bead — the pane
+is the agent's again — where `f` and `k` leave either alone. `h` starts no read — the report is whatever the five-minute reader last got, so
 it can never fail and never blocks, and `g` is what refreshes it. All of it is **outside the
 supervision lease**, as `x` and the priority keys are: it reads logs and decides nothing, so a
 read-only view shows it. The hint clause `h health` is offered unconditionally, at a rank

@@ -10001,3 +10001,74 @@ two, exactly as `cerebro--triage-message' has none."
                  (concat "[cerebro] Two hours since your last sweep. Run the two sweeps that are "
                          "yours - the claims, and the worktrees the pruner declined - and bring "
                          "the navigator anything that needs a judgement."))))
+
+;; ---------------------------------------------------------------------------
+;; A session that stopped mid-work is marked stuck on its row (cb-ykz.2)
+
+(defun cerebro-test--stuck-agent (&rest overrides)
+  "A `working' implementer whose turn ended long ago, with OVERRIDES applied."
+  (apply #'make-cerebro-agent
+         (append overrides
+                 (list :name "Storm" :role "implementer" :kind 'implementer
+                       :state 'working :phase "ci" :bead "cb-ykz.2"
+                       :since "2026-09-04T00:00:00Z"
+                       :phase-since "2026-09-04T00:00:00Z"
+                       :turn-ended "2026-09-04T00:11:00Z"
+                       :external nil))))
+
+(ert-deftest cerebro-test/a-working-row-is-stuck-only-past-the-ceiling ()
+  "The boundary is inclusive, and only a `working' row with a turn-end counts."
+  (let ((now (encode-time (iso8601-parse "2026-09-04T09:00:00Z"))))
+    (should-not (cerebro--stuck-for
+                 (cerebro-test--stuck-agent) ; 8h49 - well past
+                 (encode-time (iso8601-parse "2026-09-04T00:40:59Z"))))
+    (should (equal (cerebro--stuck-for
+                    (cerebro-test--stuck-agent)
+                    (encode-time (iso8601-parse "2026-09-04T00:41:00Z")))
+                   cerebro-stuck-ceiling))
+    ;; No turn-end at all: the ordinary working row, which must never go red.
+    (should-not (cerebro--stuck-for
+                 (make-cerebro-agent :name "Storm" :role "implementer" :kind 'implementer
+                                     :state 'working :since "2026-09-04T00:00:00Z")
+                 now))
+    ;; `asking' is a question for the navigator, not a failure.
+    (dolist (state '(asking idle waiting dead standby unknown))
+      (should-not (cerebro--stuck-for (cerebro-test--stuck-agent :state state) now)))
+    ;; A clock ahead of this view's is not evidence of a stopped session.
+    (should-not (cerebro--stuck-for
+                 (cerebro-test--stuck-agent :turn-ended "2026-09-04T10:00:00Z")
+                 now))))
+
+(ert-deftest cerebro-test/a-stuck-row-draws-a-red-cross-and-its-duration ()
+  (let* ((now (encode-time (iso8601-parse "2026-09-04T09:00:00Z")))
+         (row (nth 1 (cerebro--entry (cerebro-test--stuck-agent) now))))
+    (should (equal (substring-no-properties (aref row 0) 0 1) "✗"))
+    (should (memq 'error (cerebro-test--faces-at (aref row 0) 0)))
+    (should (equal (substring-no-properties (aref row 4)) "stuck 8h49"))
+    (should (memq 'error (cerebro-test--faces-at (aref row 4) 0)))))
+
+(ert-deftest cerebro-test/a-stuck-row-keeps-its-bead-and-phase ()
+  "The row that most needs explaining goes on saying what it was doing."
+  (let* ((now (encode-time (iso8601-parse "2026-09-04T09:00:00Z")))
+         (row (nth 1 (cerebro--entry (cerebro-test--stuck-agent) now))))
+    (should (equal (substring-no-properties (aref row 2)) "ci"))
+    (should (equal (substring-no-properties (aref row 3)) "cb-ykz.2"))))
+
+(ert-deftest cerebro-test/an-ordinary-working-row-is-unchanged ()
+  (let* ((now (encode-time (iso8601-parse "2026-09-04T09:00:00Z")))
+         (agent (make-cerebro-agent :name "Storm" :role "implementer" :kind 'implementer
+                                    :state 'working :bead "cb-ykz.2"
+                                    :since "2026-09-04T08:48:00Z"))
+         (row (nth 1 (cerebro--entry agent now))))
+    (should (equal (substring-no-properties (aref row 0) 0 1) "●"))
+    (should (memq 'success (cerebro-test--faces-at (aref row 0) 0)))
+    (should (equal (substring-no-properties (aref row 4)) "12m"))))
+
+(ert-deftest cerebro-test/the-for-column-is-sized-for-a-stuck-row ()
+  (should (>= (nth 4 (cerebro--column-widths '("Storm") '("implementer") '("cb-ykz.2")
+                                             '("stuck 11h30")))
+              11)))
+
+(ert-deftest cerebro-test/the-glyph-is-unchanged-without-the-stuck-argument ()
+  (should (equal (substring-no-properties (cerebro--glyph 'working)) "●"))
+  (should (memq 'success (cerebro-test--faces-at (cerebro--glyph 'working) 0))))

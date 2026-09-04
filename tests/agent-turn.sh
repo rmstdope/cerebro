@@ -175,4 +175,32 @@ out="$(run_turn "$tmp" Cyclops 2>/dev/null)" || status=$?
 rm -rf "$tmp"
 pass "no-mode-at-all-exits-zero"
 
+# --- a-failing-jq-leaves-no-tmp-behind ---
+# The redirection creates the tmp file before jq runs, so a failing jq would otherwise leave litter
+# in a directory both fleet views poll every five seconds.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
+f="$(state_file "$tmp" Cyclops)"
+before="$(cat "$f")"
+stub_dir="$(mktemp -d "$work_dir/jq-stub-XXXXXX")"
+cat > "$stub_dir/jq" <<'STUB'
+#!/usr/bin/env bash
+# Parses (so the guard passes), then fails on the write.
+case "$*" in
+  *turn_ended*) exit 1 ;;
+  *) exec /usr/bin/env -i PATH=/usr/bin:/bin jq "$@" ;;
+esac
+STUB
+chmod +x "$stub_dir/jq"
+status=0
+out="$(CEREBRO_AGENT_NAME=Cyclops PATH="$stub_dir:$PATH" \
+        "$tmp/.claude/cerebro/scripts/agent-turn" ended)" || status=$?
+[[ $status -eq 0 ]] || fail "a-failing-jq-leaves-no-tmp-behind: exited $status"
+[[ -z "$out" ]] || fail "a-failing-jq-leaves-no-tmp-behind: wrote to stdout: $out"
+[[ "$before" == "$(cat "$f")" ]] || fail "a-failing-jq-leaves-no-tmp-behind: the file changed"
+leftovers="$(find "$tmp/.cerebro/state" -name '*.tmp' 2>/dev/null)"
+[[ -z "$leftovers" ]] || fail "a-failing-jq-leaves-no-tmp-behind: left behind: $leftovers"
+rm -rf "$tmp" "$stub_dir"
+pass "a-failing-jq-leaves-no-tmp-behind"
+
 suite_passed

@@ -41,7 +41,10 @@
 #     therefore prints its usage on stderr and exits 0.
 #
 # Writes atomically (a .tmp file, then mv) for `agent-state''s reason: cerebro--read-state-file and
-# readers::read_states read this file on a five-second clock and must never see a torn one.
+# readers::read_states read this file on a five-second clock and must never see a torn one. The tmp
+# name carries this process''s pid, because `agent-state' writes the same file through its own
+# `<file>.tmp' - two writers sharing one scratch path would let each `mv' the other''s half-written
+# object, which is the very atomicity both headers claim.
 
 set -euo pipefail
 
@@ -68,6 +71,8 @@ command -v jq >/dev/null 2>&1 || exit 0
 repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || exit 0
 state_file="$repo_root/.cerebro/state/$name.state.json"
 
+tmp_file="$state_file.$$.tmp"
+
 [[ -f "$state_file" ]] || exit 0
 
 # A file that does not parse is left exactly as it is - there is nothing to modify.
@@ -76,16 +81,20 @@ jq -e . "$state_file" >/dev/null 2>&1 || exit 0
 case "$mode" in
   ended)
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    jq --arg now "$now" '.turn_ended = $now' "$state_file" > "$state_file.tmp" 2>/dev/null || exit 0
-    mv -f "$state_file.tmp" "$state_file" 2>/dev/null || exit 0
+    # The redirection creates the file before jq runs, so a failing jq leaves litter in a directory
+    # two views poll: remove it on the way out rather than exiting over it.
+    jq --arg now "$now" '.turn_ended = $now' "$state_file" > "$tmp_file" 2>/dev/null \
+      || { rm -f "$tmp_file"; exit 0; }
+    mv -f "$tmp_file" "$state_file" 2>/dev/null || { rm -f "$tmp_file"; exit 0; }
     ;;
   resumed)
     # Already clear, or never stamped: do nothing at all, so a session's ordinary turn costs no
     # write of a file two readers poll every five seconds.
     current="$(jq -r '.turn_ended // "null"' "$state_file" 2>/dev/null || echo null)"
     [[ "$current" == "null" ]] && exit 0
-    jq '.turn_ended = null' "$state_file" > "$state_file.tmp" 2>/dev/null || exit 0
-    mv -f "$state_file.tmp" "$state_file" 2>/dev/null || exit 0
+    jq '.turn_ended = null' "$state_file" > "$tmp_file" 2>/dev/null \
+      || { rm -f "$tmp_file"; exit 0; }
+    mv -f "$tmp_file" "$state_file" 2>/dev/null || { rm -f "$tmp_file"; exit 0; }
     ;;
 esac
 

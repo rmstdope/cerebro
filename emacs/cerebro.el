@@ -4129,6 +4129,16 @@ into the session on every tick, burying the agent's own output and
 resetting what it was told.  A name leaves this set as soon as it is no
 longer asking, so its next question is nudgeable again.")
 
+(defvar-local cerebro--stuck-logged nil
+  "Names already logged for the stuck stretch they are in now (cb-ykz.2).
+
+The poll runs every five seconds; without this the line would be written on
+every tick, and a log nobody can read is one that answers no diagnosis.  A
+name leaves this set the moment its row stops being stuck, exactly as
+`cerebro--nudged\=' leaves it when a row stops asking - a set that is never
+cleared logs a stopped session once and then never again, even after it
+recovers and stops a second time.")
+
 (defun cerebro--autostart (buffer repo-root)
   "Start every declared autostart agent in BUFFER that is dead, once.
 
@@ -4665,7 +4675,7 @@ half out of it."
 
 (defconst cerebro--log-decision-events
   '(start end retire nudge standby arm refused exit give-up sweep sweep-tell triage disarm-all
-    error)
+    stuck error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 
@@ -4913,6 +4923,24 @@ nudge is a new instruction, and a view handing supervision over issues none."
     (let ((name (cerebro-agent-name agent)))
       (unless (eq (cerebro-agent-state agent) 'asking)
         (setq cerebro--nudged (delete name cerebro--nudged)))
+      ;; A session that stopped mid-work: said on the row and written down,
+      ;; and acted on in no way at all - that is cb-ykz.3's.  Gated on the
+      ;; mode like the nudge, because a view that decides nothing records
+      ;; nothing; the DRAWING is gated on nothing, since looking at a fleet
+      ;; is not supervising it (cb-ykz.2).
+      (let ((stuck (cerebro--stuck-for agent now)))
+        (if (not stuck)
+            (setq cerebro--stuck-logged (delete name cerebro--stuck-logged))
+          (when (and (cerebro--supervision-may-act-p mode)
+                     (not (member name cerebro--stuck-logged)))
+            (push name cerebro--stuck-logged)
+            (cerebro--log repo-root 'stuck
+                          (list (cons 'agent name)
+                                (cons 'role (cerebro-agent-role agent))
+                                (cons 'state (symbol-name (cerebro-agent-state agent)))
+                                (cons 'phase (cerebro-agent-phase agent))
+                                (cons 'bead (cerebro-agent-bead agent))
+                                (cons 'stuck_for stuck))))))
       (cerebro--with-logged-errors (format "supervise %s" name)
         (pcase (let ((action (cerebro--supervise-action
                               agent (cerebro--stop-flag-p repo-root name) now)))

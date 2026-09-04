@@ -10072,3 +10072,54 @@ two, exactly as `cerebro--triage-message' has none."
 (ert-deftest cerebro-test/the-glyph-is-unchanged-without-the-stuck-argument ()
   (should (equal (substring-no-properties (cerebro--glyph 'working)) "●"))
   (should (memq 'success (cerebro-test--faces-at (cerebro--glyph 'working) 0))))
+
+(defun cerebro-test--stuck-lines (root)
+  "The `stuck' lines `cerebro--supervise' wrote under ROOT."
+  (let ((file (cerebro--log-file root nil "decisions")))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (seq-filter (lambda (line) (string-match-p "\"event\":\"stuck\"" line))
+                    (split-string (buffer-string) "\n" t))))))
+
+(ert-deftest cerebro-test/a-stuck-row-is-logged-once-per-occurrence ()
+  "The poll runs every five seconds; a line per tick is a log nobody can read.
+
+A set that is never cleared is the other failure: it logs a stopped session
+once and then never again, even after it recovers and stops a second time."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (now (encode-time (iso8601-parse "2026-09-04T09:00:00Z")))
+        (cerebro-log-verbosity 'decisions))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil)))
+          (with-temp-buffer
+            (let ((stuck (cerebro-test--stuck-agent)))
+              (cerebro--supervise (list stuck) root now '(supervising))
+              (cerebro--supervise (list stuck) root now '(supervising))
+              (cerebro--supervise (list stuck) root now '(supervising))
+              (should (= (length (cerebro-test--stuck-lines root)) 1))
+              (let ((line (car (cerebro-test--stuck-lines root))))
+                (dolist (field '("\"agent\":\"Storm\"" "\"role\":\"implementer\""
+                                 "\"state\":\"working\"" "\"phase\":\"ci\""
+                                 "\"bead\":\"cb-ykz.2\"" "\"stuck_for\":31740"))
+                  (should (string-match-p (regexp-quote field) line))))
+              ;; Running again, then stopped again: a second occurrence.
+              (cerebro--supervise
+               (list (cerebro-test--stuck-agent :turn-ended nil)) root now '(supervising))
+              (cerebro--supervise (list stuck) root now '(supervising))
+              (should (= (length (cerebro-test--stuck-lines root)) 2)))))
+      (delete-directory root t))))
+
+(ert-deftest cerebro-test/a-read-only-view-logs-no-stuck-line ()
+  "A view that decides nothing records nothing - the rule the nudge follows.
+The drawing is gated on nothing at all: looking at a fleet is not supervising it."
+  (let ((root (make-temp-file "cerebro-test-" t))
+        (now (encode-time (iso8601-parse "2026-09-04T09:00:00Z")))
+        (cerebro-log-verbosity 'decisions))
+    (unwind-protect
+        (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil)))
+          (with-temp-buffer
+            (cerebro--supervise (list (cerebro-test--stuck-agent)) root now
+                                '(read-only configured-for emacs))
+            (should-not (cerebro-test--stuck-lines root))))
+      (delete-directory root t))))

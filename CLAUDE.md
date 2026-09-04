@@ -371,8 +371,10 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   `UserPromptSubmit` hook running `scripts/agent-turn`, which stamps `turn_ended` into the state
   file when a session's turn ends and clears it when one begins — and every `scripts/agent-state`
   write clears it too, an agent writing its own state being a session still running turns. Both
-  readers parse the field and carry it on the row; **nothing reads it yet**. Deriving "stuck" from
-  it is cb-ykz.2 and acting on one is cb-ykz.3. A fleet declaring `agent_cli copilot` gets no
+  readers parse the field and carry it on the row, and since cb-ykz.2 both **derive "stuck"** from
+  it — a `working` row whose turn ended more than `cerebro-stuck-ceiling` /
+  `STUCK_CEILING_SECONDS` (1800, a literal pair) ago. Acting on one is cb-ykz.3; today it is drawn
+  and recorded and no more. A fleet declaring `agent_cli copilot` gets no
   `turn_ended` at all: no measured Copilot event corresponds to `Stop`, and a guessed one would be
   a hook that silently never fires.
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
@@ -458,6 +460,13 @@ abbreviated path, a relative path, a formatted time — is normalised by the rea
 (`cerebro--repo-root` through `cerebro--canonical-root`), never assumed canonical by a comparator,
 and a new reader is not done until its contract case exists.
 
+Since cb-ykz.2 a **stuck** row says so: a `working` row whose recorded turn-end is older than
+`cerebro-stuck-ceiling` (1800 seconds) draws a red `✗` in place of its glyph and `stuck 8h49` —
+how long the turn has been over — where its elapsed pair would be, keeping its state, phase and
+bead untouched, and one `stuck` line per occurrence goes into `decisions.jsonl` (gated on
+supervision, like the nudge; the drawing is gated on nothing, since looking at a fleet is not
+supervising it). **Supervision still does nothing about it** — that is cb-ykz.3.
+
 It writes three of its own beside them. **`.cerebro/state/errors.jsonl`** is the short one and the
 one to be pointed at: a line per thing that went wrong — `{event, ts, context, message}`, where
 `context` names the part of the view it came from (`autostart`, `roster`, `launch`, `sweep`,
@@ -470,8 +479,8 @@ evaluations a day would make useless. An error is written at every verbosity but
 means nothing at all, which is what the suite binds.
 
 **`.cerebro/state/decisions.jsonl`** is the record of what the view actually did: a line per
-decision — start (with the trigger that fired), end, retire, nudge, sweep run, sweep line typed
-(`sweep-tell`), abnormal exit. Since cb-xhu.2 that is *all* it holds, and it therefore keeps
+decision — start (with the trigger that fired), end, retire, nudge, stuck, sweep run, sweep line
+typed (`sweep-tell`), abnormal exit. Since cb-xhu.2 that is *all* it holds, and it therefore keeps
 months: it was 99.7% evaluation lines and rotated a start or an exit away within four days, which
 is exactly the window cb-nc8 needed and did not have.
 
@@ -610,12 +619,22 @@ refusal is parked from the first failure, where a silent crash is retried. Since
 three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own
 cadence and an hourly floor each. Since cb-kcs.4.4 all of it is written down, in the same three
 append-only files `M-x cerebro` writes: `decisions.jsonl` — a line per start (with the trigger that
-fired), end, retire, nudge, arm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
+fired), end, retire, nudge, stuck, arm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
 keeps months; `evaluations.jsonl` — at the verbosity this view compiles in, a
 line per trigger evaluation per armed row per tick carrying what the trigger read and which guard
 held it; and `errors.jsonl`, one line per outage rather than per failed read, naming the pane or
 the name it came from. One policy rotates all three; the writer is silent and unable to fail; and a
 read-only view writes none of them, since it decides nothing.
+
+Since cb-ykz.2 its Fleet rows carry the same **stuck** signal `M-x cerebro` does, off the same
+rule (`lifecycle::stuck_for`) and the same 1800-second ceiling: a red `✗` glyph, and `stuck 8h49`
+in red. Which cell carries the text is the one divergence, and it is the pane's own shape: in the
+wide layout it replaces the FOR column's elapsed pair, and **below `WIDE_COLUMNS` — which is the
+ordinary split layout, where the Fleet pane is a fixed 40 cells — the BEAD cell carries it**
+instead, standing aside as it already does for a standby label and a dead row's verdict, with
+`columns` sizing that column from the same `bead_cell` so the text is never cut. The STATE cell is
+untouched in both. One `stuck` line per occurrence goes into `decisions.jsonl`, gated on
+supervision like the nudge; nothing is ended, retired or nudged for it.
 
 Since cb-kcs.5.1 it runs **the six sweeps** as well, on their own ten-minute cadence and their own
 in-flight slot, and draws what they found as the Work pane's **first** section — `Sweeps {n}`, one

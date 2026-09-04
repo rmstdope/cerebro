@@ -478,7 +478,17 @@ fn supervise(
     if !app.supervision.may_end() {
         return;
     }
-    let rows: Vec<(String, String, AgentKind, RowState, Option<String>, Option<i64>)> = app
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        String,
+        String,
+        AgentKind,
+        RowState,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+    )> = app
         .fleet
         .content
         .value()
@@ -492,16 +502,45 @@ fn supervise(
                         row.state.clone(),
                         row.bead.clone(),
                         row.since.map(|since| (now - since).num_seconds()),
+                        row.phase.clone(),
+                        lifecycle::stuck_for(&row.state, row.turn_ended, now),
                     )
                 })
                 .collect()
         })
         .unwrap_or_default();
-    for (name, role, kind, state, bead, stood) in rows {
+    for (name, role, kind, state, bead, stood, phase, stuck) in rows {
         // Before any action is decided, and for every row: a name that asked, was nudged, was
         // answered and asks again is nudgeable again.
         if state != RowState::Asking {
             app.nudged.remove(&name);
+        }
+        // The same shape for a stuck row, and it decides nothing: this bead makes a stopped
+        // session visible and no more (cb-ykz.2). Gated on `may_supervise` like the nudge - a
+        // view that decides nothing records nothing - where the DRAWING is gated on nothing,
+        // because looking at a fleet is not supervising it.
+        match stuck {
+            None => {
+                app.stuck_logged.remove(&name);
+            }
+            Some(stood_stuck) => {
+                if app.supervision.may_supervise() && app.stuck_logged.insert(name.clone()) {
+                    logger.write(
+                        log::Event::Stuck,
+                        now,
+                        &[
+                            ("agent", serde_json::Value::from(name.as_str())),
+                            ("role", serde_json::Value::from(role.as_str())),
+                            ("state", serde_json::Value::from(state.word())),
+                            ("phase", phase.clone().map(serde_json::Value::from)
+                                .unwrap_or(serde_json::Value::Null)),
+                            ("bead", bead.clone().map(serde_json::Value::from)
+                                .unwrap_or(serde_json::Value::Null)),
+                            ("stuck_for", serde_json::Value::from(stood_stuck)),
+                        ],
+                    );
+                }
+            }
         }
         let agent = lifecycle::Supervised {
             kind,
@@ -7032,4 +7071,107 @@ mod main_tests {
             "the failure belonged to a bead nobody is reading"
         );
     }
+
+    // ---- cb-ykz.2: one `stuck` line per occurrence -------------------------------------
+
+    /// A `working` row whose turn ended STOOD seconds ago.
+    fn stuck_fleet_row(name: &str, stood: i64, now: DateTime<Utc>) -> cerebro_tui::model::FleetRow {
+        cerebro_tui::model::FleetRow {
+            phase: Some("ci".into()),
+            bead: Some("cb-ykz.2".into()),
+            turn_ended: Some(now - chrono::Duration::seconds(stood)),
+            ..stood_row(name, cerebro_tui::model::AgentKind::Implementer,
+                        cerebro_tui::model::RowState::Working, stood, now)
+        }
+    }
+
+    #[test]
+    fn a_stuck_row_is_logged_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+
+        let log_root = tempfile::tempdir().unwrap();
+        let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
+        let mut logger = Logger::new(log_root.path());
+        logger.set_enabled(true);
+
+        let mut app = lifecycle_app(supervising(), vec![stuck_fleet_row("Storm", 8 * 3600, now)]);
+        for _ in 0..3 {
+            supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
+                      &mut logger, &paths, now, Instant::now());
+        }
+
+        let written = std::fs::read_to_string(&decisions).unwrap_or_default();
+        let lines: Vec<&str> = written.lines().filter(|l| l.contains("\"event\":\"stuck\"")).collect();
+        assert_eq!(lines.len(), 1, "once per occurrence, not per tick: {written}");
+        let line = lines[0];
+        for field in ["\"agent\":\"Storm\"", "\"role\":", "\"state\":\"working\"",
+                      "\"phase\":\"ci\"", "\"bead\":\"cb-ykz.2\"", "\"stuck_for\":28800"] {
+            assert!(line.contains(field), "{field} missing from {line}");
+        }
+    }
+
+    #[test]
+    fn a_row_that_stops_being_stuck_can_be_logged_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+
+        let log_root = tempfile::tempdir().unwrap();
+        let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
+        let mut logger = Logger::new(log_root.path());
+        logger.set_enabled(true);
+
+        let mut app = lifecycle_app(supervising(), vec![stuck_fleet_row("Storm", 8 * 3600, now)]);
+        let mut tick = |app: &mut App, host: &mut SessionHost, logger: &mut Logger| {
+            supervise(app, host, &mut cerebro_tui::triggers::StartLedger::default(),
+                      logger, &paths, now, Instant::now());
+        };
+        tick(&mut app, &mut host, &mut logger);
+
+        // Recovered: a turn is running again.
+        app.finish_refresh(
+            Ok(vec![stood_row("Storm", cerebro_tui::model::AgentKind::Implementer,
+                              cerebro_tui::model::RowState::Working, 60, now)]),
+            now,
+        );
+        tick(&mut app, &mut host, &mut logger);
+
+        // And stopped again.
+        app.finish_refresh(Ok(vec![stuck_fleet_row("Storm", 8 * 3600, now)]), now);
+        tick(&mut app, &mut host, &mut logger);
+
+        let written = std::fs::read_to_string(&decisions).unwrap_or_default();
+        let count = written.lines().filter(|l| l.contains("\"event\":\"stuck\"")).count();
+        assert_eq!(count, 2, "a set never cleared logs a recovered session only once: {written}");
+    }
+
+    #[test]
+    fn a_read_only_view_logs_no_stuck_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+
+        let log_root = tempfile::tempdir().unwrap();
+        let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
+        let mut logger = Logger::new(log_root.path());
+        logger.set_enabled(true);
+
+        let read_only = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                cerebro_tui::supervisor::SupervisorKind::Emacs,
+            ),
+        );
+        let mut app = lifecycle_app(read_only, vec![stuck_fleet_row("Storm", 8 * 3600, now)]);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
+                  &mut logger, &paths, now, Instant::now());
+
+        let written = std::fs::read_to_string(&decisions).unwrap_or_default();
+        assert!(!written.contains("\"event\":\"stuck\""), "a view that decides nothing: {written}");
+    }
+
 }

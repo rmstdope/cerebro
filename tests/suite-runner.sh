@@ -73,6 +73,12 @@ run() {
     shift
   fi
 
+  local guard="$work_dir/protected"
+  if [[ "${1:-}" == "--guard" ]]; then
+    guard="${2:-}"
+    shift 2
+  fi
+
   local a has_log_dir=""
   for a in "$@"; do
     if [[ "$a" == "--ci" ]]; then
@@ -92,11 +98,11 @@ run() {
   fi
   args+=("$@")
 
-  # Every call carries a CEREBRO_PROTECTED_STATE_DIR under $work_dir unless the caller set one in
-  # the environment for that call, for the --log-dir paragraph's reason (cb-xhu.1): this suite runs
-  # inside the gate, the outer run exports the REAL protected directory, and an inner call that
-  # inherited it would be asserting against the navigator's own live logs.
-  local guard="${CEREBRO_PROTECTED_STATE_DIR-$work_dir/protected}"
+  # Every call carries a CEREBRO_PROTECTED_STATE_DIR under $work_dir, for the --log-dir paragraph's
+  # reason (cb-xhu.1): this suite runs inside the gate, the outer run exports the REAL protected
+  # directory, and an inner call that inherited it would be asserting against the navigator's own
+  # live logs. A leading `--guard VALUE' sets it to something else - the empty string is the
+  # guard-off case - and is consumed here, never reaching the script.
 
   local out_file="$work_dir/run.out" err_file="$work_dir/run.err"
   set +e
@@ -727,7 +733,7 @@ source "$repo_root/scripts/jsonl-log.sh"
 cerebro_jsonl_append "$work_dir/unguarded-target.jsonl" '{"x":1}' || exit 1
 exit 0
 EOF
-CEREBRO_PROTECTED_STATE_DIR="" run "$work_dir/violating-unguarded"
+run --guard "" "$work_dir/violating-unguarded"
 [[ $status -eq 0 ]] || fail "an empty guard: expected exit 0, got $status
 $both"
 ! grep -q "wrote to the fleet's live logs" <<<"$err" || fail "an empty guard still reported a violation

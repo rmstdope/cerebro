@@ -21,6 +21,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fail, pass, $work_dir and its cleanup trap - see tests/lib/consumer.sh.
 source "$repo_root/tests/lib/consumer.sh"
 
+# This suite refuses writes on purpose, so it must never record them into the run that is running
+# it: `scripts/suite-runner' exports a report file and a suite name, and an inherited report would
+# make the outer gate red for cases that are doing exactly what they are meant to (cb-xhu.1). Each
+# case that wants a report names its own.
+unset CEREBRO_PROTECTED_STATE_DIR CEREBRO_PROTECTED_STATE_REPORT CEREBRO_SUITE_NAME
+
 source "$repo_root/scripts/jsonl-log.sh"
 
 # --- appends one line and returns 0 -------------------------------------------------------------

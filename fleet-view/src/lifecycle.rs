@@ -2055,5 +2055,4 @@ mod tests {
         // A state file written by a machine whose clock is ahead is not evidence of anything.
         assert_eq!(stuck_for(&RowState::Working, Some(at(3600)), at(0)), None);
     }
-
 }

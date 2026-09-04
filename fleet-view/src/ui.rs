@@ -4676,5 +4676,4 @@ mod tests {
         assert_eq!(cell.fg, Some(RED));
         assert_eq!(cell.bg, Some(SELECTED_BG), "red survives the selection band");
     }
-
 }

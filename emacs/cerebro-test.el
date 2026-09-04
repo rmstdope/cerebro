@@ -10123,3 +10123,14 @@ The drawing is gated on nothing at all: looking at a fleet is not supervising it
                                 '(read-only configured-for emacs))
             (should-not (cerebro-test--stuck-lines root))))
       (delete-directory root t))))
+
+(ert-deftest cerebro-test/an-external-stuck-row-still-says-how-long ()
+  "`external' is every row of a fleet this Emacs did not start - which, in a
+project declaring `fleet_supervisor tui\\=', is every row there is.  A red cross
+with an empty cell beside it is the very thing this signal exists to replace."
+  (let* ((now (encode-time (iso8601-parse "2026-09-04T09:00:00Z")))
+         (row (nth 1 (cerebro--entry (cerebro-test--stuck-agent :external t) now))))
+    (should (equal (substring-no-properties (aref row 0) 0 1) "✗"))
+    (should (equal (substring-no-properties (aref row 4)) "stuck 8h49"))
+    ;; The Bead column is still the external dash: that arm is not this bead's.
+    (should (equal (substring-no-properties (aref row 3)) "—"))))

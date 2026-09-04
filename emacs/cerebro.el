@@ -797,9 +797,11 @@ question for the navigator rather than a failure, and an implementer\='s
 unanswered question is already nudged at `cerebro-answer-timeout\='.  Every
 other state has no turn to have ended.
 
-Nil-safe through `cerebro--seconds-since\=', so an absent or torn turn-end -
-and a timestamp in the future, from a machine whose clock is ahead - reads
-as \"not stuck\" rather than as a duration."
+Nil-safe through `cerebro--seconds-since\=', so an absent or torn turn-end reads
+as \"not stuck\" rather than as a duration.  A timestamp in the FUTURE - from a
+machine whose clock is ahead - answers nil for a different reason worth
+knowing: that function clamps with `max\=' , so the future reads as zero seconds
+stood, which is under any ceiling."
   (when (eq (cerebro-agent-state agent) 'working)
     (let ((stood (cerebro--seconds-since (cerebro-agent-turn-ended agent) now)))
       (when (and stood (>= stood cerebro-stuck-ceiling)) stood))))
@@ -958,7 +960,16 @@ rather than pushing the rest of the row right - see ah-lyc."
                           (t ""))
                     attention))
          (for-col (cerebro--emphasize
-                   (cond (external "")
+                   (cond
+                         ;; First, and above `external': a session this Emacs
+                         ;; did not start is still a session that stopped, and
+                         ;; in a project declaring `fleet_supervisor tui' every
+                         ;; row is external - so an arm below this one would
+                         ;; leave the red glyph with an empty cell beside it,
+                         ;; which is the very thing this signal replaces
+                         ;; (cb-ykz.2).
+                         (stuck-text (propertize stuck-text 'face 'error))
+                         (external "")
                          ;; A standby row has no session and so no elapsed
                          ;; time worth showing; what it is waiting for is the
                          ;; only thing the navigator can act on.
@@ -968,13 +979,6 @@ rather than pushing the rest of the row right - see ah-lyc."
                          ;; the row rather than behind `RET'.
                          ((and (eq state 'dead) exit-line)
                           (propertize exit-line 'face 'error))
-                         ;; A session that stopped mid-work: how long the turn
-                         ;; has been over, which is the number that decides
-                         ;; whether to act and the one the elapsed pair does
-                         ;; not give.  After `dead' and before the elapsed
-                         ;; pair - a stuck row is `working', so it can be
-                         ;; neither of the two above (cb-ykz.2).
-                         (stuck-text (propertize stuck-text 'face 'error))
                          (t (cerebro--for-column (cerebro-agent-since agent)
                                                  (cerebro-agent-phase-since agent) now)))
                    attention)))

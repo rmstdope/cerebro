@@ -7149,6 +7149,37 @@ mod main_tests {
         assert_eq!(count, 2, "a set never cleared logs a recovered session only once: {written}");
     }
 
+    /// The guard the case below could not reach: `Draining` may END, so `supervise` runs the row
+    /// loop, and `may_supervise()` is false - which is the only shape that proves the `stuck`
+    /// line is gated at all. `ReadOnly` returns at the top of `supervise` and would pass with the
+    /// guard deleted (review finding 2).
+    #[test]
+    fn a_draining_view_logs_no_stuck_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+
+        let log_root = tempfile::tempdir().unwrap();
+        let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
+        let mut logger = Logger::new(log_root.path());
+        logger.set_enabled(true);
+
+        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
+            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
+            live_sessions: 1,
+        };
+        assert!(draining.may_end() && !draining.may_supervise());
+
+        let mut app = lifecycle_app(draining, vec![stuck_fleet_row("Storm", 8 * 3600, now)]);
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
+                  &mut logger, &paths, now, Instant::now());
+
+        let written = std::fs::read_to_string(&decisions).unwrap_or_default();
+        assert!(!written.contains("\"event\":\"stuck\""), "a view handing over decides nothing: {written}");
+        assert!(app.stuck_logged.is_empty(), "and remembers nothing it did not write");
+    }
+
     #[test]
     fn a_read_only_view_logs_no_stuck_line() {
         let dir = tempfile::tempdir().unwrap();
@@ -7173,5 +7204,4 @@ mod main_tests {
         let written = std::fs::read_to_string(&decisions).unwrap_or_default();
         assert!(!written.contains("\"event\":\"stuck\""), "a view that decides nothing: {written}");
     }
-
 }

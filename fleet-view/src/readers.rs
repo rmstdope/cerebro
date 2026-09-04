@@ -154,7 +154,6 @@ impl From<String> for Invocation {
     }
 }
 
-
 /// One impure read gone wrong. Each variant keeps enough to diagnose it: which program or path,
 /// and what it said.
 #[derive(Debug)]
@@ -820,11 +819,15 @@ pub fn read_sweeps(
     for sweep in Sweep::ALL {
         let program = paths.scripts_dir.join(sweep.script());
         let failed = |cause: String| ReadError::Sweep { script: sweep.key().to_string(), cause };
+        let args = ["--json"];
         let stdout = commands
-            .run(&program, &["--json"], Some(&paths.consumer_root), SWEEP_TIMEOUT)
-            .map_err(|error| failed(error.to_string()))?;
-        let candidates: Vec<Candidate> = serde_json::from_slice(&stdout)
-            .map_err(|error| failed(format!("{program}: {error}", program = program.display())))?;
+            .run(&program, &args, Some(&paths.consumer_root), SWEEP_TIMEOUT)
+            // `log_message`, not `Display`: a sweep script that timed out or exited non-zero names
+            // its argv in the log like every other reader (cb-xhu.3).
+            .map_err(|error| failed(error.log_message()))?;
+        let candidates: Vec<Candidate> = serde_json::from_slice(&stdout).map_err(|error| {
+            failed(format!("{invocation}: {error}", invocation = Invocation::new(&program, &args)))
+        })?;
         outputs.push((sweep, candidates));
     }
     let snapshot = read_sweep_snapshot(paths, programs, commands, Utc::now())?;
@@ -1089,6 +1092,19 @@ mod tests {
         let ps = read_processes(&programs, &ps_broken).unwrap_err().log_message();
         assert!(ps.contains("-axo"), "{ps}");
         assert!(ps.contains("pid=,ppid=,args="), "{ps}");
+
+        let endpoint = read_supervisor_endpoint(&paths, &garbage).unwrap_err().log_message();
+        assert!(endpoint.contains("--endpoint"), "{endpoint}");
+
+        let standby = read_standby_names(&paths, &FakeCommands::always(vec![0xff]))
+            .unwrap_err()
+            .log_message();
+        assert!(standby.contains("--standby"), "{standby}");
+
+        // A sweep's `Display` is one word by the navigator's choice, so its argv reaches the log
+        // through `cause` rather than through the `, running:` half.
+        let sweep = read_sweeps(&paths, &programs, &garbage).unwrap_err().log_message();
+        assert!(sweep.contains("--json"), "{sweep}");
 
         // The roster takes no arguments, so its log line has no `running:` half at all.
         let roster_broken = FakeCommands::always("Rogue implementer extra fourth word");

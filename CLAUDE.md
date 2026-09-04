@@ -245,6 +245,15 @@ suite that reads `docs/`, `README.md`, `LICENSE` or `models.conf.example` must e
 `scripts/ci-needed` in the same pull request. The two ERT jobs are literal, not a matrix, because a skipped matrix job never expands into
 the per-version check names branch protection requires.
 
+What the fleet's own logs say is stuck — starts per name, passes that held no bead, what is
+running now and what has been disarmed, over `decisions*.jsonl` and `transitions*.jsonl`. It reads
+and reports; it writes, starts and stops nothing, and exits 0 always:
+
+```bash
+scripts/fleet-health                       # the four-section report, last 24h
+scripts/fleet-health --since 7d --json     # the same facts as one object, for cerebro-tui
+```
+
 Sync symlinks into a consumer repo (run from that repo, not this one):
 
 ```bash

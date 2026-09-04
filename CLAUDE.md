@@ -474,7 +474,16 @@ Since cb-ykz.2 a **stuck** row says so: a `working` row whose recorded turn-end 
 how long the turn has been over — where its elapsed pair would be, keeping its state, phase and
 bead untouched, and one `stuck` line per occurrence goes into `decisions.jsonl` (gated on
 supervision, like the nudge; the drawing is gated on nothing, since looking at a fleet is not
-supervising it). **Supervision still does nothing about it** — that is cb-ykz.3.
+supervising it). **Since cb-ykz.3 supervision acts on it**: a stuck row is asked, once, to carry
+on — one line typed into the session, `resume` in the log and a `resume` arm on
+`cerebro--supervise-action`, with the stop flag making no difference. The typed line itself clears
+`turn_ended` (`scripts/agent-turn`), so the row is un-stuck on the very next tick; the escalation
+is therefore built on the state file not having moved rather than on a second clock
+(`cerebro--resumed`, which is **not** cleared when the row stops being stuck — that is the trap).
+If the row is stuck again with its `(since . phase_since)` pair unmoved, an interactive role's
+session is ended, or retired under a stop flag, which says *no further pass*; an implementer's is
+left alone — it holds a claim, a worktree and possibly an open pull request, and `sweep-stalled`
+already offers the unclaim at sixty minutes.
 
 It writes three of its own beside them. **`.cerebro/state/errors.jsonl`** is the short one and the
 one to be pointed at: a line per thing that went wrong — `{event, ts, context, message}`, where
@@ -489,7 +498,7 @@ means nothing at all, which is what the suite binds.
 
 **`.cerebro/state/decisions.jsonl`** is the record of what the view actually did: a line per
 decision — start (with the trigger that fired), end, retire, nudge, stuck, disarm (`k` and the
-standby disarm, which said nothing at all until cb-yv9), sweep run, sweep line
+standby disarm, which said nothing at all until cb-yv9), resume, sweep run, sweep line
 typed (`sweep-tell`), abnormal exit. Since cb-xhu.2 that is *all* it holds, and it therefore keeps
 months: it was 99.7% evaluation lines and rotated a start or an exit away within four days, which
 is exactly the window cb-nc8 needed and did not have.
@@ -629,7 +638,7 @@ refusal is parked from the first failure, where a silent crash is retried. Since
 three roles whose work arrives from outside the fleet start too, off a `gh` reader on its own
 cadence and an hourly floor each. Since cb-kcs.4.4 all of it is written down, in the same three
 append-only files `M-x cerebro` writes: `decisions.jsonl` — a line per start (with the trigger that
-fired), end, retire, nudge, stuck, arm, disarm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
+fired), end, retire, nudge, resume, stuck, arm, disarm, exit and give-up, and since cb-xhu.2 nothing else, which is why it
 keeps months; `evaluations.jsonl` — at the verbosity this view compiles in, a
 line per trigger evaluation per armed row per tick carrying what the trigger read and which guard
 held it; and `errors.jsonl`, one line per outage rather than per failed read, naming the pane or
@@ -644,7 +653,12 @@ ordinary split layout, where the Fleet pane is a fixed 40 cells — the BEAD cel
 instead, standing aside as it already does for a standby label and a dead row's verdict, with
 `columns` sizing that column from the same `bead_cell` so the text is never cut. The STATE cell is
 untouched in both. One `stuck` line per occurrence goes into `decisions.jsonl`, gated on
-supervision like the nudge; nothing is ended, retired or nudged for it.
+supervision like the nudge. Since cb-ykz.3 it also **acts**, off the same rule and the same
+memory `M-x cerebro` keeps: one `resume` line typed into the session, then — if it is stuck again
+with its `(since, phase_since)` pair unmoved — the interactive role's session ended, or retired
+under a stop flag, and an implementer's left to `sweep-stalled`. A stuck row this view hosts
+therefore writes two lines per occurrence, `stuck` and `resume`: the observation and what was done
+about it.
 
 Since cb-kcs.5.1 it runs **the six sweeps** as well, on their own ten-minute cadence and their own
 in-flight slot, and draws what they found as the Work pane's **first** section — `Sweeps {n}`, one

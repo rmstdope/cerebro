@@ -280,6 +280,37 @@ out="$(run "$tmp" --json)"
   || fail "a missing field did not render as ?: $(jq -r '.disarmed[0].detail' <<<"$out")"
 pass "a missing field renders as ? rather than as nothing"
 
+tmp="$(new_fixture)"
+roster_conf "$tmp" "Xavier planner"
+{
+  dec "$(ago 30)" disarm Xavier '{"role":"planner","by":"kill"}'
+  dec "$(ago 20)" disarm Beast  '{"role":"planner","by":"standby"}'
+} > "$tmp/.cerebro/state/decisions.jsonl"
+
+out="$(run "$tmp" --json)"
+[ "$(jq -r '[.disarmed[].event] | join(",")' <<<"$out")" = "disarm,disarm" ] \
+  || fail "a disarm line is not in the disarmed section: $(jq -c '.disarmed' <<<"$out")"
+[ "$(jq -r '.disarmed[0].agent' <<<"$out")" = "Xavier" ] || fail "a disarm does not name its agent"
+[ "$(jq -r '.disarmed[0].detail' <<<"$out")" = "disarmed with k, session killed" ] \
+  || fail "k-disarm detail: $(jq -r '.disarmed[0].detail' <<<"$out")"
+[ "$(jq -r '.disarmed[1].detail' <<<"$out")" = "disarmed with k on a standby row" ] \
+  || fail "standby-disarm detail: $(jq -r '.disarmed[1].detail' <<<"$out")"
+pass "a k-disarm and a standby disarm each reach the disarmed section with their own detail"
+
+tmp="$(new_fixture)"
+roster_conf "$tmp" "Xavier planner"
+{
+  dec "$(ago 30)" disarm Xavier '{"role":"planner"}'
+  dec "$(ago 20)" disarm Xavier '{"role":"planner","by":"handover"}'
+} > "$tmp/.cerebro/state/decisions.jsonl"
+
+out="$(run "$tmp" --json)"
+[ "$(jq -r '.disarmed[0].detail' <<<"$out")" = "disarmed by ?" ] \
+  || fail "a missing by did not render as ?: $(jq -r '.disarmed[0].detail' <<<"$out")"
+[ "$(jq -r '.disarmed[1].detail' <<<"$out")" = "disarmed by handover" ] \
+  || fail "an unknown by was dropped: $(jq -r '.disarmed[1].detail' <<<"$out")"
+pass "a disarm whose by is unknown or absent still says so"
+
 # --- the report ---------------------------------------------------------------------------------
 tmp="$(new_fixture)"
 roster_conf "$tmp" "Cyclops implementer" "Storm implementer" "Cerebro orchestrator"
@@ -287,6 +318,7 @@ roster_conf "$tmp" "Cyclops implementer" "Storm implementer" "Cerebro orchestrat
   dec "$(ago 30)" start Cyclops; dec "$(ago 25)" start Cyclops; dec "$(ago 20)" start Cyclops
   dec "$(ago 15)" start Storm
   dec "$(ago 10)" retire Storm '{"role":"implementer","state":"waiting","stop_flag":"set"}'
+  dec "$(ago 5)" disarm Cyclops '{"role":"implementer","by":"kill"}'
 } > "$tmp/.cerebro/state/decisions.jsonl"
 {
   tline "$(ago 40)" Storm working build "" 111 ""
@@ -311,6 +343,7 @@ Running now                long > 60m
 
 Disarmed or given up on
   2026-08-21T17:50:00Z  Storm      retired from waiting, stop flag set
+  2026-08-21T17:55:00Z  Cyclops    disarmed with k, session killed
 
 1 name over the start ceiling, 1 running past 60m.
 REPORT

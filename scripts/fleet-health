@@ -15,7 +15,7 @@
 #   Running now                 scripts/fleet-history --json         - and what is long
 #   Disarmed or given up on     decisions*.jsonl, give-up/disarm-all/retire
 #
-# `--since` takes a SPAN ONLY - 90m, 24h, 7d - defaulting to 24h. Deliberately narrower than
+# `--since` takes a SPAN ONLY - 30s, 90m, 24h, 7d - defaulting to 24h. Deliberately narrower than
 # fleet-history's, which also accepts an ISO-8601 timestamp: this command reports "the last N", and
 # one spelling cannot then drift from the other. An ISO timestamp is a usage error naming
 # fleet-history as the tool for a fixed date.
@@ -47,7 +47,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  echo "usage: fleet-health [--since <span>] [--json]" >&2
+  echo "usage: fleet-health [--since <span: 30s, 90m, 24h, 7d>] [--json]" >&2
   exit 2
 }
 
@@ -83,7 +83,7 @@ if [[ "$since_arg" =~ ^([0-9]+)([smhd])$ ]]; then
   esac
   since=$((now - seconds))
 else
-  echo "fleet-health: --since wants a span (90m, 24h, 7d), not '$since_arg' - use fleet-history --since for a fixed date" >&2
+  echo "fleet-health: --since wants a span (30s, 90m, 24h, 7d), not '$since_arg' - use fleet-history --since for a fixed date" >&2
   exit 2
 fi
 
@@ -113,8 +113,11 @@ done
 # Reused rather than re-derived: pairing transitions into intervals, the heartbeat rule, the
 # `from: null` rule and the staleness bound are fleet-history's whole job and are already pinned by
 # tests/fleet-history.sh. FLEET_HISTORY_NOW is passed through so the two agree about "now".
-if ! history="$(FLEET_HISTORY_NOW="$now" "$script_dir/fleet-history" --json 2>/dev/null)"; then
-  echo "fleet-health: scripts/fleet-history could not read the transition log under $state_dir" >&2
+# Its stderr is NOT swallowed: a missing transition log, a jq that is not installed and a
+# consumer-root that would not answer all look identical from here, and a line naming one of them
+# sends the navigator to the wrong file.
+if ! history="$(FLEET_HISTORY_NOW="$now" "$script_dir/fleet-history" --json)"; then
+  echo "fleet-health: scripts/fleet-history exited non-zero - see its message above" >&2
   exit 1
 fi
 
@@ -164,13 +167,18 @@ if ! out="$(jq -n \
         | group_by(.agent)
         | map(sort_by(._e)
               | reduce .[] as $l ([];
-                  if (.| length) == 0 or $l.from == null then . + [[$l]]
+                  if $l.from == null then . + [[$l]]
+                  elif (. | length) == 0 then [[$l]]
                   else .[0:length - 1] + [(.[length - 1] + [$l])]
                   end))
         | add // []
         # `waiting` is terminal - a pass that has not reached it is still running, and is counted
         # nowhere. Attributed to the window by its FIRST line, so a pass that started before the
         # window is not half-counted.
+        # A tail whose own first line is not a session start is a session the log rotation cut
+        # in half, not a pass: counted whole it is a false positive in the one section meant to
+        # name agents that did nothing.
+        | map(select(.[0].from == null))
         | map(select(.[length - 1].to == "waiting"))
         | map(select(.[0]._e >= $since and .[0]._e <= $now))
         | map({agent: .[0].agent, noop: (if any(.[]; .bead != null) then 0 else 1 end)})
@@ -218,8 +226,10 @@ fi
 
 # The report, from the same object, so the two can never disagree. Padding is done here rather than
 # by printf because the whole document is one jq expression; every line is right-stripped, so a
-# golden comparison is not about invisible trailing spaces.
-jq -r --arg span "$since_arg" '
+# golden comparison is not about invisible trailing spaces. Built into a variable and only printed
+# on success, exactly as the object above is: the header promises nothing on stdout when this fails,
+# and a jq streaming straight to stdout would leave half a report behind instead.
+if ! report="$(jq -r --arg span "$since_arg" '
   def spaces: "                                                  ";
   def padr($n): (. + spaces)[0:$n];
   def padmin($n): if (length) >= $n then . else (. + spaces)[0:$n] end;
@@ -275,4 +285,9 @@ jq -r --arg span "$since_arg" '
       | if ($clauses | length) == 0 then "Nothing over a threshold in the window."
         else ($clauses | join(", ")) + "." end) ]
   | .[]
-' <<<"$out"
+' <<<"$out")"; then
+  echo "fleet-health: could not render the report from the facts it had" >&2
+  exit 1
+fi
+
+printf '%s\n' "$report"

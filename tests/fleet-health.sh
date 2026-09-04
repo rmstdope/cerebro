@@ -190,6 +190,21 @@ out="$(run "$tmp" --json)"
 [ "$(jq -r '.passes[0].total' <<<"$out")" = 2 ] || fail "the rotated transition generation was not read"
 pass "both transition generations are read"
 
+# A log rotated mid-session leaves a tail whose first line is not a session start. Counted as a
+# whole pass it is a false positive in the one section meant to name agents doing nothing.
+tmp="$(new_fixture)"
+roster_conf "$tmp" "Cyclops implementer"
+: > "$tmp/.cerebro/state/decisions.jsonl"
+{
+  tline "$(ago 60)" Cyclops working review "" 111 build
+  tline "$(ago 50)" Cyclops waiting "" "" 111 working
+} > "$tmp/.cerebro/state/transitions.jsonl"
+
+out="$(run "$tmp" --json)"
+[ "$(jq -c '.passes' <<<"$out")" = '[]' ] \
+  || fail "a rotated-away session head was counted as a whole pass: $(jq -c '.passes' <<<"$out")"
+pass "a session whose opening line has rotated away is counted nowhere"
+
 # --- holds_beads comes from the roster ----------------------------------------------------------
 tmp="$(new_fixture)"
 roster_conf "$tmp" "Cerebro orchestrator"

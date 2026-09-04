@@ -3,7 +3,7 @@
 Claude Code hook settings `scripts/launch` passes to `claude --settings`. Not git hooks — those are
 `githooks/`, and they are a different mechanism entirely.
 
-## `question-state.settings.json`
+## `session-state.settings.json`
 
 Keeps an interactive agent's state file honest across a question to the navigator: `asking` for
 exactly as long as the question tool is open, and back to what it was doing the moment an answer (or
@@ -37,6 +37,37 @@ configures its own hooks keeps them.
 The agent files still describe the same transitions themselves, and should: the hook covers the
 question tool, and an agent asks in prose sometimes too. Two copies of a rule that is this cheap to
 write is the right number.
+
+### The turn-end hooks (cb-ykz.1)
+
+The same file also carries a `Stop` hook and a `UserPromptSubmit` hook, both running
+`scripts/agent-turn`. `Stop` — Claude has finished responding — stamps `turn_ended` into the state
+file; `UserPromptSubmit` — a prompt submitted, before the model sees it — clears it again. So does
+every `scripts/agent-state` write, an agent writing its own state being a session that is still
+running turns. Neither entry carries a `matcher`: neither event supports one.
+
+It exists because a session that writes `working` and then ends its turn without writing `waiting`
+sits as `working` for hours, and nothing could tell that row from one doing real work. **Nothing
+reads the field yet** — deriving "stuck" is cb-ykz.2 and acting on one is cb-ykz.3.
+
+Two things about `agent-turn` differ from `agent-asking` beside it, and both are load-bearing:
+
+- **It never writes to stdout.** Claude Code adds a `UserPromptSubmit` hook's stdout to the model's
+  context on exit 0, so one stray `echo` is a sentence prepended to every prompt of every agent in
+  every consumer.
+- **It never exits non-zero**, not even for an unknown mode — which prints its usage on stderr and
+  exits 0. Exit 2 on `UserPromptSubmit` erases the navigator's prompt; exit 2 on `Stop` refuses to
+  let the session stop. `agent-asking`'s usage-error exit 2 would do one or the other here.
+
+`SubagentStop` is deliberately not wired: a review sub-agent finishing is not its parent's turn
+ending, and stamping there would clear the very signal cb-ykz.2 is being built on.
+
+**Copilot has no equivalent, and gets none.** `docs/providers/copilot.md`'s measured event list
+(M6) holds nothing that corresponds to `Stop` — `sessionEnd` fires when the whole session finishes
+— so `hooks/copilot/cerebro-question-state.json` is untouched and keeps its name. A guessed event
+name would be a hook that silently never fires, which is the failure this README already warns
+about for matchers. The cost, plainly: a fleet declaring `agent_cli copilot` never gets
+`turn_ended`, so when cb-ykz.2 lands no Copilot session will ever be marked stuck.
 
 What the hook deliberately does **not** do: invent a state file that does not exist yet (a question
 asked before the agent's first `agent-state` call is invisible to it), invent a bead or a phase, or

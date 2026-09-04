@@ -362,11 +362,19 @@ These are load-bearing; changing them changes how the fleet behaves in every con
   flag on a waiting agent ends it and disarms it. **`done`, the implementer's older spelling of it,
   is retired (cb-1or.2)**: `scripts/agent-state` refuses it like any unknown word, and a live file
   that carries it anyway maps to `'unknown` and is never acted on. **`asking` has a hook behind it**:
-  `hooks/question-state.settings.json` + `scripts/agent-asking`, wired into the whole fleet by the
+  `hooks/session-state.settings.json` + `scripts/agent-asking`, wired into the whole fleet by the
   two lines `scripts/launch` gives every session (`agent-hooks-env`, `--settings`), flip the file
   for the lifetime of a question tool call, because telling an agent three ways did not make it so.
   The agent files still describe the transitions and must keep doing so — the hook covers the
   question tool, not a question asked in prose, and knows nothing about `idle` versus `working`.
+  **That same settings file carries two more hooks since cb-ykz.1**: a `Stop` hook and a
+  `UserPromptSubmit` hook running `scripts/agent-turn`, which stamps `turn_ended` into the state
+  file when a session's turn ends and clears it when one begins — and every `scripts/agent-state`
+  write clears it too, an agent writing its own state being a session still running turns. Both
+  readers parse the field and carry it on the row; **nothing reads it yet**. Deriving "stuck" from
+  it is cb-ykz.2 and acting on one is cb-ykz.3. A fleet declaring `agent_cli copilot` gets no
+  `turn_ended` at all: no measured Copilot event corresponds to `Stop`, and a guessed one would be
+  a hook that silently never fires.
 - **Nothing merges unreviewed, red, or stale.** The implementer's standing approval to merge without
   asking comes from the consumer repo's CLAUDE.md ("Four Eye Principle") and applies only to a
   planned bead.
@@ -473,7 +481,7 @@ more so, being the one path that runs when something has already gone wrong.
 Two data sources it depends on, both under `.cerebro/state/` in the consumer repo:
 
 - `<name>.state.json` — `{state: "idle"|"working"|"asking"|"waiting", phase, bead, since,
-  phase_since, pid}`, written by **the agent itself** at each transition through
+  phase_since, pid, turn_ended}`, written by **the agent itself** at each transition through
   `scripts/agent-state` (never by hand — see that script's header). Every implementer writes one, and since ah-2n3.2 so does each of
   the interactive agents; `waiting` is written by every kind since cb-1or.1. The launcher used to write the file and no longer does: it
   `exec`s a session and cannot see it claim a bead. `phase` is one of `build`/`gate`/`review`/`ci`/

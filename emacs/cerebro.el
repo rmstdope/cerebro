@@ -17,7 +17,8 @@
 ;;   - an agent's status file, `.cerebro/state/<name>.state.json',
 ;;     written by the agent itself at every state transition (see ah-vcf.1,
 ;;     ah-u3i and ah-2n3.2): { state: "idle"|"working"|"asking"|"waiting",
-;;     phase, bead, since, phase_since, pid }.  Every implementer writes one;
+;;     phase, bead, since, phase_since, pid, turn_ended }.  Every implementer
+;;     writes one;
 ;;     since ah-2n3.2 the interactive roles do too.
 ;;   - `scripts/roster', the fleet: name, role and kind per agent, in
 ;;     display order.
@@ -152,6 +153,11 @@ whatever the frame has left (was a constant of 20 for eighteen agents)."
   bead since external
   phase                                ; "build"|"gate"|"review"|"ci"|"rebase"|"merge" or nil
   phase-since                          ; ISO-8601 string, or nil
+  turn-ended                           ; ISO-8601 string, or nil: when this session's most recent
+                                       ;  turn ended, if it has not started another since
+                                       ;  (cb-ykz.1).  Written by `scripts/agent-turn' from a Stop
+                                       ;  hook and cleared by every `scripts/agent-state' write.
+                                       ;  Read by nothing yet.
   sessions                             ; processes of this name in this consumer, or nil
   raw                                  ; the state file's `state' string verbatim, or nil
   unverified-pid)                      ; the pid, when the session could not be proved this
@@ -453,6 +459,7 @@ tells the row to say so."
                                 :external (not owned-p)
                                 :phase (alist-get 'phase parsed)
                                 :phase-since (alist-get 'phase_since parsed)
+                                :turn-ended (alist-get 'turn_ended parsed)
                                 :raw raw-state
                                 :unverified-pid unverified-pid)))
 

@@ -301,6 +301,15 @@ pub struct StateRecord {
     pub since: DateTime<Utc>,
     pub phase_since: Option<DateTime<Utc>>,
     pub pid: u32,
+    /// When this session's most recent turn ended, if it has not started another since (cb-ykz.1).
+    /// `None` means a turn is in progress, or none has ever ended. Stamped by
+    /// `scripts/agent-turn` from a `Stop` hook and cleared by every `scripts/agent-state` write.
+    /// Nothing derives from it yet.
+    ///
+    /// No `#[serde(default)]`: serde deserializes a missing `Option<T>` to `None`, so a state file
+    /// written by an older `agent-state` parses exactly as before —
+    /// `state_record_without_turn_ended_parses` is what pins that.
+    pub turn_ended: Option<DateTime<Utc>>,
 }
 
 /// What was found reading one agent's state file.
@@ -410,6 +419,9 @@ pub struct FleetRow {
     pub since: Option<DateTime<Utc>>,
     pub phase_since: Option<DateTime<Utc>>,
     pub pid: Option<u32>,
+    /// `StateRecord::turn_ended`, carried through for a live pid and dropped for a dead one, the
+    /// same rule `phase_since` follows. Read by nothing yet (cb-ykz.1).
+    pub turn_ended: Option<DateTime<Utc>>,
     pub sessions: usize,
     pub diagnostic: Option<String>,
 }
@@ -452,10 +464,11 @@ pub fn derive_fleet(
             let sessions = live_leaf_pids(&entry.name, root, processes).len();
             let live_here = any_live(&entry.name, root, processes);
 
-            let (state, phase, bead, since, phase_since, pid, diagnostic) =
+            let (state, phase, bead, since, phase_since, turn_ended, pid, diagnostic) =
                 match states.get(&entry.name) {
                     Some(StateObservation::Invalid(message)) => (
                         RowState::Invalid,
+                        None,
                         None,
                         None,
                         None,
@@ -468,9 +481,9 @@ pub fn derive_fleet(
                         match liveness {
                             SessionLiveness::Dead => {
                                 if live_here {
-                                    (RowState::Up, None, None, None, None, None, None)
+                                    (RowState::Up, None, None, None, None, None, None, None)
                                 } else {
-                                    (RowState::Dead, None, None, None, None, None, None)
+                                    (RowState::Dead, None, None, None, None, None, None, None)
                                 }
                             }
                             SessionLiveness::Proven => (
@@ -479,6 +492,7 @@ pub fn derive_fleet(
                                 record.bead.clone(),
                                 Some(record.since),
                                 record.phase_since,
+                                record.turn_ended,
                                 Some(record.pid),
                                 None,
                             ),
@@ -488,6 +502,7 @@ pub fn derive_fleet(
                                 record.bead.clone(),
                                 Some(record.since),
                                 record.phase_since,
+                                record.turn_ended,
                                 Some(record.pid),
                                 Some(format!(
                                     "pid {} names {} but not this consumer's root; trusting the state file",
@@ -498,9 +513,9 @@ pub fn derive_fleet(
                     }
                     Some(StateObservation::Missing) | None => {
                         if live_here {
-                            (RowState::Up, None, None, None, None, None, None)
+                            (RowState::Up, None, None, None, None, None, None, None)
                         } else {
-                            (RowState::Dead, None, None, None, None, None, None)
+                            (RowState::Dead, None, None, None, None, None, None, None)
                         }
                     }
                 };
@@ -514,6 +529,7 @@ pub fn derive_fleet(
                 bead,
                 since,
                 phase_since,
+                turn_ended,
                 pid,
                 sessions,
                 diagnostic,
@@ -1114,6 +1130,7 @@ mod tests {
             since: "2026-01-01T00:00:00Z".parse().unwrap(),
             phase_since: Some("2026-01-01T00:00:00Z".parse().unwrap()),
             pid,
+            turn_ended: None,
         }
     }
 
@@ -1390,6 +1407,57 @@ mod tests {
         }
     }
 
+    // --- turn_ended (cb-ykz.1) -----------------------------------------------------------------
+
+    #[test]
+    fn state_record_without_turn_ended_parses() {
+        // A state file written by an older `agent-state' carries the six pre-cb-ykz.1 keys and no
+        // `turn_ended'. serde_json deserializes a missing Option<T> to None, so no
+        // #[serde(default)] is needed and none should be added - this case is what pins that.
+        let json = r#"{"state":"working","phase":"build","bead":"cb-1",
+            "since":"2026-01-01T00:00:00Z","phase_since":"2026-01-01T00:00:00Z","pid":42}"#;
+        let record: StateRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.turn_ended, None);
+
+        // An explicit null maps to None too.
+        let json = r#"{"state":"working","phase":"build","bead":"cb-1",
+            "since":"2026-01-01T00:00:00Z","phase_since":"2026-01-01T00:00:00Z","pid":42,
+            "turn_ended":null}"#;
+        let record: StateRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.turn_ended, None);
+    }
+
+    #[test]
+    fn derive_fleet_carries_turn_ended() {
+        let root = Path::new("/r");
+        let roster = vec![entry("Proven", AgentKind::Interactive)];
+        let ended: DateTime<Utc> = "2026-01-01T00:05:00Z".parse().unwrap();
+        let mut rec = record("working", 11);
+        rec.turn_ended = Some(ended);
+        let states =
+            BTreeMap::from([("Proven".to_string(), StateObservation::Parsed(rec))]);
+        let processes =
+            vec![ProcessRow { pid: 11, ppid: None, args: proven_field("Proven", "/r") }];
+        let rows = derive_fleet(&roster, &states, &processes, root);
+        assert_eq!(rows[0].turn_ended, Some(ended));
+    }
+
+    #[test]
+    fn derive_fleet_drops_turn_ended_for_a_dead_pid() {
+        // A row whose pid is dead is stale: carrying its turn-end forward would describe a session
+        // that no longer exists, the same rule `phase_since' and `bead' already follow.
+        let root = Path::new("/r");
+        let roster = vec![entry("Gone", AgentKind::Implementer)];
+        let mut rec = record("working", 404);
+        rec.turn_ended = Some("2026-01-01T00:05:00Z".parse().unwrap());
+        let states = BTreeMap::from([("Gone".to_string(), StateObservation::Parsed(rec))]);
+        let rows = derive_fleet(&roster, &states, &[], root);
+        assert_eq!(rows[0].state, RowState::Dead);
+        assert_eq!(rows[0].turn_ended, None);
+        assert_eq!(rows[0].bead, None);
+        assert_eq!(rows[0].phase_since, None);
+    }
+
     // --- standby -------------------------------------------------------------------------------
 
     fn standby_row(name: &str, state: RowState) -> FleetRow {
@@ -1402,6 +1470,7 @@ mod tests {
             bead: None,
             since: None,
             phase_since: None,
+            turn_ended: None,
             pid: None,
             sessions: 0,
             diagnostic: None,

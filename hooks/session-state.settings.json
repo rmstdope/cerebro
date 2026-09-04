@@ -23,6 +23,20 @@
           { "type": "command", "command": "\"$CEREBRO_SCRIPTS/agent-asking\" end", "timeout": 10 }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"$CEREBRO_SCRIPTS/agent-turn\" ended", "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"$CEREBRO_SCRIPTS/agent-turn\" resumed", "timeout": 10 }
+        ]
+      }
     ]
   }
 }

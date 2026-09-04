@@ -38,6 +38,12 @@
 # script existed) - preserved across a phase-only change, reset when state or bead changes.
 # `phase_since` is the time of the last change of phase; null when no --phase is given.
 #
+# `turn_ended` (cb-ykz.1) is written null by every invocation of this script, and that is the whole
+# of this script's part in it: an agent writing its own state is a session that is still running
+# turns, so the write IS the clear. It is stamped by `scripts/agent-turn', from a Stop hook.
+# ANYTHING that later stops rebuilding this file wholesale must clear it deliberately, or a stamp
+# survives a state change and a working session reads as one whose turn ended.
+#
 # Writes atomically (write to a .tmp file, then mv) so cerebro.el never reads a torn file.
 
 set -euo pipefail
@@ -176,7 +182,8 @@ jq -n \
     bead: (if $bead == "" then null else $bead end),
     since: $since,
     phase_since: (if $phase_since == "" then null else $phase_since end),
-    pid: ($pid | tonumber)
+    pid: ($pid | tonumber),
+    turn_ended: null
   }' > "$tmp_file"
 
 mv -f "$tmp_file" "$out_file"

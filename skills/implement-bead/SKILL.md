@@ -146,7 +146,7 @@ again. If you find yourself typing `bd` or `git` straight after an answer, you h
 third: stop, write the state, then carry on. That is the most common way this goes wrong, because
 the answer feels like the end of the exchange while the file still says you are blocked.
 
-**There is a hook behind that, and it does not excuse you.** `hooks/question-state.settings.json`
+**There is a hook behind that, and it does not excuse you.** `hooks/session-state.settings.json`
 and `scripts/agent-asking`, which `scripts/launch` gives every session, flip the file to `asking`
 for the lifetime of a question tool call and back again on the answer or a cancellation. Keep
 writing the states anyway: the hook knows about the question tool and nothing else, so a question

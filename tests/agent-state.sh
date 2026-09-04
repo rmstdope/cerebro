@@ -552,4 +552,28 @@ fi
 rm -rf "$tmp" "$stub_dir"
 pass "a-failing-log-jq-writes-no-line-and-does-not-fail-the-write"
 
+# --- writes-turn-ended-null (cb-ykz.1) ---
+# The field is present and null on a first write, so both readers parse the same shape whether or
+# not a Stop hook has ever run.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead cb-ykz.1 --phase build --pid 42
+f="$(state_file "$tmp" Cyclops)"
+jq -e 'has("turn_ended")' "$f" >/dev/null || fail "writes-turn-ended-null: the key is absent"
+[[ "$(jq -r '.turn_ended' "$f")" == "null" ]] \
+  || fail "writes-turn-ended-null: turn_ended=$(jq -r '.turn_ended' "$f")"
+rm -rf "$tmp"
+pass "writes-turn-ended-null"
+
+# --- clears-turn-ended (cb-ykz.1) ---
+# An agent writing its own state is a session still running turns, so the write IS the clear.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead cb-ykz.1 --phase build --pid 42
+f="$(state_file "$tmp" Cyclops)"
+jq '.turn_ended = "2026-09-04T10:24:02Z"' "$f" > "$f.staged" && mv -f "$f.staged" "$f"
+run_state "$tmp" Cyclops working --bead cb-ykz.1 --phase gate --pid 42
+[[ "$(jq -r '.turn_ended' "$f")" == "null" ]] \
+  || fail "clears-turn-ended: turn_ended=$(jq -r '.turn_ended' "$f")"
+rm -rf "$tmp"
+pass "clears-turn-ended"
+
 suite_passed

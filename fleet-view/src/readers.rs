@@ -106,8 +106,9 @@ pub enum ReadError {
         stderr: String,
         /// What the program printed before it failed. Carried because one reader's refusal is
         /// still an answer: `scripts/fleet-supervisor` exits 2 on an invalid declaration and
-        /// prints the raw offending value, which is what the header has to name. Everywhere else
-        /// this is simply empty.
+        /// prints the raw offending value, which is what the header has to name. It is the value
+        /// that makes an exit 2 an answer at all - exit 3, and an exit 2 carrying nothing, are the
+        /// script failing to read the declaration (cb-nc8). Everywhere else this is simply empty.
         stdout: String,
     },
     Invalid { source: String, message: String },

@@ -4182,6 +4182,58 @@ mod main_tests {
         assert!(app.notice.is_none(), "nothing happened, so nothing is said");
     }
 
+    /// A drain records the disarm in `decisions.jsonl`; a read-only handover does not (cb-nc8).
+    ///
+    /// "A read-only view writes neither file, since it decides nothing" is the approved policy,
+    /// enforced by `logger.set_enabled(mode.may_end())` on the same tick - which is why the
+    /// navigator's answer to Q3 put the visibility on the header notice. `cerebro.el` gates its
+    /// own `disarm-all' line the same way.
+    #[test]
+    fn a_draining_handover_records_the_disarm_and_a_read_only_one_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+
+        let log_root = tempfile::tempdir().unwrap();
+        let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
+        let mut logger = Logger::new(log_root.path());
+        logger.set_enabled(true);
+
+        let mut app = standby_app(
+            cerebro_tui::supervisor::SupervisionMode::Draining {
+                configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
+                live_sessions: 1,
+            },
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            None,
+            now,
+        );
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut logger, &paths, now, Instant::now());
+        let written = std::fs::read_to_string(&decisions).unwrap_or_default();
+        assert!(written.contains("\"event\":\"disarm-all\""), "a drain decides, so it records: {written}");
+        assert!(written.contains("Xavier"), "the names are in the line: {written}");
+
+        // The read-only half: the same handover with the logger disabled, exactly as the tick
+        // disables it, writes nothing at all - and still disarms and still says so.
+        std::fs::write(&decisions, "").unwrap();
+        logger.set_enabled(false);
+        let mut app = standby_app(
+            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+                cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                    cerebro_tui::supervisor::SupervisorKind::Emacs,
+                ),
+            ),
+            vec![planner_row("Beast", cerebro_tui::model::RowState::Dead)],
+            None,
+            now,
+        );
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut logger, &paths, now, Instant::now());
+        assert!(app.armed.is_empty());
+        assert!(app.notice.is_some(), "the notice is what covers a read-only handover");
+        assert_eq!(std::fs::read_to_string(&decisions).unwrap_or_default(), "");
+    }
+
     /// The navigator's typo is not somebody else taking the checkout either (cb-nc8, Q2).
     #[test]
     fn an_invalid_declaration_leaves_the_armed_set_alone() {

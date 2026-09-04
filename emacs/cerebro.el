@@ -5227,23 +5227,25 @@ first autostart.  Returns the mode it settled on and leaves it in
 
 An acquisition is quiet by the navigator\='s choice: taking the lease starts and
 arms nothing, because changing the owner must not itself launch processes."
-  (if (eq (car-safe (cerebro--configured-supervisor repo-root)) 'unreadable)
-      ;; Keep whatever lease this buffer holds and claim nothing about ownership: what failed is
-      ;; working out WHOSE the checkout is (cb-nc8). Ratatui's `DeclarationUnreadable' is the same
-      ;; answer from the other side, and this mode already has its mode-line sentence, its refusal
-      ;; sentence and its once-per-distinct-message error report.
-      (let ((mode (list 'read-only 'reconcile-failed
-                        (cdr (cerebro--configured-supervisor repo-root)))))
-        (setq cerebro--supervision mode)
-        (cerebro--apply-supervision-mode-line mode)
-        (cerebro--report-supervision-error mode)
-        mode)
-    (cerebro--reconcile-supervision-1 repo-root)))
+  ;; READ ONCE. An `unreadable' answer is deliberately not cached, so a second call is a second
+  ;; fork of `project-conf' every five seconds for the whole of an outage - and one that now
+  ;; succeeds answers a bare symbol, of which `cdr' is a signal.
+  (let ((configured (cerebro--configured-supervisor repo-root)))
+    (if (eq (car-safe configured) 'unreadable)
+        ;; Keep whatever lease this buffer holds and claim nothing about ownership: what failed is
+        ;; working out WHOSE the checkout is (cb-nc8). Ratatui's `DeclarationUnreadable' is the
+        ;; same answer from the other side, and this mode already has its mode-line sentence, its
+        ;; refusal sentence and its once-per-distinct-message error report.
+        (let ((mode (list 'read-only 'reconcile-failed (cdr configured))))
+          (setq cerebro--supervision mode)
+          (cerebro--apply-supervision-mode-line mode)
+          (cerebro--report-supervision-error mode)
+          mode)
+      (cerebro--reconcile-supervision-1 repo-root configured))))
 
-(defun cerebro--reconcile-supervision-1 (repo-root)
-  "The ownership decision itself, once the declaration has been read (cb-nc8)."
-  (let* ((configured (cerebro--configured-supervisor repo-root))
-         (hosted (length (cerebro--owned)))
+(defun cerebro--reconcile-supervision-1 (repo-root configured)
+  "The ownership decision itself, given the declaration CONFIGURED (cb-nc8)."
+  (let* ((hosted (length (cerebro--owned)))
          ;; `process-live-p', not merely non-nil: a server process deleted by hand (or by
          ;; anything else that reaches for `delete-process') leaves this variable set while the
          ;; port is free, and Emacs would then believe it supervises a checkout it has let go of.
@@ -6796,12 +6798,18 @@ left and runs every `cerebro-system-scan-seconds'."
           (when (and (cerebro--supervision-hands-over-p mode) cerebro--armed)
             (let ((names (copy-sequence cerebro--armed)))
               (setq cerebro--armed nil)
-              (cerebro--log repo-root 'disarm-all
-                            (list :mode (symbol-name (car mode))
-                                  :reason (if (eq (car mode) 'read-only)
-                                              (symbol-name (nth 1 mode))
-                                            "-")
-                                  :agents (vconcat names)))
+              ;; Only a mode that may still ACT writes the line, which here is `draining' alone:
+              ;; "a read-only view writes neither file, since it decides nothing" is the approved
+              ;; policy, and Ratatui enforces it with `logger.set_enabled(mode.may_end())' on this
+              ;; same tick. The `message' below is what covers a read-only handover, which is the
+              ;; navigator's own answer to how loud this should be (cb-nc8, Q3).
+              (when (cerebro--supervision-may-end-p mode)
+                (cerebro--log repo-root 'disarm-all
+                              (list :mode (symbol-name (car mode))
+                                    :reason (if (eq (car mode) 'read-only)
+                                                (symbol-name (nth 1 mode))
+                                              "-")
+                                    :agents (vconcat names))))
               (message "Handing supervision over; %d name%s disarmed."
                        (length names) (if (= (length names) 1) "" "s"))))
           ;; Ending and retiring survive a drain; starting, nudging and

@@ -4902,6 +4902,43 @@ The Ratatui counterpart is `a_handover_says_how_many_names_it_disarmed'."
               (should (null said)))
           (kill-buffer list-buffer))))))
 
+(ert-deftest cerebro-test/only-a-draining-handover-records-the-disarm ()
+  "A read-only view writes neither file, since it decides nothing (cb-nc8, Q3).
+
+The header sentence is what covers a read-only handover; the `disarm-all' line
+is written only by a mode that may still act, which here is `draining'.  Ratatui
+enforces the same split with `logger.set_enabled(mode.may_end())' and pins it in
+`a_draining_handover_records_the_disarm_and_a_read_only_one_does_not'."
+  (let ((mode nil) (logged nil))
+    (cl-letf (((symbol-function 'cerebro--list-render) #'ignore)
+              ((symbol-function 'cerebro--supervise) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--start-due) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--triage-tell) (lambda (&rest _) nil))
+              ((symbol-function 'cerebro--repo-root) (lambda () default-directory))
+              ((symbol-function 'cerebro--reconcile-supervision-safely) (lambda (&rest _) mode))
+              ((symbol-function 'cerebro--ensure-prune-watcher) #'ignore)
+              ((symbol-function 'cerebro--log)
+               (lambda (_root event &rest _) (push event logged))))
+      (let ((list-buffer (generate-new-buffer " *cerebro-test-tick-disarm-log*")))
+        (unwind-protect
+            (progn
+              ;; Read-only: disarms, says so, records nothing.
+              (setq mode '(read-only configured-for tui))
+              (with-current-buffer list-buffer
+                (cerebro-mode)
+                (setq cerebro--armed '("Xavier")))
+              (cerebro--tick list-buffer (seconds-to-time 1000))
+              (should-not (memq 'disarm-all logged))
+              ;; Draining: still hosting sessions, still deciding, so it records.
+              (setq mode '(draining tui 1) logged nil)
+              (with-current-buffer list-buffer
+                (setq cerebro--armed '("Beast")))
+              (cerebro--tick list-buffer (seconds-to-time 1005))
+              (should (memq 'disarm-all logged))
+              (with-current-buffer list-buffer
+                (should (null cerebro--armed))))
+          (kill-buffer list-buffer))))))
+
 (ert-deftest cerebro-test/a-supervising-tick-leaves-the-armed-set-alone ()
   "And the clear is conditional: a view that may act keeps what it armed,
 since a pass that merely ends does not disarm (cb-op0)."

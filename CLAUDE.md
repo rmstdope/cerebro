@@ -811,9 +811,9 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   work arrives from outside the fleet. Its pane is never drawn: its four content states are exactly
   what tells a trigger "no answer yet" (no suffix) from "the last request failed" (`gh?` on Moira's
   and Cypher's rows, and their hourly floor alone).
-- `log.rs` — the two JSONL files, split the same way: the pure half (`Event::basename`,
+- `log.rs` — the three JSONL files, split the same way: the pure half (`Event::basename`,
   `log_event_p`, `log_evaluation_p`, `log_rotate_p`, `log_line`, `log_file`, `reader_context`) and
-  one impure `Logger` that owns them. It is the ONLY thing in the crate that writes either, its
+  one impure `Logger` that owns them. It is the ONLY thing in the crate that writes any of them, its
   root is a constructor parameter and never resolved — a logger that found its own root would make
   every test append to the navigator's live log — and it starts disabled, so a view that comes up
   read-only has written nothing by its first frame.

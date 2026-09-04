@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+#
+# Answers "is the fleet healthy" from the logs the fleet already writes (cb-xhu.4.1). Forge's sweep
+# of 2026-09-04 tried to answer it and could not: it took a hand-written analysis over four log
+# generations. Every fact needed is in .cerebro/state/decisions*.jsonl and
+# .cerebro/state/transitions*.jsonl; nothing here writes, ranks, starts, stops or asks `bd`
+# anything. It reports.
+#
+#     scripts/fleet-health [--since <span>] [--json]
+#
+# Four sections, one per question, and where each answer already lives:
+#
+#   Starts per name             decisions*.jsonl, event == "start"   - a name the view restarts
+#   Passes that held no bead    transitions*.jsonl                   - sessions that did nothing
+#   Running now                 scripts/fleet-history --json         - and what is long
+#   Disarmed or given up on     decisions*.jsonl, give-up/disarm-all/retire
+#
+# `--since` takes a SPAN ONLY - 30s, 90m, 24h, 7d - defaulting to 24h. Deliberately narrower than
+# fleet-history's, which also accepts an ISO-8601 timestamp: this command reports "the last N", and
+# one spelling cannot then drift from the other. An ISO timestamp is a usage error naming
+# fleet-history as the tool for a fixed date.
+#
+# `--json` prints one object; every key is always present and an empty section is an empty array,
+# so a consumer never has to tell "no findings" from "no such key". cb-xhu.4.2 renders that object
+# in cerebro-tui, which is why THE JUDGEMENT LIVES HERE AND NOWHERE ELSE - the view runs this with
+# --json and draws, exactly as it does with fleet-history today.
+#
+# The report is printed by `jq -r` from the same object --json prints, so the two can never
+# disagree about the facts. It exits 0 ALWAYS: it is a report, not a check (the navigator chose
+# that shape over a findings-only one - docs/ui/cb-xhu.4-health-output.html). Colour is
+# deliberately not used; cb-xhu.4.2 renders its own from --json.
+#
+# It fails LOUDLY - non-zero, a message on stderr, NOTHING on stdout - when no decision log exists,
+# a line will not parse, or fleet-history exits non-zero. That is fleet-history's own rule and the
+# reason is the same: a navigator deciding whether anything is stuck must never read a broken query
+# as "all clear".
+#
+# The SHARED root, never the enclosing one: a worktree has its own .cerebro/state and a health
+# report built from it describes nothing.
+#
+# FLEET_HEALTH_NOW (epoch seconds), FLEET_HEALTH_START_CEILING and FLEET_HEALTH_LONG_MINUTES exist
+# for tests/fleet-health.sh alone, exactly as FLEET_HISTORY_NOW does in fleet-history: an assertion
+# about "over the ceiling" must not need fifteen fabricated starts.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "usage: fleet-health [--since <span: 30s, 90m, 24h, 7d>] [--json]" >&2
+  exit 2
+}
+
+since_arg="24h"
+json=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) json=1; shift ;;
+    # `[[ $2 != --* ]]` so `--since --json` is the typo it is rather than a span called `--json`.
+    --since) since_arg="${2:-}"; [[ -n "$since_arg" && "$since_arg" != --* ]] || usage; shift 2 ;;
+    *) echo "fleet-health: unknown argument '$1'" >&2; usage ;;
+  esac
+done
+
+# A name started more often than this in the window is churn rather than a busy fleet. Eight is
+# roughly one start every three hours; on the day this was written Xavier had 15 and Cyclops 9.
+START_CEILING="${FLEET_HEALTH_START_CEILING:-8}"
+
+# Minutes a session may be in one state before it is called long. Anything here legitimately runs
+# for tens of minutes; an hour in one state is a session nobody is coming back to.
+LONG_MINUTES="${FLEET_HEALTH_LONG_MINUTES:-60}"
+
+now="${FLEET_HEALTH_NOW:-$(date -u +%s)}"
+
+if [[ "$since_arg" =~ ^([0-9]+)([smhd])$ ]]; then
+  count="${BASH_REMATCH[1]}"
+  case "${BASH_REMATCH[2]}" in
+    s) seconds=$((count)) ;;
+    m) seconds=$((count * 60)) ;;
+    h) seconds=$((count * 3600)) ;;
+    d) seconds=$((count * 86400)) ;;
+  esac
+  since=$((now - seconds))
+else
+  echo "fleet-health: --since wants a span (30s, 90m, 24h, 7d), not '$since_arg' - use fleet-history --since for a fixed date" >&2
+  exit 2
+fi
+
+repo_root="$("$script_dir/consumer-root" --shared)"
+state_dir="$repo_root/.cerebro/state"
+
+# The rotated generations FIRST, oldest first. fleet-view/src/log.rs keeps GENERATIONS = 3 and puts
+# the number before the extension. Each file is optional individually; none at all is a failure,
+# because a caller asking whether anything is stuck must be told the record is missing rather than
+# handed an empty answer that looks like a healthy fleet.
+dec_logs=()
+for gen in decisions.3.jsonl decisions.2.jsonl decisions.1.jsonl decisions.jsonl; do
+  [[ -f "$state_dir/$gen" ]] && dec_logs+=("$state_dir/$gen")
+done
+if [[ ${#dec_logs[@]} -eq 0 ]]; then
+  echo "fleet-health: no decision log under $state_dir - nothing has written one on this machine yet" >&2
+  exit 1
+fi
+
+# agent-state rotates on size and keeps one generation. Absent entirely is not fatal here: it makes
+# `passes` empty, and fleet-history below is what refuses when there is no transition record at all.
+tr_logs=()
+for gen in transitions.1.jsonl transitions.jsonl; do
+  [[ -f "$state_dir/$gen" ]] && tr_logs+=("$state_dir/$gen")
+done
+
+# Reused rather than re-derived: pairing transitions into intervals, the heartbeat rule, the
+# `from: null` rule and the staleness bound are fleet-history's whole job and are already pinned by
+# tests/fleet-history.sh. FLEET_HISTORY_NOW is passed through so the two agree about "now".
+# Its stderr is NOT swallowed: a missing transition log, a jq that is not installed and a
+# consumer-root that would not answer all look identical from here, and a line naming one of them
+# sends the navigator to the wrong file.
+if ! history="$(FLEET_HISTORY_NOW="$now" "$script_dir/fleet-history" --json)"; then
+  echo "fleet-health: scripts/fleet-history exited non-zero - see its message above" >&2
+  exit 1
+fi
+
+if ! roster="$("$script_dir/roster" 2>/dev/null)"; then
+  echo "fleet-health: scripts/roster would not answer - cannot tell which roles hold a bead" >&2
+  exit 1
+fi
+
+# The logs are handed to jq as FILES, never as `--arg` strings: this machine's four decision
+# generations are twenty megabytes, and an argument list that size is `Argument list too long`
+# rather than a report. tr_logs is non-empty by here - fleet-history above refuses when it is not -
+# and /dev/null in front of each `cat` keeps a bare `cat` from reading stdin either way.
+
+# Built into a variable and only printed on success, so a jq that dies half way through cannot
+# leave a partial answer on stdout for somebody to read as "all clear".
+if ! out="$(jq -n \
+      --rawfile dec <(cat /dev/null "${dec_logs[@]}") \
+      --rawfile tr <(cat /dev/null "${tr_logs[@]}") \
+      --arg roster "$roster" --argjson history "$history" \
+      --argjson now "$now" --argjson since "$since" \
+      --argjson ceiling "$START_CEILING" --argjson long_minutes "$LONG_MINUTES" '
+
+  # A field a writer did not emit renders as "?" rather than as nothing, so a writer that changes
+  # shape is visible instead of silent.
+  def f($k): if (has($k) and .[$k] != null) then (.[$k] | tostring) else "?" end;
+
+  def inwindow: (.ts | fromdateiso8601) as $e | $e >= $since and $e <= $now;
+
+  ([$dec | split("\n")[] | select(length > 0) | fromjson]) as $D
+  | ([$tr | split("\n")[] | select(length > 0) | fromjson]) as $T
+  | ($roster | split("\n") | map(select(length > 0) | split("\t"))
+     | map({key: .[0], value: .[1]}) | from_entries) as $R
+
+  # A literal list, and the reason: an orchestrator, an architect, a reviewer and a user-feedback
+  # session do their whole job without ever writing a bead into their state file, so every one of
+  # their passes is a no-op by the rule below and none of them is a problem.
+  | ["implementer", "planner", "verifier"] as $holders
+
+  | ($D | map(select(.event == "start" and inwindow))
+        | group_by(.agent)
+        | map({agent: .[0].agent, count: length, over: (length > $ceiling)})
+        | sort_by(-.count, .agent)) as $starts
+
+  # A SESSION begins at a line whose `from` is null and runs to the line before the next such line.
+  # Never grouped by pid: pids are recycled, so two sessions of one name can share a number.
+  | ($T | map(. + {_e: (.ts | fromdateiso8601)})
+        | group_by(.agent)
+        | map(sort_by(._e)
+              | reduce .[] as $l ([];
+                  if $l.from == null then . + [[$l]]
+                  elif (. | length) == 0 then [[$l]]
+                  else .[0:length - 1] + [(.[length - 1] + [$l])]
+                  end))
+        | add // []
+        # `waiting` is terminal - a pass that has not reached it is still running, and is counted
+        # nowhere. Attributed to the window by its FIRST line, so a pass that started before the
+        # window is not half-counted.
+        # A tail whose own first line is not a session start is a session the log rotation cut
+        # in half, not a pass: counted whole it is a false positive in the one section meant to
+        # name agents that did nothing.
+        | map(select(.[0].from == null))
+        | map(select(.[length - 1].to == "waiting"))
+        | map(select(.[0]._e >= $since and .[0]._e <= $now))
+        | map({agent: .[0].agent, noop: (if any(.[]; .bead != null) then 0 else 1 end)})
+        | group_by(.agent)
+        | map(.[0].agent as $a
+              | {agent: $a, noop: (map(.noop) | add), total: length,
+                 holds_beads: (if ($R | has($a)) then (($holders | index($R[$a])) != null)
+                               else true end)})
+        | sort_by(-.noop, .agent)) as $passes
+
+  | ($history | map(select(.open))
+              | map({agent, state, phase, minutes, bead, long: (.minutes > $long_minutes)})
+              | sort_by(-.minutes, .agent)) as $running
+
+  | ($D | map(select((.event | IN("give-up", "disarm-all", "retire")) and inwindow))
+        | sort_by(.ts)
+        | map({ts, event: .event,
+               agent: (if .event == "disarm-all" then null else (.agent // "?") end),
+               detail:
+                 (if .event == "give-up" then (f("failed_starts") + " starts produced no pass")
+                  elif .event == "retire" then
+                    ("retired from " + f("state") + ", stop flag "
+                     + (if (has("stop_flag") | not) then "?"
+                        elif .stop_flag == null then "none"
+                        else (.stop_flag | tostring) end))
+                  else ((if (.agents | type) == "array" then (.agents | length | tostring)
+                         else f("agents") end)
+                        + " names disarmed: " + f("reason"))
+                  end)})) as $disarmed
+
+  | {since: ($since | todate), until: ($now | todate),
+     start_ceiling: $ceiling, long_minutes: $long_minutes,
+     starts: $starts, passes: $passes, running: $running, disarmed: $disarmed}
+')"; then
+  # jq has already said what it choked on, on stderr. This line only says where to look. Nothing
+  # has reached stdout: the answer is built into $out first.
+  echo "fleet-health: could not read the fleet's logs (${dec_logs[*]} ${tr_logs[*]})" >&2
+  exit 1
+fi
+
+if [[ $json -eq 1 ]]; then
+  printf '%s\n' "$out"
+  exit 0
+fi
+
+# The report, from the same object, so the two can never disagree. Padding is done here rather than
+# by printf because the whole document is one jq expression; every line is right-stripped, so a
+# golden comparison is not about invisible trailing spaces. Built into a variable and only printed
+# on success, exactly as the object above is: the header promises nothing on stdout when this fails,
+# and a jq streaming straight to stdout would leave half a report behind instead.
+if ! report="$(jq -r --arg span "$since_arg" '
+  def spaces: "                                                  ";
+  def padr($n): (. + spaces)[0:$n];
+  def padmin($n): if (length) >= $n then . else (. + spaces)[0:$n] end;
+  def padl($n): if (length) >= $n then . else (spaces[0:$n - length] + .) end;
+  def rstrip: sub("[ ]+$"; "");
+  def grid($cells):
+    if ($cells | length) == 0 then ["  nothing in the window"]
+    else [range(0; ($cells | length); 4) as $i
+          | ("  " + ([$cells[$i:$i + 4][] | (.[0] | padr(10)) + " " + (.[1] | padmin(8))]
+                     | join("  "))) | rstrip]
+    end;
+  def header($title; $note):
+    if $note == "" then $title else (($title | padmin(27)) + $note) end;
+
+  . as $h
+  | ($h.starts | map([.agent, (.count | tostring)])) as $start_cells
+  | ($h.passes | map(select(.holds_beads and .noop > 0))
+               | map([.agent, ((.noop | tostring) + " of " + (.total | tostring))])) as $pass_cells
+  | ($h.passes | map(select(.holds_beads | not) | .agent)) as $not_counted
+  | ($h.starts | map(select(.over)) | length) as $over
+  | ($h.running | map(select(.long)) | length) as $long
+
+  | ["Fleet health — last " + $span + " (" + $h.since + " → " + $h.until + ")"]
+  + [""]
+  + [header("Starts per name"; "ceiling " + ($h.start_ceiling | tostring))]
+  + grid($start_cells)
+  + [""]
+  + [header("Passes that held no bead"; "")]
+  + grid($pass_cells)
+  + (if ($not_counted | length) > 0
+     then ["  not counted (these roles hold no bead): " + ($not_counted | join(", "))]
+     else [] end)
+  + [""]
+  + [header("Running now"; "long > " + ($h.long_minutes | tostring) + "m")]
+  + (if ($h.running | length) == 0 then ["  nothing in the window"]
+     else [$h.running[]
+           | ("  " + (.agent | padr(10)) + " "
+              + ((.state + (if .phase == null then "" else "/" + .phase end)) | padr(16)) + " "
+              + ((.minutes | round | tostring) | padl(3)) + "m  "
+              + (.bead // "-")) | rstrip]
+     end)
+  + [""]
+  + [header("Disarmed or given up on"; "")]
+  + (if ($h.disarmed | length) == 0 then ["  nothing in the window"]
+     else [$h.disarmed[]
+           | ("  " + .ts + "  " + ((.agent // "-") | padr(10)) + " " + .detail) | rstrip]
+     end)
+  + [""]
+  + [ (([ (if $over > 0 then (($over | tostring) + " name" + (if $over == 1 then "" else "s" end)
+                              + " over the start ceiling") else empty end),
+          (if $long > 0 then (($long | tostring) + " running past "
+                              + ($h.long_minutes | tostring) + "m") else empty end)]) as $clauses
+      | if ($clauses | length) == 0 then "Nothing over a threshold in the window."
+        else ($clauses | join(", ")) + "." end) ]
+  | .[]
+' <<<"$out")"; then
+  echo "fleet-health: could not render the report from the facts it had" >&2
+  exit 1
+fi
+
+printf '%s\n' "$report"

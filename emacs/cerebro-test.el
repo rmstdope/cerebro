@@ -551,14 +551,28 @@ presence in an alist was not."
     (should (eq (cerebro-agent-state agent) 'unknown))
     (should (equal (cerebro-agent-raw agent) "done"))))
 
-(ert-deftest cerebro-test/supervise-ignores-an-asking-interactive-agent ()
-  ;; The `kind' guard in `cerebro--supervise-action' must keep excluding
-  ;; interactive agents once they can write `asking' too - nudging, retiring
-  ;; or restarting one is not this function's business, ever.
+(ert-deftest cerebro-test/supervise-nudges-an-asking-interactive-agent-on-its-own-clock ()
+  ;; cb-2e9: the `kind' guard on the `asking' arm chose a timeout rather than
+  ;; excluding a kind.  An interactive role is nudged once it has stood past
+  ;; `cerebro-interactive-answer-timeout' and not before - so a question that
+  ;; would have held its whole role overnight costs half an hour.  It is still
+  ;; never retired or restarted from here.
   (let ((agent (make-cerebro-agent :name "Psylocke" :role "verifier" :kind 'interactive
                                            :state 'asking :bead "ah-xyz"
-                                           :since "2020-01-01T00:00:00Z" :external nil)))
-    (should (null (cerebro--supervise-action agent nil (current-time))))))
+                                           :since "2020-01-01T00:00:00Z" :external nil))
+        (cerebro-interactive-answer-timeout 1800))
+    (should (eq (cerebro--supervise-action agent nil (current-time)) 'nudge))
+    (should (eq (cerebro--supervise-action agent t (current-time)) 'nudge)))
+  (let ((agent (make-cerebro-agent :name "Psylocke" :role "verifier" :kind 'interactive
+                                           :state 'asking :bead "ah-xyz"
+                                           :since "2026-08-14T09:00:00Z" :external nil))
+        (cerebro-interactive-answer-timeout 1800))
+    ;; 1799 seconds after it began asking: not yet.
+    (should (null (cerebro--supervise-action
+                   agent nil (encode-time (iso8601-parse "2026-08-14T09:29:59Z")))))
+    (should (eq (cerebro--supervise-action
+                 agent nil (encode-time (iso8601-parse "2026-08-14T09:30:00Z")))
+                'nudge))))
 
 ;; ---------------------------------------------------------------------------
 ;; Increment 2: formatting
@@ -5586,15 +5600,17 @@ record of the pass it just finished - the flag cleared, and the name disarmed."
           (should-not (cerebro--stop-flag-p root "Cyclops")))
       (delete-directory root t))))
 
-(ert-deftest cerebro-test/an-interactive-role-is-still-never-restarted-or-nudged ()
+(ert-deftest cerebro-test/an-interactive-role-is-still-never-restarted-or-retired ()
   "The docstring's warning, pinned: making the guard per-arm must not let
-`restart', `retire' or `nudge' reach a role whose mockup conversation with the
+`restart' or `retire' reach a role whose mockup conversation with the
 navigator would be destroyed by it.
 
 `idle' is absent since cb-5yr - it is one of the two states that end a pass,
-and is answered there.  The rest still reach nothing: a role mid-pass, or one
-with a state file the view cannot read, is left alone."
-  (dolist (state '(unknown asking working))
+and is answered there.  `asking' is absent since cb-2e9, which gave the
+interactive roles a nudge of their own; a nudge asks the agent to finish,
+where a retire ends its session under it.  The rest still reach nothing: a
+role mid-pass, or one with a state file the view cannot read, is left alone."
+  (dolist (state '(unknown working))
     (let ((agent (make-cerebro-agent :name "Xavier" :role "planner" :kind 'interactive
                                              :state state :bead "ah-f9c"
                                              :since "2026-08-14T08:00:00Z")))
@@ -8861,8 +8877,9 @@ here rather than taken from whatever the running fleet is customised to."
   (let ((rows (cerebro-test--supervise-cases))
         (now (current-time))
         (cerebro-end-grace 30)
-        (cerebro-answer-timeout 900))
-    (should (>= (length rows) 34))
+        (cerebro-answer-timeout 900)
+        (cerebro-interactive-answer-timeout 1800))
+    (should (>= (length rows) 53))
     (dolist (row rows)
       (pcase-let* ((`(,kind ,state ,ours ,stop ,ends-pass ,stood ,action) row)
                    (cerebro-idle-ends-pass-roles

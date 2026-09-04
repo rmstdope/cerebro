@@ -94,6 +94,13 @@ pub const END_GRACE_SECONDS: i64 = 30;
 /// default (`emacs/cerebro.el:1509`), same reasoning.
 pub const ANSWER_TIMEOUT_SECONDS: i64 = 900;
 
+/// Seconds an `asking` interactive role may wait before it is nudged.
+/// `cerebro-interactive-answer-timeout`'s default, a constant here for `END_GRACE_SECONDS`'
+/// reason: this crate has no place to declare a customisation and must not invent one. Twice the
+/// implementer's, because an interactive role's questions are ones the navigator thinks about
+/// rather than answers yes/no.
+pub const INTERACTIVE_ANSWER_TIMEOUT_SECONDS: i64 = 1800;
+
 /// Everything the supervision decision reads, and nothing else.
 ///
 /// It does NOT read the bead or the phase. `emacs/cerebro.el`'s own rule, stated in the root
@@ -170,9 +177,15 @@ pub fn supervise_action(agent: Supervised<'_>) -> Option<Supervision> {
         RowState::Waiting => end_decision(&agent),
         // The stop flag makes no difference here: the bead is still in flight, so the question
         // still needs an answer or a hand-back.
-        RowState::Asking => (agent.kind == AgentKind::Implementer
-            && matches!(agent.stood, Some(stood) if stood >= ANSWER_TIMEOUT_SECONDS))
-        .then_some(Supervision::Nudge),
+        RowState::Asking => {
+            let timeout = match agent.kind {
+                AgentKind::Implementer => ANSWER_TIMEOUT_SECONDS,
+                AgentKind::Interactive => INTERACTIVE_ANSWER_TIMEOUT_SECONDS,
+            };
+            // `Option<i64>` is what keeps a torn state file safe: `matches!(None, Some(_))` is
+            // false, so a missing or unparseable `since` never reads as an expired timeout.
+            matches!(agent.stood, Some(stood) if stood >= timeout).then_some(Supervision::Nudge)
+        }
         RowState::Working
         | RowState::Up
         // Answered above, ahead of the `ours` guard.
@@ -1127,7 +1140,7 @@ mod tests {
             assert_eq!(supervise_action(agent), table_action(fields[6]), "row: {line}");
             rows += 1;
         }
-        assert!(rows >= 34, "supervise.cases: only {rows} rows ran");
+        assert!(rows >= 53, "supervise.cases: only {rows} rows ran");
     }
 
     /// The two things the table cannot carry, both of which end a session that should be left

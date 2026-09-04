@@ -1523,6 +1523,17 @@ than an abandoned one."
   :type 'integer
   :group 'cerebro)
 
+(defcustom cerebro-interactive-answer-timeout 1800
+  "Seconds an interactive role may wait on the navigator before it is told to give up.
+
+Its own setting rather than `cerebro-answer-timeout\=', and twice it: an
+interactive role\='s questions are ones the navigator thinks about rather than
+answers yes/no.  Past this, `cerebro--supervise\=' tells the role to record its
+question where its own instructions say an unanswered question goes and finish
+the pass - a role blocked in `asking\=' does nothing else it would have done."
+  :type 'integer
+  :group 'cerebro)
+
 (defcustom cerebro-wake-interval-default 600
   "Seconds a `waiting' interactive role is left alone before it is woken.
 
@@ -1649,7 +1660,9 @@ answers are:
             is removed as it retires (ah-kgc), so the next session started
             under that name does not inherit an instruction meant for this
             one.
-`nudge'   - AGENT has waited past `cerebro-answer-timeout' for an answer.
+`nudge'   - AGENT has waited past its kind's answer timeout without one:
+            `cerebro-answer-timeout' for an implementer,
+            `cerebro-interactive-answer-timeout' for an interactive role.
 `end'     - AGENT has finished a pass - `waiting', or `idle' for a role in
             `cerebro-idle-ends-pass-roles' that writes that instead - and
             `cerebro-end-grace' has passed since it said so (cb-5yr).  Its
@@ -1668,15 +1681,18 @@ restarting it would fight the navigator's own `k'.
 The `kind' guard is load-bearing now that the interactive agents write the
 same state file an implementer does (ah-2n3.2): Xavier, Cerebro, Moira,
 Psylocke and Forge can show `asking' or, if one ever writes it in error,
-`unknown', but never `retire'd or `nudge'd from here - they are
-never replaced between beads because they have none.
+`unknown', but are never `retire'd from here - they are never replaced
+between beads because they have none.  Since cb-2e9 they ARE `nudge'd, on
+`cerebro-interactive-answer-timeout' rather than the implementer's clock: a
+nudge asks the agent to finish what it is doing, where a retire ends its
+session under it.
 
 Since ah-hiib.3 that guard is *per-arm* rather than wrapped round the whole
 body, because `poke' is the one answer that belongs to the interactive roles
 alone.  The warning it used to carry still stands and is now the reason for
-the shape: `retire' and `nudge' name an implementer's kind
-explicitly, so unifying this function cannot let a planner be restarted
-mid-mockup-conversation by accident.  Being external still excludes
+the shape: `retire' names an implementer's kind explicitly, so unifying this
+function cannot let a planner be restarted mid-mockup-conversation by
+accident.  Being external still excludes
 everything: every answer here ends in Emacs acting on a session it owns."
   (unless (cerebro-agent-external agent)
     (pcase (cerebro-agent-state agent)
@@ -1710,11 +1726,16 @@ everything: every answer here ends in Emacs acting on a session it owns."
       ('standby (and (eq (cerebro-agent-kind agent) 'implementer)
                      stop-flag-p 'retire))
       ('asking
-       (let ((waited (cerebro--seconds-since (cerebro-agent-since agent) now)))
-         ;; A stop flag makes no difference: the bead is still in flight, so
-         ;; the question still needs an answer or a hand-back.
-         (and (eq (cerebro-agent-kind agent) 'implementer)
-              waited (>= waited cerebro-answer-timeout) 'nudge)))
+       (let ((waited (cerebro--seconds-since (cerebro-agent-since agent) now))
+             (timeout (if (eq (cerebro-agent-kind agent) 'implementer)
+                          cerebro-answer-timeout
+                        cerebro-interactive-answer-timeout)))
+         ;; A stop flag makes no difference for either kind: the question is
+         ;; still in flight, so it still needs an answer or a hand-back.
+         ;; `waited' is nil for a missing or unparseable `since', and
+         ;; (and nil ...) is nil - a torn file must never read as an expired
+         ;; timeout.
+         (and waited (>= waited timeout) 'nudge)))
       (_ nil))))
 
 

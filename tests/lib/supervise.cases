@@ -9,8 +9,10 @@
 # conventions this one copies deliberately.
 #
 # WHAT BOTH READERS MUST BIND. The rows assume `cerebro-end-grace' 30 and
-# `cerebro-answer-timeout' 900, so a reader binds or passes exactly those numbers rather than
-# whatever the running fleet is customised to.
+# `cerebro-answer-timeout' 900, and `cerebro-interactive-answer-timeout' 1800, so a reader binds or
+# passes exactly those numbers rather than whatever the running fleet is customised to. The two
+# answer timeouts are per kind: an implementer's questions are ones the navigator answers, an
+# interactive role's are ones they think about, so the second clock is twice the first.
 #
 # THE COLUMNS, tab- or space-separated, in order:
 #
@@ -54,7 +56,8 @@
 #     there is nothing for a grace to protect. Otherwise `stood >= 30' ends it; otherwise nothing.
 #   * `asking', implementer -> nudge once `stood >= 900'. The stop flag makes NO difference: the
 #     bead is still in flight, so the question still needs an answer or a hand-back.
-#   * `asking', interactive -> nothing.
+#   * `asking', interactive -> nudge once `stood >= 1800'. The stop flag makes no difference, for
+#     the implementer arm's reason.
 #   * everything else -> nothing, whatever the flag.
 #
 # Comparisons are `>=' on purpose: `>' delays every end by one tick.
@@ -69,6 +72,7 @@ implementer   idle      no   yes  no   5      none
 implementer   working   no   yes  no   100    none
 interactive   waiting   no   yes  no   100    none
 interactive   idle      no   yes  yes  100    none
+interactive   asking    no   no   no   3000   none
 
 # An implementer's idle: a flag retires it, nothing else acts.
 implementer   idle      yes  yes  no   0      retire
@@ -100,14 +104,19 @@ interactive   waiting   yes  no   no   29     none
 interactive   waiting   yes  no   yes  30     end
 interactive   waiting   yes  no   no   none   none
 
-# Asking: an implementer alone, and the flag makes no difference.
+# Asking: both kinds, on their own clocks, and the flag makes no difference to either.
 implementer   asking    yes  no   no   900    nudge
 implementer   asking    yes  no   no   901    nudge
 implementer   asking    yes  yes  no   900    nudge
 implementer   asking    yes  no   no   899    none
 implementer   asking    yes  no   no   none   none
-interactive   asking    yes  no   no   3000   none
-interactive   asking    yes  yes  no   3000   none
+interactive   asking    yes  no   no   1800   nudge
+interactive   asking    yes  no   no   1801   nudge
+interactive   asking    yes  yes  no   1800   nudge
+interactive   asking    yes  no   no   1799   none
+interactive   asking    yes  no   no   none   none
+interactive   asking    yes  no   no   3000   nudge
+interactive   asking    yes  yes  no   3000   nudge
 
 # Every other state, whatever the flag.
 implementer   working   yes  yes  no   5000   none

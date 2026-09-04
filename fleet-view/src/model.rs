@@ -907,6 +907,222 @@ pub fn history_line(row: &HistoryRow) -> Option<(String, bool)> {
     Some((text, long))
 }
 
+// --- Fleet health -------------------------------------------------------------------------------
+
+/// What `scripts/fleet-health --json` says, in its own shape and its own order (cb-xhu.4.2).
+///
+/// Deserialization mirrors `HistoryRow`: `#[serde(default)]` on every optional field, so a
+/// renamed one deserializes silently to its default — which is why the reader contract case in
+/// `fleet-view/tests/reader_contracts.rs` asserts the REAL object's key set against these field
+/// names rather than merely deserializing it.
+///
+/// `PartialEq` and never `Eq`: `HealthRunning::minutes` is an `f64`.
+///
+/// **Preserve the script's order everywhere this is rendered.** It is already the order the
+/// report wants, and re-sorting here would be a second opinion about the same question.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct FleetHealth {
+    pub since: String,
+    pub until: String,
+    #[serde(default)]
+    pub start_ceiling: i64,
+    #[serde(default)]
+    pub long_minutes: i64,
+    #[serde(default)]
+    pub starts: Vec<HealthStarts>,
+    #[serde(default)]
+    pub passes: Vec<HealthPasses>,
+    #[serde(default)]
+    pub running: Vec<HealthRunning>,
+    #[serde(default)]
+    pub disarmed: Vec<HealthDisarmed>,
+}
+
+/// One row of the report's `Starts per name` section.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct HealthStarts {
+    pub agent: String,
+    #[serde(default)]
+    pub count: i64,
+    #[serde(default)]
+    pub over: bool,
+}
+
+/// One row of the report's `Passes that held no bead` section. `holds_beads` is false for a role
+/// that never holds one, and such a row is counted nowhere.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct HealthPasses {
+    pub agent: String,
+    #[serde(default)]
+    pub noop: i64,
+    #[serde(default)]
+    pub total: i64,
+    #[serde(default)]
+    pub holds_beads: bool,
+}
+
+/// One row of the report's `Running now` section.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct HealthRunning {
+    pub agent: String,
+    pub state: String,
+    #[serde(default)]
+    pub phase: Option<String>,
+    #[serde(default)]
+    pub minutes: f64,
+    #[serde(default)]
+    pub bead: Option<String>,
+    #[serde(default)]
+    pub long: bool,
+}
+
+/// One row of the report's `Disarmed or given up on` section.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct HealthDisarmed {
+    pub ts: String,
+    #[serde(default)]
+    pub event: String,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub detail: String,
+}
+
+/// How urgently one Health finding reads. `ui.rs` owns colour; this owns the words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HealthTone {
+    Alert,
+    Warn,
+}
+
+/// One Health finding: the line as drawn (without its two-space indent) and how it reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HealthFinding {
+    pub text: String,
+    pub tone: HealthTone,
+}
+
+/// A no-op-pass finding needs at least this many completed passes. One no-op pass is never a
+/// finding.
+const HEALTH_PASSES_FLOOR: i64 = 2;
+
+/// Which of the report's numbers are worth putting on the Work pane, in order.
+///
+/// Three kinds, GROUPED in this order — running-long, started-too-often, passes-held-no-bead —
+/// each keeping the script's own order within it. Grouping is deterministic, explainable, and
+/// puts the red line first.
+///
+/// `disarmed` produces no finding at all: a `give-up` is a past event that does not clear until
+/// the window rolls past it, so as a finding it would sit on the pane for a day after the fleet
+/// was fixed. The section exists to say *something is stuck right now*; the `h` report says what
+/// happened.
+pub fn health_findings(health: &FleetHealth) -> Vec<HealthFinding> {
+    let span = health_span(health);
+    let mut findings = Vec::new();
+    for row in health.running.iter().filter(|row| row.long) {
+        let tail = match &row.bead {
+            Some(bead) => format!(" — {bead}"),
+            None => String::new(),
+        };
+        findings.push(HealthFinding {
+            text: format!(
+                "{} {} {}m{}",
+                row.agent,
+                row.state,
+                row.minutes.round() as i64,
+                tail
+            ),
+            tone: HealthTone::Alert,
+        });
+    }
+    for row in health.starts.iter().filter(|row| row.over) {
+        findings.push(HealthFinding {
+            text: format!("{} started {}× in {}", row.agent, row.count, span),
+            tone: HealthTone::Warn,
+        });
+    }
+    for row in health.passes.iter().filter(|row| health_passes_finding(row)) {
+        findings.push(HealthFinding {
+            text: format!("{}: {} of {} passes held no bead", row.agent, row.noop, row.total),
+            tone: HealthTone::Warn,
+        });
+    }
+    findings
+}
+
+/// Whether this `passes` row is worth reporting: a role that holds beads at all, at least two
+/// completed passes, and MORE THAN HALF of them holding none.
+pub fn health_passes_finding(row: &HealthPasses) -> bool {
+    row.holds_beads && row.total >= HEALTH_PASSES_FLOOR && row.noop * 2 > row.total
+}
+
+/// `24h`, `90m`, `7d` — the window's own span, from `until - since`.
+///
+/// Whole days read `{n}d`, whole hours `{n}h`, anything else `{n}m`. The script's own default
+/// window is exactly one day and reads `24h` rather than `1d`, which is the mockup's own
+/// spelling and the way a navigator says it; `{n}d` starts at two days.
+///
+/// A span that will not parse, or is not positive, reads `the window`, so the line still says
+/// something true: `Xavier started 15× in the window`.
+pub fn health_span(health: &FleetHealth) -> String {
+    let Ok(since) = DateTime::parse_from_rfc3339(&health.since) else {
+        return "the window".into();
+    };
+    let Ok(until) = DateTime::parse_from_rfc3339(&health.until) else {
+        return "the window".into();
+    };
+    let seconds = (until - since).num_seconds();
+    if seconds <= 0 {
+        return "the window".into();
+    }
+    if seconds % 86_400 == 0 && seconds >= 2 * 86_400 {
+        format!("{}d", seconds / 86_400)
+    } else if seconds % 3_600 == 0 {
+        format!("{}h", seconds / 3_600)
+    } else {
+        format!("{}m", seconds / 60)
+    }
+}
+
+/// The approved mockup's own fleet (`docs/ui/cb-xhu.4-tui.html`), as one `FleetHealth`.
+///
+/// At the top level rather than inside `mod tests`, so `app.rs`' and `ui.rs`' own test modules
+/// can call it as `crate::model::mockup_report()` instead of keeping a second literal of the
+/// same report.
+#[cfg(test)]
+pub(crate) fn mockup_report() -> FleetHealth {
+    serde_json::from_str(MOCKUP_REPORT_JSON).expect("the mockup report parses")
+}
+
+#[cfg(test)]
+pub(crate) const MOCKUP_REPORT_JSON: &str = r#"{
+  "since": "2026-09-03T13:20:00Z", "until": "2026-09-04T13:20:00Z",
+  "start_ceiling": 8, "long_minutes": 60,
+  "starts": [
+    {"agent":"Xavier","count":15,"over":true},   {"agent":"Cyclops","count":9,"over":true},
+    {"agent":"Storm","count":8,"over":false},    {"agent":"Beast","count":7,"over":false},
+    {"agent":"Wolverine","count":4,"over":false},{"agent":"Psylocke","count":3,"over":false},
+    {"agent":"Forge","count":3,"over":false},    {"agent":"Rogue","count":2,"over":false},
+    {"agent":"Cerebro","count":2,"over":false},  {"agent":"Moira","count":1,"over":false}
+  ],
+  "passes": [
+    {"agent":"Storm","noop":5,"total":8,"holds_beads":true},
+    {"agent":"Cyclops","noop":3,"total":9,"holds_beads":true},
+    {"agent":"Forge","noop":3,"total":3,"holds_beads":false},
+    {"agent":"Wolverine","noop":2,"total":4,"holds_beads":true},
+    {"agent":"Rogue","noop":1,"total":2,"holds_beads":true},
+    {"agent":"Beast","noop":1,"total":7,"holds_beads":true},
+    {"agent":"Cerebro","noop":1,"total":1,"holds_beads":false},
+    {"agent":"Moira","noop":1,"total":1,"holds_beads":false}
+  ],
+  "running": [
+    {"agent":"Psylocke","state":"asking","phase":"verify","minutes":74.2,"bead":"cb-5kk","long":true},
+    {"agent":"Cyclops","state":"working","phase":"build","minutes":17.4,"bead":"cb-2e9","long":false},
+    {"agent":"Storm","state":"working","phase":"build","minutes":16.1,"bead":"cb-cz7","long":false}
+  ],
+  "disarmed": []
+}"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1743,5 +1959,182 @@ mod tests {
     #[test]
     fn an_empty_array_is_an_error() {
         assert!(parse_bead_detail(b"[]").is_err());
+    }
+
+    // --- fleet health --------------------------------------------------------------------------
+
+    #[test]
+    fn a_health_report_parses_every_section() {
+        let health = mockup_report();
+        assert_eq!(health.since, "2026-09-03T13:20:00Z");
+        assert_eq!(health.until, "2026-09-04T13:20:00Z");
+        assert_eq!(health.start_ceiling, 8);
+        assert_eq!(health.long_minutes, 60);
+        assert_eq!(health.starts.len(), 10);
+        assert_eq!(
+            health.starts[0],
+            HealthStarts { agent: "Xavier".into(), count: 15, over: true }
+        );
+        assert_eq!(
+            health.passes[2],
+            HealthPasses { agent: "Forge".into(), noop: 3, total: 3, holds_beads: false }
+        );
+        assert_eq!(
+            health.running[0],
+            HealthRunning {
+                agent: "Psylocke".into(),
+                state: "asking".into(),
+                phase: Some("verify".into()),
+                minutes: 74.2,
+                bead: Some("cb-5kk".into()),
+                long: true,
+            }
+        );
+        assert!(health.disarmed.is_empty());
+    }
+
+    #[test]
+    fn a_health_report_parses_its_nullable_fields() {
+        let json = r#"{"since":"a","until":"b","running":[{"agent":"Cerebro","state":"working",
+            "phase":null,"minutes":1.0,"bead":null,"long":false}],
+            "disarmed":[{"ts":"t","event":"retire","agent":null,"detail":"d"}]}"#;
+        let health: FleetHealth = serde_json::from_str(json).expect("nulls parse");
+        assert_eq!(health.running[0].phase, None);
+        assert_eq!(health.running[0].bead, None);
+        assert_eq!(health.disarmed[0].agent, None);
+        assert_eq!(health.disarmed[0].detail, "d");
+    }
+
+    #[test]
+    fn a_health_report_with_empty_sections_parses() {
+        let json = r#"{"since":"a","until":"b","start_ceiling":8,"long_minutes":60,
+            "starts":[],"passes":[],"running":[],"disarmed":[]}"#;
+        let health: FleetHealth = serde_json::from_str(json).expect("empty sections parse");
+        assert_eq!(health, FleetHealth {
+            since: "a".into(),
+            until: "b".into(),
+            start_ceiling: 8,
+            long_minutes: 60,
+            ..FleetHealth::default()
+        });
+    }
+
+    fn spanning(since: &str, until: &str) -> FleetHealth {
+        FleetHealth { since: since.into(), until: until.into(), ..FleetHealth::default() }
+    }
+
+    #[test]
+    fn the_window_span_is_days_hours_or_minutes() {
+        assert_eq!(
+            health_span(&spanning("2026-09-03T13:20:00Z", "2026-09-04T13:20:00Z")),
+            "24h"
+        );
+        assert_eq!(
+            health_span(&spanning("2026-08-28T13:20:00Z", "2026-09-04T13:20:00Z")),
+            "7d"
+        );
+        assert_eq!(
+            health_span(&spanning("2026-09-04T11:50:00Z", "2026-09-04T13:20:00Z")),
+            "90m"
+        );
+        assert_eq!(health_span(&spanning("not a time", "2026-09-04T13:20:00Z")), "the window");
+        assert_eq!(health_span(&spanning("2026-09-04T13:20:00Z", "also not")), "the window");
+        assert_eq!(
+            health_span(&spanning("2026-09-04T13:20:00Z", "2026-09-04T13:20:00Z")),
+            "the window",
+            "a window of no length is no window"
+        );
+    }
+
+    fn finding_lines(health: &FleetHealth) -> Vec<(HealthTone, String)> {
+        health_findings(health).into_iter().map(|f| (f.tone, f.text)).collect()
+    }
+
+    #[test]
+    fn health_findings_are_the_three_kinds_grouped() {
+        assert_eq!(
+            finding_lines(&mockup_report()),
+            vec![
+                (HealthTone::Alert, "Psylocke asking 74m — cb-5kk".to_string()),
+                (HealthTone::Warn, "Xavier started 15× in 24h".to_string()),
+                (HealthTone::Warn, "Cyclops started 9× in 24h".to_string()),
+                (HealthTone::Warn, "Storm: 5 of 8 passes held no bead".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_exactly_at_the_ceiling_is_not_a_finding() {
+        let health = FleetHealth {
+            start_ceiling: 8,
+            starts: vec![HealthStarts { agent: "Storm".into(), count: 8, over: false }],
+            ..spanning("2026-09-03T13:20:00Z", "2026-09-04T13:20:00Z")
+        };
+        assert_eq!(finding_lines(&health), Vec::new(), "`over` is the script's own flag");
+    }
+
+    #[test]
+    fn a_running_row_with_no_bead_drops_the_dash_clause() {
+        let health = FleetHealth {
+            running: vec![HealthRunning {
+                agent: "Cerebro".into(),
+                state: "working".into(),
+                phase: Some("sweep".into()),
+                minutes: 107.1,
+                bead: None,
+                long: true,
+            }],
+            ..spanning("2026-09-03T13:20:00Z", "2026-09-04T13:20:00Z")
+        };
+        assert_eq!(
+            finding_lines(&health),
+            vec![(HealthTone::Alert, "Cerebro working 107m".to_string())]
+        );
+    }
+
+    #[test]
+    fn half_the_passes_holding_no_bead_is_not_yet_a_finding() {
+        let of = |noop: i64, total: i64| HealthPasses {
+            agent: "Storm".into(),
+            noop,
+            total,
+            holds_beads: true,
+        };
+        assert!(!health_passes_finding(&of(4, 8)), "half is not more than half");
+        assert!(health_passes_finding(&of(5, 8)));
+    }
+
+    #[test]
+    fn a_single_no_op_pass_is_never_a_finding() {
+        assert!(!health_passes_finding(&HealthPasses {
+            agent: "Rogue".into(),
+            noop: 1,
+            total: 1,
+            holds_beads: true,
+        }));
+    }
+
+    #[test]
+    fn a_role_that_holds_no_bead_never_produces_a_pass_finding() {
+        assert!(!health_passes_finding(&HealthPasses {
+            agent: "Forge".into(),
+            noop: 3,
+            total: 3,
+            holds_beads: false,
+        }));
+    }
+
+    #[test]
+    fn a_disarm_event_produces_no_finding() {
+        let health = FleetHealth {
+            disarmed: vec![HealthDisarmed {
+                ts: "2026-09-04T09:02:11Z".into(),
+                event: "give-up".into(),
+                agent: Some("Xavier".into()),
+                detail: "5 starts produced no pass".into(),
+            }],
+            ..spanning("2026-09-03T13:20:00Z", "2026-09-04T13:20:00Z")
+        };
+        assert_eq!(finding_lines(&health), Vec::new());
     }
 }

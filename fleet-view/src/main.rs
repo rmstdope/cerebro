@@ -39,7 +39,8 @@ use ratatui::layout::Rect;
 use ratatui::Terminal;
 
 use cerebro_tui::app::{
-    self, App, AppAction, DetailWorker, FleetWorker, GhWorker, HistoryWorker, SupervisorWorker, SweepWorker,
+    self, App, AppAction, DetailWorker, FleetWorker, GhWorker, HealthWorker, HistoryWorker,
+    SupervisorWorker, SweepWorker,
     WorkWorker, WriteWorker,
 };
 use cerebro_tui::lifecycle;
@@ -317,6 +318,9 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // A sixth thread for `scripts/fleet-history`, on its own five-minute cadence: a `jq` walk
     // over a log that grows without limit (cb-kcs.5.4).
     let history_worker = HistoryWorker::spawn(paths.clone(), commands.clone());
+    // A NINTH thread for `scripts/fleet-health`, on its own five-minute cadence and for the same
+    // reason: a `jq` walk over logs that grow without limit (cb-xhu.4.2).
+    let health_worker = HealthWorker::spawn(paths.clone(), commands.clone());
     let supervisor_worker = SupervisorWorker::spawn(paths.clone(), commands.clone());
     // An EIGHTH thread for the two board writes, for the reason the other seven exist: a
     // `bd dolt push` is a network call bounded at thirty seconds, and running it on the drawing
@@ -329,6 +333,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
         gh: gh_worker,
         sweep: sweep_worker,
         history: history_worker,
+        health: health_worker,
         supervisor: supervisor_worker,
         write: write_worker,
     };
@@ -1418,7 +1423,7 @@ struct LoopConfig {
     planner_multiple: usize,
 }
 
-/// Every worker the loop polls or asks. One value, so a ninth is a field rather than a
+/// Every worker the loop polls or asks. One value, so a tenth is a field rather than a
 /// parameter added to `run`, to `dispatch` and to sixteen cases (cb-agg).
 struct Workers {
     fleet: FleetWorker,
@@ -1427,6 +1432,7 @@ struct Workers {
     gh: GhWorker,
     sweep: SweepWorker,
     history: HistoryWorker,
+    health: HealthWorker,
     supervisor: SupervisorWorker,
     write: WriteWorker,
 }
@@ -1610,6 +1616,20 @@ where
                 ),
             }
             app.finish_history_refresh(result, clock());
+        }
+        // Health fails apart from every other pane, for History's reason: `fleet-health` not
+        // running says nothing about the fleet or the board, and a failure that has rows to keep
+        // shows only as the red word beside its own header (cb-xhu.4.2).
+        if let Some(result) = workers.health.poll() {
+            match &result {
+                Ok(_) => state.logger.clear_error("health"),
+                Err(error) => state.logger.error(
+                    &log::reader_context("health", error),
+                    &error.log_message(),
+                    clock(),
+                ),
+            }
+            app.finish_health_refresh(result, clock());
         }
         // Ownership is a third state, polled like the other two and failing apart from them: a
         // declaration that cannot be read says nothing about the fleet or the board.
@@ -1943,7 +1963,7 @@ fn lifecycle_key(
             let outcome = lifecycle::start_outcome(situation);
             // Whatever the outcome: the pane is the agent's again, which is the rule the
             // navigator chose. `f` and `k` leave a pinned bead alone.
-            app.drop_bead_detail();
+            app.drop_pin();
             match outcome {
             lifecycle::StartOutcome::Launch { clears_flag } => {
                 match lifecycle::start(host, paths, &name, clears_flag) {
@@ -2077,7 +2097,7 @@ fn dispatch(
         let id = if matches!(action, AppAction::RefreshAll) {
             app.restart_bead_read()
         } else {
-            app.bead_detail.as_ref().map(|detail| detail.bead.id.clone())
+            app.bead_detail().map(|detail| detail.bead.id.clone())
         };
         if let Some(id) = id {
             if !workers.detail.request_with(id.clone()) {
@@ -2117,6 +2137,14 @@ fn dispatch(
         && !workers.history.request()
     {
         app.finish_history_refresh(Err(worker_gone("history reader")), clock());
+    }
+    // `g` re-asks Health too, by the same rule - which is also how the pinned report is
+    // refreshed, since `h` starts no read of its own (cb-xhu.4.2).
+    if (matches!(action, AppAction::RefreshAll) || app.health_due(now))
+        && app.begin_health_refresh(now)
+        && !workers.health.request()
+    {
+        app.finish_health_refresh(Err(worker_gone("health reader")), clock());
     }
 }
 
@@ -2569,7 +2597,7 @@ mod main_tests {
     fn tab_out_of_a_pinned_bead_reaches_fleet_and_drops_it() {
         let mut host = SessionHost::default();
         let mut app = hosting(&mut host);
-        app.bead_detail = Some(cerebro_tui::app::BeadDetail {
+        app.pin = Some(cerebro_tui::app::SessionPin::Bead(cerebro_tui::app::BeadDetail {
             bead: cerebro_tui::model::Bead {
                 id: "cb-41r".into(),
                 title: "Enter on a bead opens it".into(),
@@ -2583,7 +2611,7 @@ mod main_tests {
                 external_ref: None,
             },
             body: cerebro_tui::app::DetailBody::Reading,
-        });
+        }));
         assert!(!app.session_has_keyboard(), "a pinned bead keeps the child out of the keyboard");
 
         let tab = crossterm::event::KeyEvent::new(
@@ -2592,7 +2620,7 @@ mod main_tests {
         );
         drive(&mut app, &mut host, &nowhere().0, vec![tab]);
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet);
-        assert_eq!(app.bead_detail, None, "arriving at Fleet drops the bead");
+        assert_eq!(app.pin, None, "arriving at Fleet drops the bead");
         assert!(app.notice.is_none(), "a focus key says nothing");
     }
 
@@ -2796,7 +2824,7 @@ mod main_tests {
         LoopConfig { paths, programs, spacing: BTreeMap::new(), planner_multiple: 1 }
     }
 
-    /// The eight workers, each pointed at `nowhere()`. A case that needs a specific one writes
+    /// The nine workers, each pointed at `nowhere()`. A case that needs a specific one writes
     /// `Workers { detail, ..test_workers() }`.
     fn test_workers() -> Workers {
         Workers {
@@ -2806,6 +2834,7 @@ mod main_tests {
             gh: gh_worker(),
             sweep: sweep_worker(),
             history: history_worker(),
+            health: health_worker(),
             supervisor: SupervisorWorker::spawn(nowhere().0, Arc::new(RealCommands)),
             write: write_worker(),
         }
@@ -2837,6 +2866,12 @@ mod main_tests {
         cerebro_tui::app::HistoryWorker::spawn(nowhere().0, std::sync::Arc::new(RealCommands))
     }
 
+    /// The health reader's worker, pointed at a directory with no `fleet-health` in it - so
+    /// every request fails and the Health section is never drawn.
+    fn health_worker() -> cerebro_tui::app::HealthWorker {
+        cerebro_tui::app::HealthWorker::spawn(nowhere().0, std::sync::Arc::new(RealCommands))
+    }
+
     /// The write worker, pointed at a directory with no `bd` in it: every write fails, which is
     /// what these cases about the terminal and the event source want it to do.
     fn write_worker() -> WriteWorker {
@@ -2847,6 +2882,11 @@ mod main_tests {
     /// A write worker whose thread has already gone: `request_with` cannot deliver.
     fn dead_write_worker() -> WriteWorker {
         WriteWorker::stopped()
+    }
+
+    /// The health reader's worker with its thread already gone (cb-xhu.4.2).
+    fn dead_health_worker() -> cerebro_tui::app::HealthWorker {
+        cerebro_tui::app::HealthWorker::stopped()
     }
 
     fn sweep_worker() -> SweepWorker {
@@ -7592,7 +7632,7 @@ mod main_tests {
         let config = test_config();
         let _ = run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now);
 
-        assert!(app.bead_detail.is_some(), "Enter pinned the bead");
+        assert!(app.bead_detail().is_some(), "Enter pinned the bead");
         let screen: String = {
             let buffer = terminal.backend().buffer().clone();
             let area = buffer.area;
@@ -7612,7 +7652,7 @@ mod main_tests {
     #[test]
     fn pressing_s_drops_the_pinned_bead() {
         let mut app = app_with_a_bead_under_the_cursor();
-        app.bead_detail = Some(cerebro_tui::app::BeadDetail {
+        app.pin = Some(cerebro_tui::app::SessionPin::Bead(cerebro_tui::app::BeadDetail {
             bead: cerebro_tui::model::Bead {
                 id: "cb-41r".into(),
                 title: "Enter on a bead opens it".into(),
@@ -7626,7 +7666,7 @@ mod main_tests {
                 external_ref: None,
             },
             body: cerebro_tui::app::DetailBody::Reading,
-        });
+        }));
         let mut host = SessionHost::default();
         drive(
             &mut app,
@@ -7637,7 +7677,28 @@ mod main_tests {
                 crossterm::event::KeyModifiers::NONE,
             )],
         );
-        assert_eq!(app.bead_detail, None, "s hands the pane back to the agent");
+        assert_eq!(app.pin, None, "s hands the pane back to the agent");
+    }
+
+    /// And `s` drops a pinned health REPORT too, not only a pinned bead (cb-xhu.4.2): `pin` holds
+    /// one tenant, and "the pane is the agent's again" is the rule the navigator chose for this
+    /// key. `f` and `k` leave either alone, and so do `F2` and `F3`.
+    #[test]
+    fn pressing_s_drops_the_pinned_health_report() {
+        let mut app = app_with_a_bead_under_the_cursor();
+        app.pin = Some(cerebro_tui::app::SessionPin::Health);
+        let mut host = SessionHost::default();
+        drive(
+            &mut app,
+            &mut host,
+            &nowhere().0,
+            vec![crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('s'),
+                crossterm::event::KeyModifiers::NONE,
+            )],
+        );
+        assert_eq!(app.pin, None, "s hands the pane back to the agent");
+        assert!(!app.health_pinned());
     }
 
     /// `g` re-reads the pinned bead, and asks nothing at all when none is pinned.
@@ -7654,7 +7715,7 @@ mod main_tests {
             "g with nothing pinned spawns no bd show"
         );
 
-        app.bead_detail = Some(cerebro_tui::app::BeadDetail {
+        app.pin = Some(cerebro_tui::app::SessionPin::Bead(cerebro_tui::app::BeadDetail {
             bead: cerebro_tui::model::Bead {
                 id: "cb-41r".into(),
                 title: "t".into(),
@@ -7668,10 +7729,10 @@ mod main_tests {
                 external_ref: None,
             },
             body: cerebro_tui::app::DetailBody::Ready(Default::default()),
-        });
+        }));
         dispatch(AppAction::RefreshAll, &mut app, &workers, &Utc::now);
         assert_eq!(
-            app.bead_detail.as_ref().unwrap().body,
+            app.bead_detail().unwrap().body,
             cerebro_tui::app::DetailBody::Reading,
             "and the pane says it is working"
         );
@@ -7690,7 +7751,7 @@ mod main_tests {
     #[test]
     fn a_failed_read_names_its_own_bead() {
         let mut app = App::new();
-        app.bead_detail = Some(cerebro_tui::app::BeadDetail {
+        app.pin = Some(cerebro_tui::app::SessionPin::Bead(cerebro_tui::app::BeadDetail {
             bead: cerebro_tui::model::Bead {
                 id: "cb-b".into(),
                 title: "the second bead".into(),
@@ -7704,14 +7765,14 @@ mod main_tests {
                 external_ref: None,
             },
             body: cerebro_tui::app::DetailBody::Reading,
-        });
+        }));
         // cb-a's read failing after cb-b was pinned leaves cb-b's pane alone.
         app.finish_bead_read(
             "cb-a",
             Err(ReadError::Invalid { source: "bd".into(), message: "boom".into() }),
         );
         assert_eq!(
-            app.bead_detail.as_ref().unwrap().body,
+            app.bead_detail().unwrap().body,
             cerebro_tui::app::DetailBody::Reading,
             "the failure belonged to a bead nobody is reading"
         );
@@ -7848,5 +7909,58 @@ mod main_tests {
 
         let written = std::fs::read_to_string(&decisions).unwrap_or_default();
         assert!(!written.contains("\"event\":\"stuck\""), "a view that decides nothing: {written}");
+    }
+
+    // --- the health reader's wiring (cb-xhu.4.2) -------------------------------------------------
+
+    /// `g` re-asks the health reader out of band, the History line's shape exactly: nothing
+    /// forces one otherwise, so there is no `AppAction` of its own — and it is also how the
+    /// pinned report is refreshed, since `h` starts no read.
+    #[test]
+    fn g_asks_the_health_reader() {
+        let mut app = App::new();
+        let workers = test_workers();
+        // Its first request goes out on the first dispatch, whatever the action.
+        dispatch(AppAction::None, &mut app, &workers, &Utc::now);
+        assert!(!app.health_due(std::time::Instant::now()), "the cadence was stamped");
+        let first = settle_health(&workers, &mut app);
+
+        // Well inside the five minutes: nothing asks on its own...
+        dispatch(AppAction::None, &mut app, &workers, &Utc::now);
+        assert!(workers.health.poll().is_none(), "no second request was made");
+
+        // ...and `g` asks anyway.
+        dispatch(AppAction::RefreshAll, &mut app, &workers, &Utc::now);
+        let second = settle_health(&workers, &mut app);
+        assert!(!first && !second, "pointed at nowhere, both requests fail");
+    }
+
+    /// Wait for the health worker's answer and land it, returning what it said.
+    fn settle_health(workers: &Workers, app: &mut App) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(result) = workers.health.poll() {
+                let ok = result.is_ok();
+                app.finish_health_refresh(result, Utc::now());
+                return ok;
+            }
+            assert!(std::time::Instant::now() < deadline, "the health worker never answered");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// A reader thread that has stopped is a failed refresh on screen rather than a silent
+    /// `refreshing...` forever.
+    #[test]
+    fn a_dead_health_worker_lands_as_a_failed_refresh() {
+        let mut app = App::new();
+        let workers = Workers { health: dead_health_worker(), ..test_workers() };
+        dispatch(AppAction::RefreshAll, &mut app, &workers, &Utc::now);
+        match &app.health.content {
+            cerebro_tui::app::PaneContent::Unavailable { error, .. } => {
+                assert!(error.contains("health reader"), "{error}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

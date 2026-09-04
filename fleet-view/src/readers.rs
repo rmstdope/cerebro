@@ -796,6 +796,33 @@ pub fn read_history(
     })
 }
 
+/// How long `scripts/fleet-health` may take. Thirty seconds, `HISTORY_TIMEOUT`'s own value and
+/// for its reason: a `jq` walk over logs that grow without limit, and not a network call.
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `scripts/fleet-health --json` - the whole four-section report over its own default window
+/// (cb-xhu.4.2). No `--since`: the view always runs the script's default.
+///
+/// Run from `paths.consumer_root`, like `read_history`: the script asks `consumer-root --shared`
+/// for itself, and giving it the enclosing tree is what every other script in this crate is
+/// given.
+///
+/// **A failure is never an empty answer.** `Ok(FleetHealth::default())` would draw a fleet in
+/// perfect health that nobody could look at. That includes the ordinary failure on a machine that
+/// has never run the fleet, where the logs do not exist and the script exits non-zero.
+pub fn read_health(
+    paths: &ReaderPaths,
+    commands: &dyn CommandRunner,
+) -> Result<model::FleetHealth, ReadError> {
+    let program = paths.scripts_dir.join("fleet-health");
+    let args = ["--json"];
+    let stdout = commands.run(&program, &args, Some(&paths.consumer_root), HEALTH_TIMEOUT)?;
+    serde_json::from_slice(&stdout).map_err(|error| ReadError::Invalid {
+        source: Invocation::new(&program, &args),
+        message: error.to_string(),
+    })
+}
+
 /// The six sweeps, run in `Sweep::ALL` order, and the findings they justify.
 ///
 /// The chain stops at the first script that does not answer and no later script is started -
@@ -1938,6 +1965,38 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    // --- fleet health --------------------------------------------------------------------------
+
+    #[test]
+    fn read_health_asks_fleet_health_for_json() {
+        let fake = FakeCommands::always(crate::model::MOCKUP_REPORT_JSON);
+        let paths = paths_at(Path::new("/consumer"));
+
+        let health = read_health(&paths, &fake).unwrap();
+        assert_eq!(health, crate::model::mockup_report());
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "one program, run once");
+        assert!(calls[0].program.ends_with("fleet-health"), "{:?}", calls[0].program);
+        assert_eq!(calls[0].args, vec!["--json".to_string()]);
+        assert_eq!(calls[0].cwd.as_deref(), Some(paths.consumer_root.as_path()));
+        assert_eq!(calls[0].timeout, HEALTH_TIMEOUT);
+    }
+
+    /// `Ok(FleetHealth::default())` is a fleet in perfect health that nobody could look at.
+    #[test]
+    fn a_broken_health_answer_is_an_error_naming_its_argv() {
+        let fake = FakeCommands::failing(|| exit(1, "no decisions log"));
+        let error = read_health(&paths_at(Path::new("/consumer")), &fake).unwrap_err();
+        assert!(matches!(error, ReadError::Exit { .. }), "{error:?}");
+
+        let garbage = FakeCommands::always("not json");
+        let error = read_health(&paths_at(Path::new("/consumer")), &garbage).unwrap_err();
+        let message = error.log_message();
+        assert!(message.contains("fleet-health"), "{message}");
+        assert!(message.contains("--json"), "{message}");
     }
 
     #[test]

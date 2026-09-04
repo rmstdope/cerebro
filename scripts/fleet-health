@@ -13,7 +13,7 @@
 #   Starts per name             decisions*.jsonl, event == "start"   - a name the view restarts
 #   Passes that held no bead    transitions*.jsonl                   - sessions that did nothing
 #   Running now                 scripts/fleet-history --json         - and what is long
-#   Disarmed or given up on     decisions*.jsonl, give-up/disarm-all/retire
+#   Disarmed or given up on     decisions*.jsonl, give-up/disarm-all/retire/disarm
 #
 # `--since` takes a SPAN ONLY - 30s, 90m, 24h, 7d - defaulting to 24h. Deliberately narrower than
 # fleet-history's, which also accepts an ISO-8601 timestamp: this command reports "the last N", and
@@ -193,12 +193,16 @@ if ! out="$(jq -n \
               | map({agent, state, phase, minutes, bead, long: (.minutes > $long_minutes)})
               | sort_by(-.minutes, .agent)) as $running
 
-  | ($D | map(select((.event | IN("give-up", "disarm-all", "retire")) and inwindow))
+  | ($D | map(select((.event | IN("give-up", "disarm-all", "retire", "disarm")) and inwindow))
         | sort_by(.ts)
         | map({ts, event: .event,
                agent: (if .event == "disarm-all" then null else (.agent // "?") end),
                detail:
                  (if .event == "give-up" then (f("failed_starts") + " starts produced no pass")
+                  elif .event == "disarm" then
+                    (if .by == "kill" then "disarmed with k, session killed"
+                     elif .by == "standby" then "disarmed with k on a standby row"
+                     else ("disarmed by " + f("by")) end)
                   elif .event == "retire" then
                     ("retired from " + f("state") + ", stop flag "
                      + (if (has("stop_flag") | not) then "?"

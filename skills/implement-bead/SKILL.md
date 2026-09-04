@@ -530,13 +530,15 @@ else. Everything below is how you satisfy it.
 
 ```bash
 .claude/cerebro/scripts/agent-state <name> working --bead <id> --phase review --pid $PPID
-provider="$(.claude/cerebro/scripts/agent-cli)" || provider=""
-.claude/cerebro/scripts/model-for ${provider:+--provider "$provider"} --role reviewer
+.claude/cerebro/scripts/model-for --role reviewer
 ```
 
-**Pass the provider**, exactly as `scripts/launch` does: a consumer declaring `agent_cli copilot`
-may carry a `reviewer@copilot` row, and asking without it silently matches the plain key instead —
-one file with two answers, which is the defect `model-for` exists to prevent.
+**Ask for no provider, and let `model-for` resolve it.** A caller with no provider already in
+hand gets the right answer by asking for none — `scripts/launch` passes one only because it has
+already resolved one, and a second fork per launch is the cost that script exists not to
+multiply. It matters: a consumer declaring `agent_cli copilot` may carry a `reviewer@copilot`
+row, and a lookup that never learns the provider silently matches the plain key instead — one
+file with two answers, which is the defect `model-for` exists to prevent.
 
 `model-for` prints one tab-separated line — `<matched-key>\t<model>\t<effort>` — or **nothing at
 all** when no key matched, in which case the sub-agent runs on the CLI's own default. Two things its

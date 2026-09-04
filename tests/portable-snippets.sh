@@ -156,4 +156,11 @@ grep -q "usage: portable-snippets" "$work_dir/err" \
   || fail "a usage refusal must name itself on stderr, got: $(cat "$work_dir/err")"
 pass "an argument is a usage error, and prints no findings"
 
+# --- this repository answers clean ------------------------------------------------------------------
+
+run "$repo_root/scripts/portable-snippets"
+[[ $status -eq 0 ]] || fail "this repository must exit 0, got $status (output: $out)"
+[[ -z "$out" ]] || fail "this repository must print no findings, got: $out"
+pass "this repository's own skills and agents are portable"
+
 suite_passed

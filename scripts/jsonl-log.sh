@@ -61,8 +61,8 @@ cerebro_jsonl_protected_path() {
 # Appends <line> and a newline to <path>. Returns 0 when the line was written.
 #
 # Returns non-zero WITHOUT WRITING ANYTHING when <path> is empty, when <line> is empty or does not
-# begin with `{', when <path> is protected (see above), or when the append itself fails. It never exits and never writes a diagnostic: a
-# refusal is the caller's to notice. Both callers today sit inside `|| true' groups, so a non-zero
+# begin with `{', when <path> is protected (see above), or when the append itself fails. It never
+# exits and never writes a diagnostic: a refusal is the caller's to notice. Both callers today sit inside `|| true' groups, so a non-zero
 # return cannot kill them - a future caller OUTSIDE such a group, under `set -e', would die on a
 # refusal, and wants `|| true' or a test of its own.
 #

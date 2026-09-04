@@ -724,22 +724,37 @@ pass "a run with no violation still says all suites passed"
 # --- 20. an empty guard variable turns the guard off ---
 #
 # `${VAR+set}' rather than `${VAR:-}': an explicitly empty value means "guard off" and the runner
-# must not overwrite it with the computed one.
+# must not overwrite it with the computed one. The assertion is on the value the runner EXPORTS,
+# read back by the fixture, because that is the only thing the two expansions disagree about: a
+# fixture that merely writes somewhere unguarded passes under both, since under `${VAR:-}' the
+# empty value is replaced by the real shared state directory and every path under $work_dir is
+# unguarded either way. And the real directory is not somewhere a case may write to find out.
 
-mkdir -p "$work_dir/violating-unguarded"
-cat >"$work_dir/violating-unguarded/writes.sh" <<EOF
+mkdir -p "$work_dir/guard-probe"
+cat >"$work_dir/guard-probe/reports.sh" <<EOF
 #!/usr/bin/env bash
-source "$repo_root/scripts/jsonl-log.sh"
-cerebro_jsonl_append "$work_dir/unguarded-target.jsonl" '{"x":1}' || exit 1
+printf '%s' "\${CEREBRO_PROTECTED_STATE_DIR-UNSET}" >"$work_dir/seen-guard"
 exit 0
 EOF
-run --guard "" "$work_dir/violating-unguarded"
+
+run --guard "" "$work_dir/guard-probe"
 [[ $status -eq 0 ]] || fail "an empty guard: expected exit 0, got $status
 $both"
-! grep -q "wrote to the fleet's live logs" <<<"$err" || fail "an empty guard still reported a violation
-$err"
-[[ -f "$work_dir/unguarded-target.jsonl" ]] || fail "an empty guard refused the write"
+[[ "$(cat "$work_dir/seen-guard")" == "" ]] \
+  || fail "an empty guard was replaced by '$(cat "$work_dir/seen-guard")' rather than left off"
 pass "an empty guard variable turns the guard off"
+
+# --- 21. a guard the caller did not set is computed and exported ---
+#
+# The other half of case 20: a run with no guard in its environment resolves one, so the two cases
+# together pin `${VAR+set}' from both sides.
+
+run "$work_dir/guard-probe"
+[[ $status -eq 0 ]] || fail "a default guard: expected exit 0, got $status
+$both"
+[[ "$(cat "$work_dir/seen-guard")" == "$work_dir/protected" ]] \
+  || fail "the guard the caller set was not exported: '$(cat "$work_dir/seen-guard")'"
+pass "a guard the caller set is exported to every suite"
 
 default_runs_after="$(ls "$default_log_root" 2>/dev/null || true)"
 [[ "$default_runs_after" == "$default_runs_before" ]] || fail "a call in this suite wrote to the default log root at $default_log_root.

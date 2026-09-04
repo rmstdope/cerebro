@@ -193,16 +193,16 @@ if ((durable)); then
   fi
 fi
 
-# A token pipe as the semaphore. bash 3.2 - what macOS ships and what the gate runs on locally -
-# has no `wait -n', and running batches of N with a `wait' between them would idle every core but
-# one while the slowest suite of a batch finished. Each job takes a token before it starts and puts
-# it back when it ends; `read' on the fifo blocks until one is there. `exec 3<>' opens it
-# read-write in one step, so neither end blocks on open.
 # Where `scripts/jsonl-log.sh' records a refused write, one `<suite>\t<path>' line each. Under
 # $tmp, which the EXIT trap removes: it is read at the summary below and is not evidence anything
 # later needs, so it deliberately does NOT go under $run_dir.
 export CEREBRO_PROTECTED_STATE_REPORT="$tmp/protected-writes"
 
+# A token pipe as the semaphore. bash 3.2 - what macOS ships and what the gate runs on locally -
+# has no `wait -n', and running batches of N with a `wait' between them would idle every core but
+# one while the slowest suite of a batch finished. Each job takes a token before it starts and puts
+# it back when it ends; `read' on the fifo blocks until one is there. `exec 3<>' opens it
+# read-write in one step, so neither end blocks on open.
 mkfifo "$tmp/tokens"
 exec 3<>"$tmp/tokens"
 i=0

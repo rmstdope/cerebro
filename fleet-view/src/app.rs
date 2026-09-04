@@ -988,6 +988,13 @@ pub struct App {
     /// soon as it is no longer `asking`, so its NEXT question is nudgeable again
     /// (`cerebro--nudged`, `emacs/cerebro.el:3879`).
     pub nudged: BTreeSet<String>,
+
+    /// Names already logged for the stuck stretch they are in now (cb-ykz.2).
+    ///
+    /// Cleared for a name the moment its row stops being stuck, exactly as `nudged` is cleared
+    /// when a row stops asking: a set never cleared logs a stopped session once and then never
+    /// again, even after it recovers and stops a second time (`cerebro--stuck-logged`).
+    pub stuck_logged: BTreeSet<String>,
     /// Which widget the keyboard currently acts on. Fleet by default.
     pub focus: PaneFocus,
     /// What this process is allowed to do with the checkout it is drawing (cb-kcs.1).
@@ -1147,6 +1154,7 @@ impl App {
             armed: BTreeSet::new(),
             flagged: BTreeSet::new(),
             nudged: BTreeSet::new(),
+            stuck_logged: BTreeSet::new(),
             focus: PaneFocus::default(),
             supervision,
             confirm: None,

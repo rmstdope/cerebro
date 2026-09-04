@@ -90,6 +90,33 @@ fn remove_if_present(path: &Path) -> std::io::Result<()> {
 /// gets one number from Emacs and this one from here; that is cb-kcs.5's to resolve at cutover.
 pub const END_GRACE_SECONDS: i64 = 30;
 
+/// Seconds a `working` row's ended turn may stand before the row says `stuck`.
+///
+/// `cerebro-stuck-ceiling`'s value (`emacs/cerebro.el`), and the two must agree: a literal pair
+/// like `END_GRACE_SECONDS` and `cerebro-end-grace`, for the reason above.
+pub const STUCK_CEILING_SECONDS: i64 = 1800;
+
+/// How long this row has been stuck, or `None` if it is not.
+///
+/// `Working` alone: an `asking` row is already bold with a gold `?` and is a question for the
+/// navigator rather than a failure, and an implementer's unanswered question is already nudged at
+/// `ANSWER_TIMEOUT_SECONDS`. Every other state has no turn to have ended.
+///
+/// Pure, and deliberately not a renderer detail: cb-ykz.3's supervision arm reads this same
+/// function.
+pub fn stuck_for(
+    state: &RowState,
+    turn_ended: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Option<i64> {
+    if !matches!(state, RowState::Working) {
+        return None;
+    }
+    let ended = turn_ended?;
+    let stood = (now - ended).num_seconds();
+    (stood >= STUCK_CEILING_SECONDS).then_some(stood)
+}
+
 /// Seconds an `asking` implementer may wait before it is nudged. `cerebro-answer-timeout`'s
 /// default (`emacs/cerebro.el:1509`), same reasoning.
 pub const ANSWER_TIMEOUT_SECONDS: i64 = 900;
@@ -1972,5 +1999,60 @@ mod tests {
         // A nudge on a bead with no priority has nothing to move, and says nothing: the board
         // always sets one, so this is unreachable in practice.
         assert_eq!(priority_action("cb-x", None, Requested::Nudge(-1)), PriorityAction::Nothing);
+    }
+
+    // --- stuck rows (cb-ykz.2) ---------------------------------------------------------------
+
+    fn at(secs: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(1_700_000_000 + secs, 0).unwrap()
+    }
+
+    #[test]
+    fn stuck_for_answers_none_under_the_ceiling() {
+        let now = at(0);
+        assert_eq!(
+            stuck_for(&RowState::Working, Some(at(-1799)), now),
+            None,
+            "one second under the ceiling is not stuck"
+        );
+        assert_eq!(
+            stuck_for(&RowState::Working, Some(at(-1800)), now),
+            Some(1800),
+            "the boundary is inclusive"
+        );
+    }
+
+    #[test]
+    fn stuck_for_ignores_a_row_with_no_turn_end() {
+        // The ordinary working row, and the one that must never go red.
+        assert_eq!(stuck_for(&RowState::Working, None, at(0)), None);
+    }
+
+    #[test]
+    fn stuck_for_is_working_only() {
+        let now = at(0);
+        let long_ago = Some(at(-100_000));
+        for state in [
+            RowState::Asking,
+            RowState::Idle,
+            RowState::Waiting,
+            RowState::Dead,
+            RowState::Standby,
+            RowState::Up,
+            RowState::Unknown("x".into()),
+            RowState::Invalid,
+        ] {
+            assert_eq!(
+                stuck_for(&state, long_ago, now),
+                None,
+                "{state:?} is never stuck"
+            );
+        }
+    }
+
+    #[test]
+    fn stuck_for_never_answers_a_negative() {
+        // A state file written by a machine whose clock is ahead is not evidence of anything.
+        assert_eq!(stuck_for(&RowState::Working, Some(at(3600)), at(0)), None);
     }
 }

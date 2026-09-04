@@ -663,9 +663,13 @@ answer.  `idle\=' used to carry this colour and is blue since cb-9qm, so that
 it could stop reading as one more circle beside `dead\='."
   :group 'cerebro)
 
-(defun cerebro--glyph (state)
+(defun cerebro--glyph (state &optional stuck)
   "The single-character glyph for STATE, propertized."
   (cond
+   ;; A session that stopped mid-work (cb-ykz.2).  First, so a stuck row is
+   ;; ✗ whatever else it is; a glyph of its own rather than sharing any
+   ;; other, which is the rule the rest of this vocabulary follows.
+   (stuck (propertize "✗" 'face 'error))                              ; ✗
    ((memq state '(working up)) (propertize "●" 'face 'success))   ; ●
    ;; Waiting on the navigator: the one state that is asking for something.
    ((eq state 'asking) (propertize "?" 'face 'warning))           ; ?
@@ -785,6 +789,31 @@ trigger, in `cerebro--standby-label\='."
    ((>= left 3600) (format "→%dh%02d" (/ left 3600) (/ (mod left 3600) 60)))
    (t (format "→%dm" (/ left 60)))))
 
+(defun cerebro--stuck-for (agent now)
+  "Pure.  Seconds AGENT has been stuck at NOW, or nil if it is not.
+
+`working\=' alone: an `asking\=' row is already bold with a gold \"?\" and is a
+question for the navigator rather than a failure, and an implementer\='s
+unanswered question is already nudged at `cerebro-answer-timeout\='.  Every
+other state has no turn to have ended.
+
+Nil-safe through `cerebro--seconds-since\=', so an absent or torn turn-end reads
+as \"not stuck\" rather than as a duration.  A timestamp in the FUTURE - from a
+machine whose clock is ahead - answers nil for a different reason worth
+knowing: that function clamps with `max\=' , so the future reads as zero seconds
+stood, which is under any ceiling."
+  (when (eq (cerebro-agent-state agent) 'working)
+    (let ((stood (cerebro--seconds-since (cerebro-agent-turn-ended agent) now)))
+      (when (and stood (>= stood cerebro-stuck-ceiling)) stood))))
+
+(defun cerebro--stuck-text (agent now)
+  "Pure.  \"stuck 8h49\" for a stuck AGENT at NOW, or nil.
+
+The duration is `cerebro--elapsed\=', the same renderer every other duration on
+the row uses, so the eye reads the column the same way."
+  (when (cerebro--stuck-for agent now)
+    (concat "stuck " (cerebro--elapsed (cerebro-agent-turn-ended agent) now))))
+
 (defun cerebro--for-column (since phase-since now)
   "The Bead/Phase column: time on the bead and time in the phase, at NOW.
 
@@ -890,13 +919,17 @@ default 10).  An external agent shows \"—\" rather than the wordier
 rather than pushing the rest of the row right - see ah-lyc."
   (let* ((state (cerebro-agent-state agent))
          (external (cerebro-agent-external agent))
+         ;; Computed here rather than passed in, unlike STANDBY-LABEL and
+         ;; EXIT-LINE: `cerebro--stuck-text' is pure over the agent and NOW,
+         ;; and reaches into nothing (cb-ykz.2).
+         (stuck-text (cerebro--stuck-text agent now))
          (in-flight (cerebro--in-flight-p state))
          ;; A glyph is one character in the corner of the eye, and there are
          ;; eighteen rows. Bolding the whole row makes the row itself the
          ;; signal - so bold has to stay rare enough to mean it, which is why
          ;; it is exclusive to `asking' (see `cerebro--wants-attention-p').
          (attention (cerebro--wants-attention-p state))
-         (agent-col (format "%s %s" (cerebro--glyph state)
+         (agent-col (format "%s %s" (cerebro--glyph state stuck-text)
                             (cerebro--emphasize (cerebro-agent-name agent) attention)))
          (role-col (cerebro--emphasize (cerebro-agent-role agent) attention))
          (state-col (cerebro--emphasize
@@ -927,7 +960,16 @@ rather than pushing the rest of the row right - see ah-lyc."
                           (t ""))
                     attention))
          (for-col (cerebro--emphasize
-                   (cond (external "")
+                   (cond
+                         ;; First, and above `external': a session this Emacs
+                         ;; did not start is still a session that stopped, and
+                         ;; in a project declaring `fleet_supervisor tui' every
+                         ;; row is external - so an arm below this one would
+                         ;; leave the red glyph with an empty cell beside it,
+                         ;; which is the very thing this signal replaces
+                         ;; (cb-ykz.2).
+                         (stuck-text (propertize stuck-text 'face 'error))
+                         (external "")
                          ;; A standby row has no session and so no elapsed
                          ;; time worth showing; what it is waiting for is the
                          ;; only thing the navigator can act on.
@@ -1518,6 +1560,23 @@ keypress's worth of intent would be its own kind of noise."
           (user-error "cerebro: %s failed" command-string))))))
 
 ;;; Supervising the implementers
+
+(defcustom cerebro-stuck-ceiling 1800
+  "Seconds a `working\=' row\='s ended turn may stand before the row says \"stuck\".
+
+A session that writes `working\=' and then ends its turn without writing
+`waiting\=' sits as `working\=' for hours, drawn exactly like a row doing real
+work.  Past this, the row says so.
+
+Thirty minutes, one number for every role and phase: an implementer waiting
+on its own review sub-agent legitimately ends its turn, and those waits are
+minutes, where every observed stuck stretch was five hours or more.
+
+A literal pair with `STUCK_CEILING_SECONDS\=' in `fleet-view/src/lifecycle.rs\=',
+exactly as `cerebro-end-grace\=' and `END_GRACE_SECONDS\=' are: the two must
+agree, and neither is derived from the other."
+  :type 'integer
+  :group 'cerebro)
 
 (defcustom cerebro-answer-timeout 900
   "Seconds an implementer may wait on the navigator before it is told to give up.
@@ -4074,6 +4133,16 @@ into the session on every tick, burying the agent's own output and
 resetting what it was told.  A name leaves this set as soon as it is no
 longer asking, so its next question is nudgeable again.")
 
+(defvar-local cerebro--stuck-logged nil
+  "Names already logged for the stuck stretch they are in now (cb-ykz.2).
+
+The poll runs every five seconds; without this the line would be written on
+every tick, and a log nobody can read is one that answers no diagnosis.  A
+name leaves this set the moment its row stops being stuck, exactly as
+`cerebro--nudged\=' leaves it when a row stops asking - a set that is never
+cleared logs a stopped session once and then never again, even after it
+recovers and stops a second time.")
+
 (defun cerebro--autostart (buffer repo-root)
   "Start every declared autostart agent in BUFFER that is dead, once.
 
@@ -4610,7 +4679,7 @@ half out of it."
 
 (defconst cerebro--log-decision-events
   '(start end retire nudge standby arm refused exit give-up sweep sweep-tell triage disarm-all
-    error)
+    stuck error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 
@@ -4858,6 +4927,24 @@ nudge is a new instruction, and a view handing supervision over issues none."
     (let ((name (cerebro-agent-name agent)))
       (unless (eq (cerebro-agent-state agent) 'asking)
         (setq cerebro--nudged (delete name cerebro--nudged)))
+      ;; A session that stopped mid-work: said on the row and written down,
+      ;; and acted on in no way at all - that is cb-ykz.3's.  Gated on the
+      ;; mode like the nudge, because a view that decides nothing records
+      ;; nothing; the DRAWING is gated on nothing, since looking at a fleet
+      ;; is not supervising it (cb-ykz.2).
+      (let ((stuck (cerebro--stuck-for agent now)))
+        (if (not stuck)
+            (setq cerebro--stuck-logged (delete name cerebro--stuck-logged))
+          (when (and (cerebro--supervision-may-act-p mode)
+                     (not (member name cerebro--stuck-logged)))
+            (push name cerebro--stuck-logged)
+            (cerebro--log repo-root 'stuck
+                          (list (cons 'agent name)
+                                (cons 'role (cerebro-agent-role agent))
+                                (cons 'state (symbol-name (cerebro-agent-state agent)))
+                                (cons 'phase (cerebro-agent-phase agent))
+                                (cons 'bead (cerebro-agent-bead agent))
+                                (cons 'stuck_for stuck))))))
       (cerebro--with-logged-errors (format "supervise %s" name)
         (pcase (let ((action (cerebro--supervise-action
                               agent (cerebro--stop-flag-p repo-root name) now)))
@@ -6813,7 +6900,15 @@ is where that is said."
                     (mapcar #'cerebro-agent-name agents)
                     (mapcar #'cerebro-agent-role agents)
                     (delq nil (mapcar #'cerebro-agent-bead agents))
-                    (delq nil (mapcar #'cdr for-texts)))))
+                    ;; Stuck texts too: `stuck 11h30' is eleven cells against
+                    ;; a floor of ten, and `tabulated-list-mode' truncates a
+                    ;; cell at its column without saying so (cb-ykz.2).  NOT
+                    ;; an arm of the FOR-TEXTS alist above: that value is
+                    ;; passed to `cerebro--entry' as STANDBY-LABEL or
+                    ;; EXIT-LINE, and a stuck row is neither.
+                    (delq nil (append (mapcar #'cdr for-texts)
+                                      (mapcar (lambda (a) (cerebro--stuck-text a now))
+                                              agents))))))
       (setq cerebro-list-width (cerebro--width-for widths))
       (let ((format (cerebro--table-format widths)))
         (unless (equal tabulated-list-format format)

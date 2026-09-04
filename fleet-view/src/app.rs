@@ -1376,25 +1376,30 @@ impl App {
             // than the same toggle. A boundary clamps within the focused pane; it never
             // transfers focus on its own.
             KeyCode::Tab => {
-                self.focus = self.focus.next();
+                self.set_focus(self.focus.next());
                 AppAction::None
             }
             KeyCode::BackTab => {
-                self.focus = self.focus.previous();
+                self.set_focus(self.focus.previous());
                 AppAction::None
             }
             // cb-5kk: three keys straight to the three panes, from any focus. Deliberately
             // `Tab`-shaped and not `Enter`-shaped: it moves focus and does nothing else, so it
-            // does NOT clear a pinned bead and does NOT refuse an empty Session pane the way
-            // `Enter` under Fleet does. `Tab` into an empty Session pane has always worked, and
-            // these keys are that key with the cycle skipped.
+            // does NOT refuse an empty Session pane the way `Enter` under Fleet does. `Tab` into
+            // an empty Session pane has always worked, and these keys are that key with the
+            // cycle skipped.
+            //
+            // cb-lor: `F1` does drop a bead pinned in the Session pane - not because it is
+            // `Enter`-shaped, but because ARRIVING AT FLEET drops one, whichever key arrives.
+            // That is `set_focus`'s rule and not this arm's, which is why `F2` and `F3` are
+            // unaffected.
             //
             // No modifier gate, exactly as `Tab` and `BackTab` have none: a terminal that reports
             // `SHIFT` or `CTRL` alongside `F(1)` still means the Fleet pane.
             KeyCode::F(n) if PaneFocus::from_function_key(n).is_some() => {
                 // A no-op when it names the focused pane: the assignment is the no-op, so there
                 // is no branch and nothing to say.
-                self.focus = PaneFocus::from_function_key(n).expect("guarded above");
+                self.set_focus(PaneFocus::from_function_key(n).expect("guarded above"));
                 AppAction::None
             }
             // Under Fleet these four move the SELECTION and let the pane follow it; under Work
@@ -1453,10 +1458,12 @@ impl App {
             // into an empty pane and make them `Shift-Tab` back on every standby agent.
             KeyCode::Enter if self.focus == PaneFocus::Fleet => {
                 if self.session_reachable() {
-                    self.focus = PaneFocus::Session;
+                    self.set_focus(PaneFocus::Session);
                     // The pane is the session's again: a bead pinned in it is dropped, and only
                     // when the move actually happened - a refusal keeps what was being read.
-                    self.bead_detail = None;
+                    // Unreachable from the keyboard since cb-lor, because arriving at Fleet
+                    // already dropped one; kept as the invariant it states.
+                    self.drop_bead_detail();
                 } else if let Some(name) = self.selected.clone() {
                     // Gold: news, not a fault. `on_key` already cleared the slot above, so this
                     // is the one notice this keystroke leaves, and the next keystroke clears it.
@@ -1587,6 +1594,30 @@ impl App {
     /// can scroll the Fleet pane to it without a keystroke.
     pub fn note_metrics(&mut self, metrics: Metrics) {
         self.fleet_viewport = metrics.fleet.viewport_lines;
+    }
+
+    /// Move focus to PANE, from wherever it is now.
+    ///
+    /// Arriving at Fleet drops a bead pinned in the Session pane (cb-lor), so that pane goes back
+    /// to drawing the selected agent - its live session, one starting, its retained pass, its
+    /// refused launch, or its ordinary empty body. Every other arrival leaves a pinned bead
+    /// alone. The ONE place focus changes, so `Tab`, `Shift-Tab` and `F1` cannot answer this
+    /// differently.
+    pub fn set_focus(&mut self, pane: PaneFocus) {
+        self.focus = pane;
+        if pane == PaneFocus::Fleet {
+            self.drop_bead_detail();
+        }
+    }
+
+    /// Unpin the bead the Session pane is drawing, and return that pane to its top.
+    ///
+    /// The one place `bead_detail` is cleared. The scroll reset is what keeps a retained
+    /// transcript or a refused launch from being drawn at the offset the bead was left at:
+    /// `set_session_view` zeroes the offset only for a `Live` view, so nothing else would.
+    pub fn drop_bead_detail(&mut self) {
+        self.bead_detail = None;
+        self.session.scroll = 0;
     }
 
     /// Does the focused Session pane currently hold the keyboard?
@@ -1793,7 +1824,7 @@ impl App {
     /// still not panic).
     fn toggle_bead_detail(&mut self, id: &str, now: DateTime<Utc>) -> AppAction {
         if self.bead_detail.as_ref().is_some_and(|detail| detail.bead.id == id) {
-            self.bead_detail = None;
+            self.drop_bead_detail();
             return AppAction::None;
         }
         // `selected_bead` is the one place "find the cursor's bead in the document" is answered;
@@ -1803,7 +1834,7 @@ impl App {
             return AppAction::None;
         };
         self.bead_detail = Some(BeadDetail { bead, body: DetailBody::Reading });
-        self.focus = PaneFocus::Session;
+        self.set_focus(PaneFocus::Session);
         // A bead always opens at its top, whatever the pane was scrolled to before.
         self.session.scroll = 0;
         AppAction::ReadBead
@@ -5069,5 +5100,91 @@ mod tests {
         for line in &lines {
             assert!(UnicodeWidthStr::width(line.as_str()) <= 8, "{line:?}");
         }
+    }
+
+    #[test]
+    fn dropping_a_pinned_bead_returns_the_session_pane_to_the_top() {
+        let mut app = document_app();
+        cursor_on_first_bead(&mut app);
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        app.session.scroll = 7;
+
+        app.drop_bead_detail();
+        assert!(app.bead_detail.is_none());
+        assert_eq!(app.session.scroll, 0);
+    }
+
+    #[test]
+    fn unpinning_from_the_work_row_returns_the_session_pane_to_the_top() {
+        let mut app = document_app();
+        cursor_on_first_bead(&mut app);
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        app.session.scroll = 7;
+        app.focus = PaneFocus::Work;
+
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        assert!(app.bead_detail.is_none());
+        assert_eq!(app.session.scroll, 0);
+        assert_eq!(app.focus, PaneFocus::Work);
+    }
+
+    /// Pin a bead over a scrolled pane, ready for a focus change. Leaves focus on Session,
+    /// which is where `Enter` on a Work row puts it.
+    fn pinned_and_scrolled() -> App {
+        let mut app = document_app();
+        cursor_on_first_bead(&mut app);
+        app.on_key(key(KeyCode::Enter), 10, at(0));
+        app.session.scroll = 7;
+        app.notice = None;
+        app
+    }
+
+    #[test]
+    fn tab_to_fleet_drops_the_pinned_bead() {
+        let mut app = pinned_and_scrolled();
+        app.on_key(key(KeyCode::Tab), 10, at(0));
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert!(app.bead_detail.is_none());
+        assert_eq!(app.session.scroll, 0);
+        assert!(app.notice.is_none(), "the pane changing is the feedback");
+    }
+
+    #[test]
+    fn shift_tab_to_fleet_drops_the_pinned_bead() {
+        let mut app = pinned_and_scrolled();
+        app.focus = PaneFocus::Work;
+        app.on_key(key(KeyCode::BackTab), 10, at(0));
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert!(app.bead_detail.is_none());
+        assert_eq!(app.session.scroll, 0);
+        assert!(app.notice.is_none());
+    }
+
+    #[test]
+    fn f1_drops_the_pinned_bead() {
+        let mut app = pinned_and_scrolled();
+        app.on_key(key(KeyCode::F(1)), 10, at(0));
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert!(app.bead_detail.is_none());
+        assert_eq!(app.session.scroll, 0);
+        assert!(app.notice.is_none());
+    }
+
+    #[test]
+    fn f2_and_f3_and_a_tab_that_misses_fleet_keep_the_pinned_bead() {
+        let mut app = pinned_and_scrolled();
+
+        app.on_key(key(KeyCode::F(2)), 10, at(0));
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert!(app.bead_detail.is_some());
+
+        app.on_key(key(KeyCode::F(3)), 10, at(0));
+        assert_eq!(app.focus, PaneFocus::Session);
+        assert!(app.bead_detail.is_some());
+
+        app.focus = PaneFocus::Work;
+        app.on_key(key(KeyCode::Tab), 10, at(0));
+        assert_eq!(app.focus, PaneFocus::Session);
+        assert!(app.bead_detail.is_some());
     }
 }

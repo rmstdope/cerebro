@@ -1752,10 +1752,13 @@ fn lifecycle_key(
     };
     match key {
         's' => {
+            // Decided before the drop below: `situation` borrows `app.supervision`, and
+            // `drop_bead_detail` takes the whole of `app`.
+            let outcome = lifecycle::start_outcome(situation);
             // Whatever the outcome: the pane is the agent's again, which is the rule the
             // navigator chose. `f` and `k` leave a pinned bead alone.
-            app.bead_detail = None;
-            match lifecycle::start_outcome(situation) {
+            app.drop_bead_detail();
+            match outcome {
             lifecycle::StartOutcome::Launch { clears_flag } => {
                 match lifecycle::start(host, paths, &name, clears_flag) {
                     Ok(line) => {
@@ -2371,6 +2374,39 @@ mod main_tests {
         );
         drive(&mut app, &mut host, &nowhere().0, vec![back]);
         assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Work);
+    }
+
+    /// cb-lor: with a bead pinned the child never has the keyboard, so `Tab` reaches `App` and
+    /// arrives at Fleet - which drops the bead. The routing gate and `App` have to agree.
+    #[test]
+    fn tab_out_of_a_pinned_bead_reaches_fleet_and_drops_it() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        app.bead_detail = Some(cerebro_tui::app::BeadDetail {
+            bead: cerebro_tui::model::Bead {
+                id: "cb-41r".into(),
+                title: "Enter on a bead opens it".into(),
+                status: "open".into(),
+                issue_type: "feature".into(),
+                labels: Vec::new(),
+                priority: Some(2),
+                updated_at: None,
+                assignee: None,
+                metadata: serde_json::Value::Null,
+                external_ref: None,
+            },
+            body: cerebro_tui::app::DetailBody::Reading,
+        });
+        assert!(!app.session_has_keyboard(), "a pinned bead keeps the child out of the keyboard");
+
+        let tab = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        drive(&mut app, &mut host, &nowhere().0, vec![tab]);
+        assert_eq!(app.focus, cerebro_tui::app::PaneFocus::Fleet);
+        assert_eq!(app.bead_detail, None, "arriving at Fleet drops the bead");
+        assert!(app.notice.is_none(), "a focus key says nothing");
     }
 
     /// cb-5kk: the three pane keys escape a hosted agent exactly as the tabs do.

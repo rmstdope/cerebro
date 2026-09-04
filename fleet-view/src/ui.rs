@@ -4187,6 +4187,32 @@ mod tests {
         );
     }
 
+    /// cb-lor: `Tab` to Fleet drops the pinned bead, and the pane draws the agent instead.
+    #[test]
+    fn fleet_focus_draws_the_agent_rather_than_the_pinned_bead() {
+        let mut app = pinned_app();
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, at(86_400));
+        assert_eq!(app.focus, PaneFocus::Session);
+        live(&mut app, &["Rogue is building cb-lor"]);
+
+        app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), 10, at(86_400));
+        assert_eq!(app.focus, PaneFocus::Fleet);
+
+        let rendered = lines(&render(&app, 140, 30));
+        assert!(
+            !rendered.iter().any(|l| l.contains("cb-41r — P2 feature")),
+            "the bead's title is gone: {rendered:?}"
+        );
+        assert!(
+            !rendered.iter().any(|l| l.contains("[Shift-Tab leaves]")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|l| l.contains("Rogue is building cb-lor")),
+            "the agent is drawn instead: {rendered:?}"
+        );
+    }
+
     #[test]
     fn a_pinned_bead_keeps_the_header_line() {
         let mut app = pinned_app();

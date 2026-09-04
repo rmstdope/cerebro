@@ -1704,11 +1704,13 @@ grace that has expired."
       (and stood (>= stood cerebro-end-grace)))
     'end)))
 
-(defun cerebro--supervise-action (agent stop-flag-p now)
+(defun cerebro--supervise-action (agent stop-flag-p now &optional resume-stale)
   "What the fleet poll should do about AGENT at NOW, or nil for nothing.
 
-STOP-FLAG-P is whether `.cerebro/state/<name>.stop' exists.  The
-answers are:
+STOP-FLAG-P is whether `.cerebro/state/<name>.stop' exists.  RESUME-STALE is
+whether this name was resumed while stuck and its state file has recorded
+nothing since (`cerebro--resumed'); it is optional because nil is the honest
+default - a caller with no memory has resumed nothing.  The answers are:
 
 `retire'  - AGENT finished its bead and a stop flag says do not start
             another; or AGENT is on `standby' under one - its session died
@@ -1729,6 +1731,14 @@ answers are:
 `nudge'   - AGENT has waited past its kind's answer timeout without one:
             `cerebro-answer-timeout' for an implementer,
             `cerebro-interactive-answer-timeout' for an interactive role.
+`resume'  - AGENT's turn ended while its state file still said `working', and
+            it has stood past `cerebro-stuck-ceiling' (cb-ykz.3).  One line is
+            typed into the session, which is sitting at a prompt.  Note the
+            typed line ITSELF clears `turn_ended' (`scripts/agent-turn'), so
+            the row is un-stuck on the very next tick - which is why the
+            escalation is built on the state file not having moved rather than
+            on a second clock.  The stop flag makes no difference, for the
+            `nudge' arm's reason: the session is still holding work.
 `end'     - AGENT has finished a pass - `waiting', or `idle' for a role in
             `cerebro-idle-ends-pass-roles' that writes that instead - and
             `cerebro-end-grace' has passed since it said so (cb-5yr).  Its
@@ -1791,6 +1801,25 @@ everything: every answer here ends in Emacs acting on a session it owns."
       ;; `cerebro--start-due', which is where a role is started from.
       ('standby (and (eq (cerebro-agent-kind agent) 'implementer)
                      stop-flag-p 'retire))
+      ;; The turn ended and the row never said so (cb-ykz.3).
+      ;; `cerebro--stuck-for' is nil for every other `working' row, which is
+      ;; what keeps this arm from touching the ordinary case.  Deliberately
+      ;; NOT `cerebro--end-decision': that folds in `cerebro-end-grace',
+      ;; which is about a pass that finished cleanly and has nothing to say
+      ;; about a row that stopped mid-work.
+      ('working
+       (let ((stuck (cerebro--stuck-for agent now)))
+         (cond
+          ((null stuck) nil)
+          ((not resume-stale) 'resume)
+          ;; It holds a claim, a worktree and possibly an open pull request,
+          ;; so nothing here ends it; `sweep-stalled' already offers the
+          ;; unclaim at sixty minutes.
+          ((eq (cerebro-agent-kind agent) 'implementer) nil)
+          ;; A stop flag says *no further pass*, so ending-and-restarting
+          ;; would start the very pass the flag exists to prevent.
+          (stop-flag-p 'retire)
+          (t 'end))))
       ('asking
        (let ((waited (cerebro--seconds-since (cerebro-agent-since agent) now))
              (timeout (if (eq (cerebro-agent-kind agent) 'implementer)
@@ -4143,6 +4172,35 @@ name leaves this set the moment its row stops being stuck, exactly as
 cleared logs a stopped session once and then never again, even after it
 recovers and stops a second time.")
 
+(defvar-local cerebro--resumed nil
+  "Names resumed while stuck, and what their state file said at the time.
+
+An alist of (NAME . (SINCE . PHASE-SINCE)), both ISO-8601 strings or nil,
+compared with `equal\='.  An entry means *this name has been asked to carry on
+and has recorded nothing since*, which is what turns a second stuck stretch
+into an end (cb-ykz.3).
+
+It is NOT cleared when the row stops being stuck, and that is the trap this
+whole memory exists to avoid: the typed line itself clears `turn_ended\='
+(`scripts/agent-turn\='), so the row is un-stuck on the very next tick, and a
+set cleared there would forget every resume it ever made and could never
+escalate.  What drops an entry is evidence the agent did something - the pair
+MOVING, the row leaving `working\=' - or the session ending.
+
+Only ever recorded for a row whose `since\=' is non-nil: a missing timestamp is
+not evidence that nothing happened, exactly as a nil `stood\=' is never an
+expired grace.")
+
+(defvar-local cerebro--resumed-this-stretch nil
+  "Names already told to carry on within the stuck stretch they are in now.
+
+`cerebro--resumed\=' cannot do this job: a row whose `since\=' is absent is never
+recorded there (a missing timestamp is not evidence), so without this set such
+a row would be told again on every five-second tick for ever - and it is
+exactly the row least able to answer.  Cleared the moment the row stops being
+stuck, the shape `cerebro--stuck-logged\=' and `cerebro--nudged\=' have, which is
+why it is a second set rather than a field of the first.")
+
 (defun cerebro--autostart (buffer repo-root)
   "Start every declared autostart agent in BUFFER that is dead, once.
 
@@ -4242,6 +4300,35 @@ reason its sibling\='s docstring gives.")
       cerebro--nudge-message
     cerebro--interactive-nudge-message))
 
+(defconst cerebro--resume-message
+  (concat "[cerebro] Your turn ended while your state file still said you were working. "
+          "If you are waiting on a review sub-agent, say so in one line and go on waiting. "
+          "Otherwise do not stop here: write your state file, carry on from where you left "
+          "off, or hand the work back for a person to decide exactly as your own "
+          "instructions describe, and finish the run.")
+  "What an implementer is told when its turn ended mid-work (cb-ykz.3).
+
+It names the review sub-agent because an implementer waiting on one is the
+single documented exception to the never-end-a-turn rule, and this is the only
+line an implementer ever gets for a stuck row: it has to be right for the one
+ended turn that is not a failure.")
+
+(defconst cerebro--interactive-resume-message
+  (concat "[cerebro] Your turn ended while your state file still said you were working. "
+          "Do not stop here: write your state file, carry on from where you left off, or "
+          "record where you got to where your own instructions say, and finish the run.")
+  "What an interactive role is told when its turn ended mid-work (cb-ykz.3).
+
+Its own line rather than `cerebro--resume-message\=', for the reason
+`cerebro--interactive-nudge-message\=' gives: an interactive role has no bead to
+hand back, so it defers entirely to the role\='s own instructions.")
+
+(defun cerebro--resume-message-for (kind)
+  "The line typed into a session of KIND whose turn ended mid-work."
+  (if (eq kind 'implementer)
+      cerebro--resume-message
+    cerebro--interactive-resume-message))
+
 (defcustom cerebro-return-delay 0.3
   "Seconds between typing a line into a session and sending its return.
 
@@ -4281,6 +4368,13 @@ are needed - a timer fires with no buffer current."
 Which of the two lines it is comes from `cerebro--nudge-message-for\='."
   (cerebro--type-into-session
    agent (cerebro--nudge-message-for (cerebro-agent-kind agent))))
+
+(defun cerebro--resume (agent)
+  "Type the resume line for AGENT\='s kind into AGENT\='s session.
+
+Which of the two lines it is comes from `cerebro--resume-message-for\='."
+  (cerebro--type-into-session
+   agent (cerebro--resume-message-for (cerebro-agent-kind agent))))
 
 ;;; cb-5lx.2: telling an idle Cerebro about an unranked bead
 
@@ -4678,8 +4772,8 @@ half out of it."
   :group 'cerebro)
 
 (defconst cerebro--log-decision-events
-  '(start end retire nudge standby arm refused exit give-up sweep sweep-tell triage disarm
-    disarm-all stuck error)
+  '(start end retire nudge resume standby arm refused exit give-up sweep sweep-tell triage
+    disarm disarm-all stuck error)
   "The events written at every verbosity: what the view did, and what went
 wrong while it did it.
 
@@ -4933,6 +5027,9 @@ nudge is a new instruction, and a view handing supervision over issues none."
       ;; nothing; the DRAWING is gated on nothing, since looking at a fleet
       ;; is not supervising it (cb-ykz.2).
       (let ((stuck (cerebro--stuck-for agent now)))
+        (unless stuck
+          (setq cerebro--resumed-this-stretch
+                (delete name cerebro--resumed-this-stretch)))
         (if (not stuck)
             (setq cerebro--stuck-logged (delete name cerebro--stuck-logged))
           (when (and (cerebro--supervision-may-act-p mode)
@@ -4945,9 +5042,30 @@ nudge is a new instruction, and a view handing supervision over issues none."
                                 (cons 'phase (cerebro-agent-phase agent))
                                 (cons 'bead (cerebro-agent-bead agent))
                                 (cons 'stuck_for stuck))))))
+      ;; The resume memory (cb-ykz.3).  It SURVIVES the row being un-stuck: the
+      ;; typed line is itself what un-stuck it.  What drops it is evidence the
+      ;; agent did something - its state file moved, or it left `working'.
+      (let ((recorded (cdr (assoc name cerebro--resumed))))
+        (when (and recorded
+                   (not (and (eq (cerebro-agent-state agent) 'working)
+                             (equal recorded
+                                    (cons (cerebro-agent-since agent)
+                                          (cerebro-agent-phase-since agent))))))
+          (setq cerebro--resumed (assoc-delete-all name cerebro--resumed))))
       (cerebro--with-logged-errors (format "supervise %s" name)
         (pcase (let ((action (cerebro--supervise-action
-                              agent (cerebro--stop-flag-p repo-root name) now)))
+                              agent (cerebro--stop-flag-p repo-root name) now
+                              (and (assoc name cerebro--resumed) t))))
+                 ;; A resume this view will not carry out is not a decision and
+                 ;; must not be recorded as one: `decisions.jsonl' keeps months
+                 ;; because it holds what was DONE (cb-xhu.2), and a draining
+                 ;; view or a row already told within this stretch would
+                 ;; otherwise write a line every five seconds while nothing at
+                 ;; all was typed.
+                 (when (and (eq action 'resume)
+                            (or (not (cerebro--supervision-may-act-p mode))
+                                (member name cerebro--resumed-this-stretch)))
+                   (setq action nil))
                  (when action
                    (cerebro--log repo-root action
                                  (list (cons 'agent name)
@@ -4979,6 +5097,9 @@ nudge is a new instruction, and a view handing supervision over issues none."
                ;; happens to its buffer.
                (progn (cerebro--clear-stop-flag repo-root name)
                       (setq cerebro--armed (delete name cerebro--armed))
+                      (setq cerebro--resumed (assoc-delete-all name cerebro--resumed))
+                      (setq cerebro--resumed-this-stretch
+                            (delete name cerebro--resumed-this-stretch))
                       (cerebro--park-session agent repo-root now))
              ;; An implementer is armed too now, so retiring one has to
              ;; disarm it: the flag ends this session, and armed is what
@@ -4986,12 +5107,41 @@ nudge is a new instruction, and a view handing supervision over issues none."
              ;; for the reason the branch above is ordered as it is;
              ;; `cerebro--end-session' keeps its own ownership of the flag.
              (progn (setq cerebro--armed (delete name cerebro--armed))
+                    (setq cerebro--resumed (assoc-delete-all name cerebro--resumed))
+                    (setq cerebro--resumed-this-stretch
+                          (delete name cerebro--resumed-this-stretch))
                     (cerebro--end-session agent repo-root 'clear-stop-flag))))
-          ('end (cerebro--park-session agent repo-root now))
+          ('end
+           (setq cerebro--resumed (assoc-delete-all name cerebro--resumed))
+           (setq cerebro--resumed-this-stretch
+                 (delete name cerebro--resumed-this-stretch))
+           (cerebro--park-session agent repo-root now))
           ('nudge (when (and (cerebro--supervision-may-act-p mode)
                              (not (member name cerebro--nudged)))
                     (push name cerebro--nudged)
-                    (cerebro--nudge agent))))))))
+                    (cerebro--nudge agent)))
+          ;; Gated on the mode and not merely on ending - a resume is a NEW
+          ;; instruction, and a view handing supervision over issues none -
+          ;; which is decided above, with the once-per-stretch guard, so that
+          ;; neither writes a line saying it happened.
+          ;;
+          ;; TWO sets, answering two different questions.
+          ;; `cerebro--resumed-this-stretch' is "have I already told this name
+          ;; within this stretch", and it is what stops a second line;
+          ;; `cerebro--resumed' is "was it told and has it done nothing since",
+          ;; which is the escalation and which survives the row being un-stuck.
+          ;; The first alone could never escalate; the second alone leaves a row
+          ;; with no `since' - never recorded there - told on every tick for
+          ;; ever.
+          ('resume
+           (push name cerebro--resumed-this-stretch)
+           ;; Recorded only when there is a timestamp to compare against later:
+           ;; a missing one is not evidence.
+           (when (cerebro-agent-since agent)
+             (setf (alist-get name cerebro--resumed nil nil #'equal)
+                   (cons (cerebro-agent-since agent)
+                         (cerebro-agent-phase-since agent))))
+           (cerebro--resume agent)))))))
 
 ;;; Supervision ownership (cb-kcs.1)
 

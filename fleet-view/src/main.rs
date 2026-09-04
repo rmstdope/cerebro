@@ -421,6 +421,21 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     result
 }
 
+/// One row, projected out of the fleet snapshot so the borrow of `app` ends before the loop acts
+/// on it. Every field is what the supervision decision or its record needs, and nothing else.
+struct SupervisedRow {
+    name: String,
+    role: String,
+    kind: AgentKind,
+    state: RowState,
+    bead: Option<String>,
+    phase: Option<String>,
+    since: Option<DateTime<Utc>>,
+    phase_since: Option<DateTime<Utc>>,
+    stood: Option<i64>,
+    stuck: Option<i64>,
+}
+
 /// Act on what `lifecycle::supervise_action` says about each row of the fleet snapshot that was
 /// just applied - the three things this view does on its own, from what a hosted agent wrote in
 /// its state file.
@@ -478,38 +493,40 @@ fn supervise(
     if !app.supervision.may_end() {
         return;
     }
-    #[allow(clippy::type_complexity)]
-    let rows: Vec<(
-        String,
-        String,
-        AgentKind,
-        RowState,
-        Option<String>,
-        Option<i64>,
-        Option<String>,
-        Option<i64>,
-    )> = app
+    let rows: Vec<SupervisedRow> = app
         .fleet
         .content
         .value()
         .map(|rows| {
             rows.iter()
-                .map(|row| {
-                    (
-                        row.name.clone(),
-                        row.role.clone(),
-                        row.kind,
-                        row.state.clone(),
-                        row.bead.clone(),
-                        row.since.map(|since| (now - since).num_seconds()),
-                        row.phase.clone(),
-                        lifecycle::stuck_for(&row.state, row.turn_ended, now),
-                    )
+                .map(|row| SupervisedRow {
+                    name: row.name.clone(),
+                    role: row.role.clone(),
+                    kind: row.kind,
+                    state: row.state.clone(),
+                    bead: row.bead.clone(),
+                    phase: row.phase.clone(),
+                    since: row.since,
+                    phase_since: row.phase_since,
+                    stood: row.since.map(|since| (now - since).num_seconds()),
+                    stuck: lifecycle::stuck_for(&row.state, row.turn_ended, now),
                 })
                 .collect()
         })
         .unwrap_or_default();
-    for (name, role, kind, state, bead, stood, phase, stuck) in rows {
+    for row in rows {
+        let SupervisedRow {
+            name,
+            role,
+            kind,
+            state,
+            bead,
+            phase,
+            since,
+            phase_since,
+            stood,
+            stuck,
+        } = row;
         // Before any action is decided, and for every row: a name that asked, was nudged, was
         // answered and asks again is nudgeable again.
         if state != RowState::Asking {
@@ -542,6 +559,25 @@ fn supervise(
                 }
             }
         }
+        // The resume memory (cb-ykz.3). It SURVIVES the row being un-stuck - the typed line is
+        // itself what un-stuck it - and is dropped only by evidence that the agent did something:
+        // its state file moved, or it left `Working` altogether.
+        match app.resumed.get(&name) {
+            Some(&recorded) if state == RowState::Working && recorded == (since, phase_since) => {}
+            Some(_) => {
+                app.resumed.remove(&name);
+            }
+            None => {}
+        }
+        let resume_stale = app.resumed.contains_key(&name);
+        // The other half of the memory, and a different question: `resumed` is "was this name
+        // told and has it done nothing since", which survives the row being un-stuck;
+        // `resumed_this_stretch` is "has it already been told within THIS stretch", which does
+        // not. Without it a row with no `since` - never recorded above - would be told on every
+        // tick for ever.
+        if stuck.is_none() {
+            app.resumed_this_stretch.remove(&name);
+        }
         let agent = lifecycle::Supervised {
             kind,
             state: &state,
@@ -551,8 +587,20 @@ fn supervise(
             // to declare one. Do not invent a declaration for it.
             idle_ends_pass: false,
             stood,
+            stuck,
+            resume_stale,
         };
         let Some(action) = lifecycle::supervise_action(agent) else { continue };
+        // A resume the view will not carry out is not a decision, and must not be recorded as
+        // one: `decisions.jsonl` keeps months because it holds what was DONE (cb-xhu.2), and a
+        // draining view or a row already told within this stretch would otherwise write a line
+        // every five seconds while nothing at all was typed. Decided before the record for that
+        // reason, where every other suppression sits after it.
+        if action == lifecycle::Supervision::Resume
+            && (!app.supervision.may_supervise() || app.resumed_this_stretch.contains(&name))
+        {
+            continue;
+        }
         // The record of the decision, before it is carried out and whatever it is: the five
         // fields elisp writes, in its order. `state` is the ROW's own word, so an `Unknown(w)`
         // contributes `w`; `stop_flag` is the string `"set"` or null, never a boolean.
@@ -561,6 +609,7 @@ fn supervise(
                 lifecycle::Supervision::Retire => log::Event::Retire,
                 lifecycle::Supervision::End => log::Event::End,
                 lifecycle::Supervision::Nudge => log::Event::Nudge,
+                lifecycle::Supervision::Resume => log::Event::Resume,
             },
             now,
             &[
@@ -596,14 +645,18 @@ fn supervise(
                 }
                 host.end(paths, &name);
                 ledger.note_ended(&name, now);
-                app.set_notice(lifecycle::supervision_notice(action, &name));
+                app.resumed.remove(&name);
+                app.resumed_this_stretch.remove(&name);
+                app.set_notice(lifecycle::supervision_notice(action, &name, stuck.is_some()));
             }
             lifecycle::Supervision::End => {
                 host.end(paths, &name);
                 // The authoritative `ended_at`: the moment this view ended the pass, which is
                 // what the unchanged-work guard measures a start against.
                 ledger.note_ended(&name, now);
-                app.set_notice(lifecycle::supervision_notice(action, &name));
+                app.resumed.remove(&name);
+                app.resumed_this_stretch.remove(&name);
+                app.set_notice(lifecycle::supervision_notice(action, &name, stuck.is_some()));
             }
             lifecycle::Supervision::Nudge => {
                 if !app.supervision.may_supervise() || app.nudged.contains(&name) {
@@ -611,7 +664,27 @@ fn supervise(
                 }
                 app.nudged.insert(name.clone());
                 host.type_line(&name, lifecycle::nudge_message(kind), at);
-                app.set_notice(lifecycle::supervision_notice(action, &name));
+                app.set_notice(lifecycle::supervision_notice(action, &name, false));
+            }
+            // Gated on `may_supervise` and not merely `may_end` - a resume is a NEW instruction,
+            // and a view handing supervision over issues none - which is decided above, with the
+            // once-per-stretch guard, so that neither writes a line saying it happened.
+            //
+            // TWO sets, answering two different questions. `resumed_this_stretch` is "have I
+            // already told this name within this stretch", and it is what stops a second line;
+            // `resumed` is "was it told and has it done nothing since", which is the escalation
+            // and which survives the row being un-stuck. The first alone could never escalate;
+            // the second alone leaves a row with no `since` - never recorded there - told on
+            // every tick for ever.
+            lifecycle::Supervision::Resume => {
+                app.resumed_this_stretch.insert(name.clone());
+                host.type_line(&name, lifecycle::resume_message(kind), at);
+                // Recorded only when there is a timestamp to compare against later: a missing
+                // one is not evidence that nothing happened.
+                if since.is_some() {
+                    app.resumed.insert(name.clone(), (since, phase_since));
+                }
+                app.set_notice(lifecycle::supervision_notice(action, &name, true));
             }
         }
     }
@@ -3670,6 +3743,368 @@ mod main_tests {
 
         host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
         saw_line(&mut host, "Psylocke", 24, 400, "waiting: record the question");
+    }
+
+    // --- the stuck arm's caller (cb-ykz.3) -----------------------------------------------------
+
+    /// A row that is `working`, whose turn ended STOOD seconds ago, and whose state file last
+    /// moved at SINCE / PHASE_SINCE.
+    fn stuck_row_at(
+        name: &str,
+        kind: cerebro_tui::model::AgentKind,
+        turn_ended_for: Option<i64>,
+        since: DateTime<Utc>,
+        phase_since: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> cerebro_tui::model::FleetRow {
+        cerebro_tui::model::FleetRow {
+            since: Some(since),
+            phase_since: Some(phase_since),
+            turn_ended: turn_ended_for.map(|ago| now - chrono::Duration::seconds(ago)),
+            ..fleet_row(name, kind, cerebro_tui::model::RowState::Working)
+        }
+    }
+
+    fn tick(
+        app: &mut App,
+        host: &mut SessionHost,
+        paths: &ReaderPaths,
+        logger: &mut Logger,
+        now: DateTime<Utc>,
+        at: Instant,
+    ) {
+        supervise(
+            app,
+            host,
+            &mut cerebro_tui::triggers::StartLedger::default(),
+            logger,
+            paths,
+            now,
+            at,
+        );
+    }
+
+    /// The whole escalation, in the sequence `docs/ui/cb-ykz.3-supervision.html` §2 draws: one
+    /// line typed, the un-stuck tick in between (the typed line is what un-stuck it), and the end
+    /// when it goes stuck again with its state file unmoved.
+    #[test]
+    fn a_stuck_row_is_resumed_once_and_then_ended() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let since = now - chrono::Duration::seconds(9_000);
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Psylocke");
+        let at = Instant::now();
+
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![stuck_row_at("Psylocke", AgentKind::Interactive, Some(1_800), since, since, now)],
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(app.resumed.contains_key("Psylocke"), "the resume is remembered");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Psylocke's turn had ended; it was asked to carry on.")
+        );
+        host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
+        assert!(saw_line(&mut host, "Psylocke", 24, 400, "record where you got to"));
+
+        // The typed line cleared `turn_ended`, so the very next tick is an ordinary working row -
+        // and the memory must SURVIVE it.
+        app.finish_refresh(
+            Ok(vec![stuck_row_at("Psylocke", AgentKind::Interactive, None, since, since, now)]),
+            now,
+        );
+        app.notice = None;
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(app.resumed.contains_key("Psylocke"), "the memory survives the row being un-stuck");
+        assert!(host.supervisable("Psylocke"), "nothing is ended while it is not stuck");
+
+        // Stuck again, and the state file never moved: the line did not take.
+        app.finish_refresh(
+            Ok(vec![stuck_row_at("Psylocke", AgentKind::Interactive, Some(1_800), since, since, now)]),
+            now,
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(!host.supervisable("Psylocke"), "a resume that did not take ends the session");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Psylocke was stuck and did not answer; its session was ended.")
+        );
+        assert!(app.resumed.is_empty(), "the memory goes with the session");
+        settle_gone(&mut host, "Psylocke");
+    }
+
+    /// The false-positive guard, and the reason the memory holds a timestamp rather than a flag:
+    /// a role that woke, worked and stopped again is resumed a second time.
+    #[test]
+    fn a_row_that_moved_is_resumed_again_rather_than_ended() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let since = now - chrono::Duration::seconds(9_000);
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Moira");
+        let at = Instant::now();
+
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![stuck_row_at("Moira", AgentKind::Interactive, Some(1_800), since, since, now)],
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(app.resumed.contains_key("Moira"));
+
+        // The un-stuck tick the typed line itself produces, then stuck again - but with the
+        // state file moved, which is the whole difference from the test above.
+        let moved = now - chrono::Duration::seconds(60);
+        app.finish_refresh(
+            Ok(vec![stuck_row_at("Moira", AgentKind::Interactive, None, moved, moved, now)]),
+            now,
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        app.finish_refresh(
+            Ok(vec![stuck_row_at("Moira", AgentKind::Interactive, Some(1_800), moved, moved, now)]),
+            now,
+        );
+        app.notice = None;
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(host.supervisable("Moira"), "a row that moved is not ended");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Moira's turn had ended; it was asked to carry on.")
+        );
+    }
+
+    /// `since` moves only on a change of state or bead, so `phase_since` is watched too.
+    #[test]
+    fn a_phase_change_alone_clears_the_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let since = now - chrono::Duration::seconds(9_000);
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Forge");
+        let at = Instant::now();
+
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![stuck_row_at("Forge", AgentKind::Interactive, Some(1_800), since, since, now)],
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+
+        let phase_moved = now - chrono::Duration::seconds(30);
+        app.finish_refresh(
+            Ok(vec![stuck_row_at(
+                "Forge",
+                AgentKind::Interactive,
+                Some(1_800),
+                since,
+                phase_moved,
+                now,
+            )]),
+            now,
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(host.supervisable("Forge"), "a phase change alone is work, and forgives the row");
+    }
+
+    /// Leaving `working` at all is evidence the agent did something.
+    #[test]
+    fn a_row_that_leaves_working_clears_the_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let since = now - chrono::Duration::seconds(9_000);
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Cerebro");
+        let at = Instant::now();
+
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![stuck_row_at("Cerebro", AgentKind::Interactive, Some(1_800), since, since, now)],
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(app.resumed.contains_key("Cerebro"));
+
+        // `idle` for an interactive role not in `idle_ends_pass` and under no flag: nothing
+        // happens to the session, and the memory is dropped.
+        app.finish_refresh(
+            Ok(vec![stood_row("Cerebro", AgentKind::Interactive, RowState::Idle, 5, now)]),
+            now,
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(app.resumed.is_empty(), "leaving `working` drops the memory");
+
+        app.finish_refresh(
+            Ok(vec![stuck_row_at("Cerebro", AgentKind::Interactive, Some(1_800), since, since, now)]),
+            now,
+        );
+        app.notice = None;
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(host.supervisable("Cerebro"), "it is resumed again rather than ended");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Cerebro's turn had ended; it was asked to carry on.")
+        );
+    }
+
+    /// A missing timestamp is not evidence that nothing happened, the rule `stood: None` follows.
+    #[test]
+    fn a_row_with_no_since_is_never_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Psylocke");
+        let at = Instant::now();
+
+        let no_since = cerebro_tui::model::FleetRow {
+            since: None,
+            phase_since: None,
+            turn_ended: Some(now - chrono::Duration::seconds(1_800)),
+            ..fleet_row("Psylocke", AgentKind::Interactive, RowState::Working)
+        };
+        let mut app = lifecycle_app(supervising(), vec![no_since.clone()]);
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(app.resumed.is_empty(), "nothing to compare against later is nothing recorded");
+
+        // And it is NOT told again while the same stretch runs: nothing records it in `resumed`,
+        // so without `resumed_this_stretch` this is a line typed every five seconds for ever - at
+        // the row least able to answer one.
+        for _ in 0..3 {
+            app.finish_refresh(Ok(vec![no_since.clone()]), now);
+            app.notice = None;
+            tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+            assert_eq!(app.notice, None, "one line per stuck stretch, not one per tick");
+        }
+        // The stretch ending is what makes it tellable again.
+        app.finish_refresh(
+            Ok(vec![cerebro_tui::model::FleetRow {
+                since: None,
+                phase_since: None,
+                turn_ended: None,
+                ..fleet_row("Psylocke", AgentKind::Interactive, RowState::Working)
+            }]),
+            now,
+        );
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        app.finish_refresh(Ok(vec![no_since]), now);
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(host.supervisable("Psylocke"), "it is resumed again rather than ended");
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Psylocke's turn had ended; it was asked to carry on.")
+        );
+    }
+
+    /// It holds a claim, a worktree and possibly an open pull request; `sweep-stalled` is its
+    /// escalation, not this loop.
+    #[test]
+    fn a_stuck_implementer_is_resumed_and_never_ended() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let since = now - chrono::Duration::seconds(9_000);
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Storm");
+        let at = Instant::now();
+
+        let stuck =
+            || vec![stuck_row_at("Storm", AgentKind::Implementer, Some(9_000), since, since, now)];
+        let mut app = lifecycle_app(supervising(), stuck());
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
+        assert!(saw_line(&mut host, "Storm", 24, 400, "review sub-agent"));
+
+        for _ in 0..2 {
+            app.finish_refresh(Ok(stuck()), now);
+            app.notice = None;
+            tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+            assert!(host.supervisable("Storm"), "an implementer is never ended from here");
+            assert_eq!(app.notice, None, "and it is not told twice either");
+        }
+    }
+
+    /// A resume is a NEW instruction, and a view handing supervision over issues none - but a
+    /// draining view must still finish the sessions it hosts.
+    #[test]
+    fn a_draining_view_resumes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let since = now - chrono::Duration::seconds(9_000);
+        let mut host = SessionHost::default();
+        hosted(&mut host, &paths, "Psylocke");
+        let at = Instant::now();
+
+        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
+            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
+            live_sessions: 1,
+        };
+        let log_root = dir.path().join("logs");
+        std::fs::create_dir_all(&log_root).unwrap();
+        let mut logger = logging(&log_root);
+        let mut app = lifecycle_app(
+            draining,
+            vec![stuck_row_at("Psylocke", AgentKind::Interactive, Some(1_800), since, since, now)],
+        );
+        tick(&mut app, &mut host, &paths, &mut logger, now, at);
+        assert!(app.resumed.is_empty(), "a draining view types nothing");
+        assert!(host.supervisable("Psylocke"));
+        // And records nothing either: a decision the view will not carry out is not a decision,
+        // and `decisions.jsonl` keeps months because it holds what was done.
+        assert!(
+            !log_lines(&log_root, "decisions").iter().any(|line| line.contains("\"resume\"")),
+            "a suppressed resume writes no line"
+        );
+
+        // A row already stale when the drain began is still ended: ending is what ends the drain.
+        app.resumed.insert("Psylocke".to_string(), (Some(since), Some(since)));
+        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
+        assert!(!host.supervisable("Psylocke"));
+        settle_gone(&mut host, "Psylocke");
+    }
+
+    /// One `resume` line per occurrence, carrying the five fields every supervision decision does.
+    #[test]
+    fn a_resume_is_logged_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let since = now - chrono::Duration::seconds(9_000);
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Psylocke");
+        let at = Instant::now();
+        let log_root = dir.path().join("logs");
+        std::fs::create_dir_all(&log_root).unwrap();
+        let mut logger = logging(&log_root);
+
+        let mut app = lifecycle_app(
+            supervising(),
+            vec![stuck_row_at("Psylocke", AgentKind::Interactive, Some(1_800), since, since, now)],
+        );
+        tick(&mut app, &mut host, &paths, &mut logger, now, at);
+        // The un-stuck tick writes nothing; the stale one writes an `end`, not a second `resume`.
+        app.finish_refresh(
+            Ok(vec![stuck_row_at("Psylocke", AgentKind::Interactive, None, since, since, now)]),
+            now,
+        );
+        tick(&mut app, &mut host, &paths, &mut logger, now, at);
+        app.finish_refresh(
+            Ok(vec![stuck_row_at("Psylocke", AgentKind::Interactive, Some(1_800), since, since, now)]),
+            now,
+        );
+        tick(&mut app, &mut host, &paths, &mut logger, now, at);
+
+        let lines = log_lines(&log_root, "decisions");
+        let resumes: Vec<&String> =
+            lines.iter().filter(|line| line.contains("\"event\":\"resume\"")).collect();
+        assert_eq!(resumes.len(), 1, "one line per occurrence, not one per tick: {lines:?}");
+        for field in ["\"agent\":\"Psylocke\"", "\"role\":", "\"state\":\"working\"", "\"bead\":", "\"stop_flag\":"] {
+            assert!(resumes[0].contains(field), "{field} missing from {}", resumes[0]);
+        }
+        settle_gone(&mut host, "Psylocke");
     }
 
     fn ch(c: char) -> crossterm::event::KeyEvent {

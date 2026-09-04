@@ -2527,6 +2527,237 @@ what it was told, which is worse than not telling it at all."
         (should (equal nudged '("Cyclops" "Cyclops")))))))
 
 ;; ---------------------------------------------------------------------------
+;; cb-ykz.3: a session that stopped mid-work is asked to carry on, then ended
+
+(defun cerebro-test--stuck (kind turn-ended-for &optional since phase-since)
+  "A `working' agent whose turn ended TURN-ENDED-FOR seconds before now.
+
+SINCE and PHASE-SINCE default to a fixed pair, so two calls describe a state
+file that has not moved.  A nil TURN-ENDED-FOR is a turn still in progress."
+  (make-cerebro-agent
+   :name "Cyclops" :role (if (eq kind 'implementer) "implementer" "verifier")
+   :kind kind :state 'working :bead "ah-f9c"
+   :since (or since "2026-08-14T08:00:00Z")
+   :phase-since (or phase-since "2026-08-14T08:00:00Z")
+   :turn-ended (when turn-ended-for
+                 (format-time-string
+                  "%Y-%m-%dT%H:%M:%SZ"
+                  (time-subtract cerebro-test--now turn-ended-for) t))))
+
+(defun cerebro-test--resume-run (agents)
+  "Run `cerebro--supervise' over AGENTS in order, one call each.
+Answers the list of names resumed, in order, and leaves `cerebro--resumed'
+as the run left it - the caller reads it inside its own `with-temp-buffer'."
+  (let ((resumed nil))
+    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
+              ((symbol-function 'cerebro--resume)
+               (lambda (a) (push (cerebro-agent-name a) resumed))))
+      (dolist (agent agents)
+        (cerebro--supervise (list agent) "/fake/repo" cerebro-test--now '(supervising))))
+    (nreverse resumed)))
+
+(ert-deftest cerebro-test/an-ordinary-working-row-is-still-untouched ()
+  "The regression that keeps a working fleet working."
+  (let ((cerebro-stuck-ceiling 1800))
+    (dolist (kind '(implementer interactive))
+      (dolist (flag '(nil t))
+        (dolist (stale '(nil t))
+          (should (null (cerebro--supervise-action
+                         (cerebro-test--stuck kind nil) flag cerebro-test--now stale)))
+          (should (null (cerebro--supervise-action
+                         (cerebro-test--stuck kind 1799) flag cerebro-test--now stale))))))))
+
+(ert-deftest cerebro-test/a-stuck-row-is-resumed-once-and-then-ended ()
+  "One line, the un-stuck tick in between, and the end when it did not take.
+
+The middle tick is the trap: the typed line itself clears `turn_ended', so
+the row is an ordinary working row on the very next poll."
+  (let ((cerebro-stuck-ceiling 1800)
+        (parked nil))
+    (cl-letf (((symbol-function 'cerebro--park-session)
+               (lambda (a &rest _) (push (cerebro-agent-name a) parked))))
+      (with-temp-buffer
+        (should (equal (cerebro-test--resume-run
+                        (list (cerebro-test--stuck 'interactive 1800)
+                              (cerebro-test--stuck 'interactive nil)
+                              (cerebro-test--stuck 'interactive 1800)))
+                       '("Cyclops")))
+        (should (equal parked '("Cyclops")))
+        (should (null cerebro--resumed))))))
+
+(ert-deftest cerebro-test/the-resume-memory-survives-the-row-being-unstuck ()
+  "Stated as its own test, because it is the one place this goes backwards.
+
+A memory cleared \"when the row is no longer stuck\" - the shape
+`cerebro--nudged' has - forgets every resume it ever made."
+  (let ((cerebro-stuck-ceiling 1800))
+    (cl-letf (((symbol-function 'cerebro--park-session) (lambda (&rest _) nil)))
+      (with-temp-buffer
+        (cerebro-test--resume-run (list (cerebro-test--stuck 'interactive 1800)))
+        (should (assoc "Cyclops" cerebro--resumed))
+        (cerebro-test--resume-run (list (cerebro-test--stuck 'interactive nil)))
+        (should (assoc "Cyclops" cerebro--resumed))))))
+
+(ert-deftest cerebro-test/a-stuck-row-that-moved-is-resumed-again ()
+  "The false-positive guard: a role that woke, worked and stopped again.
+
+And the reason the memory holds a timestamp pair rather than a flag - a
+`phase-since' that moved alone is work too, since `since' moves only on a
+change of state or bead."
+  (let ((cerebro-stuck-ceiling 1800)
+        (parked nil))
+    (cl-letf (((symbol-function 'cerebro--park-session)
+               (lambda (a &rest _) (push (cerebro-agent-name a) parked))))
+      (with-temp-buffer
+        ;; The un-stuck tick the typed line itself produces sits between the two,
+        ;; as it does in life: the stretch ends, and the second one is a new one.
+        (should (equal (cerebro-test--resume-run
+                        (list (cerebro-test--stuck 'interactive 1800)
+                              (cerebro-test--stuck 'interactive nil)
+                              (cerebro-test--stuck 'interactive 1800
+                                                   "2026-08-14T09:29:00Z"
+                                                   "2026-08-14T09:29:00Z")))
+                       '("Cyclops" "Cyclops")))
+        (should (null parked)))
+      (with-temp-buffer
+        (should (equal (cerebro-test--resume-run
+                        (list (cerebro-test--stuck 'interactive 1800)
+                              (cerebro-test--stuck 'interactive nil)
+                              (cerebro-test--stuck 'interactive 1800 nil
+                                                   "2026-08-14T09:29:00Z")))
+                       '("Cyclops" "Cyclops")))
+        (should (null parked))))))
+
+(ert-deftest cerebro-test/a-row-that-leaves-working-clears-the-memory ()
+  "Leaving `working' at all is evidence the agent did something."
+  (let ((cerebro-stuck-ceiling 1800)
+        (parked nil))
+    (cl-letf (((symbol-function 'cerebro--park-session)
+               (lambda (a &rest _) (push (cerebro-agent-name a) parked))))
+      (with-temp-buffer
+        (should (equal (cerebro-test--resume-run
+                        (list (cerebro-test--stuck 'interactive 1800)
+                              (make-cerebro-agent :name "Cyclops" :role "verifier"
+                                                  :kind 'interactive :state 'idle)
+                              (cerebro-test--stuck 'interactive 1800)))
+                       '("Cyclops" "Cyclops")))
+        (should (null parked))))))
+
+(ert-deftest cerebro-test/a-stuck-row-with-no-since-is-never-stale ()
+  "A missing timestamp is not evidence that nothing happened."
+  (let ((cerebro-stuck-ceiling 1800)
+        (parked nil))
+    (cl-letf (((symbol-function 'cerebro--park-session)
+               (lambda (a &rest _) (push (cerebro-agent-name a) parked))))
+      (with-temp-buffer
+        (let ((agent (make-cerebro-agent
+                      :name "Cyclops" :role "verifier" :kind 'interactive
+                      :state 'working
+                      :turn-ended (format-time-string
+                                   "%Y-%m-%dT%H:%M:%SZ"
+                                   (time-subtract cerebro-test--now 1800) t))))
+          ;; Told once, and NOT again while the same stretch runs: nothing records
+          ;; it in `cerebro--resumed', so without `cerebro--resumed-this-stretch'
+          ;; this is a line typed every five seconds for ever, at the row least
+          ;; able to answer one.
+          (should (equal (cerebro-test--resume-run (make-list 4 agent)) '("Cyclops")))
+          (should (null cerebro--resumed))
+          (should (null parked))
+          ;; The stretch ending is what makes it tellable again.
+          (should (equal (cerebro-test--resume-run
+                          (list (make-cerebro-agent :name "Cyclops" :role "verifier"
+                                                    :kind 'interactive :state 'working)
+                                agent))
+                         '("Cyclops")))
+          (should (null parked)))))))
+
+(ert-deftest cerebro-test/a-stuck-implementer-is-resumed-and-never-ended ()
+  "It holds a claim, a worktree and possibly an open pull request.
+`sweep-stalled' is its escalation, not this loop."
+  (let ((cerebro-stuck-ceiling 1800)
+        (ended nil))
+    (cl-letf (((symbol-function 'cerebro--park-session)
+               (lambda (a &rest _) (push (cerebro-agent-name a) ended)))
+              ((symbol-function 'cerebro--end-session)
+               (lambda (a &rest _) (push (cerebro-agent-name a) ended))))
+      (with-temp-buffer
+        (should (equal (cerebro-test--resume-run
+                        (make-list 3 (cerebro-test--stuck 'implementer 9000)))
+                       '("Cyclops")))
+        (should (null ended))))))
+
+(ert-deftest cerebro-test/a-stuck-row-under-a-stop-flag-is-retired ()
+  "The flag says *no further pass*, so ending-and-restarting would start the
+very pass it exists to prevent.  It is retired, its flag cleared with it."
+  (let ((cerebro-stuck-ceiling 1800)
+        (cleared nil)
+        (parked nil)
+        (resumed nil))
+    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) t))
+              ((symbol-function 'cerebro--clear-stop-flag)
+               (lambda (_root name) (push name cleared)))
+              ((symbol-function 'cerebro--resume)
+               (lambda (a) (push (cerebro-agent-name a) resumed)))
+              ((symbol-function 'cerebro--park-session)
+               (lambda (a &rest _) (push (cerebro-agent-name a) parked))))
+      (with-temp-buffer
+        ;; The flag makes no difference to the resume itself.
+        (cerebro--supervise (list (cerebro-test--stuck 'interactive 1800))
+                            "/fake/repo" cerebro-test--now '(supervising))
+        (should (equal resumed '("Cyclops")))
+        (should (null parked))
+        (cerebro--supervise (list (cerebro-test--stuck 'interactive 1800))
+                            "/fake/repo" cerebro-test--now '(supervising))
+        (should (equal cleared '("Cyclops")))
+        (should (equal parked '("Cyclops")))))))
+
+(ert-deftest cerebro-test/a-draining-view-resumes-nothing ()
+  "A resume is a new instruction, and a view handing supervision over issues
+none - but it must still finish the sessions it hosts."
+  (let ((cerebro-stuck-ceiling 1800)
+        (logged nil)
+        (parked nil))
+    (cl-letf (((symbol-function 'cerebro--stop-flag-p) (lambda (_root _name) nil))
+              ((symbol-function 'cerebro--resume) (lambda (_a) (error "typed")))
+              ((symbol-function 'cerebro--log)
+               (lambda (_root event &rest _) (push event logged)))
+              ((symbol-function 'cerebro--park-session)
+               (lambda (a &rest _) (push (cerebro-agent-name a) parked))))
+      (with-temp-buffer
+        (cerebro--supervise (list (cerebro-test--stuck 'interactive 1800))
+                            "/fake/repo" cerebro-test--now '(draining tui 1))
+        (should (null cerebro--resumed))
+        (should (null parked))
+        ;; And records nothing either: a decision the view will not carry out is
+        ;; not a decision, and `decisions.jsonl' keeps months because it holds
+        ;; what was done.
+        (should-not (memq 'resume logged))
+        ;; A row already stale when the drain began is still ended.
+        (setf (alist-get "Cyclops" cerebro--resumed nil nil #'equal)
+              (cons "2026-08-14T08:00:00Z" "2026-08-14T08:00:00Z"))
+        (cerebro--supervise (list (cerebro-test--stuck 'interactive 1800))
+                            "/fake/repo" cerebro-test--now '(draining tui 1))
+        (should (equal parked '("Cyclops")))))))
+
+(ert-deftest cerebro-test/the-resume-lines-differ-by-kind ()
+  "The implementer's line names the review wait: an implementer waiting on the
+review sub-agent it spawned is the one ended turn that is not a failure."
+  (should (string-match-p "review sub-agent" cerebro--resume-message))
+  (should-not (string-match-p "review sub-agent" cerebro--interactive-resume-message))
+  (dolist (line (list cerebro--resume-message cerebro--interactive-resume-message))
+    (should (string-prefix-p "[cerebro] " line)))
+  (should (equal (cerebro--resume-message-for 'implementer) cerebro--resume-message))
+  (should (equal (cerebro--resume-message-for 'interactive)
+                 cerebro--interactive-resume-message)))
+
+(ert-deftest cerebro-test/resume-is-a-decision-event ()
+  "Its own event rather than `nudge''s, and written at every verbosity but none."
+  (should (memq 'resume cerebro--log-decision-events))
+  (should (cerebro--log-event-p 'resume 'decisions))
+  (should-not (cerebro--log-event-p 'resume 'none))
+  (should (equal (cerebro--log-basename 'resume) "decisions")))
+
+;; ---------------------------------------------------------------------------
 ;; ah-y3j1: one typing path, and the return sent separately from the text
 
 (ert-deftest cerebro-test/typing-into-a-session-sends-the-return-on-its-own ()
@@ -9232,15 +9463,15 @@ already left the available set."
 
 (defun cerebro-test--supervise-cases ()
   "The rows of `cerebro-test--supervise-cases-file' as plain lists.
-Each is (KIND STATE OURS STOP IDLE-ENDS-PASS STOOD ACTION).  A malformed row
-is an error, not a skipped case."
+Each is (KIND STATE OURS STOP IDLE-ENDS-PASS STOOD TURN-ENDED-FOR
+RESUME-STALE ACTION).  A malformed row is an error, not a skipped case."
   (let (rows)
     (with-temp-buffer
       (insert-file-contents cerebro-test--supervise-cases-file)
       (dolist (line (split-string (buffer-string) "\n" t))
         (unless (string-match-p "\\`[ \t]*\\(#\\|\\'\\)" line)
           (let ((fields (split-string (string-trim line) "[ \t]+" t)))
-            (unless (= (length fields) 7)
+            (unless (= (length fields) 9)
               (error "supervise.cases: malformed row: %s" line))
             (push fields rows)))))
     (nreverse rows)))
@@ -9258,10 +9489,13 @@ here rather than taken from whatever the running fleet is customised to."
         (now (current-time))
         (cerebro-end-grace 30)
         (cerebro-answer-timeout 900)
-        (cerebro-interactive-answer-timeout 1800))
-    (should (>= (length rows) 53))
+        (cerebro-interactive-answer-timeout 1800)
+        (cerebro-stuck-ceiling 1800))
+    (should (>= (length rows) 82))
     (dolist (row rows)
-      (pcase-let* ((`(,kind ,state ,ours ,stop ,ends-pass ,stood ,action) row)
+      (pcase-let* ((`(,kind ,state ,ours ,stop ,ends-pass ,stood ,turn-ended-for
+                            ,resume-stale ,action)
+                    row)
                    (cerebro-idle-ends-pass-roles
                     (if (equal ends-pass "yes") '("ends-pass") nil))
                    (agent (make-cerebro-agent
@@ -9280,8 +9514,18 @@ here rather than taken from whatever the running fleet is customised to."
                                     (format-time-string
                                      "%Y-%m-%dT%H:%M:%SZ"
                                      (time-subtract now (string-to-number stood))
-                                     t))))
-                   (answer (cerebro--supervise-action agent (equal stop "yes") now)))
+                                     t))
+                           ;; Through the agent's own `turn-ended' rather than a
+                           ;; pre-computed answer, so `cerebro--stuck-for' and its
+                           ;; ceiling are part of what the table proves.
+                           :turn-ended (unless (equal turn-ended-for "none")
+                                         (format-time-string
+                                          "%Y-%m-%dT%H:%M:%SZ"
+                                          (time-subtract
+                                           now (string-to-number turn-ended-for))
+                                          t))))
+                   (answer (cerebro--supervise-action agent (equal stop "yes") now
+                                                      (equal resume-stale "yes"))))
         (should (equal (cons (if answer (symbol-name answer) "none") row)
                        (cons action row)))))))
 

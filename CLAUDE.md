@@ -1047,6 +1047,23 @@ and the key hint stays `g retry` until both panes are fresh.
   `scripts/session-marker.sh` and greps for `cerebro_marker_infix`, which is the rule rather than a
   way round it. Like `tracked-links` it is a gate predicate and must never join
   `launch-preflight`'s hot path: a check that refuses there is a fleet that cannot start.
+- **`scripts/portable-snippets` is the one place "does a skill or agent snippet only word-split
+  under bash" is answered** (cb-7ft). An agent pastes the snippets in `skills/` and `agents/` into
+  whatever shell its tool provides, and an alternate-value expansion means two different things
+  across them: bash splits an unquoted one into several arguments, zsh does not word-split a
+  parameter expansion at all, so the command receives a flag glued to its value and answers with its
+  usage line. Two implementers hit that at the same line of the same file and wrote the same
+  prevention (cb-i1w, cb-hz4) while the snippet stayed byte-identical, which is the second sighting
+  a check is earned on. Findings on stdout, exit 1, in `tracked-links`' house format —
+  `unportable: <path>:<line>` — with `tests/portable-snippets.sh` as its suite. It scans `skills/`
+  and `agents/` and nothing else, for `tracked-links`' reason: those are the two directories the
+  sync links into a consumer's discovery paths, and a wider pathspec would make the suite read
+  `docs/`, `README.md`, `LICENSE` or `models.conf.example` and quietly break `scripts/ci-needed`'s
+  skip list. Only the alternate-value form is matched, never the default-value one — `"${BD_TIMEOUT:-30}"`
+  is portable and quoted, and flagging it would push authors toward uglier code for no defect. It is
+  **not itself scanned**, living in `scripts/`, the way `marker-readers` is not itself a reader of
+  the marker sentence — which is what lets its header spell the construct out where a skill may not.
+  Like its siblings it is a gate predicate and must never join `launch-preflight`'s hot path.
 - `scripts/consumer-root` is the one place "where is the consumer root" is answered (ah-e0w). Every
   other script that needs it asks this one rather than deriving it itself — `consumer-root` (no
   argument) for the enclosing working tree (main checkout, or a bead worktree when this copy is the

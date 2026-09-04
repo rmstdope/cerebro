@@ -268,6 +268,17 @@ you are away, it is told to give up after fifteen minutes (`cerebro-answer-timeo
 hand the bead to your queue instead — so a fleet left alone overnight drains the queue rather than
 sitting blocked on you.
 
+**The interactive roles have the same clock, set longer.** Since cb-2e9 Xavier, Beast, Cerebro,
+Moira, Psylocke, Cypher and Forge are told to give up after thirty minutes
+(`cerebro-interactive-answer-timeout`, 1800 seconds) — twice a builder's, because their questions
+are ones you think about rather than answer yes/no. Each records its question where its own
+instructions say an unanswered one goes and ends the pass, and is started again on its own trigger.
+That is a deliberate trade you should know about before stepping away mid-interview: it is what
+keeps one unanswered question from holding a whole role overnight (Psylocke once sat in `asking` for
+1306 minutes while sixteen merged beads went unverified), and the price is that a walkthrough you
+are more than half an hour into is abandoned. They are never *retired* on that clock — only asked to
+finish.
+
 **Two or three is a sensible number on one machine.** More is not faster: every merge makes every
 other open PR stale, and where the branch protection sets `strict` each of them pays for a `BEHIND`
 catch-up and a fresh CI run — and CI is

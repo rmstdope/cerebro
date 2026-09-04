@@ -571,7 +571,7 @@ fn supervise(
                     continue;
                 }
                 app.nudged.insert(name.clone());
-                host.type_line(&name, lifecycle::NUDGE_MESSAGE, at);
+                host.type_line(&name, lifecycle::nudge_message(kind), at);
                 app.set_notice(lifecycle::supervision_notice(action, &name));
             }
         }
@@ -3541,6 +3541,37 @@ mod main_tests {
         app.notice = None;
         supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
         assert_eq!(app.notice.as_deref(), Some("Cyclops was asked to hand its question back."));
+    }
+
+    /// The line that reaches an interactive role is its own, not the implementer's.
+    ///
+    /// The needle is a substring only `INTERACTIVE_NUDGE_MESSAGE` has: both messages open with
+    /// `[cerebro] Nobody answered within the timeout. Do not keep waiting:`, so a prefix match
+    /// cannot tell them apart - and typing the implementer's line into Psylocke would tell her to
+    /// hand the bead back, which `agents/verifier.md` forbids her doing.
+    #[test]
+    fn an_interactive_role_is_nudged_in_its_own_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted_echo(&mut host, "Psylocke");
+
+        let asking = vec![stood_row(
+            "Psylocke",
+            cerebro_tui::model::AgentKind::Interactive,
+            cerebro_tui::model::RowState::Asking,
+            31 * 60,
+            now,
+        )];
+        let mut app = lifecycle_app(supervising(), asking);
+        let at = Instant::now();
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, at);
+        assert!(app.nudged.contains("Psylocke"));
+        assert_eq!(app.notice.as_deref(), Some("Psylocke was asked to hand its question back."));
+
+        host.flush_returns(at + cerebro_tui::session::RETURN_DELAY);
+        saw_line(&mut host, "Psylocke", 24, 400, "waiting: record the question");
     }
 
     fn ch(c: char) -> crossterm::event::KeyEvent {

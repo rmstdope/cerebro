@@ -946,7 +946,7 @@ pub fn start(
 ) -> Result<String, ReadError> {
     if clears_flag {
         clear_stop_flag(paths, name).map_err(|error| ReadError::Spawn {
-            source: format!("the stop flag for {name}"),
+            source: format!("the stop flag for {name}").into(),
             message: error.to_string(),
         })?;
     }

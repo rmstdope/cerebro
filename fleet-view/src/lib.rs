@@ -86,7 +86,7 @@ pub use model::{
 pub use readers::{
     read_beads, read_fleet, read_processes, read_roster, read_states, read_sweeps, read_work,
     Judged, CommandRunner,
-    Commands, Programs, ReadError, ReaderPaths, RealCommands,
+    Commands, Invocation, Programs, ReadError, ReaderPaths, RealCommands,
 };
 pub use supervisor::{
     reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,

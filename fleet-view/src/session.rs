@@ -377,7 +377,7 @@ impl std::fmt::Debug for Session {
 }
 
 fn spawn_error(name: &str, error: impl std::fmt::Display) -> ReadError {
-    ReadError::Spawn { source: format!("the session for {name}"), message: error.to_string() }
+    ReadError::Spawn { source: format!("the session for {name}").into(), message: error.to_string() }
 }
 
 impl Session {

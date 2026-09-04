@@ -1958,7 +1958,7 @@ fn dispatch(
 /// `refreshing...` forever.
 fn worker_gone(source: &str) -> ReadError {
     ReadError::Spawn {
-        source: source.to_string(),
+        source: source.to_string().into(),
         message: "the reader thread has stopped".into(),
     }
 }

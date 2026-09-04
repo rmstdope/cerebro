@@ -74,7 +74,7 @@ fn a_child_that_never_returns_is_killed_and_reaped() {
     match err {
         ReadError::Timeout { seconds, source } => {
             assert_eq!(seconds, 1);
-            assert!(source.ends_with("slow"), "the failure names the program: {source}");
+            assert!(source.program().ends_with("slow"), "the failure names the program: {source}");
         }
         other => panic!("expected Timeout, got {other:?}"),
     }

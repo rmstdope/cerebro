@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-xhu.4 — where fleet health goes in cerebro-tui</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 72rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.6rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto; margin:.4rem 0; line-height:1.45; }
+  .r { color:#f0776c; } .g { color:#7ee787; } .y { color:#e3b341; } .d { color:#8b949e; } .b { color:#79c0ff; } .sel { background:#1f6feb33; }
+  .note { color: var(--dim); font-size: 13.5px; }
+  blockquote { margin:.6rem 0; padding:.5rem .9rem; border-left:3px solid var(--line); color:var(--dim); font-size:13.5px; }
+</style>
+</head>
+<body>
+
+<h1>cb-xhu.4 — where fleet health goes in <code>cerebro-tui</code></h1>
+<p class="lede">You chose Option B for the command: a full four-section report. The Work pane is a
+fixed <b>40 columns</b> wide in the split layout, and Option B is about 70 columns of table — so the
+report does not fit where the Sweeps and History sections live. These are the three ways round it.
+Rendered at true widths against this machine's real logs.</p>
+
+<h2>T1 — a Health section at the top of the Work pane</h2>
+<p class="note">Exactly the Sweeps pattern: findings only, hidden entirely when there is nothing to
+report, its own five-minute reader. Fits 40 columns because it prints findings, not the table.</p>
+<pre><span class="d">┌ Work ────────────────────────────────┐</span>
+<span class="d">│</span> <span class="r">Health 4</span>                             <span class="d">│</span>
+<span class="d">│</span>   <span class="r">Psylocke asking 74m — cb-5kk</span>       <span class="d">│</span>
+<span class="d">│</span>   <span class="y">Xavier started 15× in 24h</span>          <span class="d">│</span>
+<span class="d">│</span>   <span class="y">Storm: 5 of 8 passes held no bead</span>  <span class="d">│</span>
+<span class="d">│</span>   <span class="y">Cyclops started 9× in 24h</span>          <span class="d">│</span>
+<span class="d">│</span>                                      <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                             <span class="d">│</span>
+<span class="d">│</span>   cb-3in claimed by Cyclops, merged   <span class="d">│</span>
+<span class="d">│</span>   cb-hz4 epic, all children closed    <span class="d">│</span>
+<span class="d">│</span>                                      <span class="d">│</span>
+<span class="d">│</span> Claimed 4                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that…            <span class="d">│</span>
+<span class="d">│</span>   …                                   <span class="d">│</span>
+<span class="d">│</span> History 7                            <span class="d">│</span>
+<span class="d">│</span>   <span class="y">Psylocke asking 74m - long, medi…</span>  <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span></pre>
+<blockquote>One consistent pattern, one new section, no new key. But the four sections of the
+report you chose become four one-line findings — the numbers that are <em>within</em> the ceiling,
+which is the reason you picked B over A, are not on screen. And “running now” is now said twice:
+once here and once by History.</blockquote>
+
+<h2>T2 — <code>h</code> opens the full report in the Session pane</h2>
+<p class="note">The precedent is <code>Enter</code> on a Work row, which pins a bead in the Session
+pane (cb-41r). <code>h</code> pins the report instead; <code>Tab</code>/<code>F1</code> to Fleet
+drops it, exactly as a pinned bead is dropped. The Session pane is the wide one, so the whole of
+Option B fits.</p>
+<pre><span class="d">┌ Fleet ───────────────────┐┌ Session — fleet health ─────────────────────────────────────────────┐</span>
+<span class="d">│</span> Xavier    working  plan  <span class="d">││</span> <span class="b">Fleet health — last 24h (2026-09-03T13:20Z → 2026-09-04T13:20Z)</span>     <span class="d">│</span>
+<span class="d">│</span> Beast     working  plan  <span class="d">││</span>                                                                     <span class="d">│</span>
+<span class="d">│</span> Cerebro   working  sweep <span class="d">││</span> <span class="b">Starts per name</span>            ceiling 8                                <span class="d">│</span>
+<span class="d">│</span> Psylocke  asking   verify<span class="d">││</span>   <span class="r">Xavier        15</span>   <span class="r">Cyclops   9</span>   Storm      8   Beast     7        <span class="d">│</span>
+<span class="d">│</span> Cypher    standby        <span class="d">││</span>   Wolverine      4   Psylocke  3   Forge      3   Rogue     2        <span class="d">│</span>
+<span class="d">│</span> Moira     standby        <span class="d">││</span>   Cerebro        2   Moira     1                                    <span class="d">│</span>
+<span class="d">│</span> Forge     standby        <span class="d">││</span>                                                                     <span class="d">│</span>
+<span class="d">│</span> Cyclops   working  build <span class="d">││</span> <span class="b">Passes that held no bead</span>                                            <span class="d">│</span>
+<span class="d">│</span> Storm     working  build <span class="d">││</span>   <span class="y">Storm       5 of 8</span>       <span class="y">Cyclops   3 of 9</span>     <span class="y">Wolverine 2 of 4</span>     <span class="d">│</span>
+<span class="d">│</span> Wolverine working  build <span class="d">││</span>   Rogue       1 of 2       Beast     1 of 7                        <span class="d">│</span>
+<span class="d">│</span> Rogue     working  build <span class="d">││</span>   <span class="d">Forge 3 of 3 — a sweep holds no bead; not counted</span>                 <span class="d">│</span>
+<span class="d">└──────────────────────────┘│</span>                                                                     <span class="d">│</span>
+<span class="d">┌ Work ────────────────────┐│</span> <span class="b">Running now</span>                 long &gt; 60m                              <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                 <span class="d">││</span>   <span class="r">Psylocke  asking/verify   74m   cb-5kk</span>                            <span class="d">│</span>
+<span class="d">│</span>   cb-3in claimed by Cyc… <span class="d">││</span>   Cyclops   working/build   17m   cb-2e9                            <span class="d">│</span>
+<span class="d">│</span>   cb-hz4 epic, all chil… <span class="d">││</span>   Storm     working/build   16m   cb-cz7                            <span class="d">│</span>
+<span class="d">│</span>                          <span class="d">││</span>   …                                                                 <span class="d">│</span>
+<span class="d">│</span> Claimed 4                <span class="d">││</span>                                                                     <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase th… <span class="d">││</span> <span class="b">Disarmed or given up on</span>                                             <span class="d">│</span>
+<span class="d">│</span>   …                      <span class="d">││</span>   <span class="d">nothing in the window</span>                                             <span class="d">│</span>
+<span class="d">└──────────────────────────┘└─────────────────────────────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   q quit</span></pre>
+<blockquote>The whole report, at full width, in one keystroke — and no new pane, no new Tab stop, no
+row taken from Fleet. The cost is a new key and a second thing the Session pane can be holding, and
+a fleet problem is only visible once you press <code>h</code>.</blockquote>
+
+<h2>T3 — both: the findings section, and <code>h</code> for the whole report</h2>
+<p class="note">T1 tells you something is wrong without being asked; <code>h</code> then shows the
+report behind it. The Health section header carries the hint.</p>
+<pre><span class="d">┌ Work ────────────────────────────────┐</span>
+<span class="d">│</span> <span class="r">Health 4</span>                     <span class="d">h report</span>  <span class="d">│</span>
+<span class="d">│</span>   <span class="r">Psylocke asking 74m — cb-5kk</span>       <span class="d">│</span>
+<span class="d">│</span>   <span class="y">Xavier started 15× in 24h</span>          <span class="d">│</span>
+<span class="d">│</span>   <span class="y">Storm: 5 of 8 passes held no bead</span>  <span class="d">│</span>
+<span class="d">│</span>   <span class="y">Cyclops started 9× in 24h</span>          <span class="d">│</span>
+<span class="d">│</span>                                      <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                             <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span></pre>
+<blockquote>Everything both give, and the largest change of the three — a reader, a section, a key
+and a second Session-pane tenant. Almost certainly more than one bead.</blockquote>
+
+<h2>What is the same in all three</h2>
+<ul class="note">
+<li><code>scripts/fleet-health</code> is the only place the judgement lives; the view runs it with
+<code>--json</code> and renders, exactly as it does with <code>fleet-history</code>.</li>
+<li>Its own five-minute reader, its own in-flight slot, its own clock — History's pattern.</li>
+<li>A failed run keeps what it had and names the failure in red beside the header
+(<code>Health 4  fleet-health failed</code>); a <em>first</em> failure draws nothing at all, which is
+the ordinary state of a machine that has never run the fleet.</li>
+<li>Outside the supervision lease: it reads logs and decides nothing, so a read-only view shows it.</li>
+<li><b>Emacs is not touched.</b> You said <code>M-x cerebro</code> is on its way out.</li>
+</ul>
+
+</body>
+</html>

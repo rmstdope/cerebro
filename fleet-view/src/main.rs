@@ -4198,8 +4198,21 @@ mod main_tests {
         let log_root = tempfile::tempdir().unwrap();
         let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
         let mut logger = Logger::new(log_root.path());
-        logger.set_enabled(true);
 
+        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
+            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
+            live_sessions: 1,
+        };
+        let handing_over = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                cerebro_tui::supervisor::SupervisorKind::Emacs,
+            ),
+        );
+        // Both hand over; only one may still act, and the tick sets the logger from exactly this.
+        assert!(draining.hands_over() && handing_over.hands_over());
+        assert!(draining.may_end() && !handing_over.may_end());
+
+        logger.set_enabled(draining.may_end());
         let mut app = standby_app(
             cerebro_tui::supervisor::SupervisionMode::Draining {
                 configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
@@ -4217,7 +4230,7 @@ mod main_tests {
         // The read-only half: the same handover with the logger disabled, exactly as the tick
         // disables it, writes nothing at all - and still disarms and still says so.
         std::fs::write(&decisions, "").unwrap();
-        logger.set_enabled(false);
+        logger.set_enabled(handing_over.may_end());
         let mut app = standby_app(
             cerebro_tui::supervisor::SupervisionMode::ReadOnly(
                 cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(

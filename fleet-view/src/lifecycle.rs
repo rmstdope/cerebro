@@ -666,6 +666,15 @@ pub fn disarm_notice(name: &str) -> String {
     format!("{name} is disarmed; the view will not bring it back.")
 }
 
+/// What the header says when a handover empties the armed set (cb-nc8).
+///
+/// A second function rather than a parameter on `disarm_notice`, which names one agent for the
+/// disarm prompt and is a different sentence.
+pub fn disarm_all_notice(count: usize) -> String {
+    let names = if count == 1 { "name" } else { "names" };
+    format!("Handing supervision over; {count} {names} disarmed.")
+}
+
 /// The one read-only sentence, naming no owner: the header's own title already names which of the
 /// six reasons applies, immediately to the left of this (Q12).
 const READ_ONLY_REFUSAL: &str = "This view is read-only; it starts and stops nothing";
@@ -1815,6 +1824,13 @@ mod tests {
         assert_eq!(triage_notice("Cerebro", 3), "Cerebro was asked to rank 3 unranked beads.");
         // The name comes from the roster and is not always the word Cerebro.
         assert_eq!(triage_notice("Xavier", 2), "Xavier was asked to rank 2 unranked beads.");
+    }
+
+    /// The handover sentence, singular for one name (cb-nc8).
+    #[test]
+    fn disarm_all_notice_is_singular_for_one_name() {
+        assert_eq!(disarm_all_notice(1), "Handing supervision over; 1 name disarmed.");
+        assert_eq!(disarm_all_notice(4), "Handing supervision over; 4 names disarmed.");
     }
 
     /// An empty set is FORGOTTEN and not remembered as an empty telling, so a set that comes back

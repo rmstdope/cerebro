@@ -129,7 +129,20 @@ having the Ratatui view drop its clear instead, were both drawn and declined.</p
   <b class="k">k</b> on a standby row — the disarm prompt         <span class="e">disarm</span>
   <b class="k">k</b> on a live session — the kill prompt          <span class="e">disarm</span>   <span class="dim">§4</span>
   five starts produced no pass                    <span class="e">disarm</span>
-  this view may not supervise                     <span class="e">disarm all</span> <span class="dim">§5</span></pre></div>
+  a handover — the project declares the other
+  view, somebody else holds the lease, or this
+  view is draining                                <span class="e">disarm all</span> <span class="dim">§5</span>
+  this view cannot tell who supervises            <span class="dim">unchanged</span></pre></div>
+
+<p class="note"><b>A recoverable condition may not have a permanent consequence.</b> Emptying the armed
+set is how a view stops promising sessions it will not start, and that is right when somebody else has
+or is taking the checkout. It is wrong for the modes that mean <i>I could not find out</i> — an
+unreadable declaration, a lock error, a declaration the navigator has mistyped: nobody else has the
+checkout, the next five-second poll recovers, and the armed set does not. In cb-nc8 one transient
+<code>project-conf</code> failure drained a view for a single tick and left four agents permanently
+ineligible, replaceable only by pressing <b class="k">s</b> on each. The cost knowingly accepted: during
+an outage a row can read blue <span class="b">standby</span> while the view could not in fact start it,
+until the next good poll.</p>
 
 <p class="note"><b>Deliberately not a shared case table.</b> A fixture both implementations answer — the
 shape of <code>tests/lib/supervise.cases</code> — was drawn and declined: this is the first time the two

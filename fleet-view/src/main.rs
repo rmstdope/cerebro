@@ -448,12 +448,32 @@ fn supervise(
 ) {
     // The whole of the drain behaviour: a draining view finishes the sessions it hosts and
     // starts nothing, so every armed name is a promise it will not keep. Clearing the set turns
-    // each row grey on the next fleet read, and it is correct for `ReadOnly` too, where the set
-    // should never have held anything. A view that later re-acquires the lease comes back with an
-    // empty armed set - the roster's declaration is read once at startup - so the navigator
-    // presses `s` for the first session of each name, exactly as `M-x cerebro` behaves.
-    if !app.supervision.may_supervise() {
+    // each row grey on the next fleet read, and a view that later re-acquires the lease comes back
+    // with an empty armed set - the roster's declaration is read once at startup - so the
+    // navigator presses `s` for the first session of each name, exactly as `M-x cerebro` behaves.
+    //
+    // It asks `hands_over` and NOT `may_supervise` (cb-nc8): the modes that mean "I could not find
+    // out whose checkout this is" are recoverable on the next five-second poll, and emptying the
+    // armed set on one of them is a permanent consequence drawn from a transient condition - which
+    // is exactly the incident that bead is named for. Only somebody else having, or taking, the
+    // checkout may disarm anything.
+    if app.supervision.hands_over() && !app.armed.is_empty() {
+        let names: Vec<String> = app.armed.iter().cloned().collect();
         app.armed.clear();
+        let reason = match &app.supervision {
+            cerebro_tui::supervisor::SupervisionMode::ReadOnly(reason) => reason.word(),
+            _ => "-",
+        };
+        logger.write(
+            log::Event::DisarmAll,
+            now,
+            &[
+                ("mode", serde_json::Value::from(app.supervision.word())),
+                ("reason", serde_json::Value::from(reason)),
+                ("agents", serde_json::json!(names)),
+            ],
+        );
+        app.set_notice(lifecycle::disarm_all_notice(names.len()));
     }
     if !app.supervision.may_end() {
         return;
@@ -4129,6 +4149,160 @@ mod main_tests {
 
         start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
         assert!(!host.is_live("Xavier"));
+    }
+
+    /// A view that could not READ the declaration keeps every promise it made (cb-nc8).
+    ///
+    /// One transient `project-conf` failure used to reach `Draining` for a single tick and empty
+    /// the armed set for good, so every name became permanently ineligible and only `s` brought
+    /// one back. The elisp counterpart is
+    /// `cerebro-test/an-unreadable-declaration-leaves-the-armed-set-alone'.
+    #[test]
+    fn an_unreadable_declaration_leaves_the_armed_set_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mode = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::DeclarationUnreadable("boom".into()),
+        );
+        let mut app = standby_app(
+            mode,
+            vec![
+                planner_row("Xavier", cerebro_tui::model::RowState::Dead),
+                planner_row("Beast", cerebro_tui::model::RowState::Dead),
+            ],
+            None,
+            now,
+        );
+
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        assert!(app.armed.contains("Xavier") && app.armed.contains("Beast"),
+                "an outage is not a handover: {:?}", app.armed);
+        assert!(app.notice.is_none(), "nothing happened, so nothing is said");
+    }
+
+    /// A drain records the disarm in `decisions.jsonl`; a read-only handover does not (cb-nc8).
+    ///
+    /// "A read-only view writes neither file, since it decides nothing" is the approved policy,
+    /// enforced by `logger.set_enabled(mode.may_end())` on the same tick - which is why the
+    /// navigator's answer to Q3 put the visibility on the header notice. `cerebro.el` gates its
+    /// own `disarm-all' line the same way.
+    #[test]
+    fn a_draining_handover_records_the_disarm_and_a_read_only_one_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+
+        let log_root = tempfile::tempdir().unwrap();
+        let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
+        let mut logger = Logger::new(log_root.path());
+
+        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
+            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
+            live_sessions: 1,
+        };
+        let handing_over = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                cerebro_tui::supervisor::SupervisorKind::Emacs,
+            ),
+        );
+        // Both hand over; only one may still act, and the tick sets the logger from exactly this.
+        assert!(draining.hands_over() && handing_over.hands_over());
+        assert!(draining.may_end() && !handing_over.may_end());
+
+        logger.set_enabled(draining.may_end());
+        let mut app = standby_app(
+            cerebro_tui::supervisor::SupervisionMode::Draining {
+                configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
+                live_sessions: 1,
+            },
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            None,
+            now,
+        );
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut logger, &paths, now, Instant::now());
+        let written = std::fs::read_to_string(&decisions).unwrap_or_default();
+        assert!(written.contains("\"event\":\"disarm-all\""), "a drain decides, so it records: {written}");
+        assert!(written.contains("Xavier"), "the names are in the line: {written}");
+
+        // The read-only half: the same handover with the logger disabled, exactly as the tick
+        // disables it, writes nothing at all - and still disarms and still says so.
+        std::fs::write(&decisions, "").unwrap();
+        logger.set_enabled(handing_over.may_end());
+        let mut app = standby_app(
+            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+                cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                    cerebro_tui::supervisor::SupervisorKind::Emacs,
+                ),
+            ),
+            vec![planner_row("Beast", cerebro_tui::model::RowState::Dead)],
+            None,
+            now,
+        );
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut logger, &paths, now, Instant::now());
+        assert!(app.armed.is_empty());
+        assert!(app.notice.is_some(), "the notice is what covers a read-only handover");
+        assert_eq!(std::fs::read_to_string(&decisions).unwrap_or_default(), "");
+    }
+
+    /// The navigator's typo is not somebody else taking the checkout either (cb-nc8, Q2).
+    #[test]
+    fn an_invalid_declaration_leaves_the_armed_set_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mode = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::InvalidDeclaration("tui2".into()),
+        );
+        let mut app = standby_app(
+            mode,
+            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
+            None,
+            now,
+        );
+
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        assert!(app.armed.contains("Xavier"), "one edited line brings the declaration back");
+    }
+
+    /// A real handover still disarms, and says how many names it took (cb-nc8, Q3).
+    ///
+    /// And says it ONCE: a read-only view ticks every five seconds for hours, and a sentence
+    /// rewritten on every one of them would paint over every other notice for ever.
+    #[test]
+    fn a_handover_says_how_many_names_it_disarmed() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        let mode = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                cerebro_tui::supervisor::SupervisorKind::Emacs,
+            ),
+        );
+        let mut app = standby_app(
+            mode,
+            vec![
+                planner_row("Xavier", cerebro_tui::model::RowState::Dead),
+                planner_row("Beast", cerebro_tui::model::RowState::Dead),
+            ],
+            None,
+            now,
+        );
+
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        assert!(app.armed.is_empty());
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Handing supervision over; 2 names disarmed.")
+        );
+
+        app.clear_notice();
+        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
+        assert!(app.notice.is_none(), "an empty armed set says nothing");
     }
 
     #[test]

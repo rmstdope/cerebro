@@ -10,6 +10,10 @@
 #   exit 0  answered
 #   exit 2  a usage error, an invalid declaration, an unresolvable root, or a root that cannot be
 #           written into the diagnostic record
+#   exit 3  the declaration could not be READ - `project-conf' itself failed. Distinct from 2
+#           because a reader's failure is not a fact about the project: 2 means a value was read
+#           and refused, and always prints that value on stdout, so an exit 2 carrying nothing is
+#           a lie a caller cannot detect (cb-nc8).
 #
 # THE ONE PLACE either implementation answers this. `emacs/cerebro.el' and `fleet-view/' both call
 # this script rather than parsing project.conf or hashing a root themselves. That is the whole
@@ -145,15 +149,17 @@ case "${1:---declaration}" in
     [[ $# -eq 0 ]] || usage
     # `project-conf' says on stderr which branch it took, which is noise here: this script's stderr
     # is the invalid-declaration sentence and nothing else. Its own failures are not swallowed
-    # though - a declaration left at the retired path exits 2 there, and is re-run so its own
-    # diagnosis reaches the caller rather than being replaced by a guess.
+    # though - a declaration left at the retired path is a `project-conf' refusal, and is re-run so
+    # its own diagnosis reaches the caller rather than being replaced by a guess. Any such failure
+    # leaves here as exit 3, never 2: this script has no value to print, and an exit 2 carrying
+    # nothing is a lie the caller cannot detect (cb-nc8).
     set +e
     value="$("$here/project-conf" fleet_supervisor emacs 2>/dev/null)"
     status=$?
     set -e
     if [[ $status -ne 0 ]]; then
       "$here/project-conf" fleet_supervisor emacs >/dev/null || true
-      exit 2
+      exit 3
     fi
     case "$value" in
       emacs|tui) printf '%s\n' "$value" ;;

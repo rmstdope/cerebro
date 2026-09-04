@@ -34,10 +34,16 @@ acquires the lease after it has started comes up with nothing armed.
    ```
 
    Starting it fresh matters. The roster's `autostart` and `standby` declarations are read
-   once, as a view comes up, and only by a view that may act. A view that was already running
-   read-only and then acquires the lease has an empty armed set: it supervises correctly, and
+   once, as a view comes up, and only by a view that may act. A view that was read-only because
+   somebody else had the checkout — this project declared the other view, or another process
+   held the lease — and then acquires it has an empty armed set: it supervises correctly, and
    it starts nothing until you press `s` once per name. Both views behave this way. If yours
    was already open, quit it and open it again.
+
+   A view that was read-only because it could not *tell* who supervises is the other case
+   (cb-nc8): a declaration it could not read, a lock error, a mistyped declaration. That set is
+   left exactly as it was, so the fleet comes back on the next five-second poll with no
+   keystroke at all.
 
 4. Confirm one view and only one is acting. The owner's header says `Cerebro — supervising`;
    the other says `read-only`. If both say read-only, go to *When neither view will act*.

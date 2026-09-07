@@ -492,20 +492,34 @@ as anything else that lands in the backlog. Do not rank it yourself.
 
 ```bash
 bd reopen <id> --reason "<what the navigator saw, one line>"
+bd update <id> --assignee ""                    # bd reopen does NOT do this - see below
 bd update <id> --priority=0 --append-notes "Verification failed (<date>, at <short sha>): <what the navigator saw, in full>"
 bd set-state <id> verification=failed --reason "failed verification at <short sha>"
 bd update <id> --set-metadata verified_at=<full sha>
 bd update <id> --remove-label verdict:stale     # harmless when it is not there
 ```
 
+**The `--assignee ""` is the step that makes the reopen mean anything, and it is second for a
+reason.** `bd reopen` sets the status to `open` and clears `closed_at`; it leaves the assignee
+of the implementer that delivered the bead exactly where it was. `bd ready` does not filter on
+assignee, so the bead looks available to every human and every agent reading that list — while
+the pool an implementer is actually started from is *planned, open and **unclaimed***, which the
+bead is not in. Nothing picks it up, and nothing says so: a P0 sat like that for ten hours.
+Second rather than first because the clear is refused while the bead is still `in_progress` and
+held by somebody else; once `bd reopen` has made it `open` there is no live claim to protect and
+it succeeds unguarded. It is idempotent, so it costs nothing on a bead that was already
+unassigned.
+
 Then ask the navigator one more question, as part of taking the verdict: **is the plan wrong, or is
 the build wrong?** Another question, so another sandwich — `asking --bead <id> --phase verify`
 before it, `working --bead <id> --phase verify` on the answer, before the `bd update` it decides.
 That answer decides one more step:
 
-- **Build wrong (the default).** `planned` stays. The bead goes straight back to `bd ready`, unclaimed
-  and P0, and the fleet picks it up as ordinary work — no plan revision needed, an implementer just
-  built something that does not match a design that was fine. **Never add `plan:revise` on this
+- **Build wrong (the default).** `planned` stays, and the bead — unassigned by the step above — is
+  back in the *planned, open, unclaimed* pool the fleet starts an implementer from, at P0. **That is
+  the `--assignee ""`, not `bd reopen`**: `bd ready` lists it either way, and believing otherwise is
+  what stranded a P0 for ten hours. No plan revision is needed — an implementer just built something
+  that does not match a design that was fine. **Never add `plan:revise` on this
   branch**: the navigator has just said the plan is sound, and the label would send a planner to
   rewrite it.
 - **Plan wrong.** The design itself asked for the wrong thing.
@@ -534,7 +548,11 @@ you are applying a decision already made.
 
 ```bash
 bd reopen <parent> --reason "child <id> reopened by failed verification"
+bd update <parent> --assignee ""
 ```
+
+Both lines, for each parent, for the same reason as above — `bd reopen` leaves an assignee behind
+wherever it is used. A parent that never carried one is unaffected: the clear is idempotent.
 
 Walk up as far as there is a closed parent. Then, always, last:
 
@@ -595,8 +613,9 @@ cheapest place to catch one. The next pass opens with `working --phase prepare`,
 
 - **Never verifies anything herself.** The entire point of the role is that a person looks at the
   thing. You prepare, brief, launch and record — you never render a verdict.
-- **Never claims a bead.** Claiming is the implementer's alone; you read and reopen beads, and both
-  work unclaimed.
+- **Never claims a bead.** Claiming is the implementer's alone; reading and reopening need no claim
+  of your own. Clearing the assignee a reopen leaves behind is not claiming — it is putting the bead
+  back where an implementer can claim it.
 - **Never touches code.** If you are editing the project's application paths (`scripts/app-paths`),
   you have taken the wrong job.
 - **Never sets a priority outside the standing P0 exception.** Reopening at P0 is the one case the

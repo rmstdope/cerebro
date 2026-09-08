@@ -207,7 +207,7 @@ pub const GIVE_UP_AFTER: u32 = 5;
 pub fn wake_interval(role: &str) -> i64 {
     match role {
         "verifier" => 300,
-        "planner" | "implementer" => 0,
+        "planner" | "implementer" | "ux" | "build-design" => 0,
         _ => WAKE_INTERVAL_DEFAULT,
     }
 }
@@ -215,7 +215,7 @@ pub fn wake_interval(role: &str) -> i64 {
 /// `cerebro-role-start-spacing`, the fallback for a role the project declares nothing about.
 pub fn default_spacing(role: &str) -> Option<u64> {
     match role {
-        "planner" | "implementer" => Some(30),
+        "planner" | "implementer" | "ux" | "build-design" => Some(30),
         _ => None,
     }
 }
@@ -228,11 +228,29 @@ pub fn default_spacing(role: &str) -> Option<u64> {
 /// to build a `TriggerFacts` at all says the same thing without a sentinel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriggerFacts {
-    /// Ids of unplanned, unparked beads at priority 0, in bucket order.
+    /// Ids of unplanned, unparked beads at priority 0, in bucket order. For the COMBINED
+    /// `planner` role, so it is `p0_undesigned` followed by `p0_ux_agreed` (cb-lz5.1).
     pub p0_unplanned: Vec<String>,
+    /// Ids of the unplanned, unparked, non-P4 beads whose experience has NOT been agreed - what
+    /// the `ux` role may take. Empty on a board where nothing carries `ux:agreed`, which is every
+    /// board not running the cb-lz5 trial.
+    pub undesigned_ids: Vec<String>,
+    /// Those of `undesigned_ids` at priority 0, in bucket order.
+    pub p0_undesigned: Vec<String>,
+    /// Ids of the unplanned, unparked, non-P4 beads carrying `ux:agreed` - what the
+    /// `build-design` role may take.
+    pub ux_agreed_ids: Vec<String>,
+    /// Those of `ux_agreed_ids` at priority 0, in bucket order.
+    pub p0_ux_agreed: Vec<String>,
+    /// How many unplanned, unparked beads carry `ux:agreed` - the `ux` role's own buffer, and the
+    /// Rust copy of `scripts/planner-buffer --ux-agreed`. NO P4 filter, exactly as `planned` has
+    /// none: this counts what is waiting for a build-designer, and the shell counts it the same
+    /// way.
+    pub ux_agreed: usize,
     /// How many planned, unclaimed, unparked beads there are.
     pub planned: usize,
-    /// Ids of the unplanned, unparked beads a planner may actually take: P4s excluded, since an
+    /// Ids of the unplanned, unparked beads the COMBINED planner may actually take - the union
+    /// `undesigned_ids ++ ux_agreed_ids` (cb-lz5.1). P4s excluded, since an
     /// unranked bead is Cerebro's to rank and not a planner's to plan. Feeds both the buffer
     /// condition and the planner fingerprint, and the second is why ranking releases the guard.
     pub actionable_ids: Vec<String>,
@@ -289,6 +307,7 @@ pub fn unranked_ids(buckets: &WorkBuckets) -> Vec<String> {
     let mut ids: Vec<String> = buckets
         .unplanned
         .iter()
+        .chain(buckets.ux_agreed.iter())
         .filter(|bead| !parked(&bead.labels) && bead.priority == Some(4))
         .map(|bead| bead.id.clone())
         .collect();
@@ -310,11 +329,22 @@ impl TriggerFacts {
         gh: GhAnswer,
         planner_multiple: usize,
     ) -> Self {
-        let unplanned: Vec<_> = buckets
+        // The two halves of what used to be one `unplanned` list. Everything the COMBINED
+        // `planner` role reads is their union: a project runs `planner` or the two cb-lz5 roles,
+        // never both, and a bead that carried `ux:agreed` must not vanish from the planner's
+        // trigger, from Cerebro's triage set or from Psylocke's stale-verdict count.
+        let undesigned: Vec<_> = buckets
             .unplanned
             .iter()
             .filter(|bead| !parked(&bead.labels))
             .collect();
+        let agreed: Vec<_> = buckets
+            .ux_agreed
+            .iter()
+            .filter(|bead| !parked(&bead.labels))
+            .collect();
+        let unplanned: Vec<_> =
+            undesigned.iter().chain(agreed.iter()).copied().collect::<Vec<_>>();
         let planned: Vec<_> = buckets
             .planned
             .iter()
@@ -325,6 +355,7 @@ impl TriggerFacts {
             &buckets.claimed,
             &buckets.planned,
             &buckets.being_planned,
+            &buckets.ux_agreed,
             &buckets.unplanned,
             &buckets.paused,
         ]
@@ -353,6 +384,27 @@ impl TriggerFacts {
                 .filter(|bead| bead.priority != Some(4))
                 .map(|bead| bead.id.clone())
                 .collect(),
+            undesigned_ids: undesigned
+                .iter()
+                .filter(|bead| bead.priority != Some(4))
+                .map(|bead| bead.id.clone())
+                .collect(),
+            p0_undesigned: undesigned
+                .iter()
+                .filter(|bead| bead.priority == Some(0))
+                .map(|bead| bead.id.clone())
+                .collect(),
+            ux_agreed_ids: agreed
+                .iter()
+                .filter(|bead| bead.priority != Some(4))
+                .map(|bead| bead.id.clone())
+                .collect(),
+            p0_ux_agreed: agreed
+                .iter()
+                .filter(|bead| bead.priority == Some(0))
+                .map(|bead| bead.id.clone())
+                .collect(),
+            ux_agreed: agreed.len(),
             planned_ids: planned.iter().map(|bead| bead.id.clone()).collect(),
             unranked_ids,
             merged_unverified: buckets.merged.len(),
@@ -389,6 +441,8 @@ impl TriggerFacts {
         let available = match role {
             "planner" => self.actionable_ids.len(),
             "implementer" => self.planned_ids.len(),
+            "ux" => self.undesigned_ids.len(),
+            "build-design" => self.ux_agreed_ids.len(),
             _ => return None,
         };
         Some(available.saturating_sub(*self.in_flight.get(role).unwrap_or(&0)))
@@ -436,6 +490,18 @@ pub enum Fingerprint {
     Orchestrator {
         unranked_ids: Vec<String>,
     },
+    Ux {
+        p0_undesigned: Vec<String>,
+        ux_agreed: usize,
+        implementers: usize,
+        undesigned_ids: Vec<String>,
+    },
+    BuildDesign {
+        p0_ux_agreed: Vec<String>,
+        planned: usize,
+        implementers: usize,
+        ux_agreed_ids: Vec<String>,
+    },
 }
 
 pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
@@ -455,6 +521,18 @@ pub fn fingerprint(role: &str, facts: &TriggerFacts) -> Option<Fingerprint> {
         }),
         "orchestrator" => Some(Fingerprint::Orchestrator {
             unranked_ids: facts.unranked_ids.clone(),
+        }),
+        "ux" => Some(Fingerprint::Ux {
+            p0_undesigned: facts.p0_undesigned.clone(),
+            ux_agreed: facts.ux_agreed,
+            implementers: facts.implementers,
+            undesigned_ids: facts.undesigned_ids.clone(),
+        }),
+        "build-design" => Some(Fingerprint::BuildDesign {
+            p0_ux_agreed: facts.p0_ux_agreed.clone(),
+            planned: facts.planned,
+            implementers: facts.implementers,
+            ux_agreed_ids: facts.ux_agreed_ids.clone(),
         }),
         _ => None,
     }
@@ -513,6 +591,28 @@ fn condition(facts: &TriggerFacts, agent: &AgentFacts<'_>) -> Option<String> {
                 return None;
             }
             if let Some(first) = facts.p0_unplanned.first() {
+                return Some(format!("P0 {first} unplanned"));
+            }
+            let want = facts.planner_want();
+            (facts.planned < want).then(|| format!("buffer {} of {want}", facts.planned))
+        }
+        // The planner's two halves, each over its own queue. A project runs `planner` or these
+        // two, never both, so neither arm can double-start anything.
+        "ux" => {
+            if facts.headroom("ux") == Some(0) {
+                return None;
+            }
+            if let Some(first) = facts.p0_undesigned.first() {
+                return Some(format!("P0 {first} unplanned"));
+            }
+            let want = facts.planner_want();
+            (facts.ux_agreed < want).then(|| format!("UX {} of {want}", facts.ux_agreed))
+        }
+        "build-design" => {
+            if facts.headroom("build-design") == Some(0) {
+                return None;
+            }
+            if let Some(first) = facts.p0_ux_agreed.first() {
                 return Some(format!("P0 {first} unplanned"));
             }
             let want = facts.planner_want();
@@ -736,6 +836,8 @@ pub fn standby_label(
     }
     match role {
         "planner" => Some(format!("→ buffer<{}", facts.planner_want())),
+        "ux" => Some(format!("→ UX<{}", facts.planner_want())),
+        "build-design" => Some(format!("→ buffer<{}", facts.planner_want())),
         "implementer" => Some("→ planned".to_string()),
         "verifier" => Some("→ merged".to_string()),
         "orchestrator" => Some("→ unranked".to_string()),
@@ -986,6 +1088,195 @@ mod tests {
 
     fn agent_of(role: &str) -> AgentFacts<'_> {
         AgentFacts { role, ended_at: None, started_at: None, last_fingerprint: None }
+    }
+
+    /// The cb-lz5 split must be invisible to the combined `planner` role, which this repository
+    /// itself runs: `actionable_ids`, `p0_unplanned` and `headroom` are the UNION of the two
+    /// buckets, or a bead that carries `ux:agreed` becomes work no planner can see.
+    #[test]
+    fn the_planner_still_sees_an_agreed_bead_as_its_own_work() {
+        let facts = facts_for(
+            vec![
+                bead("cb-a2", "open", &["ux:agreed"], 2),
+                bead("cb-a0", "open", &["ux:agreed"], 0),
+            ],
+            &[],
+        );
+        assert!(facts.actionable_ids.contains(&"cb-a2".to_string()));
+        assert!(facts.actionable_ids.contains(&"cb-a0".to_string()));
+        assert_eq!(facts.p0_unplanned, vec!["cb-a0".to_string()]);
+        assert_eq!(
+            condition(&facts, &agent_of("planner")),
+            Some("P0 cb-a0 unplanned".to_string())
+        );
+        assert_eq!(facts.headroom("planner"), Some(2));
+    }
+
+    /// Cerebro's triage arm and Psylocke's stale-verdict arm read the open buckets too, and both
+    /// lose a bead the moment `ux:agreed` moves it out of `unplanned`.
+    #[test]
+    fn an_agreed_bead_still_counts_as_unranked_and_as_a_stale_verdict() {
+        let facts = facts_for(
+            vec![
+                bead("cb-p4", "open", &["ux:agreed"], 4),
+                bead("cb-st", "open", &["ux:agreed", "verdict:stale"], 2),
+            ],
+            &[],
+        );
+        assert_eq!(facts.unranked_ids, vec!["cb-p4".to_string()]);
+        assert_eq!(facts.stale_verdicts, 1);
+    }
+
+    /// The `ux` role's own queue is what it has NOT designed yet, and its buffer is how much
+    /// agreed work is waiting for a build-designer.
+    #[test]
+    fn the_ux_role_starts_while_the_agreed_queue_is_short() {
+        let facts = facts_for(
+            vec![
+                bead("cb-u1", "open", &[], 2),
+                bead("cb-u2", "open", &[], 2),
+                bead("cb-u3", "open", &[], 2),
+                bead("cb-a1", "open", &["ux:agreed"], 2),
+            ],
+            &[],
+        );
+        assert_eq!(facts.planner_want(), 2);
+        assert_eq!(condition(&facts, &agent_of("ux")), Some("UX 1 of 2".to_string()));
+    }
+
+    #[test]
+    fn the_ux_role_takes_a_p0_before_the_queue() {
+        let facts = facts_for(
+            vec![
+                bead("cb-p0", "open", &[], 0),
+                bead("cb-a1", "open", &["ux:agreed"], 2),
+                bead("cb-a2", "open", &["ux:agreed"], 2),
+            ],
+            &[],
+        );
+        assert_eq!(
+            condition(&facts, &agent_of("ux")),
+            Some("P0 cb-p0 unplanned".to_string()),
+            "the P0 arm wins over a buffer that is already full"
+        );
+    }
+
+    #[test]
+    fn the_ux_role_is_held_when_nothing_is_undesigned() {
+        let facts = facts_for(vec![bead("cb-a1", "open", &["ux:agreed"], 2)], &[]);
+        assert_eq!(condition(&facts, &agent_of("ux")), None);
+        assert_eq!(
+            standby_label("ux", &facts, agent_of("ux"), at(0)),
+            Some("\u{2192} 0 free".to_string())
+        );
+    }
+
+    #[test]
+    fn the_build_design_role_starts_while_the_planned_buffer_is_short() {
+        let short = facts_for(vec![bead("cb-a1", "open", &["ux:agreed"], 2)], &[]);
+        assert_eq!(
+            condition(&short, &agent_of("build-design")),
+            Some("buffer 0 of 2".to_string())
+        );
+
+        let full = facts_for(
+            vec![
+                bead("cb-a1", "open", &["ux:agreed"], 2),
+                bead("cb-p1", "open", &["planned"], 2),
+                bead("cb-p2", "open", &["planned"], 2),
+            ],
+            &[],
+        );
+        assert_eq!(condition(&full, &agent_of("build-design")), None);
+    }
+
+    #[test]
+    fn the_build_design_role_is_held_when_nothing_is_agreed() {
+        let facts = facts_for(vec![bead("cb-u1", "open", &[], 2)], &[]);
+        assert_eq!(condition(&facts, &agent_of("build-design")), None);
+        assert_eq!(
+            standby_label("build-design", &facts, agent_of("build-design"), at(0)),
+            Some("\u{2192} 0 free".to_string())
+        );
+    }
+
+    #[test]
+    fn the_two_new_standby_cells_read_like_the_planners() {
+        let facts = facts_for(
+            vec![
+                bead("cb-u1", "open", &[], 2),
+                bead("cb-a1", "open", &["ux:agreed"], 2),
+            ],
+            &[],
+        );
+        assert_eq!(
+            standby_label("ux", &facts, agent_of("ux"), at(0)),
+            Some("\u{2192} UX<2".to_string())
+        );
+        assert_eq!(
+            standby_label("build-design", &facts, agent_of("build-design"), at(0)),
+            Some("\u{2192} buffer<2".to_string())
+        );
+        assert_eq!(
+            standby_label("planner", &facts, agent_of("planner"), at(0)),
+            Some("\u{2192} buffer<2".to_string())
+        );
+    }
+
+    #[test]
+    fn an_in_flight_session_of_each_new_role_takes_its_own_queue_down() {
+        let beads = || {
+            vec![
+                bead("cb-u1", "open", &[], 2),
+                bead("cb-a1", "open", &["ux:agreed"], 2),
+            ]
+        };
+        let taken = facts_for(beads(), &[("build-design", 1)]);
+        assert_eq!(taken.headroom("build-design"), Some(0));
+        assert_eq!(condition(&taken, &agent_of("build-design")), None);
+        assert_eq!(taken.headroom("ux"), Some(1), "the other queue is untouched");
+    }
+
+    #[test]
+    fn neither_new_role_waits_out_a_wake_interval() {
+        assert_eq!(wake_interval("ux"), 0);
+        assert_eq!(wake_interval("build-design"), 0);
+        assert_eq!(default_spacing("ux"), Some(30));
+        assert_eq!(default_spacing("build-design"), Some(30));
+    }
+
+    #[test]
+    fn the_new_fingerprints_move_with_their_own_queues() {
+        let one = facts_for(
+            vec![
+                bead("cb-u1", "open", &[], 2),
+                bead("cb-a1", "open", &["ux:agreed"], 2),
+            ],
+            &[],
+        );
+        let more_undesigned = facts_for(
+            vec![
+                bead("cb-u1", "open", &[], 2),
+                bead("cb-u2", "open", &[], 2),
+                bead("cb-a1", "open", &["ux:agreed"], 2),
+            ],
+            &[],
+        );
+        let more_agreed = facts_for(
+            vec![
+                bead("cb-u1", "open", &[], 2),
+                bead("cb-a1", "open", &["ux:agreed"], 2),
+                bead("cb-a2", "open", &["ux:agreed"], 2),
+            ],
+            &[],
+        );
+        assert_ne!(fingerprint("ux", &one), fingerprint("ux", &more_undesigned));
+        assert_ne!(
+            fingerprint("build-design", &one),
+            fingerprint("build-design", &more_agreed)
+        );
+        assert!(fingerprint("ux", &one).is_some());
+        assert!(fingerprint("build-design", &one).is_some());
     }
 
     #[test]
@@ -1332,6 +1623,11 @@ mod tests {
     fn empty_facts() -> TriggerFacts {
         TriggerFacts {
             p0_unplanned: Vec::new(),
+            undesigned_ids: Vec::new(),
+            p0_undesigned: Vec::new(),
+            ux_agreed_ids: Vec::new(),
+            p0_ux_agreed: Vec::new(),
+            ux_agreed: 0,
             planned: 0,
             actionable_ids: Vec::new(),
             planned_ids: Vec::new(),

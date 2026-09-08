@@ -1363,7 +1363,8 @@ fn arm_and_autostart(
 }
 
 /// The roles a spacing is asked about, once, at startup.
-const SPACED_ROLES: [&str; 4] = ["planner", "implementer", "verifier", "orchestrator"];
+const SPACED_ROLES: [&str; 6] =
+    ["planner", "implementer", "verifier", "orchestrator", "ux", "build-design"];
 
 /// The startup line, naming both halves of the roster's declaration - because the declaration did
 /// both and only one of them is otherwise audible. An empty half drops its clause along with the
@@ -2290,6 +2291,15 @@ impl<M: TerminalModes> Drop for TerminalGuard<M> {
 #[cfg(test)]
 mod main_tests {
     use super::*;
+
+    /// Every board-backed role is asked what spacing the project declares for it, or the two
+    /// cb-lz5 roles silently fall back to no spacing at all while their peers have one.
+    #[test]
+    fn spaced_roles_covers_every_board_backed_role() {
+        for role in ["planner", "implementer", "verifier", "orchestrator", "ux", "build-design"] {
+            assert!(SPACED_ROLES.contains(&role), "{role} is asked about spacing");
+        }
+    }
     use cerebro_tui::probe;
     use std::cell::RefCell;
     use std::rc::Rc;

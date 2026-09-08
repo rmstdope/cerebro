@@ -730,6 +730,10 @@ pub fn body_line_of_row(body: &[FleetBodyLine], index: usize) -> Option<usize> {
 /// it is `Enter` on the `+N more` row, which opens that one section (cb-kcs.5.4).
 pub const WORK_ROWS_PER_SECTION: usize = 8;
 
+/// The title of the one Work section that is hidden rather than drawn as `(none)` when empty
+/// (cb-lz5.1). Spelled once, because the array entry and the skip must not drift.
+pub const UX_AGREED_SECTION: &str = "UX agreed";
+
 /// How a section orders its rows and what it puts at the far end of one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SectionKind {
@@ -1295,22 +1299,30 @@ fn queues_body(app: &App, now: DateTime<Utc>) -> Vec<WorkBodyLine<'_>> {
     }
 }
 
-/// The six queues, in the order work moves in read backwards, and in the panel's own spelling.
+/// The seven queues, in the order work moves in read backwards, and in the panel's own spelling.
 fn sections_body<'a>(
     app: &App,
     buckets: &'a WorkBuckets,
     now: DateTime<Utc>,
 ) -> Vec<WorkBodyLine<'a>> {
-    let sections: [(&'static str, &'a Vec<Bead>, SectionKind); 6] = [
+    let sections: [(&'static str, &'a Vec<Bead>, SectionKind); 7] = [
         ("Claimed", &buckets.claimed, SectionKind::Open),
         ("Planned, unclaimed", &buckets.planned, SectionKind::Open),
         ("Being planned", &buckets.being_planned, SectionKind::Open),
+        (UX_AGREED_SECTION, &buckets.ux_agreed, SectionKind::Open),
         ("Unplanned", &buckets.unplanned, SectionKind::Open),
         ("Waiting on you", &buckets.paused, SectionKind::Paused),
         ("Merged, unverified", &buckets.merged, SectionKind::Merged),
     ];
     let mut body = Vec::new();
     for (index, (title, beads, kind)) in sections.into_iter().enumerate() {
+        // The one section that is hidden rather than shown as `(none)': in a project running the
+        // combined `planner' role no bead ever carries `ux:agreed', so an always-drawn header
+        // would put a permanently empty section on every fleet not running the cb-lz5 trial. The
+        // rule Sweeps, Health and History already follow, applied to one queue.
+        if title == UX_AGREED_SECTION && beads.is_empty() {
+            continue;
+        }
         if index > 0 {
             body.push(WorkBodyLine::Blank);
         }
@@ -1396,6 +1408,7 @@ fn apply_pending_priority(overlay: &BTreeMap<String, PendingPriority>, buckets: 
         &mut buckets.claimed,
         &mut buckets.planned,
         &mut buckets.being_planned,
+        &mut buckets.ux_agreed,
         &mut buckets.unplanned,
         &mut buckets.paused,
         &mut buckets.merged,
@@ -6199,6 +6212,82 @@ mod tests {
         let parked = suffix_of("cb-parked").expect("the paused row keeps a suffix");
         assert_ne!(parked, "epic", "the age wins the Waiting-on-you column");
         assert!(!parked.is_empty());
+    }
+
+    /// The cb-lz5 queue sits between `Being planned` and `Unplanned`, and behaves like every
+    /// other bead section once it is drawn at all.
+    #[test]
+    fn work_body_draws_the_ux_agreed_section_between_being_planned_and_unplanned() {
+        let mut app = App::default();
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                ux_agreed: vec![test_bead("cb-agreed", Some(2))],
+                ..WorkBuckets::default()
+            }),
+            at(0),
+        );
+        let body = work_body(&app, at(0));
+        let index_of = |want: &str| {
+            body.iter()
+                .position(|l| matches!(l, WorkBodyLine::SectionHeader { title, .. } if *title == want))
+                .unwrap_or_else(|| panic!("the {want} header is drawn"))
+        };
+        let agreed = index_of(UX_AGREED_SECTION);
+        assert!(index_of("Being planned") < agreed);
+        assert!(agreed < index_of("Unplanned"));
+        assert!(matches!(
+            body[agreed],
+            WorkBodyLine::SectionHeader { title: UX_AGREED_SECTION, count: 1 }
+        ));
+        let row = body
+            .iter()
+            .position(|l| matches!(l, WorkBodyLine::Bead { bead, .. } if bead.id == "cb-agreed"))
+            .expect("the bead's own row is drawn");
+        assert!(agreed < row && row < index_of("Unplanned"));
+    }
+
+    /// The one section hidden rather than shown as `(none)` - and the other six still say it,
+    /// which is the half that catches a fix applied too broadly.
+    #[test]
+    fn an_empty_ux_agreed_section_is_not_drawn_at_all() {
+        let mut app = App::default();
+        app.finish_work_refresh(Ok(WorkBuckets::default()), at(0));
+        let body = work_body(&app, at(0));
+        assert!(
+            !body.iter().any(
+                |l| matches!(l, WorkBodyLine::SectionHeader { title, .. } if *title == UX_AGREED_SECTION)
+            ),
+            "an empty UX queue draws no header at all"
+        );
+        let unplanned = body
+            .iter()
+            .position(|l| matches!(l, WorkBodyLine::SectionHeader { title: "Unplanned", count: 0 }))
+            .expect("Unplanned still draws its own header");
+        assert_eq!(body[unplanned + 1], WorkBodyLine::Empty);
+    }
+
+    /// Without the new bucket in `apply_pending_priority`, a keystroke on one of its rows leaves
+    /// the old priority on screen until a board read lands.
+    #[test]
+    fn a_pending_priority_shows_on_a_ux_agreed_row() {
+        let mut app = App::default();
+        app.finish_work_refresh(
+            Ok(WorkBuckets {
+                ux_agreed: vec![test_bead("cb-agreed", Some(3))],
+                ..WorkBuckets::default()
+            }),
+            at(0),
+        );
+        app.begin_write(&priority_write("cb-agreed", Some(3), 0), bd_path());
+        let body = work_body(&app, at(0));
+        let priority = body
+            .iter()
+            .find_map(|l| match l {
+                WorkBodyLine::Bead { bead, .. } if bead.id == "cb-agreed" => Some(bead.priority),
+                _ => None,
+            })
+            .expect("the row is drawn");
+        assert_eq!(priority, Some(0));
     }
 
     #[test]

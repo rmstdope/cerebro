@@ -26,6 +26,7 @@
 <body>
 <h1>cb-bch — the surface the navigator approved, 2026-09-08</h1>
 <p class="lede">Two rounds. This file is the specification for <b>resizable panes in <code>cerebro-tui</code></b>. Where this file and either child bead's plan disagree, this file is right. It applies to the terminal view alone: <code>M-x cerebro</code> is read-only in this repository and is deliberately not given the terminal view's newer surfaces.</p>
+<p class="lede"><b>Revised 2026-09-08, after verification.</b> The chords were <code>Ctrl</code>-arrows in the first round and did not work: macOS binds <code>Ctrl-←</code>/<code>Ctrl-→</code> to switching Spaces and <code>Ctrl-↑</code>/<code>Ctrl-↓</code> to Mission Control and Application Windows, and takes all four before any terminal sees them. They are <code>Shift</code>-arrows and <code>Shift-Home</code> now, confirmed arriving in the navigator’s own terminal before the change was agreed. Nothing else on this page moved: the sizes, the floors, the notices and everything under <i>The mouse</i> are as they were.</p>
 <p class="lede">The work is split. <b>cb-bch.1</b> is the size state and the keyboard chords; <b>cb-bch.2</b> is mouse capture and everything the mouse does. Everything on this page under <i>The chords</i> is cb-bch.1; everything under <i>The mouse</i> is cb-bch.2.</p>
 <h2>1. What is fixed today</h2>
 <p class="note">At a hundred columns and wider the left column is a hard 40 cells, Fleet takes its natural height capped at half that column, and Work gets the rest. None of it can be moved.</p>
@@ -53,8 +54,8 @@
 <span class="d">└──────────────────────────────────────┘</span><span class="d">└────────────────────────────────────────────────────────────┘</span>
 <span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
 <h2>2. The chords — cb-bch.1</h2>
-<p class="note"><code>Ctrl-←</code> and <code>Ctrl-→</code> move the vertical divider one cell; <code>Ctrl-↑</code> and <code>Ctrl-↓</code> move a horizontal divider one row; <code>Ctrl-Home</code> puts every divider back. They act from any focus and are held back from a focused live session, exactly as <code>Tab</code>, <code>Shift-Tab</code> and <code>F1</code>–<code>F3</code> already are.</p>
-<h3><code>Ctrl-→</code> ×16 — the left column widens to 56</h3>
+<p class="note"><code>Shift-←</code> and <code>Shift-→</code> move the vertical divider one cell; <code>Shift-↑</code> and <code>Shift-↓</code> move a horizontal divider one row; <code>Shift-Home</code> puts every divider back. They act from any focus and are held back from a focused live session, exactly as <code>Tab</code>, <code>Shift-Tab</code> and <code>F1</code>–<code>F3</code> already are.</p>
+<h3><code>Shift-→</code> ×16 — the left column widens to 56</h3>
 <pre><span class="y"> left column 56 cells</span>
 <span class="d">┌ Fleet ───────────────────────────────────────────────</span><span class="b">┐</span><span class="b">┌</span><span class="d"> Session — Cyclops ─────────────────────────┐</span>
 <span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch                   <span class="b">│</span><span class="b">│</span> ● Cyclops — implementer                    <span class="d">│</span>
@@ -79,8 +80,8 @@
 <span class="d">│</span>   cb-cz7 P1 A session is started o…                  <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
 <span class="d">└──────────────────────────────────────────────────────┘</span><span class="d">└────────────────────────────────────────────┘</span>
 <span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
-<h3><code>Ctrl-↓</code> ×4 — Fleet takes four more rows</h3>
-<p class="note">Fleet stops sizing itself to the roster the moment a divider is moved; it is what the navigator set until <code>Ctrl-Home</code>.</p>
+<h3><code>Shift-↓</code> ×4 — Fleet takes four more rows</h3>
+<p class="note">Fleet stops sizing itself to the roster the moment a divider is moved; it is what the navigator set until <code>Shift-Home</code>.</p>
 <pre><span class="y"> Fleet 16 rows</span>
 <span class="d">┌ Fleet ───────────────────────────────────────────────</span><span class="d">┐</span><span class="d">┌</span><span class="d"> Session — Cyclops ─────────────────────────┐</span>
 <span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch                   <span class="d">│</span><span class="d">│</span> ● Cyclops — implementer                    <span class="d">│</span>
@@ -120,7 +121,7 @@
 <span class="d">└──────────────────────┘</span><span class="d">└────────────────────────────────────────────────────────────────────────────┘</span>
 <span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
 <h3>Below a hundred columns the panes stack</h3>
-<p class="note">No vertical divider, and <b>two</b> horizontal ones. <code>Ctrl-↑</code>/<code>Ctrl-↓</code> move <b>the divider below the focused pane</b>: Fleet focused moves the Fleet/Work divider, Work focused moves the Work/Session divider, and from Session focus they say so and move nothing. <code>Ctrl-←</code>/<code>Ctrl-→</code> there say there is nothing to widen.</p>
+<p class="note">No vertical divider, and <b>two</b> horizontal ones. <code>Shift-↑</code>/<code>Shift-↓</code> move <b>the divider below the focused pane</b>: Fleet focused moves the Fleet/Work divider, Work focused moves the Work/Session divider, and from Session focus they say so and move nothing. <code>Shift-←</code>/<code>Shift-→</code> there say there is nothing to widen.</p>
 <pre><span class="y"> Fleet 8 rows</span>
 <span class="d">┌ Fleet ─────────────────────────────────────────────────────────────────────┐</span>
 <span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch                                         <span class="d">│</span>
@@ -229,9 +230,9 @@
 <p class="note">A size lasts until <code>cerebro-tui</code> exits and no longer. Nothing is written to disk: scroll offsets, focus, selection and the armed set are all memory-only in this crate by design, and the navigator chose to keep divider sizes in that company rather than introduce the crate's first on-disk preference. Sizes <b>are</b> kept per layout within one run, so narrowing the terminal below a hundred columns and widening it again restores what was set on the wide screen.</p>
 <h2>5. Every line it can say</h2>
 <p class="note">All of them in the header's notice slot, in gold, cleared by the next keystroke like every other notice.</p>
-<table><tr><th>When</th><th>The line</th></tr><tr><td>the vertical divider moves</td><td><code>left column 56 cells</code></td></tr><tr><td>a horizontal divider moves</td><td><code>Fleet 16 rows</code> · <code>Work 12 rows</code></td></tr><tr><td>a chord at the floor</td><td><code>left column is as narrow as it goes</code> · <code>Fleet is as short as it goes</code> · <code>Work is as short as it goes</code></td></tr><tr><td>a chord at the ceiling</td><td><code>left column is as wide as it goes</code> · <code>Fleet is as tall as it goes</code> · <code>Work is as tall as it goes</code></td></tr><tr><td><code>Ctrl-←</code>/<code>Ctrl-→</code> while the panes are stacked</td><td><code>nothing to widen while the panes are stacked</code></td></tr><tr><td><code>Ctrl-↑</code>/<code>Ctrl-↓</code> from Session focus, stacked</td><td><code>nothing below Session to move</code></td></tr><tr><td><code>Ctrl-Home</code> or a double-click with nothing moved</td><td><code>panes are already at their default sizes</code></td></tr><tr><td><code>Ctrl-Home</code> after something moved</td><td><code>panes back to their default sizes</code></td></tr><tr><td>double-click on one divider</td><td><code>left column back to 40 cells</code> · <code>Fleet back to its own height</code> · <code>Work back to its own height</code></td></tr></table>
+<table><tr><th>When</th><th>The line</th></tr><tr><td>the vertical divider moves</td><td><code>left column 56 cells</code></td></tr><tr><td>a horizontal divider moves</td><td><code>Fleet 16 rows</code> · <code>Work 12 rows</code></td></tr><tr><td>a chord at the floor</td><td><code>left column is as narrow as it goes</code> · <code>Fleet is as short as it goes</code> · <code>Work is as short as it goes</code></td></tr><tr><td>a chord at the ceiling</td><td><code>left column is as wide as it goes</code> · <code>Fleet is as tall as it goes</code> · <code>Work is as tall as it goes</code></td></tr><tr><td><code>Shift-←</code>/<code>Shift-→</code> while the panes are stacked</td><td><code>nothing to widen while the panes are stacked</code></td></tr><tr><td><code>Shift-↑</code>/<code>Shift-↓</code> from Session focus, stacked</td><td><code>nothing below Session to move</code></td></tr><tr><td><code>Shift-Home</code> or a double-click with nothing moved</td><td><code>panes are already at their default sizes</code></td></tr><tr><td><code>Shift-Home</code> after something moved</td><td><code>panes back to their default sizes</code></td></tr><tr><td>double-click on one divider</td><td><code>left column back to 40 cells</code> · <code>Fleet back to its own height</code> · <code>Work back to its own height</code></td></tr></table>
 <h2>6. The hint line</h2>
-<p class="note"><code>^←→ size</code> joins the hint line at the optional rank — the same rank as <code>h health</code> — so it is offered unconditionally and is dropped first and alone when the screen narrows, never costing a whole tier of the hints the navigator asked by name to keep. It arrives with cb-bch.1 and is unchanged by cb-bch.2.</p>
-<pre><span class="d"> g refresh   h health   Tab pane   x run   </span><span class="b">^←→ size</span><span class="d">   q quit</span></pre>
+<p class="note"><code>⇧←→ size</code> joins the hint line at the optional rank — the same rank as <code>h health</code> — so it is offered unconditionally and is dropped first and alone when the screen narrows, never costing a whole tier of the hints the navigator asked by name to keep. It arrives with cb-bch.1 and is unchanged by cb-bch.2.</p>
+<pre><span class="d"> g refresh   h health   Tab pane   x run   </span><span class="b">⇧←→ size</span><span class="d">   q quit</span></pre>
 </body>
 </html>

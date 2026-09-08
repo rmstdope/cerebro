@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-lz5.1 — Record B: two fields</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 72rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .4rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  p.lede { color: var(--dim); margin: 0 0 1.4rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .6rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.45; }
+  .r{color:#f0776c}.g{color:#7ee787}.y{color:#e3b341}.d{color:#8b949e}.b{color:#79c0ff;font-weight:bold}
+  .m{color:#d2a8ff;font-weight:bold}
+  blockquote{margin:.7rem 0;padding:.5rem .9rem;border-left:3px solid var(--line);color:var(--dim);font-size:13.5px}
+</style></head><body>
+<h1>cb-lz5.1 — Record <b>B</b>: two fields, one per stage</h1>
+<p class="lede">The experience agent writes the bead's <code>notes</code> field and never touches <code>design</code>. The implementation-design agent writes <code>design</code> and never touches <code>notes</code>. Each stage owns one field outright, so neither can overwrite the other even by accident — and <code>design</code> keeps exactly the shape an implementer already reads today.</p>
+
+<h2>1. After the experience agent's pass — <code>bd show cb-abc</code></h2>
+<p class="note">Two fields, and one of them is empty. <code>bd show</code> prints them in this order.</p>
+<pre><span class="d">cb-abc  P2  open   Row limit settable from the list pane</span>
+<span class="d">labels: experience:agreed</span>
+
+<span class="y">Design:</span>
+  <span class="d">(none)</span>
+
+<span class="y">Notes:</span>
+
+  <span class="m">## The agreed experience</span>
+
+  The list pane grows a <b>Rows</b> control at the right of its header, showing
+  the current limit as a number. Clicking it opens a short menu — 50, 100, 250,
+  500, All — and choosing one reloads the list at once. The chosen limit is
+  remembered for the next visit.
+
+  <span class="d">Empty list</span>    the control still shows, dimmed, reading `Rows 100'.
+  <span class="d">Still loading</span> the control is dimmed and does not open.
+  <span class="d">Fewer rows</span>   than the limit: the control reads `Rows 100' unchanged.
+  <span class="d">Narrow window</span> the control drops to the line below the title.
+
+  The words, exactly: the control reads <b>Rows</b>; the menu entries read
+  <b>50</b>, <b>100</b>, <b>250</b>, <b>500</b>, <b>All</b>; the empty list reads
+  <b>Nothing to show yet</b>.
+
+  <span class="m">## What was considered and rejected</span>
+
+  <b>A number the person types.</b> Rejected: every typed value has to be
+  validated and explained, and the four steps cover what anyone wanted.
+
+  <b>Infinite scroll instead of a limit.</b> Rejected: the navigator wants to say
+  how much is loaded, and scroll position is not a setting they can state.
+
+  <b>Remembering the limit per data set.</b> Rejected for now: one remembered
+  value is what was asked for.
+
+  <span class="m">## The mockup</span>
+
+  docs/ui/cb-abc-row-limit.html — chosen 2026-09-04, after three rounds.
+</pre>
+
+<h2>2. After the implementation-design agent's pass</h2>
+<p class="note"><code>design</code> is exactly the eight-heading plan an implementer reads today. <code>notes</code> is untouched, and its <i>User-facing decisions</i> counterpart in the plan points back at it.</p>
+<pre><span class="d">cb-abc  P2  open   Row limit settable from the list pane</span>
+<span class="d">labels: planned</span>
+
+<span class="y">Design:</span>
+
+  <span class="b">## Context</span>
+  The list pane loads every row today… The agreed experience is in this bead's
+  <b>notes</b>, and is the specification this plan realises.
+
+  <span class="b">## Files to change, and what to reuse</span>
+  <span class="b">## Increments</span>
+  <span class="b">## The test plan</span>
+  <span class="b">## User-facing decisions</span>
+  <span class="b">## Out of scope</span>
+  <span class="b">## Validation</span>
+  <span class="b">## Known traps</span>
+
+<span class="y">Notes:</span>
+
+  <span class="m">## The agreed experience</span>
+  <span class="d">   … unchanged …</span>
+  <span class="m">## What was considered and rejected</span>
+  <span class="d">   … unchanged …</span>
+  <span class="m">## The mockup</span>
+  <span class="d">   … unchanged …</span>
+</pre>
+<blockquote>The cost of B, stated plainly: <code>notes</code> is already the fleet's append-log — a parked question the orchestrator reads out, and the sentence Psylocke appends when a verification fails. So the agreed experience shares a field with those, and a reader has to scroll past them.</blockquote>
+
+<h2>3. A bead with nothing a person can see</h2>
+<pre><span class="d">cb-def  P3  open   The suite runner names each suite before it runs it</span>
+<span class="d">labels: experience:agreed</span>
+
+<span class="y">Notes:</span>
+
+  <span class="m">## The agreed experience</span>
+
+  None. This bead changes nothing a person sees. Passed straight to
+  implementation design without an interview.
+
+  <span class="m">## What was considered and rejected</span>
+
+  None. There was nothing to choose between.
+
+  <span class="m">## The mockup</span>
+
+  None.
+</pre>
+
+<h2>4. Sent back — the developer found the experience unbuildable</h2>
+<p class="note">Appended to <code>notes</code>, below the designer's own sections, which are never edited.</p>
+<pre><span class="d">cb-abc  P2  open   Row limit settable from the list pane</span>
+<span class="d">labels: experience:revise</span>
+
+<span class="y">Notes:</span>
+
+  <span class="m">## The agreed experience</span>       <span class="d">… unchanged …</span>
+  <span class="m">## What was considered and rejected</span> <span class="d">… unchanged …</span>
+  <span class="m">## The mockup</span>                  <span class="d">… unchanged …</span>
+
+  <span class="r">## Sent back to the experience stage</span>
+
+  2026-09-06. `All' cannot be built as agreed: the list has no upper bound, and
+  a data set of two million rows would take the pane minutes to draw and about a
+  gigabyte to hold. Everything else in the agreed experience stands.
+
+  The question to settle: what should `All' do on a data set too large to draw —
+  refuse with a message, cap silently at some number, or be dropped?
+</pre>
+</body></html>

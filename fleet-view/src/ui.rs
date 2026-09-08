@@ -33,7 +33,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::lifecycle::LastExit;
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::app::{
-    self, App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, PaneSizes,
+    self, App, FleetBodyLine, LayoutFacts, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, PaneSizes,
 };
 use crate::lifecycle;
 use crate::model::{Bead, FleetRow, HealthTone, RowState};
@@ -228,6 +228,32 @@ pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
             viewport_lines: session_viewport,
             inner_width: inner_width(session_rect),
         },
+    }
+}
+
+/// What one draw of APP at NOW in AREA would lay out, for `App::note_layout`.
+///
+/// It calls the same `split` `draw` and `metrics` call, so a chord and a drawn border cannot come
+/// from two pieces of arithmetic. It builds the fleet body a third time per tick, which is the
+/// same trade `work_content_lines`' own comment records and is measured against a 200ms poll over
+/// a roster of a few dozen rows.
+pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
+    if too_small(area) {
+        // `usable: false`, exactly as `metrics` returns zeroed `PaneMetrics` here: there is no
+        // layout to move a divider in, and a stale one would be worse than none.
+        return LayoutFacts::default();
+    }
+    let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
+    let (_, fleet, work, _) =
+        split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
+    LayoutFacts {
+        usable: true,
+        split: area.width >= SPLIT_COLUMNS,
+        width: area.width,
+        available: area.height.saturating_sub(1),
+        left_column: fleet.width,
+        fleet_rows: fleet.height,
+        work_rows: work.height,
     }
 }
 
@@ -3285,6 +3311,32 @@ mod tests {
             "and Work lost exactly those four"
         );
         assert_eq!(30 - after[2].0, session_height, "Session kept every row it had");
+    }
+
+    #[test]
+    fn layout_facts_report_the_rects_the_frame_was_drawn_from() {
+        let app = supervising();
+
+        let area = Rect::new(0, 0, 120, 30);
+        let facts = layout_facts(&app, now(), area);
+        assert!(facts.usable);
+        assert!(facts.split);
+        assert_eq!(facts.width, 120);
+        assert_eq!(facts.available, 29);
+        assert_eq!(facts.left_column, LEFT_COLUMN);
+        // Taken from the same `split` the frame is drawn from, not from a second rule.
+        let fleet_lines = fleet_document(&app, now(), fleet_width(area), app.selected_index());
+        let (_, fleet, work, _) =
+            split(area, fleet_lines.len(), work_content_lines(&app, now(), area), app.panes);
+        assert_eq!(facts.fleet_rows, fleet.height);
+        assert_eq!(facts.work_rows, work.height);
+
+        let stacked = layout_facts(&app, now(), Rect::new(0, 0, 99, 30));
+        assert!(stacked.usable);
+        assert!(!stacked.split);
+        assert_eq!(stacked.left_column, 99);
+
+        assert_eq!(layout_facts(&app, now(), Rect::new(0, 0, 30, 10)), LayoutFacts::default());
     }
 
     #[test]

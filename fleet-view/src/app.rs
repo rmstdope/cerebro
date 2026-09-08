@@ -1343,6 +1343,10 @@ pub struct App {
     pub resumed_this_stretch: BTreeSet<String>,
     /// The navigator's divider overrides. Memory only; see `PaneSizes`.
     pub panes: PaneSizes,
+    /// What the last drawn frame's layout came to. `App` still computes no geometry of its own:
+    /// this is written by `note_layout` and read by the resize arm of `on_key`, exactly as
+    /// `fleet_viewport` is written by `note_metrics`.
+    layout: LayoutFacts,
     /// Which widget the keyboard currently acts on. Fleet by default.
     pub focus: PaneFocus,
     /// What this process is allowed to do with the checkout it is drawing (cb-kcs.1).
@@ -1512,6 +1516,7 @@ impl App {
             resumed: BTreeMap::new(),
             resumed_this_stretch: BTreeSet::new(),
             panes: PaneSizes::default(),
+            layout: LayoutFacts::default(),
             focus: PaneFocus::default(),
             supervision,
             confirm: None,
@@ -1986,6 +1991,12 @@ impl App {
 
     /// Remember the geometry of the frame just drawn, so a refresh that moves the selected row
     /// can scroll the Fleet pane to it without a keystroke.
+    /// Record what `ui::layout_facts` said this frame's layout came to. One call per loop
+    /// iteration, beside `note_metrics`.
+    pub fn note_layout(&mut self, facts: LayoutFacts) {
+        self.layout = facts;
+    }
+
     pub fn note_metrics(&mut self, metrics: Metrics) {
         self.fleet_viewport = metrics.fleet.viewport_lines;
     }

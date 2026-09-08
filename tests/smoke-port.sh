@@ -49,9 +49,21 @@ second_block=$((test_base + 20))
 # one is a red one, which is the run an implementer repeats immediately (ah-dksm review, delta
 # round, finding 1).
 live_holder=""
+live_stop=""
+listener=""
 suite_cleanup() {
-  [[ -n "$live_holder" ]] || return 0
-  kill "$live_holder" 2>/dev/null || true
+  # RELEASE the wait; do not signal the wrapper. `$live_holder' is the smoke-port wrapper, which
+  # has a trap of its own - and bash defers a trap until the foreground child returns, so a SIGTERM
+  # to it is queued behind the very loop it would end. Both processes then survive the fixture's
+  # removal. suite_cleanup runs BEFORE the trap's `rm -rf' (tests/lib/consumer.sh), so the stop
+  # file can still be written, which is what the loop is actually waiting for.
+  [[ -n "$live_stop" ]] && touch "$live_stop" 2>/dev/null
+  [[ -n "$live_holder" ]] && wait "$live_holder" 2>/dev/null
+  # The bound socket is the other stray, and it poisons the NEXT run rather than living for ever:
+  # a second `s.bind' fails, and the case then goes red with "could not bind" - a different failure
+  # for a reason that is not the defect.
+  [[ -n "$listener" ]] && kill "$listener" 2>/dev/null
+  return 0
 }
 
 smoke_port() {
@@ -145,6 +157,7 @@ smoke_port "$tmp" -- /bin/sh -c "echo started >'$tmp/started'
                                  while [ ! -f '$tmp/stop' ]; do sleep 0.05; done" >/dev/null 2>&1 &
 first=$!
 live_holder=$first
+live_stop="$tmp/stop"
 cleanup_add "$tmp"
 for _ in $(seq 1 100); do
   [[ -f "$tmp/started" ]] && break
@@ -157,6 +170,7 @@ second="$(smoke_port "$tmp" -- /bin/sh -c 'echo $SMOKE_PORT_BASE' 2>/dev/null)"
 touch "$tmp/stop"
 wait "$first" 2>/dev/null || true
 live_holder=""
+live_stop=""
 pass "smoke-port-skips-a-block-a-live-run-holds"
 
 # --- smoke-port-releases-its-block-when-the-command-ends ---
@@ -228,6 +242,7 @@ sys.stderr.write("bound\\n")
 sys.stderr.flush()
 time.sleep(30)' $first_block 2>"$tmp/bound" &
   binder=$!
+  listener=$binder
   for _ in $(seq 1 100); do
     grep -q bound "$tmp/bound" 2>/dev/null && break
     sleep 0.1
@@ -257,6 +272,7 @@ time.sleep(30)' $first_block 2>"$tmp/bound" &
   grep -q "$first_block" <<<"$out" || fail "smoke-port-exhausts-and-exits-3: message does not name $first_block: $out"
   kill "$binder" 2>/dev/null || true
   wait "$binder" 2>/dev/null || true
+  listener=""
   rm -rf "$tmp"
   pass "smoke-port-exhausts-and-exits-3"
 fi
@@ -310,6 +326,7 @@ sys.stderr.write("bound\\n")
 sys.stderr.flush()
 time.sleep(30)' "$first_block" 2>"$tmp/bound" &
   binder=$!
+  listener=$binder
   for _ in $(seq 1 100); do
     grep -q bound "$tmp/bound" 2>/dev/null && break
     sleep 0.1
@@ -323,9 +340,10 @@ time.sleep(30)' "$first_block" 2>"$tmp/bound" &
   printf '%s %s %s\n' "$dead" "$(date +%s)" "a run that is over" >"$(lock_dir "$tmp")/$first_block.lock"
 
   set +e
-  out="$(smoke_port "$tmp" --blocks 1 -- /bin/sh -c ":" 2>&1)"
+  out="$(smoke_port "$tmp" --blocks 1 -- /bin/sh -c ":" 2>"$tmp/err2")"
   status=$?
   set -e
+  out="$out$(cat "$tmp/err2")"
   [[ $status -eq 3 ]] \
     || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: expected exit 3, got $status ($out)"
   # The SUMMARY line, not the probe's own message: the probe says "already listening" whichever
@@ -336,12 +354,15 @@ time.sleep(30)' "$first_block" 2>"$tmp/bound" &
     || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: no exhaustion line: $out"
   grep -q "$first_block(listening)" <<<"$summary" \
     || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: summary does not blame the listening port: $summary"
-  grep -q "$binder" <<<"$out" \
-    || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: did not name the holding pid $binder: $out"
+  # The probe's own line, not the whole output: the block's ports are in there too, and a pid that
+  # collided with one would make a bare search pass having proved nothing.
+  grep -q "held by pid .*$binder" "$tmp/err2" \
+    || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: did not name the holding pid $binder: $(cat "$tmp/err2")"
   [[ -e "$(lock_dir "$tmp")/$first_block.lock" ]] \
     && fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: kept the reservation it refused"
   kill "$binder" 2>/dev/null || true
   wait "$binder" 2>/dev/null || true
+  listener=""
   rm -rf "$tmp"
   pass "smoke-port-names-the-listening-port-of-a-block-it-reclaimed"
 fi

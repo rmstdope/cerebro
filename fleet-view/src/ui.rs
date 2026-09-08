@@ -260,6 +260,92 @@ pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
     }
 }
 
+/// Which divider a drag moves. One variant per `PaneSizes` field, so a divider maps to exactly
+/// one stored override and a reset cannot clear the wrong one.
+///
+/// `LeftColumn` and `SplitFleet` exist only in the split layout; `StackedFleet` and `StackedWork`
+/// only in the stacked one. `mouse_target` is what decides which are on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Divider {
+    LeftColumn,
+    SplitFleet,
+    StackedFleet,
+    StackedWork,
+}
+
+/// What lies under the pointer at (COLUMN, ROW).
+///
+/// Dividers win over panes: a divider cell IS a pane's border cell, and a press on it must start a
+/// drag rather than move focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseTarget {
+    /// A divider, and which of its two adjacent cells was grabbed: 0 for the upper/left cell, 1
+    /// for the lower/right one. The grab offset is what keeps the grabbed cell under the pointer
+    /// for the whole drag, so the divider never jumps on the first press.
+    Divider(Divider, u16),
+    /// Inside this pane's outer rect, border included, and not on a divider.
+    Pane(PaneFocus),
+    /// The header row, a gap, or any position at all while the frame is too small: nothing.
+    Nothing,
+}
+
+/// The ONE place a screen position becomes a divider or a pane. Pure over FACTS.
+///
+/// The order of the rules is load-bearing: the vertical divider is tested before the horizontal
+/// one, so the cell where the two cross belongs to the divider that spans the whole height, which
+/// is the one a pointer in that corner is aiming at.
+pub fn mouse_target(column: u16, row: u16, facts: LayoutFacts) -> MouseTarget {
+    if !facts.usable {
+        return MouseTarget::Nothing;
+    }
+    let bottom = |rect: Rect| rect.y + rect.height - 1;
+
+    if facts.split {
+        let spans = row >= facts.fleet.y && row <= bottom(facts.session);
+        if spans && facts.left_column >= 1 {
+            if column == facts.left_column - 1 {
+                return MouseTarget::Divider(Divider::LeftColumn, 0);
+            }
+            if column == facts.left_column {
+                return MouseTarget::Divider(Divider::LeftColumn, 1);
+            }
+        }
+        if column < facts.left_column.saturating_sub(1) {
+            if row == bottom(facts.fleet) {
+                return MouseTarget::Divider(Divider::SplitFleet, 0);
+            }
+            if row == facts.work.y {
+                return MouseTarget::Divider(Divider::SplitFleet, 1);
+            }
+        }
+    } else {
+        if row == bottom(facts.fleet) {
+            return MouseTarget::Divider(Divider::StackedFleet, 0);
+        }
+        if row == facts.work.y {
+            return MouseTarget::Divider(Divider::StackedFleet, 1);
+        }
+        if row == bottom(facts.work) {
+            return MouseTarget::Divider(Divider::StackedWork, 0);
+        }
+        if row == facts.session.y {
+            return MouseTarget::Divider(Divider::StackedWork, 1);
+        }
+    }
+
+    let point = Position::new(column, row);
+    for (rect, pane) in [
+        (facts.fleet, PaneFocus::Fleet),
+        (facts.work, PaneFocus::Work),
+        (facts.session, PaneFocus::Session),
+    ] {
+        if rect.contains(point) {
+            return MouseTarget::Pane(pane);
+        }
+    }
+    MouseTarget::Nothing
+}
+
 /// A pane's inner width in cells: its own width less the two border columns.
 fn inner_width(outer: Rect) -> usize {
     (outer.width as usize).saturating_sub(2)
@@ -3384,6 +3470,96 @@ mod tests {
         assert_eq!(tiny.fleet, Rect::default());
         assert_eq!(tiny.work, Rect::default());
         assert_eq!(tiny.session, Rect::default());
+    }
+
+    #[test]
+    fn a_press_on_the_vertical_divider_is_a_divider_and_not_a_pane() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        assert_eq!(
+            mouse_target(LEFT_COLUMN - 1, 5, facts),
+            MouseTarget::Divider(Divider::LeftColumn, 0)
+        );
+        assert_eq!(
+            mouse_target(LEFT_COLUMN, 5, facts),
+            MouseTarget::Divider(Divider::LeftColumn, 1)
+        );
+    }
+
+    #[test]
+    fn a_press_inside_a_pane_names_that_pane() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        assert_eq!(mouse_target(5, facts.fleet.y + 1, facts), MouseTarget::Pane(PaneFocus::Fleet));
+        assert_eq!(mouse_target(5, facts.work.y + 1, facts), MouseTarget::Pane(PaneFocus::Work));
+        assert_eq!(
+            mouse_target(LEFT_COLUMN + 5, facts.session.y + 1, facts),
+            MouseTarget::Pane(PaneFocus::Session)
+        );
+    }
+
+    #[test]
+    fn the_crossing_cell_belongs_to_the_vertical_divider() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        let crossing_row = facts.fleet.y + facts.fleet.height - 1;
+        assert_eq!(
+            mouse_target(LEFT_COLUMN - 1, crossing_row, facts),
+            MouseTarget::Divider(Divider::LeftColumn, 0),
+            "the divider that spans the whole height wins the corner"
+        );
+        // One cell left of the crossing is the horizontal divider proper.
+        assert_eq!(
+            mouse_target(LEFT_COLUMN - 3, crossing_row, facts),
+            MouseTarget::Divider(Divider::SplitFleet, 0)
+        );
+        assert_eq!(
+            mouse_target(LEFT_COLUMN - 3, facts.work.y, facts),
+            MouseTarget::Divider(Divider::SplitFleet, 1)
+        );
+    }
+
+    #[test]
+    fn the_stacked_layout_has_two_horizontal_dividers_and_no_vertical_one() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 99, 30));
+        assert!(!facts.split);
+        assert_eq!(
+            mouse_target(5, facts.fleet.y + facts.fleet.height - 1, facts),
+            MouseTarget::Divider(Divider::StackedFleet, 0)
+        );
+        assert_eq!(mouse_target(5, facts.work.y, facts), MouseTarget::Divider(Divider::StackedFleet, 1));
+        assert_eq!(
+            mouse_target(5, facts.work.y + facts.work.height - 1, facts),
+            MouseTarget::Divider(Divider::StackedWork, 0)
+        );
+        assert_eq!(
+            mouse_target(5, facts.session.y, facts),
+            MouseTarget::Divider(Divider::StackedWork, 1)
+        );
+        // No vertical divider exists here: that column is inside a pane.
+        assert_eq!(
+            mouse_target(LEFT_COLUMN, facts.fleet.y + 1, facts),
+            MouseTarget::Pane(PaneFocus::Fleet)
+        );
+    }
+
+    #[test]
+    fn the_header_row_is_nothing() {
+        let app = supervising();
+        for width in [120, 99] {
+            let facts = layout_facts(&app, now(), Rect::new(0, 0, width, 30));
+            assert_eq!(mouse_target(5, 0, facts), MouseTarget::Nothing, "at {width} cells");
+        }
+    }
+
+    #[test]
+    fn every_position_is_nothing_while_the_frame_is_too_small() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 30, 10));
+        for (column, row) in [(0, 0), (5, 5), (29, 9)] {
+            assert_eq!(mouse_target(column, row, facts), MouseTarget::Nothing);
+        }
     }
 
     #[test]

@@ -258,6 +258,9 @@ it fail again when the behaviour breaks.
 - Is there a test per behaviour the PR claims, including the edge cases it says it fixes?
 - Would each one fail against the old code? If you cannot tell by reading, check it out and run the
   new tests against the old implementation — that is the whole argument for a regression test.
+  Run a project's browser suites through `.claude/cerebro/scripts/smoke-port -- <command>`, never
+  bare: you are running in a worktree beside a checkout that probably has a server up, and a suite
+  that quietly answers from it reports a working branch as broken.
 - Do the tests assert behaviour, or the shape of the implementation? A test that mirrors the code
   passes forever and protects nothing.
 - Are they deterministic? Sleeps, wall-clock time, network, ordering assumptions and shared temp

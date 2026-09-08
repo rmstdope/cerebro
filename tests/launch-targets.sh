@@ -200,11 +200,22 @@ case "$skill" in
   *"its own block of ports"*) ;;
   *) fail "implement-bead: the give-each-session-its-own-block rule is gone" ;;
 esac
+# A block is now RESERVED for the run rather than checked before it: a check is true at the instant
+# it runs, and a bead spends most of an hour between that instant and the suite that needs the
+# block (ah-dksm). What has to survive is the wrapper and the lifetime of what it holds.
 case "$skill" in
-  *"check before claiming"*) ;;
-  *) fail "implement-bead: the check-before-claiming rule is gone" ;;
+  *"smoke-port -- "*) ;;
+  *) fail "implement-bead: the run-it-through-smoke-port rule is gone" ;;
 esac
-pass "give each session its own block of ports, and check before claiming one, both survive"
+case "$skill" in
+  *"holds it for exactly as long as your command runs"*) ;;
+  *) fail "implement-bead: the reservation-lasts-the-run rule is gone" ;;
+esac
+case "$skill" in
+  *"Do not set \`CI\` by hand"*) ;;
+  *) fail "implement-bead: the do-not-set-CI rule is gone" ;;
+esac
+pass "give each session its own block of ports, reserved for the run, and never by setting CI"
 
 echo "all launch-targets tests passed"
 

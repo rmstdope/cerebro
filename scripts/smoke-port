@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+# Reserves a free browser-suite port block for exactly one command:
+#
+#     smoke-port [--blocks <n>] -- <command> [args...]
+#
+#       exit   the command's own exit status
+#       exit 2 usage error, or a consumer that declares `port_base' and no `port_env'
+#       exit 3 every block tried was taken (the message names what held each)
+#
+# WHY A WRAPPER AND NOT A CHECK. Until this script existed, every implementer took a block by
+# running `lsof' over one and exporting it - a fact true at the instant it ran and nowhere
+# reserved. A bead spends most of an hour between that instant and the run that needs it, and three
+# retrospectives record the same collision one at a time (ah-lbd9.3, ah-lbd9.4, ah-ty3s.3), one of
+# them a review that reported a working branch as broken because its suite answered from another
+# checkout's preview server. The lease here is exactly the run: taken when the command starts,
+# released however it ends.
+#
+# IT SETS `port_env' AND NOTHING ELSE - in particular it NEVER sets `CI'. A project's own tooling
+# reads `CI' to mean "this is a runner with the machine to itself", so using it as a proxy for "do
+# not reuse a running server" switches off everything a project does only when it does NOT have the
+# machine to itself. That conflation is what this bead removes; do not reintroduce it here.
+#
+# A project that declares no `port_base' has no port-sharing problem to solve: the command is
+# exec'd unchanged, after one line on stderr saying so. That is what makes the wrapper safe to
+# write into generic agent prose.
+#
+# STDOUT BELONGS TO THE COMMAND. Everything this script has to say goes to stderr.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+blocks=8
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --blocks)
+      # Shift the flag first and read the value as the new $1. `shift 2' with only the flag left
+      # fails, and a swallowed failure leaves `--blocks' as $1 for the case to match again, for ever.
+      shift
+      [[ $# -gt 0 ]] || {
+        echo "smoke-port: --blocks wants a value" >&2
+        exit 2
+      }
+      blocks="$1"
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      echo "usage: smoke-port [--blocks <n>] -- <command> [args...]" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ $# -eq 0 ]]; then
+  echo "usage: smoke-port [--blocks <n>] -- <command> [args...]" >&2
+  exit 2
+fi
+
+# Checked here rather than at the flag, so `--blocks' with a value that is really the separator
+# ("--blocks -- cmd") is refused by its own message rather than by whatever the command turns out
+# to be.
+if ! [[ "$blocks" =~ ^[1-9][0-9]*$ ]]; then
+  echo "smoke-port: --blocks wants a positive integer, got '$blocks'" >&2
+  exit 2
+fi
+
+# project-conf never fails on absence - a missing file, a missing key and an unreadable file all
+# exit 0 with the default - so the VALUE is what is tested for emptiness, never the exit status.
+port_base="$("$here/project-conf" port_base 2>/dev/null || true)"
+if [[ -z "$port_base" ]]; then
+  echo "smoke-port: this project declares no port_base, so there is no block to reserve; running the command unchanged" >&2
+  exec "$@"
+fi
+
+port_env="$("$here/project-conf" port_env 2>/dev/null || true)"
+if [[ -z "$port_env" ]]; then
+  echo "smoke-port: this project declares port_base but no port_env, so nothing names the variable the suites read; declare port_env in .cerebro/project.conf" >&2
+  exit 2
+fi
+
+block_size="$("$here/project-conf" port_block_size 10 2>/dev/null || true)"
+[[ -n "$block_size" ]] || block_size=10
+
+# The shared root, the same answer project-conf and agent-state resolve: the fleet's reservations
+# are one set for the checkout, not one per worktree - which is the whole point of reserving.
+shared_root="$("$here/consumer-root" --shared 2>/dev/null || true)"
+[[ -n "$shared_root" ]] || shared_root="$(cd "$here/../../.." && pwd -P)"
+
+dir="$shared_root/.cerebro/state/smoke-ports"
+mkdir -p "$dir"
+
+# One hour, the same number and the same reasoning as LOCK_TTL_MS in the consumer's gateLock: the
+# whole gate is minutes, so an hour is not a slow run - it is a pid that has been reused.
+ttl=3600
+
+held=""
+
+# Armed BEFORE the first reservation is taken. The window between taking a lock and arming its trap
+# is exactly where a Ctrl-C lands, and a lock left there is a block nobody can take for an hour.
+release() {
+  [[ -n "$held" ]] || return 0
+  local lock="$dir/$held.lock" pid rest
+  if read -r pid rest <"$lock" 2>/dev/null && [[ "$pid" == "$$" ]]; then
+    rm -f "$lock"
+  fi
+  held=""
+}
+trap 'release' EXIT INT TERM HUP
+
+# Takes <base> atomically, or returns non-zero. Contents first, then `ln' onto the name: `ln' fails
+# when the name exists, so it is as exclusive as an O_EXCL create AND the lock never exists empty -
+# an empty lock is what lets a rival read it, conclude the holder is a ghost, and steal a
+# millisecond-old reservation.
+take() {
+  local base="$1" lock="$dir/$base.lock" scratch="$dir/.$base.$$.tmp"
+  printf '%s %s %s\n' "$$" "$(date +%s)" "$what" >"$scratch"
+  if ln "$scratch" "$lock" 2>/dev/null; then
+    rm -f "$scratch"
+    held="$base"
+    return 0
+  fi
+  rm -f "$scratch"
+  return 1
+}
+
+# 0 when the lock on <base> is a ghost: its pid is gone, or it is older than the TTL.
+#
+# `kill -0' cannot tell "no such process" from "not yours": a pid owned by another user answers
+# EPERM, and this reads that as a ghost. Harmless on a single-user fleet, where every lock in this
+# directory was written by the same person, and the port probe below catches the consequence
+# anyway - but do not lean on liveness alone across users.
+is_stale() {
+  local lock="$dir/$1.lock" pid since rest now
+  read -r pid since rest <"$lock" 2>/dev/null || return 0
+  [[ -n "${pid:-}" && -n "${since:-}" ]] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  now="$(date +%s)"
+  (( now - since > ttl ))
+}
+
+# 0 when every port of the block is free. Prints what holds one, so an orphan is killable by hand.
+#
+# THREE ports, whatever `port_block_size' says. That is the convention the blocks were cut for - a
+# web preview, a desktop-shell preview and a PWA preview - not an arithmetic consequence of the
+# block size. A project whose suites bind a fourth port wants this number raised with them.
+ports_free() {
+  local base="$1" p pids
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  for p in "$base" $((base + 1)) $((base + 2)); do
+    pids="$(lsof -nP -iTCP:"$p" -sTCP:LISTEN -t 2>/dev/null || true)"
+    if [[ -n "$pids" ]]; then
+      echo "smoke-port: port $p is already listening, held by pid $(tr '\n' ' ' <<<"$pids")" >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
+if ! command -v lsof >/dev/null 2>&1; then
+  echo "smoke-port: lsof is not on PATH, so a port held by a foreign process cannot be seen; the reservation still keeps this fleet's own runs apart" >&2
+fi
+
+# One line of contents: <pid> <since-epoch-seconds> <command>, read back with a bare `read'.
+what="$1"
+
+why=""
+k=1
+while (( k <= blocks )); do
+  base=$((port_base + k * block_size))
+  if take "$base"; then
+    if ports_free "$base"; then
+      break
+    fi
+    why="$why $base(listening)"
+    release
+  elif is_stale "$base"; then
+    # A ghost: remove it and retry this same block ONCE. A second failure means a live rival won
+    # the race in between, and that is the next block's business.
+    rm -f "$dir/$base.lock"
+    if take "$base"; then
+      if ports_free "$base"; then
+        break
+      fi
+      why="$why $base(listening)"
+      release
+    else
+      # A live rival won the race in the moment between the removal and the retry.
+      why="$why $base(taken)"
+    fi
+  else
+    why="$why $base(held by pid $(awk '{print $1; exit}' "$dir/$base.lock" 2>/dev/null || echo '?'))"
+  fi
+  k=$((k + 1))
+done
+
+if [[ -z "$held" ]]; then
+  echo "smoke-port: every block tried was taken:$why" >&2
+  exit 3
+fi
+
+echo "smoke-port: $port_env=$held" >&2
+export "$port_env=$held"
+
+set +e
+"$@"
+status=$?
+set -e
+exit "$status"

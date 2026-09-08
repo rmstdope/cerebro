@@ -838,12 +838,18 @@ are, and it behaves identically on a read-only view. `g` refreshes both readers 
 `q`/`Esc`/`Ctrl-C` quits. A pane whose content outgrows its inner height reserves its last row for a dim
 `Rows n–m of total` cue.
 
-Since cb-bch.1 those dividers move from the keyboard: `Ctrl-←`/`Ctrl-→` widen and narrow the left
-column a cell at a time, `Ctrl-↑`/`Ctrl-↓` move a horizontal divider a row at a time - in the
+Since cb-bch.1 those dividers move from the keyboard: `Shift-←`/`Shift-→` widen and narrow the left
+column a cell at a time, `Shift-↑`/`Shift-↓` move a horizontal divider a row at a time - in the
 stacked layout the one **below the focused pane**, so Session focus has none to move - and
-`Ctrl-Home` puts every divider back, each saying what it did in the header's notice slot, including
-when it moved nothing (a silently dead key is what the whole vocabulary exists to prevent). The
-reset is `Ctrl-Home` and never `Ctrl-=`, which is neither a control byte nor a CSI sequence and
+`Shift-Home` puts every divider back, each saying what it did in the header's notice slot, including
+when it moved nothing (a silently dead key is what the whole vocabulary exists to prevent). They are
+`Shift` keys and not `Ctrl` ones because the `Ctrl` chords shipped first and never arrived: macOS
+binds all four `Ctrl`-arrows by default - Spaces on left and right, Mission Control and Application
+Windows on up and down - and takes them before any terminal sees them, so verification found a
+feature that compiled, tested green and could not be pressed. The five `Shift` keys were probed in
+the navigator's own terminal before they were agreed, and `Ctrl`-arrows are nobody's again and reach
+a hosted agent. The
+reset is `Shift-Home` and never `Ctrl-=`, which is neither a control byte nor a CSI sequence and
 which macOS Terminal.app and iTerm2 send nothing at all for. `app::resize_action` is the ONE place
 a chord's meaning is decided, pure over the sizes, the focus and `LayoutFacts` - what
 `ui::layout_facts` says the drawn frame actually came to, off the same `split`, so a chord and a
@@ -867,7 +873,7 @@ border cells moves it, saying `left column 56 cells` / `Fleet 16 rows` through `
 the one place a chord and a drag word the same event - and a double-click within
 `DOUBLE_CLICK_MS` resets **that divider alone** (`left column back to 40 cells`, or `panes are
 already at their default sizes` when it had not moved), which is what makes it different from
-`Ctrl-Home`. The wheel acts on the pane under the **pointer** and never moves focus: one row of
+`Shift-Home`. The wheel acts on the pane under the **pointer** and never moves focus: one row of
 the Fleet selection or the Work cursor per notch, `WHEEL_LINES` of the Session transcript. A click
 selects a Fleet row or a selectable Work row and focuses that pane through `App::set_focus`, so
 arriving at Fleet drops a pinned bead (cb-lor); on a heading, a blank or the range cue row it

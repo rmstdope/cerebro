@@ -861,7 +861,7 @@ fn hint_clauses(app: &App) -> Vec<HintClause> {
     // any higher rank drops a whole tier of hints the navigator asked by name to keep. It is
     // unconditional because the chords always do something, and outside the supervision lease
     // because moving a divider changes this screen and nothing else.
-    clauses.push(HintClause { text: "^←→ size", rank: HintRank::Optional });
+    clauses.push(HintClause { text: "⇧←→ size", rank: HintRank::Optional });
     // The two clauses of cb-kcs.5.4, by the same rule and for the same reason: both write to the
     // shared board rather than to this checkout's sessions, so both are shown on a read-only
     // view. Each only while the cursor is on a row that key acts on. cb-41r's `Enter bead` rides
@@ -2918,7 +2918,7 @@ mod tests {
     fn the_resize_hint_rides_beside_h_health_at_the_optional_rank() {
         let rendered = lines(&render(&populated(), 160, 20));
         let health = rendered[0].find("h health").expect("the health clause");
-        let size = rendered[0].find("^←→ size").expect("the resize clause");
+        let size = rendered[0].find("⇧←→ size").expect("the resize clause");
         assert!(health < size, "beside it, and after it: {:?}", rendered[0]);
     }
 
@@ -5168,7 +5168,7 @@ mod tests {
         // Beside it, at the same rank and for the same reason (cb-bch.1): the chords always do
         // something, so the clause is unconditional, and `Optional` is what keeps it from
         // costing the movement tier anything.
-        let size = HintClause { text: "^←→ size", rank: HintRank::Optional };
+        let size = HintClause { text: "⇧←→ size", rank: HintRank::Optional };
 
         assert_eq!(
             hint_clauses(&populated()),

@@ -59,6 +59,52 @@ pub const SPLIT_COLUMNS: u16 = 100;
 /// every remaining cell to the session.
 pub const LEFT_COLUMN: u16 = 40;
 
+/// The narrowest a pane may be made, in outer cells: two borders and enough body for a truncated
+/// bead line. The navigator saw this floor in the mockup (cb-bch.1).
+pub const MIN_PANE_COLUMNS: u16 = 24;
+
+/// The shortest a pane may be made, in outer rows: two borders and one body row. This is the `3`
+/// the two existing caps in `split` already use, given a name.
+pub const MIN_PANE_ROWS: u16 = 3;
+
+/// The left column's outer width, clamped so both it and Session keep `MIN_PANE_COLUMNS`.
+///
+/// Each ceiling here ends `.max(MIN_…)`, and that is load-bearing rather than defensive: on a
+/// screen at the `MIN_COLUMNS`/`MIN_ROWS` floor the ceiling arithmetic lands BELOW the floor, and
+/// `u16::clamp` panics when `min > max` - which would take the whole view down on the smallest
+/// terminal, where it is least recoverable.
+pub fn clamp_left_column(requested: u16, screen_width: u16) -> u16 {
+    let ceiling = screen_width.saturating_sub(MIN_PANE_COLUMNS).max(MIN_PANE_COLUMNS);
+    requested.clamp(MIN_PANE_COLUMNS, ceiling)
+}
+
+/// Fleet's outer height in the split layout, clamped so Work keeps `MIN_PANE_ROWS`.
+pub fn clamp_split_fleet(requested: u16, column_height: u16) -> u16 {
+    let ceiling = column_height.saturating_sub(MIN_PANE_ROWS).max(MIN_PANE_ROWS);
+    requested.clamp(MIN_PANE_ROWS, ceiling)
+}
+
+/// Fleet's outer height in the stacked layout, clamped so Work AND Session each keep
+/// `MIN_PANE_ROWS`.
+pub fn clamp_stacked_fleet(requested: u16, available_height: u16) -> u16 {
+    let ceiling = available_height.saturating_sub(2 * MIN_PANE_ROWS).max(MIN_PANE_ROWS);
+    requested.clamp(MIN_PANE_ROWS, ceiling)
+}
+
+/// Work's outer height in the stacked layout given Fleet's, clamped so Session keeps
+/// `MIN_PANE_ROWS`.
+///
+/// Fleet's height is taken CLAMPED and subtracted first, which is what makes growing Fleet take
+/// rows from Work and leave Session alone (the navigator's own reading order: Session is the pane
+/// they are usually looking at).
+pub fn clamp_stacked_work(requested: u16, available_height: u16, fleet_outer: u16) -> u16 {
+    let ceiling = available_height
+        .saturating_sub(fleet_outer)
+        .saturating_sub(MIN_PANE_ROWS)
+        .max(MIN_PANE_ROWS);
+    requested.clamp(MIN_PANE_ROWS, ceiling)
+}
+
 /// The exact title agreed in the parent epic's interview, em dash and all - now the read-only
 /// spelling of five, one per supervision state (`supervision_title`).
 const TITLE: &str = "Cerebro — read-only";
@@ -3107,6 +3153,31 @@ mod tests {
             style.add_modifier.contains(Modifier::DIM),
             "the write is still running: {style:?}"
         );
+    }
+
+    #[test]
+    fn a_clamp_never_takes_a_pane_below_its_floor() {
+        // The left column keeps `MIN_PANE_COLUMNS` for itself and leaves as many for Session.
+        assert_eq!(clamp_left_column(1, 100), MIN_PANE_COLUMNS);
+        assert_eq!(clamp_left_column(99, 100), 100 - MIN_PANE_COLUMNS);
+        // A screen at the floor: the ceiling arithmetic falls below the floor, and `clamp`
+        // panics when `min > max`. It must answer the floor rather than die.
+        assert_eq!(clamp_left_column(40, 40), MIN_PANE_COLUMNS);
+        assert_eq!(clamp_left_column(1, 0), MIN_PANE_COLUMNS);
+
+        assert_eq!(clamp_split_fleet(1, 20), MIN_PANE_ROWS);
+        assert_eq!(clamp_split_fleet(19, 20), 20 - MIN_PANE_ROWS);
+        assert_eq!(clamp_split_fleet(5, 4), MIN_PANE_ROWS);
+
+        // Stacked Fleet leaves room for BOTH Work and Session.
+        assert_eq!(clamp_stacked_fleet(1, 30), MIN_PANE_ROWS);
+        assert_eq!(clamp_stacked_fleet(29, 30), 30 - 2 * MIN_PANE_ROWS);
+        assert_eq!(clamp_stacked_fleet(9, 6), MIN_PANE_ROWS);
+
+        // Stacked Work leaves room for Session, given Fleet's height.
+        assert_eq!(clamp_stacked_work(1, 30, 5), MIN_PANE_ROWS);
+        assert_eq!(clamp_stacked_work(99, 30, 5), 30 - 5 - MIN_PANE_ROWS);
+        assert_eq!(clamp_stacked_work(9, 10, 8), MIN_PANE_ROWS);
     }
 
     #[test]

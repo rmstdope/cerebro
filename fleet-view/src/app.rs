@@ -241,6 +241,97 @@ impl PaneFocus {
     }
 }
 
+/// The navigator's divider overrides, in OUTER cells and rows (borders included).
+///
+/// `None` means "as the layout would have it": the fixed `LEFT_COLUMN`, and a pane's own natural
+/// height under the existing caps. Stored UNCLAMPED and clamped where it is used, so a terminal
+/// that shrinks and grows again gives the navigator back the size they set rather than the size
+/// that happened to fit at the smallest moment.
+///
+/// Memory only, by the same rule as `App::armed` - never a file, never persisted (the navigator's
+/// choice, cb-bch.1 round one). Split and stacked keep separate fields because they are separate
+/// layouts: a size set on a wide screen survives a narrow spell.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PaneSizes {
+    /// Split layout: the left column's outer width.
+    pub left_column: Option<u16>,
+    /// Split layout: Fleet's outer height inside that column.
+    pub split_fleet_rows: Option<u16>,
+    /// Stacked layout: Fleet's outer height.
+    pub stacked_fleet_rows: Option<u16>,
+    /// Stacked layout: Work's outer height.
+    pub stacked_work_rows: Option<u16>,
+}
+
+impl PaneSizes {
+    /// True while every divider is where the layout would have put it.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Which divider a resize chord is aimed at, and which way it moves.
+///
+/// `Shorter`/`Taller` are named for what happens to the pane ABOVE the divider, which is the pane
+/// the chord's arrow points away from: `Ctrl-↓` moves the divider down and makes that pane taller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resize {
+    Narrower,
+    Wider,
+    Shorter,
+    Taller,
+    Reset,
+}
+
+/// What one frame's layout actually came to, for the resize decision to start from.
+///
+/// Recorded by `App::note_layout` from `ui::layout_facts`, which calls the same `split` the frame
+/// was drawn from - so a chord and a border can never disagree about where the divider is. The
+/// three sizes are the OUTER sizes as drawn, whether they came from an override or from the
+/// layout's own rule, which is what lets a chord start from the natural height.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LayoutFacts {
+    /// False while `ui::too_small` is true: there is no layout to move a divider in.
+    pub usable: bool,
+    /// False below `SPLIT_COLUMNS`, where the panes stack.
+    pub split: bool,
+    /// The whole screen's width.
+    pub width: u16,
+    /// The height below the one-line header.
+    pub available: u16,
+    /// The left column's outer width. `width` in the stacked layout.
+    pub left_column: u16,
+    /// Fleet's outer height.
+    pub fleet_rows: u16,
+    /// Work's outer height.
+    pub work_rows: u16,
+}
+
+impl Default for LayoutFacts {
+    fn default() -> Self {
+        Self {
+            usable: false,
+            split: false,
+            width: 0,
+            available: 0,
+            left_column: 0,
+            fleet_rows: 0,
+            work_rows: 0,
+        }
+    }
+}
+
+/// What a resize chord decides: the sizes to keep, and the line to say about it.
+///
+/// `notice: None` means say nothing at all, which is the too-small frame and nothing else. A chord
+/// that moves nothing still carries a notice - a key that silently does nothing is the failure
+/// this whole vocabulary exists to prevent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResizeOutcome {
+    pub sizes: PaneSizes,
+    pub notice: Option<String>,
+}
+
 /// Does this key move focus between panes, whoever currently holds the keyboard?
 ///
 /// `main.rs` asks this to decide what a focused live session does NOT receive; the answer must be

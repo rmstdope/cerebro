@@ -291,6 +291,7 @@ planner`), which is the one place a name and a role stop being interchangeable:
   sweep looks for and the guards it runs under); what is left for a Cerebro session is the claims
   sweep, the beads parked on the navigator, and the worktrees the watcher declined, each of which
   needs a judgement no table makes,
+  filing the beads the navigator asks for, by interview, through `write-bead`,
   handing a release
   request to the project's own release skill, diagnosing a stuck implementer, and anything needing a forced reassignment.
 - **implementer** (Sonnet) — loads `implement-bead`. One bead per session: claim, build test-first in

@@ -728,7 +728,7 @@ fails to parse, renders as the empty string."
 
 (defconst cerebro--phases
   '("build" "gate" "review" "ci" "rebase" "merge"
-    "triage" "plan" "prepare" "verify" "sweep" "release" "daily" "weekly"
+    "triage" "plan" "prepare" "verify" "sweep" "release" "bead" "daily" "weekly"
     "read" "check" "walk" "report")
   "The phase vocabulary this fleet uses.
 
@@ -743,7 +743,7 @@ file carries, in the State column, and a wrong word for the role in that
 column is not worth a per-role table in Elisp any more than in the script.
 By role, for reference: `build gate review ci rebase merge' belong to an
 implementer; `plan' to a planner; `prepare verify' to Psylocke; `sweep' to
-Moira; `sweep', `release' and `triage' to Cerebro; `daily weekly' to Forge; and
+Moira; `sweep', `release', `triage' and `bead' to Cerebro; `daily weekly' to Forge; and
 `read check walk report' to Cypher, whose work item is a pull request
 rather than a bead.")
 

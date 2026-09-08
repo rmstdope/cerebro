@@ -60,6 +60,9 @@ while [[ $# -gt 0 ]]; do
     # `planner-buffer`'s three `--print-*` modes do, and for the same reason: a contract test in
     # another language runs it where `consumer-root --shared` would refuse.
     --print-stage-label)
+      # The whole call or nothing: a stage word beside it would be silently ignored, and a caller
+      # that meant to ask for candidates would get the label and exit 0.
+      [[ -z "$mode" && $# -eq 1 ]] || usage
       printf '%s\n' "$stage_label"; exit 0 ;;
     ux|build-design)
       [[ -z "$mode" ]] || usage

@@ -102,7 +102,9 @@ pass "prints the stage label the fleet view checks itself against"
 # exits with nothing between that could fail: an advisory step that failed would hand the caller 1
 # instead of 2 (.cerebro/traps.md, *An advisory step can eat the exit status that follows it*).
 set_stub '[]'
-for args in "" "ux build-design" "designer"; do
+# `ux --print-stage-label` is in the list because the label mode is the whole call or nothing: a
+# stage word silently ignored beside it would answer a question nobody asked.
+for args in "" "ux build-design" "designer" "ux --print-stage-label"; do
   set +e
   # shellcheck disable=SC2086
   out="$(run $args 2>"$stub_dir/err")"

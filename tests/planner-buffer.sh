@@ -185,12 +185,19 @@ ux_beads='[{"id":"ua","issue_type":"task","labels":["ux:agreed"]},
            {"id":"ub","issue_type":"task","labels":["ux:agreed","planned"]},
            {"id":"uc","issue_type":"task","labels":["ux:agreed","human"]},
            {"id":"ud","issue_type":"task","labels":["ux:agreed","triage:declined"]},
-           {"id":"ue","issue_type":"task","labels":[]}]'
+           {"id":"ue","issue_type":"task","labels":[]},
+           {"id":"uf","issue_type":"task","labels":["ux:agreed","planning:Beast"]}]'
 set_stub "$ux_beads"
 
 agreed="$(run_count --ux-agreed)"
 [ "$agreed" = "1" ] || fail "--ux-agreed counted '$agreed', not the one agreed, undesigned bead"
 pass "counts the agreed but undesigned beads"
+
+# A bead a build-design agent is holding is not work waiting for one: `scripts/stage-candidates
+# build-design` would not hand it out, and a count that includes it is exactly the drift this
+# script'"'"'s header records as already paid for - a trigger counting beads the candidate query
+# excludes starts a session that finds nothing to do.
+pass "a bead held by a planning label is not counted as waiting"
 
 # The wanted number is the existing one, shared with `--count`: a second declaration would be a
 # number nobody has a reason for.

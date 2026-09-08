@@ -717,13 +717,17 @@ pub fn linked_beads(beads: &[Bead]) -> Vec<LinkedBead> {
         .collect()
 }
 
-/// The panel's six sections, in the order `emacs/cerebro.el:4652-4764`
+/// The panel's seven sections, in the order `emacs/cerebro.el:4652-4764`
 /// (`cerebro--partition-beads`) builds them; a bead's input order is preserved within its bucket.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorkBuckets {
     pub claimed: Vec<Bead>,
     pub planned: Vec<Bead>,
     pub being_planned: Vec<Bead>,
+    /// The beads whose experience the `ux` agent has agreed and that no build-designer has planned
+    /// yet (cb-lz5.1). Empty on every board not running the cb-lz5 trial, which is why the pane
+    /// hides this section rather than drawing it as `(none)`.
+    pub ux_agreed: Vec<Bead>,
     pub unplanned: Vec<Bead>,
     pub paused: Vec<Bead>,
     pub merged: Vec<Bead>,
@@ -746,6 +750,16 @@ const CONDITIONAL_ISSUE_TYPE: &str = "epic";
 const PAUSED_LABEL: &str = "human";
 const PLANNED_LABEL: &str = "planned";
 const PLANNING_LABEL: &str = "planning";
+/// The stage label the UX agent adds when a bead's experience has been agreed (cb-lz5.1).
+/// The shell owner is `scripts/stage-candidates --print-stage-label`, and
+/// `fleet-view/tests/reader_contracts.rs` holds this copy to it.
+const UX_AGREED_LABEL: &str = "ux:agreed";
+
+/// The stage label this view partitions on, for the contract test that holds it to
+/// `scripts/stage-candidates --print-stage-label`.
+pub fn ux_agreed_label() -> &'static str {
+    UX_AGREED_LABEL
+}
 const SETTLED_LABELS: [&str; 2] = ["verification:passed", "verification:not-needed"];
 
 fn is_holding_label(labels: &[String]) -> bool {
@@ -790,13 +804,13 @@ fn is_bookkeeping(bead: &Bead, parents: &BTreeSet<String>) -> bool {
         && (issue_type != CONDITIONAL_ISSUE_TYPE || parents.contains(&bead.id))
 }
 
-/// Split BEADS into the fleet panel's six buckets.
+/// Split BEADS into the fleet panel's seven buckets.
 ///
 /// Exact precedence, matching `emacs/cerebro.el:4652-4764`: an `event`, and an `epic` that has at
 /// least one direct child, are skipped outright (`is_bookkeeping`), while a CHILDLESS epic
 /// partitions like any other bead; `in_progress` is always claimed; for `open`, `human` wins over exact `planned`,
-/// exact `planned` wins over a hold (`planning` or `planning:<name>`), and anything else open is
-/// unplanned; `closed` is merged unless it carries a settled verification label; every other
+/// exact `planned` wins over a hold (`planning` or `planning:<name>`), a hold wins over the
+/// `ux:agreed` stage label, and anything else open is unplanned; `closed` is merged unless it carries a settled verification label; every other
 /// status (blocked, deferred, an unknown future status) appears in no bucket.
 pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
     let mut buckets = WorkBuckets::default();
@@ -815,6 +829,8 @@ pub fn partition_beads(beads: Vec<Bead>) -> WorkBuckets {
                     buckets.planned.push(bead);
                 } else if is_holding_label(&bead.labels) {
                     buckets.being_planned.push(bead);
+                } else if bead.labels.iter().any(|l| l == UX_AGREED_LABEL) {
+                    buckets.ux_agreed.push(bead);
                 } else {
                     buckets.unplanned.push(bead);
                 }
@@ -1582,6 +1598,28 @@ mod tests {
             vec!["cb-p", "cb-p.1.1"],
             "cb-p.1.1's direct parent is cb-p.1, which is not in the list, so cb-p is childless"
         );
+    }
+
+    /// The `ux:agreed` stage label gets a bucket of its own, and it loses to every bucket that
+    /// already exists: `human`, exact `planned` and a `planning:<name>` hold all win over it,
+    /// because both cb-lz5 agents take a bead with the SAME hold and must show under
+    /// `Being planned` while they have one open.
+    #[test]
+    fn partition_beads_puts_an_agreed_bead_in_its_own_bucket() {
+        let beads = vec![
+            bead("agreed", "open", "feature", &["ux:agreed"]),
+            bead("agreed-planned", "open", "feature", &["ux:agreed", "planned"]),
+            bead("agreed-held", "open", "feature", &["ux:agreed", "planning:Beast"]),
+            bead("agreed-paused", "open", "feature", &["ux:agreed", "human"]),
+            bead("plain", "open", "feature", &[]),
+        ];
+        let buckets = partition_beads(beads);
+        let ids = |v: &Vec<Bead>| v.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&buckets.ux_agreed), vec!["agreed"]);
+        assert_eq!(ids(&buckets.planned), vec!["agreed-planned"]);
+        assert_eq!(ids(&buckets.being_planned), vec!["agreed-held"]);
+        assert_eq!(ids(&buckets.paused), vec!["agreed-paused"]);
+        assert_eq!(ids(&buckets.unplanned), vec!["plain"]);
     }
 
     #[test]

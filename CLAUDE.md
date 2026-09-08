@@ -607,7 +607,12 @@ declaring itself.
 ## fleet-view/ — the standalone terminal view
 
 `.claude/cerebro/scripts/cerebro-tui` opens `cerebro-tui`, a Rust/Ratatui program that draws the
-same fleet and the same six work queues as `M-x cerebro`. **Since cb-kcs.1 what it may do at all is
+same fleet and the same work queues as `M-x cerebro` - seven of them since cb-lz5.1, which
+added a `UX agreed {n}` section between `Being planned` and `Unplanned` for beads carrying the
+`ux:agreed` stage label, hidden entirely when empty, and which starts the two cb-lz5 roles `ux`
+and `build-design` off queues of their own; the combined `planner` role reads the union of the
+two buckets and is unaffected. `M-x cerebro` is deliberately given none of it (cb-lz5's own
+decision), so there is no `tests/lib/` table for it. **Since cb-kcs.1 what it may do at all is
 a consequence of what the project declares rather than of what the program can do.** Since cb-kcs.3 it acts unattended on
 the sessions it hosts where a project declares it the supervisor: it ends one whose pass is over
 after `END_GRACE_SECONDS`, retires one under a stop flag and clears the flag with it, deletes the

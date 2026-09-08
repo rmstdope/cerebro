@@ -694,7 +694,7 @@ fn failed<T>(pane: &Pane<T>) -> bool {
 }
 
 /// One pane's title text. NAME is `Fleet` or `Work`; COUNT is the number a fresh pane carries
-/// beside its name, and `None` for Work, whose six section headers each carry one already.
+/// beside its name, and `None` for Work, whose section headers each carry one already.
 fn pane_title<T>(pane: &Pane<T>, name: &str, peer_failed: bool, count: Option<usize>) -> String {
     match &pane.content {
         PaneContent::Loading => name.to_string(),
@@ -1288,7 +1288,7 @@ fn fleet_body_line(
     }
 }
 
-/// The Work pane's whole body: the Sweeps section, the six queues, then History.
+/// The Work pane's whole body: the Sweeps section, the seven queues, then History.
 ///
 /// One arm per `app::WorkBodyLine`, and no structure of its own: `app::work_body` is the one
 /// owner of what this pane contains, so the row the cursor is on and the row that is drawn cannot
@@ -3978,7 +3978,7 @@ mod tests {
     // --- cb-vyp.3: the Work pane -----------------------------------------------------------------
 
     #[test]
-    fn renders_all_six_work_sections_in_lifecycle_order() {
+    fn renders_every_drawn_work_section_in_lifecycle_order() {
         let app = work_app(WorkBuckets {
             claimed: vec![bead("cb-123", Some(1), "Preserve session output")],
             being_planned: vec![
@@ -5455,7 +5455,7 @@ mod tests {
             "{:?}",
             rendered[header + 1]
         );
-        // Above the six queues, which is what `Claimed` heads.
+        // Above the queues, which is what `Claimed` heads.
         let claimed = rendered
             .iter()
             .position(|l| l.contains("Claimed"))

@@ -641,7 +641,7 @@ pub fn read_bead_detail(
 ///
 /// The only aggregate Work read there is, and the counterpart of `read_fleet` above. A failure of
 /// any kind - a non-zero `bd`, a timed-out one, output that is not the JSON list it promised - is
-/// returned as itself. `Ok(WorkBuckets::default())` would render as six empty queues, which is a
+/// returned as itself. `Ok(WorkBuckets::default())` would render as a pane of empty queues, which is a
 /// fleet with nothing to do rather than a board nobody could read.
 pub fn read_work(
     paths: &ReaderPaths,
@@ -1540,7 +1540,7 @@ mod tests {
         assert_eq!(calls[0].args, bd_argv(&paths.shared_root));
     }
 
-    /// A `bd` that exits non-zero is a failure, not six empty queues: an empty board and an
+    /// A `bd` that exits non-zero is a failure, not a set of empty queues: an empty board and an
     /// unreadable one are opposite screens.
     #[test]
     fn work_reader_preserves_bd_failure() {

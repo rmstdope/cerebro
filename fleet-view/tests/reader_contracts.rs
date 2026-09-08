@@ -239,3 +239,22 @@ fn real_fleet_health_output_matches_the_health_struct() {
         assert!(!finding.text.is_empty());
     }
 }
+
+/// The stage label this view partitions on is `scripts/stage-candidates`'s to declare, and the
+/// two copies drifting apart is a `UX agreed` section that never draws a row (cb-lz5.1).
+///
+/// `--print-stage-label` resolves no root and reads no board, which is why cb-lz5.1.1 built that
+/// mode and why this case can run in CI.
+#[test]
+fn the_stage_label_matches_the_shell() {
+    let output = std::process::Command::new(repo_root().join("scripts/stage-candidates"))
+        .arg("--print-stage-label")
+        .output()
+        .expect("this checkout's scripts/stage-candidates must run");
+    assert!(output.status.success(), "--print-stage-label exits 0");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        model::ux_agreed_label(),
+        "the label this view buckets on is the one the shell prints"
+    );
+}

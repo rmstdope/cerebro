@@ -122,7 +122,12 @@ out="$( { cerebro_state_write_atomic "$t" printf 'x'; } 2>&1 )"
 [[ -z "$out" ]] || fail "it-prints-nothing-of-its-own: success printed '$out'"
 out="$( { cerebro_state_write_atomic "$t" bash -c 'exit 1' || true; } 2>&1 )"
 [[ -z "$out" ]] || fail "it-prints-nothing-of-its-own: a failing command printed '$out'"
-out="$( { PATH="$fail_mv_dir:$PATH" cerebro_state_write_atomic "$t" printf 'x' || true; } 2>&1 )"
+# Its own failing-mv stub, so this case does not depend on an earlier one having built one.
+quiet_mv_dir="$work_dir/quiet-mv-fail-stub"
+mkdir -p "$quiet_mv_dir"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$quiet_mv_dir/mv"
+chmod +x "$quiet_mv_dir/mv"
+out="$( { PATH="$quiet_mv_dir:$PATH" cerebro_state_write_atomic "$t" printf 'x' || true; } 2>&1 )"
 [[ -z "$out" ]] || fail "it-prints-nothing-of-its-own: a failing rename printed '$out'"
 pass "it-prints-nothing-of-its-own"
 

@@ -855,9 +855,28 @@ this crate has no on-disk UI preference and a size takes two seconds to set agai
 unclamped and clamped where used, so a narrow spell never overwrites what was set on a wide screen,
 and split and stacked keep separate heights for the same reason. The chords are outside the
 supervision lease, as `x` and the priority keys are: moving a divider changes this screen and
-nothing else. cb-bch.2 adds mouse capture, the drags, the wheel and click-to-focus on top of
-exactly this state. `emacs/cerebro.el` is deliberately given none of it, as cb-xhu.4.2's health
+nothing else. `emacs/cerebro.el` is deliberately given none of it, as cb-xhu.4.2's health
 section was: no `tests/lib/` table, no second implementation.
+
+Since cb-bch.2 the **mouse** drives exactly that state: capture is on for the whole run, with no
+key to turn it off, so the terminal's own click-drag selection and scroll wheel are given up over
+the whole window - a cost the navigator took knowingly, bearable because most terminals give both
+back while a modifier is held (Option on macOS Terminal and iTerm2, Shift elsewhere), which is the
+terminal's behaviour and not something this program promises. A left drag on either divider's two
+border cells moves it, saying `left column 56 cells` / `Fleet 16 rows` through `app::size_notice` -
+the one place a chord and a drag word the same event - and a double-click within
+`DOUBLE_CLICK_MS` resets **that divider alone** (`left column back to 40 cells`, or `panes are
+already at their default sizes` when it had not moved), which is what makes it different from
+`Ctrl-Home`. The wheel acts on the pane under the **pointer** and never moves focus: one row of
+the Fleet selection or the Work cursor per notch, `WHEEL_LINES` of the Session transcript. A click
+selects a Fleet row or a selectable Work row and focuses that pane through `App::set_focus`, so
+arriving at Fleet drops a pinned bead (cb-lor); on a heading, a blank or the range cue row it
+focuses and changes nothing else, and on the Session pane it never refuses the way `Enter` under
+Fleet does. `ui::mouse_target` is the ONE place a screen position becomes a divider or a pane,
+pure over the `LayoutFacts` rects the drawn frame came from, and dividers win over panes because a
+divider cell IS a border cell. **No mouse event ever reaches a hosted agent** - `session::key_bytes`
+has no mouse path - and all of it is outside the supervision lease, as the chords are. The surface
+itself is written down at `docs/ui/cb-bch-resizable-panes.html`.
 
 **The selection is a name, never an index** (`App::selected`, `App::selected_index`): the roster can
 shrink under the navigator, and an index would silently come to mean a different agent. A selected

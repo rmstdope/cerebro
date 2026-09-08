@@ -217,7 +217,12 @@ roster_conf "$tmp" "Cerebro orchestrator"
 out="$(run "$tmp" --json)"
 [ "$(jq -r '.passes[0].holds_beads' <<<"$out")" = false ] || fail "an orchestrator was counted as holding beads"
 [ "$(jq -r '.passes[0].noop' <<<"$out")" = 1 ] || fail "the pass itself is still reported"
-printf '%s\n' "$(run "$tmp")" | grep -q 'not counted (these roles hold no bead): Cerebro' \
+# A here-string and not a pipe into `grep -q`: that grep exits at its first match, the writer
+# upstream of it takes SIGPIPE, and `pipefail` then makes the PASSING assertion the failing one.
+# It only fires when the reader wins the race, which is why it was green locally and on macOS and
+# red on a loaded ubuntu runner (cb-bch.2).
+report="$(run "$tmp")"
+grep -q 'not counted (these roles hold no bead): Cerebro' <<<"$report" \
   || fail "the report does not name the roles it did not count"
 pass "a role that never holds a bead is reported and never counted"
 

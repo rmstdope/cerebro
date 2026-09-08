@@ -244,7 +244,7 @@ pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
         return LayoutFacts::default();
     }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
-    let (_, fleet, work, _) =
+    let (_, fleet, work, session) =
         split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
     LayoutFacts {
         usable: true,
@@ -254,7 +254,98 @@ pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
         left_column: fleet.width,
         fleet_rows: fleet.height,
         work_rows: work.height,
+        fleet,
+        work,
+        session,
     }
+}
+
+/// Which divider a drag moves. One variant per `PaneSizes` field, so a divider maps to exactly
+/// one stored override and a reset cannot clear the wrong one.
+///
+/// `LeftColumn` and `SplitFleet` exist only in the split layout; `StackedFleet` and `StackedWork`
+/// only in the stacked one. `mouse_target` is what decides which are on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Divider {
+    LeftColumn,
+    SplitFleet,
+    StackedFleet,
+    StackedWork,
+}
+
+/// What lies under the pointer at (COLUMN, ROW).
+///
+/// Dividers win over panes: a divider cell IS a pane's border cell, and a press on it must start a
+/// drag rather than move focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseTarget {
+    /// A divider, and which of its two adjacent cells was grabbed: 0 for the upper/left cell, 1
+    /// for the lower/right one. The grab offset is what keeps the grabbed cell under the pointer
+    /// for the whole drag, so the divider never jumps on the first press.
+    Divider(Divider, u16),
+    /// Inside this pane's outer rect, border included, and not on a divider.
+    Pane(PaneFocus),
+    /// The header row, a gap, or any position at all while the frame is too small: nothing.
+    Nothing,
+}
+
+/// The ONE place a screen position becomes a divider or a pane. Pure over FACTS.
+///
+/// The order of the rules is load-bearing: the vertical divider is tested before the horizontal
+/// one, so the cell where the two cross belongs to the divider that spans the whole height, which
+/// is the one a pointer in that corner is aiming at.
+pub fn mouse_target(column: u16, row: u16, facts: LayoutFacts) -> MouseTarget {
+    if !facts.usable {
+        return MouseTarget::Nothing;
+    }
+    // Saturating, like every other subtraction in this bead: a zero-height rect is unreachable
+    // while `usable` is true, and is one clamp change away from being a panic in the draw path.
+    let bottom = |rect: Rect| rect.bottom().saturating_sub(1);
+
+    if facts.split {
+        let spans = row >= facts.fleet.y && row <= bottom(facts.session);
+        if spans && facts.left_column >= 1 {
+            if column == facts.left_column - 1 {
+                return MouseTarget::Divider(Divider::LeftColumn, 0);
+            }
+            if column == facts.left_column {
+                return MouseTarget::Divider(Divider::LeftColumn, 1);
+            }
+        }
+        if column < facts.left_column.saturating_sub(1) {
+            if row == bottom(facts.fleet) {
+                return MouseTarget::Divider(Divider::SplitFleet, 0);
+            }
+            if row == facts.work.y {
+                return MouseTarget::Divider(Divider::SplitFleet, 1);
+            }
+        }
+    } else {
+        if row == bottom(facts.fleet) {
+            return MouseTarget::Divider(Divider::StackedFleet, 0);
+        }
+        if row == facts.work.y {
+            return MouseTarget::Divider(Divider::StackedFleet, 1);
+        }
+        if row == bottom(facts.work) {
+            return MouseTarget::Divider(Divider::StackedWork, 0);
+        }
+        if row == facts.session.y {
+            return MouseTarget::Divider(Divider::StackedWork, 1);
+        }
+    }
+
+    let point = Position::new(column, row);
+    for (rect, pane) in [
+        (facts.fleet, PaneFocus::Fleet),
+        (facts.work, PaneFocus::Work),
+        (facts.session, PaneFocus::Session),
+    ] {
+        if rect.contains(point) {
+            return MouseTarget::Pane(pane);
+        }
+    }
+    MouseTarget::Nothing
 }
 
 /// A pane's inner width in cells: its own width less the two border columns.
@@ -3351,6 +3442,292 @@ mod tests {
         assert_eq!(stacked.left_column, 99);
 
         assert_eq!(layout_facts(&app, now(), Rect::new(0, 0, 30, 10)), LayoutFacts::default());
+    }
+
+    #[test]
+    fn layout_facts_carry_the_rects_the_frame_was_drawn_from() {
+        let app = supervising();
+
+        let area = Rect::new(0, 0, 120, 30);
+        let facts = layout_facts(&app, now(), area);
+        assert_eq!(facts.fleet.x, 0);
+        assert_eq!(facts.session.x, facts.left_column);
+        assert_eq!(facts.fleet.height, facts.fleet_rows);
+        assert_eq!(facts.work.y, facts.fleet.y + facts.fleet.height);
+        assert_eq!(facts.work.height, facts.work_rows);
+        // The session pane takes the column height beside the two, in the split layout.
+        assert_eq!(facts.session.y, facts.fleet.y);
+        assert_eq!(facts.session.height, facts.fleet.height + facts.work.height);
+
+        let stacked = layout_facts(&app, now(), Rect::new(0, 0, 99, 30));
+        for rect in [stacked.fleet, stacked.work, stacked.session] {
+            assert_eq!(rect.x, 0);
+            assert_eq!(rect.width, 99, "every pane is full width while stacked");
+        }
+        assert_eq!(stacked.work.y, stacked.fleet.y + stacked.fleet.height);
+        assert_eq!(stacked.session.y, stacked.work.y + stacked.work.height);
+
+        let tiny = layout_facts(&app, now(), Rect::new(0, 0, 30, 10));
+        assert!(!tiny.usable);
+        assert_eq!(tiny.fleet, Rect::default());
+        assert_eq!(tiny.work, Rect::default());
+        assert_eq!(tiny.session, Rect::default());
+    }
+
+    #[test]
+    fn a_press_on_the_vertical_divider_is_a_divider_and_not_a_pane() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        assert_eq!(
+            mouse_target(LEFT_COLUMN - 1, 5, facts),
+            MouseTarget::Divider(Divider::LeftColumn, 0)
+        );
+        assert_eq!(
+            mouse_target(LEFT_COLUMN, 5, facts),
+            MouseTarget::Divider(Divider::LeftColumn, 1)
+        );
+    }
+
+    #[test]
+    fn a_press_inside_a_pane_names_that_pane() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        assert_eq!(mouse_target(5, facts.fleet.y + 1, facts), MouseTarget::Pane(PaneFocus::Fleet));
+        assert_eq!(mouse_target(5, facts.work.y + 1, facts), MouseTarget::Pane(PaneFocus::Work));
+        assert_eq!(
+            mouse_target(LEFT_COLUMN + 5, facts.session.y + 1, facts),
+            MouseTarget::Pane(PaneFocus::Session)
+        );
+    }
+
+    #[test]
+    fn the_crossing_cell_belongs_to_the_vertical_divider() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        let crossing_row = facts.fleet.y + facts.fleet.height - 1;
+        assert_eq!(
+            mouse_target(LEFT_COLUMN - 1, crossing_row, facts),
+            MouseTarget::Divider(Divider::LeftColumn, 0),
+            "the divider that spans the whole height wins the corner"
+        );
+        // One cell left of the crossing is the horizontal divider proper.
+        assert_eq!(
+            mouse_target(LEFT_COLUMN - 3, crossing_row, facts),
+            MouseTarget::Divider(Divider::SplitFleet, 0)
+        );
+        assert_eq!(
+            mouse_target(LEFT_COLUMN - 3, facts.work.y, facts),
+            MouseTarget::Divider(Divider::SplitFleet, 1)
+        );
+    }
+
+    #[test]
+    fn the_stacked_layout_has_two_horizontal_dividers_and_no_vertical_one() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 99, 30));
+        assert!(!facts.split);
+        assert_eq!(
+            mouse_target(5, facts.fleet.y + facts.fleet.height - 1, facts),
+            MouseTarget::Divider(Divider::StackedFleet, 0)
+        );
+        assert_eq!(mouse_target(5, facts.work.y, facts), MouseTarget::Divider(Divider::StackedFleet, 1));
+        assert_eq!(
+            mouse_target(5, facts.work.y + facts.work.height - 1, facts),
+            MouseTarget::Divider(Divider::StackedWork, 0)
+        );
+        assert_eq!(
+            mouse_target(5, facts.session.y, facts),
+            MouseTarget::Divider(Divider::StackedWork, 1)
+        );
+        // No vertical divider exists here: that column is inside a pane.
+        assert_eq!(
+            mouse_target(LEFT_COLUMN, facts.fleet.y + 1, facts),
+            MouseTarget::Pane(PaneFocus::Fleet)
+        );
+    }
+
+    #[test]
+    fn the_header_row_is_nothing() {
+        let app = supervising();
+        for width in [120, 99] {
+            let facts = layout_facts(&app, now(), Rect::new(0, 0, width, 30));
+            assert_eq!(mouse_target(5, 0, facts), MouseTarget::Nothing, "at {width} cells");
+        }
+    }
+
+    #[test]
+    fn every_position_is_nothing_while_the_frame_is_too_small() {
+        let app = supervising();
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 30, 10));
+        for (column, row) in [(0, 0), (5, 5), (29, 9)] {
+            assert_eq!(mouse_target(column, row, facts), MouseTarget::Nothing);
+        }
+    }
+
+    /// Render APP at 120x30 and tell it what that frame came to, then hand it the click.
+    ///
+    /// A hand-built `LayoutFacts` here would prove the arithmetic against itself rather than
+    /// against the screen, which is the reader-contract discipline `emacs/cerebro.el`'s own
+    /// section states and which cb-os4 paid for.
+    fn seeded(app: &mut App) -> Rect {
+        let area = Rect::new(0, 0, 120, 30);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| draw(frame, app, now())).unwrap();
+        app.note_layout(layout_facts(app, now(), area));
+        app.note_metrics(metrics(app, now(), area));
+        area
+    }
+
+    fn click(app: &mut App, column: u16, row: u16) {
+        let event = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        let m = metrics(app, now(), Rect::new(0, 0, 120, 30));
+        app.on_mouse(event, m, now());
+    }
+
+    #[test]
+    fn a_click_on_a_fleet_row_selects_that_agent_and_focuses_fleet() {
+        let mut app = supervising();
+        app.set_focus(PaneFocus::Session);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        // Inner row 0 is the column heading; inner row 1 is the first agent.
+        let names: Vec<String> =
+            app.fleet.content.value().unwrap().iter().map(|r| r.name.clone()).collect();
+        click(&mut app, 5, facts.fleet.y + 1 + 3);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert_eq!(app.selected.as_deref(), Some(names[2].as_str()));
+    }
+
+    #[test]
+    fn a_click_on_the_fleet_heading_focuses_and_selects_nothing() {
+        let mut app = supervising();
+        app.set_focus(PaneFocus::Session);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        let before = app.selected.clone();
+        click(&mut app, 5, facts.fleet.y + 1);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert_eq!(app.selected, before);
+    }
+
+    #[test]
+    fn a_click_on_a_selectable_work_row_moves_the_cursor_there() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        app.set_focus(PaneFocus::Fleet);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        let body = app::work_body(&app, now());
+        let scroll = app.work.scroll;
+        let (line, expected) = body
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .find_map(|(index, l)| l.cursor().map(|c| (index, c)))
+            .expect("the Work pane has a selectable row");
+        click(&mut app, 5, facts.work.y + 1 + (line - scroll) as u16);
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert_eq!(app.work_cursor, Some(expected));
+    }
+
+    #[test]
+    fn a_click_on_a_work_section_header_focuses_and_moves_no_cursor() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        app.set_focus(PaneFocus::Fleet);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        let body = app::work_body(&app, now());
+        let scroll = app.work.scroll;
+        let line = body
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .find_map(|(index, l)| l.cursor().is_none().then_some(index))
+            .expect("the Work pane has an unselectable row");
+        let before = app.work_cursor.clone();
+        click(&mut app, 5, facts.work.y + 1 + (line - scroll) as u16);
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert_eq!(app.work_cursor, before);
+    }
+
+    #[test]
+    fn a_click_on_the_session_pane_focuses_it_even_when_it_is_empty() {
+        let mut app = supervising();
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        click(&mut app, facts.session.x + 5, facts.session.y + 2);
+        assert_eq!(
+            app.focus,
+            PaneFocus::Session,
+            "a click on a pane is Tab-shaped, not Enter-shaped: it never refuses"
+        );
+    }
+
+    #[test]
+    fn a_click_arriving_at_fleet_drops_a_pinned_bead() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        app.set_focus(PaneFocus::Work);
+        app.pin = Some(app::SessionPin::Health);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        click(&mut app, 5, facts.fleet.y + 2);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert!(app.pin.is_none(), "arriving at Fleet drops the pin, whichever way it arrived");
+    }
+
+    #[test]
+    fn a_click_on_the_range_cue_row_selects_nothing() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        app.set_focus(PaneFocus::Session);
+        // A short Fleet pane, so the table is clipped and the pane has a range cue.
+        app.panes.split_fleet_rows = Some(5);
+        seeded(&mut app);
+        let area = Rect::new(0, 0, 120, 30);
+        let facts = layout_facts(&app, now(), area);
+        let m = metrics(&app, now(), area);
+        assert!(
+            m.fleet.content_lines > m.fleet.viewport_lines,
+            "this fixture's Fleet pane is clipped, so it has a cue row"
+        );
+        let before = app.selected.clone();
+        // The cue takes the pane's LAST inner row, which is one past `viewport_lines`.
+        click(&mut app, 5, facts.fleet.y + 1 + m.fleet.viewport_lines as u16);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert_eq!(app.selected, before, "the cue row is not a document line");
+    }
+
+    #[test]
+    fn a_click_reads_the_same_scroll_the_frame_was_drawn_from() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        // A short Fleet pane, so the table is clipped and the pane has a range cue.
+        app.panes.split_fleet_rows = Some(5);
+        seeded(&mut app);
+        let area = Rect::new(0, 0, 120, 30);
+        let m = metrics(&app, now(), area);
+        assert!(m.fleet.content_lines > m.fleet.viewport_lines);
+        // A stored offset past its clamp: the renderer draws from the clamped one, and so must a
+        // click, or it lands a row or more away from what the navigator saw.
+        app.fleet.scroll = 9_000;
+        let facts = layout_facts(&app, now(), area);
+        let clamped = m.fleet.content_lines - m.fleet.viewport_lines;
+        let body = app::fleet_body(&app.fleet.content);
+        let names: Vec<String> =
+            app.fleet.content.value().unwrap().iter().map(|r| r.name.clone()).collect();
+        let expected = match body[clamped] {
+            app::FleetBodyLine::Row(index) => names[index].clone(),
+            ref other => panic!("this fixture's first drawn line is a row, not {other:?}"),
+        };
+        click(&mut app, 5, facts.fleet.y + 1);
+        assert_eq!(app.selected.as_deref(), Some(expected.as_str()));
     }
 
     #[test]

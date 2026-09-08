@@ -30,7 +30,8 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use crossterm::event::{
-    DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    KeyCode, KeyEvent, KeyEventKind,
 };
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, ExecutableCommand};
@@ -1695,6 +1696,14 @@ where
                         }
                     }
                 }
+                // Mouse events are NEVER forwarded to a hosted child: `session::key_bytes` has
+                // no mouse path and must not grow one. An agent in the Session pane sees no mouse
+                // at all, which is why this arm sits outside `route_key` and its live-session
+                // branch entirely.
+                Event::Mouse(mouse) => {
+                    let action = app.on_mouse(mouse, metrics, clock());
+                    dispatch(action, app, workers, &clock);
+                }
                 // A resize needs nothing but the redraw at the top of the loop.
                 _ => {}
             }
@@ -2196,7 +2205,13 @@ impl TerminalModes for CrosstermTerminal {
     fn enter(&mut self) -> io::Result<()> {
         enable_raw_mode()?;
         let mut out: Stdout = io::stdout();
-        execute!(out, EnterAlternateScreen, EnableBracketedPaste, crossterm::cursor::Hide)?;
+        execute!(
+            out,
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableMouseCapture,
+            crossterm::cursor::Hide
+        )?;
         out.flush()
     }
 
@@ -2206,22 +2221,25 @@ impl TerminalModes for CrosstermTerminal {
         // the rest.
         let mut out: Stdout = io::stdout();
         let cursor = out.execute(crossterm::cursor::Show).err();
+        // Alongside the other input modes and before the screen is left: a terminal left
+        // reporting mouse events has lost its own selection and wheel for good.
+        let mouse = out.execute(DisableMouseCapture).err();
         let paste = out.execute(DisableBracketedPaste).err();
         let screen = out.execute(LeaveAlternateScreen).err();
         let raw = disable_raw_mode().err();
         let _ = out.flush();
-        first_error([cursor, paste, screen, raw])
+        first_error([cursor, mouse, paste, screen, raw])
     }
 }
 
-/// The four undo steps' outcomes folded into one result: the first failure, or `Ok`.
+/// The five undo steps' outcomes folded into one result: the first failure, or `Ok`.
 ///
 /// A free function so the rule the comment above states - every step is attempted, and a failure
 /// in one does not shadow the rest - is assertable. `Recorder` substitutes for
 /// `CrosstermTerminal` entirely and so can never see its crossterm commands; this is the half of
 /// `leave` that can be tested without a real terminal, and it is the half that grew a fourth
 /// step when bracketed paste arrived.
-fn first_error(steps: [Option<io::Error>; 4]) -> io::Result<()> {
+fn first_error(steps: [Option<io::Error>; 5]) -> io::Result<()> {
     match steps.into_iter().flatten().next() {
         Some(error) => Err(error),
         None => Ok(()),
@@ -3377,26 +3395,64 @@ mod main_tests {
     /// `CrosstermTerminal` outright, so the crossterm calls themselves are not observable; the
     /// fold is, and it is what the fourth step changed.
     #[test]
+    fn a_focused_live_session_never_receives_a_mouse_event() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let mut events = ReplayedEvents::stopping(vec![
+            key(KeyCode::Char('x')),
+            // Inside the Fleet pane, with the keyboard on the hosted child.
+            Event::Mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: 5,
+                row: 3,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+        ]);
+        let workers = test_workers();
+        let mut state = LoopState { host, ..test_state() };
+        let config = test_config();
+        let _ = run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now);
+
+        assert_eq!(
+            app.focus,
+            cerebro_tui::app::PaneFocus::Fleet,
+            "the view consumed the press rather than forwarding it"
+        );
+        let text = echoed(&mut state.host, &app, "x");
+        assert!(text.contains('x'), "the plain char still reached the child: {text:?}");
+        assert!(
+            !text.contains("[<"),
+            "no SGR mouse sequence reached the child: {text:?}"
+        );
+    }
+
+    #[test]
     fn a_failed_undo_step_neither_hides_the_others_nor_the_first_error() {
         let err = |text: &str| Some(io::Error::other(text.to_string()));
 
-        assert!(first_error([None, None, None, None]).is_ok());
+        assert!(first_error([None, None, None, None, None]).is_ok());
 
         // The first failure is what is reported, whichever step it is - and a later failure
         // never shadows it.
-        let reported = first_error([err("cursor"), err("paste"), None, err("raw")])
+        let reported = first_error([err("cursor"), err("mouse"), err("paste"), None, err("raw")])
             .expect_err("a failed undo is reported");
         assert_eq!(reported.to_string(), "cursor");
 
         // A failure in the FIRST step must not be the only thing this can report: the caller
-        // ran every step regardless, and the third one's error still surfaces on its own.
-        let reported =
-            first_error([None, None, err("screen"), None]).expect_err("a failed undo is reported");
+        // ran every step regardless, and the fourth one's error still surfaces on its own.
+        let reported = first_error([None, None, None, err("screen"), None])
+            .expect_err("a failed undo is reported");
         assert_eq!(reported.to_string(), "screen");
 
         let reported =
-            first_error([None, err("paste"), None, None]).expect_err("bracketed paste too");
+            first_error([None, None, err("paste"), None, None]).expect_err("bracketed paste too");
         assert_eq!(reported.to_string(), "paste");
+
+        // Mouse capture is the fifth step (cb-bch.2), and it is attempted like the others.
+        let reported = first_error([None, err("mouse"), None, None, None])
+            .expect_err("mouse capture too");
+        assert_eq!(reported.to_string(), "mouse");
     }
 
     #[test]

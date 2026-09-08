@@ -175,6 +175,57 @@ pass "fails loudly on --count too, which is the mode the skill calls"
 set_stub "$beads"
 
 # ------------------------------------------------------------------------------------------------
+# The UX buffer (cb-lz5.1.1): how much agreed-but-undesigned work is waiting for the build-design
+# agent. `planned` is excluded because `ux:agreed` stays on the bead for the rest of its life - a
+# bead that has been through both agents still says its experience was agreed, and counting it would
+# make the queue look full when everything in it has already moved on.
+# ------------------------------------------------------------------------------------------------
+
+ux_beads='[{"id":"ua","issue_type":"task","labels":["ux:agreed"]},
+           {"id":"ub","issue_type":"task","labels":["ux:agreed","planned"]},
+           {"id":"uc","issue_type":"task","labels":["ux:agreed","human"]},
+           {"id":"ud","issue_type":"task","labels":["ux:agreed","triage:declined"]},
+           {"id":"ue","issue_type":"task","labels":[]}]'
+set_stub "$ux_beads"
+
+agreed="$(run_count --ux-agreed)"
+[ "$agreed" = "1" ] || fail "--ux-agreed counted '$agreed', not the one agreed, undesigned bead"
+pass "counts the agreed but undesigned beads"
+
+# A bead a build-design agent is HOLDING is not work waiting for one: `scripts/stage-candidates
+# build-design` would not hand it out, and a count that includes it is exactly the drift this
+# script header records as already paid for - a trigger counting beads the candidate query
+# excludes starts a session that finds nothing to do. Both live spellings of the hold, since the
+# rule is `planning` or `planning:<name>` and neither is the other.
+held='[{"id":"ha","issue_type":"task","labels":["ux:agreed","planning"]},
+       {"id":"hb","issue_type":"task","labels":["ux:agreed","planning:Beast"]}]'
+set_stub "$held"
+agreed="$(run_count --ux-agreed)"
+[ "$agreed" = "0" ] || fail "--ux-agreed counted '$agreed' beads that a build-design agent is already holding"
+pass "a bead held by either spelling of the planning label is not counted as waiting"
+
+set_stub "$ux_beads"
+
+# The wanted number is the existing one, shared with `--count`: a second declaration would be a
+# number nobody has a reason for.
+line="$(run_count --ux-count)"
+[ "$line" = "agreed=1 want=2" ] || fail "--ux-count printed '$line', not 'agreed=1 want=2'"
+pass "--ux-count prints the agreed count beside the wanted number"
+
+# --- a failing bead query is loud on --ux-agreed too ---------------------------------------------
+set_stub "$ux_beads" 1
+set +e
+out="$(run_count --ux-agreed 2>"$stub_dir/err")"
+status=$?
+set -e
+[ "$status" -ne 0 ] || fail "--ux-agreed exited 0 when the bead query failed"
+[ -z "$out" ] || fail "--ux-agreed printed '$out' on stdout when the bead query failed"
+grep -q 'planner-buffer' "$stub_dir/err" || fail "--ux-agreed does not name planner-buffer on stderr"
+pass "a failing bead query is loud on --ux-agreed too"
+
+set_stub "$beads"
+
+# ------------------------------------------------------------------------------------------------
 # The wanted number: one per implementer on the ROSTER, never fewer than the floor - and an
 # implementer told to finish is left out, since it takes no further bead. Sessions are not counted
 # at all since cb-1or.3: since cb-1or.1 a builder between beads has no session and is started *by* a

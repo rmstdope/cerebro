@@ -277,7 +277,7 @@ impl PaneSizes {
 /// Which divider a resize chord is aimed at, and which way it moves.
 ///
 /// `Shorter`/`Taller` are named for what happens to the pane ABOVE the divider, which is the pane
-/// the chord's arrow points away from: `Ctrl-↓` moves the divider down and makes that pane taller.
+/// the chord's arrow points away from: `Shift-↓` moves the divider down and makes that pane taller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Resize {
     Narrower,
@@ -452,7 +452,7 @@ pub fn drag_action(
 /// Put one divider back where the layout would have it, and say so.
 ///
 /// It derives for itself whether that divider had moved: an override already `None` gets the
-/// mockup's `panes are already at their default sizes` — the same sentence `Ctrl-Home` gets — and
+/// mockup's `panes are already at their default sizes` — the same sentence `Shift-Home` gets — and
 /// one that was `Some` gets `reset_notice(divider)`.
 pub fn reset_divider(divider: Divider, sizes: PaneSizes) -> (PaneSizes, String) {
     let (after, moved) = match divider {
@@ -595,20 +595,21 @@ pub fn is_pane_key(code: KeyCode) -> bool {
         || matches!(code, KeyCode::F(n) if PaneFocus::from_function_key(n).is_some())
 }
 
-/// Which resize a key asks for, if any. The ONE place the five chords are spelled.
+/// Which resize a key asks for, if any. The ONE place the five keys are spelled.
 ///
-/// `CONTROL` must be present and `SHIFT` is tolerated - crossterm reports `SHIFT` alongside a
-/// chord under the kitty keyboard protocol and on some Windows paths, exactly as the priority
-/// keys' own comment records - and any other modifier disqualifies, so `Alt-←` still reaches a
-/// hosted agent.
+/// `SHIFT` and nothing else: any other modifier disqualifies, so `Ctrl-Shift-←` and `Alt-←` still
+/// reach a hosted agent, and a plain arrow still scrolls.
 ///
-/// `Ctrl-Home` and not `Ctrl-=` for the reset: `Ctrl-=` is neither a control byte nor a CSI
+/// `Shift` and not `Ctrl` (cb-bch.1, second pass): macOS binds all four `Ctrl`-arrows by default -
+/// Spaces on left and right, Mission Control and Application Windows on up and down - and takes
+/// them before any terminal sees them, so the chords this shipped with never arrived at all. The
+/// five `Shift` keys were probed in the navigator's own terminal before they were agreed.
+///
+/// `Shift-Home` and not `Ctrl-=` for the reset: `Ctrl-=` is neither a control byte nor a CSI
 /// sequence, and macOS Terminal.app and iTerm2 send nothing at all for it, so binding it would
-/// ship a key that silently does nothing in the navigator's own terminal (cb-bch.1, round three).
+/// ship a key that silently does nothing in the navigator's own terminal (round three).
 pub fn resize_key(key: KeyEvent) -> Option<Resize> {
-    if !key.modifiers.contains(KeyModifiers::CONTROL)
-        || !key.modifiers.difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT).is_empty()
-    {
+    if key.modifiers != KeyModifiers::SHIFT {
         return None;
     }
     match key.code {
@@ -2207,7 +2208,7 @@ impl App {
         // keyboard, whatever they press.
         self.clear_notice();
         // Before the match: the plain arrow arms below gate on focus and not on modifiers, so a
-        // `Ctrl-↑` reaching them would scroll a pane instead of moving a divider.
+        // `Shift-↑` reaching them would scroll a pane instead of moving a divider.
         if let Some(resize) = resize_key(key) {
             let outcome = resize_action(resize, self.panes, self.focus, self.layout);
             self.panes = outcome.sizes;
@@ -4770,14 +4771,26 @@ mod tests {
     }
 
     fn chord(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
     #[test]
     fn view_keys_are_the_pane_keys_and_the_five_resize_chords() {
         for code in [KeyCode::Left, KeyCode::Right, KeyCode::Up, KeyCode::Down, KeyCode::Home] {
-            assert!(is_view_key(chord(code)), "Ctrl-{code:?} moves a divider");
+            assert!(is_view_key(chord(code)), "Shift-{code:?} moves a divider");
             assert!(!is_view_key(key(code)), "a plain {code:?} is the pane's own");
+            assert!(
+                !is_view_key(ctrl(code)),
+                "Ctrl-{code:?} is nobody's now and reaches a hosted agent"
+            );
+            assert!(
+                !is_view_key(KeyEvent::new(code, KeyModifiers::CONTROL | KeyModifiers::SHIFT)),
+                "Ctrl-Shift-{code:?} carries a second modifier and is not a resize"
+            );
             assert!(
                 !is_view_key(KeyEvent::new(code, KeyModifiers::ALT)),
                 "Alt-{code:?} still reaches a hosted agent"
@@ -4788,14 +4801,8 @@ mod tests {
         }
         for code in [KeyCode::F(4), KeyCode::Char('x')] {
             assert!(!is_view_key(key(code)), "{code:?} is the agent's");
-            assert!(!is_view_key(chord(code)), "and so is Ctrl-{code:?}");
+            assert!(!is_view_key(chord(code)), "and so is Shift-{code:?}");
         }
-        // crossterm reports SHIFT alongside a chord under the kitty protocol and on some Windows
-        // paths, exactly as the priority keys' own comment records.
-        assert!(is_view_key(KeyEvent::new(
-            KeyCode::Left,
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT
-        )));
     }
 
     fn seeded(focus: PaneFocus) -> App {
@@ -4806,7 +4813,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_arrows_resize_from_every_focus() {
+    fn shift_arrows_resize_from_every_focus() {
         for focus in [PaneFocus::Fleet, PaneFocus::Work, PaneFocus::Session] {
             let mut app = seeded(focus);
             assert_eq!(app.on_key(chord(KeyCode::Right), 10, at(0)), AppAction::None);
@@ -4820,7 +4827,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_home_puts_every_divider_back() {
+    fn shift_home_puts_every_divider_back() {
         let mut app = seeded(PaneFocus::Fleet);
         app.on_key(chord(KeyCode::Right), 10, at(0));
         app.on_key(chord(KeyCode::Down), 10, at(0));

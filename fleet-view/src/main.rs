@@ -1760,7 +1760,7 @@ fn write_priority(
     AppAction::Write(request)
 }
 
-/// In branch 3, `Tab`, `Shift-Tab`, `F1`-`F3` and the five resize chords are held back and handed to `App::on_key`, which runs
+/// In branch 3, `Tab`, `Shift-Tab`, `F1`-`F3` and the five `Shift` resize keys are held back and handed to `App::on_key`, which runs
 /// the plain focus cycle: from Session that is `Tab` -> Fleet and `Shift-Tab` -> Work (cb-3v5 for the
 /// first of them, Q8 for the second), which is the reason the child can never receive either;
 /// everything else goes to
@@ -1846,8 +1846,8 @@ fn route_key(
     // still sends one - it IS 0x09, through `control_byte` - so an agent that needs a real tab
     // gets one in two keys. Since cb-5kk `F1`, `F2` and `F3` join them, at the same accepted
     // cost and with no escape hatch; `F4` and every other function key still reach the agent.
-    // Since cb-bch.1 the five resize chords join them, at the same accepted cost: `Ctrl-←/→/↑/↓`
-    // and `Ctrl-Home` move a divider rather than reaching the agent, so the navigator can resize
+    // Since cb-bch.1 the five resize keys join them, at the same accepted cost: `Shift-←/→/↑/↓`
+    // and `Shift-Home` move a divider rather than reaching the agent, so the navigator can resize
     // the pane they are reading an agent in. `app::is_view_key` is the one place that whole set
     // is named.
     if app.session_has_keyboard() && !cerebro_tui::app::is_view_key(key) {
@@ -2486,6 +2486,10 @@ mod main_tests {
         Event::Key(KeyEvent::new(code, crossterm::event::KeyModifiers::CONTROL))
     }
 
+    fn shift(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, crossterm::event::KeyModifiers::SHIFT))
+    }
+
     /// A child that echoes every byte back printably, so a case can read what the navigator's
     /// keystrokes became. `cat -v` renders `ESC` as `^[` and `Ctrl-C` as `^C`, and `stty raw`
     /// stops the line discipline from turning either into a signal.
@@ -2564,7 +2568,7 @@ mod main_tests {
         let mut app = hosting(&mut host);
         let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
         let mut events = ReplayedEvents::stopping(vec![
-            ctrl(KeyCode::Right),
+            shift(KeyCode::Right),
             key(KeyCode::Char('x')),
         ]);
         let workers = test_workers();

@@ -33,7 +33,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::lifecycle::LastExit;
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::app::{
-    self, App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics,
+    self, App, FleetBodyLine, LayoutFacts, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, PaneSizes,
 };
 use crate::lifecycle;
 use crate::model::{Bead, FleetRow, HealthTone, RowState};
@@ -58,6 +58,52 @@ pub const SPLIT_COLUMNS: u16 = 100;
 /// The left column's width when the screen is split - Fleet and Work in their narrow columns, and
 /// every remaining cell to the session.
 pub const LEFT_COLUMN: u16 = 40;
+
+/// The narrowest a pane may be made, in outer cells: two borders and enough body for a truncated
+/// bead line. The navigator saw this floor in the mockup (cb-bch.1).
+pub const MIN_PANE_COLUMNS: u16 = 24;
+
+/// The shortest a pane may be made, in outer rows: two borders and one body row. This is the `3`
+/// the two existing caps in `split` already use, given a name.
+pub const MIN_PANE_ROWS: u16 = 3;
+
+/// The left column's outer width, clamped so both it and Session keep `MIN_PANE_COLUMNS`.
+///
+/// Each ceiling here ends `.max(MIN_…)`, and that is load-bearing rather than defensive: on a
+/// screen at the `MIN_COLUMNS`/`MIN_ROWS` floor the ceiling arithmetic lands BELOW the floor, and
+/// `u16::clamp` panics when `min > max` - which would take the whole view down on the smallest
+/// terminal, where it is least recoverable.
+pub fn clamp_left_column(requested: u16, screen_width: u16) -> u16 {
+    let ceiling = screen_width.saturating_sub(MIN_PANE_COLUMNS).max(MIN_PANE_COLUMNS);
+    requested.clamp(MIN_PANE_COLUMNS, ceiling)
+}
+
+/// Fleet's outer height in the split layout, clamped so Work keeps `MIN_PANE_ROWS`.
+pub fn clamp_split_fleet(requested: u16, column_height: u16) -> u16 {
+    let ceiling = column_height.saturating_sub(MIN_PANE_ROWS).max(MIN_PANE_ROWS);
+    requested.clamp(MIN_PANE_ROWS, ceiling)
+}
+
+/// Fleet's outer height in the stacked layout, clamped so Work AND Session each keep
+/// `MIN_PANE_ROWS`.
+pub fn clamp_stacked_fleet(requested: u16, available_height: u16) -> u16 {
+    let ceiling = available_height.saturating_sub(2 * MIN_PANE_ROWS).max(MIN_PANE_ROWS);
+    requested.clamp(MIN_PANE_ROWS, ceiling)
+}
+
+/// Work's outer height in the stacked layout given Fleet's, clamped so Session keeps
+/// `MIN_PANE_ROWS`.
+///
+/// Fleet's height is taken CLAMPED and subtracted first, which is what makes growing Fleet take
+/// rows from Work and leave Session alone (the navigator's own reading order: Session is the pane
+/// they are usually looking at).
+pub fn clamp_stacked_work(requested: u16, available_height: u16, fleet_outer: u16) -> u16 {
+    let ceiling = available_height
+        .saturating_sub(fleet_outer)
+        .saturating_sub(MIN_PANE_ROWS)
+        .max(MIN_PANE_ROWS);
+    requested.clamp(MIN_PANE_ROWS, ceiling)
+}
 
 /// The exact title agreed in the parent epic's interview, em dash and all - now the read-only
 /// spelling of five, one per supervision state (`supervision_title`).
@@ -158,7 +204,7 @@ pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
     }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
     let (_, fleet_rect, work_rect, session_rect) =
-        split(area, fleet_lines.len(), work_content_lines(app, now, area));
+        split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
     let work_inner_width = (work_rect.width as usize).saturating_sub(2);
     let work_lines = work_document(app, now, work_inner_width);
     let session_lines =
@@ -185,6 +231,32 @@ pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
     }
 }
 
+/// What one draw of APP at NOW in AREA would lay out, for `App::note_layout`.
+///
+/// It calls the same `split` `draw` and `metrics` call, so a chord and a drawn border cannot come
+/// from two pieces of arithmetic. It builds the fleet body a third time per tick, which is the
+/// same trade `work_content_lines`' own comment records and is measured against a 200ms poll over
+/// a roster of a few dozen rows.
+pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
+    if too_small(area) {
+        // `usable: false`, exactly as `metrics` returns zeroed `PaneMetrics` here: there is no
+        // layout to move a divider in, and a stale one would be worse than none.
+        return LayoutFacts::default();
+    }
+    let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
+    let (_, fleet, work, _) =
+        split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
+    LayoutFacts {
+        usable: true,
+        split: area.width >= SPLIT_COLUMNS,
+        width: area.width,
+        available: area.height.saturating_sub(1),
+        left_column: fleet.width,
+        fleet_rows: fleet.height,
+        work_rows: work.height,
+    }
+}
+
 /// A pane's inner width in cells: its own width less the two border columns.
 fn inner_width(outer: Rect) -> usize {
     (outer.width as usize).saturating_sub(2)
@@ -204,6 +276,7 @@ fn split(
     area: Rect,
     fleet_content_lines: usize,
     work_content_lines: usize,
+    sizes: PaneSizes,
 ) -> (Rect, Rect, Rect, Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
     let header = rows[0];
@@ -211,23 +284,39 @@ fn split(
     let fleet_natural = fleet_content_lines + 2;
 
     if area.width >= SPLIT_COLUMNS {
+        // The override is the navigator's; the fixed `LEFT_COLUMN` is what the layout would have
+        // had. Either way it goes through the same clamp `resize_action` asks, so a chord and a
+        // drawn border can never disagree about where the divider may go.
+        let left_width = clamp_left_column(sizes.left_column.unwrap_or(LEFT_COLUMN), area.width);
         let columns =
-            Layout::horizontal([Constraint::Length(LEFT_COLUMN), Constraint::Min(0)]).split(available);
+            Layout::horizontal([Constraint::Length(left_width), Constraint::Min(0)]).split(available);
         let left = columns[0];
-        let cap = ((left.height as usize) / 2).max(3);
-        let fleet_outer = fleet_natural.min(cap) as u16;
+        let cap = ((left.height as usize) / 2).max(MIN_PANE_ROWS as usize);
+        let natural = fleet_natural.min(cap) as u16;
+        let fleet_outer =
+            clamp_split_fleet(sizes.split_fleet_rows.unwrap_or(natural), left.height);
         let stacked =
             Layout::vertical([Constraint::Length(fleet_outer), Constraint::Min(0)]).split(left);
         return (header, stacked[0], stacked[1], columns[1]);
     }
 
     let height = available.height as usize;
-    let fleet_outer = fleet_natural.min((height / 3).max(3));
-    let remaining = height.saturating_sub(fleet_outer);
-    let work_outer = (work_content_lines + 2).min((remaining / 2).max(3)).min(remaining);
+    let natural_fleet = fleet_natural.min((height / 3).max(MIN_PANE_ROWS as usize)) as u16;
+    let fleet_outer =
+        clamp_stacked_fleet(sizes.stacked_fleet_rows.unwrap_or(natural_fleet), available.height);
+    let remaining = height.saturating_sub(fleet_outer as usize);
+    let natural_work =
+        (work_content_lines + 2).min((remaining / 2).max(MIN_PANE_ROWS as usize)).min(remaining) as u16;
+    // Work is clamped AFTER Fleet and against Fleet's clamped height, which is what makes growing
+    // Fleet take rows from Work and leave Session alone.
+    let work_outer = clamp_stacked_work(
+        sizes.stacked_work_rows.unwrap_or(natural_work),
+        available.height,
+        fleet_outer,
+    );
     let panes = Layout::vertical([
-        Constraint::Length(fleet_outer as u16),
-        Constraint::Length(work_outer as u16),
+        Constraint::Length(fleet_outer),
+        Constraint::Length(work_outer),
         Constraint::Min(0),
     ])
     .split(available);
@@ -314,7 +403,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
     let (header, fleet_rect, work_rect, session_rect) =
-        split(area, fleet_lines.len(), work_content_lines(app, now, area));
+        split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
     frame.render_widget(Paragraph::new(header_line(app, header.width)), header);
 
     let fleet_count = app.fleet.content.value().map(|rows| rows.len());
@@ -676,6 +765,12 @@ fn hint_clauses(app: &App) -> Vec<HintClause> {
     // first and alone, so the key is offered wherever there is room and nowhere it would push
     // something else off.
     clauses.push(HintClause { text: "h health", rank: HintRank::Optional });
+    // cb-bch.1, at the same `Optional` rank as `h health` above and for the same reason: the
+    // ordinary hundred-column screen has about one cell of slack, so an unconditional clause at
+    // any higher rank drops a whole tier of hints the navigator asked by name to keep. It is
+    // unconditional because the chords always do something, and outside the supervision lease
+    // because moving a divider changes this screen and nothing else.
+    clauses.push(HintClause { text: "^←→ size", rank: HintRank::Optional });
     // The two clauses of cb-kcs.5.4, by the same rule and for the same reason: both write to the
     // shared board rather than to this checkout's sessions, so both are shown on a read-only
     // view. Each only while the cursor is on a row that key acts on. cb-41r's `Enter bead` rides
@@ -2728,6 +2823,14 @@ mod tests {
         assert!(!rendered[0].contains("3 live agents"), "{:?}", rendered[0]);
     }
 
+    #[test]
+    fn the_resize_hint_rides_beside_h_health_at_the_optional_rank() {
+        let rendered = lines(&render(&populated(), 160, 20));
+        let health = rendered[0].find("h health").expect("the health clause");
+        let size = rendered[0].find("^←→ size").expect("the resize clause");
+        assert!(health < size, "beside it, and after it: {:?}", rendered[0]);
+    }
+
     /// The screen every consumer sees today keeps every hint it had before this bead.
     ///
     /// This is the assertion the navigator asked for by name: ownership must not cost the default
@@ -3107,6 +3210,147 @@ mod tests {
             style.add_modifier.contains(Modifier::DIM),
             "the write is still running: {style:?}"
         );
+    }
+
+    #[test]
+    fn a_clamp_never_takes_a_pane_below_its_floor() {
+        // The left column keeps `MIN_PANE_COLUMNS` for itself and leaves as many for Session.
+        assert_eq!(clamp_left_column(1, 100), MIN_PANE_COLUMNS);
+        assert_eq!(clamp_left_column(99, 100), 100 - MIN_PANE_COLUMNS);
+        // A screen at the floor: the ceiling arithmetic falls below the floor, and `clamp`
+        // panics when `min > max`. It must answer the floor rather than die.
+        assert_eq!(clamp_left_column(40, 40), MIN_PANE_COLUMNS);
+        assert_eq!(clamp_left_column(1, 0), MIN_PANE_COLUMNS);
+
+        assert_eq!(clamp_split_fleet(1, 20), MIN_PANE_ROWS);
+        assert_eq!(clamp_split_fleet(19, 20), 20 - MIN_PANE_ROWS);
+        assert_eq!(clamp_split_fleet(5, 4), MIN_PANE_ROWS);
+
+        // Stacked Fleet leaves room for BOTH Work and Session.
+        assert_eq!(clamp_stacked_fleet(1, 30), MIN_PANE_ROWS);
+        assert_eq!(clamp_stacked_fleet(29, 30), 30 - 2 * MIN_PANE_ROWS);
+        assert_eq!(clamp_stacked_fleet(9, 6), MIN_PANE_ROWS);
+
+        // Stacked Work leaves room for Session, given Fleet's height.
+        assert_eq!(clamp_stacked_work(1, 30, 5), MIN_PANE_ROWS);
+        assert_eq!(clamp_stacked_work(99, 30, 5), 30 - 5 - MIN_PANE_ROWS);
+        assert_eq!(clamp_stacked_work(9, 10, 8), MIN_PANE_ROWS);
+    }
+
+    #[test]
+    fn default_pane_sizes_reproduce_the_fixed_split() {
+        // `PaneSizes::default()` must be exactly today's layout, split and stacked. The corners
+        // asserted here are the ones the two existing layout cases already assert; what this adds
+        // is that they still hold once `split` reads the sizes.
+        let app = supervising();
+        assert!(app.panes.is_default());
+
+        let wide = render(&app, 120, 30);
+        let fleet_row = top_corners(&wide)[0].0;
+        assert_eq!(corners_on_row(&wide, fleet_row), vec![0, LEFT_COLUMN - 1, LEFT_COLUMN, 119]);
+
+        let narrow = render(&app, 99, 30);
+        for (row, column) in top_corners(&narrow) {
+            assert_eq!(column, 0);
+            assert_eq!(corners_on_row(&narrow, row), vec![0, 98]);
+        }
+    }
+
+    #[test]
+    fn an_overridden_left_column_moves_the_session_pane() {
+        let mut app = supervising();
+        app.panes.left_column = Some(56);
+        let buffer = render(&app, 120, 30);
+        let fleet_row = top_corners(&buffer)[0].0;
+        assert_eq!(corners_on_row(&buffer, fleet_row), vec![0, 55, 56, 119]);
+    }
+
+    #[test]
+    fn an_overridden_fleet_height_beats_the_natural_cap() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![
+                row("A", "implementer", RowState::Dead),
+                row("B", "implementer", RowState::Dead),
+            ]),
+            at(0),
+        );
+        app.panes.split_fleet_rows = Some(16);
+        let buffer = render(&app, 100, 30);
+        let corners = top_corners(&buffer);
+        // Fleet opens on row 1 (below the header) and is sixteen outer rows, so Work's own top
+        // border is at 1 + 16 - past the natural cap a two-row roster would have taken.
+        assert_eq!(corners[0].0, 1);
+        let work = corners.iter().filter(|(row, col)| *col == 0 && *row > 1).map(|c| c.0).min();
+        assert_eq!(work, Some(1 + 16));
+    }
+
+    #[test]
+    fn a_stored_size_too_big_for_the_screen_is_clamped_and_not_lost() {
+        let mut app = supervising();
+        app.panes.left_column = Some(90);
+        // Too wide for a hundred-cell screen: Session keeps its floor.
+        let narrow = render(&app, 100, 30);
+        let narrow_row = top_corners(&narrow)[0].0;
+        assert_eq!(
+            corners_on_row(&narrow, narrow_row),
+            vec![0, 100 - MIN_PANE_COLUMNS - 1, 100 - MIN_PANE_COLUMNS, 99]
+        );
+        // The same `App`, on a screen wide enough: the stored ninety is back, so nothing
+        // overwrote it while the terminal was small.
+        let wide = render(&app, 140, 30);
+        let wide_row = top_corners(&wide)[0].0;
+        assert_eq!(corners_on_row(&wide, wide_row), vec![0, 89, 90, 139]);
+    }
+
+    #[test]
+    fn a_grown_fleet_takes_rows_from_work_and_leaves_session_alone() {
+        // The clamp ORDER is what this pins: Work is clamped against Fleet's already-clamped
+        // height, so the rows a grown Fleet takes come out of Work while Session keeps every row
+        // it had. Work is given the whole column here so that its own ceiling is what binds -
+        // below that ceiling Work is at its content height and it is Session, the remainder, that
+        // gives way, which is the layout's existing rule and not something this bead changes.
+        let mut app = supervising();
+        app.panes.stacked_work_rows = Some(99);
+        let before = top_corners(&render(&app, 99, 30));
+        let session_height = 30 - before[2].0;
+        let fleet_rows = before[1].0 - before[0].0;
+
+        app.panes.stacked_fleet_rows = Some(fleet_rows + 4);
+        let after = top_corners(&render(&app, 99, 30));
+        assert_eq!(after[1].0, before[1].0 + 4, "the Fleet/Work divider moved down four rows");
+        assert_eq!(
+            after[2].0 - after[1].0,
+            before[2].0 - before[1].0 - 4,
+            "and Work lost exactly those four"
+        );
+        assert_eq!(30 - after[2].0, session_height, "Session kept every row it had");
+    }
+
+    #[test]
+    fn layout_facts_report_the_rects_the_frame_was_drawn_from() {
+        let app = supervising();
+
+        let area = Rect::new(0, 0, 120, 30);
+        let facts = layout_facts(&app, now(), area);
+        assert!(facts.usable);
+        assert!(facts.split);
+        assert_eq!(facts.width, 120);
+        assert_eq!(facts.available, 29);
+        assert_eq!(facts.left_column, LEFT_COLUMN);
+        // Taken from the same `split` the frame is drawn from, not from a second rule.
+        let fleet_lines = fleet_document(&app, now(), fleet_width(area), app.selected_index());
+        let (_, fleet, work, _) =
+            split(area, fleet_lines.len(), work_content_lines(&app, now(), area), app.panes);
+        assert_eq!(facts.fleet_rows, fleet.height);
+        assert_eq!(facts.work_rows, work.height);
+
+        let stacked = layout_facts(&app, now(), Rect::new(0, 0, 99, 30));
+        assert!(stacked.usable);
+        assert!(!stacked.split);
+        assert_eq!(stacked.left_column, 99);
+
+        assert_eq!(layout_facts(&app, now(), Rect::new(0, 0, 30, 10)), LayoutFacts::default());
     }
 
     #[test]
@@ -4544,10 +4788,14 @@ mod tests {
         // header hint alone would leave `h` undiscoverable exactly when the fleet is fine. Its
         // own rank, dropped first and alone, so it costs no other clause anything.
         let health = HintClause { text: "h health", rank: HintRank::Optional };
+        // Beside it, at the same rank and for the same reason (cb-bch.1): the chords always do
+        // something, so the clause is unconditional, and `Optional` is what keeps it from
+        // costing the movement tier anything.
+        let size = HintClause { text: "^←→ size", rank: HintRank::Optional };
 
         assert_eq!(
             hint_clauses(&populated()),
-            vec![pane, scroll, health, refresh, quit],
+            vec![pane, scroll, health, size, refresh, quit],
             "read-only, no findings, no cursor, no reachable session"
         );
         assert_eq!(
@@ -4557,6 +4805,7 @@ mod tests {
                 scroll,
                 HintClause { text: "s/f/k start·finish·kill", rank: HintRank::Kept },
                 health,
+                size,
                 refresh,
                 quit
             ],
@@ -4569,6 +4818,7 @@ mod tests {
                 scroll,
                 HintClause { text: "f finish | k kill", rank: HintRank::Kept },
                 health,
+                size,
                 refresh,
                 quit
             ],
@@ -4579,7 +4829,7 @@ mod tests {
         failed.finish_refresh(Err(failure()), at(86_400));
         assert_eq!(
             hint_clauses(&failed),
-            vec![pane, scroll, health, retry, quit],
+            vec![pane, scroll, health, size, retry, quit],
             "a failed pane asks for a retry rather than a refresh"
         );
 
@@ -4601,6 +4851,7 @@ mod tests {
                 pane,
                 scroll,
                 health,
+                size,
                 HintClause { text: "0-4/+/-/u priority", rank: HintRank::Cursor },
                 HintClause { text: "Enter bead", rank: HintRank::Cursor },
                 refresh,
@@ -4618,6 +4869,7 @@ mod tests {
                 pane,
                 scroll,
                 health,
+                size,
                 HintClause { text: "Enter show all", rank: HintRank::Cursor },
                 refresh,
                 quit
@@ -4635,6 +4887,7 @@ mod tests {
                 pane,
                 scroll,
                 health,
+                size,
                 HintClause { text: "Enter session", rank: HintRank::Cursor },
                 refresh,
                 quit

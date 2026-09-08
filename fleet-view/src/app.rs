@@ -34,6 +34,7 @@ use crate::readers::{
     Commands, Judged, Programs, ReaderPaths, ReadError,
 };
 use crate::sweeps::Finding;
+use crate::ui::Divider;
 use crate::triggers::GhAnswer;
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
@@ -349,6 +350,137 @@ pub struct ResizeOutcome {
 /// out with, which is what lets "as wide as it goes" be the width the border actually stops at
 /// rather than a second opinion about it. A chord that moves nothing still carries a notice; the
 /// only silent case is a frame too small to have a layout at all.
+/// A divider being dragged: which one, and which of its two cells was grabbed.
+///
+/// Memory only and per-gesture: it exists between a left-button press on a divider and the release
+/// that ends it. A press anywhere else clears it, so a release lost to a terminal that swallowed
+/// it cannot leave the view dragging for ever.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Drag {
+    pub divider: Divider,
+    pub grab: u16,
+}
+
+/// How close together two presses on one divider count as a double-click.
+///
+/// 400ms, the shape of every desktop toolkit's default. A longer window makes two deliberate drags
+/// of the same divider read as a reset; a shorter one makes a real double-click miss.
+pub const DOUBLE_CLICK_MS: i64 = 400;
+
+/// How many lines one wheel notch scrolls the Session pane. Three, the terminal convention.
+///
+/// The Fleet selection and the Work cursor move ONE per notch instead: a selection that jumps
+/// three rows at a time is disorienting in a way a transcript scrolling three lines is not.
+pub const WHEEL_LINES: usize = 3;
+
+/// The gold line a divider's new size gets, from the mockup's §5 and nowhere else.
+///
+/// `resize_action` words its two size lines through this rather than with its own `format!`: a
+/// chord and a drag move the same divider, and two spellings of one event is exactly what one
+/// function prevents. Sizes are OUTER, borders included.
+pub fn size_notice(divider: Divider, outer: u16) -> String {
+    match divider {
+        Divider::LeftColumn => format!("left column {outer} cells"),
+        Divider::SplitFleet | Divider::StackedFleet => format!("Fleet {outer} rows"),
+        Divider::StackedWork => format!("Work {outer} rows"),
+    }
+}
+
+/// The gold line a double-clicked divider gets. The mockup's §5, last row.
+pub fn reset_notice(divider: Divider) -> String {
+    match divider {
+        Divider::LeftColumn => format!("left column back to {} cells", crate::ui::LEFT_COLUMN),
+        Divider::SplitFleet | Divider::StackedFleet => "Fleet back to its own height".to_string(),
+        Divider::StackedWork => "Work back to its own height".to_string(),
+    }
+}
+
+/// The outer size a divider dragged to (COLUMN, ROW) should take, already clamped.
+///
+/// GRAB is the offset from `MouseTarget::Divider`, which is what keeps the grabbed cell under the
+/// pointer. Returns the `PaneSizes` that stores it and the clamped OUTER size.
+///
+/// A drag past a floor or a ceiling stops there and reports the clamped size — it does NOT say
+/// `left column is as narrow as it goes`. Those four sentences are the chords', where nothing moves
+/// and a silent key would be a dead key; a drag that visibly stops needs no sentence, and one
+/// repeated on every drag event would be noise.
+///
+/// Every subtraction is saturating: the pointer can be above or left of the pane's own origin, and
+/// a wrap there would be a divider that jumps to 65535 and clamps to the ceiling, which looks like
+/// a bug in the clamp rather than in the arithmetic.
+pub fn drag_action(
+    drag: Drag,
+    column: u16,
+    row: u16,
+    sizes: PaneSizes,
+    facts: LayoutFacts,
+) -> (PaneSizes, u16) {
+    match drag.divider {
+        Divider::LeftColumn => {
+            let requested = column.saturating_add(1).saturating_sub(drag.grab);
+            let outer = crate::ui::clamp_left_column(requested, facts.width);
+            (PaneSizes { left_column: Some(outer), ..sizes }, outer)
+        }
+        Divider::SplitFleet => {
+            let requested = row
+                .saturating_add(1)
+                .saturating_sub(facts.fleet.y)
+                .saturating_sub(drag.grab);
+            // Fleet and Work together are the left column's whole height, which is the
+            // `column_height` that clamp takes.
+            let outer = crate::ui::clamp_split_fleet(
+                requested,
+                facts.fleet.height.saturating_add(facts.work.height),
+            );
+            (PaneSizes { split_fleet_rows: Some(outer), ..sizes }, outer)
+        }
+        Divider::StackedFleet => {
+            let requested = row
+                .saturating_add(1)
+                .saturating_sub(facts.fleet.y)
+                .saturating_sub(drag.grab);
+            let outer = crate::ui::clamp_stacked_fleet(requested, facts.available);
+            (PaneSizes { stacked_fleet_rows: Some(outer), ..sizes }, outer)
+        }
+        Divider::StackedWork => {
+            let requested = row
+                .saturating_add(1)
+                .saturating_sub(facts.work.y)
+                .saturating_sub(drag.grab);
+            let outer =
+                crate::ui::clamp_stacked_work(requested, facts.available, facts.fleet.height);
+            (PaneSizes { stacked_work_rows: Some(outer), ..sizes }, outer)
+        }
+    }
+}
+
+/// Put one divider back where the layout would have it, and say so.
+///
+/// It derives for itself whether that divider had moved: an override already `None` gets the
+/// mockup's `panes are already at their default sizes` — the same sentence `Ctrl-Home` gets — and
+/// one that was `Some` gets `reset_notice(divider)`.
+pub fn reset_divider(divider: Divider, sizes: PaneSizes) -> (PaneSizes, String) {
+    let (after, moved) = match divider {
+        Divider::LeftColumn => {
+            (PaneSizes { left_column: None, ..sizes }, sizes.left_column.is_some())
+        }
+        Divider::SplitFleet => {
+            (PaneSizes { split_fleet_rows: None, ..sizes }, sizes.split_fleet_rows.is_some())
+        }
+        Divider::StackedFleet => {
+            (PaneSizes { stacked_fleet_rows: None, ..sizes }, sizes.stacked_fleet_rows.is_some())
+        }
+        Divider::StackedWork => {
+            (PaneSizes { stacked_work_rows: None, ..sizes }, sizes.stacked_work_rows.is_some())
+        }
+    };
+    if moved {
+        (after, reset_notice(divider))
+    } else {
+        (sizes, "panes are already at their default sizes".to_string())
+    }
+}
+
 pub fn resize_action(
     resize: Resize,
     sizes: PaneSizes,
@@ -396,7 +528,7 @@ pub fn resize_action(
             }
             ResizeOutcome {
                 sizes: PaneSizes { left_column: Some(want), ..sizes },
-                notice: Some(format!("left column {want} cells")),
+                notice: Some(size_notice(Divider::LeftColumn, want)),
             }
         }
         Resize::Shorter | Resize::Taller => {
@@ -413,7 +545,7 @@ pub fn resize_action(
                 }
                 return ResizeOutcome {
                     sizes: PaneSizes { split_fleet_rows: Some(want), ..sizes },
-                    notice: Some(format!("Fleet {want} rows")),
+                    notice: Some(size_notice(Divider::SplitFleet, want)),
                 };
             }
             // Stacked: the divider BELOW the focused pane, which is why Session has none.
@@ -428,7 +560,7 @@ pub fn resize_action(
                     }
                     ResizeOutcome {
                         sizes: PaneSizes { stacked_fleet_rows: Some(want), ..sizes },
-                        notice: Some(format!("Fleet {want} rows")),
+                        notice: Some(size_notice(Divider::StackedFleet, want)),
                     }
                 }
                 PaneFocus::Work => {
@@ -442,7 +574,7 @@ pub fn resize_action(
                     }
                     ResizeOutcome {
                         sizes: PaneSizes { stacked_work_rows: Some(want), ..sizes },
-                        notice: Some(format!("Work {want} rows")),
+                        notice: Some(size_notice(Divider::StackedWork, want)),
                     }
                 }
                 PaneFocus::Session => say("nothing below Session to move".into()),
@@ -3920,6 +4052,136 @@ mod tests {
             work: Rect::new(0, 10, 80, 8),
             session: Rect::new(0, 18, 80, 12),
         }
+    }
+
+    #[test]
+    fn a_drag_moves_the_divider_to_the_pointer() {
+        let facts = split_facts();
+        let (sizes, outer) = drag_action(
+            Drag { divider: Divider::LeftColumn, grab: 0 },
+            55,
+            5,
+            PaneSizes::default(),
+            facts,
+        );
+        assert_eq!(outer, 56);
+        assert_eq!(sizes, PaneSizes { left_column: Some(56), ..PaneSizes::default() });
+    }
+
+    #[test]
+    fn a_drag_keeps_the_grabbed_cell_under_the_pointer() {
+        let facts = split_facts();
+        let (sizes, outer) = drag_action(
+            Drag { divider: Divider::LeftColumn, grab: 1 },
+            55,
+            5,
+            PaneSizes::default(),
+            facts,
+        );
+        assert_eq!(outer, 55);
+        assert_eq!(sizes.left_column, Some(55));
+    }
+
+    #[test]
+    fn a_drag_past_a_floor_stops_at_the_floor() {
+        let facts = split_facts();
+        let (sizes, outer) =
+            drag_action(Drag { divider: Divider::LeftColumn, grab: 0 }, 2, 5, PaneSizes::default(), facts);
+        assert_eq!(outer, crate::ui::MIN_PANE_COLUMNS);
+        assert_eq!(sizes.left_column, Some(crate::ui::MIN_PANE_COLUMNS));
+    }
+
+    #[test]
+    fn a_drag_past_a_ceiling_stops_at_the_ceiling() {
+        let facts = split_facts();
+        let (sizes, outer) = drag_action(
+            Drag { divider: Divider::LeftColumn, grab: 0 },
+            250,
+            5,
+            PaneSizes::default(),
+            facts,
+        );
+        let ceiling = facts.width - crate::ui::MIN_PANE_COLUMNS;
+        assert_eq!(outer, ceiling);
+        assert_eq!(sizes.left_column, Some(ceiling));
+    }
+
+    #[test]
+    fn a_pointer_above_the_pane_does_not_wrap_the_size() {
+        let facts = split_facts();
+        let (sizes, outer) =
+            drag_action(Drag { divider: Divider::SplitFleet, grab: 0 }, 5, 0, PaneSizes::default(), facts);
+        assert_eq!(outer, crate::ui::MIN_PANE_ROWS, "no u16 wrap above the pane's own origin");
+        assert_eq!(sizes.split_fleet_rows, Some(crate::ui::MIN_PANE_ROWS));
+    }
+
+    #[test]
+    fn each_divider_writes_its_own_stored_size() {
+        let split = split_facts();
+        let (sizes, _) =
+            drag_action(Drag { divider: Divider::LeftColumn, grab: 0 }, 55, 5, PaneSizes::default(), split);
+        assert!(sizes.split_fleet_rows.is_none() && sizes.stacked_fleet_rows.is_none());
+
+        let (sizes, outer) =
+            drag_action(Drag { divider: Divider::SplitFleet, grab: 0 }, 5, 12, PaneSizes::default(), split);
+        assert_eq!(sizes.split_fleet_rows, Some(outer));
+        assert!(sizes.left_column.is_none() && sizes.stacked_work_rows.is_none());
+
+        let stacked = stacked_facts();
+        let (sizes, outer) = drag_action(
+            Drag { divider: Divider::StackedFleet, grab: 0 },
+            5,
+            12,
+            PaneSizes::default(),
+            stacked,
+        );
+        assert_eq!(sizes.stacked_fleet_rows, Some(outer));
+        assert!(sizes.stacked_work_rows.is_none());
+
+        let (sizes, outer) = drag_action(
+            Drag { divider: Divider::StackedWork, grab: 0 },
+            5,
+            20,
+            PaneSizes::default(),
+            stacked,
+        );
+        assert_eq!(sizes.stacked_work_rows, Some(outer));
+        assert!(sizes.stacked_fleet_rows.is_none());
+    }
+
+    #[test]
+    fn a_divider_size_is_worded_in_one_place() {
+        assert_eq!(size_notice(Divider::LeftColumn, 56), "left column 56 cells");
+        assert_eq!(size_notice(Divider::SplitFleet, 16), "Fleet 16 rows");
+        assert_eq!(size_notice(Divider::StackedFleet, 16), "Fleet 16 rows");
+        assert_eq!(size_notice(Divider::StackedWork, 12), "Work 12 rows");
+
+        assert_eq!(
+            reset_notice(Divider::LeftColumn),
+            format!("left column back to {} cells", crate::ui::LEFT_COLUMN)
+        );
+        assert_eq!(reset_notice(Divider::SplitFleet), "Fleet back to its own height");
+        assert_eq!(reset_notice(Divider::StackedWork), "Work back to its own height");
+    }
+
+    #[test]
+    fn resetting_one_divider_clears_that_divider_alone() {
+        let sizes = PaneSizes {
+            left_column: Some(56),
+            split_fleet_rows: Some(16),
+            ..PaneSizes::default()
+        };
+        let (after, notice) = reset_divider(Divider::LeftColumn, sizes);
+        assert_eq!(after.left_column, None);
+        assert_eq!(after.split_fleet_rows, Some(16), "the other divider is untouched");
+        assert_eq!(notice, reset_notice(Divider::LeftColumn));
+    }
+
+    #[test]
+    fn resetting_a_divider_that_has_not_moved_says_so() {
+        let (after, notice) = reset_divider(Divider::LeftColumn, PaneSizes::default());
+        assert_eq!(after, PaneSizes::default());
+        assert_eq!(notice, "panes are already at their default sizes");
     }
 
     #[test]

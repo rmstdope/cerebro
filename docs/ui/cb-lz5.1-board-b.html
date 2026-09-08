@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-lz5.1 — Board B: one section, split by a suffix</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 78rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .4rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  p.lede { color: var(--dim); margin: 0 0 1.4rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .6rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.4; }
+  .r{color:#f0776c}.g{color:#7ee787}.y{color:#e3b341}.d{color:#8b949e}.b{color:#79c0ff;font-weight:bold}
+  .m{color:#d2a8ff}
+</style></head><body>
+<h1>cb-lz5.1 — Board <b>B</b>: no new section; the stage rides on the bead's own line</h1>
+<p class="lede">The Work pane keeps exactly the five bead sections it has. A bead whose experience is agreed sits in <b>Unplanned</b> with every other bead nobody has planned — because that is what it still is — and carries a dim <code>· agreed</code> after its title. Nothing is added to the pane, nothing moves, and a navigator who never runs the two-agent variant sees no change at all.</p>
+
+<h2>1. The fleet running the two-agent variant</h2>
+<pre><span class="d">┌ Fleet ───────────────────────────────┐┌ Session — Turing ─────────────────────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle                     <span class="d">││</span> ● Turing — implementation-design                           <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Ada       working  agree  cb-abc   <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Turing    working  design cb-def   <span class="d">││</span> Reading the agreed experience for cb-def.                  <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Psylocke  standby                  <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Forge     standby                  <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9   <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Storm     standby         <span class="y">→ 0 free</span> <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘│</span>                                                            <span class="d">│</span>
+<span class="d">┌ Work ────────────────────────────────┐│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Claimed 1                            <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that keeps…     <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Planned, unclaimed 0                 <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   (none)                             <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Being planned 2                      <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-abc P2 Row limit settable f…    <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-def P3 The suite runner names…  <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Unplanned 5                          <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-9qm P1 Zooming out no <span class="m">· agreed</span> <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-lor P2 Row limit settable fro…  <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-41r P3 Remember the z <span class="m">· agreed</span> <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘└────────────────────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
+<p class="note">The cost of B, stated plainly: the suffix competes with the title for a 40-cell column, so a title is truncated earlier on exactly the beads that carry it — and the count on the <i>Unplanned</i> header no longer tells the navigator how much work is still waiting for a designer.</p>
+
+<h2>2. In a wide left column, where there is room</h2>
+<pre><span class="d">┌ Work ────────────────────────────────────────────────┐</span>
+<span class="d">│</span> Unplanned 5                                          <span class="d">│</span>
+<span class="d">│</span>   cb-9qm P1 Zooming out no longer shrinks  <span class="m">· agreed</span> <span class="d">│</span>
+<span class="d">│</span>   cb-lor P2 Row limit settable from the list pane    <span class="d">│</span>
+<span class="d">│</span>   cb-41r P3 Remember the zoom level across  <span class="m">· agreed</span><span class="d">│</span>
+<span class="d">└──────────────────────────────────────────────────────┘</span></pre>
+
+<h2>3. Nothing at that stage — nothing to see</h2>
+<p class="note">No suffix anywhere, and the pane is byte-identical to today's.</p>
+<pre><span class="d">┌ Work ────────────────────────────────┐</span>
+<span class="d">│</span> Claimed 1                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that keeps…     <span class="d">│</span>
+<span class="d">│</span> Planned, unclaimed 2                 <span class="d">│</span>
+<span class="d">│</span>   cb-9qm P1 Zooming out no longer s… <span class="d">│</span>
+<span class="d">│</span>   cb-41r P3 Remember the zoom level… <span class="d">│</span>
+<span class="d">│</span> Unplanned 3                          <span class="d">│</span>
+<span class="d">│</span>   cb-lor P2 Row limit settable fro…  <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span></pre>
+
+<h2>4. The two standby rows, waiting</h2>
+<pre><span class="d">│</span> <span class="b">◌</span> Ada       standby         <span class="y">→ agreed 2 of 4</span>  <span class="d">two beads have an agreed experience, four wanted</span>
+<span class="d">│</span> <span class="b">◌</span> Turing    standby         <span class="y">→ buffer 0 of 4</span>  <span class="d">no planned bead, four wanted</span>
+<span class="d">│</span> <span class="b">◌</span> Turing    standby         <span class="y">→ 0 free</span>         <span class="d">nothing at the agreed stage for it to design</span></pre>
+
+<h2>5. A bead sent back</h2>
+<p class="note">The suffix simply goes. The <i>Unplanned</i> count does not move, so nothing on the pane says it happened.</p>
+<pre><span class="d">┌ Work ────────────────────────────────┐</span>
+<span class="d">│</span> Unplanned 5                          <span class="d">│</span>   <span class="d">unchanged — was 5 before the send-back too</span>
+<span class="d">│</span>   cb-9qm P1 Zooming out no <span class="m">· agreed</span> <span class="d">│</span>
+<span class="d">│</span>   <span class="r">cb-abc P2 Row limit settable fro…</span>  <span class="d">│</span>   <span class="d">lost its suffix; nothing else changed</span>
+<span class="d">│</span>   cb-41r P3 Remember the z <span class="m">· agreed</span> <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span></pre>
+</body></html>

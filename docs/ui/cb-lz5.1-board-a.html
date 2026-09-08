@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-lz5.1 — Board A: the stage is a section of its own</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 78rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .4rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  p.lede { color: var(--dim); margin: 0 0 1.4rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .6rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.4; }
+  .r{color:#f0776c}.g{color:#7ee787}.y{color:#e3b341}.d{color:#8b949e}.b{color:#79c0ff;font-weight:bold}
+  .m{color:#d2a8ff}
+</style></head><body>
+<h1>cb-lz5.1 — Board <b>A</b>: the new stage gets a section of its own</h1>
+<p class="lede">A bead whose experience is agreed but whose build is not designed is a real waiting state — it is what the implementation-design agent picks up. In A it has its own Work-pane section, <b>Experience agreed</b>, sitting between <i>Being planned</i> and <i>Unplanned</i>, so the queue reads in the order work actually moves through it. It behaves like every other bead section: the cursor walks it, the priority keys work on it, <code>Enter</code> pins the bead.</p>
+
+<h2>1. The fleet running the two-agent variant</h2>
+<p class="note">The roster carries <code>experience</code> and <code>implementation-design</code> instead of <code>planner</code>. Two beads have an agreed experience and none is being designed yet, so Ada is idle and Turing has just been started.</p>
+<pre><span class="d">┌ Fleet ───────────────────────────────┐┌ Session — Turing ─────────────────────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle                     <span class="d">││</span> ● Turing — implementation-design                           <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Ada       working  agree  cb-abc   <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Turing    working  design cb-def   <span class="d">││</span> Reading the agreed experience for cb-def.                  <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Psylocke  standby                  <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Forge     standby                  <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9   <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Storm     standby         <span class="y">→ 0 free</span> <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘│</span>                                                            <span class="d">│</span>
+<span class="d">┌ Work ────────────────────────────────┐│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Claimed 1                            <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that keeps…     <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Planned, unclaimed 0                 <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   (none)                             <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Being planned 2                      <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-abc P2 Row limit settable f…    <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-def P3 The suite runner names…  <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="m">Experience agreed 2</span>                  <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   <span class="m">cb-9qm P1 Zooming out no longer s…</span> <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   <span class="m">cb-41r P3 Remember the zoom level…</span> <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Unplanned 3                          <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-lor P2 Row limit settable fro…  <span class="d">││</span>                                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘└────────────────────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
+
+<h2>2. Nothing at that stage — the section disappears entirely</h2>
+<p class="note">Same rule the Sweeps and Health sections already follow: an empty section is not drawn at all, so an ordinary board looks exactly as it does today.</p>
+<pre><span class="d">┌ Work ────────────────────────────────┐</span>
+<span class="d">│</span> Claimed 1                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that keeps…     <span class="d">│</span>
+<span class="d">│</span> Planned, unclaimed 2                 <span class="d">│</span>
+<span class="d">│</span>   cb-9qm P1 Zooming out no longer s… <span class="d">│</span>
+<span class="d">│</span>   cb-41r P3 Remember the zoom level… <span class="d">│</span>
+<span class="d">│</span> Unplanned 3                          <span class="d">│</span>
+<span class="d">│</span>   cb-lor P2 Row limit settable fro…  <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span></pre>
+
+<h2>3. The two standby rows, waiting</h2>
+<p class="note">Each agent's row says what it is waiting for in the words of its own stage — the same shape as the planner's <code>→ buffer 1 of 4</code> today.</p>
+<pre><span class="d">│</span> <span class="b">◌</span> Ada       standby         <span class="y">→ agreed 2 of 4</span>  <span class="d">the experience agent: two beads have an agreed experience,</span>
+<span class="d">                                                    four are wanted</span>
+<span class="d">│</span> <span class="b">◌</span> Turing    standby         <span class="y">→ buffer 0 of 4</span>  <span class="d">the implementation-design agent: no planned bead, four wanted</span>
+<span class="d">│</span> <span class="b">◌</span> Turing    standby         <span class="y">→ 0 free</span>         <span class="d">nothing at the agreed stage for it to design</span></pre>
+
+<h2>4. A bead sent back reads as a first-class thing to look at</h2>
+<p class="note">Sent back means the experience agent must look again, so the bead leaves <i>Experience agreed</i> and returns to <i>Unplanned</i>, where the experience agent takes it. The section count moves, which is the signal.</p>
+<pre><span class="d">┌ Work ────────────────────────────────┐</span>
+<span class="d">│</span> <span class="m">Experience agreed 1</span>                  <span class="d">│</span>   <span class="d">was 2 — cb-abc went back</span>
+<span class="d">│</span>   <span class="m">cb-41r P3 Remember the zoom level…</span> <span class="d">│</span>
+<span class="d">│</span> Unplanned 4                          <span class="d">│</span>   <span class="d">was 3</span>
+<span class="d">│</span>   <span class="r">cb-abc P2 Row limit settable fro…</span>  <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span></pre>
+</body></html>

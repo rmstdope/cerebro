@@ -48,6 +48,10 @@ done
 [ -n "$sub" ] || sub="unknown"
 argv="$stub_dir/argv.$sub"
 for a in "$@"; do printf 'ARG:%s\n' "$a" >> "$argv"; done
+# One shared, ordered log as well: argv.<sub> cannot show that `reopen' preceded the assignee
+# clear, and that ordering is load-bearing.
+printf 'CALL:%s\n' "$sub" >> "$stub_dir/argv.all"
+for a in "$@"; do printf 'ARG:%s\n' "$a" >> "$stub_dir/argv.all"; done
 if [ "$sub" = "show" ]; then
   n=1
   [ -f "$stub_dir/show.n" ] && n="$(cat "$stub_dir/show.n")"
@@ -211,6 +215,11 @@ argv_has_pair update --remove-label "verdict:stale" \
 [ "$(grep -n 'ARG:--assignee' "$stub_dir/argv.update" | head -1 | cut -d: -f1)" \
   -lt "$(grep -n 'ARG:--priority=0' "$stub_dir/argv.update" | head -1 | cut -d: -f1)" ] \
   || fail "reopens-unassigns-and-records: the assignee clear did not come before the P0"
+# And across subcommands: `bd reopen' must precede the assignee clear, because the clear is refused
+# while the bead is still `in_progress' and held by somebody else. argv.<sub> cannot see this.
+[ "$(grep -n 'CALL:reopen' "$stub_dir/argv.all" | head -1 | cut -d: -f1)" \
+  -lt "$(grep -n 'ARG:--assignee' "$stub_dir/argv.all" | head -1 | cut -d: -f1)" ] \
+  || fail "reopens-unassigns-and-records: the reopen did not precede the assignee clear"
 pass "reopens-unassigns-and-records"
 
 # --- does-not-reopen-an-already-open-bead -------------------------------------------------------
@@ -309,5 +318,48 @@ run tt-a --sha "$sha40" --notes "n" --fault build
 [ ! -f "$stub_dir/argv.dolt" ] \
   || fail "a-failed-bd-call-stops-the-run: a half-reopen was pushed"
 pass "a-failed-bd-call-stops-the-run"
+
+# --- a-flag-with-no-value-is-a-usage-error ------------------------------------------------------
+#
+# `shift 2` with one argument left returns non-zero and `set -euo pipefail` kills the script before
+# any validation - exit 1 with no message, where exit 1 is documented as "a bd call failed; the bead
+# may be half-reopened". The one thing that status tells the reader would be wrong.
+reset_stub
+set_show '[{"id":"tt-a","status":"closed","parent":null}]'
+run tt-a --notes n --fault build --sha
+[ "$status" -eq 2 ] || fail "a-flag-with-no-value-is-a-usage-error: expected exit 2, got $status"
+[ -n "$err" ] || fail "a-flag-with-no-value-is-a-usage-error: nothing on stderr"
+[ ! -f "$stub_dir/argv.update" ] \
+  || fail "a-flag-with-no-value-is-a-usage-error: a bd update was made anyway"
+pass "a-flag-with-no-value-is-a-usage-error"
+
+# --- a-failed-parent-show-stops-the-run ---------------------------------------------------------
+#
+# "bd could not answer" must not be indistinguishable from "there is no parent". A Dolt-remote
+# timeout on the parent's `show` would otherwise skip the whole chain, push, and exit 0 - telling
+# the navigator the reopen succeeded while the closed parent keeps its status and its assignee.
+reset_stub
+set_show '[{"id":"tt-a","status":"closed","parent":"tt-p"}]'
+printf '1' > "$stub_dir/exit.show"
+run tt-a --sha "$sha40" --notes "n" --fault build
+[ "$status" -eq 1 ] || fail "a-failed-parent-show-stops-the-run: expected exit 1, got $status"
+[ -n "$err" ] || fail "a-failed-parent-show-stops-the-run: nothing on stderr"
+[ ! -f "$stub_dir/argv.dolt" ] \
+  || fail "a-failed-parent-show-stops-the-run: a half-reopen was pushed"
+pass "a-failed-parent-show-stops-the-run"
+
+# --- a-failed-first-show-is-not-reported-as-a-typo ----------------------------------------------
+#
+# A bd outage reported as `no such bead' sends the reader hunting for a typo that is not there.
+reset_stub
+printf '1' > "$stub_dir/exit.show"
+run tt-a --sha "$sha40" --notes "n" --fault build
+[ "$status" -eq 1 ] \
+  || fail "a-failed-first-show-is-not-reported-as-a-typo: expected exit 1, got $status"
+grep -qi 'no such bead' <<<"$err" \
+  && fail "a-failed-first-show-is-not-reported-as-a-typo: a bd failure was called a missing bead"
+[ ! -f "$stub_dir/argv.update" ] \
+  || fail "a-failed-first-show-is-not-reported-as-a-typo: a bd update was made anyway"
+pass "a-failed-first-show-is-not-reported-as-a-typo"
 
 suite_passed

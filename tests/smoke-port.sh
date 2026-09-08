@@ -245,8 +245,10 @@ s.listen(1)
 sys.stderr.write("bound\\n")
 sys.stderr.flush()
 time.sleep(30)' $first_block 2>"$tmp/bound" &
-  binder=$!
-  listener=$binder
+  # Registered as it is captured, not on the line after: an errexit death in between would leave
+  # `listener' empty and the socket bound for its full sleep, poisoning the next run's own bind.
+  listener=$!
+  binder=$listener
   for _ in $(seq 1 100); do
     grep -q bound "$tmp/bound" 2>/dev/null && break
     sleep 0.1
@@ -329,8 +331,10 @@ s.listen(1)
 sys.stderr.write("bound\\n")
 sys.stderr.flush()
 time.sleep(30)' "$first_block" 2>"$tmp/bound" &
-  binder=$!
-  listener=$binder
+  # Registered as it is captured, not on the line after: an errexit death in between would leave
+  # `listener' empty and the socket bound for its full sleep, poisoning the next run's own bind.
+  listener=$!
+  binder=$listener
   for _ in $(seq 1 100); do
     grep -q bound "$tmp/bound" 2>/dev/null && break
     sleep 0.1

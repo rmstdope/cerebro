@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-bch — the agreed surface</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 78rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.4rem 0 .4rem; padding-top: 1.1rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.4rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 1.6rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .5rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.4; }
+  .r { color:#f0776c; } .g { color:#7ee787; } .y { color:#e3b341; } .d { color:#8b949e; }
+  .b { color:#79c0ff; font-weight:bold; }
+  blockquote { margin:.7rem 0; padding:.5rem .9rem; border-left:3px solid var(--line);
+               color:var(--dim); font-size:13.5px; }
+  table { border-collapse: collapse; font-size: 13.5px; margin: .6rem 0; }
+  td, th { border: 1px solid var(--line); padding: .35rem .6rem; text-align: left; vertical-align: top; }
+</style>
+</head>
+<body>
+<h1>cb-bch — the surface the navigator approved, 2026-09-08</h1>
+<p class="lede">Two rounds. This file is the specification for <b>resizable panes in <code>cerebro-tui</code></b>. Where this file and either child bead's plan disagree, this file is right. It applies to the terminal view alone: <code>M-x cerebro</code> is read-only in this repository and is deliberately not given the terminal view's newer surfaces.</p>
+<p class="lede">The work is split. <b>cb-bch.1</b> is the size state and the keyboard chords; <b>cb-bch.2</b> is mouse capture and everything the mouse does. Everything on this page under <i>The chords</i> is cb-bch.1; everything under <i>The mouse</i> is cb-bch.2.</p>
+<h2>1. What is fixed today</h2>
+<p class="note">At a hundred columns and wider the left column is a hard 40 cells, Fleet takes its natural height capped at half that column, and Work gets the rest. None of it can be moved.</p>
+<pre><span class="d">┌ Fleet ───────────────────────────────</span><span class="d">┐</span><span class="d">┌</span><span class="d"> Session — Cyclops ─────────────────────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch   <span class="d">│</span><span class="d">│</span> ● Cyclops — implementer                                    <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Beast     standby         → 0 free <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle                     <span class="d">│</span><span class="d">│</span> Running the gate before opening the                        <span class="d">│</span>
+<span class="d">│</span> <span class="y">?</span> Psylocke  asking   verify cb-7nx   <span class="d">│</span><span class="d">│</span> pull request for cb-2e9.                                   <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Cypher    standby                  <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Moira     standby                  <span class="d">│</span><span class="d">│</span> $ bash tests/gate                                          <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Forge     standby                  <span class="d">│</span><span class="d">│</span>   suite-runner: 14 suites, 10 jobs                         <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9   <span class="d">│</span><span class="d">│</span>   ok  tests/launchers.sh                                   <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Storm     working  build  cb-cz7   <span class="d">│</span><span class="d">│</span>   ok  tests/consumer-lib.sh                                <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Wolverine standby                  <span class="d">│</span><span class="d">│</span>   …                                                        <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">┌ Work ────────────────────────────────┐</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Health 4                     h report<span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   Psylocke asking 74m — cb-5kk       <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   Xavier started 15× in 24h          <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                             <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-3in claimed by Cyclops, merg…   <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Claimed 4                            <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that…           <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-cz7 P1 A session is started o…  <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span><span class="d">└────────────────────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
+<h2>2. The chords — cb-bch.1</h2>
+<p class="note"><code>Ctrl-←</code> and <code>Ctrl-→</code> move the vertical divider one cell; <code>Ctrl-↑</code> and <code>Ctrl-↓</code> move a horizontal divider one row; <code>Ctrl-Home</code> puts every divider back. They act from any focus and are held back from a focused live session, exactly as <code>Tab</code>, <code>Shift-Tab</code> and <code>F1</code>–<code>F3</code> already are.</p>
+<h3><code>Ctrl-→</code> ×16 — the left column widens to 56</h3>
+<pre><span class="y"> left column 56 cells</span>
+<span class="d">┌ Fleet ───────────────────────────────────────────────</span><span class="b">┐</span><span class="b">┌</span><span class="d"> Session — Cyclops ─────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch                   <span class="b">│</span><span class="b">│</span> ● Cyclops — implementer                    <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Beast     standby         → 0 free                 <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle                                     <span class="b">│</span><span class="b">│</span> Running the gate before opening the        <span class="d">│</span>
+<span class="d">│</span> <span class="y">?</span> Psylocke  asking   verify cb-7nx                   <span class="b">│</span><span class="b">│</span> pull request for cb-2e9.                   <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Cypher    standby                                  <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Moira     standby                                  <span class="b">│</span><span class="b">│</span> $ bash tests/gate                          <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Forge     standby                                  <span class="b">│</span><span class="b">│</span>   suite-runner: 14 suites, 10 jobs         <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9                   <span class="b">│</span><span class="b">│</span>   ok  tests/launchers.sh                   <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Storm     working  build  cb-cz7                   <span class="b">│</span><span class="b">│</span>   ok  tests/consumer-lib.sh                <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Wolverine standby                                  <span class="b">│</span><span class="b">│</span>   …                                        <span class="d">│</span>
+<span class="d">└──────────────────────────────────────────────────────┘</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">┌ Work ────────────────────────────────────────────────┐</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> Health 4                     h report                <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   Psylocke asking 74m — cb-5kk                       <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   Xavier started 15× in 24h                          <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                                             <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   cb-3in claimed by Cyclops, merg…                   <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> Claimed 4                                            <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that…                           <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   cb-cz7 P1 A session is started o…                  <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────────────────────┘</span><span class="d">└────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
+<h3><code>Ctrl-↓</code> ×4 — Fleet takes four more rows</h3>
+<p class="note">Fleet stops sizing itself to the roster the moment a divider is moved; it is what the navigator set until <code>Ctrl-Home</code>.</p>
+<pre><span class="y"> Fleet 16 rows</span>
+<span class="d">┌ Fleet ───────────────────────────────────────────────</span><span class="d">┐</span><span class="d">┌</span><span class="d"> Session — Cyclops ─────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch                   <span class="d">│</span><span class="d">│</span> ● Cyclops — implementer                    <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Beast     standby         → 0 free                 <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle                                     <span class="d">│</span><span class="d">│</span> Running the gate before opening the        <span class="d">│</span>
+<span class="d">│</span> <span class="y">?</span> Psylocke  asking   verify cb-7nx                   <span class="d">│</span><span class="d">│</span> pull request for cb-2e9.                   <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Cypher    standby                                  <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Moira     standby                                  <span class="d">│</span><span class="d">│</span> $ bash tests/gate                          <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Forge     standby                                  <span class="d">│</span><span class="d">│</span>   suite-runner: 14 suites, 10 jobs         <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9                   <span class="d">│</span><span class="d">│</span>   ok  tests/launchers.sh                   <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Storm     working  build  cb-cz7                   <span class="d">│</span><span class="d">│</span>   ok  tests/consumer-lib.sh                <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Wolverine standby                                  <span class="d">│</span><span class="d">│</span>   …                                        <span class="d">│</span>
+<span class="d">│</span>                                                      <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>                                                      <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>                                                      <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>                                                      <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="b">└──────────────────────────────────────────────────────┘</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="b">┌ Work ────────────────────────────────────────────────┐</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> Health 4                     h report                <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   Psylocke asking 74m — cb-5kk                       <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   Xavier started 15× in 24h                          <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                                             <span class="d">│</span><span class="d">│</span>                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────────────────────┘</span><span class="d">└────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
+<h3>The floors</h3>
+<p class="note">A chord that would take a pane past its floor or ceiling moves nothing and says so, rather than silently doing nothing.</p>
+<pre><span class="y"> left column is as narrow as it goes</span>
+<span class="d">┌ Fleet ───────────────</span><span class="b">┐</span><span class="b">┌</span><span class="d"> Session — Cyclops ─────────────────────────────────────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch<span class="b">│</span><span class="b">│</span> ● Cyclops — implementer                                                    <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Beast     standby         → 0 free<span class="b">│</span><span class="b">│</span>                                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle     <span class="b">│</span><span class="b">│</span> Running the gate before opening the                                        <span class="d">│</span>
+<span class="d">└──────────────────────┘</span><span class="b">│</span>                                                                            <span class="d">│</span>
+<span class="d">┌ Work ────────────────┐</span><span class="b">│</span>                                                                            <span class="d">│</span>
+<span class="d">│</span> Health 4                     h report<span class="b">│</span><span class="b">│</span>                                                                            <span class="d">│</span>
+<span class="d">│</span>   Psylocke asking 74m — cb-5kk<span class="b">│</span><span class="b">│</span> $ bash tests/gate                                                          <span class="d">│</span>
+<span class="d">│</span>   Xavier started 15× in 24h<span class="b">│</span><span class="b">│</span>   suite-runner: 14 suites, 10 jobs                                         <span class="d">│</span>
+<span class="d">└──────────────────────┘</span><span class="d">└────────────────────────────────────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
+<h3>Below a hundred columns the panes stack</h3>
+<p class="note">No vertical divider, and <b>two</b> horizontal ones. <code>Ctrl-↑</code>/<code>Ctrl-↓</code> move <b>the divider below the focused pane</b>: Fleet focused moves the Fleet/Work divider, Work focused moves the Work/Session divider, and from Session focus they say so and move nothing. <code>Ctrl-←</code>/<code>Ctrl-→</code> there say there is nothing to widen.</p>
+<pre><span class="y"> Fleet 8 rows</span>
+<span class="d">┌ Fleet ─────────────────────────────────────────────────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch                                         <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Beast     standby         → 0 free                                       <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle                                                           <span class="d">│</span>
+<span class="d">│</span> <span class="y">?</span> Psylocke  asking   verify cb-7nx                                         <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Cypher    standby                                                        <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Moira     standby                                                        <span class="d">│</span>
+<span class="b">└────────────────────────────────────────────────────────────────────────────┘</span>
+<span class="b">┌ Work ──────────────────────────────────────────────────────────────────────┐</span>
+<span class="d">│</span> Health 4                     h report                                      <span class="d">│</span>
+<span class="d">│</span>   Psylocke asking 74m — cb-5kk                                             <span class="d">│</span>
+<span class="d">│</span>   Xavier started 15× in 24h                                                <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                                                                   <span class="d">│</span>
+<span class="d">│</span>   cb-3in claimed by Cyclops, merg…                                         <span class="d">│</span>
+<span class="d">│</span> Claimed 4                                                                  <span class="d">│</span>
+<span class="d">└────────────────────────────────────────────────────────────────────────────┘</span>
+<span class="d">┌ Session — Cyclops ─────────────────────────────────────────────────────────┐</span>
+<span class="d">│</span> ● Cyclops — implementer                                                    <span class="d">│</span>
+<span class="d">│</span>                                                                            <span class="d">│</span>
+<span class="d">│</span> Running the gate before opening the                                        <span class="d">│</span>
+<span class="d">│</span> pull request for cb-2e9.                                                   <span class="d">│</span>
+<span class="d">└────────────────────────────────────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   Tab pane   q quit</span></pre>
+<h2>3. The mouse — cb-bch.2</h2>
+<p class="note">Mouse capture is on for the whole run. That takes the terminal's own click-drag text selection and its scroll wheel away over the whole window, including over a live agent session; most terminals give them back while a modifier is held (Option on macOS Terminal and iTerm2, Shift elsewhere), and that is the terminal's behaviour rather than something this program can promise. <b>The navigator accepted that cost knowingly.</b> Mouse events are never forwarded into a session's pty, so an agent in the Session pane sees no mouse at all.</p>
+<h3>Dragging</h3>
+<p class="note">Press on a divider and move: it follows the pointer live and both panes reflow every frame — the Session pane is a real pty, so the agent inside it is told its new size as the drag happens. A drag past a floor stops at the floor. Double-clicking one divider resets that divider alone.</p>
+<pre><span class="y"> left column 56 cells</span>
+<span class="d">┌ Fleet ───────────────────────────────────────────────</span><span class="b">┐</span><span class="b">┌</span><span class="d"> Session — Cyclops ─────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch                   <span class="b">│</span><span class="b">│</span> ● Cyclops — implementer                    <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Beast     standby         → 0 free                 <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle                                     <span class="b">│</span><span class="b">│</span> Running the gate before opening the        <span class="d">│</span>
+<span class="d">│</span> <span class="y">?</span> Psylocke  asking   verify cb-7nx                   <span class="b">│</span><span class="b">│</span> pull request for cb-2e9.                   <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Cypher    standby                                  <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Moira     standby                                  <span class="b">│</span><span class="b">│</span> $ bash tests/gate                          <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Forge     standby                                  <span class="b">│</span><span class="b">│</span>   suite-runner: 14 suites, 10 jobs         <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9                   <span class="b">│</span><span class="b">│</span>   ok  tests/launchers.sh                   <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Storm     working  build  cb-cz7                   <span class="b">│</span><span class="b">│</span>   ok  tests/consumer-lib.sh                <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Wolverine standby                                  <span class="b">│</span><span class="b">│</span>   …                                        <span class="d">│</span>
+<span class="d">└──────────────────────────────────────────────────────┘</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">┌ Work ────────────────────────────────────────────────┐</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> Health 4                     h report                <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   Psylocke asking 74m — cb-5kk                       <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   Xavier started 15× in 24h                          <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                                             <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   cb-3in claimed by Cyclops, merg…                   <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span> Claimed 4                                            <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that…                           <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">│</span>   cb-cz7 P1 A session is started o…                  <span class="b">│</span><span class="b">│</span>                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────────────────────┘</span><span class="d">└────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
+<h3>The wheel scrolls the pane under the pointer, and never changes focus</h3>
+<p class="note">Over Fleet the wheel moves the <b>selection</b>, which is what <code>↑</code>/<code>↓</code> do in that pane; over Work it moves the cursor; over Session it scrolls that pane. Whatever had the keyboard keeps it.</p>
+<pre><span class="y"> wheel over Session — scrolled to rows 40–61 of 118</span>
+<span class="d">┌ Fleet ───────────────────────────────</span><span class="d">┐</span><span class="d">┌</span><span class="d"> Session — Cyclops ─────────────────────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch   <span class="d">│</span><span class="d">│</span> ● Cyclops — implementer                                    <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Beast     standby         → 0 free <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle                     <span class="d">│</span><span class="d">│</span> Running the gate before opening the                        <span class="d">│</span>
+<span class="d">│</span> <span class="y">?</span> Psylocke  asking   verify cb-7nx   <span class="d">│</span><span class="d">│</span> pull request for cb-2e9.                                   <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Cypher    standby                  <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Moira     standby                  <span class="d">│</span><span class="d">│</span> $ bash tests/gate                                          <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Forge     standby                  <span class="d">│</span><span class="d">│</span>   suite-runner: 14 suites, 10 jobs                         <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9   <span class="d">│</span><span class="d">│</span>   ok  tests/launchers.sh                                   <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Storm     working  build  cb-cz7   <span class="d">│</span><span class="d">│</span>   ok  tests/consumer-lib.sh                                <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Wolverine standby                  <span class="d">│</span><span class="d">│</span>   …                                                        <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">┌ Work ────────────────────────────────┐</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Health 4                     h report<span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   Psylocke asking 74m — cb-5kk       <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   Xavier started 15× in 24h          <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                             <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-3in claimed by Cyclops, merg…   <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Claimed 4                            <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that…           <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-cz7 P1 A session is started o…  <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span><span class="d">└────────────────────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
+<h3>A click selects and focuses</h3>
+<p class="note">Clicking a Fleet row selects that agent and focuses Fleet; clicking a selectable Work row moves the cursor there and focuses Work; clicking the Session pane focuses it, which hands the keyboard to a live agent. <code>Tab</code> is the way back, as it already is. A click on a heading, a blank or any other unselectable line focuses that pane and changes nothing else.</p>
+<pre><span class="y"> clicked Storm</span>
+<span class="d">┌ Fleet ───────────────────────────────</span><span class="d">┐</span><span class="d">┌</span><span class="d"> Session — Cyclops ─────────────────────────────────────────┐</span>
+<span class="d">│</span> <span class="g">●</span> Xavier    working  plan   cb-bch   <span class="d">│</span><span class="d">│</span> ● Cyclops — implementer                                    <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Beast     standby         → 0 free <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cerebro   idle                     <span class="d">│</span><span class="d">│</span> Running the gate before opening the                        <span class="d">│</span>
+<span class="d">│</span> <span class="y">?</span> Psylocke  asking   verify cb-7nx   <span class="d">│</span><span class="d">│</span> pull request for cb-2e9.                                   <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Cypher    standby                  <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Moira     standby                  <span class="d">│</span><span class="d">│</span> $ bash tests/gate                                          <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Forge     standby                  <span class="d">│</span><span class="d">│</span>   suite-runner: 14 suites, 10 jobs                         <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Cyclops   working  build  cb-2e9   <span class="d">│</span><span class="d">│</span>   ok  tests/launchers.sh                                   <span class="d">│</span>
+<span class="d">│</span> <span class="g">●</span> Storm     working  build  cb-cz7   <span class="d">│</span><span class="d">│</span>   ok  tests/consumer-lib.sh                                <span class="d">│</span>
+<span class="d">│</span> <span class="b">◌</span> Wolverine standby                  <span class="d">│</span><span class="d">│</span>   …                                                        <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">┌ Work ────────────────────────────────┐</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Health 4                     h report<span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   Psylocke asking 74m — cb-5kk       <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   Xavier started 15× in 24h          <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Sweeps 2                             <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-3in claimed by Cyclops, merg…   <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span> Claimed 4                            <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-2e9 P2 A rebase that…           <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">│</span>   cb-cz7 P1 A session is started o…  <span class="d">│</span><span class="d">│</span>                                                            <span class="d">│</span>
+<span class="d">└──────────────────────────────────────┘</span><span class="d">└────────────────────────────────────────────────────────────┘</span>
+<span class="d"> g refresh   h health   Tab pane   x run   q quit</span></pre>
+<h2>4. What is <i>not</i> remembered</h2>
+<p class="note">A size lasts until <code>cerebro-tui</code> exits and no longer. Nothing is written to disk: scroll offsets, focus, selection and the armed set are all memory-only in this crate by design, and the navigator chose to keep divider sizes in that company rather than introduce the crate's first on-disk preference. Sizes <b>are</b> kept per layout within one run, so narrowing the terminal below a hundred columns and widening it again restores what was set on the wide screen.</p>
+<h2>5. Every line it can say</h2>
+<p class="note">All of them in the header's notice slot, in gold, cleared by the next keystroke like every other notice.</p>
+<table><tr><th>When</th><th>The line</th></tr><tr><td>the vertical divider moves</td><td><code>left column 56 cells</code></td></tr><tr><td>a horizontal divider moves</td><td><code>Fleet 16 rows</code> · <code>Work 12 rows</code></td></tr><tr><td>a chord at the floor</td><td><code>left column is as narrow as it goes</code> · <code>Fleet is as short as it goes</code> · <code>Work is as short as it goes</code></td></tr><tr><td>a chord at the ceiling</td><td><code>left column is as wide as it goes</code> · <code>Fleet is as tall as it goes</code> · <code>Work is as tall as it goes</code></td></tr><tr><td><code>Ctrl-←</code>/<code>Ctrl-→</code> while the panes are stacked</td><td><code>nothing to widen while the panes are stacked</code></td></tr><tr><td><code>Ctrl-↑</code>/<code>Ctrl-↓</code> from Session focus, stacked</td><td><code>nothing below Session to move</code></td></tr><tr><td><code>Ctrl-Home</code> or a double-click with nothing moved</td><td><code>panes are already at their default sizes</code></td></tr><tr><td><code>Ctrl-Home</code> after something moved</td><td><code>panes back to their default sizes</code></td></tr><tr><td>double-click on one divider</td><td><code>left column back to 40 cells</code> · <code>Fleet back to its own height</code> · <code>Work back to its own height</code></td></tr></table>
+<h2>6. The hint line</h2>
+<p class="note"><code>^←→ size</code> joins the hint line at the optional rank — the same rank as <code>h health</code> — so it is offered unconditionally and is dropped first and alone when the screen narrows, never costing a whole tier of the hints the navigator asked by name to keep. It arrives with cb-bch.1 and is unchanged by cb-bch.2.</p>
+<pre><span class="d"> g refresh   h health   Tab pane   x run   </span><span class="b">^←→ size</span><span class="d">   q quit</span></pre>
+</body>
+</html>

@@ -42,6 +42,18 @@ test_base=39170
 first_block=$((test_base + 10))
 second_block=$((test_base + 20))
 
+# The background run of `smoke-port-skips-a-block-a-live-run-holds', so it can be killed however
+# this suite ends. Its command waits on a file inside the fixture, and the EXIT trap removes the
+# fixture without the wait noticing - so an assertion that fails between starting it and releasing
+# it would leave a shell spinning at twenty wakeups a second, for ever. The gate run that produces
+# one is a red one, which is the run an implementer repeats immediately (ah-dksm review, delta
+# round, finding 1).
+live_holder=""
+suite_cleanup() {
+  [[ -n "$live_holder" ]] || return 0
+  kill "$live_holder" 2>/dev/null || true
+}
+
 smoke_port() {
   # $1 = fixture root, rest = args
   local tmp="$1"
@@ -104,9 +116,9 @@ rm -rf "$tmp"
 pass "smoke-port-refuses-a-port-base-with-no-port-env"
 
 # --- smoke-port-exports-the-projects-port-variable-and-returns-the-command-status ---
-# Block k = 1, not k = 0: the base block overlaps whatever dev servers the project itself declares
-# (in this consumer, launch_desktop_port), which is why the hand-written snippet this replaces also started
-# one block up.
+# Block k = 1, not k = 0: the base block overlaps whatever dev servers the project itself
+# declares - launch_desktop_port, in this consumer - which is why the hand-written snippet this
+# replaces also started one block up.
 tmp="$(new_fixture)"
 declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_PORT_BASE"
 set +e
@@ -132,6 +144,7 @@ declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_
 smoke_port "$tmp" -- /bin/sh -c "echo started >'$tmp/started'
                                  while [ ! -f '$tmp/stop' ]; do sleep 0.05; done" >/dev/null 2>&1 &
 first=$!
+live_holder=$first
 cleanup_add "$tmp"
 for _ in $(seq 1 100); do
   [[ -f "$tmp/started" ]] && break
@@ -143,6 +156,7 @@ second="$(smoke_port "$tmp" -- /bin/sh -c 'echo $SMOKE_PORT_BASE' 2>/dev/null)"
   || fail "smoke-port-skips-a-block-a-live-run-holds: the second run got '$second', wanted $second_block"
 touch "$tmp/stop"
 wait "$first" 2>/dev/null || true
+live_holder=""
 pass "smoke-port-skips-a-block-a-live-run-holds"
 
 # --- smoke-port-releases-its-block-when-the-command-ends ---
@@ -252,6 +266,7 @@ fi
 # that fails leaves the flag in place for the case to match again, for ever. So it is tested, not
 # reasoned about (ah-dksm review, findings 2 and 3).
 tmp="$(new_fixture)"
+cleanup_add "$tmp"
 declare_conf "$tmp" "port_base $test_base" "port_env SMOKE_PORT_BASE"
 set +e
 out="$(smoke_port "$tmp" --blocks 2>&1)"
@@ -274,5 +289,61 @@ for bad in 0 x -1; do
 done
 rm -rf "$tmp"
 pass "smoke-port-refuses-a-blocks-count-that-is-not-a-positive-integer"
+
+# --- smoke-port-names-the-listening-port-of-a-block-it-reclaimed ---
+# The one branch the delta reshaped: a block whose lock is a ghost AND whose port is listening. The
+# reclaim succeeds and the probe then refuses it, so the diagnosis must be `(listening)' with the
+# holding pid - not `(taken)', which now means only that a live rival won the race in between. The
+# exit-3 line is the whole diagnosis an agent gets for a stuck run (ah-dksm review, finding 6).
+if ! command -v python3 >/dev/null 2>&1 || ! command -v lsof >/dev/null 2>&1; then
+  pass "smoke-port-names-the-listening-port-of-a-block-it-reclaimed (skipped: python3 or lsof is not on PATH)"
+else
+  tmp="$(new_fixture)"
+  cleanup_add "$tmp"
+  declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_PORT_BASE"
+  python3 -c 'import socket,sys,time
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(sys.argv[1])))
+s.listen(1)
+sys.stderr.write("bound\\n")
+sys.stderr.flush()
+time.sleep(30)' "$first_block" 2>"$tmp/bound" &
+  binder=$!
+  for _ in $(seq 1 100); do
+    grep -q bound "$tmp/bound" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q bound "$tmp/bound" 2>/dev/null \
+    || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: could not bind $first_block"
+
+  # A ghost's lock over the listening block: the reclaim must succeed and the probe must then win.
+  mkdir -p "$(lock_dir "$tmp")"
+  dead=$(bash -c 'echo $$')
+  printf '%s %s %s\n' "$dead" "$(date +%s)" "a run that is over" >"$(lock_dir "$tmp")/$first_block.lock"
+
+  set +e
+  out="$(smoke_port "$tmp" --blocks 1 -- /bin/sh -c ":" 2>&1)"
+  status=$?
+  set -e
+  [[ $status -eq 3 ]] \
+    || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: expected exit 3, got $status ($out)"
+  # The SUMMARY line, not the probe's own message: the probe says "already listening" whichever
+  # branch refused the block, so an assertion over the whole output passes against the shape this
+  # case exists to pin. What is being tested is the diagnosis the exit-3 line carries.
+  summary="$(grep "every block tried was taken" <<<"$out" || true)"
+  [[ -n "$summary" ]] \
+    || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: no exhaustion line: $out"
+  grep -q "$first_block(listening)" <<<"$summary" \
+    || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: summary does not blame the listening port: $summary"
+  grep -q "$binder" <<<"$out" \
+    || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: did not name the holding pid $binder: $out"
+  [[ -e "$(lock_dir "$tmp")/$first_block.lock" ]] \
+    && fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: kept the reservation it refused"
+  kill "$binder" 2>/dev/null || true
+  wait "$binder" 2>/dev/null || true
+  rm -rf "$tmp"
+  pass "smoke-port-names-the-listening-port-of-a-block-it-reclaimed"
+fi
 
 suite_passed

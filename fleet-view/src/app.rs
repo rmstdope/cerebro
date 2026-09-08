@@ -2114,12 +2114,39 @@ impl App {
     /// keyboard keeps it.
     fn wheel(
         &mut self,
-        _up: bool,
-        _column: u16,
-        _row: u16,
-        _metrics: Metrics,
-        _now: DateTime<Utc>,
+        up: bool,
+        column: u16,
+        row: u16,
+        metrics: Metrics,
+        now: DateTime<Utc>,
     ) {
+        let delta: isize = if up { -1 } else { 1 };
+        match mouse_target(column, row, self.layout) {
+            MouseTarget::Pane(PaneFocus::Fleet) => {
+                self.move_selection(delta, metrics.fleet.viewport_lines.max(1));
+            }
+            MouseTarget::Pane(PaneFocus::Work) => {
+                if !self.move_work_cursor(delta, metrics.work.viewport_lines.max(1), now) {
+                    // NOT through `focused_scroll_mut`, which reads `self.focus`: the wheel acts
+                    // on the pane under the POINTER, and that helper would scroll whichever pane
+                    // happens to be focused.
+                    self.work.scroll = if up {
+                        self.work.scroll.saturating_sub(1)
+                    } else {
+                        self.work.scroll.saturating_add(1)
+                    };
+                }
+            }
+            MouseTarget::Pane(PaneFocus::Session) => {
+                // The loop clamps this after the next frame, exactly as it does for the arrows.
+                self.session.scroll = if up {
+                    self.session.scroll.saturating_sub(WHEEL_LINES)
+                } else {
+                    self.session.scroll.saturating_add(WHEEL_LINES)
+                };
+            }
+            MouseTarget::Divider(_, _) | MouseTarget::Nothing => {}
+        }
     }
 
     pub fn on_key(
@@ -4466,6 +4493,92 @@ mod tests {
         app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at(0));
         assert!(app.drag.is_none());
         assert_eq!(app.notice.as_deref(), Some("something gold"), "a modal's own text survives");
+    }
+
+    fn some_metrics() -> Metrics {
+        let pane = PaneMetrics { content_lines: 200, viewport_lines: 8, inner_width: 38 };
+        Metrics { fleet: pane, work: pane, session: pane }
+    }
+
+    #[test]
+    fn the_wheel_over_an_unfocused_pane_scrolls_it_and_leaves_focus_alone() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.set_focus(PaneFocus::Fleet);
+        app.on_mouse(wheel(false, facts.session.x + 5, facts.session.y + 2), some_metrics(), at(0));
+        assert_eq!(app.session.scroll, WHEEL_LINES);
+        assert_eq!(app.focus, PaneFocus::Fleet, "the wheel never moves focus");
+
+        app.on_mouse(wheel(true, facts.session.x + 5, facts.session.y + 2), some_metrics(), at(0));
+        assert_eq!(app.session.scroll, 0);
+    }
+
+    #[test]
+    fn the_wheel_over_fleet_moves_the_selection_one_row() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.finish_refresh(Ok(vec![row("Xavier"), row("Beast"), row("Storm")]), at(0));
+        app.set_focus(PaneFocus::Session);
+        app.on_mouse(wheel(false, 5, facts.fleet.y + 2), some_metrics(), at(0));
+        assert_eq!(app.selected.as_deref(), Some("Beast"), "one row per notch, not three");
+        assert_eq!(app.focus, PaneFocus::Session);
+
+        app.on_mouse(wheel(true, 5, facts.fleet.y + 2), some_metrics(), at(0));
+        assert_eq!(app.selected.as_deref(), Some("Xavier"));
+    }
+
+    #[test]
+    fn the_wheel_over_work_moves_the_cursor_one_row() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.set_focus(PaneFocus::Fleet);
+        app.finish_sweep_refresh(
+            Ok(vec![judged("unclaim"), judged("reclaim"), judged("epic")]),
+            at(0),
+        );
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+        app.on_mouse(wheel(false, 5, facts.work.y + 2), some_metrics(), at(0));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("reclaim:cb-b".into())));
+        assert_eq!(app.focus, PaneFocus::Fleet, "still no focus change");
+        app.on_mouse(wheel(true, 5, facts.work.y + 2), some_metrics(), at(0));
+        assert_eq!(app.work_cursor, Some(WorkCursor::Finding("unclaim:cb-a".into())));
+    }
+
+    #[test]
+    fn the_wheel_over_work_scrolls_the_pane_when_there_is_no_cursor_to_move() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.on_mouse(wheel(false, 5, facts.work.y + 2), some_metrics(), at(0));
+        assert_eq!(app.work.scroll, 1, "the fallback the Work arms of `on_key` have");
+        app.on_mouse(wheel(true, 5, facts.work.y + 2), some_metrics(), at(0));
+        assert_eq!(app.work.scroll, 0);
+    }
+
+    #[test]
+    fn the_wheel_over_a_divider_does_nothing() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.on_mouse(wheel(false, facts.left_column - 1, 5), some_metrics(), at(0));
+        assert_eq!(app.work.scroll, 0);
+        assert_eq!(app.session.scroll, 0);
+        assert_eq!(app.panes, PaneSizes::default());
+    }
+
+    #[test]
+    fn a_pointer_that_only_moves_clears_no_notice() {
+        let mut app = mouse_app();
+        app.set_notice("left column 56 cells".to_string());
+        let moved = MouseEvent { kind: MouseEventKind::Moved, ..mouse_press(5, 5) };
+        app.on_mouse(moved, some_metrics(), at(0));
+        assert_eq!(app.notice.as_deref(), Some("left column 56 cells"));
+
+        // And neither does a button this view does not act on.
+        let right = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            ..mouse_press(5, 5)
+        };
+        app.on_mouse(right, some_metrics(), at(0));
+        assert_eq!(app.notice.as_deref(), Some("left column 56 cells"));
     }
 
     #[test]

@@ -145,6 +145,7 @@ for name in $(.claude/cerebro/scripts/roster --role ux) \
   fi
 done | sort > "$held"
 comm -23 "$labelled" "$held"                # labelled, held by nobody: abandoned
+rm -f "$labelled" "$held"
 ```
 
 **Two temporary files of your own, never fixed names.** Every pass of every agent at either stage
@@ -414,7 +415,7 @@ bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).labels // [
 two holds means two interviews, whoever started first, and writing anyway overwrites a record
 somebody else has just spent one on. Say in one line that you lost it and what you had agreed, tell
 the designer with the failure paragraph below — *somebody else is already working on this piece of
-work* — and end the pass. It is a backstop and worth being honest about: by the time it fires the
+work* — and end the pass, by *Ending a pass* below, worktree removal included. It is a backstop and worth being honest about: by the time it fires the
 interview is already spent, and it rescues the record rather than the hour.
 
 ```bash

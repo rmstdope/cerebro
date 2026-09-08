@@ -72,6 +72,7 @@ said `asking`; corrected").
 | Moment | Call |
 |---|---|
 | Startup, and any sweep run outside a release | `.claude/cerebro/scripts/agent-state Cerebro working --phase sweep --pid $PPID` |
+| A request for a new bead | `.claude/cerebro/scripts/agent-state Cerebro working --phase bead --pid $PPID` |
 | A release request | `.claude/cerebro/scripts/agent-state Cerebro working --phase release --pid $PPID` |
 | A triage pass — startup, a status turn, or a line the fleet view typed | `.claude/cerebro/scripts/agent-state Cerebro working --phase triage --pid $PPID` |
 | Every triage question | `.claude/cerebro/scripts/agent-state Cerebro asking --phase triage --pid $PPID`, and `working --phase triage` again once answered |

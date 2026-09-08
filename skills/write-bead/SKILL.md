@@ -31,7 +31,7 @@ One command's worth of searching, before the first question:
 ```bash
 bd dolt pull
 bd search "<the strongest noun of the request>"
-bd search --desc-contains "<the same noun>"
+bd search "<the same noun>" --desc-contains "<the same noun>"
 ```
 
 Two or three nouns, not the whole sentence. `bd search` includes closed beads by default, and that
@@ -97,7 +97,9 @@ Then report the id and the title back to the navigator.
 
 After filing, ask **once** whether to rank it now. If the navigator takes it, rank it through
 `agents/orchestrator.md`'s *Ranking the backlog* — that same pass, not a second one of your own. If
-they decline or do not answer, say the bead will come to the next ranking pass, and stop.
+they decline or do not answer, say the bead will come to the next ranking pass, and stop. Outside a
+Cerebro session — invoked by hand as `/write-bead` — there is no ranking pass to run: say the bead
+goes to the next one and stop there.
 
 Never rank it unasked.
 

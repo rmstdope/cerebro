@@ -33,7 +33,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::lifecycle::LastExit;
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
 use crate::app::{
-    self, App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics,
+    self, App, FleetBodyLine, Metrics, Pane, PaneContent, PaneFocus, PaneMetrics, PaneSizes,
 };
 use crate::lifecycle;
 use crate::model::{Bead, FleetRow, HealthTone, RowState};
@@ -204,7 +204,7 @@ pub fn metrics(app: &App, now: DateTime<Utc>, area: Rect) -> Metrics {
     }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
     let (_, fleet_rect, work_rect, session_rect) =
-        split(area, fleet_lines.len(), work_content_lines(app, now, area));
+        split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
     let work_inner_width = (work_rect.width as usize).saturating_sub(2);
     let work_lines = work_document(app, now, work_inner_width);
     let session_lines =
@@ -250,6 +250,7 @@ fn split(
     area: Rect,
     fleet_content_lines: usize,
     work_content_lines: usize,
+    sizes: PaneSizes,
 ) -> (Rect, Rect, Rect, Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
     let header = rows[0];
@@ -257,23 +258,39 @@ fn split(
     let fleet_natural = fleet_content_lines + 2;
 
     if area.width >= SPLIT_COLUMNS {
+        // The override is the navigator's; the fixed `LEFT_COLUMN` is what the layout would have
+        // had. Either way it goes through the same clamp `resize_action` asks, so a chord and a
+        // drawn border can never disagree about where the divider may go.
+        let left_width = clamp_left_column(sizes.left_column.unwrap_or(LEFT_COLUMN), area.width);
         let columns =
-            Layout::horizontal([Constraint::Length(LEFT_COLUMN), Constraint::Min(0)]).split(available);
+            Layout::horizontal([Constraint::Length(left_width), Constraint::Min(0)]).split(available);
         let left = columns[0];
-        let cap = ((left.height as usize) / 2).max(3);
-        let fleet_outer = fleet_natural.min(cap) as u16;
+        let cap = ((left.height as usize) / 2).max(MIN_PANE_ROWS as usize);
+        let natural = fleet_natural.min(cap) as u16;
+        let fleet_outer =
+            clamp_split_fleet(sizes.split_fleet_rows.unwrap_or(natural), left.height);
         let stacked =
             Layout::vertical([Constraint::Length(fleet_outer), Constraint::Min(0)]).split(left);
         return (header, stacked[0], stacked[1], columns[1]);
     }
 
     let height = available.height as usize;
-    let fleet_outer = fleet_natural.min((height / 3).max(3));
-    let remaining = height.saturating_sub(fleet_outer);
-    let work_outer = (work_content_lines + 2).min((remaining / 2).max(3)).min(remaining);
+    let natural_fleet = fleet_natural.min((height / 3).max(MIN_PANE_ROWS as usize)) as u16;
+    let fleet_outer =
+        clamp_stacked_fleet(sizes.stacked_fleet_rows.unwrap_or(natural_fleet), available.height);
+    let remaining = height.saturating_sub(fleet_outer as usize);
+    let natural_work =
+        (work_content_lines + 2).min((remaining / 2).max(MIN_PANE_ROWS as usize)).min(remaining) as u16;
+    // Work is clamped AFTER Fleet and against Fleet's clamped height, which is what makes growing
+    // Fleet take rows from Work and leave Session alone.
+    let work_outer = clamp_stacked_work(
+        sizes.stacked_work_rows.unwrap_or(natural_work),
+        available.height,
+        fleet_outer,
+    );
     let panes = Layout::vertical([
-        Constraint::Length(fleet_outer as u16),
-        Constraint::Length(work_outer as u16),
+        Constraint::Length(fleet_outer),
+        Constraint::Length(work_outer),
         Constraint::Min(0),
     ])
     .split(available);
@@ -360,7 +377,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, now: DateTime<Utc>) {
     }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
     let (header, fleet_rect, work_rect, session_rect) =
-        split(area, fleet_lines.len(), work_content_lines(app, now, area));
+        split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
     frame.render_widget(Paragraph::new(header_line(app, header.width)), header);
 
     let fleet_count = app.fleet.content.value().map(|rows| rows.len());
@@ -3178,6 +3195,96 @@ mod tests {
         assert_eq!(clamp_stacked_work(1, 30, 5), MIN_PANE_ROWS);
         assert_eq!(clamp_stacked_work(99, 30, 5), 30 - 5 - MIN_PANE_ROWS);
         assert_eq!(clamp_stacked_work(9, 10, 8), MIN_PANE_ROWS);
+    }
+
+    #[test]
+    fn default_pane_sizes_reproduce_the_fixed_split() {
+        // `PaneSizes::default()` must be exactly today's layout, split and stacked. The corners
+        // asserted here are the ones the two existing layout cases already assert; what this adds
+        // is that they still hold once `split` reads the sizes.
+        let app = supervising();
+        assert!(app.panes.is_default());
+
+        let wide = render(&app, 120, 30);
+        let fleet_row = top_corners(&wide)[0].0;
+        assert_eq!(corners_on_row(&wide, fleet_row), vec![0, LEFT_COLUMN - 1, LEFT_COLUMN, 119]);
+
+        let narrow = render(&app, 99, 30);
+        for (row, column) in top_corners(&narrow) {
+            assert_eq!(column, 0);
+            assert_eq!(corners_on_row(&narrow, row), vec![0, 98]);
+        }
+    }
+
+    #[test]
+    fn an_overridden_left_column_moves_the_session_pane() {
+        let mut app = supervising();
+        app.panes.left_column = Some(56);
+        let buffer = render(&app, 120, 30);
+        let fleet_row = top_corners(&buffer)[0].0;
+        assert_eq!(corners_on_row(&buffer, fleet_row), vec![0, 55, 56, 119]);
+    }
+
+    #[test]
+    fn an_overridden_fleet_height_beats_the_natural_cap() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![
+                row("A", "implementer", RowState::Dead),
+                row("B", "implementer", RowState::Dead),
+            ]),
+            at(0),
+        );
+        app.panes.split_fleet_rows = Some(16);
+        let buffer = render(&app, 100, 30);
+        let corners = top_corners(&buffer);
+        // Fleet opens on row 1 (below the header) and is sixteen outer rows, so Work's own top
+        // border is at 1 + 16 - past the natural cap a two-row roster would have taken.
+        assert_eq!(corners[0].0, 1);
+        let work = corners.iter().filter(|(row, col)| *col == 0 && *row > 1).map(|c| c.0).min();
+        assert_eq!(work, Some(1 + 16));
+    }
+
+    #[test]
+    fn a_stored_size_too_big_for_the_screen_is_clamped_and_not_lost() {
+        let mut app = supervising();
+        app.panes.left_column = Some(90);
+        // Too wide for a hundred-cell screen: Session keeps its floor.
+        let narrow = render(&app, 100, 30);
+        let narrow_row = top_corners(&narrow)[0].0;
+        assert_eq!(
+            corners_on_row(&narrow, narrow_row),
+            vec![0, 100 - MIN_PANE_COLUMNS - 1, 100 - MIN_PANE_COLUMNS, 99]
+        );
+        // The same `App`, on a screen wide enough: the stored ninety is back, so nothing
+        // overwrote it while the terminal was small.
+        let wide = render(&app, 140, 30);
+        let wide_row = top_corners(&wide)[0].0;
+        assert_eq!(corners_on_row(&wide, wide_row), vec![0, 89, 90, 139]);
+    }
+
+    #[test]
+    fn a_grown_fleet_takes_rows_from_work_and_leaves_session_alone() {
+        // The clamp ORDER is what this pins: Work is clamped against Fleet's already-clamped
+        // height, so the rows a grown Fleet takes come out of Work while Session keeps every row
+        // it had. Work is given the whole column here so that its own ceiling is what binds -
+        // below that ceiling Work is at its content height and it is Session, the remainder, that
+        // gives way, which is the layout's existing rule and not something this bead changes.
+        let mut app = supervising();
+        app.panes.stacked_work_rows = Some(99);
+        let before = top_corners(&render(&app, 99, 30));
+        let session_height = 30 - before[2].0;
+        let fleet_rows = before[1].0 - before[0].0;
+
+        app.panes.stacked_fleet_rows = Some(fleet_rows + 4);
+        let after = top_corners(&render(&app, 99, 30));
+        assert_eq!(after[1].0, before[1].0 + 4, "the Fleet/Work divider moved down four rows");
+        assert_eq!(
+            after[2].0 - after[1].0,
+            before[2].0 - before[1].0 - 4,
+            "and Work lost exactly those four"
+        );
+        assert_eq!(30 - after[2].0, session_height, "Session kept every row it had");
     }
 
     #[test]

@@ -1341,6 +1341,8 @@ pub struct App {
     /// the moment the row stops being stuck, the shape `stuck_logged` and `nudged` have, which is
     /// why it is a second set rather than a field of the first.
     pub resumed_this_stretch: BTreeSet<String>,
+    /// The navigator's divider overrides. Memory only; see `PaneSizes`.
+    pub panes: PaneSizes,
     /// Which widget the keyboard currently acts on. Fleet by default.
     pub focus: PaneFocus,
     /// What this process is allowed to do with the checkout it is drawing (cb-kcs.1).
@@ -1509,6 +1511,7 @@ impl App {
             stuck_logged: BTreeSet::new(),
             resumed: BTreeMap::new(),
             resumed_this_stretch: BTreeSet::new(),
+            panes: PaneSizes::default(),
             focus: PaneFocus::default(),
             supervision,
             confirm: None,

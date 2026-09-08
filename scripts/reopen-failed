@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+#
+# scripts/reopen-failed — the one place a failed verification reopens a bead.
+#
+#     .claude/cerebro/scripts/reopen-failed <bead> --sha <full-sha> --notes <text> \
+#         --fault plan|build [--reason <line>]
+#
+#   <bead>      the bead id whose verification failed
+#   --sha       the full 40-hex commit the verification ran against; becomes `verified_at`
+#               metadata and, abbreviated, the "at <short sha>" in the note and the reasons
+#   --notes     what the navigator saw, in full; becomes the appended failure note
+#   --fault     `plan`  the design asked for the wrong thing -> remove `planned', add `plan:revise'
+#               `build` the design was fine, the build was not -> neither label is touched
+#   --reason    the one-line reason for `bd reopen'. Optional; defaults to the FIRST LINE of --notes
+#
+#   exit 0  the bead is reopened, unassigned, at P0, and pushed
+#   exit 1  a `bd` call failed; the message names which step. Nothing is pushed, and the bead may be
+#           half-reopened - re-running is safe, at the cost of a duplicated failure note
+#   exit 2  usage error - an unknown argument, a missing or malformed --sha, a missing --notes,
+#           a missing or unrecognised --fault, or a bead `bd show' does not know
+#
+# THIS SCRIPT MUTATES THE BOARD, and it is the first under `scripts/` that does. Its four sweep
+# siblings go out of their way not to (`scripts/sweep-assignees.sh':14-19) because a sweep PROPOSES
+# and a human DISPOSES. This script is the opposite shape and is safe for the opposite reason: it is
+# not a proposal but an agent carrying out a decision the navigator has just made aloud — the verdict
+# and the plan-or-build answer are both in its arguments. It makes no read-only guarantee, and it is
+# never run unattended.
+#
+# `--fault` is required, and that is the point of it. The label flip was the second step an agent
+# retyping the old six-command prose could silently skip, and a required flag cannot be skipped.
+# `--fault build` must add NOTHING: `plan:revise' on that branch sends a planner to rewrite a design
+# the navigator has just called sound.
+#
+# `--assignee ""` is the step this script exists for. `bd reopen' sets `status=open' and clears
+# `closed_at'; it leaves the delivering implementer's assignee exactly where it was, and the pool an
+# implementer is started from is *planned, open and UNCLAIMED*. A bead reopened with an assignee
+# still on it is listed by `bd ready' and picked up by nobody. That stranded a P0 three times — twice
+# on 2026-08-23, one of them for 32 minutes (`scripts/sweep-assignees.sh':9-11), and once for ten
+# hours. `scripts/sweep-assignees.sh' stays as the net under every OTHER way an assignee is left
+# behind; this script makes THIS way unreachable.
+#
+# A RE-RUN APPENDS THE FAILURE NOTE TWICE. Every other step is idempotent by construction or behind
+# the `status != open' guard; `--append-notes' is not. That is accepted rather than worked around: a
+# dated duplicate in an audit trail costs nothing, and sniffing the existing notes for a match would
+# be a guess that fails silently. So a second run after a failed one is safe, and costs one extra
+# note.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "usage: reopen-failed <bead> --sha <full-sha> --notes <text> --fault plan|build [--reason <line>]" >&2
+  exit 2
+}
+
+bead="${1:-}"
+[[ -n "$bead" ]] || usage
+case "$bead" in
+  -*) usage ;;
+esac
+shift
+
+sha=""
+notes=""
+fault=""
+reason=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sha)    [[ $# -ge 2 ]] || usage; sha="$2";    shift 2 ;;
+    --notes)  [[ $# -ge 2 ]] || usage; notes="$2";  shift 2 ;;
+    --fault)  [[ $# -ge 2 ]] || usage; fault="$2";  shift 2 ;;
+    --reason) [[ $# -ge 2 ]] || usage; reason="$2"; shift 2 ;;
+    *)
+      echo "reopen-failed: unknown argument '$1'" >&2
+      exit 2 ;;
+  esac
+done
+
+if [[ -z "$sha" ]]; then
+  echo "reopen-failed: --sha is required (the full 40-character commit the verification ran against)" >&2
+  exit 2
+fi
+if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "reopen-failed: --sha must be a full 40-character hex commit, not '$sha'" >&2
+  exit 2
+fi
+if [[ -z "$notes" ]]; then
+  echo "reopen-failed: --notes is required (what the navigator saw, in full)" >&2
+  exit 2
+fi
+case "$fault" in
+  plan|build) ;;
+  "")
+    echo "reopen-failed: --fault is required (plan or build)" >&2
+    exit 2 ;;
+  *)
+    echo "reopen-failed: --fault must be 'plan' or 'build', not '$fault'" >&2
+    exit 2 ;;
+esac
+
+[[ -n "$reason" ]] || reason="$(printf '%s\n' "$notes" | head -1)"
+
+root="$("$script_dir/consumer-root" --shared)"
+
+# A FAILED `bd show' and an EMPTY one are different answers, and conflating them is how a step goes
+# silently missing: a Dolt-remote timeout reported as "no such bead" sends the reader hunting for a
+# typo that is not there. So the status is captured separately from the output.
+set +e
+status_json="$(bd -C "$root" show "$bead" --json 2>/dev/null)"
+show_status=$?
+set -e
+if [[ $show_status -ne 0 ]]; then
+  echo "reopen-failed: bd show failed for '$bead' (exit $show_status); nothing has been changed" >&2
+  exit 1
+fi
+if [[ -z "$(printf '%s' "$status_json" | tr -d '[:space:]')" ]]; then
+  echo "reopen-failed: no such bead '$bead'" >&2
+  exit 2
+fi
+
+json_field() {
+  # json_field <json> <field> - `bd show --json' returns an ARRAY (.cerebro/traps.md)
+  printf '%s' "$1" | jq -r '(if type=="array" then .[0] else . end) | .'"$2"' // empty'
+}
+
+# The short sha the note and the reasons carry. `git rev-parse --short` prints an UNKNOWN 40-hex sha
+# straight back rather than abbreviating it, so the commit is proved to exist first; the fallback is
+# the first 8 characters, which is what this repository abbreviates to today, so a fixture's sha and
+# a real one read the same way.
+short=""
+if git -C "$root" cat-file -e "$sha^{commit}" 2>/dev/null; then
+  short="$(git -C "$root" rev-parse --short "$sha" 2>/dev/null || true)"
+fi
+[[ -n "$short" ]] || short="${sha:0:8}"
+today="$(date -u +%Y-%m-%d)"
+
+die_step() {
+  echo "reopen-failed: $1 failed for '$2'; the bead may be half-reopened - re-running is safe" >&2
+  exit 1
+}
+
+status="$(json_field "$status_json" status)"
+
+if [[ "$status" != "open" ]]; then
+  bd -C "$root" reopen "$bead" --reason "$reason" || die_step "bd reopen" "$bead"
+fi
+
+# THE step. Second rather than first: the clear is refused while the bead is still `in_progress' and
+# held by somebody else, and the reopen above has just made it `open', so there is no live claim to
+# protect. Idempotent on a bead that carries none.
+bd -C "$root" update "$bead" --assignee "" || die_step "the assignee clear" "$bead"
+
+bd -C "$root" update "$bead" --priority=0 \
+  --append-notes "Verification failed ($today, at $short): $notes" \
+  || die_step "the P0 and failure note" "$bead"
+
+bd -C "$root" set-state "$bead" verification=failed --reason "failed verification at $short" \
+  || die_step "set-state verification=failed" "$bead"
+
+bd -C "$root" update "$bead" --set-metadata "verified_at=$sha" \
+  || die_step "the verified_at metadata" "$bead"
+
+# Harmless when it is not there.
+bd -C "$root" update "$bead" --remove-label "verdict:stale" \
+  || die_step "removing verdict:stale" "$bead"
+
+if [[ "$fault" == "plan" ]]; then
+  bd -C "$root" update "$bead" --remove-label planned --add-label "plan:revise" \
+    || die_step "the plan:revise label flip" "$bead"
+fi
+
+# The parent chain: up as far as there is a CLOSED ancestor. An already-open parent ends the walk.
+# Capped at 10 levels, because a `.parent' cycle would otherwise loop for ever against a live board.
+parent="$(json_field "$status_json" parent)"
+seen=" $bead "
+depth=0
+while [[ -n "$parent" ]]; do
+  depth=$((depth + 1))
+  if [[ $depth -gt 10 ]] || [[ "$seen" == *" $parent "* ]]; then
+    echo "reopen-failed: parent cycle or a family more than 10 deep at '$parent'; stopping" >&2
+    exit 1
+  fi
+  seen="$seen$parent "
+  # Same distinction as above, and it matters more here: `|| true` would make a bd outage look like
+  # "there is no parent", skip the whole chain, push, and exit 0 - the navigator told the reopen
+  # succeeded while a closed parent keeps its status and its assignee.
+  set +e
+  parent_json="$(bd -C "$root" show "$parent" --json 2>/dev/null)"
+  show_status=$?
+  set -e
+  [[ $show_status -eq 0 ]] || die_step "bd show" "$parent"
+  [[ -n "$(printf '%s' "$parent_json" | tr -d '[:space:]')" ]] || break
+  [[ "$(json_field "$parent_json" status)" == "closed" ]] || break
+  bd -C "$root" reopen "$parent" --reason "child $bead reopened by failed verification" \
+    || die_step "bd reopen" "$parent"
+  bd -C "$root" update "$parent" --assignee "" || die_step "the assignee clear" "$parent"
+  parent="$(json_field "$parent_json" parent)"
+done
+
+bd -C "$root" dolt push || die_step "bd dolt push" "$bead"

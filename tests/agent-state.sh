@@ -22,7 +22,7 @@ source "$repo_root/tests/lib/consumer.sh"
 # consults it for the fleet.
 # A git repo, since consumer-root --shared asks git for the main .git directory.
 new_fixture() {
-  consumer_new "$(fixture_name)" --link roster agent-state consumer-root
+  consumer_new "$(fixture_name)" --link roster agent-state consumer-root agent-turn
 }
 
 run_state() {
@@ -213,6 +213,98 @@ leftover="$(find "$tmp/.cerebro/state" -name '*.tmp' 2>/dev/null)"
 [[ -z "$leftover" ]] || fail "no-tmp-left-behind: found $leftover"
 rm -rf "$tmp"
 pass "no-tmp-left-behind"
+
+# --- the-temp-name-is-unique-to-the-writing-process ---
+# Two writers of one state file (agent-state and agent-turn) must never share a scratch path: a
+# fixed `<file>.tmp' let each mv the other's half-written object, and the loser's mv failed with
+# `No such file or directory' (ah-za5i).
+tmp="$(new_fixture)"
+mv_log="$work_dir/agent-state-mv-calls.log"
+: > "$mv_log"
+mv_stub_dir="$work_dir/agent-state-mv-stub"
+mkdir -p "$mv_stub_dir"
+# The real mv is resolved before the stub shadows it - a pass-through that cannot find its tool
+# makes the case green for the wrong reason.
+real_mv="$(command -v mv)"
+[[ -n "$real_mv" ]] || fail "the-temp-name-is-unique-to-the-writing-process: no real mv"
+cat > "$mv_stub_dir/mv" <<STUB
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in -*) ;; *) printf '%s\n' "\$a" >> "$mv_log"; break ;; esac
+done
+exec "$real_mv" "\$@"
+STUB
+chmod +x "$mv_stub_dir/mv"
+f="$(state_file "$tmp" Cyclops)"
+PATH="$mv_stub_dir:$PATH" run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1
+PATH="$mv_stub_dir:$PATH" run_state "$tmp" Cyclops working --bead ah-f9c --phase gate --pid 1
+state_movs="$(grep -F "$f." "$mv_log" || true)"
+[[ "$(printf '%s\n' "$state_movs" | grep -c .)" == "2" ]] \
+  || fail "the-temp-name-is-unique-to-the-writing-process: expected 2 state-file renames, got '$state_movs'"
+first="$(printf '%s\n' "$state_movs" | sed -n 1p)"
+second="$(printf '%s\n' "$state_movs" | sed -n 2p)"
+[[ "$first" =~ ^"$f"\.[0-9]+\.tmp$ ]] \
+  || fail "the-temp-name-is-unique-to-the-writing-process: '$first' is not <file>.<pid>.tmp"
+[[ "$first" != "$second" ]] \
+  || fail "the-temp-name-is-unique-to-the-writing-process: two processes shared '$first'"
+rm -rf "$tmp" "$mv_stub_dir"
+pass "the-temp-name-is-unique-to-the-writing-process"
+
+# --- a-failing-jq-leaves-no-temp-behind-and-fails-loudly ---
+# The opposite obligation to agent-turn's: a session's own state write must fail loudly when it
+# fails, because two fleet views read that file to decide whether the session is alive.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1
+f="$(state_file "$tmp" Cyclops)"
+before="$(cat "$f")"
+jq_stub_dir="$work_dir/agent-state-jq-stub"
+mkdir -p "$jq_stub_dir"
+real_jq="$(command -v jq)"
+[[ -n "$real_jq" ]] || fail "a-failing-jq-leaves-no-temp-behind-and-fails-loudly: no real jq"
+cat > "$jq_stub_dir/jq" <<STUB
+#!/usr/bin/env bash
+# Reads (so the previous-value lookups pass), then fails on the object write.
+case "\$*" in
+  *phase_since*) exit 1 ;;
+  *) exec "$real_jq" "\$@" ;;
+esac
+STUB
+chmod +x "$jq_stub_dir/jq"
+status=0
+PATH="$jq_stub_dir:$PATH" run_state "$tmp" Cyclops working --bead ah-f9c --phase gate --pid 1 \
+  >/dev/null 2>&1 || status=$?
+[[ $status -ne 0 ]] || fail "a-failing-jq-leaves-no-temp-behind-and-fails-loudly: exited 0"
+[[ "$before" == "$(cat "$f")" ]] || fail "a-failing-jq-leaves-no-temp-behind-and-fails-loudly: the file changed"
+leftover="$(find "$tmp/.cerebro/state" -name '*.tmp' 2>/dev/null)"
+[[ -z "$leftover" ]] || fail "a-failing-jq-leaves-no-temp-behind-and-fails-loudly: found $leftover"
+rm -rf "$tmp" "$jq_stub_dir"
+pass "a-failing-jq-leaves-no-temp-behind-and-fails-loudly"
+
+# --- concurrent-writers-of-one-state-file-all-succeed ---
+# The stress case ah-za5i exists to buy: agent-state and agent-turn writing ONE agent's file at
+# once. Nothing is asserted about `turn_ended' - a read-modify-write racing a whole-file write can
+# lose the stamp, which is inherent to two writers of one file and not what this bead changes.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1
+statuses="$work_dir/concurrent-statuses.log"
+: > "$statuses"
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  ( s=0; run_state "$tmp" Cyclops working --bead ah-f9c --phase build --pid 1 || s=$?
+    printf '%s\n' "$s" >> "$statuses"
+    s=0; CEREBRO_AGENT_NAME=Cyclops "$tmp/.claude/cerebro/scripts/agent-turn" ended || s=$?
+    printf '%s\n' "$s" >> "$statuses" ) &
+done
+wait
+[[ "$(grep -c . "$statuses")" == "20" ]] || fail "concurrent-writers: expected 20 statuses, got $(grep -c . "$statuses")"
+bad="$(grep -v '^0$' "$statuses" || true)"
+[[ -z "$bad" ]] || fail "concurrent-writers: non-zero exits: $bad"
+leftover="$(find "$tmp/.cerebro/state" -name '*.tmp' 2>/dev/null)"
+[[ -z "$leftover" ]] || fail "concurrent-writers: left behind $leftover"
+f="$(state_file "$tmp" Cyclops)"
+jq -e 'type == "object" and (.state | length > 0)' "$f" >/dev/null \
+  || fail "concurrent-writers: the state file is torn or has no state: $(cat "$f")"
+rm -rf "$tmp"
+pass "concurrent-writers-of-one-state-file-all-succeed"
 
 # --- ah-2n3.2: the five interactive agents write the same file ---
 

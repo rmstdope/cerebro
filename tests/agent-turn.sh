@@ -213,4 +213,38 @@ leftovers="$(find "$tmp/.cerebro/state" -name '*.tmp' 2>/dev/null)"
 rm -rf "$tmp" "$stub_dir"
 pass "a-failing-jq-leaves-no-tmp-behind"
 
+# --- the-temp-name-is-unique-to-the-writing-process ---
+# agent-turn already had this property before ah-za5i moved the write into scripts/state-write.sh;
+# the case is here so the refactor is proved not to lose it.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
+f="$(state_file "$tmp" Cyclops)"
+mv_log="$work_dir/agent-turn-mv-calls.log"
+: > "$mv_log"
+mv_stub_dir="$work_dir/agent-turn-mv-stub"
+mkdir -p "$mv_stub_dir"
+real_mv="$(command -v mv)"
+[[ -n "$real_mv" ]] || fail "the-temp-name-is-unique-to-the-writing-process: no real mv"
+cat > "$mv_stub_dir/mv" <<STUB
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in -*) ;; *) printf '%s\n' "\$a" >> "$mv_log"; break ;; esac
+done
+exec "$real_mv" "\$@"
+STUB
+chmod +x "$mv_stub_dir/mv"
+PATH="$mv_stub_dir:$PATH" run_turn "$tmp" Cyclops ended
+PATH="$mv_stub_dir:$PATH" run_turn "$tmp" Cyclops resumed
+movs="$(grep -F "$f." "$mv_log" || true)"
+[[ "$(printf '%s\n' "$movs" | grep -c .)" == "2" ]] \
+  || fail "the-temp-name-is-unique-to-the-writing-process: expected 2 renames, got '$movs'"
+first="$(printf '%s\n' "$movs" | sed -n 1p)"
+second="$(printf '%s\n' "$movs" | sed -n 2p)"
+[[ "$first" =~ ^"$f"\.[0-9]+\.tmp$ ]] \
+  || fail "the-temp-name-is-unique-to-the-writing-process: '$first' is not <file>.<pid>.tmp"
+[[ "$first" != "$second" ]] \
+  || fail "the-temp-name-is-unique-to-the-writing-process: two processes shared '$first'"
+rm -rf "$tmp" "$mv_stub_dir"
+pass "the-temp-name-is-unique-to-the-writing-process"
+
 suite_passed

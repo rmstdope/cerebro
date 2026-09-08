@@ -39,7 +39,7 @@ Two rules hold that together, and both are load-bearing:
 ## Who is in the fleet
 
 Seven roles. Six are interactive sessions you talk to; the seventh is the implementer, of which
-there are twelve on the roster.
+your project's roster declares as many as it wants.
 
 | Agent | Role | Runs on | What it is for |
 |---|---|---|---|

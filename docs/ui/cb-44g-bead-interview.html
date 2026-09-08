@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-44g — three shapes for "Cerebro interviews before it files a bead"</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --warn:#b08800; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 66rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.6rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .95rem; margin: 1.4rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto; margin:.4rem 0; line-height:1.5; }
+  pre.plain { background: var(--bg); color: var(--ink); border:1px solid var(--line); }
+  .r { color:#f0776c; } .g { color:#7ee787; } .y { color:#e3b341; } .d { color:#8b949e; } .b { color:#79c0ff; } .m { color:#d2a8ff; }
+  .note { color: var(--dim); font-size: 13.5px; }
+  blockquote { margin:.6rem 0; padding:.5rem .9rem; border-left:3px solid var(--line); color:var(--dim); font-size:13.5px; }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13.5px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .45rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<h1>cb-44g — three shapes for “Cerebro interviews before it files a bead”</h1>
+<p class="lede">The same request, put to Cerebro three ways. In every variant the bead ends unranked
+at P4 and the existing ranking pass runs on it afterwards; what differs is how many times the
+navigator is interrupted, and whether they see the bead before it exists.</p>
+
+<div style="border:2px solid #22863a;border-radius:6px;padding:.8rem 1rem;margin:1.4rem 0;background:#f0fff4">
+<b>Decided, 2026-09-08.</b> <b>Option B</b> — a conversation, then a draft the navigator approves before
+anything is written. Rounds are not capped: it keeps asking until it can describe the work. Before it
+interviews it searches the board and shows anything close. “Just file it” is honoured, and the report
+names what went unanswered. A request holding several beads is named as such and asked about, never
+split silently. After filing it offers the ranking once, and drops it if the navigator does not take it.
+The skill is invocable by hand as a slash command as well as loaded by Cerebro.
+</div>
+
+<p class="note">The request throughout, typed into a running Cerebro session:</p>
+<pre><span class="d">&gt;</span> the fleet view should show me which bead each implementer is on in the session pane header</pre>
+
+<h2>Option A — one batched round, then file</h2>
+<p class="note">Cerebro asks everything it needs in one question dialog (the question tool takes up
+to four), writes the bead from the answers, and reports it. One interruption.</p>
+
+<pre><span class="b">Cerebro</span>  Before I file this, four questions.
+
+  <span class="y">┌ What's wrong today ─────────────────────────────────────────┐</span>
+  <span class="y">│</span> What does the session pane show instead right now?
+  <span class="y">│</span>   1. Nothing — the header is blank
+  <span class="y">│</span>   2. The agent's name only  <span class="d">(recommended)</span>
+  <span class="y">│</span>   3. Something wrong or stale
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+
+  <span class="y">┌ Why now ────────────────────────────────────────────────────┐</span>
+  <span class="y">│</span> What is this costing you today?
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+
+  <span class="y">┌ Done looks like ────────────────────────────────────────────┐</span>
+  <span class="y">│</span> What would you look at to say this is finished?
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+
+  <span class="y">┌ Surface ────────────────────────────────────────────────────┐</span>
+  <span class="y">│</span> Does this change anything a person sees or presses?
+  <span class="y">│</span>   1. Yes — the planner should interview me about the shape
+  <span class="y">│</span>   2. No — it is internal
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+
+<span class="d">…answers…</span>
+
+<span class="b">Cerebro</span>  Filed <span class="g">cb-9k2</span> at P4, unranked:
+         <span class="g">“Session pane header names the bead the agent is on”</span>
+         It says the header shows the name alone today, that you are switching panes to
+         find out who is on what, that done is the bead id visible in the header for a
+         working agent, and that it touches something you look at — so the planner will
+         put the shape to you.
+         I'll bring it to you at the next ranking pass.</pre>
+
+<blockquote><b>Cost:</b> one interruption, and the bead exists before you have seen it. Cerebro
+guesses the title. If an answer opens something the questions did not cover, it is written down as
+whatever Cerebro made of it.</blockquote>
+
+<h2>Option B — a short conversation, then a draft to approve</h2>
+<p class="note">Two rounds: the second is chosen from what the first said, so it can ask the thing
+that only became worth asking. Then the whole bead is shown as it will be filed, and nothing is
+written until the navigator says so.</p>
+
+<pre><span class="b">Cerebro</span>  Two questions to start.
+
+  <span class="y">┌ What's wrong today ─────────────────────────────────────────┐</span>
+  <span class="y">│</span> What does the session pane header show instead?
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+  <span class="y">┌ Why now ────────────────────────────────────────────────────┐</span>
+  <span class="y">│</span> What is that costing you?
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+
+<span class="d">&gt; the agent's name. I keep tabbing to Work to find out who is on what and
+&gt; losing my place in the session I was reading</span>
+
+<span class="b">Cerebro</span>  Then two more.
+
+  <span class="y">┌ Scope ──────────────────────────────────────────────────────┐</span>
+  <span class="y">│</span> Only the implementers, or every agent that can hold a bead?
+  <span class="y">│</span>   1. Every agent that names a bead  <span class="d">(recommended)</span>
+  <span class="y">│</span>   2. Implementers only
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+  <span class="y">┌ Done looks like ────────────────────────────────────────────┐</span>
+  <span class="y">│</span> What would you look at to call it finished?
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+
+<span class="d">…answers…</span>
+
+<span class="b">Cerebro</span>  Here is the bead. Say <span class="g">file it</span>, or tell me what to change.
+
+<span class="d">  ┌──────────────────────────────────────────────────────────────────────────┐</span>
+  <span class="d">│</span> <span class="m">type</span> feature   <span class="m">priority</span> P4 (unranked)
+  <span class="d">│</span> <span class="m">title</span> Session pane header names the bead the agent is on
+  <span class="d">│</span>
+  <span class="d">│</span> The session pane header carries the agent's name and nothing else, so
+  <span class="d">│</span> finding out which bead an agent is on means leaving the pane for Work and
+  <span class="d">│</span> losing your place in what you were reading.
+  <span class="d">│</span>
+  <span class="d">│</span> Wanted: the bead id in that header, for every agent whose state file
+  <span class="d">│</span> names one, and nothing where it names none.
+  <span class="d">│</span>
+  <span class="d">│</span> <span class="m">Done looks like</span> reading a working agent's bead id without leaving the pane.
+  <span class="d">│</span> <span class="m">Touches the navigator's surface</span> — yes, so the planner puts the shape to you.
+  <span class="d">└──────────────────────────────────────────────────────────────────────────┘</span>
+
+<span class="d">&gt; file it</span>
+
+<span class="b">Cerebro</span>  Filed <span class="g">cb-9k2</span> at P4, unranked. I'll bring it to the next ranking pass.</pre>
+
+<blockquote><b>Cost:</b> two or three interruptions instead of one, and you read a paragraph before
+it is filed. You see the words the planner will read, and the wrong ones cost a sentence to fix
+rather than a bead edit later.</blockquote>
+
+<h2>Option C — draft first, ask only about the gaps</h2>
+<p class="note">Cerebro writes the bead immediately from what was said, shows it with its guesses
+marked, and asks only about the parts it could not fill. Answering edits the draft in place.</p>
+
+<pre><span class="b">Cerebro</span>  My reading of it — the <span class="y">amber</span> parts are guesses:
+
+<span class="d">  ┌──────────────────────────────────────────────────────────────────────────┐</span>
+  <span class="d">│</span> <span class="m">title</span> Session pane header names the bead the agent is on
+  <span class="d">│</span>
+  <span class="d">│</span> The session pane header shows <span class="y">the agent's name alone</span>, so finding out
+  <span class="d">│</span> which bead an agent is on means leaving the pane.
+  <span class="d">│</span>
+  <span class="d">│</span> Wanted: the bead id in that header, for <span class="y">every agent whose state file
+  <span class="d">│</span> names one</span>.
+  <span class="d">│</span>
+  <span class="d">│</span> <span class="m">Why now</span> <span class="y">— not given —</span>
+  <span class="d">│</span> <span class="m">Done looks like</span> <span class="y">— not given —</span>
+  <span class="d">└──────────────────────────────────────────────────────────────────────────┘</span>
+
+  Two gaps, and one guess worth checking:
+
+  <span class="y">┌ Why now ────────────────────────────────────────────────────┐</span>
+  <span class="y">│</span> What is this costing you today?
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+  <span class="y">┌ Done looks like ────────────────────────────────────────────┐</span>
+  <span class="y">│</span> What would you look at to call it finished?
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+  <span class="y">┌ Scope ──────────────────────────────────────────────────────┐</span>
+  <span class="y">│</span> I assumed every agent, not just implementers. Right?
+  <span class="y">└─────────────────────────────────────────────────────────────┘</span>
+
+<span class="d">…answers…</span>
+
+<span class="b">Cerebro</span>  Filed <span class="g">cb-9k2</span> at P4, unranked. I'll bring it to the next ranking pass.</pre>
+
+<blockquote><b>Cost:</b> one interruption and you still see the text, but you are reviewing
+Cerebro's reading rather than being asked cold — which is faster when its reading is right and
+anchoring when it is wrong. It also cannot ask a question that only the first answer would have
+suggested.</blockquote>
+
+<h2>Two smaller decisions, whichever shape wins</h2>
+<table>
+<tr><th>Question</th><th>Options</th></tr>
+<tr><td><b>An escape hatch</b> — "just file it, don't ask me"</td>
+    <td>Honour it and file from the one line, saying which parts are unanswered · Or always ask at least the two gaps, since an un-interviewed bead is what this bead exists to end</td></tr>
+<tr><td><b>Who can invoke it</b></td>
+    <td>Cerebro only, when the navigator asks for a bead · Or also a slash command the navigator types (<code>/write-bead</code>) in any session</td></tr>
+</table>
+
+</body>
+</html>

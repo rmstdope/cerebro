@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-lz5.2 — how a design session opens</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 74rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .4rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.3rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 1.4rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .6rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.5; white-space:pre-wrap; }
+  .r{color:#f0776c}.g{color:#7ee787}.y{color:#e3b341}.d{color:#8b949e}.b{color:#79c0ff;font-weight:bold}
+  .m{color:#d2a8ff;font-weight:bold}
+  .you{color:#79c0ff;font-weight:bold}
+  .cols{display:flex;gap:1.4rem;align-items:flex-start}
+  .cols>div{flex:1;min-width:0}
+  blockquote{margin:.7rem 0;padding:.5rem .9rem;border-left:3px solid var(--line);color:var(--dim);font-size:13.5px}
+  table{border-collapse:collapse;font-size:13.5px;margin:.6rem 0;width:100%}
+  td,th{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top}
+</style></head><body>
+
+<h1>cb-lz5.2 — how a design session opens, and what a designer ever sees of the machinery</h1>
+<p class="lede">The UX agent is written for a <b>designer</b>, who may not be you and who is assumed to know nothing about this repository — not beads, not worktrees, not pull requests. It handles all of that itself. Two things on this page are yours to agree: <b>how a session opens</b> (does the agent pick the work, or offer a choice?) and <b>what the designer sees when the machinery goes wrong</b>.</p>
+<p class="lede">The word the agent uses for a bead, throughout, is <b>&ldquo;this piece of work&rdquo;</b> — never <i>bead</i>, <i>ticket</i> or <i>issue</i>. Overrule that in a sentence if you would rather it said something else.</p>
+
+<h2>The question: does the agent pick the work, or offer a choice?</h2>
+
+<div class="cols">
+<div>
+<h3>Option A — the agent picks, and says why</h3>
+<p class="note">The agent takes the most urgent piece of work waiting for a design, exactly as a planner takes the top candidate today, and opens on the subject itself. One piece of work per session.</p>
+<pre><span class="b">Ada</span>
+
+I&rsquo;m the design agent for <b>atlantis</b>. I work out what a change should
+look and feel like, we agree it together, and I write it down so
+whoever builds it doesn&rsquo;t have to guess.
+
+Today&rsquo;s piece of work is the most urgent one waiting for a design:
+
+  <b>Row limit settable from the list pane</b>
+
+  People looking at long lists want fewer rows at a time on a small
+  screen, and everything at once on a big one. Right now the list
+  always shows 100 rows and there is no way to change it.
+
+I have three questions about the shape of it, and I&rsquo;ll show you
+drawings for each. Ready when you are.
+
+<span class="you">&gt; go on</span></pre>
+<p class="note"><b>The cost:</b> the designer never chooses their own work, and a session opens on whatever is most urgent. If they wanted to work on something else, they have to say so unprompted.</p>
+</div>
+
+<div>
+<h3>Option B — the agent offers what is waiting</h3>
+<p class="note">The agent lists what is waiting for a design, in the product&rsquo;s own words, most urgent first, and the designer picks. It still handles everything else.</p>
+<pre><span class="b">Ada</span>
+
+I&rsquo;m the design agent for <b>atlantis</b>. I work out what a change should
+look and feel like, we agree it together, and I write it down so
+whoever builds it doesn&rsquo;t have to guess.
+
+Three things are waiting for a design. Most pressing first:
+
+  <b>1.</b>  Row limit settable from the list pane
+      <span class="d">Long lists always show 100 rows; there is no way to change it.</span>
+
+  <b>2.</b>  Turn comparison shows a &ldquo;no changes&rdquo; dialog on the desktop
+      <span class="d">A comparison with nothing in it interrupts instead of saying so quietly.</span>
+
+  <b>3.</b>  Remember the zoom level across reloads
+      <span class="d">Reopening the map throws away where you were.</span>
+
+Which one shall we take? (<b>1</b> is the one the team is waiting on.)
+
+<span class="you">&gt; 2</span></pre>
+<p class="note"><b>The cost:</b> one extra exchange before any design happens, every session — and a designer who does not know the work has to choose between three sentences. If nobody answers the choice, the session ends having designed nothing.</p>
+</div>
+</div>
+
+<h2>The states — where they differ, and where they do not</h2>
+
+<h3>Nothing is waiting for a design</h3>
+<p class="note">Identical in both options.</p>
+<pre><span class="b">Ada</span>
+
+Nothing is waiting for a design right now — everything that needs one
+has had it. I&rsquo;ll be here when something new comes in.</pre>
+
+<h3>The piece of work changes nothing a person can see</h3>
+<p class="note">Identical in both options, and <b>the designer is never asked about it</b> — the agent recognises it, records &ldquo;nothing a person can see&rdquo; itself, and moves on. This was already agreed for cb-lz5.1; it is here so you can see what it does to a session.</p>
+<pre><span class="b">Ada</span>
+
+<span class="d">(nothing is shown to the designer at all — the session moves straight to
+the next piece of work, or ends if there is none)</span></pre>
+
+<h3>Nobody answers</h3>
+<p class="note">Identical in both options. The agent waits, and if the designer never comes back it leaves the question written down for them and stops — the same thing a planner does today.</p>
+<pre><span class="b">Ada</span>
+
+I&rsquo;ll leave this one here — I&rsquo;ve written down the question and the two
+drawings, so we can pick it up exactly where we left off. Nothing is
+lost.</pre>
+
+<h2>The second question: what shows when the machinery fails?</h2>
+<p class="lede">Saving the drawing, recording what we agreed, or reading the list of work can all fail — a network that is down, a change somebody else made first. The designer knows nothing about any of it. What do they see?</p>
+
+<div class="cols">
+<div>
+<h3>Option S — silent: the agent says only what it means for the designer</h3>
+<pre><span class="b">Ada</span>
+
+That&rsquo;s the shape agreed — thank you.
+
+I couldn&rsquo;t finish filing it just now, so I&rsquo;ve kept everything we
+decided and flagged it for the team. Nothing you told me is lost, and
+you don&rsquo;t need to do anything.</pre>
+<p class="note">No error text, no command, no file path. The detail goes where the team already looks for it. The cost: a designer sitting beside a developer cannot tell them what went wrong.</p>
+</div>
+<div>
+<h3>Option T — one plain sentence, plus the detail underneath</h3>
+<pre><span class="b">Ada</span>
+
+That&rsquo;s the shape agreed — thank you.
+
+I couldn&rsquo;t finish filing it just now: <b>the shared task list wouldn&rsquo;t
+accept the update</b>. I&rsquo;ve kept everything we decided and flagged it
+for the team. Nothing you told me is lost.
+
+<span class="d">Detail for whoever picks this up:
+  bd update cb-abc --acceptance ... exited 1
+  dolt: remote unreachable (connection refused)</span>
+</pre>
+<p class="note">The designer can read the first paragraph and stop; the second is there for whoever they turn to. The cost: the machinery appears in the designer&rsquo;s session, which is the one thing this role was written to avoid.</p>
+</div>
+</div>
+
+<h2>What is already settled and is not being asked again</h2>
+<table>
+<tr><th>Settled</th><th>Where</th></tr>
+<tr><td>The agreed experience is recorded in the piece of work itself, under five headings</td><td>cb-lz5.1, agreed with you</td></tr>
+<tr><td>The drawings are committed to the repository, as planners do today</td><td>cb-lz5.1 / cb-lz5.2&rsquo;s own description</td></tr>
+<tr><td>Mockups, alternatives and <code>file://</code> links work exactly as the planner&rsquo;s skill already specifies</td><td>cb-lz5.2&rsquo;s description — you said a dedicated agent should not go further</td></tr>
+<tr><td>A piece of work with nothing a person can see is marked and passed on without asking anybody</td><td>cb-lz5.1, agreed with you</td></tr>
+<tr><td>The agent never designs the build — no files, no tests, no increments</td><td>cb-lz5.2&rsquo;s description</td></tr>
+</table>
+
+</body></html>

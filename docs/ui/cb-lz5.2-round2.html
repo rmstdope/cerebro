@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-lz5.2 — round 2: does the session stop after one?</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 74rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .4rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.3rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 1.4rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .6rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.5; white-space:pre-wrap; }
+  .d{color:#8b949e}.b{color:#79c0ff;font-weight:bold}.m{color:#d2a8ff;font-weight:bold}
+  .you{color:#79c0ff;font-weight:bold}
+  .cols{display:flex;gap:1.4rem;align-items:flex-start}
+  .cols>div{flex:1;min-width:0}
+  table{border-collapse:collapse;font-size:13.5px;margin:.6rem 0;width:100%}
+  td,th{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top}
+</style></head><body>
+
+<h1>cb-lz5.2, round 2 — when one piece of work is agreed, is the session over?</h1>
+<p class="lede">You chose: <b>the agent picks the work and says why</b>; <b>a failure is one plain sentence with the detail underneath</b>; <b>the designer approves the record before it is written</b>. The mockups those came from are unchanged at <code>cb-lz5.2-opening.html</code> and <code>cb-lz5.2-record.html</code>.</p>
+<p class="lede">That leaves one thing the designer will feel every time. A planner ends its pass after one piece of work and the fleet starts a fresh session seconds later — a machine does not mind. <b>A designer is sitting in the chair.</b></p>
+
+<h2>The question</h2>
+
+<div class="cols">
+<div>
+<h3>Option 1 — one piece of work, then the session ends</h3>
+<p class="note">Exactly the planner&rsquo;s rhythm. The agent finishes, says so, and stops; the fleet view ends the session and starts a fresh one when there is more waiting.</p>
+<pre><span class="b">Ada</span>
+
+Filed. The drawing is saved with it, and whoever builds this will work
+from exactly what you just read.
+
+That&rsquo;s us done — thank you.
+
+<span class="d">(the session ends; a new one starts if more work is waiting, and opens
+ the way the first one did: "I'm the design agent for atlantis...")</span></pre>
+<p class="note"><b>The cost:</b> a designer with an hour to spend gets the full introduction again, and again, and has no way to say &ldquo;keep going&rdquo;. <b>The gain:</b> each session is one piece of work deep, and nothing carries over from a conversation about a different screen.</p>
+</div>
+
+<div>
+<h3>Option 2 — it offers the next one, and the designer decides</h3>
+<p class="note">The agent finishes, says so, and asks. Stopping ends the session exactly as option 1 does; carrying on opens the next piece of work in the same session, with a short opening rather than the full introduction.</p>
+<pre><span class="b">Ada</span>
+
+Filed. The drawing is saved with it, and whoever builds this will work
+from exactly what you just read.
+
+There are two more waiting for a design. Shall we carry on, or is that
+us for now?
+
+<span class="you">&gt; carry on</span>
+
+<span class="b">Ada</span>
+
+Next is <b>Turn comparison shows a &ldquo;no changes&rdquo; dialog on the desktop</b>.
+
+  Comparing two turns that are identical opens a dialog saying so,
+  which has to be dismissed before anything else can happen.
+
+Same as before — I&rsquo;ll show you drawings.</pre>
+<p class="note"><b>The cost:</b> a long session accumulates one screen&rsquo;s conversation behind the next, and a tired designer is asked one more question at exactly the moment they wanted to leave. <b>The gain:</b> an hour with a designer is an hour, not four introductions.</p>
+</div>
+</div>
+
+<h2>What happens either way</h2>
+<table>
+<tr><th>Situation</th><th>What the designer sees</th></tr>
+<tr><td>They stop in the middle, before anything is agreed</td><td>&ldquo;I&rsquo;ll leave this one here — I&rsquo;ve written down the question and the drawings, so we can pick it up exactly where we left off. Nothing is lost.&rdquo; The piece of work is <b>not</b> marked as designed, and the next session resumes it with what was already settled.</td></tr>
+<tr><td>They stop after approving the record</td><td>It is filed. The session ends there whichever option is chosen.</td></tr>
+<tr><td>Nothing more is waiting</td><td>&ldquo;Nothing else is waiting for a design — that&rsquo;s everything. Thank you.&rdquo; No question is asked in either option.</td></tr>
+<tr><td>Nobody answers &ldquo;shall we carry on?&rdquo; (option 2 only)</td><td>The session ends by itself, the same as option 1. The finished work is already filed and nothing waits on the answer.</td></tr>
+</table>
+
+</body></html>

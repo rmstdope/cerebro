@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-lz5.2 — how the agreed experience is confirmed and reported</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 74rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .4rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.3rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 1.4rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .6rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  pre { background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.5; white-space:pre-wrap; }
+  .r{color:#f0776c}.g{color:#7ee787}.y{color:#e3b341}.d{color:#8b949e}.b{color:#79c0ff;font-weight:bold}
+  .m{color:#d2a8ff;font-weight:bold}
+  .you{color:#79c0ff;font-weight:bold}
+  .cols{display:flex;gap:1.4rem;align-items:flex-start}
+  .cols>div{flex:1;min-width:0}
+  table{border-collapse:collapse;font-size:13.5px;margin:.6rem 0;width:100%}
+  td,th{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top}
+</style></head><body>
+
+<h1>cb-lz5.2 — how what you agreed gets written down, and what the designer sees of it</h1>
+<p class="lede">The five headings are settled (cb-lz5.1): <code>## The agreed experience</code>, <code>## The states</code>, <code>## The words, exactly</code>, <code>## What was considered and rejected</code>, <code>## The mockup</code>. What is <b>not</b> settled is whether the designer reads that record and approves it before it is written, or reads it after it has been. That is the question on this page.</p>
+
+<h2>What is being written, in both options</h2>
+<p class="note">This is what a developer opens, days later, having never met the designer. It is the same document in both options; only when the designer sees it differs.</p>
+<pre><span class="m">## The agreed experience</span>
+
+The list pane grows a <b>Rows</b> control at the right of its header, showing the current
+limit as a number. Clicking it opens a short menu — 50, 100, 250, 500, All — and choosing
+one reloads the list at once. The chosen limit is remembered for the next visit.
+
+<span class="m">## The states</span>
+
+<span class="d">Empty list</span>     the control still shows, dimmed, reading `Rows 100'.
+<span class="d">Still loading</span>  the control is dimmed and does not open.
+<span class="d">Fewer rows</span>     than the limit: the control reads `Rows 100', unchanged.
+<span class="d">Narrow window</span>  the control drops to the line below the title.
+
+<span class="m">## The words, exactly</span>
+
+The control reads <b>Rows</b>. The menu entries read <b>50</b>, <b>100</b>, <b>250</b>, <b>500</b>, <b>All</b>.
+An empty list reads <b>Nothing to show yet</b>.
+
+<span class="m">## What was considered and rejected</span>
+
+<b>A slider</b> — rejected: it invites values nobody wants and gives no way to say "All".
+<b>A setting in preferences</b> — rejected: the limit is changed while looking at the list,
+not before opening it.
+<b>Remembering per list</b> — rejected: one remembered number, everywhere, was preferred as
+being easier to predict.
+
+<span class="m">## The mockup</span>
+
+docs/ui/cb-abc-row-limit.html</pre>
+
+<h2>The question: approve it, or read it back?</h2>
+
+<div class="cols">
+<div>
+<h3>Option A — the designer approves it before it is written</h3>
+<pre><span class="b">Ada</span>
+
+Here&rsquo;s everything we agreed, as the person building it will read it.
+Have a look before I file it — anything wrong is much cheaper to fix
+now.
+
+<span class="d">&hellip; the document above &hellip;</span>
+
+Is that right?
+
+<span class="you">&gt; the empty list should say "No rows yet", not "Nothing to show yet"</span>
+
+<span class="b">Ada</span>
+
+Changed. Anything else?
+
+<span class="you">&gt; no, that's it</span>
+
+<span class="b">Ada</span>
+
+Filed. The drawing is saved with it, and whoever builds this will
+work from exactly what you just read. We&rsquo;re done — thank you.</pre>
+<p class="note"><b>The cost:</b> one more exchange per piece of work, and a designer who answers &ldquo;fine&rdquo; without reading has approved something they have not read. <b>The gain:</b> the words a developer builds from are words the designer signed off, and a wording slip costs a sentence rather than a rebuild.</p>
+</div>
+
+<div>
+<h3>Option B — it is written, then shown</h3>
+<pre><span class="b">Ada</span>
+
+That&rsquo;s the shape agreed — thank you. I&rsquo;ve filed it, and the drawing
+is saved with it.
+
+Here&rsquo;s what whoever builds this will read:
+
+<span class="d">&hellip; the document above &hellip;</span>
+
+If anything there isn&rsquo;t what you meant, say so and I&rsquo;ll change it.
+
+<span class="you">&gt; the empty list should say "No rows yet"</span>
+
+<span class="b">Ada</span>
+
+Changed and re-filed.</pre>
+<p class="note"><b>The cost:</b> the record is briefly wrong on the board, and a designer who has already walked away leaves it wrong — the piece of work is queued for a developer the moment it is filed. <b>The gain:</b> a session with nothing to correct ends one exchange sooner, which is most of them.</p>
+</div>
+</div>
+
+<h2>The states</h2>
+
+<h3>Nothing a person can see</h3>
+<p class="note">Identical in both options — nobody is asked, and the designer sees nothing. This is what gets recorded.</p>
+<pre><span class="m">## The agreed experience</span>
+
+None. This piece of work ships two shell readers and a document; nothing a person can
+look at changes.
+
+<span class="m">## The states</span>
+
+None.
+<span class="d">&hellip; and the same under the remaining three headings.</span></pre>
+
+<h3>The designer changes their mind about something agreed earlier in the same session</h3>
+<p class="note">Identical in both options. The agent carries the change through everything that depends on it, and says which parts moved — it never leaves two answers standing.</p>
+<pre><span class="b">Ada</span>
+
+That changes two other things we&rsquo;d settled, so I&rsquo;ve moved them with it:
+the empty list now reads <b>No rows yet</b>, and the dimmed control keeps
+showing the number rather than going blank. Both are in the drawing.</pre>
+
+<h3>The developer sends it back</h3>
+<p class="note">Identical in both options, and already agreed (cb-lz5.1): a send-back is silent on the board, and the piece of work returns to the design queue as ordinary work. The next session the designer has opens on it like any other, saying what came back.</p>
+<pre><span class="b">Ada</span>
+
+This one came back from the person building it. What we agreed didn&rsquo;t
+say what happens when the list is still loading <i>and</i> empty, and they
+can&rsquo;t build it without knowing. Everything else we agreed stands — this
+is the only open question.</pre>
+
+</body></html>

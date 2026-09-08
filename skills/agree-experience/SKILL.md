@@ -16,9 +16,7 @@ theirs.
 
 ## Telling the fleet view what you are doing
 
-```bash
-.claude/cerebro/scripts/agent-state <your-name> working --bead <id> --phase ux --pid $PPID
-```
+`.cerebro/state/<your-name>.state.json` is how the fleet view sees you and when it replaces you.
 
 <!-- state-contract:begin -->
 
@@ -132,9 +130,10 @@ and abandoned otherwise. Both stages take the same `planning:<name>` label, so b
 read: freeing the other stage's live hold would hand one piece of work to two agents.
 
 ```bash
+labelled="$(mktemp)"; held="$(mktemp)"      # never fixed names: several of you may start at once
 bd list --status open --json \
   | jq -r '.[] | select((.labels // []) | any(. == "planning" or startswith("planning:"))) | .id' \
-  | sort > /tmp/labelled
+  | sort > "$labelled"
 state="$(.claude/cerebro/scripts/consumer-root --shared)/.cerebro/state"
 for name in $(.claude/cerebro/scripts/roster --role ux) \
             $(.claude/cerebro/scripts/roster --role build-design); do
@@ -144,9 +143,14 @@ for name in $(.claude/cerebro/scripts/roster --role ux) \
       jq -r '.bead // empty' "$f"
     fi
   fi
-done | sort > /tmp/held
-comm -23 /tmp/labelled /tmp/held            # labelled, held by nobody: abandoned
+done | sort > "$held"
+comm -23 "$labelled" "$held"                # labelled, held by nobody: abandoned
 ```
+
+**Two temporary files of your own, never fixed names.** Every pass of every agent at either stage
+starts with this loop, so two sessions a second apart would interleave writes into one pair of
+files — and a truncated held-list makes a *live* hold look abandoned, one line before the command
+that removes it.
 
 Liveness is `agent-alive` and never a bare `kill -0`: pids are recycled, and a dead agent that looks
 alive strands exactly the label this loop exists to free. A `planning:<name>` whose name is on
@@ -259,6 +263,20 @@ To the designer it opens like this, and never as a fresh session:
 
 > This one came back from the person building it. \<what is missing, in the product's own words\>.
 > Everything else we agreed stands — this is the only open question.
+
+## A piece of work that was parked
+
+One parked because nobody answered comes back carrying `needs-ui-decision`, and its notes carry a
+`## Where we got to in the UX stage` heading. It reaches your queue only once the `human` label has
+been taken off it — that is the orchestrator's, when the navigator has answered — so a piece of work
+you can see here is one somebody is ready to talk about.
+
+**Read that note before anything else, and resume rather than restart.** Everything under it is
+already settled: put only the open question it names to the designer, and never re-ask what they
+have already answered. Open on the question itself rather than on the full introduction.
+
+`needs-ui-decision` is **yours to take off**, and the write in *Recording it* already does — a piece
+of work filed with it still on reads as waiting on an answer for the rest of its life.
 
 ## A piece of work with children, and one with none
 
@@ -384,6 +402,21 @@ wrong cheaply — the moment it is filed it is queued for a developer:
 A correction is answered with "Changed. Anything else?", and the loop repeats until they say it is
 right. Only then:
 
+**Check you still hold it, immediately before you write** — the last moment the check is worth
+anything:
+
+```bash
+bd dolt pull
+bd show <id> --json | jq -r '(if type=="array" then .[0] else . end).labels // [] | join(" ")'
+```
+
+**Do not write** if your own hold is gone, or if somebody else's `planning:` sits there beside it:
+two holds means two interviews, whoever started first, and writing anyway overwrites a record
+somebody else has just spent one on. Say in one line that you lost it and what you had agreed, tell
+the designer with the failure paragraph below — *somebody else is already working on this piece of
+work* — and end the pass. It is a backstop and worth being honest about: by the time it fires the
+interview is already spent, and it rescues the record rather than the hour.
+
 ```bash
 bd update <id> --acceptance "$(cat /tmp/ux-<id>.md)"
 bd update <id> --add-label ux:agreed --remove-label planning:<your-name> \
@@ -472,22 +505,27 @@ If the designer is still there, they see only this:
 
 ## Ending a pass
 
-```bash
-.claude/cerebro/scripts/end-pass <your-name> --pid $PPID
-```
-
-Then say in one line what the pass did and **stop producing output**. Never a sleep loop inside your
-own session, and never a second piece of work — whatever the buffer says afterwards. The fleet view
-ends this session and starts a fresh one under your name when there is something else to design; a
-designer with an hour gets the full introduction each time, which is the cost that was chosen over a
-session that accumulates.
-
-Remove your worktree before you go, from outside the tree you are deleting:
+**Remove your worktree first**, from outside the tree you are deleting. It has to happen before the
+call below, not after: that call says your pass is over, and the fleet view ends this session about
+half a minute later — anything you meant to do afterwards does not happen. The half-hourly sweep
+that would eventually collect the tree is the net under this, not a substitute for it.
 
 ```bash
 git -C <repo> worktree remove --force .cerebro/worktrees/<id>-mockup
 git -C <repo> worktree prune
 ```
+
+Then, and only then:
+
+```bash
+.claude/cerebro/scripts/end-pass <your-name> --pid $PPID
+```
+
+Say in one line what the pass did and **stop producing output**. Never a sleep loop inside your own
+session, and never a second piece of work — whatever the buffer says afterwards. The fleet view ends
+this session and starts a fresh one under your name when there is something else to design; a
+designer with an hour gets the full introduction each time, which is the cost that was chosen over a
+session that accumulates.
 
 ## What you never do
 

@@ -31,11 +31,16 @@ One command's worth of searching, before the first question:
 ```bash
 bd dolt pull
 bd search "<the strongest noun of the request>"
-bd search "<the same noun>" --desc-contains "<the same noun>"
+bd search "<a second noun>"
 ```
 
-Two or three nouns, not the whole sentence. `bd search` includes closed beads by default, and that
-default is kept on purpose: *was this already fixed?* must not silently answer no.
+Two or three nouns, one search each, not the whole sentence. `bd search` includes closed beads by
+default, and that default is kept on purpose: *was this already fixed?* must not silently answer no.
+
+**bd cannot search descriptions alone.** `--desc-contains` is a filter ANDed with the positional
+query, so it can only ever narrow what the query already matched, and the query is required — a
+bead whose description mentions the noun but whose title does not is reached by searching the
+broader word, never by adding the filter.
 
 Show whatever comes back — ids and titles, closed ones included. If anything looks close, ask before
 interviewing whether to file a new bead, add what was said to the existing one, or drop it. If

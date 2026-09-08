@@ -298,7 +298,9 @@ pub fn mouse_target(column: u16, row: u16, facts: LayoutFacts) -> MouseTarget {
     if !facts.usable {
         return MouseTarget::Nothing;
     }
-    let bottom = |rect: Rect| rect.y + rect.height - 1;
+    // Saturating, like every other subtraction in this bead: a zero-height rect is unreachable
+    // while `usable` is true, and is one clamp change away from being a panic in the draw path.
+    let bottom = |rect: Rect| rect.bottom().saturating_sub(1);
 
     if facts.split {
         let spans = row >= facts.fleet.y && row <= bottom(facts.session);

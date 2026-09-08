@@ -345,13 +345,6 @@ pub struct ResizeOutcome {
     pub notice: Option<String>,
 }
 
-/// The ONE place a resize chord's meaning is decided. Pure over the four arguments: `App::on_key`
-/// applies the sizes and puts the notice up, and nothing else reads it.
-///
-/// Every ceiling and floor is asked of the same `ui::clamp_*` functions `ui::split` lays the frame
-/// out with, which is what lets "as wide as it goes" be the width the border actually stops at
-/// rather than a second opinion about it. A chord that moves nothing still carries a notice; the
-/// only silent case is a frame too small to have a layout at all.
 /// A divider being dragged: which one, and which of its two cells was grabbed.
 ///
 /// Memory only and per-gesture: it exists between a left-button press on a divider and the release
@@ -483,6 +476,13 @@ pub fn reset_divider(divider: Divider, sizes: PaneSizes) -> (PaneSizes, String) 
     }
 }
 
+/// The ONE place a resize chord's meaning is decided. Pure over the four arguments: `App::on_key`
+/// applies the sizes and puts the notice up, and nothing else reads it.
+///
+/// Every ceiling and floor is asked of the same `ui::clamp_*` functions `ui::split` lays the frame
+/// out with, which is what lets "as wide as it goes" be the width the border actually stops at
+/// rather than a second opinion about it. A chord that moves nothing still carries a notice; the
+/// only silent case is a frame too small to have a layout at all.
 pub fn resize_action(
     resize: Resize,
     sizes: PaneSizes,
@@ -2001,20 +2001,6 @@ impl App {
         }
     }
 
-    /// The whole keyboard contract this method owns: focus, scroll, refresh, quit.
-    ///
-    /// The lifecycle keys are NOT here. `main::route_key` takes `s`, `f` and `k` before this is
-    /// reached, and the quit-refusal and kill-confirmation panes consume every key ahead of it, so
-    /// by the time a key arrives here it is one of the movement, refresh and quit keys alone. They
-    /// cannot travel through this method because `AppAction` is `Copy` and field-less and is
-    /// compared with `==` in the loop, so no variant may carry an agent's name.
-    ///
-    /// `viewport_lines` is what PageUp/PageDown move the focused pane by: that pane's own body
-    /// height the last frame actually showed, so a page is a page of what the navigator is
-    /// looking at in the widget they are looking at. `App::focused_viewport` is the one place the
-    /// at-least-one floor on that number is applied; this method never applies its own.
-    /// NOW is threaded in rather than asked of the clock: `work_body` needs one for the `Paused`
-    /// suffix, and a key case that called `Utc::now()` would race the wall clock in every test.
     /// One mouse event. METRICS is the frame that was last drawn, for the same reason `on_key`
     /// takes a viewport: the wheel acts on the pane under the POINTER, not on the focused one, so
     /// one viewport number would not do.
@@ -2038,10 +2024,18 @@ impl App {
         // up.
         match event.kind {
             MouseEventKind::Down(MouseButton::Left)
-            | MouseEventKind::Up(MouseButton::Left)
             | MouseEventKind::Drag(MouseButton::Left)
             | MouseEventKind::ScrollUp
             | MouseEventKind::ScrollDown => {}
+            // A release ends the gesture and nothing else — and it does NOT clear the notice: the
+            // agreed words say the line is cleared by the next KEYSTROKE, and letting go of a
+            // divider is the moment the navigator reads the size they just set.
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.drag = None;
+                // `last_divider_press` is deliberately left alone: it is what the next press's
+                // double-click test reads.
+                return AppAction::None;
+            }
             _ => return AppAction::None,
         }
         self.clear_notice();
@@ -2088,9 +2082,6 @@ impl App {
                     self.set_notice(size_notice(drag.divider, outer));
                 }
             }
-            // `last_divider_press` is deliberately left alone: it is what the next press's
-            // double-click test reads.
-            MouseEventKind::Up(MouseButton::Left) => self.drag = None,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let up = event.kind == MouseEventKind::ScrollUp;
                 self.wheel(up, event.column, event.row, metrics, now);
@@ -2187,6 +2178,20 @@ impl App {
         }
     }
 
+    /// The whole keyboard contract this method owns: focus, scroll, refresh, quit.
+    ///
+    /// The lifecycle keys are NOT here. `main::route_key` takes `s`, `f` and `k` before this is
+    /// reached, and the quit-refusal and kill-confirmation panes consume every key ahead of it, so
+    /// by the time a key arrives here it is one of the movement, refresh and quit keys alone. They
+    /// cannot travel through this method because `AppAction` is `Copy` and field-less and is
+    /// compared with `==` in the loop, so no variant may carry an agent's name.
+    ///
+    /// `viewport_lines` is what PageUp/PageDown move the focused pane by: that pane's own body
+    /// height the last frame actually showed, so a page is a page of what the navigator is
+    /// looking at in the widget they are looking at. `App::focused_viewport` is the one place the
+    /// at-least-one floor on that number is applied; this method never applies its own.
+    /// NOW is threaded in rather than asked of the clock: `work_body` needs one for the `Paused`
+    /// suffix, and a key case that called `Utc::now()` would race the wall clock in every test.
     pub fn on_key(
         &mut self,
         key: KeyEvent,
@@ -4436,6 +4441,20 @@ mod tests {
         app.on_mouse(dragged(55, 5), no_metrics(), at(0));
         assert_eq!(app.panes, PaneSizes::default());
         assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn letting_go_of_a_divider_leaves_the_size_on_the_screen() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at(0));
+        app.on_mouse(dragged(55, 5), no_metrics(), at(0));
+        app.on_mouse(released(55, 5), no_metrics(), at(0));
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("left column 56 cells"),
+            "the notice is cleared by the next KEYSTROKE, and a release is not one"
+        );
     }
 
     #[test]

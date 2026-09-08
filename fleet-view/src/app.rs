@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use crate::supervisor::{ReadOnlyReason, SupervisionMode, SupervisorKind};
@@ -305,6 +306,12 @@ pub struct LayoutFacts {
     pub fleet_rows: u16,
     /// Work's outer height.
     pub work_rows: u16,
+    /// The Fleet pane's outer rect as the frame was drawn. `Rect::default()` while `!usable`.
+    pub fleet: Rect,
+    /// The Work pane's outer rect. `Rect::default()` while `!usable`.
+    pub work: Rect,
+    /// The Session pane's outer rect. `Rect::default()` while `!usable`.
+    pub session: Rect,
 }
 
 impl Default for LayoutFacts {
@@ -317,6 +324,9 @@ impl Default for LayoutFacts {
             left_column: 0,
             fleet_rows: 0,
             work_rows: 0,
+            fleet: Rect::new(0, 0, 0, 0),
+            work: Rect::new(0, 0, 0, 0),
+            session: Rect::new(0, 0, 0, 0),
         }
     }
 }
@@ -3891,6 +3901,9 @@ mod tests {
             left_column: 40,
             fleet_rows: 10,
             work_rows: 19,
+            fleet: Rect::new(0, 1, 40, 10),
+            work: Rect::new(0, 11, 40, 19),
+            session: Rect::new(40, 1, 80, 29),
         }
     }
 
@@ -3903,6 +3916,9 @@ mod tests {
             left_column: 80,
             fleet_rows: 9,
             work_rows: 8,
+            fleet: Rect::new(0, 1, 80, 9),
+            work: Rect::new(0, 10, 80, 8),
+            session: Rect::new(0, 18, 80, 12),
         }
     }
 

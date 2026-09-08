@@ -244,7 +244,7 @@ pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
         return LayoutFacts::default();
     }
     let fleet_lines = fleet_document(app, now, fleet_width(area), app.selected_index());
-    let (_, fleet, work, _) =
+    let (_, fleet, work, session) =
         split(area, fleet_lines.len(), work_content_lines(app, now, area), app.panes);
     LayoutFacts {
         usable: true,
@@ -254,6 +254,9 @@ pub fn layout_facts(app: &App, now: DateTime<Utc>, area: Rect) -> LayoutFacts {
         left_column: fleet.width,
         fleet_rows: fleet.height,
         work_rows: work.height,
+        fleet,
+        work,
+        session,
     }
 }
 
@@ -3351,6 +3354,36 @@ mod tests {
         assert_eq!(stacked.left_column, 99);
 
         assert_eq!(layout_facts(&app, now(), Rect::new(0, 0, 30, 10)), LayoutFacts::default());
+    }
+
+    #[test]
+    fn layout_facts_carry_the_rects_the_frame_was_drawn_from() {
+        let app = supervising();
+
+        let area = Rect::new(0, 0, 120, 30);
+        let facts = layout_facts(&app, now(), area);
+        assert_eq!(facts.fleet.x, 0);
+        assert_eq!(facts.session.x, facts.left_column);
+        assert_eq!(facts.fleet.height, facts.fleet_rows);
+        assert_eq!(facts.work.y, facts.fleet.y + facts.fleet.height);
+        assert_eq!(facts.work.height, facts.work_rows);
+        // The session pane takes the column height beside the two, in the split layout.
+        assert_eq!(facts.session.y, facts.fleet.y);
+        assert_eq!(facts.session.height, facts.fleet.height + facts.work.height);
+
+        let stacked = layout_facts(&app, now(), Rect::new(0, 0, 99, 30));
+        for rect in [stacked.fleet, stacked.work, stacked.session] {
+            assert_eq!(rect.x, 0);
+            assert_eq!(rect.width, 99, "every pane is full width while stacked");
+        }
+        assert_eq!(stacked.work.y, stacked.fleet.y + stacked.fleet.height);
+        assert_eq!(stacked.session.y, stacked.work.y + stacked.work.height);
+
+        let tiny = layout_facts(&app, now(), Rect::new(0, 0, 30, 10));
+        assert!(!tiny.usable);
+        assert_eq!(tiny.fleet, Rect::default());
+        assert_eq!(tiny.work, Rect::default());
+        assert_eq!(tiny.session, Rect::default());
     }
 
     #[test]

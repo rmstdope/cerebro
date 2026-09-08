@@ -453,17 +453,20 @@ is a narrow race here worth knowing about: an implementer between beads writes `
 next bead, and only then writes `working` — a flag that lands in that gap can end a session holding a
 fresh claim. That claim is not lost: Cerebro's claims sweep reclaims a lease nobody heartbeats.
 
-**Implementers are named after X-Men.** Take them from this list, in order, skipping any that is
-already running:
+**Implementers are whatever this project's roster declares.** Take them from this list, in
+order, skipping any that is already running:
 
 ```bash
 .claude/cerebro/scripts/roster --implementers
 ```
 
-**The list is a fence, not a suggestion.** `.claude/cerebro/scripts/launch` refuses anything that is not on
-it, and refuses a wrong case too — `storm` is told it is spelt `Storm`. So if the navigator asks for
-a name that is not an X-Man, say that it will not start rather than trying it: the launcher exits 2
-and prints the roster.
+**The list is a fence, not a suggestion.** `.claude/cerebro/scripts/launch` refuses any name that is not on
+the roster, and refuses a wrong case too — `storm` is told it is spelt `Storm`. So if the navigator
+asks for a name this project does not declare, say that it will not start rather than trying it:
+the launcher exits 2 and prints the roster. Say which names *are* declared, and say where the list
+lives — `.cerebro/roster.conf`, a tracked file the navigator can add a row to — so the
+answer is a way forward rather than a wall. Never say a name is refused for not being an X-Man:
+the launcher has never checked that, and `roster.conf` replaces the built-in cast outright.
 
 That is enforced because you work from this list. An off-roster implementer would hold a bead, open
 PRs and be invisible to every question asked about the fleet, since you would never look for it.
@@ -768,8 +771,8 @@ fleet view already reads.)
 on every path that ends a session and again before it starts one, so a file present is a session
 that has not ended and a name with no file is a name that is not running. That is why the first
 loop is the whole of the ordinary case: it names everyone who is up, with what they are doing — the
-list to skip when you pick a new X-Man name for the navigator to start, and the list to choose from
-when you set a stop flag.
+list to skip when you pick the next unused implementer name this project declares for the
+navigator to start, and the list to choose from when you set a stop flag.
 
 **`scripts/agent-alive` is the one place bash answers "is this agent up"**, and the second loop is
 what it is for here: a session killed hard leaves its file behind until the fleet view notices, and

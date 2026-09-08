@@ -392,22 +392,25 @@ consumer tree.
 into another agent's worktree to look at something leaves every later command there — and a
 `git checkout -b` then moves that agent off its own branch.
 
-**Give each session its own block of ports** so two agents never test each other's bundle, and
-**check before claiming one**. A project that declares no `port_base` has no port-sharing problem to
-solve — skip the rest of this section. Otherwise the project declares where the blocks start and how
-far apart they are; nothing here knows the numbers:
+**Give each session its own block of ports, and let the run take one.** A project that declares no
+`port_base` has no port-sharing problem to solve: `smoke-port` says so on stderr and runs your
+command unchanged, so the wrapper is always safe to write.
 
 ```bash
-base="$(.claude/cerebro/scripts/project-conf port_base)"          # where this project's blocks start
-size="$(.claude/cerebro/scripts/project-conf port_block_size 10)" # blocks are this far apart
-mine=$((base + size))                                             # the next block up; try base + 2*size, ... otherwise
-lsof -i :$mine -i :$((mine + 1)) -i :$((mine + 2))   # silence means the block is free
-export "$(.claude/cerebro/scripts/project-conf port_env)=$mine"   # the variable the project's suites read
-export CI=1                          # so a dying server from your own last run is never reused
+.claude/cerebro/scripts/smoke-port -- <the project's browser-suite command>
 ```
 
-There is no registry, so the check is the whole mechanism. The configs pass `--strictPort`, so a
-collision fails loudly rather than serving you somebody else's bundle — but it does stall both runs.
+It takes a free block, holds it for exactly as long as your command runs, releases it however the
+command ends, and exports the variable the project's suites read. **Wrap every browser-suite run
+this way, not the first one only.** The check that used to stand here was true at the instant it
+ran, and a bead spends most of an hour between that instant and the run that needs it; three
+retrospectives paid for the gap one at a time.
+
+**Do not set `CI` by hand.** It once served as the way to stop a stale server being reused, and a
+project's own tooling reads the same variable to mean "this is a runner with the machine to
+itself" — so setting it can switch off the very things a project does only when it does not have
+the machine to itself. If a project's browser config uses `CI` as a proxy for "never reuse a
+server I did not start", fix the config to say that outright.
 
 ## Building
 

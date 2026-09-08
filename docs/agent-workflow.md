@@ -39,7 +39,7 @@ Two rules hold that together, and both are load-bearing:
 ## Who is in the fleet
 
 Seven roles. Six are interactive sessions you talk to; the seventh is the implementer, of which
-there are twelve on the roster.
+your project's roster declares as many as it wants.
 
 | Agent | Role | Runs on | What it is for |
 |---|---|---|---|
@@ -49,7 +49,7 @@ there are twelve on the roster.
 | **Psylocke** | `verifier` | Sonnet | Puts merged work in front of you and records your verdict |
 | **Cypher** | `reviewer` | Opus / high | Reviews pull requests that came from outside the fleet |
 | **Forge** | `architect` | Opus / xhigh | Reads the shape of the codebase and files what it is costing |
-| twelve X-Men | `implementer` | Sonnet | One planned bead each, built test-first, to a merged PR |
+| your implementers | `implementer` | Sonnet | One planned bead each, built test-first, to a merged PR |
 
 `scripts/roster` is the one declaration of that list — name, role and kind, one line each. Everything
 else derives from it: the fleet view, the launcher, and the state files.
@@ -250,8 +250,11 @@ planned, unclaimed bead is what starts it. There is no flag that puts a running 
 running implementer is a working one**, and it claims the next planned bead as soon as one exists. If you want another
 builder, start another session.
 
-Implementers are named after X-Men — Cyclops, Storm, Wolverine, Rogue, and on down the roster — so
-that a fleet of them can be talked about without anyone counting session hashes.
+Implementers carry the names your project declares in `.cerebro/roster.conf`, so that a fleet of
+them can be talked about without anyone counting session hashes. Declare none and you get
+cerebro's own default — twelve X-Men, Cyclops and Storm and Wolverine and Rogue and on down the
+list — which is a default rather than a rule: nothing in the launcher or the fleet view knows
+what an X-Man is, and a project whose builders are named for itself works exactly the same way.
 
 Each takes a planned bead, creates its own git worktree, works through the plan test-first, opens
 a PR, spawns a reviewer sub-agent and answers what it finds, waits for CI, merges and cleans up.

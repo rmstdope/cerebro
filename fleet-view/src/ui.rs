@@ -765,6 +765,12 @@ fn hint_clauses(app: &App) -> Vec<HintClause> {
     // first and alone, so the key is offered wherever there is room and nowhere it would push
     // something else off.
     clauses.push(HintClause { text: "h health", rank: HintRank::Optional });
+    // cb-bch.1, at the same `Optional` rank as `h health` above and for the same reason: the
+    // ordinary hundred-column screen has about one cell of slack, so an unconditional clause at
+    // any higher rank drops a whole tier of hints the navigator asked by name to keep. It is
+    // unconditional because the chords always do something, and outside the supervision lease
+    // because moving a divider changes this screen and nothing else.
+    clauses.push(HintClause { text: "^←→ size", rank: HintRank::Optional });
     // The two clauses of cb-kcs.5.4, by the same rule and for the same reason: both write to the
     // shared board rather than to this checkout's sessions, so both are shown on a read-only
     // view. Each only while the cursor is on a row that key acts on. cb-41r's `Enter bead` rides
@@ -2817,6 +2823,14 @@ mod tests {
         assert!(!rendered[0].contains("3 live agents"), "{:?}", rendered[0]);
     }
 
+    #[test]
+    fn the_resize_hint_rides_beside_h_health_at_the_optional_rank() {
+        let rendered = lines(&render(&populated(), 160, 20));
+        let health = rendered[0].find("h health").expect("the health clause");
+        let size = rendered[0].find("^←→ size").expect("the resize clause");
+        assert!(health < size, "beside it, and after it: {:?}", rendered[0]);
+    }
+
     /// The screen every consumer sees today keeps every hint it had before this bead.
     ///
     /// This is the assertion the navigator asked for by name: ownership must not cost the default
@@ -4774,10 +4788,14 @@ mod tests {
         // header hint alone would leave `h` undiscoverable exactly when the fleet is fine. Its
         // own rank, dropped first and alone, so it costs no other clause anything.
         let health = HintClause { text: "h health", rank: HintRank::Optional };
+        // Beside it, at the same rank and for the same reason (cb-bch.1): the chords always do
+        // something, so the clause is unconditional, and `Optional` is what keeps it from
+        // costing the movement tier anything.
+        let size = HintClause { text: "^←→ size", rank: HintRank::Optional };
 
         assert_eq!(
             hint_clauses(&populated()),
-            vec![pane, scroll, health, refresh, quit],
+            vec![pane, scroll, health, size, refresh, quit],
             "read-only, no findings, no cursor, no reachable session"
         );
         assert_eq!(
@@ -4787,6 +4805,7 @@ mod tests {
                 scroll,
                 HintClause { text: "s/f/k start·finish·kill", rank: HintRank::Kept },
                 health,
+                size,
                 refresh,
                 quit
             ],
@@ -4799,6 +4818,7 @@ mod tests {
                 scroll,
                 HintClause { text: "f finish | k kill", rank: HintRank::Kept },
                 health,
+                size,
                 refresh,
                 quit
             ],
@@ -4809,7 +4829,7 @@ mod tests {
         failed.finish_refresh(Err(failure()), at(86_400));
         assert_eq!(
             hint_clauses(&failed),
-            vec![pane, scroll, health, retry, quit],
+            vec![pane, scroll, health, size, retry, quit],
             "a failed pane asks for a retry rather than a refresh"
         );
 
@@ -4831,6 +4851,7 @@ mod tests {
                 pane,
                 scroll,
                 health,
+                size,
                 HintClause { text: "0-4/+/-/u priority", rank: HintRank::Cursor },
                 HintClause { text: "Enter bead", rank: HintRank::Cursor },
                 refresh,
@@ -4848,6 +4869,7 @@ mod tests {
                 pane,
                 scroll,
                 health,
+                size,
                 HintClause { text: "Enter show all", rank: HintRank::Cursor },
                 refresh,
                 quit
@@ -4865,6 +4887,7 @@ mod tests {
                 pane,
                 scroll,
                 health,
+                size,
                 HintClause { text: "Enter session", rank: HintRank::Cursor },
                 refresh,
                 quit

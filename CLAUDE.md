@@ -813,8 +813,9 @@ back is one line (`docs/cerebro-supervision.md`).
 
 One screen, **three** independently bordered, independently scrolling widgets since cb-kcs.2.1:
 Fleet, Work and Session, each with its own title, focus and scroll offset rather than one shared
-document. At `SPLIT_COLUMNS` (100) or wider the screen is a fixed `LEFT_COLUMN` (40) holding Fleet
+document. At `SPLIT_COLUMNS` (100) or wider the screen is a `LEFT_COLUMN` (40) holding Fleet
 over Work, with Session taking every remaining cell beside them; below that width all three stack.
+Neither divider is fixed any more - see the resize chords below.
 `Tab` cycles Fleet → Work → Session and `Shift-Tab` reverses it, and since cb-5kk `F1`/`F2`/`F3`
 jump straight to those three panes from any focus (held back from a focused live session like the
 tabs; `F4` and above still reach the agent) — the focused one draws a
@@ -834,6 +835,27 @@ and nothing else, so it is **outside the supervision lease** exactly as `x` and 
 are, and it behaves identically on a read-only view. `g` refreshes both readers regardless of focus,
 `q`/`Esc`/`Ctrl-C` quits. A pane whose content outgrows its inner height reserves its last row for a dim
 `Rows n–m of total` cue.
+
+Since cb-bch.1 those dividers move from the keyboard: `Ctrl-←`/`Ctrl-→` widen and narrow the left
+column a cell at a time, `Ctrl-↑`/`Ctrl-↓` move a horizontal divider a row at a time - in the
+stacked layout the one **below the focused pane**, so Session focus has none to move - and
+`Ctrl-Home` puts every divider back, each saying what it did in the header's notice slot, including
+when it moved nothing (a silently dead key is what the whole vocabulary exists to prevent). The
+reset is `Ctrl-Home` and never `Ctrl-=`, which is neither a control byte nor a CSI sequence and
+which macOS Terminal.app and iTerm2 send nothing at all for. `app::resize_action` is the ONE place
+a chord's meaning is decided, pure over the sizes, the focus and `LayoutFacts` - what
+`ui::layout_facts` says the drawn frame actually came to, off the same `split`, so a chord and a
+border can never disagree - and `ui::clamp_*` is the one place a floor (`MIN_PANE_COLUMNS` 24,
+`MIN_PANE_ROWS` 3) or a ceiling is decided, asked by both. `app::is_view_key` is the one place the
+set held back from a hosted agent is named: the pane keys plus these five. **The sizes are memory
+only** (`App::panes`), on the navigator's own choice - no file is read and none is written, since
+this crate has no on-disk UI preference and a size takes two seconds to set again - stored
+unclamped and clamped where used, so a narrow spell never overwrites what was set on a wide screen,
+and split and stacked keep separate heights for the same reason. The chords are outside the
+supervision lease, as `x` and the priority keys are: moving a divider changes this screen and
+nothing else. cb-bch.2 adds mouse capture, the drags, the wheel and click-to-focus on top of
+exactly this state. `emacs/cerebro.el` is deliberately given none of it, as cb-xhu.4.2's health
+section was: no `tests/lib/` table, no second implementation.
 
 **The selection is a name, never an index** (`App::selected`, `App::selected_index`): the roster can
 shrink under the navigator, and an index would silently come to mean a different agent. A selected
@@ -917,7 +939,9 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   root is a constructor parameter and never resolved — a logger that found its own root would make
   every test append to the navigator's live log — and it starts disabled, so a view that comes up
   read-only has written nothing by its first frame.
-- `app.rs` — the display state, the two independent cadences (fleet every 5s, work every 30s) and
+- `app.rs` — the display state, the pane sizes and the resize decision (`PaneSizes`,
+  `LayoutFacts`, `resize_action` - where the geometry `App` holds begins and ends), the two
+  independent cadences (fleet every 5s, work every 30s) and
   one worker thread per pane. The panes are independent all the way down: one in-flight slot each,
   one clock each, one `Pane<T>` state machine each. A global busy bit would let the five-second
   fleet read starve the thirty-second work read, and a busy fleet would swallow the retry a

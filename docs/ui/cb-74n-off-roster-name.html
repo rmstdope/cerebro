@@ -1,0 +1,53 @@
+<!doctype html><meta charset="utf-8"><title>cb-74n — Cerebro is asked for a name that is not on the roster</title><style>body{background:#1e1e1e;color:#d4d4d4;font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px}h1{font-size:16px;color:#fff}h2{font-size:14px;color:#9cdcfe;margin-top:30px}h3{font-size:13px;color:#d7ba7d;margin-top:18px}pre{background:#111;padding:14px;border:1px solid #333;line-height:1.4;white-space:pre-wrap}.u{color:#e5a13b;font-weight:bold}.c{color:#9cdcfe}.g{color:#6a9955}.r{color:#f14c4c}.d{color:#777}.note{color:#aaa;max-width:88ch;line-height:1.5}b{color:#fff}</style>
+
+<h1>cb-74n — what Cerebro says when the navigator asks for a name that is not on the roster</h1>
+<p class="note">Today <code>agents/orchestrator.md</code> says <b>“Implementers are named after X-Men… if the navigator asks for a name that is not an X-Man, say that it will not start rather than trying it.”</b> That reason is wrong: <code>scripts/launch</code> refuses a name for not being <b>on the roster</b>, and the roster is whatever <code>.cerebro/roster.conf</code> declares. The three options below differ in what Cerebro <em>does</em> about it, not only in how it words it. The scene is the same in each: this repository’s roster declares Cyclops, Storm, Wolverine, Rogue, and the navigator asks for a name that is not there.</p>
+
+<p class="note" style="border-left:3px solid #6a9955;padding-left:10px"><b>Chosen by the navigator, 2026-09-08: Option A.</b> B was declined as a new capability with real blast radius (file order is load-bearing; a bad row refuses the whole roster with exit 2) and belongs in its own bead if it is ever wanted. C was declined because making the navigator find out by trying is exactly what the sentence being corrected was written to save them.</p>
+<h2>Option A — refuse, and name the roster (today’s behaviour, corrected reason) — <span class="g">CHOSEN</span></h2>
+<pre><span class="u">you ▸</span> start Morph on the next planned bead
+
+<span class="c">Cerebro ▸</span> Morph is not on this project's roster, so `launch Morph` would refuse
+          (exit 2) and nothing would start. The implementer names this project
+          declares are Cyclops, Storm, Wolverine and Rogue — all four are up.
+
+          If you want an implementer called Morph, add the row to
+          .cerebro/roster.conf and commit it; I'll pick the name up on my next
+          pass.</pre>
+<p class="note"><b>Cost:</b> nothing new is built; one sentence changes meaning. Cerebro still refuses before trying, but for the true reason, and it tells you where the list actually lives. The navigator does the edit.</p>
+
+<h2>Option B — refuse, and offer to add the name to the roster</h2>
+<pre><span class="u">you ▸</span> start Morph on the next planned bead
+
+<span class="c">Cerebro ▸</span> Morph is not on this project's roster, so `launch Morph` would refuse
+          (exit 2). The declared implementers are Cyclops, Storm, Wolverine and
+          Rogue — all four are up.
+
+          I can add Morph to .cerebro/roster.conf as a fifth implementer. That is
+          a tracked file, so it is a commit on main and every clone gets it.
+          Add it?
+
+<span class="u">you ▸</span> yes
+
+<span class="c">Cerebro ▸</span> Added `Morph  implementer` to .cerebro/roster.conf and committed it
+          (roster: add Morph as an implementer). The fleet view will show the row
+          on its next read. I cannot start a session — run
+          `.claude/cerebro/scripts/launch Morph`, or press s on its row.</pre>
+<p class="note"><b>Cost:</b> a new capability for Cerebro — it edits and commits a tracked declaration. Order is load-bearing in that file (the orchestrator takes implementer names in file order), and a bad row refuses the whole roster with exit 2, so this is a write with real blast radius. It also needs its own rules: where the row goes, whether it carries <code>standby</code>, and what happens on a dirty checkout.</p>
+
+<h2>Option C — do not pre-judge; run it and report what happened</h2>
+<pre><span class="u">you ▸</span> start Morph on the next planned bead
+
+<span class="c">Cerebro ▸</span> I cannot start a session — that is yours or the fleet view's. If you run
+          `.claude/cerebro/scripts/launch Morph` it will answer for itself; on this
+          roster I expect it to refuse, since the declared implementers are
+          Cyclops, Storm, Wolverine and Rogue.</pre>
+<p class="note"><b>Cost:</b> the least prose, and it never asserts a fence that a consumer's own roster might not have. But it makes the navigator find out by trying, which is exactly what the sentence being removed was written to save them.</p>
+
+<h2>Unchanged in all three — the ordinary “start another builder” answer</h2>
+<pre><span class="u">you ▸</span> start another builder
+
+<span class="c">Cerebro ▸</span> Storm and Wolverine are up. The next unused implementer name this
+          project declares is Rogue — run `.claude/cerebro/scripts/launch Rogue`,
+          or press s on its row in the fleet view.</pre>
+<p class="note">Today this paragraph reads “when you pick a new <b>X-Man</b> name”. In every option it becomes “the next unused implementer name <b>this project declares</b>”, which is the same act with a true reason. The built-in default table in <code>scripts/roster</code> stays X-Men and is not touched by this bead.</p>

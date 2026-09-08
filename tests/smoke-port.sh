@@ -57,8 +57,12 @@ suite_cleanup() {
   # to it is queued behind the very loop it would end. Both processes then survive the fixture's
   # removal. suite_cleanup runs BEFORE the trap's `rm -rf' (tests/lib/consumer.sh), so the stop
   # file can still be written, which is what the loop is actually waiting for.
-  [[ -n "$live_stop" ]] && touch "$live_stop" 2>/dev/null
-  [[ -n "$live_holder" ]] && wait "$live_holder" 2>/dev/null
+  # The wait is guarded by the STOP FILE, not by the pid. A death between the two assignments below
+  # would otherwise leave `live_stop' empty, nothing to release the loop, and a `wait' that never
+  # returns - trading a stray for a hung gate, which is worse: a hang has no failing suite to name.
+  if [[ -n "$live_stop" ]] && touch "$live_stop" 2>/dev/null; then
+    [[ -n "$live_holder" ]] && wait "$live_holder" 2>/dev/null
+  fi
   # The bound socket is the other stray, and it poisons the NEXT run rather than living for ever:
   # a second `s.bind' fails, and the case then goes red with "could not bind" - a different failure
   # for a reason that is not the defect.
@@ -153,11 +157,11 @@ declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_
 # The first run holds its block until this suite says otherwise, rather than for a fixed sleep: a
 # `sleep' would be dead wall-clock on every gate run, and bash defers the kill's trap until a
 # foreground sleep returns anyway - so `wait' would pay the whole of it (ah-dksm review, finding 4).
+live_stop="$tmp/stop"
 smoke_port "$tmp" -- /bin/sh -c "echo started >'$tmp/started'
                                  while [ ! -f '$tmp/stop' ]; do sleep 0.05; done" >/dev/null 2>&1 &
-first=$!
-live_holder=$first
-live_stop="$tmp/stop"
+live_holder=$!
+first=$live_holder
 cleanup_add "$tmp"
 for _ in $(seq 1 100); do
   [[ -f "$tmp/started" ]] && break
@@ -343,7 +347,8 @@ time.sleep(30)' "$first_block" 2>"$tmp/bound" &
   out="$(smoke_port "$tmp" --blocks 1 -- /bin/sh -c ":" 2>"$tmp/err2")"
   status=$?
   set -e
-  out="$out$(cat "$tmp/err2")"
+  out="$out
+$(cat "$tmp/err2")"
   [[ $status -eq 3 ]] \
     || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: expected exit 3, got $status ($out)"
   # The SUMMARY line, not the probe's own message: the probe says "already listening" whichever
@@ -356,7 +361,7 @@ time.sleep(30)' "$first_block" 2>"$tmp/bound" &
     || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: summary does not blame the listening port: $summary"
   # The probe's own line, not the whole output: the block's ports are in there too, and a pid that
   # collided with one would make a bare search pass having proved nothing.
-  grep -q "held by pid .*$binder" "$tmp/err2" \
+  grep -qE "held by pid ([0-9]+ )*$binder( |\$)" "$tmp/err2" \
     || fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: did not name the holding pid $binder: $(cat "$tmp/err2")"
   [[ -e "$(lock_dir "$tmp")/$first_block.lock" ]] \
     && fail "smoke-port-names-the-listening-port-of-a-block-it-reclaimed: kept the reservation it refused"

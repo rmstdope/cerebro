@@ -302,7 +302,8 @@ fn stale(labels: &[String]) -> bool {
 /// Sorted so the same set in a different bucket order is the same set
 /// (`cerebro--trigger-context`'s own note). Extracted from `TriggerFacts::derive` in cb-kcs.5.2
 /// because the triage path needs exactly this set from exactly these buckets and nothing else -
-/// and a second copy of the rule is a set the two could disagree about.
+/// and a second copy of the rule is a set the two could disagree about. Since cb-lz5.1 it reads
+/// BOTH open unplanned buckets: a P4 carrying `ux:agreed` is still a bead nobody has ranked.
 pub fn unranked_ids(buckets: &WorkBuckets) -> Vec<String> {
     let mut ids: Vec<String> = buckets
         .unplanned

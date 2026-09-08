@@ -1204,7 +1204,7 @@ pub fn bead_body(detail: &BeadDetail, width: usize) -> Vec<BeadBodyLine> {
     body
 }
 
-/// The whole Work document, in order: the Health section, the Sweeps section, the six queues,
+/// The whole Work document, in order: the Health section, the Sweeps section, the seven queues,
 /// then History.
 ///
 /// The Sweeps section is FIRST on the screen (the navigator's choice: this pane shows about
@@ -1212,7 +1212,8 @@ pub fn bead_body(detail: &BeadDetail, width: usize) -> Vec<BeadBodyLine> {
 /// presses), and History is LAST - the `M-x cerebro` order, so the two views read alike.
 ///
 /// Nothing at all for Sweeps - not even a blank - when there are no findings and no error. That
-/// is deliberately unlike the six queues, which print `(none)`: an empty Sweeps section is the
+/// is deliberately unlike the queues, which print `(none)` - all but `UX agreed`, which is
+/// hidden when empty for this same reason (cb-lz5.1): an empty Sweeps section is the
 /// ORDINARY result of every render but one. A FAILED sweep with nothing to keep still draws its
 /// header, because a clean fleet and a fleet nobody could look at must not draw the same blank.
 ///

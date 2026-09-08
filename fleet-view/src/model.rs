@@ -717,7 +717,7 @@ pub fn linked_beads(beads: &[Bead]) -> Vec<LinkedBead> {
         .collect()
 }
 
-/// The panel's six sections, in the order `emacs/cerebro.el:4652-4764`
+/// The panel's seven sections, in the order `emacs/cerebro.el:4652-4764`
 /// (`cerebro--partition-beads`) builds them; a bead's input order is preserved within its bucket.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorkBuckets {

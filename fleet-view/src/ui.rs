@@ -1288,7 +1288,7 @@ fn fleet_body_line(
     }
 }
 
-/// The Work pane's whole body: the Sweeps section, the six queues, then History.
+/// The Work pane's whole body: the Sweeps section, the seven queues, then History.
 ///
 /// One arm per `app::WorkBodyLine`, and no structure of its own: `app::work_body` is the one
 /// owner of what this pane contains, so the row the cursor is on and the row that is drawn cannot

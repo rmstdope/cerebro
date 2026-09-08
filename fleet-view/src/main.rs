@@ -2561,7 +2561,10 @@ mod main_tests {
         );
         let text = echoed(&mut state.host, &app, "x");
         assert!(text.contains('x'), "the plain char still reached the child: {text:?}");
-        assert!(!text.contains("[1;5C"), "and the chord did not: {text:?}");
+        // The sequence actually at risk: `session::key_bytes` maps `KeyCode::Right` to `ESC [ C`
+        // whatever the modifiers, so a regressed holdback would send the child a PLAIN right
+        // arrow rather than a modified one. `cat -v` renders the escape as `^[`.
+        assert!(!text.contains("^[[C"), "and the chord did not: {text:?}");
     }
 
     #[test]

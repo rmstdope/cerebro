@@ -2141,14 +2141,14 @@ impl App {
         }
     }
 
-    /// Remember the geometry of the frame just drawn, so a refresh that moves the selected row
-    /// can scroll the Fleet pane to it without a keystroke.
     /// Record what `ui::layout_facts` said this frame's layout came to. One call per loop
     /// iteration, beside `note_metrics`.
     pub fn note_layout(&mut self, facts: LayoutFacts) {
         self.layout = facts;
     }
 
+    /// Remember the geometry of the frame just drawn, so a refresh that moves the selected row
+    /// can scroll the Fleet pane to it without a keystroke.
     pub fn note_metrics(&mut self, metrics: Metrics) {
         self.fleet_viewport = metrics.fleet.viewport_lines;
     }

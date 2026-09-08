@@ -650,7 +650,8 @@ Since cb-ykz.2 its Fleet rows carry the same **stuck** signal `M-x cerebro` does
 rule (`lifecycle::stuck_for`) and the same 1800-second ceiling: a red `✗` glyph, and `stuck 8h49`
 in red. Which cell carries the text is the one divergence, and it is the pane's own shape: in the
 wide layout it replaces the FOR column's elapsed pair, and **below `WIDE_COLUMNS` — which is the
-ordinary split layout, where the Fleet pane is a fixed 40 cells — the BEAD cell carries it**
+ordinary split layout, where the Fleet pane is 40 cells unless the navigator has widened it
+(cb-bch.1) — the BEAD cell carries it**
 instead, standing aside as it already does for a standby label and a dead row's verdict, with
 `columns` sizing that column from the same `bead_cell` so the text is never cut. The STATE cell is
 untouched in both. One `stuck` line per occurrence goes into `decisions.jsonl`, gated on
@@ -940,7 +941,9 @@ The crate is split the way `cerebro.el` is, and for the same reason:
   every test append to the navigator's live log — and it starts disabled, so a view that comes up
   read-only has written nothing by its first frame.
 - `app.rs` — the display state, the pane sizes and the resize decision (`PaneSizes`,
-  `LayoutFacts`, `resize_action` - where the geometry `App` holds begins and ends), the two
+  `LayoutFacts`, `resize_action` - where the geometry `App` holds begins and ends, and the one
+  place this module reaches INTO `ui`, for the floors and ceilings `ui::split` lays out with), the
+  two
   independent cadences (fleet every 5s, work every 30s) and
   one worker thread per pane. The panes are independent all the way down: one in-flight slot each,
   one clock each, one `Pane<T>` state machine each. A global busy bit would let the five-second

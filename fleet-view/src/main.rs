@@ -1481,6 +1481,11 @@ where
         // Kept for the refresh that moves the selected row with nothing pressed - the only place
         // `App` learns any geometry, and always from a frame that was actually drawn.
         app.note_metrics(metrics);
+        // Two statements rather than one: `layout_facts` borrows `app` immutably and
+        // `note_layout` mutably. Outside the `too_small` guard below, so a frame with no layout
+        // records `usable: false` rather than leaving a stale one for a chord to act on.
+        let facts = ui::layout_facts(app, now, area);
+        app.note_layout(facts);
         // A page is a page of the FOCUSED pane's own viewport, not the other pane's and not the
         // whole terminal: `App::focused_viewport` is the one place the at-least-one floor lives.
         let viewport_lines = app.focused_viewport(metrics);
@@ -1746,7 +1751,7 @@ fn write_priority(
     AppAction::Write(request)
 }
 
-/// In branch 3, `Tab` and `Shift-Tab` are BOTH held back and handed to `App::on_key`, which runs
+/// In branch 3, `Tab`, `Shift-Tab`, `F1`-`F3` and the five resize chords are held back and handed to `App::on_key`, which runs
 /// the plain focus cycle: from Session that is `Tab` -> Fleet and `Shift-Tab` -> Work (cb-3v5 for the
 /// first of them, Q8 for the second), which is the reason the child can never receive either;
 /// everything else goes to
@@ -1832,8 +1837,11 @@ fn route_key(
     // still sends one - it IS 0x09, through `control_byte` - so an agent that needs a real tab
     // gets one in two keys. Since cb-5kk `F1`, `F2` and `F3` join them, at the same accepted
     // cost and with no escape hatch; `F4` and every other function key still reach the agent.
-    // `app::is_pane_key` is the one place that set is named.
-    if app.session_has_keyboard() && !cerebro_tui::app::is_pane_key(key.code) {
+    // Since cb-bch.1 the five resize chords join them, at the same accepted cost: `Ctrl-←/→/↑/↓`
+    // and `Ctrl-Home` move a divider rather than reaching the agent, so the navigator can resize
+    // the pane they are reading an agent in. `app::is_view_key` is the one place that whole set
+    // is named.
+    if app.session_has_keyboard() && !cerebro_tui::app::is_view_key(key) {
         if let (Some(name), Some(bytes)) = (app.selected.clone(), session::key_bytes(key)) {
             state.host.send(&name, &bytes);
         }
@@ -2530,6 +2538,30 @@ mod main_tests {
             text.contains(wanted).then_some(())
         });
         text
+    }
+
+    #[test]
+    fn a_focused_live_session_never_receives_a_resize_chord() {
+        let mut host = SessionHost::default();
+        let mut app = hosting(&mut host);
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let mut events = ReplayedEvents::stopping(vec![
+            ctrl(KeyCode::Right),
+            key(KeyCode::Char('x')),
+        ]);
+        let workers = test_workers();
+        let mut state = LoopState { host, ..test_state() };
+        let config = test_config();
+        let _ = run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now);
+
+        assert_eq!(
+            app.panes.left_column,
+            Some(cerebro_tui::ui::LEFT_COLUMN + 1),
+            "the chord moved the divider"
+        );
+        let text = echoed(&mut state.host, &app, "x");
+        assert!(text.contains('x'), "the plain char still reached the child: {text:?}");
+        assert!(!text.contains("[1;5C"), "and the chord did not: {text:?}");
     }
 
     #[test]

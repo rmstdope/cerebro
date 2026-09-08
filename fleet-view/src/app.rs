@@ -451,6 +451,38 @@ pub fn is_pane_key(code: KeyCode) -> bool {
         || matches!(code, KeyCode::F(n) if PaneFocus::from_function_key(n).is_some())
 }
 
+/// Which resize a key asks for, if any. The ONE place the five chords are spelled.
+///
+/// `CONTROL` must be present and `SHIFT` is tolerated - crossterm reports `SHIFT` alongside a
+/// chord under the kitty keyboard protocol and on some Windows paths, exactly as the priority
+/// keys' own comment records - and any other modifier disqualifies, so `Alt-←` still reaches a
+/// hosted agent.
+///
+/// `Ctrl-Home` and not `Ctrl-=` for the reset: `Ctrl-=` is neither a control byte nor a CSI
+/// sequence, and macOS Terminal.app and iTerm2 send nothing at all for it, so binding it would
+/// ship a key that silently does nothing in the navigator's own terminal (cb-bch.1, round three).
+pub fn resize_key(key: KeyEvent) -> Option<Resize> {
+    if !key.modifiers.contains(KeyModifiers::CONTROL)
+        || !key.modifiers.difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT).is_empty()
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Left => Some(Resize::Narrower),
+        KeyCode::Right => Some(Resize::Wider),
+        KeyCode::Up => Some(Resize::Shorter),
+        KeyCode::Down => Some(Resize::Taller),
+        KeyCode::Home => Some(Resize::Reset),
+        _ => None,
+    }
+}
+
+/// Every key a focused live session never receives: the ones that move focus between panes, and
+/// the ones that move a divider. The ONE place that set is named; `main.rs` asks this.
+pub fn is_view_key(key: KeyEvent) -> bool {
+    is_pane_key(key.code) || resize_key(key).is_some()
+}
+
 /// The Session pane's own scroll offset, and the lines one frame draws it from. It has no reader
 /// and therefore no `PaneContent`: what it shows is a child's screen, materialised by
 /// `SessionHost::sync` BEFORE the frame, or one of the bodies derived from the selection and the
@@ -1844,6 +1876,16 @@ impl App {
         // A notice is transient by design: it survives exactly until the navigator touches the
         // keyboard, whatever they press.
         self.clear_notice();
+        // Before the match: the plain arrow arms below gate on focus and not on modifiers, so a
+        // `Ctrl-↑` reaching them would scroll a pane instead of moving a divider.
+        if let Some(resize) = resize_key(key) {
+            let outcome = resize_action(resize, self.panes, self.focus, self.layout);
+            self.panes = outcome.sizes;
+            if let Some(text) = outcome.notice {
+                self.set_notice(text);
+            }
+            return AppAction::None;
+        }
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quit = true;
@@ -3993,6 +4035,79 @@ mod tests {
             assert_eq!(out.sizes, sizes, "{resize:?} changed nothing");
             assert_eq!(out.notice, None, "{resize:?} said nothing");
         }
+    }
+
+    fn chord(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn view_keys_are_the_pane_keys_and_the_five_resize_chords() {
+        for code in [KeyCode::Left, KeyCode::Right, KeyCode::Up, KeyCode::Down, KeyCode::Home] {
+            assert!(is_view_key(chord(code)), "Ctrl-{code:?} moves a divider");
+            assert!(!is_view_key(key(code)), "a plain {code:?} is the pane's own");
+            assert!(
+                !is_view_key(KeyEvent::new(code, KeyModifiers::ALT)),
+                "Alt-{code:?} still reaches a hosted agent"
+            );
+        }
+        for code in [KeyCode::Tab, KeyCode::BackTab, KeyCode::F(1), KeyCode::F(2), KeyCode::F(3)] {
+            assert!(is_view_key(key(code)), "{code:?} moves focus");
+        }
+        for code in [KeyCode::F(4), KeyCode::Char('x')] {
+            assert!(!is_view_key(key(code)), "{code:?} is the agent's");
+            assert!(!is_view_key(chord(code)), "and so is Ctrl-{code:?}");
+        }
+        // crossterm reports SHIFT alongside a chord under the kitty protocol and on some Windows
+        // paths, exactly as the priority keys' own comment records.
+        assert!(is_view_key(KeyEvent::new(
+            KeyCode::Left,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )));
+    }
+
+    fn seeded(focus: PaneFocus) -> App {
+        let mut app = App::new();
+        app.focus = focus;
+        app.note_layout(split_facts());
+        app
+    }
+
+    #[test]
+    fn ctrl_arrows_resize_from_every_focus() {
+        for focus in [PaneFocus::Fleet, PaneFocus::Work, PaneFocus::Session] {
+            let mut app = seeded(focus);
+            assert_eq!(app.on_key(chord(KeyCode::Right), 10, at(0)), AppAction::None);
+            assert_eq!(app.panes.left_column, Some(41), "from {focus:?}");
+            assert_eq!(app.notice.as_deref(), Some("left column 41 cells"));
+
+            let mut app = seeded(focus);
+            app.on_key(chord(KeyCode::Down), 10, at(0));
+            assert_eq!(app.panes.split_fleet_rows, Some(11), "from {focus:?}");
+        }
+    }
+
+    #[test]
+    fn ctrl_home_puts_every_divider_back() {
+        let mut app = seeded(PaneFocus::Fleet);
+        app.on_key(chord(KeyCode::Right), 10, at(0));
+        app.on_key(chord(KeyCode::Down), 10, at(0));
+        assert!(!app.panes.is_default(), "two dividers moved");
+
+        app.on_key(chord(KeyCode::Home), 10, at(0));
+        assert!(app.panes.is_default());
+        assert_eq!(app.notice.as_deref(), Some("panes back to their default sizes"));
+    }
+
+    /// The plain-arrow arms of `on_key` gate on focus and not on modifiers, so the resize arm has
+    /// to sit before the match - and must not swallow the scroll keys on its way past.
+    #[test]
+    fn a_plain_arrow_still_scrolls_its_own_pane() {
+        let mut app = seeded(PaneFocus::Session);
+        app.session.scroll = 4;
+        app.on_key(key(KeyCode::Up), 10, at(0));
+        assert_eq!(app.session.scroll, 3, "the plain arrow scrolled");
+        assert!(app.panes.is_default(), "and moved no divider");
     }
 
     /// The set held back from a hosted agent is exactly the set that moves focus.

@@ -3562,6 +3562,172 @@ mod tests {
         }
     }
 
+    /// Render APP at 120x30 and tell it what that frame came to, then hand it the click.
+    ///
+    /// A hand-built `LayoutFacts` here would prove the arithmetic against itself rather than
+    /// against the screen, which is the reader-contract discipline `emacs/cerebro.el`'s own
+    /// section states and which cb-os4 paid for.
+    fn seeded(app: &mut App) -> Rect {
+        let area = Rect::new(0, 0, 120, 30);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| draw(frame, app, now())).unwrap();
+        app.note_layout(layout_facts(app, now(), area));
+        app.note_metrics(metrics(app, now(), area));
+        area
+    }
+
+    fn click(app: &mut App, column: u16, row: u16) {
+        let event = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        let m = metrics(app, now(), Rect::new(0, 0, 120, 30));
+        app.on_mouse(event, m, now());
+    }
+
+    #[test]
+    fn a_click_on_a_fleet_row_selects_that_agent_and_focuses_fleet() {
+        let mut app = supervising();
+        app.set_focus(PaneFocus::Session);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        // Inner row 0 is the column heading; inner row 1 is the first agent.
+        let names: Vec<String> =
+            app.fleet.content.value().unwrap().iter().map(|r| r.name.clone()).collect();
+        click(&mut app, 5, facts.fleet.y + 1 + 3);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert_eq!(app.selected.as_deref(), Some(names[2].as_str()));
+    }
+
+    #[test]
+    fn a_click_on_the_fleet_heading_focuses_and_selects_nothing() {
+        let mut app = supervising();
+        app.set_focus(PaneFocus::Session);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        let before = app.selected.clone();
+        click(&mut app, 5, facts.fleet.y + 1);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert_eq!(app.selected, before);
+    }
+
+    #[test]
+    fn a_click_on_a_selectable_work_row_moves_the_cursor_there() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        app.set_focus(PaneFocus::Fleet);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        let body = app::work_body(&app, now());
+        let scroll = app.work.scroll;
+        let (line, expected) = body
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .find_map(|(index, l)| l.cursor().map(|c| (index, c)))
+            .expect("the Work pane has a selectable row");
+        click(&mut app, 5, facts.work.y + 1 + (line - scroll) as u16);
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert_eq!(app.work_cursor, Some(expected));
+    }
+
+    #[test]
+    fn a_click_on_a_work_section_header_focuses_and_moves_no_cursor() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        app.set_focus(PaneFocus::Fleet);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        let body = app::work_body(&app, now());
+        let scroll = app.work.scroll;
+        let line = body
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .find_map(|(index, l)| l.cursor().is_none().then_some(index))
+            .expect("the Work pane has an unselectable row");
+        let before = app.work_cursor.clone();
+        click(&mut app, 5, facts.work.y + 1 + (line - scroll) as u16);
+        assert_eq!(app.focus, PaneFocus::Work);
+        assert_eq!(app.work_cursor, before);
+    }
+
+    #[test]
+    fn a_click_on_the_session_pane_focuses_it_even_when_it_is_empty() {
+        let mut app = supervising();
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        click(&mut app, facts.session.x + 5, facts.session.y + 2);
+        assert_eq!(
+            app.focus,
+            PaneFocus::Session,
+            "a click on a pane is Tab-shaped, not Enter-shaped: it never refuses"
+        );
+    }
+
+    #[test]
+    fn a_click_arriving_at_fleet_drops_a_pinned_bead() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        app.set_focus(PaneFocus::Work);
+        app.pin = Some(app::SessionPin::Health);
+        seeded(&mut app);
+        let facts = layout_facts(&app, now(), Rect::new(0, 0, 120, 30));
+        click(&mut app, 5, facts.fleet.y + 2);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert!(app.pin.is_none(), "arriving at Fleet drops the pin, whichever way it arrived");
+    }
+
+    #[test]
+    fn a_click_on_the_range_cue_row_selects_nothing() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        app.set_focus(PaneFocus::Session);
+        // A short Fleet pane, so the table is clipped and the pane has a range cue.
+        app.panes.split_fleet_rows = Some(5);
+        seeded(&mut app);
+        let area = Rect::new(0, 0, 120, 30);
+        let facts = layout_facts(&app, now(), area);
+        let m = metrics(&app, now(), area);
+        assert!(
+            m.fleet.content_lines > m.fleet.viewport_lines,
+            "this fixture's Fleet pane is clipped, so it has a cue row"
+        );
+        let before = app.selected.clone();
+        // The cue takes the pane's LAST inner row, which is one past `viewport_lines`.
+        click(&mut app, 5, facts.fleet.y + 1 + m.fleet.viewport_lines as u16);
+        assert_eq!(app.focus, PaneFocus::Fleet);
+        assert_eq!(app.selected, before, "the cue row is not a document line");
+    }
+
+    #[test]
+    fn a_click_reads_the_same_scroll_the_frame_was_drawn_from() {
+        let mut app = both_populated();
+        app.set_supervision(SupervisionMode::Supervising);
+        // A short Fleet pane, so the table is clipped and the pane has a range cue.
+        app.panes.split_fleet_rows = Some(5);
+        seeded(&mut app);
+        let area = Rect::new(0, 0, 120, 30);
+        let m = metrics(&app, now(), area);
+        assert!(m.fleet.content_lines > m.fleet.viewport_lines);
+        // A stored offset past its clamp: the renderer draws from the clamped one, and so must a
+        // click, or it lands a row or more away from what the navigator saw.
+        app.fleet.scroll = 9_000;
+        let facts = layout_facts(&app, now(), area);
+        let clamped = m.fleet.content_lines - m.fleet.viewport_lines;
+        let body = app::fleet_body(&app.fleet.content);
+        let names: Vec<String> =
+            app.fleet.content.value().unwrap().iter().map(|r| r.name.clone()).collect();
+        let expected = match body[clamped] {
+            app::FleetBodyLine::Row(index) => names[index].clone(),
+            ref other => panic!("this fixture's first drawn line is a row, not {other:?}"),
+        };
+        click(&mut app, 5, facts.fleet.y + 1);
+        assert_eq!(app.selected.as_deref(), Some(expected.as_str()));
+    }
+
     #[test]
     fn a_wide_screen_splits_into_a_left_column_and_a_session_pane() {
         let app = supervising();

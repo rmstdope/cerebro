@@ -2070,7 +2070,7 @@ impl App {
                     MouseTarget::Pane(pane) => {
                         self.drag = None;
                         self.last_divider_press = None;
-                        self.click_in_pane(pane, event.row, metrics);
+                        self.click_in_pane(pane, event.row, metrics, now);
                     }
                     MouseTarget::Nothing => {
                         self.drag = None;
@@ -2104,10 +2104,48 @@ impl App {
     ///
     /// Unlike `Enter` under Fleet (cb-d31) this NEVER refuses: `Tab` into an empty Session pane
     /// has always worked, and a click on a pane is `Tab`-shaped rather than `Enter`-shaped.
-    fn click_in_pane(&mut self, pane: PaneFocus, _row: u16, _metrics: Metrics) {
+    fn click_in_pane(&mut self, pane: PaneFocus, row: u16, metrics: Metrics, now: DateTime<Utc>) {
         // Through `set_focus` rather than by assigning `self.focus`, so arriving at Fleet drops a
         // pinned bead exactly as cb-lor says it must, whichever way the navigator arrived.
         self.set_focus(pane);
+        let (outer, m, scroll) = match pane {
+            PaneFocus::Fleet => (self.layout.fleet, metrics.fleet, self.fleet.scroll),
+            PaneFocus::Work => (self.layout.work, metrics.work, self.work.scroll),
+            // The Session pane's own rows carry nothing to select: focus, and nothing else.
+            PaneFocus::Session => return,
+        };
+        // Each of these three returns having already set the focus: the top or bottom border, the
+        // range cue row, and a pane whose reader has never answered are all "focus this pane and
+        // change nothing else".
+        let Some(inner_row) = row.checked_sub(outer.y + 1).map(usize::from) else { return };
+        if inner_row >= m.viewport_lines {
+            return;
+        }
+        // `render_bordered_pane`'s own `clamped_scroll`, written the same way: the renderer clamps
+        // the offset it draws from and the loop clamps `App`'s stored one only AFTER the frame, so
+        // for one frame the two differ and a click would land a row away from what was seen.
+        let scroll = scroll.min(m.content_lines.saturating_sub(m.viewport_lines));
+        let line = scroll + inner_row;
+
+        match pane {
+            PaneFocus::Fleet => {
+                let body = fleet_body(&self.fleet.content);
+                let Some(&FleetBodyLine::Row(index)) = body.get(line) else { return };
+                let Some(rows) = self.fleet.content.value() else { return };
+                let Some(clicked) = rows.get(index) else { return };
+                // No `follow_selection`: the row is under the pointer, so it is on screen by
+                // construction, and scrolling to it would move the table under the click.
+                self.selected = Some(clicked.name.clone());
+            }
+            PaneFocus::Work => {
+                let body = work_body(self, now);
+                let Some(cursor) = body.get(line).and_then(|line| line.cursor()) else { return };
+                // Assigned directly rather than through `place_work_cursor`, for
+                // `follow_selection`'s reason: the row is already visible.
+                self.work_cursor = Some(cursor);
+            }
+            PaneFocus::Session => {}
+        }
     }
 
     /// One wheel notch over the pane under the POINTER. It never changes focus: whatever had the

@@ -52,17 +52,24 @@ for a in "$@"; do printf 'ARG:%s\n' "$a" >> "$argv"; done
 # clear, and that ordering is load-bearing.
 printf 'CALL:%s\n' "$sub" >> "$stub_dir/argv.all"
 for a in "$@"; do printf 'ARG:%s\n' "$a" >> "$stub_dir/argv.all"; done
+show_n=""
 if [ "$sub" = "show" ]; then
-  n=1
-  [ -f "$stub_dir/show.n" ] && n="$(cat "$stub_dir/show.n")"
-  if [ -f "$stub_dir/stdout.show.$n" ]; then
-    cat "$stub_dir/stdout.show.$n"
-    echo $((n + 1)) > "$stub_dir/show.n"
+  show_n=1
+  [ -f "$stub_dir/show.n" ] && show_n="$(cat "$stub_dir/show.n")"
+  if [ -f "$stub_dir/stdout.show.$show_n" ]; then
+    cat "$stub_dir/stdout.show.$show_n"
+    echo $((show_n + 1)) > "$stub_dir/show.n"
   elif [ -f "$stub_dir/stdout.show" ]; then
     cat "$stub_dir/stdout.show"
   fi
 elif [ -f "$stub_dir/stdout.$sub" ]; then
   cat "$stub_dir/stdout.$sub"
+fi
+# A NUMBERED exit for `show', alongside its numbered stdout: without it, a case that wants only the
+# PARENT's show to fail fails the bead's own show too, the first-show guard exits before the parent
+# walk is reached, and the case passes against the defect it was written to catch.
+if [ -n "$show_n" ] && [ -f "$stub_dir/exit.show.$show_n" ]; then
+  exit "$(cat "$stub_dir/exit.show.$show_n")"
 fi
 if [ -f "$stub_dir/exit.$sub" ]; then exit "$(cat "$stub_dir/exit.$sub")"; fi
 exit 0
@@ -339,20 +346,29 @@ pass "a-flag-with-no-value-is-a-usage-error"
 # timeout on the parent's `show` would otherwise skip the whole chain, push, and exit 0 - telling
 # the navigator the reopen succeeded while the closed parent keeps its status and its assignee.
 reset_stub
-set_show '[{"id":"tt-a","status":"closed","parent":"tt-p"}]'
-printf '1' > "$stub_dir/exit.show"
+set_show '[{"id":"tt-a","status":"closed","parent":"tt-p"}]' '[{"id":"tt-p","status":"closed","parent":null}]'
+# The SECOND show - the parent's - and only that one. `exit.show` would fail the bead's own show
+# first, the first-show guard would exit before the walk was reached, and this case would pass
+# against the very defect it exists to catch.
+printf '1' > "$stub_dir/exit.show.2"
 run tt-a --sha "$sha40" --notes "n" --fault build
 [ "$status" -eq 1 ] || fail "a-failed-parent-show-stops-the-run: expected exit 1, got $status"
 [ -n "$err" ] || fail "a-failed-parent-show-stops-the-run: nothing on stderr"
 [ ! -f "$stub_dir/argv.dolt" ] \
   || fail "a-failed-parent-show-stops-the-run: a half-reopen was pushed"
+# The walk was actually REACHED: without this the case is satisfied by the first-show guard and
+# proves nothing about the parent walk at all.
+grep -q "ARG:tt-p" "$stub_dir/argv.show" \
+  || fail "a-failed-parent-show-stops-the-run: the parent's show was never reached"
+argv_has update "--assignee" \
+  || fail "a-failed-parent-show-stops-the-run: the bead's own reopen never ran"
 pass "a-failed-parent-show-stops-the-run"
 
 # --- a-failed-first-show-is-not-reported-as-a-typo ----------------------------------------------
 #
 # A bd outage reported as `no such bead' sends the reader hunting for a typo that is not there.
 reset_stub
-printf '1' > "$stub_dir/exit.show"
+printf '1' > "$stub_dir/exit.show.1"
 run tt-a --sha "$sha40" --notes "n" --fault build
 [ "$status" -eq 1 ] \
   || fail "a-failed-first-show-is-not-reported-as-a-typo: expected exit 1, got $status"

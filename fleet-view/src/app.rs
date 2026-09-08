@@ -332,6 +332,116 @@ pub struct ResizeOutcome {
     pub notice: Option<String>,
 }
 
+/// The ONE place a resize chord's meaning is decided. Pure over the four arguments: `App::on_key`
+/// applies the sizes and puts the notice up, and nothing else reads it.
+///
+/// Every ceiling and floor is asked of the same `ui::clamp_*` functions `ui::split` lays the frame
+/// out with, which is what lets "as wide as it goes" be the width the border actually stops at
+/// rather than a second opinion about it. A chord that moves nothing still carries a notice; the
+/// only silent case is a frame too small to have a layout at all.
+pub fn resize_action(
+    resize: Resize,
+    sizes: PaneSizes,
+    focus: PaneFocus,
+    facts: LayoutFacts,
+) -> ResizeOutcome {
+    let say = |text: String| ResizeOutcome { sizes, notice: Some(text) };
+    if !facts.usable {
+        return ResizeOutcome { sizes, notice: None };
+    }
+    if resize == Resize::Reset {
+        return if sizes.is_default() {
+            say("panes are already at their default sizes".into())
+        } else {
+            ResizeOutcome {
+                sizes: PaneSizes::default(),
+                notice: Some("panes back to their default sizes".into()),
+            }
+        };
+    }
+
+    // One step, in the direction the arrow points. No accelerator: terminal key repeat covers a
+    // long move with one held key, and a second step size is a second thing to learn.
+    let stepped = |current: u16, up: bool| {
+        if up {
+            current.saturating_add(1)
+        } else {
+            current.saturating_sub(1)
+        }
+    };
+
+    match resize {
+        Resize::Narrower | Resize::Wider => {
+            if !facts.split {
+                return say("nothing to widen while the panes are stacked".into());
+            }
+            let wider = resize == Resize::Wider;
+            let want = crate::ui::clamp_left_column(
+                stepped(facts.left_column, wider),
+                facts.width,
+            );
+            if want == facts.left_column {
+                let edge = if wider { "wide" } else { "narrow" };
+                return say(format!("left column is as {edge} as it goes"));
+            }
+            ResizeOutcome {
+                sizes: PaneSizes { left_column: Some(want), ..sizes },
+                notice: Some(format!("left column {want} cells")),
+            }
+        }
+        Resize::Shorter | Resize::Taller => {
+            let taller = resize == Resize::Taller;
+            let edge = if taller { "tall" } else { "short" };
+            if facts.split {
+                // One column, one horizontal divider: focus chooses nothing here.
+                let want = crate::ui::clamp_split_fleet(
+                    stepped(facts.fleet_rows, taller),
+                    facts.available,
+                );
+                if want == facts.fleet_rows {
+                    return say(format!("Fleet is as {edge} as it goes"));
+                }
+                return ResizeOutcome {
+                    sizes: PaneSizes { split_fleet_rows: Some(want), ..sizes },
+                    notice: Some(format!("Fleet {want} rows")),
+                };
+            }
+            // Stacked: the divider BELOW the focused pane, which is why Session has none.
+            match focus {
+                PaneFocus::Fleet => {
+                    let want = crate::ui::clamp_stacked_fleet(
+                        stepped(facts.fleet_rows, taller),
+                        facts.available,
+                    );
+                    if want == facts.fleet_rows {
+                        return say(format!("Fleet is as {edge} as it goes"));
+                    }
+                    ResizeOutcome {
+                        sizes: PaneSizes { stacked_fleet_rows: Some(want), ..sizes },
+                        notice: Some(format!("Fleet {want} rows")),
+                    }
+                }
+                PaneFocus::Work => {
+                    let want = crate::ui::clamp_stacked_work(
+                        stepped(facts.work_rows, taller),
+                        facts.available,
+                        facts.fleet_rows,
+                    );
+                    if want == facts.work_rows {
+                        return say(format!("Work is as {edge} as it goes"));
+                    }
+                    ResizeOutcome {
+                        sizes: PaneSizes { stacked_work_rows: Some(want), ..sizes },
+                        notice: Some(format!("Work {want} rows")),
+                    }
+                }
+                PaneFocus::Session => say("nothing below Session to move".into()),
+            }
+        }
+        Resize::Reset => unreachable!("answered above"),
+    }
+}
+
 /// Does this key move focus between panes, whoever currently holds the keyboard?
 ///
 /// `main.rs` asks this to decide what a focused live session does NOT receive; the answer must be
@@ -3727,6 +3837,161 @@ mod tests {
         assert_eq!(PaneFocus::from_function_key(3), Some(PaneFocus::Session));
         for n in [0, 4, 5, 12] {
             assert_eq!(PaneFocus::from_function_key(n), None, "F{n} names no pane");
+        }
+    }
+
+    fn split_facts() -> LayoutFacts {
+        LayoutFacts {
+            usable: true,
+            split: true,
+            width: 120,
+            available: 29,
+            left_column: 40,
+            fleet_rows: 10,
+            work_rows: 19,
+        }
+    }
+
+    fn stacked_facts() -> LayoutFacts {
+        LayoutFacts {
+            usable: true,
+            split: false,
+            width: 80,
+            available: 29,
+            left_column: 80,
+            fleet_rows: 9,
+            work_rows: 8,
+        }
+    }
+
+    #[test]
+    fn a_chord_moves_one_divider_by_one_cell_or_row() {
+        let out = resize_action(
+            Resize::Wider,
+            PaneSizes::default(),
+            PaneFocus::Fleet,
+            split_facts(),
+        );
+        assert_eq!(out.sizes.left_column, Some(41));
+        assert_eq!(out.notice.as_deref(), Some("left column 41 cells"));
+
+        let out =
+            resize_action(Resize::Taller, PaneSizes::default(), PaneFocus::Work, split_facts());
+        assert_eq!(out.sizes.split_fleet_rows, Some(11));
+        assert_eq!(out.notice.as_deref(), Some("Fleet 11 rows"));
+    }
+
+    #[test]
+    fn a_chord_at_the_floor_moves_nothing_and_says_so() {
+        let facts = LayoutFacts { left_column: crate::ui::MIN_PANE_COLUMNS, ..split_facts() };
+        let sizes = PaneSizes { left_column: Some(crate::ui::MIN_PANE_COLUMNS), ..Default::default() };
+        let out = resize_action(Resize::Narrower, sizes, PaneFocus::Fleet, facts);
+        assert_eq!(out.sizes, sizes, "nothing moved");
+        assert_eq!(out.notice.as_deref(), Some("left column is as narrow as it goes"));
+
+        let facts = LayoutFacts { fleet_rows: crate::ui::MIN_PANE_ROWS, ..split_facts() };
+        let out = resize_action(Resize::Shorter, PaneSizes::default(), PaneFocus::Fleet, facts);
+        assert_eq!(out.sizes, PaneSizes::default());
+        assert_eq!(out.notice.as_deref(), Some("Fleet is as short as it goes"));
+    }
+
+    #[test]
+    fn a_chord_at_the_ceiling_moves_nothing_and_says_so() {
+        // 120 wide: the left column may reach `120 - MIN_PANE_COLUMNS`.
+        let ceiling = 120 - crate::ui::MIN_PANE_COLUMNS;
+        let facts = LayoutFacts { left_column: ceiling, ..split_facts() };
+        let out = resize_action(Resize::Wider, PaneSizes::default(), PaneFocus::Fleet, facts);
+        assert_eq!(out.sizes, PaneSizes::default());
+        assert_eq!(out.notice.as_deref(), Some("left column is as wide as it goes"));
+
+        // 29 rows in the column: Fleet may reach `29 - MIN_PANE_ROWS`.
+        let tallest = 29 - crate::ui::MIN_PANE_ROWS;
+        let facts = LayoutFacts { fleet_rows: tallest, ..split_facts() };
+        let out = resize_action(Resize::Taller, PaneSizes::default(), PaneFocus::Fleet, facts);
+        assert_eq!(out.sizes, PaneSizes::default());
+        assert_eq!(out.notice.as_deref(), Some("Fleet is as tall as it goes"));
+    }
+
+    #[test]
+    fn widening_says_there_is_nothing_to_widen_while_the_panes_are_stacked() {
+        for resize in [Resize::Narrower, Resize::Wider] {
+            let out =
+                resize_action(resize, PaneSizes::default(), PaneFocus::Fleet, stacked_facts());
+            assert_eq!(out.sizes, PaneSizes::default());
+            assert_eq!(
+                out.notice.as_deref(),
+                Some("nothing to widen while the panes are stacked")
+            );
+        }
+    }
+
+    #[test]
+    fn stacked_chords_move_the_divider_below_the_focused_pane() {
+        let out =
+            resize_action(Resize::Taller, PaneSizes::default(), PaneFocus::Fleet, stacked_facts());
+        assert_eq!(out.sizes.stacked_fleet_rows, Some(10));
+        assert_eq!(out.sizes.stacked_work_rows, None);
+        assert_eq!(out.notice.as_deref(), Some("Fleet 10 rows"));
+
+        let out =
+            resize_action(Resize::Shorter, PaneSizes::default(), PaneFocus::Work, stacked_facts());
+        assert_eq!(out.sizes.stacked_work_rows, Some(7));
+        assert_eq!(out.sizes.stacked_fleet_rows, None);
+        assert_eq!(out.notice.as_deref(), Some("Work 7 rows"));
+    }
+
+    #[test]
+    fn from_session_focus_while_stacked_there_is_nothing_below_to_move() {
+        for resize in [Resize::Shorter, Resize::Taller] {
+            let out =
+                resize_action(resize, PaneSizes::default(), PaneFocus::Session, stacked_facts());
+            assert_eq!(out.sizes, PaneSizes::default());
+            assert_eq!(out.notice.as_deref(), Some("nothing below Session to move"));
+        }
+    }
+
+    #[test]
+    fn focus_does_not_choose_a_divider_in_the_split_layout() {
+        // Fleet sits over Work in one column and Session beside them, so there is exactly one
+        // horizontal divider and one vertical one whatever holds the keyboard.
+        for focus in [PaneFocus::Fleet, PaneFocus::Work, PaneFocus::Session] {
+            let out = resize_action(Resize::Taller, PaneSizes::default(), focus, split_facts());
+            assert_eq!(out.sizes.split_fleet_rows, Some(11), "from {focus:?}");
+            let out = resize_action(Resize::Narrower, PaneSizes::default(), focus, split_facts());
+            assert_eq!(out.sizes.left_column, Some(39), "from {focus:?}");
+        }
+    }
+
+    #[test]
+    fn reset_says_so_when_no_divider_has_moved() {
+        let out =
+            resize_action(Resize::Reset, PaneSizes::default(), PaneFocus::Fleet, split_facts());
+        assert_eq!(out.sizes, PaneSizes::default());
+        assert_eq!(out.notice.as_deref(), Some("panes are already at their default sizes"));
+    }
+
+    #[test]
+    fn reset_puts_every_divider_back() {
+        let sizes = PaneSizes {
+            left_column: Some(56),
+            split_fleet_rows: Some(16),
+            stacked_fleet_rows: Some(9),
+            stacked_work_rows: Some(8),
+        };
+        let out = resize_action(Resize::Reset, sizes, PaneFocus::Fleet, split_facts());
+        assert_eq!(out.sizes, PaneSizes::default());
+        assert_eq!(out.notice.as_deref(), Some("panes back to their default sizes"));
+    }
+
+    #[test]
+    fn a_chord_decides_nothing_while_the_screen_is_too_small() {
+        let sizes = PaneSizes { left_column: Some(56), ..Default::default() };
+        for resize in
+            [Resize::Narrower, Resize::Wider, Resize::Shorter, Resize::Taller, Resize::Reset]
+        {
+            let out = resize_action(resize, sizes, PaneFocus::Fleet, LayoutFacts::default());
+            assert_eq!(out.sizes, sizes, "{resize:?} changed nothing");
+            assert_eq!(out.notice, None, "{resize:?} said nothing");
         }
     }
 

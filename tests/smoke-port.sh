@@ -35,6 +35,13 @@ declare_conf() {
   printf '%s\n' "$@" >"$tmp/.cerebro/project.conf"
 }
 
+# A base far from anything the fleet or the machine actually serves on. The suite asserts absolute
+# port numbers, so a fixture declaring the project's REAL base fails the moment a browser suite is
+# running beside it - which is exactly when this suite is most likely to be run.
+test_base=39170
+first_block=$((test_base + 10))
+second_block=$((test_base + 20))
+
 smoke_port() {
   # $1 = fixture root, rest = args
   local tmp="$1"
@@ -68,7 +75,7 @@ pass "smoke-port-runs-the-command-unchanged-when-no-port-base-is-declared"
 
 # --- smoke-port-refuses-a-missing-separator ---
 tmp="$(new_fixture)"
-declare_conf "$tmp" "port_base 4173" "port_env SMOKE_PORT_BASE"
+declare_conf "$tmp" "port_base $test_base" "port_env SMOKE_PORT_BASE"
 set +e
 out="$(smoke_port "$tmp" /bin/sh -c 'echo ran' 2>&1)"
 status=$?
@@ -82,7 +89,7 @@ pass "smoke-port-refuses-a-missing-separator"
 # A misdeclaration rather than an absence: the blocks exist and nothing says which variable carries
 # them, so exporting nothing would run the suite on whatever default it has.
 tmp="$(new_fixture)"
-declare_conf "$tmp" "port_base 4173"
+declare_conf "$tmp" "port_base $test_base"
 set +e
 out="$(smoke_port "$tmp" -- /bin/sh -c 'echo ran' 2>&1)"
 status=$?
@@ -98,19 +105,19 @@ pass "smoke-port-refuses-a-port-base-with-no-port-env"
 
 # --- smoke-port-exports-the-projects-port-variable-and-returns-the-command-status ---
 # Block k = 1, not k = 0: the base block overlaps whatever dev servers the project itself declares
-# (here launch_desktop_port 4174), which is why the hand-written snippet this replaces also started
+# (in this consumer, launch_desktop_port), which is why the hand-written snippet this replaces also started
 # one block up.
 tmp="$(new_fixture)"
-declare_conf "$tmp" "port_base 4173" "port_block_size 10" "port_env SMOKE_PORT_BASE"
+declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_PORT_BASE"
 set +e
 out="$(smoke_port "$tmp" -- /bin/sh -c 'echo $SMOKE_PORT_BASE; exit 3' 2>"$tmp/err")"
 status=$?
 set -e
 [[ $status -eq 3 ]] \
   || fail "smoke-port-exports-the-projects-port-variable-and-returns-the-command-status: exit $status"
-[[ "$out" == "4183" ]] \
-  || fail "smoke-port-exports-the-projects-port-variable-and-returns-the-command-status: got '$out', wanted 4183"
-grep -q "SMOKE_PORT_BASE=4183" "$tmp/err" \
+[[ "$out" == "$first_block" ]] \
+  || fail "smoke-port-exports-the-projects-port-variable-and-returns-the-command-status: got '$out', wanted $first_block"
+grep -q "SMOKE_PORT_BASE=$first_block" "$tmp/err" \
   || fail "smoke-port-exports-the-projects-port-variable-and-returns-the-command-status: stderr did not name the block: $(cat "$tmp/err")"
 rm -rf "$tmp"
 pass "smoke-port-exports-the-projects-port-variable-and-returns-the-command-status"
@@ -118,8 +125,12 @@ pass "smoke-port-exports-the-projects-port-variable-and-returns-the-command-stat
 # --- smoke-port-skips-a-block-a-live-run-holds ---
 # The case the whole script exists for: two runs in one checkout, overlapping in time.
 tmp="$(new_fixture)"
-declare_conf "$tmp" "port_base 4173" "port_block_size 10" "port_env SMOKE_PORT_BASE"
-smoke_port "$tmp" -- /bin/sh -c "echo started >'$tmp/started'; sleep 20" >/dev/null 2>&1 &
+declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_PORT_BASE"
+# The first run holds its block until this suite says otherwise, rather than for a fixed sleep: a
+# `sleep' would be dead wall-clock on every gate run, and bash defers the kill's trap until a
+# foreground sleep returns anyway - so `wait' would pay the whole of it (ah-dksm review, finding 4).
+smoke_port "$tmp" -- /bin/sh -c "echo started >'$tmp/started'
+                                 while [ ! -f '$tmp/stop' ]; do sleep 0.05; done" >/dev/null 2>&1 &
 first=$!
 cleanup_add "$tmp"
 for _ in $(seq 1 100); do
@@ -128,9 +139,9 @@ for _ in $(seq 1 100); do
 done
 [[ -f "$tmp/started" ]] || fail "smoke-port-skips-a-block-a-live-run-holds: the first run never started"
 second="$(smoke_port "$tmp" -- /bin/sh -c 'echo $SMOKE_PORT_BASE' 2>/dev/null)"
-[[ "$second" == "4193" ]] \
-  || fail "smoke-port-skips-a-block-a-live-run-holds: the second run got '$second', wanted 4193"
-kill "$first" 2>/dev/null || true
+[[ "$second" == "$second_block" ]] \
+  || fail "smoke-port-skips-a-block-a-live-run-holds: the second run got '$second', wanted $second_block"
+touch "$tmp/stop"
 wait "$first" 2>/dev/null || true
 pass "smoke-port-skips-a-block-a-live-run-holds"
 
@@ -138,32 +149,32 @@ pass "smoke-port-skips-a-block-a-live-run-holds"
 # The lease is exactly the run. Nothing else clears it - no end-pass hook, no janitor sweep - so a
 # reservation that outlived its command would be a block lost for an hour.
 smoke_port "$tmp" -- /bin/sh -c ":" >/dev/null 2>&1
-[[ -e "$(lock_dir "$tmp")/4183.lock" ]] \
-  && fail "smoke-port-releases-its-block-when-the-command-ends: 4183.lock survived the command"
+[[ -e "$(lock_dir "$tmp")/$first_block.lock" ]] \
+  && fail "smoke-port-releases-its-block-when-the-command-ends: $first_block.lock survived the command"
 rm -rf "$tmp"
 pass "smoke-port-releases-its-block-when-the-command-ends"
 
 # --- smoke-port-takes-a-block-whose-holder-is-gone ---
 # A run killed with SIGKILL leaves its lock behind, and the next caller must be able to reclaim it.
 tmp="$(new_fixture)"
-declare_conf "$tmp" "port_base 4173" "port_block_size 10" "port_env SMOKE_PORT_BASE"
+declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_PORT_BASE"
 mkdir -p "$(lock_dir "$tmp")"
 dead=$(bash -c 'echo $$')
-printf '%s %s %s\n' "$dead" "$(date +%s)" "a run that is over" >"$(lock_dir "$tmp")/4183.lock"
+printf '%s %s %s\n' "$dead" "$(date +%s)" "a run that is over" >"$(lock_dir "$tmp")/$first_block.lock"
 got="$(smoke_port "$tmp" -- /bin/sh -c 'echo $SMOKE_PORT_BASE' 2>/dev/null)"
-[[ "$got" == "4183" ]] \
-  || fail "smoke-port-takes-a-block-whose-holder-is-gone: got '$got', wanted 4183"
+[[ "$got" == "$first_block" ]] \
+  || fail "smoke-port-takes-a-block-whose-holder-is-gone: got '$got', wanted $first_block"
 rm -rf "$tmp"
 pass "smoke-port-takes-a-block-whose-holder-is-gone"
 
 # --- smoke-port-leaves-a-recent-live-holder-alone ---
 tmp="$(new_fixture)"
-declare_conf "$tmp" "port_base 4173" "port_block_size 10" "port_env SMOKE_PORT_BASE"
+declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_PORT_BASE"
 mkdir -p "$(lock_dir "$tmp")"
-printf '%s %s %s\n' "$$" "$(date +%s)" "this very suite" >"$(lock_dir "$tmp")/4183.lock"
+printf '%s %s %s\n' "$$" "$(date +%s)" "this very suite" >"$(lock_dir "$tmp")/$first_block.lock"
 got="$(smoke_port "$tmp" -- /bin/sh -c 'echo $SMOKE_PORT_BASE' 2>/dev/null)"
-[[ "$got" == "4193" ]] \
-  || fail "smoke-port-leaves-a-recent-live-holder-alone: got '$got', wanted 4193"
+[[ "$got" == "$second_block" ]] \
+  || fail "smoke-port-leaves-a-recent-live-holder-alone: got '$got', wanted $second_block"
 rm -rf "$tmp"
 pass "smoke-port-leaves-a-recent-live-holder-alone"
 
@@ -171,12 +182,12 @@ pass "smoke-port-leaves-a-recent-live-holder-alone"
 # A live pid and an hour-old reservation is a pid that has been reused, not a slow run: the whole
 # gate is minutes. Same number and same reasoning as the consumer's gate lock.
 tmp="$(new_fixture)"
-declare_conf "$tmp" "port_base 4173" "port_block_size 10" "port_env SMOKE_PORT_BASE"
+declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_PORT_BASE"
 mkdir -p "$(lock_dir "$tmp")"
-printf '%s %s %s\n' "$$" "$(( $(date +%s) - 7200 ))" "two hours ago" >"$(lock_dir "$tmp")/4183.lock"
+printf '%s %s %s\n' "$$" "$(( $(date +%s) - 7200 ))" "two hours ago" >"$(lock_dir "$tmp")/$first_block.lock"
 got="$(smoke_port "$tmp" -- /bin/sh -c 'echo $SMOKE_PORT_BASE' 2>/dev/null)"
-[[ "$got" == "4183" ]] \
-  || fail "smoke-port-reclaims-a-holder-older-than-an-hour: got '$got', wanted 4183"
+[[ "$got" == "$first_block" ]] \
+  || fail "smoke-port-reclaims-a-holder-older-than-an-hour: got '$got', wanted $first_block"
 rm -rf "$tmp"
 pass "smoke-port-reclaims-a-holder-older-than-an-hour"
 
@@ -193,7 +204,7 @@ if ! command -v python3 >/dev/null 2>&1 || ! command -v lsof >/dev/null 2>&1; th
 else
   tmp="$(new_fixture)"
   cleanup_add "$tmp"
-  declare_conf "$tmp" "port_base 4173" "port_block_size 10" "port_env SMOKE_PORT_BASE"
+  declare_conf "$tmp" "port_base $test_base" "port_block_size 10" "port_env SMOKE_PORT_BASE"
   python3 -c 'import socket,sys,time
 s = socket.socket()
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -201,23 +212,23 @@ s.bind(("127.0.0.1", int(sys.argv[1])))
 s.listen(1)
 sys.stderr.write("bound\\n")
 sys.stderr.flush()
-time.sleep(30)' 4183 2>"$tmp/bound" &
+time.sleep(30)' $first_block 2>"$tmp/bound" &
   binder=$!
   for _ in $(seq 1 100); do
     grep -q bound "$tmp/bound" 2>/dev/null && break
     sleep 0.1
   done
   grep -q bound "$tmp/bound" 2>/dev/null \
-    || fail "smoke-port-skips-a-block-whose-port-is-listening: could not bind 4183"
+    || fail "smoke-port-skips-a-block-whose-port-is-listening: could not bind $first_block"
 
   got="$(smoke_port "$tmp" -- /bin/sh -c 'echo $SMOKE_PORT_BASE' 2>"$tmp/err")"
-  [[ "$got" == "4193" ]] \
-    || fail "smoke-port-skips-a-block-whose-port-is-listening: got '$got', wanted 4193"
-  grep -q "4183" "$tmp/err" \
+  [[ "$got" == "$second_block" ]] \
+    || fail "smoke-port-skips-a-block-whose-port-is-listening: got '$got', wanted $second_block"
+  grep -q "$first_block" "$tmp/err" \
     || fail "smoke-port-skips-a-block-whose-port-is-listening: stderr did not name the port: $(cat "$tmp/err")"
   grep -q "$binder" "$tmp/err" \
     || fail "smoke-port-skips-a-block-whose-port-is-listening: stderr did not name the holding pid $binder: $(cat "$tmp/err")"
-  [[ -e "$(lock_dir "$tmp")/4183.lock" ]] \
+  [[ -e "$(lock_dir "$tmp")/$first_block.lock" ]] \
     && fail "smoke-port-skips-a-block-whose-port-is-listening: kept a reservation on the block it rejected"
   pass "smoke-port-skips-a-block-whose-port-is-listening"
 
@@ -229,11 +240,39 @@ time.sleep(30)' 4183 2>"$tmp/bound" &
   status=$?
   set -e
   [[ $status -eq 3 ]] || fail "smoke-port-exhausts-and-exits-3: expected exit 3, got $status ($out)"
-  grep -q "4183" <<<"$out" || fail "smoke-port-exhausts-and-exits-3: message does not name 4183: $out"
+  grep -q "$first_block" <<<"$out" || fail "smoke-port-exhausts-and-exits-3: message does not name $first_block: $out"
   kill "$binder" 2>/dev/null || true
   wait "$binder" 2>/dev/null || true
   rm -rf "$tmp"
   pass "smoke-port-exhausts-and-exits-3"
 fi
+
+# --- smoke-port-refuses-a-blocks-flag-with-no-value ---
+# The flag's own argument loop is the one place a usage error can HANG rather than exit: a `shift 2'
+# that fails leaves the flag in place for the case to match again, for ever. So it is tested, not
+# reasoned about (ah-dksm review, findings 2 and 3).
+tmp="$(new_fixture)"
+declare_conf "$tmp" "port_base $test_base" "port_env SMOKE_PORT_BASE"
+set +e
+out="$(smoke_port "$tmp" --blocks 2>&1)"
+status=$?
+set -e
+[[ $status -eq 2 ]] \
+  || fail "smoke-port-refuses-a-blocks-flag-with-no-value: expected exit 2, got $status"
+grep -q "blocks" <<<"$out" \
+  || fail "smoke-port-refuses-a-blocks-flag-with-no-value: message does not name the flag: $out"
+pass "smoke-port-refuses-a-blocks-flag-with-no-value"
+
+# --- smoke-port-refuses-a-blocks-count-that-is-not-a-positive-integer ---
+for bad in 0 x -1; do
+  set +e
+  out="$(smoke_port "$tmp" --blocks "$bad" -- /bin/sh -c ":" 2>&1)"
+  status=$?
+  set -e
+  [[ $status -eq 2 ]] \
+    || fail "smoke-port-refuses-a-blocks-count-that-is-not-a-positive-integer: --blocks $bad gave exit $status"
+done
+rm -rf "$tmp"
+pass "smoke-port-refuses-a-blocks-count-that-is-not-a-positive-integer"
 
 suite_passed

@@ -33,8 +33,15 @@ blocks=8
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --blocks)
-      blocks="${2:-}"
-      shift 2 || true
+      # Shift the flag first and read the value as the new $1. `shift 2' with only the flag left
+      # fails, and a swallowed failure leaves `--blocks' as $1 for the case to match again, for ever.
+      shift
+      [[ $# -gt 0 ]] || {
+        echo "smoke-port: --blocks wants a value" >&2
+        exit 2
+      }
+      blocks="$1"
+      shift
       ;;
     --)
       shift
@@ -52,6 +59,9 @@ if [[ $# -eq 0 ]]; then
   exit 2
 fi
 
+# Checked here rather than at the flag, so `--blocks' with a value that is really the separator
+# ("--blocks -- cmd") is refused by its own message rather than by whatever the command turns out
+# to be.
 if ! [[ "$blocks" =~ ^[1-9][0-9]*$ ]]; then
   echo "smoke-port: --blocks wants a positive integer, got '$blocks'" >&2
   exit 2
@@ -117,6 +127,11 @@ take() {
 }
 
 # 0 when the lock on <base> is a ghost: its pid is gone, or it is older than the TTL.
+#
+# `kill -0' cannot tell "no such process" from "not yours": a pid owned by another user answers
+# EPERM, and this reads that as a ghost. Harmless on a single-user fleet, where every lock in this
+# directory was written by the same person, and the port probe below catches the consequence
+# anyway - but do not lean on liveness alone across users.
 is_stale() {
   local lock="$dir/$1.lock" pid since rest now
   read -r pid since rest <"$lock" 2>/dev/null || return 0
@@ -127,6 +142,10 @@ is_stale() {
 }
 
 # 0 when every port of the block is free. Prints what holds one, so an orphan is killable by hand.
+#
+# THREE ports, whatever `port_block_size' says. That is the convention the blocks were cut for - a
+# web preview, a desktop-shell preview and a PWA preview - not an arithmetic consequence of the
+# block size. A project whose suites bind a fourth port wants this number raised with them.
 ports_free() {
   local base="$1" p pids
   if ! command -v lsof >/dev/null 2>&1; then
@@ -163,11 +182,16 @@ while (( k <= blocks )); do
     # A ghost: remove it and retry this same block ONCE. A second failure means a live rival won
     # the race in between, and that is the next block's business.
     rm -f "$dir/$base.lock"
-    if take "$base" && ports_free "$base"; then
-      break
+    if take "$base"; then
+      if ports_free "$base"; then
+        break
+      fi
+      why="$why $base(listening)"
+      release
+    else
+      # A live rival won the race in the moment between the removal and the retry.
+      why="$why $base(taken)"
     fi
-    why="$why $base(taken)"
-    release
   else
     why="$why $base(held by pid $(awk '{print $1; exit}' "$dir/$base.lock" 2>/dev/null || echo '?'))"
   fi

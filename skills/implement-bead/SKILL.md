@@ -1010,9 +1010,12 @@ into it.
   artefact differently, running them in the wrong order fails the second one for a reason that is
   not a defect — which is why a project's full gate orders them as it does. Run the gate; do not
   "fix" what the previous suite left behind.
-- **A leftover preview server.** Without `CI=1`, a browser runner reuses an existing server —
-  including your own dying one from the previous run — and tests the bundle it is serving. That
-  produced a "65 passed" and a "40 passed" run of a 138-test suite before anyone noticed.
+- **A leftover preview server.** A browser runner configured to reuse an existing server takes
+  whatever is answering on the port — your own dying one from the previous run, or another
+  checkout's — and tests the bundle *it* is serving. That produced a "65 passed" and a "40 passed"
+  run of a 138-test suite before anyone noticed. `CI=1` was once the way to switch that off, and it
+  is not: it is what the project's own gate lock reads to decide it has the machine to itself. Run
+  through `smoke-port` (above), and fix a config that reuses a server to say `false` outright.
 - **`--` forwarded into a test runner.** A package-manager script passes `--` through, and a runner
   that reads what follows as a positional filter then matches no spec at all, after building and
   serving — which looks exactly like a hang rather than a mistake.

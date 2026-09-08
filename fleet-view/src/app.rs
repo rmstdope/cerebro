@@ -5995,7 +5995,8 @@ mod tests {
                 "finding unclaim:cb-a",
                 "finding reclaim:cb-b",
                 "blank",
-                // The six queues, in the order work moves in read backwards.
+                // The queues, in the order work moves in read backwards. `UX agreed` is not
+                // among them: it is empty here, and empty is the one section that is hidden.
                 "header Claimed 2",
                 // P0 before P1: the section's own order, which the document owns now.
                 "bead cb-b",

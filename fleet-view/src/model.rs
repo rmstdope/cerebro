@@ -804,7 +804,7 @@ fn is_bookkeeping(bead: &Bead, parents: &BTreeSet<String>) -> bool {
         && (issue_type != CONDITIONAL_ISSUE_TYPE || parents.contains(&bead.id))
 }
 
-/// Split BEADS into the fleet panel's six buckets.
+/// Split BEADS into the fleet panel's seven buckets.
 ///
 /// Exact precedence, matching `emacs/cerebro.el:4652-4764`: an `event`, and an `epic` that has at
 /// least one direct child, are skipped outright (`is_bookkeeping`), while a CHILDLESS epic

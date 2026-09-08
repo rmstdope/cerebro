@@ -44,6 +44,7 @@ CARRIERS=(
   agents/verifier.md
   skills/implement-bead/SKILL.md
   skills/plan-bead/SKILL.md
+  skills/agree-experience/SKILL.md
 )
 
 new_fixture() {

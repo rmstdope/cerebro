@@ -73,7 +73,7 @@ source "$script_dir/block-sync.sh"
 
 CANONICAL="templates/state-file-contract.md"
 
-# The seven documents a session actually loads. See the header for why the two thin role files are
+# The eight documents a session actually loads. See the header for why the two thin role files are
 # not among them.
 CARRIERS=(
   agents/architect.md
@@ -83,6 +83,7 @@ CARRIERS=(
   agents/verifier.md
   skills/implement-bead/SKILL.md
   skills/plan-bead/SKILL.md
+  skills/agree-experience/SKILL.md
 )
 
 cerebro_block_sync state-contract "$CANONICAL" "${CARRIERS[@]}"

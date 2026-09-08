@@ -44,7 +44,9 @@
 # ANYTHING that later stops rebuilding this file wholesale must clear it deliberately, or a stamp
 # survives a state change and a working session reads as one whose turn ended.
 #
-# Writes atomically (write to a .tmp file, then mv) so cerebro.el never reads a torn file.
+# Writes atomically through `scripts/state-write.sh' - one whole object built elsewhere and renamed
+# over the target - so cerebro.el never reads a torn file. That library, not this script, is where
+# the scratch-name rule for a file two processes write now lives.
 
 set -euo pipefail
 
@@ -54,6 +56,11 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # cannot be a bare `printf'. Sourced at the top level, never inside the `|| true' group at the foot
 # of this file: a missing or broken library must be a loud failure, not a swallowed one.
 source "$script_dir/jsonl-log.sh"
+
+# The one place bash replaces a file two fleet views poll - see its header for why the producer is
+# passed as arguments and why the scratch name carries a pid. Sourced at the top level for the same
+# reason as the line above it.
+source "$script_dir/state-write.sh"
 
 usage() {
   echo "usage: agent-state <name> <idle|working|asking|waiting> [--bead <id>] [--phase <word>] --pid <pid>" >&2
@@ -132,7 +139,6 @@ repo_root="$("$script_dir/consumer-root" --shared)"
 out_dir="$repo_root/.cerebro/state"
 mkdir -p "$out_dir"
 out_file="$out_dir/$name.state.json"
-tmp_file="$out_file.tmp"
 
 # One reading of the clock, from which both timestamps below are derived. Two `date` calls would
 # straddle a second boundary now and then, and `since` and `phase_since` are compared with one
@@ -169,7 +175,12 @@ else
   phase_since="$now"
 fi
 
-jq -n \
+# Unchecked deliberately: this script runs `set -euo pipefail', so a failed write ends it with a
+# non-zero status, which is what a session's own state write must do when it fails. Do NOT add
+# `|| true' here, and keep this call ABOVE the `{ ... } || true' log group at the foot of the file,
+# where errexit is suspended for everything inside.
+cerebro_state_write_atomic "$out_file" \
+  jq -n \
   --arg state "$state" \
   --arg phase "$phase" \
   --arg bead "$bead" \
@@ -184,9 +195,7 @@ jq -n \
     phase_since: (if $phase_since == "" then null else $phase_since end),
     pid: ($pid | tonumber),
     turn_ended: null
-  }' > "$tmp_file"
-
-mv -f "$tmp_file" "$out_file"
+  }'
 
 # --- The transition log (ah-hiib.1) -------------------------------------------------------------
 # Every invocation appends one line to the shared, append-only .cerebro/state/transitions.jsonl,

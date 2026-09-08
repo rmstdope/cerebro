@@ -40,15 +40,19 @@
 #     either eat the navigator's typing or spin a session that cannot finish. An unknown mode
 #     therefore prints its usage on stderr and exits 0.
 #
-# Writes atomically (a .tmp file, then mv) for `agent-state''s reason: cerebro--read-state-file and
-# readers::read_states read this file on a five-second clock and must never see a torn one. The tmp
-# name carries this process''s pid, because `agent-state' writes the same file through its own
-# `<file>.tmp' - two writers sharing one scratch path would let each `mv' the other''s half-written
-# object, which is the very atomicity both headers claim.
+# Writes atomically through `scripts/state-write.sh', for the reason its header carries in full:
+# cerebro--read-state-file and readers::read_states read this file on a five-second clock and must
+# never see a torn one, and two processes write it - this script and `scripts/agent-state' - so the
+# scratch name must be one no peer can collide with. That library is the one place that rule now
+# lives; neither script decides it any more.
 
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The one place bash replaces a file two fleet views poll. Sourced BEFORE the ERR trap below, so a
+# missing or broken library is a loud failure rather than a swallowed one.
+source "$script_dir/state-write.sh"
 
 # Nothing below is worth failing a turn over - and under `set -euo pipefail' a failing step ends the
 # script where it stands, so the ERR trap is what makes every `exit 0' below unnecessary.
@@ -71,8 +75,6 @@ command -v jq >/dev/null 2>&1 || exit 0
 repo_root="$("$script_dir/consumer-root" --shared 2>/dev/null)" || exit 0
 state_file="$repo_root/.cerebro/state/$name.state.json"
 
-tmp_file="$state_file.$$.tmp"
-
 [[ -f "$state_file" ]] || exit 0
 
 # A file that does not parse is left exactly as it is - there is nothing to modify.
@@ -81,20 +83,19 @@ jq -e . "$state_file" >/dev/null 2>&1 || exit 0
 case "$mode" in
   ended)
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    # The redirection creates the file before jq runs, so a failing jq leaves litter in a directory
-    # two views poll: remove it on the way out rather than exiting over it.
-    jq --arg now "$now" '.turn_ended = $now' "$state_file" > "$tmp_file" 2>/dev/null \
-      || { rm -f "$tmp_file"; exit 0; }
-    mv -f "$tmp_file" "$state_file" 2>/dev/null || { rm -f "$tmp_file"; exit 0; }
+    # The 2>/dev/null is on the CALL, so it covers everything inside: this script may never print.
+    # `|| exit 0' is the whole of the failure handling now that the library removes its own temp
+    # file: this script may never fail either. Both reasons are in the header above.
+    cerebro_state_write_atomic "$state_file" \
+      jq --arg now "$now" '.turn_ended = $now' "$state_file" 2>/dev/null || exit 0
     ;;
   resumed)
     # Already clear, or never stamped: do nothing at all, so a session's ordinary turn costs no
     # write of a file two readers poll every five seconds.
     current="$(jq -r '.turn_ended // "null"' "$state_file" 2>/dev/null || echo null)"
     [[ "$current" == "null" ]] && exit 0
-    jq '.turn_ended = null' "$state_file" > "$tmp_file" 2>/dev/null \
-      || { rm -f "$tmp_file"; exit 0; }
-    mv -f "$tmp_file" "$state_file" 2>/dev/null || { rm -f "$tmp_file"; exit 0; }
+    cerebro_state_write_atomic "$state_file" \
+      jq '.turn_ended = null' "$state_file" 2>/dev/null || exit 0
     ;;
 esac
 

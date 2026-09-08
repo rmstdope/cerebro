@@ -488,50 +488,42 @@ bd dolt push
 P4, the ordinary rule for new work — it is unranked until Cerebro triages it with the navigator, same
 as anything else that lands in the backlog. Do not rank it yourself.
 
-**3. Failed.** The reopen procedure, below — in this order, and every step:
+**3. Failed.** Ask the navigator one more question first, as part of taking the verdict: **is the
+plan wrong, or is the build wrong?** Another question, so another sandwich — `asking --bead <id>
+--phase verify` before it, `working --bead <id> --phase verify` on the answer. With that answer in
+hand the reopen is one command:
 
 ```bash
-bd reopen <id> --reason "<what the navigator saw, one line>"
-bd update <id> --assignee ""                    # bd reopen does NOT do this - see below
-bd update <id> --priority=0 --append-notes "Verification failed (<date>, at <short sha>): <what the navigator saw, in full>"
-bd set-state <id> verification=failed --reason "failed verification at <short sha>"
-bd update <id> --set-metadata verified_at=<full sha>
-bd update <id> --remove-label verdict:stale     # harmless when it is not there
+.claude/cerebro/scripts/reopen-failed <id> \
+  --sha <the full sha the verification ran against> \
+  --notes "<what the navigator saw, in full>" \
+  --fault plan          # or: build
 ```
 
-**The `--assignee ""` is the step that makes the reopen mean anything, and it is second for a
-reason.** `bd reopen` sets the status to `open` and clears `closed_at`; it leaves the assignee
-of the implementer that delivered the bead exactly where it was. `bd ready` does not filter on
-assignee, so the bead looks available to every human and every agent reading that list — while
-the pool an implementer is actually started from is *planned, open and **unclaimed***, which the
-bead is not in. Nothing picks it up, and nothing says so: a P0 sat like that for ten hours.
-Second rather than first because the clear is refused while the bead is still `in_progress` and
-held by somebody else; once `bd reopen` has made it `open` there is no live claim to protect and
-it succeeds unguarded. It is idempotent, so it costs nothing on a bead that was already
-unassigned.
+One command does the whole of it: the reopen, the assignee clear, P0, the dated failure note,
+`verification=failed`, `verified_at`, dropping `verdict:stale`, the plan-or-build label flip, every
+closed ancestor, and the push. There is no second `bd dolt push` line after it.
 
-Then ask the navigator one more question, as part of taking the verdict: **is the plan wrong, or is
-the build wrong?** Another question, so another sandwich — `asking --bead <id> --phase verify`
-before it, `working --bead <id> --phase verify` on the answer, before the `bd update` it decides.
-That answer decides one more step:
+**The assignee clear is the step that makes the reopen mean anything, and it is why this is a script
+rather than a list of commands.** `bd reopen` sets the status to `open` and clears `closed_at`; it
+leaves the assignee of the implementer that delivered the bead exactly where it was. `bd ready` does
+not filter on assignee, so the bead looks available to every human and every agent reading that list
+— while the pool an implementer is actually started from is *planned, open and **unclaimed***, which
+the bead is not in. Nothing picks it up, and nothing says so: a P0 sat like that for ten hours, and
+twice more besides. Retyped out of prose, that was the step that got dropped; inside the script it
+cannot be.
 
-- **Build wrong (the default).** `planned` stays, and the bead — unassigned by the step above — is
-  back in the *planned, open, unclaimed* pool the fleet starts an implementer from, at P0. **That is
-  the `--assignee ""`, not `bd reopen`**: `bd ready` lists it either way, and believing otherwise is
-  what stranded a P0 for ten hours. No plan revision is needed — an implementer just built something
-  that does not match a design that was fine. **Never add `plan:revise` on this
-  branch**: the navigator has just said the plan is sound, and the label would send a planner to
-  rewrite it.
-- **Plan wrong.** The design itself asked for the wrong thing.
+What `--fault` decides:
 
-  ```bash
-  bd update <id> --remove-label planned --add-label plan:revise
-  ```
-
-  This is a P0 pre-emption for the planners: whichever of them picks it up plans it on their very
-  next pass, reads the failure notes,
-  and revises the existing plan in place rather than starting over — see `plan-bead`'s guidance on a
-  reopened bead.
+- **Build wrong (the default).** `planned` stays, and the bead — unassigned by the script — is back
+  in the *planned, open, unclaimed* pool the fleet starts an implementer from, at P0. No plan
+  revision is needed: an implementer just built something that does not match a design that was
+  fine. **`--fault build` adds `plan:revise` to nothing**, and that is deliberate — the navigator has
+  just said the plan is sound, and the label would send a planner to rewrite it.
+- **Plan wrong.** The design itself asked for the wrong thing, so `planned` comes off and
+  `plan:revise` goes on. This is a P0 pre-emption for the planners: whichever of them picks it up
+  plans it on their very next pass, reads the failure notes, and revises the existing plan in place
+  rather than starting over — see `plan-bead`'s guidance on a reopened bead.
 
   **`plan:revise` is what a planner looks for, and you are the only role that sets it.** Removing
   `planned` on its own no longer means anything to them: it comes off for several unrelated reasons
@@ -544,21 +536,10 @@ Priority **P0 is set without asking** — the navigator ranked this class once, 
 exception to "never set a priority the navigator did not choose". You are not deciding urgency here;
 you are applying a decision already made.
 
-**If the bead (or its parent, or grandparent) is closed, reopen the chain:**
-
-```bash
-bd reopen <parent> --reason "child <id> reopened by failed verification"
-bd update <parent> --assignee ""
-```
-
-Both lines, for each parent, for the same reason as above — `bd reopen` leaves an assignee behind
-wherever it is used. A parent that never carried one is unaffected: the clear is idempotent.
-
-Walk up as far as there is a closed parent. Then, always, last:
-
-```bash
-bd dolt push
-```
+The script walks up as far as there is a closed parent, reopening and unassigning each, so a bead
+whose parent or grandparent was closed needs nothing extra from you. It refuses rather than looping
+if it ever meets a cycle, and it is safe to run again after a failure — the one cost of a second run
+is a duplicated dated failure note.
 
 ## When a verification itself goes wrong
 

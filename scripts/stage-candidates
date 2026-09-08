@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+#
+# The one place the harness answers: "which beads may the agent at stage S take at all?" Prints a
+# JSON array on stdout, sorted by priority ascending then by id, so a caller pipes it into `jq`
+# exactly as it pipes `plan-candidates`.
+#
+#     .claude/cerebro/scripts/stage-candidates ux
+#     .claude/cerebro/scripts/stage-candidates build-design
+#     .claude/cerebro/scripts/stage-candidates --print-stage-label
+#
+# It is the sibling of `scripts/plan-candidates`, which answers the same question for the COMBINED
+# `planner` role and is deliberately not modified: a project's roster carries either that role or
+# the two stage roles (cb-lz5), never both, so both routes must go on working. A new script rather
+# than a flag on that one, because its header states in as many words that it has no modes and no
+# flags precisely because its name is its question - and this is a different question.
+#
+# The two stages differ in exactly one rule. The UX agent takes what is NOT yet `ux:agreed`; the
+# build-design agent takes what IS. Every other rule below is lifted from `plan-candidates` and
+# means what it means there.
+#
+# It deliberately does NOT filter by priority, for `plan-candidates`' reason: which candidate, and
+# in what order, is policy the two agents' own skills explain, and both call sites keep their
+# one-line `jq` priority filter.
+#
+# `work-beads --status open` is where the whole EPIC question is answered, and routing through it is
+# the entire point: it has owned that rule since cb-hzl - a childless epic is real work, one with a
+# direct child is bookkeeping - and this script must add NO epic rule of its own. A second copy of
+# that rule is what `plan-candidates` exists to end.
+#
+# Two jq traps, each of which fails silently if it is got wrong:
+#
+#   1. `index(...)` returns the POSITION, null when absent; in jq only null and false are falsy, so
+#      a label at position 0 yields 0, which is TRUTHY. `index(x)` and `index(x) | not` are the
+#      correct tests; a `has`/`contains` spelling gets exactly that case wrong.
+#   2. A hold is not one exact string: `planning` and `planning:<name>` are both live, so the test
+#      is `any(. == "planning" or startswith("planning:"))`. The `:` is required rather than a bare
+#      prefix, so `planning-ideas` is not read as a hold.
+#
+# It fails LOUDLY - non-zero, a message on stderr, nothing on stdout - when `work-beads` fails or
+# prints something this script cannot filter. An empty array that really means "the query broke"
+# would tell an agent its queue is empty, and an agent that believes it ends its pass.
+
+set -euo pipefail
+
+# The label that says a bead's experience is agreed and its build is not yet designed. THIS IS THE
+# ONE PLACE THE SHELL SPELLS IT: `scripts/planner-buffer` asks for it through
+# `--print-stage-label` rather than repeating the literal.
+stage_label="ux:agreed"
+
+usage() {
+  echo "usage: stage-candidates <ux|build-design> | stage-candidates --print-stage-label" >&2
+  exit 2
+}
+
+mode=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    # Answered before any root is resolved, so this works with no repository at all - exactly as
+    # `planner-buffer`'s three `--print-*` modes do, and for the same reason: a contract test in
+    # another language runs it where `consumer-root --shared` would refuse.
+    --print-stage-label)
+      printf '%s\n' "$stage_label"; exit 0 ;;
+    ux|build-design)
+      [[ -z "$mode" ]] || usage
+      mode="$1"; shift ;;
+    *)
+      echo "stage-candidates: unknown argument '$1'" >&2
+      usage ;;
+  esac
+done
+
+[[ -n "$mode" ]] || usage
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Captured before the pipe rather than piped straight into `jq`, for the reason `plan-candidates`
+# gives about the same call: under `pipefail` a `work-beads` failure inside a pipeline is this
+# script's failure too, but this script must leave stdout EMPTY on a failure, and a pipeline that
+# has already started writing cannot promise that.
+if ! raw="$("$script_dir/work-beads" --status open)"; then
+  echo "stage-candidates: work-beads failed - cannot list the candidates" >&2
+  exit 1
+fi
+
+if ! out="$(printf '%s' "$raw" | jq --arg mode "$mode" --arg stage "$stage_label" '[ .[]
+      | select((.labels // []) | index("planned")       | not)
+      | select((.labels // []) | index("human")         | not)
+      | select((.labels // []) | index("verdict:stale") | not)
+      | select((.labels // []) | any(. == "planning" or startswith("planning:")) | not)
+      | select(((.labels // []) | index("verification:failed") | not)
+               or ((.labels // []) | index("plan:revise")))
+      | select(if $mode == "ux"
+               then ((.labels // []) | index($stage) | not)
+               else ((.labels // []) | index($stage)) end)
+    ] | sort_by(.priority, .id)' 2>/dev/null)"; then
+  echo "stage-candidates: the bead list is not JSON this script can filter" >&2
+  exit 1
+fi
+
+printf '%s\n' "$out"

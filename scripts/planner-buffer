@@ -6,6 +6,8 @@
 #     .claude/cerebro/scripts/planner-buffer --count                     planned=<p> want=<m>
 #     .claude/cerebro/scripts/planner-buffer --planned                   <p>
 #     .claude/cerebro/scripts/planner-buffer --want                      <m>
+#     .claude/cerebro/scripts/planner-buffer --ux-agreed                 <a>
+#     .claude/cerebro/scripts/planner-buffer --ux-count                  agreed=<a> want=<m>
 #     .claude/cerebro/scripts/planner-buffer --print-excluded-labels     one label per line
 #     .claude/cerebro/scripts/planner-buffer --print-floor               the floor, as a number
 #     .claude/cerebro/scripts/planner-buffer --print-multiple-key        the project.conf key name
@@ -49,7 +51,7 @@ floor=2
 multiple_key="planner_buffer_multiple"
 
 usage() {
-  echo "usage: planner-buffer --count | --planned | --want | --print-excluded-labels | --print-floor | --print-multiple-key" >&2
+  echo "usage: planner-buffer --count | --planned | --want | --ux-agreed | --ux-count | --print-excluded-labels | --print-floor | --print-multiple-key" >&2
   exit 2
 }
 
@@ -57,7 +59,7 @@ mode=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --count|--planned|--want)
+    --count|--planned|--want|--ux-agreed|--ux-count)
       mode="$1"; shift ;;
     # Answered before any root is resolved, so these work with no repository at all: the ERT
     # contract test runs from cerebro's own tree, where `consumer-root --shared' refuses.
@@ -95,6 +97,40 @@ planned_count() {
   excluded_json="$(printf '%s\n' "${excluded_labels[@]}" | jq -R . | jq -s .)"
   if ! printf '%s' "$raw" | jq --argjson excluded "$excluded_json" \
         '[.[] | select((.labels // []) | index("planned") != null)
+              | select((.labels // []) | any(. as $l | $excluded | index($l) != null) | not)]
+         | length' 2>/dev/null; then
+    echo "planner-buffer: the bead list is not JSON this script can count" >&2
+    exit 1
+  fi
+}
+
+# The beads whose experience has been agreed and whose build is not yet designed - the
+# build-design agent's queue, in the two-agent variant of planning (cb-lz5). Built from
+# `planned_count' above: same `work-beads --status open' call, same capture-then-`jq' shape, same
+# excluded labels, same loud failure.
+#
+# `planned' is excluded because `ux:agreed' STAYS ON THE BEAD for the rest of its life: it is a
+# record that the experience was agreed, so a bead an implementer is already building still carries
+# it, and counting it would make the queue look full when everything in it has moved on.
+#
+# The label is asked for rather than repeated: `scripts/stage-candidates' is the one place the shell
+# spells `ux:agreed', and this is one fork, on a mode that resolves no root and can only fail if
+# that script is missing - the alternative being a second literal that a suite would then have to
+# police.
+ux_agreed_count() {
+  local raw excluded_json stage_label
+  if ! stage_label="$("$script_dir/stage-candidates" --print-stage-label)"; then
+    echo "planner-buffer: stage-candidates failed - cannot name the stage label" >&2
+    exit 1
+  fi
+  if ! raw="$("$script_dir/work-beads" --status open)"; then
+    echo "planner-buffer: work-beads failed - cannot count the UX buffer" >&2
+    exit 1
+  fi
+  excluded_json="$(printf '%s\n' "${excluded_labels[@]}" | jq -R . | jq -s .)"
+  if ! printf '%s' "$raw" | jq --argjson excluded "$excluded_json" --arg stage "$stage_label" \
+        '[.[] | select((.labels // []) | index($stage) != null)
+              | select((.labels // []) | index("planned") == null)
               | select((.labels // []) | any(. as $l | $excluded | index($l) != null) | not)]
          | length' 2>/dev/null; then
     echo "planner-buffer: the bead list is not JSON this script can count" >&2
@@ -166,8 +202,13 @@ want_count() {
 case "$mode" in
   --planned) planned_count ;;
   --want)    want_count ;;
+  --ux-agreed) ux_agreed_count ;;
   --count)
     planned="$(planned_count)"
     want="$(want_count)"
     printf 'planned=%s want=%s\n' "$planned" "$want" ;;
+  --ux-count)
+    agreed="$(ux_agreed_count)"
+    want="$(want_count)"
+    printf 'agreed=%s want=%s\n' "$agreed" "$want" ;;
 esac

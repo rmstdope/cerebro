@@ -58,10 +58,13 @@ if [ "$sub" = "show" ]; then
   [ -f "$stub_dir/show.n" ] && show_n="$(cat "$stub_dir/show.n")"
   if [ -f "$stub_dir/stdout.show.$show_n" ]; then
     cat "$stub_dir/stdout.show.$show_n"
-    echo $((show_n + 1)) > "$stub_dir/show.n"
   elif [ -f "$stub_dir/stdout.show" ]; then
     cat "$stub_dir/stdout.show"
   fi
+  # UNCONDITIONALLY, not only when a numbered stdout was found: a case that numbers an exit without
+  # numbering the stdout would otherwise leave the counter at 1 and apply that exit to every `show'
+  # call - the whole-run behaviour this numbering exists to remove.
+  echo $((show_n + 1)) > "$stub_dir/show.n"
 elif [ -f "$stub_dir/stdout.$sub" ]; then
   cat "$stub_dir/stdout.$sub"
 fi

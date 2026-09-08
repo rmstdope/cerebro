@@ -17,7 +17,9 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
@@ -34,7 +36,7 @@ use crate::readers::{
     Commands, Judged, Programs, ReaderPaths, ReadError,
 };
 use crate::sweeps::Finding;
-use crate::ui::Divider;
+use crate::ui::{mouse_target, Divider, MouseTarget};
 use crate::triggers::GhAnswer;
 
 /// How often the fleet is re-read while nobody touches the keyboard. Agreed in the parent epic's
@@ -1631,6 +1633,13 @@ pub struct App {
     /// this is written by `note_layout` and read by the resize arm of `on_key`, exactly as
     /// `fleet_viewport` is written by `note_metrics`.
     layout: LayoutFacts,
+    /// The divider the pointer is currently dragging, if any. See `Drag`.
+    pub drag: Option<Drag>,
+    /// The last left-button press that landed on a divider, for the double-click test: which
+    /// divider, and when. Cleared by a press that is not on a divider, and by the double-click it
+    /// completes — so three presses in a row are a double-click and then a fresh single one, never
+    /// two overlapping doubles.
+    last_divider_press: Option<(Divider, DateTime<Utc>)>,
     /// Which widget the keyboard currently acts on. Fleet by default.
     pub focus: PaneFocus,
     /// What this process is allowed to do with the checkout it is drawing (cb-kcs.1).
@@ -1801,6 +1810,8 @@ impl App {
             resumed_this_stretch: BTreeSet::new(),
             panes: PaneSizes::default(),
             layout: LayoutFacts::default(),
+            drag: None,
+            last_divider_press: None,
             focus: PaneFocus::default(),
             supervision,
             confirm: None,
@@ -2004,6 +2015,113 @@ impl App {
     /// at-least-one floor on that number is applied; this method never applies its own.
     /// NOW is threaded in rather than asked of the clock: `work_body` needs one for the `Paused`
     /// suffix, and a key case that called `Utc::now()` would race the wall clock in every test.
+    /// One mouse event. METRICS is the frame that was last drawn, for the same reason `on_key`
+    /// takes a viewport: the wheel acts on the pane under the POINTER, not on the focused one, so
+    /// one viewport number would not do.
+    ///
+    /// Returns `AppAction` for `on_key`'s reason and nothing more: today every arm returns
+    /// `AppAction::None`, and the type is what lets a later arm ask for a read without changing
+    /// every caller.
+    pub fn on_mouse(
+        &mut self,
+        event: MouseEvent,
+        metrics: Metrics,
+        now: DateTime<Utc>,
+    ) -> AppAction {
+        // A modal owns the screen: a prompt consumes every key by construction, and a stray click
+        // must not act behind one or clear its gold text.
+        if self.quit_refusal.is_some() || self.confirm.is_some() {
+            return AppAction::None;
+        }
+        // Dropped BEFORE `clear_notice`: `EnableMouseCapture` turns on any-event tracking, so a
+        // pointer merely crossing the window would otherwise wipe the line the last keystroke put
+        // up.
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left)
+            | MouseEventKind::Up(MouseButton::Left)
+            | MouseEventKind::Drag(MouseButton::Left)
+            | MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown => {}
+            _ => return AppAction::None,
+        }
+        self.clear_notice();
+
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                match mouse_target(event.column, event.row, self.layout) {
+                    MouseTarget::Divider(divider, grab) => {
+                        let double = self.last_divider_press.is_some_and(|(previous, at)| {
+                            let since = (now - at).num_milliseconds();
+                            // `>= 0` so a clock that went backwards is a fresh press rather than a
+                            // double-click.
+                            previous == divider && (0..=DOUBLE_CLICK_MS).contains(&since)
+                        });
+                        if double {
+                            let (sizes, notice) = reset_divider(divider, self.panes);
+                            self.panes = sizes;
+                            self.set_notice(notice);
+                            self.drag = None;
+                            self.last_divider_press = None;
+                        } else {
+                            self.drag = Some(Drag { divider, grab });
+                            self.last_divider_press = Some((divider, now));
+                        }
+                    }
+                    MouseTarget::Pane(pane) => {
+                        self.drag = None;
+                        self.last_divider_press = None;
+                        self.click_in_pane(pane, event.row, metrics);
+                    }
+                    MouseTarget::Nothing => {
+                        self.drag = None;
+                        self.last_divider_press = None;
+                    }
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                // With no press behind it this is a text selection the terminal is no longer
+                // making, not a resize.
+                if let Some(drag) = self.drag {
+                    let (sizes, outer) =
+                        drag_action(drag, event.column, event.row, self.panes, self.layout);
+                    self.panes = sizes;
+                    self.set_notice(size_notice(drag.divider, outer));
+                }
+            }
+            // `last_divider_press` is deliberately left alone: it is what the next press's
+            // double-click test reads.
+            MouseEventKind::Up(MouseButton::Left) => self.drag = None,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let up = event.kind == MouseEventKind::ScrollUp;
+                self.wheel(up, event.column, event.row, metrics, now);
+            }
+            _ => {}
+        }
+        AppAction::None
+    }
+
+    /// A left click inside PANE's outer rect. Focus always; the row, if it landed on one.
+    ///
+    /// Unlike `Enter` under Fleet (cb-d31) this NEVER refuses: `Tab` into an empty Session pane
+    /// has always worked, and a click on a pane is `Tab`-shaped rather than `Enter`-shaped.
+    fn click_in_pane(&mut self, pane: PaneFocus, _row: u16, _metrics: Metrics) {
+        // Through `set_focus` rather than by assigning `self.focus`, so arriving at Fleet drops a
+        // pinned bead exactly as cb-lor says it must, whichever way the navigator arrived.
+        self.set_focus(pane);
+    }
+
+    /// One wheel notch over the pane under the POINTER. It never changes focus: whatever had the
+    /// keyboard keeps it.
+    fn wheel(
+        &mut self,
+        _up: bool,
+        _column: u16,
+        _row: u16,
+        _metrics: Metrics,
+        _now: DateTime<Utc>,
+    ) {
+    }
+
     pub fn on_key(
         &mut self,
         key: KeyEvent,
@@ -4182,6 +4300,172 @@ mod tests {
         let (after, notice) = reset_divider(Divider::LeftColumn, PaneSizes::default());
         assert_eq!(after, PaneSizes::default());
         assert_eq!(notice, "panes are already at their default sizes");
+    }
+
+    fn mouse_press(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn dragged(column: u16, row: u16) -> MouseEvent {
+        MouseEvent { kind: MouseEventKind::Drag(MouseButton::Left), column, row, ..mouse_press(0, 0) }
+    }
+
+    fn released(column: u16, row: u16) -> MouseEvent {
+        MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), column, row, ..mouse_press(0, 0) }
+    }
+
+    fn wheel(up: bool, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: if up { MouseEventKind::ScrollUp } else { MouseEventKind::ScrollDown },
+            column,
+            row,
+            ..mouse_press(0, 0)
+        }
+    }
+
+    fn no_metrics() -> Metrics {
+        let pane = PaneMetrics { content_lines: 0, viewport_lines: 0, inner_width: 0 };
+        Metrics { fleet: pane, work: pane, session: pane }
+    }
+
+    /// An `App` whose layout is `split_facts()`, which is what the mouse hit-tests against.
+    fn mouse_app() -> App {
+        let mut app = App::new();
+        app.note_layout(split_facts());
+        app
+    }
+
+    #[test]
+    fn pressing_a_divider_and_dragging_moves_it_and_says_so() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at(0));
+        assert!(app.drag.is_some(), "the press started a drag");
+        assert_eq!(app.notice, None, "a press that has moved nothing says nothing");
+
+        app.on_mouse(dragged(55, 5), no_metrics(), at(0));
+        assert_eq!(app.panes.left_column, Some(56));
+        assert_eq!(app.notice.as_deref(), Some("left column 56 cells"));
+    }
+
+    #[test]
+    fn a_press_that_is_not_on_a_divider_cancels_any_drag() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at(0));
+        app.on_mouse(mouse_press(5, facts.fleet.y + 1), no_metrics(), at(0));
+        assert!(app.drag.is_none());
+
+        app.on_mouse(dragged(55, 5), no_metrics(), at(0));
+        assert_eq!(app.panes.left_column, None, "a drag with no press behind it moves nothing");
+    }
+
+    #[test]
+    fn a_drag_with_no_press_behind_it_moves_nothing() {
+        let mut app = mouse_app();
+        app.on_mouse(dragged(55, 5), no_metrics(), at(0));
+        assert_eq!(app.panes, PaneSizes::default());
+        assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn a_release_ends_the_drag_and_leaves_the_double_click_memory() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        let at = at(0);
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at);
+        app.on_mouse(released(facts.left_column - 1, 5), no_metrics(), at);
+        assert!(app.drag.is_none());
+
+        // The next press inside the window is still the second half of a double-click.
+        app.panes = PaneSizes { left_column: Some(56), ..PaneSizes::default() };
+        app.on_mouse(
+            mouse_press(facts.left_column - 1, 5),
+            no_metrics(),
+            at + chrono::Duration::milliseconds(100),
+        );
+        assert_eq!(app.panes.left_column, None);
+    }
+
+    #[test]
+    fn a_second_press_on_one_divider_within_the_window_resets_it() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        let at = at(0);
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at);
+        app.on_mouse(dragged(55, 5), no_metrics(), at);
+        app.on_mouse(released(55, 5), no_metrics(), at);
+        app.on_mouse(
+            mouse_press(facts.left_column - 1, 5),
+            no_metrics(),
+            at + chrono::Duration::milliseconds(200),
+        );
+        assert_eq!(app.panes.left_column, None);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some(format!("left column back to {} cells", crate::ui::LEFT_COLUMN).as_str())
+        );
+        assert!(app.drag.is_none(), "the reset does not then drag");
+    }
+
+    #[test]
+    fn a_second_press_after_the_window_starts_a_fresh_drag() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        let at = at(0);
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at);
+        app.panes = PaneSizes { left_column: Some(56), ..PaneSizes::default() };
+        app.on_mouse(
+            mouse_press(facts.left_column - 1, 5),
+            no_metrics(),
+            at + chrono::Duration::milliseconds(DOUBLE_CLICK_MS + 1),
+        );
+        assert_eq!(app.panes.left_column, Some(56), "nothing was reset");
+        assert!(app.drag.is_some());
+    }
+
+    #[test]
+    fn a_double_click_on_a_divider_that_has_not_moved_says_so() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        let at = at(0);
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at);
+        app.on_mouse(
+            mouse_press(facts.left_column - 1, 5),
+            no_metrics(),
+            at + chrono::Duration::milliseconds(100),
+        );
+        assert_eq!(app.notice.as_deref(), Some("panes are already at their default sizes"));
+    }
+
+    #[test]
+    fn three_presses_are_a_double_click_and_then_a_single_one() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        let at = at(0);
+        let column = facts.left_column - 1;
+        app.on_mouse(mouse_press(column, 5), no_metrics(), at);
+        app.on_mouse(mouse_press(column, 5), no_metrics(), at + chrono::Duration::milliseconds(100));
+        app.panes = PaneSizes { left_column: Some(56), ..PaneSizes::default() };
+        app.on_mouse(mouse_press(column, 5), no_metrics(), at + chrono::Duration::milliseconds(200));
+        assert_eq!(app.panes.left_column, Some(56), "the third press is a fresh single one");
+        assert!(app.drag.is_some());
+    }
+
+    #[test]
+    fn a_mouse_event_does_nothing_while_a_prompt_is_up() {
+        let mut app = mouse_app();
+        let facts = split_facts();
+        app.set_notice("something gold".to_string());
+        app.quit_refusal = Some(vec!["Storm".to_string()]);
+        app.on_mouse(mouse_press(facts.left_column - 1, 5), no_metrics(), at(0));
+        assert!(app.drag.is_none());
+        assert_eq!(app.notice.as_deref(), Some("something gold"), "a modal's own text survives");
     }
 
     #[test]

@@ -1,0 +1,126 @@
+<!doctype html><meta charset="utf-8"><title>cb-hjf — showing each agent's role in the Fleet pane</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:17px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:12px;margin:12px 0 4px;color:#eee}
+.row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.panel{padding:14px 18px;border:1px solid #333}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.45;white-space:pre}.hd{text-decoration:underline}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.y{color:gold}.e{color:#f14c4c}
+.sel{background:#264f78}
+.note{color:#eee;max-width:110ch;background:#333;padding:8px 12px;margin-top:16px}
+.cost{color:#ffd,background:#4a3b1a;padding:6px 10px;margin-top:10px;max-width:60ch}
+</style>
+
+<h1>cb-hjf — what kind of agent is this? The role, on a Fleet row</h1>
+
+<p class="note">
+The Fleet list names nine agents. Nothing next to a name says what kind of agent it is, so the shape
+of the fleet — how many are planning, how many are building — is something you have to remember
+rather than see.
+<br><br>
+There is a catch, and it is the whole of this decision. When the whole window is given to the fleet
+list it <b>already</b> shows a Role column. The everyday screen does not: the fleet list sits in a
+narrow column beside the work list, and at that width the Role column is dropped and never seen.
+Every panel below is drawn at that everyday width. There is room for about two spare characters.
+</p>
+
+<div class="row">
+<div class="panel dark"><h2>Today, at the everyday width</h2><pre><span class="hd">  AGENT       STATE       BEAD</span>
+<span class="i">◆</span> Cerebro     idle
+<span class="g">●</span> Xavier      ux          cb-hjf
+<span class="i">◌</span> Beast       standby     <span class="d">→ ux agreed</span>
+<span class="g">●</span> Forge       weekly
+<span class="y">◐</span> Psylocke    waiting
+<span class="g">●</span> Cyclops     build       cb-21g
+<span class="g">●</span> Storm       gate        cb-4cn
+<span class="i">◌</span> Wolverine   standby     <span class="d">→ planned bead</span>
+<span class="d">○</span> Rogue       dead</pre>
+<div class="cost">Nine names, no roles. Beast and Rogue could be anything.</div></div>
+
+<div class="panel dark"><h2>A — group the list, and name each group once</h2><pre><span class="hd">  AGENT       STATE       BEAD</span>
+<span class="d">  orchestrator</span>
+<span class="i">◆</span> Cerebro     idle
+<span class="d">  ux</span>
+<span class="g">●</span> Xavier      ux          cb-hjf
+<span class="d">  build-design</span>
+<span class="i">◌</span> Beast       standby     <span class="d">→ ux agreed</span>
+<span class="d">  architect</span>
+<span class="g">●</span> Forge       weekly
+<span class="d">  verifier</span>
+<span class="y">◐</span> Psylocke    waiting
+<span class="d">  implementer</span>
+<span class="g">●</span> Cyclops     build       cb-21g
+<span class="g">●</span> Storm       gate        cb-4cn
+<span class="i">◌</span> Wolverine   standby     <span class="d">→ planned bead</span>
+<span class="d">○</span> Rogue       dead
+<span class="d">                     Rows 1–15 of 15</span></pre>
+<div class="cost">Full words, nothing squeezed, and the shape is visible: one of each, four builders. Costs six extra lines — the list is 15 lines tall instead of 9, so on a short screen the last agents scroll out of sight.</div></div>
+</div>
+
+<div class="row" style="margin-top:20px">
+<div class="panel dark"><h2>B — the role of whichever agent is highlighted, in the frame's title</h2><pre>┌─ Fleet — Wolverine · implementer ────┐
+│<span class="hd">  AGENT       STATE       BEAD      </span>│
+│<span class="i">◆</span> Cerebro     idle                  │
+│<span class="g">●</span> Xavier      ux          cb-hjf    │
+│<span class="i">◌</span> Beast       standby     <span class="d">→ ux agreed</span>│
+│<span class="g">●</span> Forge       weekly                │
+│<span class="y">◐</span> Psylocke    waiting               │
+│<span class="g">●</span> Cyclops     build       cb-21g    │
+│<span class="g">●</span> Storm       gate        cb-4cn    │
+│<span class="sel">◌ Wolverine   standby     → planned </span>│
+│<span class="d">○</span> Rogue       dead                  │
+└──────────────────────────────────────┘</pre>
+<h3>Move the highlight up two, and the title follows:</h3><pre>┌─ Fleet — Cyclops · implementer ──────┐</pre>
+<h3>Nothing highlighted:</h3><pre>┌─ Fleet ──────────────────────────────┐</pre>
+<div class="cost">Costs no space at all and works at every width. But one role at a time: you learn a role by walking to it, and the shape of the fleet is still not visible.</div></div>
+
+<div class="panel dark"><h2>C — a Role column at every width, cut to fit</h2><pre><span class="hd">  AGENT     ROLE    STATE    BEAD</span>
+<span class="i">◆</span> Cerebro   <span class="d">orches…</span> idle
+<span class="g">●</span> Xavier    <span class="d">ux    </span> ux       cb-hjf
+<span class="i">◌</span> Beast     <span class="d">build-…</span> standby  <span class="d">→ ux …</span>
+<span class="g">●</span> Forge     <span class="d">archit…</span> weekly
+<span class="y">◐</span> Psylocke  <span class="d">verifi…</span> waiting
+<span class="g">●</span> Cyclops   <span class="d">implem…</span> build    cb-21g
+<span class="g">●</span> Storm     <span class="d">implem…</span> gate     cb-4cn
+<span class="i">◌</span> Wolveri…  <span class="d">implem…</span> standby  <span class="d">→ pla…</span>
+<span class="d">○</span> Rogue     <span class="d">implem…</span> dead</pre>
+<div class="cost">Every row says something, and one line per agent. But the words do not fit: <b>orches…</b> and <b>build-…</b> and <b>implem…</b>, and the name and the bead get cut to pay for them.</div></div>
+
+<div class="panel dark"><h2>D — a short tag instead of the word</h2><pre><span class="hd">  AGENT       ROLE   STATE     BEAD</span>
+<span class="i">◆</span> Cerebro     <span class="d">orch</span>   idle
+<span class="g">●</span> Xavier      <span class="d">ux</span>     ux        cb-hjf
+<span class="i">◌</span> Beast       <span class="d">bld</span>    standby   <span class="d">→ ux a…</span>
+<span class="g">●</span> Forge       <span class="d">arch</span>   weekly
+<span class="y">◐</span> Psylocke    <span class="d">verf</span>   waiting
+<span class="g">●</span> Cyclops     <span class="d">impl</span>   build     cb-21g
+<span class="g">●</span> Storm       <span class="d">impl</span>   gate      cb-4cn
+<span class="i">◌</span> Wolverine   <span class="d">impl</span>   standby   <span class="d">→ pla…</span>
+<span class="d">○</span> Rogue       <span class="d">impl</span>   dead</pre>
+<div class="cost">Fits, one line per agent, the four builders line up down the column. But <b>bld</b> and <b>arch</b> and <b>verf</b> are words nobody uses anywhere else, so they have to be learned once.</div></div>
+</div>
+
+<h1 style="margin-top:28px">The awkward states, drawn for A (the one that changes the list's shape)</h1>
+<div class="row">
+<div class="panel dark"><h2>Walking the list with the arrow keys</h2><pre><span class="d">  verifier</span>
+<span class="y">◐</span> Psylocke    waiting
+<span class="d">  implementer</span>
+<span class="sel">● Cyclops     build       cb-21g</span>
+<span class="g">●</span> Storm       gate        cb-4cn</pre>
+<h3>Press ↑ once — the highlight jumps over the group name to Psylocke, never lands on it:</h3><pre><span class="d">  verifier</span>
+<span class="sel">◐ Psylocke    waiting</span>
+<span class="d">  implementer</span>
+<span class="g">●</span> Cyclops     build       cb-21g</pre></div>
+
+<div class="panel dark"><h2>A name whose role is not one this view knows</h2><pre><span class="d">  implementer</span>
+<span class="g">●</span> Cyclops     build       cb-21g
+<span class="d">  quartermaster</span>
+<span class="e">!</span> <span class="e">Gambit</span>      <span class="e">invalid</span></pre>
+<h3>It gets a group of its own, spelled as written. Nothing is silently filed under a role it does not have.</h3></div>
+
+<div class="panel dark"><h2>The whole window given to the fleet — already has a Role column today</h2><pre><span class="hd">  AGENT         ROLE           STATE        BEAD          FOR</span>
+<span class="i">◆</span> Cerebro       orchestrator   idle                       4m
+<span class="g">●</span> Xavier        ux             ux           cb-hjf        18m 18m
+<span class="i">◌</span> Beast         build-design   standby      <span class="d">→ ux agreed</span>
+<span class="g">●</span> Cyclops       implementer    build        cb-21g        22m 6m</pre>
+<h3>Question 2 is whether this stays exactly as it is, or takes the same shape as the narrow list.</h3></div>
+</div>

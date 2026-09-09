@@ -202,4 +202,91 @@ grep -q 'usage' "$tmp/err" || fail "no-mode-at-all-exits-two: no usage line on s
 rm -rf "$tmp"
 pass "no-mode-at-all-exits-two"
 
+# --- the-sidecar-temp-name-carries-the-writing-pid ---
+# Two separate PROCESSES, because `$$` in a subshell is still the parent's pid: the colliding
+# writers here are two hook processes under one agent name, and a fixed `<file>.tmp` lets each `mv`
+# the other's half-written object.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
+s="$(sidecar_file "$tmp" Cyclops)"
+mv_log="$work_dir/agent-asking-mv-calls.log"
+: > "$mv_log"
+mv_stub_dir="$work_dir/agent-asking-mv-stub"
+mkdir -p "$mv_stub_dir"
+# The real mv is resolved HERE, before the stub shadows it: a pass-through that cannot find it
+# would make this case green for the wrong reason.
+real_mv="$(command -v mv)"
+[[ -n "$real_mv" ]] || fail "the-sidecar-temp-name-carries-the-writing-pid: no real mv"
+cat > "$mv_stub_dir/mv" <<STUB
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in -*) ;; *) printf '%s\n' "\$a" >> "$mv_log"; break ;; esac
+done
+exec "$real_mv" "\$@"
+STUB
+chmod +x "$mv_stub_dir/mv"
+PATH="$mv_stub_dir:$PATH" run_asking "$tmp" Cyclops begin
+# Back to `working`, or the second begin takes the already-asking short circuit and writes nothing.
+run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
+PATH="$mv_stub_dir:$PATH" run_asking "$tmp" Cyclops begin
+# agent-state's own renames target the STATE file's temp names; only the sidecar's are this case.
+movs="$(grep -F "$s." "$mv_log" || true)"
+[[ "$(printf '%s\n' "$movs" | grep -c .)" == "2" ]] \
+  || fail "the-sidecar-temp-name-carries-the-writing-pid: expected 2 renames, got '$movs'"
+first="$(printf '%s\n' "$movs" | sed -n 1p)"
+second="$(printf '%s\n' "$movs" | sed -n 2p)"
+[[ "$first" =~ ^"$s"\.[0-9]+\.tmp$ ]] \
+  || fail "the-sidecar-temp-name-carries-the-writing-pid: '$first' is not <sidecar>.<pid>.tmp"
+[[ "$first" != "$second" ]] \
+  || fail "the-sidecar-temp-name-carries-the-writing-pid: two processes shared '$first'"
+rm -rf "$tmp" "$mv_stub_dir"
+pass "the-sidecar-temp-name-carries-the-writing-pid"
+
+# --- a-failing-jq-leaves-no-temp-beside-the-sidecar ---
+# The redirection creates the temp file before jq runs, and the directory it would be left in is
+# polled every five seconds by both fleet views.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
+f="$(state_file "$tmp" Cyclops)"
+before="$(cat "$f")"
+stub_dir="$work_dir/agent-asking-jq-stub"
+mkdir -p "$stub_dir"
+real_jq="$(command -v jq)"
+[[ -n "$real_jq" ]] || fail "a-failing-jq-leaves-no-temp: no real jq to pass through to"
+cat > "$stub_dir/jq" <<STUB
+#!/usr/bin/env bash
+# Reads (so the guards pass), then fails on the sidecar's own object.
+case "\$*" in
+  *'{state: \$state, bead: \$bead, phase: \$phase}'*) exit 1 ;;
+  *) exec "$real_jq" "\$@" ;;
+esac
+STUB
+chmod +x "$stub_dir/jq"
+status=0
+out="$(CEREBRO_AGENT_NAME=Cyclops PATH="$stub_dir:$PATH" \
+        "$tmp/.claude/cerebro/scripts/agent-asking" begin)" || status=$?
+[[ $status -eq 0 ]] || fail "a-failing-jq-leaves-no-temp: exited $status"
+[[ -z "$out" ]] || fail "a-failing-jq-leaves-no-temp: wrote to stdout: $out"
+[[ "$before" == "$(cat "$f")" ]] || fail "a-failing-jq-leaves-no-temp: the state file changed"
+leftovers="$(find "$tmp/.cerebro/state" -name '*.tmp' 2>/dev/null)"
+[[ -z "$leftovers" ]] || fail "a-failing-jq-leaves-no-temp: left behind: $leftovers"
+rm -rf "$tmp" "$stub_dir"
+pass "a-failing-jq-leaves-no-temp-beside-the-sidecar"
+
+# --- a-missing-state-write-library-does-not-fail-the-question ---
+# The deliberate divergence from agent-state and agent-turn: they source the library above their
+# guards, so a missing one is loud. This script's non-zero exit is a question the navigator never
+# gets asked, so it may not be.
+tmp="$(new_fixture)"
+run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
+rm -f "$tmp/.claude/cerebro/scripts/state-write.sh"
+for mode in begin end; do
+  status=0
+  out="$(run_asking "$tmp" Cyclops "$mode")" || status=$?
+  [[ $status -eq 0 ]] || fail "a-missing-state-write-library: $mode exited $status"
+  [[ -z "$out" ]] || fail "a-missing-state-write-library: $mode wrote to stdout: $out"
+done
+rm -rf "$tmp"
+pass "a-missing-state-write-library-does-not-fail-the-question"
+
 suite_passed

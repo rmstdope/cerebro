@@ -62,6 +62,8 @@ The third is **not** a design question. A *yes* is the planner's cue that the sh
 interaction needs the navigator, and you record that fact in the description. You do not start
 designing it, and you do not ask what it should look like.
 
+When you have all information needed, file the bead without asking the navigator for approval.
+
 ## Filing it
 
 Write the description to a file first — a bead's description is paragraphs, and `--description` on a

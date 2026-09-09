@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cb-33n — the agreed closing of a design conversation</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; --bad:#b31d28; --good:#22863a; --bg:#fafbfc; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 58rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.1rem; margin: 2.6rem 0 .5rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: .98rem; margin: 1.3rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  .chat { background:#fff; border:1px solid var(--line); border-radius:8px; overflow:hidden; margin:.6rem 0 1rem; }
+  .chat .who { background:#f2f5f8; color:var(--dim); font-size:11px; letter-spacing:.07em;
+               text-transform:uppercase; padding:.35rem .9rem; border-bottom:1px solid var(--line); }
+  .chat .who.you { background:#eef4ff; }
+  .chat .body { padding:.85rem .95rem; }
+  .chat .body p { margin:.5rem 0; }
+  .chat .body p:first-child { margin-top:0; }
+  .chat .body p:last-child { margin-bottom:0; }
+  .agreed { border:1px solid #b6e0c2; background:#f6fff9; border-radius:8px; padding:.1rem 1.1rem 1.1rem; margin:1rem 0; }
+  .rejected { border:1px solid var(--line); border-radius:8px; padding:.1rem 1.1rem 1rem; margin:1rem 0; background:#fcfcfd; }
+  .rejected h3 { color: var(--dim); }
+  .note { color: var(--dim); font-size: 13.5px; }
+  .dimdetail { color:#8a929b; font-size:13px; border-top:1px dashed #d0d7de; margin-top:.7rem; padding-top:.5rem; }
+  .scroll { max-height: 13rem; overflow-y: auto; border:1px dashed #d0d7de; border-radius:6px; padding:.6rem .8rem;
+            background:var(--bg); font-size:13.5px; }
+  table { border-collapse: collapse; width: 100%; margin-top: .6rem; font-size: 13px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .45rem .5rem; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .del { color: var(--bad); }
+</style>
+</head>
+<body>
+
+<h1>cb-33n — the agreed closing of a design conversation</h1>
+<p class="lede">Agreed over two rounds, 2026-09-09. The design conversation itself is untouched: the
+agent still interviews with drawings, still puts the shape of every new interaction to the designer,
+still loops on corrections while the interview is running. This page is only about what happens once
+the last question has been answered.</p>
+
+<h2>What goes</h2>
+<div class="chat"><div class="who">The design agent — today, and no longer</div><div class="body">
+  <p class="del">Here's everything we agreed, as the person building it will read it. Have a look
+  before I file it — anything wrong is much cheaper to fix now.</p>
+  <div class="scroll"><p class="note del">…the whole record, roughly seventy lines…</p></div>
+  <p class="del">Is that right?</p>
+</div></div>
+<p class="note">Then it waits. Every question that record is made of has already been answered, so
+the wait decides nothing — and a designer who has stepped away leaves the whole session parked on
+it. Showing the record and asking about it were one step, and both go.</p>
+
+<h2>The agreed ending</h2>
+<div class="agreed">
+<div class="chat"><div class="who">The design agent</div><div class="body">
+  <p>Filed — <em>the panel that opens beneath a row</em> is written down and waiting for whoever
+  builds it: the shape, the states, your words and the drawing you chose. Thank you.</p>
+</div></div>
+<p class="note">One paragraph. It names the thing just designed, which matters in a day with several
+of these in it; it says where the work went; and it ends the conversation without asking anything.
+The italicised phrase is the piece of work in the product's own words, not its filed title.</p>
+</div>
+
+<h2>A correction typed after the ending</h2>
+<p>Nothing invites one now, but a designer who thinks of something a moment later will still type it.</p>
+<div class="agreed">
+<div class="chat">
+  <div class="who you">The designer</div>
+  <div class="body"><p>wait — the empty line should say "Nothing yet", not "Nothing recorded yet"</p></div>
+</div>
+<div class="chat"><div class="who">The design agent</div><div class="body">
+  <p>That one's already filed and out of my hands — but it isn't lost. Tell the team and it can be
+  changed before anyone builds it.</p>
+</div></div>
+<p class="note">The same answer whether the correction is a second late or an hour late. Taking the
+change instead would work only by luck — the conversation ends shortly after the closing message, so
+a minute later the identical sentence would reach nobody with no sign that it hadn't landed.</p>
+</div>
+
+<h2>When the filing is refused</h2>
+<p>The designer no longer reads the record on screen, so on the one day the shared list refuses it,
+the record is printed — this is now the only place it exists that a person can see. The technical
+line comes first and the record last, so the record is what the message ends on and what a designer
+can select to the bottom of the screen.</p>
+<div class="agreed">
+<div class="chat"><div class="who">The design agent</div><div class="body">
+  <p>I couldn't finish filing it just now: the shared task list wouldn't accept the update. I've
+  flagged it for the team, and nothing you told me is lost — below is everything we agreed, so it
+  exists somewhere other than my own head. Keep it if you can.</p>
+  <p class="dimdetail">Detail for whoever picks this up:<br>
+  <code>bd update cb-33n --acceptance … → error: connection refused</code></p>
+  <div class="scroll">
+    <p><strong>The agreed experience</strong><br>The panel opens beneath the row it belongs to,
+    pushing the rows below it down rather than covering them…</p>
+    <p><strong>The states</strong><br>Empty — the panel opens and reads "Nothing recorded yet"…</p>
+    <p><strong>The words, exactly</strong><br>Heading: "What happened here"…</p>
+    <p><strong>What was considered and rejected</strong><br>A pop-over anchored to the row…</p>
+    <p><strong>The mockup</strong><br><code>docs/ui/…</code></p>
+  </div>
+</div></div>
+</div>
+<p class="note">The same holds for the other two failures that reach a designer — the drawing that
+couldn't be saved, and somebody else already working on this piece of work: each keeps its plain
+sentence, and each now prints the record after the technical line for the same reason.</p>
+
+<h2>Every state</h2>
+<table>
+<tr><th>State</th><th>What the designer sees</th></tr>
+<tr><td><strong>Normal ending</strong></td><td>The one paragraph above. The conversation is over.</td></tr>
+<tr><td><strong>A correction typed after it</strong></td><td>The "already filed and out of my hands" answer above.</td></tr>
+<tr><td><strong>Filing refused</strong></td><td>Plain sentence, technical line, then the full record.</td></tr>
+<tr><td><strong>Drawing couldn't be saved</strong></td><td>Same shape, its own first sentence.</td></tr>
+<tr><td><strong>Somebody else took the work mid-conversation</strong></td><td>Same shape, its own first sentence.</td></tr>
+<tr><td><strong>Designer stepped away mid-interview</strong></td><td>Unchanged: the question and drawings are written down and the conversation resumes there next time.</td></tr>
+<tr><td><strong>Nothing a person can see</strong></td><td>Unchanged: there is no conversation at all.</td></tr>
+</table>
+
+<h2>Considered and rejected</h2>
+<div class="rejected">
+<h3>A recap of each part of the record</h3>
+<p class="note">One line per heading — the shape, the states, the words, what was rejected, the
+drawing — so nothing looks dropped. Rejected: it is a shorter wall of text doing the job the wall of
+text was rejected for. The designer answered every one of those questions minutes earlier.</p>
+</div>
+<div class="rejected">
+<h3>Filing at once, but leaving the door open</h3>
+<p class="note">"If something's come to you since, say so now and I'll change it." Rejected: it is an
+invitation to answer, so a session that was meant to end sits open again — the exact thing this
+change removes, in a softer voice.</p>
+</div>
+<div class="rejected">
+<h3>Taking a late correction when the agent is still there</h3>
+<p class="note">Rejected: it works by luck. The same sentence a minute later reaches nobody, and the
+designer gets no sign that it didn't land.</p>
+</div>
+<div class="rejected">
+<h3>Keeping the failure message short</h3>
+<p class="note">Rejected: with the record no longer shown before filing, "I've kept everything we
+decided" would mean kept somewhere the designer cannot see, on the one day it isn't kept anywhere.</p>
+</div>
+
+</body>
+</html>

@@ -382,9 +382,13 @@ pub fn size_notice(divider: Divider, outer: u16) -> String {
 }
 
 /// The gold line a double-clicked divider gets. The mockup's §5, last row.
-pub fn reset_notice(divider: Divider) -> String {
+pub fn reset_notice(divider: Divider, screen_width: u16) -> String {
     match divider {
-        Divider::LeftColumn => format!("left column back to {} cells", crate::ui::LEFT_COLUMN),
+        // The number the reset actually produces, which is width-dependent since cb-hjf.
+        Divider::LeftColumn => format!(
+            "left column back to {} cells",
+            crate::ui::default_left_column(screen_width)
+        ),
         Divider::SplitFleet | Divider::StackedFleet => "Fleet back to its own height".to_string(),
         Divider::StackedWork => "Work back to its own height".to_string(),
     }
@@ -454,7 +458,7 @@ pub fn drag_action(
 /// It derives for itself whether that divider had moved: an override already `None` gets the
 /// mockup's `panes are already at their default sizes` — the same sentence `Shift-Home` gets — and
 /// one that was `Some` gets `reset_notice(divider)`.
-pub fn reset_divider(divider: Divider, sizes: PaneSizes) -> (PaneSizes, String) {
+pub fn reset_divider(divider: Divider, sizes: PaneSizes, screen_width: u16) -> (PaneSizes, String) {
     let (after, moved) = match divider {
         Divider::LeftColumn => {
             (PaneSizes { left_column: None, ..sizes }, sizes.left_column.is_some())
@@ -470,7 +474,7 @@ pub fn reset_divider(divider: Divider, sizes: PaneSizes) -> (PaneSizes, String) 
         }
     };
     if moved {
-        (after, reset_notice(divider))
+        (after, reset_notice(divider, screen_width))
     } else {
         (sizes, "panes are already at their default sizes".to_string())
     }
@@ -2066,7 +2070,8 @@ impl App {
                             previous == divider && (0..=DOUBLE_CLICK_MS).contains(&since)
                         });
                         if double {
-                            let (sizes, notice) = reset_divider(divider, self.panes);
+                            let (sizes, notice) =
+                                reset_divider(divider, self.panes, self.layout.width);
                             self.panes = sizes;
                             self.set_notice(notice);
                             self.drag = None;
@@ -4360,11 +4365,16 @@ mod tests {
         assert_eq!(size_notice(Divider::StackedWork, 12), "Work 12 rows");
 
         assert_eq!(
-            reset_notice(Divider::LeftColumn),
+            reset_notice(Divider::LeftColumn, 100),
             format!("left column back to {} cells", crate::ui::LEFT_COLUMN)
         );
-        assert_eq!(reset_notice(Divider::SplitFleet), "Fleet back to its own height");
-        assert_eq!(reset_notice(Divider::StackedWork), "Work back to its own height");
+        assert_eq!(
+            reset_notice(Divider::LeftColumn, 140),
+            format!("left column back to {} cells", crate::ui::WIDE_LEFT_COLUMN),
+            "the sentence names the number the reset actually produces"
+        );
+        assert_eq!(reset_notice(Divider::SplitFleet, 100), "Fleet back to its own height");
+        assert_eq!(reset_notice(Divider::StackedWork, 100), "Work back to its own height");
     }
 
     #[test]
@@ -4374,15 +4384,16 @@ mod tests {
             split_fleet_rows: Some(16),
             ..PaneSizes::default()
         };
-        let (after, notice) = reset_divider(Divider::LeftColumn, sizes);
+        let (after, notice) = reset_divider(Divider::LeftColumn, sizes, 140);
         assert_eq!(after.left_column, None);
         assert_eq!(after.split_fleet_rows, Some(16), "the other divider is untouched");
-        assert_eq!(notice, reset_notice(Divider::LeftColumn));
+        assert_eq!(notice, reset_notice(Divider::LeftColumn, 140));
+        assert_eq!(notice, "left column back to 52 cells", "on a window that can spare it");
     }
 
     #[test]
     fn resetting_a_divider_that_has_not_moved_says_so() {
-        let (after, notice) = reset_divider(Divider::LeftColumn, PaneSizes::default());
+        let (after, notice) = reset_divider(Divider::LeftColumn, PaneSizes::default(), 140);
         assert_eq!(after, PaneSizes::default());
         assert_eq!(notice, "panes are already at their default sizes");
     }

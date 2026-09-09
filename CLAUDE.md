@@ -652,11 +652,24 @@ held it; and `errors.jsonl`, one line per outage rather than per failed read, na
 the name it came from. One policy rotates all three; the writer is silent and unable to fail; and a
 read-only view writes none of them, since it decides nothing.
 
+Since cb-hjf every Fleet row carries the agent's **role** at every width, in the roster's own word
+and faded against the name beside it. The column is paid for out of `AGENT_FLOOR`'s and
+`STATE_FLOOR`'s unused cells and never out of the work cell, cut with a trailing `…` when the word
+does not fit, and given up whole below `ui::ROLE_MIN` — a pane too narrow for it draws exactly the
+row it drew before, with nothing else shortened. `ui::default_left_column` is the one place the
+left column's starting width lives: `LEFT_COLUMN` (40), or `WIDE_LEFT_COLUMN` (52) on a window at
+least `WIDE_LEFT_COLUMN_SCREEN` (134) wide, which is 52 plus two borders plus the eighty columns
+agents print to. It picks the *starting* width alone — a width the navigator dragged or keyed is
+theirs and survives every resize, and `Shift-Home` hands it back to this rule, saying the number
+the reset actually produces. `emacs/cerebro.el` is deliberately given none of it, as cb-bch.1's
+chords and cb-xhu.4.2's health section were: no `tests/lib/` table, no second implementation.
+
 Since cb-ykz.2 its Fleet rows carry the same **stuck** signal `M-x cerebro` does, off the same
 rule (`lifecycle::stuck_for`) and the same 1800-second ceiling: a red `✗` glyph, and `stuck 8h49`
 in red. Which cell carries the text is the one divergence, and it is the pane's own shape: in the
 wide layout it replaces the FOR column's elapsed pair, and **below `WIDE_COLUMNS` — which is the
-ordinary split layout, where the Fleet pane is 40 cells unless the navigator has widened it
+ordinary split layout, where the Fleet pane is 40 cells — or 52 on a window at least 134 wide
+(cb-hjf) — unless the navigator has widened it
 (cb-bch.1) — the BEAD cell carries it**
 instead, standing aside as it already does for a standby label and a dead row's verdict, with
 `columns` sizing that column from the same `bead_cell` so the text is never cut. The STATE cell is

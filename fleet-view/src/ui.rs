@@ -59,6 +59,28 @@ pub const SPLIT_COLUMNS: u16 = 100;
 /// every remaining cell to the session.
 pub const LEFT_COLUMN: u16 = 40;
 
+/// The left column's starting width on a window with room to spare, in outer cells: enough for
+/// every roster role to be whole and the standby sentences nearly so (cb-hjf).
+pub const WIDE_LEFT_COLUMN: u16 = 52;
+
+/// The window width at which the left column starts `WIDE_LEFT_COLUMN` rather than `LEFT_COLUMN`.
+/// 52 + 2 borders + 80: agents print to eighty columns, so the session pane keeps eighty inner
+/// cells or the wider list is not taken at all.
+pub const WIDE_LEFT_COLUMN_SCREEN: u16 = 134;
+
+/// The left column's width when the navigator has not set one. THE one place that rule lives, so
+/// `split`, `fleet_width` and `app::reset_notice` cannot disagree about the default.
+///
+/// It picks the STARTING width only: an override is still the navigator's and survives every
+/// resize, and `Shift-Home` hands the width back to this rule by clearing it.
+pub fn default_left_column(screen_width: u16) -> u16 {
+    if screen_width >= WIDE_LEFT_COLUMN_SCREEN {
+        WIDE_LEFT_COLUMN
+    } else {
+        LEFT_COLUMN
+    }
+}
+
 /// The narrowest a pane may be made, in outer cells: two borders and enough body for a truncated
 /// bead line. The navigator saw this floor in the mockup (cb-bch.1).
 pub const MIN_PANE_COLUMNS: u16 = 24;
@@ -378,7 +400,8 @@ fn split(
         // The override is the navigator's; the fixed `LEFT_COLUMN` is what the layout would have
         // had. Either way it goes through the same clamp `resize_action` asks, so a chord and a
         // drawn border can never disagree about where the divider may go.
-        let left_width = clamp_left_column(sizes.left_column.unwrap_or(LEFT_COLUMN), area.width);
+        let left_width =
+            clamp_left_column(sizes.left_column.unwrap_or_else(|| default_left_column(area.width)), area.width);
         let columns =
             Layout::horizontal([Constraint::Length(left_width), Constraint::Min(0)]).split(available);
         let left = columns[0];
@@ -433,8 +456,8 @@ fn work_content_lines(app: &App, now: DateTime<Utc>, area: Rect) -> usize {
     work_document(app, now, (area.width as usize).saturating_sub(2)).len()
 }
 
-/// How wide the Fleet pane will be, before `split` runs - `LEFT_COLUMN` when AREA is at least
-/// `SPLIT_COLUMNS` wide, AREA's own width otherwise.
+/// How wide the Fleet pane will be, before `split` runs - `default_left_column` when AREA is at
+/// least `SPLIT_COLUMNS` wide, AREA's own width otherwise.
 ///
 /// It exists because `draw` and `metrics` both need the fleet body before the split, and the
 /// screen's width stopped being the Fleet pane's width the moment a third pane appeared beside
@@ -442,7 +465,7 @@ fn work_content_lines(app: &App, now: DateTime<Utc>, area: Rect) -> usize {
 /// column layout does.
 fn fleet_width(area: Rect) -> u16 {
     if area.width >= SPLIT_COLUMNS {
-        LEFT_COLUMN
+        default_left_column(area.width)
     } else {
         area.width
     }
@@ -2889,6 +2912,48 @@ mod tests {
             (narrow.agent, narrow.state, narrow.bead),
             "nothing else is shortened to keep the role on screen"
         );
+    }
+
+    #[test]
+    fn the_left_column_starts_wider_on_a_window_that_can_spare_it() {
+        assert_eq!(default_left_column(133), LEFT_COLUMN);
+        assert_eq!(default_left_column(WIDE_LEFT_COLUMN_SCREEN), WIDE_LEFT_COLUMN);
+        assert_eq!(default_left_column(200), WIDE_LEFT_COLUMN);
+
+        let app = populated();
+        assert_eq!(
+            border_column(&lines(&render(&app, 133, 20))),
+            LEFT_COLUMN as usize,
+            "below the threshold the list starts where it always did"
+        );
+        assert_eq!(
+            border_column(&lines(&render(&app, 140, 20))),
+            WIDE_LEFT_COLUMN as usize,
+            "on a window that can spare it the list starts wider"
+        );
+    }
+
+    #[test]
+    fn a_hand_set_left_column_survives_a_wider_window() {
+        let mut app = populated();
+        app.panes.left_column = Some(46);
+        assert_eq!(
+            border_column(&lines(&render(&app, 140, 20))),
+            46,
+            "a width the navigator set is theirs, whatever the window does"
+        );
+    }
+
+    /// Where the Fleet pane's right-hand border sits, which is the left column's outer width:
+    /// the second vertical rule on the heading line.
+    fn border_column(rendered: &[String]) -> usize {
+        line_with(rendered, "AGENT")
+            .chars()
+            .enumerate()
+            .filter(|&(_, character)| character == '│' || character == '┃')
+            .nth(1)
+            .map(|(index, _)| index + 1)
+            .expect("the fleet pane has a right border")
     }
 
     #[test]

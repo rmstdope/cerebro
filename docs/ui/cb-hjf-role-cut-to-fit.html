@@ -1,0 +1,115 @@
+<!doctype html><meta charset="utf-8"><title>cb-hjf — the Role column, cut to fit</title><style>
+body{font-family:Menlo,Monaco,monospace;font-size:13px;margin:24px;background:#888;color:#111}
+h1{font-size:17px;color:#fff}h2{font-size:14px;margin:0 0 8px}h3{font-size:12px;margin:12px 0 4px;color:#eee}
+.row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.panel{padding:14px 18px;border:1px solid #333}
+.dark{background:#1e1e1e;color:#d4d4d4}
+pre{margin:0;line-height:1.45;white-space:pre}.hd{text-decoration:underline}
+.g{color:#6a9955}.d{color:#777}.i{color:DodgerBlue}.y{color:gold}.e{color:#f14c4c}
+.note{color:#eee;max-width:110ch;background:#333;padding:8px 12px;margin-top:16px}
+.cost{color:#ffd;background:#4a3b1a;padding:6px 10px;margin-top:10px;max-width:56ch}
+</style>
+
+<h1>cb-hjf — a Role column that is cut to fit</h1>
+<p class="note">
+Agreed: a Role column beside every name, at every width, cut where it does not fit; the wide screen
+keeps exactly the column it draws today. What is left is what gets cut <b>first</b> when the list is
+narrow, because at the narrowest widths something has to go entirely.
+<br><br>
+The everyday list is 38 characters across. At that width all three orders below look the same and
+everything is legible — the difference only shows once you narrow the column further, which the last
+row of panels draws.
+</p>
+
+<h2 style="color:#fff">The everyday width — the same under all three</h2>
+<div class="row">
+<div class="panel dark"><pre><span class="hd">  AGENT     ROLE   STATE    BEAD</span>
+<span class="i">◆</span> Cerebro   <span class="d">orche…</span> idle
+<span class="g">●</span> Xavier    <span class="d">ux</span>     ux       cb-hjf
+<span class="i">◌</span> Beast     <span class="d">build…</span> standby  <span class="d">→ ux agre…</span>
+<span class="g">●</span> Forge     <span class="d">archi…</span> weekly
+<span class="y">◐</span> Psylocke  <span class="d">verif…</span> waiting
+<span class="g">●</span> Cyclops   <span class="d">imple…</span> build    cb-21g
+<span class="g">●</span> Storm     <span class="d">imple…</span> gate     cb-4cn
+<span class="i">◌</span> Wolverine <span class="d">imple…</span> standby  <span class="d">→ planned…</span>
+<span class="d">○</span> Rogue     <span class="d">imple…</span> dead
+<span class="e">✗</span> Gambit    <span class="d">imple…</span> gate     <span class="e">stuck 11h…</span></pre>
+<div class="cost">Every name still fits whole. The kinds are told apart on five letters. What pays is the right-hand cell: <b>→ planned bead</b> and <b>stuck 11h30</b> now end in a dot-dot-dot.</div></div>
+
+<div class="panel dark"><h2>Full strength or faded?</h2>
+<h3>Faded — the role sits behind the name and the state:</h3><pre><span class="g">●</span> Cyclops   <span class="d">imple…</span> build    cb-21g
+<span class="i">◌</span> Beast     <span class="d">build…</span> standby  <span class="d">→ ux agre…</span></pre>
+<h3>Full strength — the role reads as equal to what the agent is doing:</h3><pre><span class="g">●</span> Cyclops   imple… build    cb-21g
+<span class="i">◌</span> Beast     build… standby  <span class="d">→ ux agre…</span></pre>
+<div class="cost">Faded is quieter to scan past and easier to pick out as a column; full strength is easier to read on the row you are looking at.</div></div>
+</div>
+
+<h1 style="margin-top:26px">Narrow the column further — this is where the three differ</h1>
+<div class="row">
+<div class="panel dark"><h2>A — the role gives way first</h2><pre><span class="hd">  AGENT     STATE    BEAD</span>
+<span class="i">◆</span> Cerebro   idle
+<span class="g">●</span> Xavier    ux       cb-hjf
+<span class="i">◌</span> Beast     standby  <span class="d">→ ux agr…</span>
+<span class="g">●</span> Cyclops   build    cb-21g
+<span class="i">◌</span> Wolverine standby  <span class="d">→ planne…</span></pre>
+<div class="cost">Names whole, states whole, the work cell nearly whole — and no roles at all. What you gave up by narrowing the column is exactly the thing you narrowed it for.</div></div>
+
+<div class="panel dark"><h2>B — everything shrinks together</h2><pre><span class="hd">  AGENT   ROLE  STATE   BEAD</span>
+<span class="i">◆</span> Cerebr… <span class="d">orch…</span> idle
+<span class="g">●</span> Xavier  <span class="d">ux</span>    ux      cb-hjf
+<span class="i">◌</span> Beast   <span class="d">buil…</span> standby <span class="d">→ ux…</span>
+<span class="g">●</span> Cyclops <span class="d">impl…</span> build   cb-21g
+<span class="i">◌</span> Wolver… <span class="d">impl…</span> standby <span class="d">→ pl…</span></pre>
+<div class="cost">Everything is still there and nothing is whole. <b>Cerebr…</b> and <b>Wolver…</b> are cut, and the work cell says almost nothing.</div></div>
+
+<div class="panel dark"><h2>C — the role is never given up</h2><pre><span class="hd">  AGENT     ROLE STATE    BEAD</span>
+<span class="i">◆</span> Cerebro   <span class="d">orc…</span> idle
+<span class="g">●</span> Xavier    <span class="d">ux</span>   ux       cb-…
+<span class="i">◌</span> Beast     <span class="d">bui…</span> standby  <span class="d">→ u…</span>
+<span class="g">●</span> Cyclops   <span class="d">imp…</span> build    cb-…
+<span class="i">◌</span> Wolverine <span class="d">imp…</span> standby  <span class="d">→ p…</span></pre>
+<div class="cost">Names and states whole, three letters of role always there — and the work cell reduced to nothing useful. You can no longer read which piece of work anyone is on.</div></div>
+</div>
+
+<h1 style="margin-top:26px">How wide the list starts &mdash; corrected</h1>
+<p class="note">I gave the wrong cost the first time round, twice over. Widening the fleet list does
+not take anything from the work list &mdash; those two are stacked in the same column, so they widen
+together. It takes from <b>the agent's own screen</b> beside them. And the amount is twelve
+characters, not eight: that is what the longest kind, <b>build-design</b>, needs.</p>
+<div class="row">
+<div class="panel dark"><h2>Today &mdash; the list starts 40 across</h2><pre><span class="hd">  AGENT     ROLE   STATE    BEAD</span>
+<span class="g">&#9679;</span> Cyclops   <span class="d">imple&hellip;</span> build    cb-21g
+<span class="i">&#9676;</span> Wolverine <span class="d">imple&hellip;</span> standby  <span class="d">&rarr; planned&hellip;</span>
+<span class="i">&#9676;</span> Beast     <span class="d">build&hellip;</span> standby  <span class="d">&rarr; ux agre&hellip;</span></pre>
+<h3>On a 100-wide window the agent&rsquo;s screen keeps 58 characters.</h3></div>
+
+<div class="panel dark"><h2>Wider &mdash; the list starts 52 across</h2><pre><span class="hd">  AGENT       ROLE          STATE       BEAD</span>
+<span class="g">&#9679;</span> Cyclops     <span class="d">implementer</span>   build       cb-21g
+<span class="i">&#9676;</span> Wolverine   <span class="d">implementer</span>   standby     <span class="d">&rarr; planned b&hellip;</span>
+<span class="i">&#9676;</span> Beast       <span class="d">build-design</span>  standby     <span class="d">&rarr; ux agreed</span></pre>
+<h3>Every kind whole. On a 100-wide window the agent&rsquo;s screen drops to 46 characters, and agents
+print lines wider than that.</h3></div>
+
+<div class="panel dark"><h2>Wider only when the window can spare it</h2><pre>window 100 wide &rarr; list 40, kinds abbreviated
+window 130 wide &rarr; list 52, kinds whole</pre>
+<h3>The list starts wide when there is room left over for the agent&rsquo;s screen, and narrow when
+there is not. Costs one rule that is invisible until you meet it on a different machine.</h3></div>
+</div>
+<p class="note">Either way both widths can still be dragged or keyed at any time, and Shift-Home puts
+them back.</p>
+<h1 style="margin-top:26px">&ldquo;A big window&rdquo; &mdash; where the line sits, and what happens after you move it</h1>
+<div class="row">
+<div class="panel dark"><h2>Where the line sits</h2>
+<h3>Leave the agent 80 characters &mdash; the width agents print to:</h3><pre>window &lt; 134  &rarr;  list 40, kinds abbreviated
+window &ge; 134  &rarr;  list 52, kinds whole</pre>
+<h3>Leave the agent 64 characters &mdash; wide words on more screens:</h3><pre>window &lt; 118  &rarr;  list 40, kinds abbreviated
+window &ge; 118  &rarr;  list 52, kinds whole</pre></div>
+
+<div class="panel dark"><h2>After you have moved it yourself</h2>
+<h3>A &mdash; your width wins from then on:</h3><pre>you drag the list to 46
+&hellip; you make the window bigger
+list stays 46.            <span class="d">Shift-Home puts it back to the starting rule.</span></pre>
+<h3>B &mdash; the rule keeps applying:</h3><pre>you drag the list to 46
+&hellip; you make the window bigger
+list jumps to 52.         <span class="d">Your 46 is gone.</span></pre></div>
+</div>

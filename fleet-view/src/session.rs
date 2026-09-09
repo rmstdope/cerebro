@@ -721,6 +721,13 @@ impl SessionHost {
         self.exits.clone()
     }
 
+    /// Every name this view has told to close and whose child it has not yet reaped - the window
+    /// `supervisable` describes just below, named so a row can be drawn honestly across it
+    /// (cb-m0c). For `App::set_closing`, beside `exits`.
+    pub fn ending_names(&self) -> std::collections::BTreeSet<String> {
+        self.ending.keys().cloned().collect()
+    }
+
     /// Is NAME a session this view may act on - live, and not one it has already stopped?
     ///
     /// `is_live` alone is not that: `end` and `kill` leave the child to be reaped by the next

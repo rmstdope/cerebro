@@ -13,9 +13,9 @@ on this branch (cold compile, loaded machine) failed
 `Supervising`. It passed on three subsequent full runs and three isolated ones, and on every run of
 `bash tests/gate` in the worktree and in a throwaway clone.
 **Why.** Not established here, but the test's own comment on `main_tests::apply_until`
-(`fleet-view/src/main.rs`) names the mechanism: each attempt inside `main_tests::apply_until`'s
-`probe::wait_for(probe::POLL_BOUND, …)` **forks `fleet-supervisor`**, so the number of attempts a five-second budget buys depends on how loaded the
-machine is. Nothing in this bead touches that test, its budget, or anything it reads — the branch
+(`fleet-view/src/main.rs`) names the mechanism: each attempt inside its
+`probe::wait_for(probe::POLL_BOUND, …)` **forks `fleet-supervisor`**, so the number of attempts a
+five-second budget buys depends on how loaded the machine is. Nothing in this bead touches that test, its budget, or anything it reads — the branch
 deletes an unrelated pair of Emacs tests — so this reads as pre-existing rather than introduced.
 **Cost.** None to this bead: it was seen by the reviewer, not by CI, and CI was green on both heads.
 The cost is the next one — a lease test that is red about one run in four is how a fleet learns to
@@ -34,9 +34,9 @@ one attempt short). Both are about the same test and the same budget.
 ## A plan's increment boundary can be un-buildable when one suite spans two increments
 
 **What happened.** The plan's increment 1 inverted `tests/app-paths.sh`'s assertion to "no document
-names `emacs/`", to be made green by dropping the clause from `agents/architect.md` and from `CLAUDE.md`'s
-*Forge files, never fixes* bullet. That assertion greps the **whole** of `CLAUDE.md`, which still carried the
-`## emacs/cerebro.el` section until increment 4. So increment 1 could not end green, and increment 4
+names `emacs/`", to be made green by dropping the clause from `agents/architect.md` and from
+`CLAUDE.md`'s *Forge files, never fixes* bullet. That assertion greps the **whole** of `CLAUDE.md`,
+which still carried the `## emacs/cerebro.el` section until increment 4. So increment 1 could not end green, and increment 4
 could not open red — the two are one commit or nothing.
 **Why.** The plan reasoned about the two `emacs/` *clauses* it was removing, and the suite reasons
 about the file. Both are right; the coupling is only visible once the inverted assertion is run.

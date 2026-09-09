@@ -1,6 +1,6 @@
 [
   {
-    "_": "The six sweeps' decisions, and every word either fleet view says about a finding. Both implementations answer this file: cerebro-test/the-sweep-table-is-answered-by-the-finders in emacs/cerebro-test.el, and sweeps::tests::the_shared_table_is_answered in fleet-view/src/sweeps.rs. After the cutover both views still sweep - the bead panel's board writes are outside the supervision lease - so two implementations of one decision, in two languages, is exactly what this table exists for. JSON rather than a tab-separated table because one sweep's candidate carries a nested list. An element carrying this `_' key is a comment and is skipped by both readers. `prompt' is the Ratatui header's own wording and has no elisp counterpart: the ERT reader ignores that field and the Rust reader asserts it."
+    "_": "The six sweeps' decisions, and every word either fleet view says about a finding. sweeps::tests::the_shared_table_is_answered in fleet-view/src/sweeps.rs answers this file. The second implementation - the Emacs fleet view's own copy - was removed with that view (cb-abs.1); the rows stay, because they ARE the rule. JSON rather than a tab-separated table because one sweep's candidate carries a nested list. An element carrying this `_' key is a comment and is skipped by both readers. `prompt' is the header's own wording."
   },
   {
     "name": "claims: delivered, its implementer gone, the commit settled",

@@ -229,7 +229,7 @@ text(SX + SW // 2, SY + 448, "then the fleet view retires it and starts a fresh 
 FX, FY, FW, FH = 1230, 790, 570, 310
 add(f'<rect x="{FX+10}" y="{FY+10}" width="{FW}" height="{FH}" rx="16" fill="{INK}" opacity="0.85"/>')
 add(f'<rect x="{FX}" y="{FY}" width="{FW}" height="{FH}" rx="16" fill="{INK}" stroke="{INK}" stroke-width="7"/>')
-text(FX + FW // 2, FY + 46, "M-x cerebro — THE FLEET VIEW", size=24, fill=GOLD, spacing=1)
+text(FX + FW // 2, FY + 46, "THE FLEET VIEW", size=24, fill=GOLD, spacing=1)
 ROWS_UI = [("XAVIER", "working", "plan", "#7ee787"), ("PSYLOCKE", "asking", "verify", GOLD),
            ("CYCLOPS", "working", "review", "#7ee787"), ("ROGUE", "idle", "—", "#8b949e")]
 for i, (nm, st, ph, col) in enumerate(ROWS_UI):

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Opens the standalone Ratatui fleet view, beside `M-x cerebro' rather than instead of it. The
+# Opens the Ratatui fleet view. The
 # second script here meant for a person to type rather than for an agent to call, from anywhere
 # inside a consumer:
 #

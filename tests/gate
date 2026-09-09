@@ -5,8 +5,8 @@
 # .cerebro/project.conf both name this file) because the whole thing takes under a minute -
 # a separate fast gate would only be worth having if the full one were slow.
 #
-# It runs exactly what .github/workflows/ci.yml runs - byte-compile, ERT, and every tests/*.sh
-# through scripts/suite-runner, which both this file and CI call. A gate that has drifted from CI
+# It runs exactly what .github/workflows/ci.yml runs - every tests/*.sh
+# through scripts/suite-runner, which both this file and CI call, and the Cargo tests. A gate that has drifted from CI
 # is worse than no gate: the fleet merges on green that nobody else sees. Nothing checks that the
 # two still agree - the lint that used to is gone, and keeping them in step is a matter of editing
 # both, which is why they are named next to each other here.
@@ -21,22 +21,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 status=0
-
-echo "== byte-compile =="
-if ! emacs --batch -L emacs -f batch-byte-compile emacs/cerebro.el; then
-  echo "FAILED: byte-compile" >&2
-  status=1
-fi
-# The .elc is removed whether or not it compiled: `-L emacs' prefers it over the source when it is
-# newer, so leaving one behind means every later run of the tests - and every interactive `M-x
-# cerebro' in this checkout - reads a stale compile of a file somebody is still editing.
-rm -f emacs/cerebro.elc
-
-echo "== ERT =="
-if ! emacs --batch -L emacs -l cerebro-test -f ert-run-tests-batch-and-exit; then
-  echo "FAILED: ERT" >&2
-  status=1
-fi
 
 echo "== bash suites =="
 # scripts/suite-runner is the one suite loop, and CI runs the same script (cb-8cn). It names each

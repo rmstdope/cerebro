@@ -210,7 +210,7 @@ in it are load-bearing and nothing else records them:
 # Order is load-bearing, not display: the interactive roles come first, and the orchestrator takes
 # the next unused implementer name in file order.
 #
-# A third word, `autostart', starts that agent with `M-x cerebro'; omitted means it is started by
+# A third word, `autostart', starts that agent with the fleet view; omitted means it is started by
 # hand with `s'. Any other third word refuses, so a typo cannot read as "no".
 #
 # NAME          ROLE            [autostart]

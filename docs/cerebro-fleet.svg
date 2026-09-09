@@ -415,7 +415,7 @@
 <text x="1515" y="698" font-family="'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" font-weight="800" fill="#d7263d" text-anchor="middle" letter-spacing="0.3">then the fleet view retires it and starts a fresh session</text>
 <rect x="1240" y="800" width="570" height="310" rx="16" fill="#17130f" opacity="0.85"/>
 <rect x="1230" y="790" width="570" height="310" rx="16" fill="#17130f" stroke="#17130f" stroke-width="7"/>
-<text x="1515" y="836" font-family="'Bangers','Luckiest Guy','Impact','Haettenschweiler','Arial Black',sans-serif" font-size="24" font-weight="700" fill="#f2b705" text-anchor="middle" letter-spacing="1">M-x cerebro — THE FLEET VIEW</text>
+<text x="1515" y="836" font-family="'Bangers','Luckiest Guy','Impact','Haettenschweiler','Arial Black',sans-serif" font-size="24" font-weight="700" fill="#f2b705" text-anchor="middle" letter-spacing="1">THE FLEET VIEW</text>
 <circle cx="1270" cy="871" r="7" fill="#7ee787"/>
 <text x="1292" y="876" font-family="'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" font-weight="800" fill="#e6edf3" text-anchor="start" letter-spacing="0">XAVIER</text>
 <text x="1440" y="876" font-family="'Avenir Next','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" font-weight="800" fill="#7ee787" text-anchor="start" letter-spacing="0">working</text>

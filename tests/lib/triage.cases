@@ -1,14 +1,15 @@
-# The triage decision, run by BOTH implementations of the rule:
+# The triage decision, answered by:
 #
 #   lifecycle::triage_action        (Rust, fleet-view/)  via fleet-view/src/lifecycle.rs
-#   cerebro--triage-action          (emacs/cerebro.el)   via emacs/cerebro-test.el
 #
-# WHY IT IS ONE FILE. It is `tests/lib/supervise.cases`'s reason, one job along: cb-kcs.5 is a
-# cutover, and until the declaration moves BOTH views triage the same checkout. A row the two
-# answer differently is an idle Cerebro told twice about one unranked set, or never told at all -
-# and neither failure announces itself, because a typed line is fire-and-forget and Cerebro
-# writes nothing back to say it heard. Read `tests/lib/supervisor.cases`' header for the
-# conventions this one copies deliberately.
+# The second implementation - the Emacs fleet view's own copy - was removed with that view
+# (cb-abs.1). The rows stay: they ARE the rule, and re-typing them into assertions would
+# lose the one thing a table is good at.
+#
+# WHY IT IS ONE FILE. A row answered wrongly is an idle Cerebro told twice about one unranked set,
+# or never told at all - and neither failure announces itself, because a typed line is
+# fire-and-forget and Cerebro writes nothing back to say it heard. Read
+# `tests/lib/supervisor.cases`' header for the conventions this one copies deliberately.
 #
 # WHAT BOTH READERS MUST BIND. The rows assume `cerebro-triage-repeat' / `TRIAGE_REPEAT_SECONDS'
 # is 600, so a reader binds or passes exactly that number rather than whatever the running fleet

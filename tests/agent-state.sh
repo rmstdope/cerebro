@@ -112,8 +112,10 @@ for bad in 'Plan Bead' 'Plan' '-plan' 'plan-' '' '2plan' 'plan_b'; do
   status=$?
   set -e
   [[ $status -eq 2 ]] || fail "rejects-malformed-phase: '$bad' expected exit 2, got $status"
-  [[ "$out" == *"cerebro--phases"* ]] \
-    || fail "rejects-malformed-phase: '$bad' message does not point at cerebro--phases: $out"
+  [[ "$out" == *"agent-state"* ]] \
+    || fail "rejects-malformed-phase: '$bad' message does not name this script: $out"
+  [[ "$out" != *"cerebro.el"* && "$out" != *"cerebro--phases"* ]] \
+    || fail "rejects-malformed-phase: '$bad' message points at the removed Emacs view: $out"
   [[ -f "$(state_file "$tmp" Cyclops)" ]] && fail "rejects-malformed-phase: '$bad' wrote a file"
   rm -rf "$tmp"
 done

@@ -270,7 +270,7 @@ on a quiet board no builder is running at all, a count of sessions is the floor,
 plans two beads and wakes two builders for ever.
 
 Two overshoots come with that and are accepted. A builder the navigator retired with `f` while it
-was waiting is disarmed and still counts — armed-ness lives only in the running Emacs and no file
+was waiting is disarmed and still counts — armed-ness lives only in the running fleet view and no file
 records it, and a rule the two readers answer differently is the drift `scripts/planner-buffer`
 exists to end. A `dead` builder counts too, being one `s` away from building. The cost either way is
 one bead built when the navigator next presses `s`; the buffer is a floor, not a ceiling.
@@ -738,7 +738,7 @@ interview. It is cheap, and it is the thing to reach for last, not the thing tha
 ### Reclaiming a hold nobody is holding
 
 **Every pass starts by checking whether any `planning` label has been abandoned.** A planning session
-that is killed, or an Emacs that quits mid-plan, leaves the label behind — and a bead carrying
+that is killed, or a fleet view that quits mid-plan, leaves the label behind — and a bead carrying
 `planning` is excluded from every candidate query, so nothing ever considers it again. Three beads
 sat like that for a day before anybody noticed (ah-2p.3): the label is the one part of this role that
 strands work when a session dies, precisely because it is deliberately not a claim and so has no

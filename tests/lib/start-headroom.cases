@@ -1,12 +1,14 @@
-# The start-headroom decision, run by BOTH implementations of the rule:
+# The start-headroom decision, answered by:
 #
 #   triggers::condition / triggers::standby_label  (Rust, fleet-view/)
-#   cerebro--trigger / cerebro--standby-label      (emacs/cerebro.el) via emacs/cerebro-test.el
 #
-# WHY IT IS ONE FILE. It is `tests/lib/supervise.cases`' reason: one decision with two
-# implementations in two languages, and a row they answer differently is a builder started for a
-# bead that is gone, or a queue left unstaffed. Read that file's header for the conventions this
-# one copies deliberately.
+# The second implementation - the Emacs fleet view's own copy - was removed with that view
+# (cb-abs.1). The rows stay: they ARE the rule, and re-typing them into assertions would
+# lose the one thing a table is good at.
+#
+# WHY IT IS ONE FILE. It is `tests/lib/supervise.cases`' reason: a row answered wrongly is a
+# builder started for a bead that is gone, or a queue left unstaffed. Read that file's header for
+# the conventions this one copies deliberately.
 #
 # THE RULE THE ROWS ENCODE, stated once so a new row can be checked against intent:
 #

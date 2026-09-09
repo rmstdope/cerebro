@@ -13,7 +13,7 @@
 #     .claude/cerebro/scripts/planner-buffer --print-multiple-key        the project.conf key name
 #
 # It exists because that one rule was written twice, in two languages, by two readers that have to
-# agree: `cerebro--trigger's planner arm in emacs/cerebro.el, and a hand-written `bd list' in
+# agree: the fleet view's planner trigger, and a hand-written `bd list' in
 # skills/plan-bead/SKILL.md. They drifted, and each drift cost sessions - a trigger counting beads
 # the skill's own queries excluded started a planner to find nothing to do and started it again when
 # that pass ended (de05dc3), and one change to the rule took five files and missed a sixth
@@ -22,11 +22,9 @@
 # neither side counts sessions at all: the wanted number is the roster's implementers minus those
 # told to finish.
 #
-# The elisp keeps a pure copy of the predicate, because `cerebro--trigger-context' is evaluated once
+# The fleet view keeps a pure copy of the predicate, because a trigger is evaluated once
 # per standby row per five-second tick and cannot afford a subprocess. What replaces a shared
-# implementation there is a contract test - `cerebro-test/the-trigger-counts-what-planner-buffer-counts'
-# holds `cerebro-parked-labels' and `cerebro-planner-buffer-floor' to the two `--print-*' modes
-# below, exactly as the panel is held to `scripts/work-beads'.
+# implementation there is the `--print-*' modes below, which are what the copy is written from.
 #
 # It fails LOUDLY - non-zero, a message on stderr, nothing on stdout - when the bead query fails.
 # A reader of this output is deciding whether to start a planning session, and an empty buffer that
@@ -36,18 +34,18 @@ set -euo pipefail
 
 # Labels that say a bead is the navigator's rather than a planner's: a bead parked with `human' is
 # waiting on a person, and a P4 the navigator declined to rank is not a candidate either. Counting
-# either would starve the queue while the number looked healthy. The elisp copy is
-# `cerebro-parked-labels'; emacs/cerebro-test.el holds the two to each other.
+# either would starve the queue while the number looked healthy. The Rust copy is
+# `triggers::PARKED_LABELS'.
 excluded_labels=("human" "triage:declined")
 
 # The buffer floor: never fewer than this many planned beads, whatever the fleet looks like -
 # including a roster with one implementer on it, since the navigator starting a second builder by
-# hand expects it to have something to claim. The elisp copy is `cerebro-planner-buffer-floor'.
+# hand expects it to have something to claim. The Rust copy is `triggers::PLANNER_BUFFER_FLOOR'.
 floor=2
 
 # The project.conf key that scales the buffer (cb-3in). ABSENT MEANS 1 - today's rule - so every
-# consumer that predates this key is untouched. The elisp copy is `cerebro--planner-multiple-key';
-# the Rust copy is `triggers::PLANNER_MULTIPLE_KEY'.
+# consumer that predates this key is untouched. The Rust copy is
+# `triggers::PLANNER_MULTIPLE_KEY'.
 multiple_key="planner_buffer_multiple"
 
 usage() {
@@ -156,7 +154,7 @@ ux_agreed_count() {
 #
 # Two overshoots are accepted rather than guessed at: a builder the navigator retired with `f' while
 # it was waiting is disarmed, and a `dead' one refused its launch - neither is visible to the shell,
-# since armed-ness lives only in one Emacs. Both count, and the cost is one bead built when the
+# since armed-ness lives only in one running fleet view. Both count, and the cost is one bead built when the
 # navigator next presses `s'; the buffer is a floor, not a ceiling.
 #
 # The shared checkout, never the enclosing tree: from a worktree `.cerebro/state' is the worktree's,

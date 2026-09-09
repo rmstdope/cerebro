@@ -2,8 +2,8 @@
 #
 # tests/lib/place-scripts - put scripts into a fixture's scripts directory, with the libraries they
 # source. The one place that knows which libraries a script needs, for both halves of the gate
-# (cb-u70): `link_scripts` in tests/lib/consumer.sh wraps it, and `emacs/cerebro-test.el` shells out
-# to it. A `source` line added to any script under `scripts/` therefore needs no fixture edit.
+# (cb-u70): `link_scripts` in tests/lib/consumer.sh wraps it. A `source` line added to any script
+# under `scripts/` therefore needs no fixture edit.
 #
 #     tests/lib/place-scripts [--copy|--link] <scripts-dir> <script>...
 #

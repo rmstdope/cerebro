@@ -31,13 +31,12 @@ script="$repo_root/scripts/marker-readers"
 [[ -x "$script" ]] || fail "scripts/marker-readers is not executable"
 
 # A fresh, whole self-consumer. `copy_cerebro_into' brings `scripts/', `agents/', `skills/' and
-# `hooks/' only - deliberately not `emacs/', which no other bash suite reads - so this check's other
-# three scanned directories (`emacs', `tests', `githooks' and, since cb-vyp.1, `fleet-view') are
-# copied here, or every fixture reports a table full of `stale:' rows.
+# `hooks/' only, so this check's other three scanned directories (`tests', `githooks' and, since
+# cb-vyp.1, `fleet-view') are copied here, or every fixture reports a table full of `stale:' rows.
 new_fixture() {
   local fix="$work_dir/$(fixture_name markers)" d
   copy_cerebro_into "$fix"
-  for d in emacs tests githooks fleet-view; do
+  for d in tests githooks fleet-view; do
     [ -d "$repo_root/$d" ] && cp -R "$repo_root/$d" "$fix/"
   done
   git init -q "$fix"

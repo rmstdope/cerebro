@@ -4,7 +4,7 @@
 #
 # On 2026-08-26 the whole fleet was unable to start for about a day: `launch-preflight` was exiting 2
 # with a precise, actionable line on stderr, and the navigator could find no sign of it anywhere -
-# not in errors.jsonl, not in decisions.jsonl, not on a row in `M-x cerebro`. The view's capture
+# not in errors.jsonl, not in decisions.jsonl, not on a row in the fleet view. The view's capture
 # (cb-eat) reads the dying vterm buffer, and vterm draws process output on a 0.1s timer while the
 # launcher exits within a second of starting, so there was nothing in the buffer to read. The
 # launcher writing its own refusal needs no pty, no timer and no view (cb-ccl).

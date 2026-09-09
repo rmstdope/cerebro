@@ -151,14 +151,12 @@ pass "consumer_new --link brings each script's own libraries and no others"
 # --- consumer_new --copy ---------------------------------------------------------------------------
 #
 # Narrowed to what a fixture consumer needs: `cp -R "$repo_root"` dragged in whatever happened to be
-# present - a local .cerebro/, the .git, byte-compiled elisp - so the fixture was neither hermetic
-# nor cheap (ah-qled.11). `emacs/` is deliberately absent: no bash suite reads it, and it is the
-# largest thing in the tree.
+# present - a local .cerebro/, the .git - so the fixture was neither hermetic nor cheap
+# (ah-qled.11).
 c="$(consumer_new copied --copy)"
 for d in scripts agents skills hooks; do
   [[ -d "$c/.claude/cerebro/$d" ]] || fail "--copy: $d missing under .claude/cerebro"
 done
-[[ ! -e "$c/.claude/cerebro/emacs" ]] || fail "--copy: emacs/ should not be copied"
 [[ ! -e "$c/.claude/cerebro/.git" ]] || fail "--copy: .git should not be copied"
 pass "consumer_new --copy: scripts, agents, skills and hooks only"
 

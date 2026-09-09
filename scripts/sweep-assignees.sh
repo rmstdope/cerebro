@@ -15,7 +15,7 @@
 # of any kind. Like its three siblings it only gathers facts, so that a pure elisp function
 # (`cerebro--assignee-finding') can turn them into a decision and a human confirms that decision
 # before anything runs. Keeping this file read-only is what makes that guarantee checkable at a
-# glance: the only path to a `bd update ... --assignee ""' is the confirmed one in `cerebro.el',
+# glance: the only path to a `bd update ... --assignee ""' is the confirmed one in the fleet view,
 # never this script.
 #
 # One object per `open` bead with a non-empty assignee:

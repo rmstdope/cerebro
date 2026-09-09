@@ -17,7 +17,7 @@
 # live agent ever checks.
 #
 # There is no wake to ask for and no number to carry. Cadence is the fleet view's own
-# (`cerebro-wake-interval' / `cerebro-wake-intervals' in emacs/cerebro.el), measured from an
+# (`triggers::wake_interval' in fleet-view/), measured from an
 # agent's last start, and has never read the state file.
 
 set -euo pipefail

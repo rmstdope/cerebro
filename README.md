@@ -1,5 +1,5 @@
 # Cerebro
-An AI harness consisting of agents, skills and scripts. Preferably run within emacs
+An AI harness consisting of agents, skills and scripts, with a terminal fleet view.
 
 ![The Cerebro fleet](docs/cerebro-fleet.svg)
 
@@ -13,7 +13,7 @@ repository, and how to tell it worked.
 
 ### 1. Have the tools on PATH
 
-The fleet is bash and Emacs Lisp on top of programs it does not ship:
+The fleet is bash and Rust on top of programs it does not ship:
 
 - **One agent CLI** — every agent is a session of it. Either `claude`
   ([Claude Code](https://claude.com/claude-code)) or `copilot`
@@ -24,17 +24,12 @@ The fleet is bash and Emacs Lisp on top of programs it does not ship:
   with a Dolt remote so every machine and session sees one board.
 - `gh` — pull requests, reviews, and the issue inbox.
 - `git` and `jq` — every script.
-- Emacs 28 or later for the fleet view; `vterm` if you want sessions started from it with `s`.
-  Without vterm you start sessions in a terminal and the view still shows them.
-- **Rust and Cargo**, for the terminal fleet view (`.claude/cerebro/scripts/cerebro-tui`, below).
-  Needed only by a project that declares `fleet_supervisor tui`, or by anyone who wants the
-  terminal view beside Emacs; a project that declares neither runs the fleet from Emacs and needs
-  no Rust toolchain.
+- **Rust and Cargo**, for the fleet view (`.claude/cerebro/scripts/cerebro-tui`, below).
 
 Check:
 
 ```bash
-for t in bd gh git jq emacs; do command -v "$t" >/dev/null && echo "$t ok" || echo "$t MISSING"; done
+for t in bd gh git jq; do command -v "$t" >/dev/null && echo "$t ok" || echo "$t MISSING"; done
 if command -v claude >/dev/null || command -v copilot >/dev/null
 then echo "agent CLI ok"; else echo "agent CLI MISSING"; fi
 command -v cargo >/dev/null && echo "cargo ok (cerebro-tui available)" || echo "cargo absent (cerebro-tui unavailable)"
@@ -182,25 +177,13 @@ The board is beads: `bd init` in your repository, then a Dolt remote
 (`bd dolt remote add origin <url>`) so every machine and session sees the same beads. Every bead is
 created unranked and ranked with you; a planner turns it into a plan; an implementer builds it.
 
-Then open the fleet view:
+Then open the fleet view, from anywhere inside the consumer:
 
 ```bash
-.claude/cerebro/scripts/cerebro
+.claude/cerebro/scripts/cerebro-tui
 ```
 
-That opens it in a fresh Emacs — your own init is loaded, so the vterm the view needs for live
-sessions is whatever your Emacs has; set `EMACS` to a binary that is not on your `PATH`
-(`EMACS=/Applications/Emacs.app/Contents/MacOS/Emacs`). Press `s` on a planner's row.
-
-#### In your own Emacs
-
-To have `M-x cerebro` in the Emacs you already work in, add to your init, with the path of your
-checkout:
-
-```elisp
-(add-to-list 'load-path "/path/to/your/project/.claude/cerebro/emacs")
-(autoload 'cerebro "cerebro" "List the Cerebro agent fleet." t)
-```
+Press `s` on a planner's row.
 
 A session can also be started from a terminal without the fleet view:
 
@@ -213,16 +196,9 @@ else. In the fleet view the row turns green a few seconds after the session star
 its state file. [docs/agent-workflow.md](docs/agent-workflow.md) is what to read next: it is the
 operating guide for everything after this point.
 
-#### Watching without Emacs
+#### What the view shows
 
-There is a second, **read-only** view — a standalone terminal program, run from anywhere inside the
-consumer:
-
-```bash
-.claude/cerebro/scripts/cerebro-tui
-```
-
-It shows the same fleet rows and the same six work queues (Claimed, Planned unclaimed, Being
+It shows the fleet rows and six work queues (Claimed, Planned unclaimed, Being
 planned, Unplanned, Waiting on you, Merged unverified) in two separately bordered, independently
 scrolling widgets stacked one above the other - Fleet on top, Work below - refreshing the fleet
 every five seconds and the board every thirty. `Tab`/`Shift-Tab` move focus between them, and `F1`/`F2`/`F3`
@@ -233,8 +209,7 @@ refreshes both panes, and `q`, `Esc` or `Ctrl-C` quits.
 **What it may do is your project's declaration, not a property of the program.** With
 `fleet_supervisor tui` it operates the fleet: it hosts sessions, starts them on their triggers,
 ends a pass, runs the sweeps and prunes worktrees. With anything else it draws all of that and
-acts on none of it, and says so in its header. Either way the two may run side by side on one
-repository, and only one of them ever acts. Building it needs Rust and Cargo (step 1); the first
+acts on none of it, and says so in its header. Building it needs Rust and Cargo (step 1); the first
 run in a fresh checkout compiles the workspace, so give it a minute before deciding it has hung.
 
 ## Launchers
@@ -245,11 +220,8 @@ Each agent is started by a script of its own, run from the consumer repository r
 .claude/cerebro/scripts/launch <Name>            # any agent, by name - the one way to start one
 .claude/cerebro/scripts/roster                   # the fleet: name, role, kind - one line per agent
 .claude/cerebro/scripts/roster --implementers    # the implementer names, one per line
-.claude/cerebro/scripts/cerebro                  # the Emacs fleet view
-.claude/cerebro/scripts/cerebro-tui              # the terminal fleet view (needs cargo)
+.claude/cerebro/scripts/cerebro-tui              # the fleet view (needs cargo)
 ```
-
-Whichever your project declares operates the fleet; the other reads.
 
 Every agent starts the same way, by its own name: `launch Xavier`, `launch Cyclops`, `launch Forge`.
 There are no per-role launcher scripts - the roster is the one place the fleet is declared, and

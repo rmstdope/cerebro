@@ -27,7 +27,7 @@ its ERT case with it; they are one rule in two places, and this is the half that
 
 ## Keeping the worktrees tidy
 
-**The fleet view runs this sweep for you now**, automatically, on every `M-x cerebro` and
+**The fleet view runs this sweep for you now**, automatically, whenever it is open and
 without asking: `prune-worktrees.sh --watch` starts alongside the fleet buffer and stops when it is
 killed. The watcher's own removals need no judgement from you — the script's guards are the whole
 safety story for those. What is left for a session is the trees it *declines* or never looks at:
@@ -98,7 +98,7 @@ did: say which one and why it was safe.
 **The fleet view now detects these candidates for you**: `sweep-claims.sh` gathers the
 same facts this section describes, every ten minutes, and the Sweeps section of the bead panel shows
 each one as a line — `x` on it runs the exact `bd close` or `bd reclaim` shown, only after you
-confirm. The guards below are exactly what `cerebro--claim-finding` in `emacs/cerebro.el` enforces,
+confirm. The guards below are exactly what the fleet view's claim finding enforces,
 pinned by its own ERT cases; this prose is the specification they were built from, not a duplicate
 process. What is left for a Cerebro session is the judgement the fleet view does not attempt: a claim
 whose work is not on main, which is not a sweep-close at all (see below).

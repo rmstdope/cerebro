@@ -50,7 +50,7 @@
 # explanation in docs/retrospectives/cb-ge0.md is not the mechanism. Only reaching the end of the
 # suite proves the suite ran, so that is what is recorded.
 #
-#   copy_cerebro_into <dest>      scripts, agents, skills, hooks - no emacs/, no .git
+#   copy_cerebro_into <dest>      scripts, agents, skills, hooks - and no .git
 #   link_scripts <consumer> <script>...
 #                                 symlinks <script> into <consumer>/.claude/cerebro/scripts/, with
 #                                 the libraries those scripts source (tests/lib/place-scripts)
@@ -188,9 +188,8 @@ trap _consumer_lib_cleanup EXIT
 # --- cerebro, into a fixture --------------------------------------------------------------------------
 
 # The submodule, narrowed to what a fixture consumer actually needs. `cp -R "$repo_root"` dragged in
-# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, byte-compiled
-# elisp, editor droppings - so the fixture was neither hermetic nor cheap (ah-qled.11). `emacs/` is
-# deliberately absent: no bash suite reads it, and it is the largest thing in the tree.
+# whatever happened to be present at the time - a local `.cerebro/`, the `.git`, editor droppings -
+# so the fixture was neither hermetic nor cheap (ah-qled.11).
 copy_cerebro_into() {
   local dest="$1" d
   mkdir -p "$dest"

@@ -20,7 +20,7 @@
 # pure elisp function (`cerebro--paused-finding') can turn them into a decision and a human confirms
 # that decision before anything runs. Keeping this file read-only is what makes that guarantee
 # checkable at a glance: the only path to a `bd update ... --remove-label human' is the confirmed
-# one in `cerebro.el', never this script.
+# one in the fleet view, never this script.
 #
 # One object per candidate - an `open` bead carrying `human`:
 #

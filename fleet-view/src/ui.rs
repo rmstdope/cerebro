@@ -4824,6 +4824,35 @@ mod tests {
         assert_eq!(glyph.bg, Some(SELECTED_BG));
     }
 
+    /// cb-m0c: `→ planned 10/10` is fifteen cells, well over `BEAD_FLOOR`. `natural_bead` sizes
+    /// the column from the labels it will actually draw, and a truncated fraction would be the lie
+    /// `→ planned 1`.
+    ///
+    /// Asserted at the two widths the note is drawn whole at: the stacked pane, and the split
+    /// layout on a window at least `WIDE_LEFT_COLUMN_SCREEN` wide, where the left column is 52
+    /// (cb-hjf). Between `SPLIT_COLUMNS` and that, the pane is 40 cells and the BEAD column takes
+    /// 13 of them, so a thirteen-cell note truncates - the same narrow-pane budget that already
+    /// cuts `↻ retry in 30s, 2 failed`. The navigator ranked that as its own question rather than
+    /// this bead\'s (2026-09-09).
+    #[test]
+    fn a_ten_implementer_fleet_reads_its_whole_stage_note() {
+        let mut app = App::new();
+        app.armed = ["Beast"].into_iter().map(String::from).collect();
+        app.finish_refresh(Ok(vec![row("Beast", "build-design", RowState::Dead)]), at(86_400));
+        app.set_standby_labels(
+            [("Beast".to_string(), "→ planned 10/10".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let stacked = body(&render(&app, 90, 24));
+        assert!(line_with(&stacked, "Beast").contains("→ planned 10/10"), "{stacked:?}");
+
+        // And the wide split layout, which is what a full-screen terminal draws.
+        let split = body(&render(&app, 140, 24));
+        assert!(line_with(&split, "Beast").contains("→ planned 10/10"), "{split:?}");
+    }
+
     #[test]
     fn a_ten_implementer_fleet_still_reads_its_whole_condition() {
         // `→ buffer<10` is eleven cells; the column takes them rather than truncating to the lie

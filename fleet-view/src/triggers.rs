@@ -805,9 +805,16 @@ pub fn give_up_notice(name: &str, total: u32) -> String {
 
 /// The BEAD column of a standby row: what the agent is waiting for. The vocabulary is closed.
 ///
-/// The arrow is U+2192, and there is no space around the `<` - that is what makes `→ buffer<4`
-/// exactly ten cells, which is `BEAD_FLOOR`. A ten-implementer fleet wants eleven and the column
-/// takes them: the number is the part that changes.
+/// The arrow is U+2192, and in the `planner` arm there is no space around the `<` - that is what
+/// makes `→ buffer<4` exactly ten cells, which is `BEAD_FLOOR`. A ten-implementer fleet wants
+/// eleven and the column takes them: the number is the part that changes.
+///
+/// The two staged planning roles name the pile they fill and how full it is instead (cb-m0c) -
+/// `→ agreed n/want` and `→ planned n/want`, both longer than `BEAD_FLOOR` at a realistic
+/// fleet, which `ui::natural_bead` sizes the column from. They are deliberately NOT the `<` shape:
+/// two adjacent stages said the same idea two different ways and neither said how full the pile
+/// was, so a sleeping row with work piling up looked like one with nothing to do. A full pile
+/// still gets a note here - `condition` is what answers `None`.
 ///
 ///     user-feedback | reviewer | architect
 ///         -> `countdown(ended_at + cadence - now)`, or `→ hourly` when there is no `ended_at`
@@ -837,8 +844,10 @@ pub fn standby_label(
     }
     match role {
         "planner" => Some(format!("→ buffer<{}", facts.planner_want())),
-        "ux" => Some(format!("→ UX<{}", facts.planner_want())),
-        "build-design" => Some(format!("→ buffer<{}", facts.planner_want())),
+        "ux" => Some(format!("→ agreed {}/{}", facts.ux_agreed, facts.planner_want())),
+        "build-design" => {
+            Some(format!("→ planned {}/{}", facts.planned, facts.planner_want()))
+        }
         "implementer" => Some("→ planned".to_string()),
         "verifier" => Some("→ merged".to_string()),
         "orchestrator" => Some("→ unranked".to_string()),
@@ -1201,6 +1210,82 @@ mod tests {
         );
     }
 
+    /// cb-m0c increment 2 — each staged role names the pile it fills and how full it is.
+    ///
+    /// The two adjacent stages said the same idea two different ways (`\u{2192} UX<4`,
+    /// `\u{2192} buffer<4`) and neither said how full the pile actually was, so a sleeping row with
+    /// work piling up looked exactly like one with nothing to do.
+    #[test]
+    fn the_two_stage_roles_name_the_pile_they_fill() {
+        // Four implementers, so `planner_want` is 4 and the denominator is worth reading.
+        let four = |beads: Vec<Bead>| {
+            let roster = roster(&[
+                ("Xavier", "ux"),
+                ("Beast", "build-design"),
+                ("Cyclops", "implementer"),
+                ("Rogue", "implementer"),
+                ("Storm", "implementer"),
+                ("Gambit", "implementer"),
+            ]);
+            TriggerFacts::derive(
+                &partition_beads(beads),
+                &roster,
+                std::collections::BTreeMap::new(),
+                |_| false,
+                GhAnswer::Unanswered,
+                1,
+            )
+        };
+
+        // One plain unplanned bead in each fixture, so the `ux` row has headroom and reads its
+        // note rather than the `\u{2192} 0 free` that wins above every role's own condition.
+        let two = four(vec![
+            bead("cb-u1", "open", &[], 2),
+            bead("cb-a1", "open", &["ux:agreed"], 2),
+            bead("cb-a2", "open", &["ux:agreed"], 2),
+            bead("cb-p1", "open", &["planned"], 2),
+            bead("cb-p2", "open", &["planned"], 2),
+        ]);
+        assert_eq!(two.planner_want(), 4);
+        assert_eq!(
+            standby_label("ux", &two, agent_of("ux"), at(0)),
+            Some("\u{2192} agreed 2/4".to_string())
+        );
+        assert_eq!(
+            standby_label("build-design", &two, agent_of("build-design"), at(0)),
+            Some("\u{2192} planned 2/4".to_string())
+        );
+
+        // A full pile still gets a note: `condition` is what returns `None`, not this.
+        let full = four(vec![
+            bead("cb-u1", "open", &[], 2),
+            bead("cb-a1", "open", &["ux:agreed"], 2),
+            bead("cb-a2", "open", &["ux:agreed"], 2),
+            bead("cb-a3", "open", &["ux:agreed"], 2),
+            bead("cb-a4", "open", &["ux:agreed"], 2),
+            bead("cb-p1", "open", &["planned"], 2),
+            bead("cb-p2", "open", &["planned"], 2),
+            bead("cb-p3", "open", &["planned"], 2),
+            bead("cb-p4", "open", &["planned"], 2),
+        ]);
+        assert_eq!(
+            standby_label("ux", &full, agent_of("ux"), at(0)),
+            Some("\u{2192} agreed 4/4".to_string())
+        );
+        assert_eq!(
+            standby_label("build-design", &full, agent_of("build-design"), at(0)),
+            Some("\u{2192} planned 4/4".to_string())
+        );
+
+        // The combined role is untouched: a project runs it or these two, never both.
+        assert_eq!(
+            standby_label("planner", &two, agent_of("planner"), at(0)),
+            Some("\u{2192} buffer<4".to_string())
+        );
+    }
+
+    /// Cut down by cb-m0c: the two staged cells no longer read like the planner's, so what is
+    /// left here is that each role is answered at all, in its own words.
     #[test]
     fn the_two_new_standby_cells_read_like_the_planners() {
         let facts = facts_for(
@@ -1212,11 +1297,11 @@ mod tests {
         );
         assert_eq!(
             standby_label("ux", &facts, agent_of("ux"), at(0)),
-            Some("\u{2192} UX<2".to_string())
+            Some("\u{2192} agreed 1/2".to_string())
         );
         assert_eq!(
             standby_label("build-design", &facts, agent_of("build-design"), at(0)),
-            Some("\u{2192} buffer<2".to_string())
+            Some("\u{2192} planned 0/2".to_string())
         );
         assert_eq!(
             standby_label("planner", &facts, agent_of("planner"), at(0)),

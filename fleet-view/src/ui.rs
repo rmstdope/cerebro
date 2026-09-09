@@ -5384,7 +5384,7 @@ mod tests {
         clauses.insert(first_kept, new);
 
         // The report quotes each clause; named here so the assertion below reads as one fragment.
-        const ESC: char = '"';
+        const QUOTE: char = '"';
         let used = header_used(&app);
         let over = (used + tier_width(&clauses, HintRank::Movement))
             .checked_sub(HINT_BUDGET_COLUMNS)
@@ -5394,7 +5394,7 @@ mod tests {
 
         assert!(report.contains("Ctrl-r reload"), "{report}");
         assert!(
-            report.contains(&format!("{ESC}{HINT_SEPARATOR}{}{ESC} {}", new.text, new.width())),
+            report.contains(&format!("{QUOTE}{HINT_SEPARATOR}{}{QUOTE} {}", new.text, new.width())),
             "the offending clause carries its OWN width, beside itself: {report}"
         );
         assert!(report.contains(&format!("{over} too many")), "{report}");

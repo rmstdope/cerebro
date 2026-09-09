@@ -280,9 +280,13 @@ pass "a-failing-jq-leaves-no-temp-beside-the-sidecar"
 #
 # The refusal is at the ONE call site that needs the library rather than over the whole script, so
 # `end' - which needs none - is never disabled by this script's own guard. The guard is the call's
-# own `|| exit 0', which catches the 127 a missing function gives; what it buys is stopping BEFORE
-# `write_state asking', since a row flipped to `asking' with no sidecar behind it is exactly the
-# stale state this hook exists to clear.
+# own `|| exit 0', which catches the 127 a missing function gives.
+#
+# What this case proves is the narrow thing it can: with the library gone, `begin' exits 0, writes
+# nothing to stdout and leaves no sidecar. It cannot prove the row is not flipped to `asking' -
+# `scripts/agent-state' sources the same library unguarded, so nothing could write here anyway.
+# That the call's `|| exit 0' is load-bearing at all is proved by
+# `a-failing-jq-leaves-no-temp-beside-the-sidecar' above, which goes red when it is weakened.
 tmp="$(new_fixture)"
 run_state "$tmp" Cyclops working --bead cb-1 --phase build --pid 42
 f="$(state_file "$tmp" Cyclops)"
@@ -294,12 +298,14 @@ out="$(run_asking "$tmp" Cyclops begin)" || status=$?
 [[ $status -eq 0 ]] || fail "a-missing-state-write-library: begin exited $status"
 [[ -z "$out" ]] || fail "a-missing-state-write-library: begin wrote to stdout: $out"
 [[ ! -e "$s" ]] || fail "a-missing-state-write-library: begin wrote a sidecar without the library"
-[[ "$before" == "$(cat "$f")" ]] \
-  || fail "a-missing-state-write-library: begin flipped the row with no sidecar behind it"
-# `end' now, on a row a live session had already put at `asking' with a sidecar of its own. It
-# restores nothing, because `scripts/agent-state' sources the same library and is the thing that
-# would have to write - that is agent-state failing loudly, not this hook failing silently. What is
-# observable here is that `end' passes no library guard of its own: it consumes the sidecar.
+# Unchanged - though inherited from agent-state being unable to write either, not from this hook.
+[[ "$before" == "$(cat "$f")" ]] || fail "a-missing-state-write-library: begin changed the row"
+# `end' now, on a row at `asking' with a sidecar of its own, as a session that asked and was
+# answered would leave it. It restores nothing, because `scripts/agent-state' sources the same
+# library and is the thing that would have to write - that is agent-state failing loudly, not this
+# hook failing silently. What is observable here is that `end' passes no library guard of its own:
+# it consumes the sidecar.
+printf '{"state":"asking","bead":"cb-1","phase":"build","since":"2026-01-01T00:00:00Z","phase_since":"2026-01-01T00:00:00Z","pid":42}\n' > "$f"
 printf '{"state":"working","bead":"cb-1","phase":"build"}\n' > "$s"
 status=0
 out="$(run_asking "$tmp" Cyclops end)" || status=$?

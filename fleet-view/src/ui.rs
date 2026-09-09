@@ -59,6 +59,28 @@ pub const SPLIT_COLUMNS: u16 = 100;
 /// every remaining cell to the session.
 pub const LEFT_COLUMN: u16 = 40;
 
+/// The left column's starting width on a window with room to spare, in outer cells: enough for
+/// every roster role to be whole and the standby sentences nearly so (cb-hjf).
+pub const WIDE_LEFT_COLUMN: u16 = 52;
+
+/// The window width at which the left column starts `WIDE_LEFT_COLUMN` rather than `LEFT_COLUMN`.
+/// 52 + 2 borders + 80: agents print to eighty columns, so the session pane keeps eighty inner
+/// cells or the wider list is not taken at all.
+pub const WIDE_LEFT_COLUMN_SCREEN: u16 = 134;
+
+/// The left column's width when the navigator has not set one. THE one place that rule lives, so
+/// `split`, `fleet_width` and `app::reset_notice` cannot disagree about the default.
+///
+/// It picks the STARTING width only: an override is still the navigator's and survives every
+/// resize, and `Shift-Home` hands the width back to this rule by clearing it.
+pub fn default_left_column(screen_width: u16) -> u16 {
+    if screen_width >= WIDE_LEFT_COLUMN_SCREEN {
+        WIDE_LEFT_COLUMN
+    } else {
+        LEFT_COLUMN
+    }
+}
+
 /// The narrowest a pane may be made, in outer cells: two borders and enough body for a truncated
 /// bead line. The navigator saw this floor in the mockup (cb-bch.1).
 pub const MIN_PANE_COLUMNS: u16 = 24;
@@ -378,7 +400,8 @@ fn split(
         // The override is the navigator's; the fixed `LEFT_COLUMN` is what the layout would have
         // had. Either way it goes through the same clamp `resize_action` asks, so a chord and a
         // drawn border can never disagree about where the divider may go.
-        let left_width = clamp_left_column(sizes.left_column.unwrap_or(LEFT_COLUMN), area.width);
+        let left_width =
+            clamp_left_column(sizes.left_column.unwrap_or_else(|| default_left_column(area.width)), area.width);
         let columns =
             Layout::horizontal([Constraint::Length(left_width), Constraint::Min(0)]).split(available);
         let left = columns[0];
@@ -433,8 +456,8 @@ fn work_content_lines(app: &App, now: DateTime<Utc>, area: Rect) -> usize {
     work_document(app, now, (area.width as usize).saturating_sub(2)).len()
 }
 
-/// How wide the Fleet pane will be, before `split` runs - `LEFT_COLUMN` when AREA is at least
-/// `SPLIT_COLUMNS` wide, AREA's own width otherwise.
+/// How wide the Fleet pane will be, before `split` runs - `default_left_column` when AREA is at
+/// least `SPLIT_COLUMNS` wide, AREA's own width otherwise.
 ///
 /// It exists because `draw` and `metrics` both need the fleet body before the split, and the
 /// screen's width stopped being the Fleet pane's width the moment a third pane appeared beside
@@ -442,7 +465,7 @@ fn work_content_lines(app: &App, now: DateTime<Utc>, area: Rect) -> usize {
 /// column layout does.
 fn fleet_width(area: Rect) -> u16 {
     if area.width >= SPLIT_COLUMNS {
-        LEFT_COLUMN
+        default_left_column(area.width)
     } else {
         area.width
     }
@@ -1259,7 +1282,7 @@ fn fleet_document(
     let body = crate::app::fleet_body(&app.fleet.content);
     let empty: Vec<FleetRow> = Vec::new();
     let rows = app.fleet.content.value().unwrap_or(&empty);
-    let columns = columns(rows, width, &app.standby_labels, &app.exits, now);
+    let columns = columns(rows, width, &app.standby_labels, &app.exits, &app.flagged, now);
     let inner_width = (width as usize).saturating_sub(2);
     body.iter()
         .map(|entry| {
@@ -1549,6 +1572,7 @@ fn truncate_cells(text: &str, width: usize) -> String {
     kept
 }
 
+#[derive(Debug)]
 struct Columns {
     agent: usize,
     role: usize,
@@ -1568,6 +1592,7 @@ fn columns(
     width: u16,
     standby_labels: &BTreeMap<String, String>,
     exits: &BTreeMap<String, LastExit>,
+    flagged: &BTreeSet<String>,
     now: DateTime<Utc>,
 ) -> Columns {
     // Before `natural_bead`: in a narrow pane the BEAD cell carries a stuck row's `stuck 11h30`,
@@ -1598,6 +1623,24 @@ fn columns(
     let fixed = if wide { STATE_FLOOR + natural_role + 4 } else { STATE_FLOOR + 1 };
     let agent = natural_agent.min((width as usize).saturating_sub(fixed + natural_bead).max(AGENT_FLOOR));
     let bead = natural_bead.min((width as usize).saturating_sub(fixed + agent).max(BEAD_FLOOR));
+    if !wide {
+        // The role column is paid for out of slack, never out of content (cb-hjf): whatever
+        // `AGENT_FLOOR` and `STATE_FLOOR` hold above the widest cell they actually draw, plus
+        // whatever the row has left over, is the role column's whole budget. When that will not
+        // buy a legible column, nothing is taken and the row is what it drew before this rule.
+        // WIDTH is the pane's outer width; the row is drawn into its inner rectangle, so the
+        // borders come off before anything is spent. The rule above it deliberately keeps the
+        // outer width it has always used - only the cells this bead gives away are counted here.
+        let (agent, state, bead, role) = narrow_role_budget(
+            rows,
+            (width as usize).saturating_sub(2),
+            agent,
+            STATE_FLOOR,
+            bead,
+            flagged,
+        );
+        return Columns { agent, role, state, bead, wide };
+    }
     let role = natural_role.min((width as usize).saturating_sub(STATE_FLOOR + agent + bead + 4).max(ROLE_FLOOR));
     Columns {
         agent,
@@ -1608,10 +1651,65 @@ fn columns(
     }
 }
 
+/// The narrowest ROLE column worth drawing, in cells: two letters, an ellipsis and the gap.
+/// Below it the column is dropped entirely and the row is exactly what it drew before cb-hjf.
+const ROLE_MIN: usize = 4;
+
+/// What the AGENT column actually needs for its content - the glyph, a space, the widest name and
+/// one gap. `AGENT_FLOOR` sits above this on any ordinary roster, and the difference is part of
+/// what pays for the ROLE column in a narrow pane.
+fn narrow_agent_content(rows: &[FleetRow]) -> usize {
+    3 + rows.iter().map(|r| r.name.chars().count()).max().unwrap_or(0)
+}
+
+/// What the STATE column actually needs - the widest cell it draws, and one gap.
+///
+/// It asks `state_cell_width`, which is what `state_spans` pads from, because a column sized from
+/// anything else is a column sized for a cell the row does not draw. The ` ?`, ` ■` and ` ×N`
+/// qualifications are part of that cell: `STATE_FLOOR` carries them today, so they are content
+/// rather than slack, and spending them on the role clips the BEAD cell at the border - a bead id
+/// cut with no ellipsis, which reads as a different and valid bead id (cb-hjf review, finding 1).
+fn narrow_state_content(rows: &[FleetRow], flagged: &BTreeSet<String>) -> usize {
+    1 + rows
+        .iter()
+        .map(|r| state_cell_width(r, flagged.contains(&r.name)))
+        .max()
+        .unwrap_or(0)
+}
+
+/// AGENT, STATE, BEAD and ROLE in a narrow pane, given the widths the pre-cb-hjf rule produced.
+///
+/// Pure over its arguments, and the one place the narrow role budget lives. Slack is taken
+/// agent-first, then state, then the row's own spare cells - what the mockup draws, and what
+/// keeps the name and the role adjacent. BEAD is never touched: the work cell is the one the
+/// navigator reads for content rather than for shape.
+fn narrow_role_budget(
+    rows: &[FleetRow],
+    inner_width: usize,
+    agent: usize,
+    state: usize,
+    bead: usize,
+    flagged: &BTreeSet<String>,
+) -> (usize, usize, usize, usize) {
+    // `ROLE_FLOOR` is deliberately not used here: it is thirteen, and a fleet of nothing but `ux`
+    // agents must not be handed thirteen cells of a thirty-eight cell pane.
+    let role_content = 1 + rows.iter().map(|r| r.role.chars().count()).max().unwrap_or(0);
+    let spare = inner_width.saturating_sub(agent + state + bead);
+    let agent_slack = agent.saturating_sub(narrow_agent_content(rows));
+    let state_slack = state.saturating_sub(narrow_state_content(rows, flagged));
+    let role = role_content.min(spare + agent_slack + state_slack);
+    if role < ROLE_MIN {
+        return (agent, state, bead, 0);
+    }
+    let from_agent = agent_slack.min(role);
+    let from_state = state_slack.min(role - from_agent);
+    (agent - from_agent, state - from_state, bead, role)
+}
+
 fn heading(columns: &Columns) -> Line<'static> {
     let mut text = String::from("  ");
     text.push_str(&pad("AGENT", columns.agent - 2));
-    if columns.wide {
+    if columns.role > 0 {
         text.push_str(&pad("ROLE", columns.role));
     }
     text.push_str(&pad("STATE", columns.state));
@@ -1845,10 +1943,22 @@ fn row_line(
         pad(&row.name, columns.agent - 2),
         emphasized(name_style, attention),
     ));
-    if columns.wide {
+    if columns.role > 0 {
+        // In a narrow pane one cell of the column is always the gap, so a cut `build…` never runs
+        // into `standby`. The wide layout keeps `pad`'s own rule exactly as it was: its column is
+        // sized from `1 + longest role` and only clamps to `ROLE_FLOOR` on a tight pane, where a
+        // thirteen-character role ran whole before this bead and still does.
+        let cell = if columns.wide {
+            pad(&row.role, columns.role)
+        } else {
+            pad(&truncate(&row.role, columns.role - 1), columns.role)
+        };
         spans.push(Span::styled(
-            pad(&row.role, columns.role),
-            emphasized(Style::default(), attention),
+            cell,
+            // Faded at every width, the wide five-column screen included: the fade is a property
+            // of the column, so the role reads as something to scan down rather than as news on
+            // the row the navigator is looking at (cb-hjf).
+            emphasized(dim(), attention),
         ));
     }
     spans.extend(state_spans(row, columns, invalid, attention, flagged));
@@ -1878,6 +1988,26 @@ fn row_line(
     Line::from(spans)
 }
 
+/// How many cells the STATE cell will draw for ROW - the word and every qualification after it.
+///
+/// THE one place that arithmetic lives: `state_spans` pads from it, and `narrow_state_content`
+/// sizes from it, so a column can never be sized for a cell the row does not draw. ` ■` is one
+/// char and one cell (U+25A0 is East Asian ambiguous, which `unicode-width` counts as one), so
+/// `chars().count()` and `.width()` agree throughout.
+fn state_cell_width(row: &FleetRow, flagged: bool) -> usize {
+    let mut used = state_label(row).chars().count();
+    if row.diagnostic.is_some() && row.state != RowState::Invalid {
+        used += 2;
+    }
+    if flagged && flag_shows_for(&row.state) {
+        used += 2;
+    }
+    if row.sessions > 1 {
+        used += format!(" ×{}", row.sessions).chars().count();
+    }
+    used
+}
+
 /// The State cell: the word, then the two qualifications Emacs shows in the same order - a dim
 /// ` ?` when the pid names this agent but not this consumer's root, and a gold ` ×N` when more
 /// than one session of the name is up (`cerebro--entry`).
@@ -1896,11 +2026,10 @@ fn state_spans(
         Style::default()
     };
 
-    let mut used = label.chars().count();
+    let used = state_cell_width(row, flagged);
     let mut spans = vec![Span::styled(label, emphasized(word_style, attention))];
     if unverified {
         spans.push(Span::styled(" ?", dim()));
-        used += 2;
     }
     // The gold `■`: this agent was told to finish. Between the dim `?` and the gold `×N` because
     // the three answer different questions — `?` qualifies the state word, `■` is about the bead
@@ -1909,12 +2038,9 @@ fn state_spans(
     // and `.width()` agree and this may follow the ` ?` branch's arithmetic exactly.
     if flagged && flag_shows_for(&row.state) {
         spans.push(Span::styled(" \u{25a0}", Style::default().fg(GOLD)));
-        used += 2;
     }
     if row.sessions > 1 {
-        let count = format!(" ×{}", row.sessions);
-        used += count.chars().count();
-        spans.push(Span::styled(count, Style::default().fg(GOLD)));
+        spans.push(Span::styled(format!(" ×{}", row.sessions), Style::default().fg(GOLD)));
     }
     let padding = columns.state.saturating_sub(used).max(1);
     spans.push(Span::raw(" ".repeat(padding)));
@@ -2448,14 +2574,15 @@ mod tests {
         assert!(line_with(&rendered, "Fleet 5").contains("Fleet 5"), "the pane counts its rows");
 
         // The screen is split: the fleet lives in a `LEFT_COLUMN`-wide column, so it shows the
-        // narrow three-column table rather than the five-column one. The navigator chose that
+        // narrow four-column table rather than the five-column one. The navigator chose that
         // (a fixed left column, the session taking the rest) over half and half, which would
-        // have kept ROLE and FOR at the cost of the session's width.
+        // have kept FOR at the cost of the session's width. ROLE is paid for out of the AGENT
+        // and STATE floors' slack and is drawn at every width (cb-hjf).
         let heading = line_with(&rendered, "AGENT");
-        for column in ["AGENT", "STATE", "BEAD"] {
+        for column in ["AGENT", "ROLE", "STATE", "BEAD"] {
             assert!(heading.contains(column), "the narrow heading shows {column}: {heading:?}");
         }
-        assert!(!heading.contains("ROLE"), "and not the wide ones: {heading:?}");
+        assert!(!heading.contains("FOR"), "and not the wide one: {heading:?}");
 
         let xavier = line_with(&rendered, "● Xavier");
         assert!(xavier.contains("● Xavier"), "{xavier:?}");
@@ -2728,19 +2855,215 @@ mod tests {
 
         let heading = line_with(&rendered, "AGENT");
         assert!(heading.contains("AGENT") && heading.contains("STATE") && heading.contains("BEAD"));
-        assert!(!heading.contains("ROLE"), "below 64 columns Role is hidden: {heading:?}");
+        assert!(heading.contains("ROLE"), "the role is shown at every width now: {heading:?}");
         assert!(!heading.contains("FOR"), "below 64 columns For is hidden: {heading:?}");
 
         let xavier = line_with(&rendered, "Xavier");
         assert!(xavier.contains("● Xavier"), "{xavier:?}");
         assert!(xavier.contains("plan"), "{xavier:?}");
         assert!(xavier.contains("cb-kcs"), "{xavier:?}");
-        assert!(!xavier.contains("planner"), "the Role column is gone: {xavier:?}");
+        assert!(xavier.contains("planner"), "the Role column is drawn: {xavier:?}");
         assert!(!xavier.contains("18m"), "the For column is gone: {xavier:?}");
 
         // 64 is the boundary itself, and it is wide.
         let wide = lines(&render(&app, 64, 20));
         assert!(line_with(&wide, "AGENT").contains("ROLE"));
+    }
+
+    /// A roster of the shape the navigator actually watches, for the narrow column arithmetic.
+    fn roster_rows() -> Vec<FleetRow> {
+        vec![
+            working("Wolverine", "implementer", "build", "cb-hjf"),
+            row("Cerebro", "orchestrator", RowState::Idle),
+            row("Rogue", "build-design", RowState::Standby),
+            row("Jubilee", "ux", RowState::Idle),
+        ]
+    }
+
+    #[test]
+    fn the_role_column_is_paid_for_out_of_slack() {
+        let rows = roster_rows();
+        let narrow = columns(&rows, 38, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
+
+        assert!(!narrow.wide, "38 cells is the narrow layout");
+        assert!(
+            narrow.role >= ROLE_MIN,
+            "the role is drawn in a 38-cell pane: {}",
+            narrow.role
+        );
+        assert_eq!(
+            narrow.bead,
+            BEAD_FLOOR.max(1 + "cb-hjf".len()),
+            "the work cell is never what pays for the role"
+        );
+        assert!(
+            narrow.agent + narrow.role + narrow.state + narrow.bead <= 38,
+            "{narrow:?} overflows a 38-cell pane"
+        );
+        assert!(
+            narrow.agent >= 3 + "Wolverine".chars().count(),
+            "the longest name still fits whole: {}",
+            narrow.agent
+        );
+        assert!(
+            narrow.state >= 1 + "standby".chars().count(),
+            "the longest state word still fits whole: {}",
+            narrow.state
+        );
+    }
+
+    #[test]
+    fn a_narrow_role_is_cut_with_an_ellipsis_and_keeps_its_gap() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(roster_rows()), at(86_400));
+        let rendered = lines(&render(&app, 100, 20));
+
+        assert!(line_with(&rendered, "AGENT").contains("ROLE"));
+        let wolverine = line_with(&rendered, "● Wolverine");
+        assert!(
+            wolverine.contains("implemen… "),
+            "the role is cut with an ellipsis, and one cell of the column is always the gap so it \
+             never runs into the state word: {wolverine:?}"
+        );
+        let jubilee = line_with(&rendered, "◆ Jubilee");
+        assert!(jubilee.contains("ux"), "a short role is whole: {jubilee:?}");
+    }
+
+    #[test]
+    fn a_state_cell_carrying_its_suffixes_still_leaves_the_bead_whole() {
+        // `■` is the everyday result of pressing `f`, and ` ×N` and ` ?` ride in the same cell.
+        // None of them is slack, so none of them may be spent on the role: a bead id clipped at
+        // the border reads as a different, valid bead id.
+        let mut app = App::new();
+        let mut wolverine = working("Wolverine", "implementer", "working", "cb-hjf");
+        wolverine.sessions = 2;
+        wolverine.diagnostic = Some("not this consumer".into());
+        app.finish_refresh(Ok(vec![wolverine, row("Rogue", "build-design", RowState::Idle)]), at(86_400));
+        app.flagged = ["Wolverine".to_string()].into_iter().collect();
+
+        let rendered = lines(&render(&app, 100, 20));
+        let line = line_with(&rendered, "● Wolverine");
+        assert!(line.contains("cb-hjf"), "the bead id is whole: {line:?}");
+        assert!(line.contains("×2"), "and so is the session count: {line:?}");
+    }
+
+    #[test]
+    fn the_wide_role_column_never_clamps_below_the_word_it_draws() {
+        // The wide branch keeps `pad`'s own rule and takes no gap out of its column, which is what
+        // it did before this bead. The clipping the cold read asked about turns out to be
+        // unreachable: `role` floors at `ROLE_FLOOR` and `natural_role` is `1 + longest`, and no
+        // width in the wide range clamps it below that. This case says so rather than pretending
+        // to pin a state the code cannot reach.
+        let rows = vec![
+            working("Wolverine", "user-feedback", "working", "cb-hjf-a-very-long-bead-id"),
+            row("Rogue", "ux", RowState::Idle),
+        ];
+        let wanted = 1 + "user-feedback".chars().count();
+        for width in WIDE_COLUMNS..=200 {
+            let wide = columns(&rows, width, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
+            assert!(wide.wide);
+            assert!(
+                wide.role >= wanted,
+                "at {width} the wide column is {} and would cut `user-feedback`",
+                wide.role
+            );
+        }
+
+        let mut app = App::new();
+        app.finish_refresh(Ok(rows), at(86_400));
+        let rendered = lines(&render(&app, 64, 20));
+        let line = line_with(&rendered, "● Wolverine");
+        assert!(line.contains("user-feedback "), "whole, and clear of the state word: {line:?}");
+    }
+
+    #[test]
+    fn a_pane_too_narrow_for_a_role_is_exactly_todays_row() {
+        // Names and state words that leave the two floors no slack at all to give away.
+        let rows = vec![
+            working("Wolverinexxx", "implementer", "rebasing", "cb-hjf"),
+            row("Nightcrawler", "orchestrator", RowState::Standby),
+        ];
+        let narrow = columns(&rows, 30, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
+        assert_eq!(narrow.role, 0, "the column is given up whole: {narrow:?}");
+
+        let (agent, state, bead, role) =
+            narrow_role_budget(&rows, 30, narrow.agent, narrow.state, narrow.bead, &BTreeSet::new());
+        assert_eq!(role, 0);
+        assert_eq!(
+            (agent, state, bead),
+            (narrow.agent, narrow.state, narrow.bead),
+            "nothing else is shortened to keep the role on screen"
+        );
+    }
+
+    #[test]
+    fn the_left_column_starts_wider_on_a_window_that_can_spare_it() {
+        assert_eq!(default_left_column(133), LEFT_COLUMN);
+        assert_eq!(default_left_column(WIDE_LEFT_COLUMN_SCREEN), WIDE_LEFT_COLUMN);
+        assert_eq!(default_left_column(200), WIDE_LEFT_COLUMN);
+
+        let app = populated();
+        assert_eq!(
+            border_column(&lines(&render(&app, 133, 20))),
+            LEFT_COLUMN as usize,
+            "below the threshold the list starts where it always did"
+        );
+        assert_eq!(
+            border_column(&lines(&render(&app, 140, 20))),
+            WIDE_LEFT_COLUMN as usize,
+            "on a window that can spare it the list starts wider"
+        );
+    }
+
+    #[test]
+    fn a_hand_set_left_column_survives_a_wider_window() {
+        let mut app = populated();
+        app.panes.left_column = Some(46);
+        assert_eq!(
+            border_column(&lines(&render(&app, 140, 20))),
+            46,
+            "a width the navigator set is theirs, whatever the window does"
+        );
+    }
+
+    /// Where the Fleet pane's right-hand border sits, which is the left column's outer width:
+    /// the second vertical rule on the heading line.
+    fn border_column(rendered: &[String]) -> usize {
+        line_with(rendered, "AGENT")
+            .chars()
+            .enumerate()
+            .filter(|&(_, character)| character == '│' || character == '┃')
+            .nth(1)
+            .map(|(index, _)| index + 1)
+            .expect("the fleet pane has a right border")
+    }
+
+    #[test]
+    fn a_role_is_dimmer_than_the_name_beside_it() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(roster_rows()), at(86_400));
+        let buffer = render(&app, 100, 20);
+
+        assert!(
+            style_where(&buffer, "implemen…").add_modifier.contains(Modifier::DIM),
+            "the role reads as a column to scan down, not as news on the row"
+        );
+        assert!(
+            !style_where(&buffer, "Wolverine implemen…").add_modifier.contains(Modifier::DIM),
+            "the name beside it is at full strength"
+        );
+    }
+
+    #[test]
+    fn an_unknown_role_word_is_shown_verbatim() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![row("Bishop", "timecop", RowState::Idle)]),
+            at(86_400),
+        );
+        let rendered = lines(&render(&app, 100, 20));
+        let bishop = line_with(&rendered, "◆ Bishop");
+        assert!(bishop.contains("timecop"), "the roster's own word, verbatim: {bishop:?}");
     }
 
     #[test]
@@ -4552,12 +4875,12 @@ mod tests {
             [("Xavier".to_string(), LastExit::GaveUp { failures: 5 })]
                 .into_iter()
                 .collect();
-        let columns = columns(&rows, 80, &BTreeMap::new(), &exits, now());
+        let columns = columns(&rows, 80, &BTreeMap::new(), &exits, &BTreeSet::new(), now());
         assert_eq!(columns.bead, 18, "seventeen cells and the column's own gap");
 
         // A pane too narrow to spare them cuts the cell - the clamp below the measurement,
         // unchanged - rather than widening the column past the pane.
-        let narrow = self::columns(&rows, 40, &BTreeMap::new(), &exits, now());
+        let narrow = self::columns(&rows, 40, &BTreeMap::new(), &exits, &BTreeSet::new(), now());
         assert!(narrow.bead < 18, "the clamp still bites: {}", narrow.bead);
         let mut app = App::new();
         app.finish_refresh(Ok(rows), at(86_400));
@@ -5670,7 +5993,7 @@ mod tests {
     #[test]
     fn the_bead_column_is_sized_for_a_stuck_row() {
         let rows = vec![stuck_row()];
-        let narrow = columns(&rows, 40, &BTreeMap::new(), &BTreeMap::new(), now());
+        let narrow = columns(&rows, 40, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
         assert!(
             narrow.bead >= "stuck 11h30".width(),
             "sized for the cell it draws, not for the bead id: {}",

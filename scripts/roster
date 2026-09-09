@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # The one place the fleet is declared: name, role, and (derived) kind, one agent per line. Every
-# other reader — `scripts/launch`, `scripts/agent-state`, `emacs/cerebro.el`, and the tests — reads
-# this file rather than keeping its own copy, which is what let those copies drift from each other
-# and from the launchers before this script existed.
+# other reader — `scripts/launch`, `scripts/agent-state`, `fleet-view/src/model.rs`, and the tests
+# — reads this file rather than keeping its own copy, which is what let those copies drift from
+# each other and from the launchers before this script existed.
 #
 # Order matters: interactive agents first, then implementers, in the order the fleet view shows them
 # and the order Cerebro picks the next unused implementer name from. Keep new entries in that shape.
@@ -40,7 +40,7 @@
 # naming the file, the line and the word: a typo of `autostart' that read as "no" would be a fleet
 # that quietly does not start, which is the failure this refusal exists to prevent. `standby' on an
 # implementer row arms it the same way (cb-1or.2): its trigger is a planned, unclaimed bead. The words are exposed through `--autostart' and `--standby' ALONE - the default
-# output stays three columns, because `launch', `agent-state' and `cerebro--parse-fleet' all take
+# output stays three columns, because `launch', `agent-state' and `model::parse_roster' all take
 # the last field as the KIND.
 #
 # Exact-match only, case-sensitive — the "it is spelt Storm" courtesy belongs to `launch`, where a

@@ -32,7 +32,7 @@
 # the text asks for it.
 #
 # THE SCAN SET IS PART OF THE DESIGN, the same way tracked-links' pathspec is. Only `scripts',
-# `emacs', `tests', `hooks', `githooks' and, since cb-vyp.1, `fleet-view' are scanned. Scanning the
+# `tests', `hooks', `githooks' and, since cb-vyp.1, `fleet-view' are scanned. Scanning the
 # whole repository would make this suite read `docs/', `README.md', `LICENSE' and
 # `models.conf.example' - the entries on `scripts/ci-needed''s skip list - and a suite that starts
 # reading one of them makes a green pull request that should have been red. All five are on
@@ -84,12 +84,6 @@ infix="$(cerebro_marker_infix)"
 # ships bash 3.2 and there is no `declare -A'. The reason for each row is the comment above it.
 
 READERS="
-# The elisp copy: cerebro--session-args-p, cerebro--name-in-args-p, cerebro--root-in-args-p and
-# cerebro--marker-needle. Elisp cannot source a bash library - the same qualification
-# cerebro--log-line carries against scripts/jsonl-log.sh - so it subscribes instead.
-emacs/cerebro.el                emacs/cerebro-test.el
-# It parses the case table itself, in elisp, for that same reason: both a reader and its own pin.
-emacs/cerebro-test.el           emacs/cerebro-test.el
 # The bash reader. Its needles come from the library; its header quotes the sentence to say why.
 scripts/agent-alive             tests/agent-alive.sh
 # The SQL LIKE prefilter and the two jq capture() definitions - cb-akt's reader.
@@ -111,7 +105,7 @@ tests/lib/session-args.cases    -
 tests/session-marker.sh         -
 # The Rust reader (cb-vyp.1): model::session_liveness/name_needle/root_needle. It parses the case
 # table itself, in its own #[cfg(test)] module, so it is both a reader and its own pin - the same
-# shape as emacs/cerebro-test.el above.
+# shape as the rows above.
 fleet-view/src/model.rs         fleet-view/src/model.rs
 # Its own #[cfg(test)] module fabricates one process-table line carrying the marker, so that a case
 # about the sweeps' snapshot has a live implementer to judge against. A fixture, not a parser - the
@@ -153,7 +147,7 @@ while IFS= read -r -d '' path; do
   is_declared "$path" && continue
   echo "unsubscribed: $path (spells the session marker and is not a declared reader)"
   findings=$((findings + 1))
-done < <(git ls-files --cached --others --exclude-standard -z -- scripts emacs tests hooks githooks fleet-view)
+done < <(git ls-files --cached --others --exclude-standard -z -- scripts tests hooks githooks fleet-view)
 
 # --- checks two and three: every row still describes a reader, and names a real subscription -------
 #

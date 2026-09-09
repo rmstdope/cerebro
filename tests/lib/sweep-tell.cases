@@ -1,12 +1,14 @@
-# The two-hourly sweep decision, run by BOTH implementations of the rule:
+# The two-hourly sweep decision, answered by:
 #
 #   lifecycle::sweep_action         (Rust, fleet-view/)  via fleet-view/src/lifecycle.rs
-#   cerebro--sweep-action           (emacs/cerebro.el)   via emacs/cerebro-test.el
 #
-# WHY IT IS ONE FILE. `tests/lib/triage.cases`' reason exactly: until the declaration moves both
-# views supervise the same checkout, and a row the two answer differently is a Cerebro told to
-# sweep twice in one window, or never told at all - neither of which announces itself, because a
-# typed line is fire-and-forget and Cerebro writes nothing back to say it heard.
+# The second implementation - the Emacs fleet view's own copy - was removed with that view
+# (cb-abs.1). The rows stay: they ARE the rule, and re-typing them into assertions would
+# lose the one thing a table is good at.
+#
+# WHY IT IS ONE FILE. `tests/lib/triage.cases`' reason exactly: a row answered wrongly is a Cerebro
+# told to sweep twice in one window, or never told at all - neither of which announces itself,
+# because a typed line is fire-and-forget and Cerebro writes nothing back to say it heard.
 #
 # IT IS A SEPARATE TABLE FROM `triage.cases` ON PURPOSE. Triage's trigger is a CONDITION that
 # stays true, so a busy Cerebro needs no queue. A two-hour mark is an EDGE that passes, and if it

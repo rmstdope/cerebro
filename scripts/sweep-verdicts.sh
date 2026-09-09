@@ -19,7 +19,7 @@
 # pure elisp function (`cerebro--verdict-finding') can turn them into a decision and a human confirms
 # that decision before anything runs. Keeping this file read-only is what makes that guarantee
 # checkable at a glance: the only path to a `bd set-state ... verdict=stale' is the confirmed one in
-# `cerebro.el', never this script.
+# the fleet view, never this script.
 #
 # One object per candidate - an `open` bead carrying `verification:failed` and not already carrying
 # `verdict:stale`:

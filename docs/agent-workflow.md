@@ -57,29 +57,22 @@ else derives from it: the fleet view, the launcher, and the state files.
 ## The fleet view is the console
 
 ```
-.claude/cerebro/scripts/cerebro   # from a terminal, in a fresh Emacs
-M-x cerebro                       # in your own
+.claude/cerebro/scripts/cerebro-tui   # anywhere inside the consumer
 ```
 
-Everything below can be done from a terminal, and almost nobody does. The Emacs fleet view lists
+Everything below can be done from a terminal, and almost nobody does. The fleet view lists
 every agent on the roster with its state, the bead or PR it is on, and how long it has been there.
 
-**The view your project declares is the one that operates the fleet**: every key below, every
-trigger, every stop flag and every state file deleted belongs to whichever it is. Both views offer
-the same keys and answer the same tables; this repository declares `tui`, so here they are the
-terminal view's — `.claude/cerebro/scripts/cerebro-tui`, under *Watching without interfering*,
-which shows the same rows and the same queues. `docs/cerebro-supervision.md` is how supervision
-moves either way.
-
-Which of the two may act is now the project's own declaration rather than a property of the
-programs: `fleet_supervisor emacs|tui` in `.cerebro/project.conf`, absent meaning `emacs`. Leave it
-out and everything below is exactly as it has always been. Whichever view is not the declared one
-reads and draws and does nothing else — it says so on its mode line or in its header — and only one
-process can hold the lease at a time even when two Emacsen are open on one checkout.
+**Whether this window operates the fleet** — every key below, every trigger, every stop flag and
+every state file deleted — is the project's own declaration: `fleet_supervisor emacs|tui` in
+`.cerebro/project.conf`, and this repository declares `tui`. A window that is not the owner reads
+and draws and does nothing else, and says so in its header; only one process can hold the lease at
+a time even when two are open on one checkout. `docs/cerebro-supervision.md` is how supervision
+moves.
 
 | Key | Does |
 |---|---|
-| `s` | start the agent on this row, in an Emacs-owned `vterm` session |
+| `s` | start the agent on this row, in a session the view hosts |
 | `k` | kill it, confirming harder when it is mid-bead |
 | `f` | tell an agent to finish — an implementer completes its bead, an interactive role its pass, and neither starts again until you press `s` |
 | `RET` | focus the detail window, to type to the agent shown there |
@@ -104,7 +97,7 @@ outside PR moved, both hourly regardless; Forge hourly too; an implementer when 
 unclaimed bead exists; Cerebro when an unranked bead appears — an idle, running Cerebro is typed a
 line naming the beads instead, and again every ten minutes while they stay unranked; an idle
 Cerebro is also typed a line every two hours asking it to run the two sweeps that are its own, queued
-until it goes idle if the mark falls mid-pass (cb-7nx). A role you have not started this Emacs is never started: `s` (or
+until it goes idle if the mark falls mid-pass (cb-7nx). A role you have not started in this window is never started: `s` (or
 `autostart` or `standby` in `roster.conf`) arms it — `standby` arms without starting, so the row
 reads `standby` from the moment the view opens and the trigger is what starts it — `k` and `f`
 disarm it, and none of that is written to any
@@ -244,7 +237,7 @@ not park a bead over a button label.
 ## Starting builders
 
 **You** start builders — one session each, `s` in the fleet view or `launch <Name>` in a
-terminal — unless their `.cerebro/roster.conf` line says `autostart`, in which case `M-x cerebro`
+terminal — unless their `.cerebro/roster.conf` line says `autostart`, in which case the fleet view
 starts them for you as it opens. `standby` on an implementer row arms it without starting it, and a
 planned, unclaimed bead is what starts it. There is no flag that puts a running implementer to work: **a
 running implementer is a working one**, and it claims the next planned bead as soon as one exists. If you want another
@@ -363,8 +356,8 @@ Agents work in `.cerebro/worktrees/<bead>` and remove the tree when they finish.
 whose bead somebody else merged, leaves it behind — and a stray tree holding `main` makes the next
 agent's `git checkout main` fail for no visible reason.
 
-**The fleet view sweeps them**: opening `M-x cerebro` starts `prune-worktrees.sh --watch` in the
-background, which prunes every ten minutes for as long as the buffer lives. You can run the same
+**The fleet view sweeps them**: opening it starts `prune-worktrees.sh --watch` in the
+background, which prunes every ten minutes for as long as the view lives. You can run the same
 sweep yourself at any time:
 
 ```bash
@@ -585,7 +578,7 @@ agent whose whole contribution to a bead was unpriced reads `0.0` beside a numbe
 looking free.
 
 **`decisions.jsonl`** is the fleet view's, and it answers the other half: not what the agents did but
-what Emacs decided about them. One line per start (with the trigger that fired and whether it was a
+what the fleet view decided about them. One line per start (with the trigger that fired and whether it was a
 trigger or you), per end, retire and nudge, per sweep finding run, per triage line typed, per
 two-hourly sweep line typed (`sweep-tell`, which is not the `sweep` a finding run writes), and per
 abnormal exit. It is the **small, long-lived** one: since cb-xhu.2 the evaluation lines live
@@ -635,11 +628,9 @@ bd update <id> --remove-label human                        # back to a planner
 
 ## Watching without interfering
 
-The fleet view is the short answer — the agent list, the bead panel and the sweeps in one buffer.
-
-If you only want to watch, and especially from a machine or a terminal without Emacs, there is a
-standalone terminal view — which, where a project declares `fleet_supervisor tui` as this one does,
-is also the view that acts:
+The fleet view is the short answer — the agent list, the bead panel and the sweeps in one window,
+and where a project declares `fleet_supervisor tui` as this one does, it is also the view that
+acts:
 
 ```bash
 .claude/cerebro/scripts/cerebro-tui     # needs cargo; anywhere inside the consumer
@@ -664,10 +655,9 @@ empty. `g` refreshes both panes regardless of focus, `q`/`Esc`/`Ctrl-C` quits. I
 two readers fails, that pane keeps its last good data and says when it went stale; the other
 carries on.
 
-It offers the same keys as the Emacs view — `s`, `f`, `k`, `x`, the priority keys — and whether
-the first three act is the declaration. The keys that write to the board rather than to this
-checkout's sessions, `x` and the priority keys, act either way. The two may run side by side on one
-repository; `docs/cerebro-supervision.md` is how supervision moves between them.
+Whether `s`, `f` and `k` act is the declaration. The keys that write to the board rather than to
+this checkout's sessions, `x` and the priority keys, act either way; `docs/cerebro-supervision.md`
+is how supervision moves.
 
 In a terminal:
 

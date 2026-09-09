@@ -58,8 +58,8 @@
 set -euo pipefail
 
 # The issue types that are bookkeeping rather than work. `--print-excluded-types` prints these so
-# `emacs/cerebro-test.el` can hold the panel's own list to this one and stop the two drifting -
-# UNCHANGED by cb-hzl, and the ERT contract depends on it staying both words.
+# the fleet view's own list can be held to this one and stop the two drifting -
+# UNCHANGED by cb-hzl.
 excluded_types=("epic" "event")
 
 # The ones excluded UNCONDITIONALLY, which is what the `bd` call and the `jq` guard use. An `epic`

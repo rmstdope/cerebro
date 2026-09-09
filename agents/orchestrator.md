@@ -430,7 +430,7 @@ piece of evidence that the launcher is out of date.
 **So "start Storm" is not yours to do.** You cannot open a terminal and you cannot start a session.
 Say so plainly and hand it back to the navigator, who has two ways:
 
-- press `s` on that name in the Emacs fleet view, which is the usual one; or
+- press `s` on that name in the fleet view, which is the usual one; or
 - run `.claude/cerebro/scripts/launch Storm` in a terminal of their own.
 
 Then check whether it actually came up (see *Who is actually running*) rather than assuming it did.

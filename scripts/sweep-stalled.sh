@@ -13,7 +13,7 @@
 # only gathers facts, so that a pure elisp function (`cerebro--stalled-finding') can turn them into
 # a decision and a human confirms that decision before anything runs. Keeping this file read-only
 # is what makes that guarantee checkable at a glance: the only path to a `bd unclaim' is the
-# confirmed one in `cerebro.el', never this script.
+# confirmed one in the fleet view, never this script.
 #
 # `sweep-claims.sh' answers the opposite question and cannot be reused for this one: its
 # `commit_age_min' is measured against the default branch on origin, and only once the work has

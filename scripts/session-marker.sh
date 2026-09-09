@@ -23,7 +23,7 @@
 # carrying anything before it, and reported a silent zero for a fleet that had spent ten thousand
 # credits that week. This library removes the writer/reader pair from that count: `scripts/launch'
 # and `scripts/agent-alive' now obtain the text here rather than each carrying it. The elisp and
-# SQL/jq copies stay copies - `emacs/cerebro.el' cannot source a bash library (the qualification
+# SQL/jq copies stay copies - they cannot source a bash library (the qualification
 # `cerebro--log-line' already carries against `scripts/jsonl-log.sh'), and the prefilter runs inside
 # SQLite - but since cb-9su a copy cannot exist UNDECLARED: `scripts/marker-readers' fails the gate
 # on any file in this repository that spells the sentence without being a declared reader with a

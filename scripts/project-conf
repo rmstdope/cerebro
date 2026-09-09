@@ -30,7 +30,7 @@
 #   role_start_spacing_<role>
 #                  — seconds between two starts of one role, one key per role. ABSENT means the
 #                    fleet view's own built-in gap; 0 means never space that role. Read by
-#                    emacs/cerebro.el, which is the only caller and the only elisp reader of this
+#                    the fleet view, which is the only caller and the only reader of this
 #                    file.
 #   planner_buffer_multiple
 #                  — planned beads wanted per implementer. ABSENT means 1, the rule every consumer

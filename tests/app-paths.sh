@@ -125,17 +125,14 @@ for f in agents/architect.md agents/verifier.md agents/planner.md agents/user-fe
 done
 pass "each of the five names app-paths, so an agent can find the answer"
 
-# --- emacs/ is cerebro's OWN source, not the consumer's application: it survives as its own
-# --- clause in exactly the two files whose rule always covered it, and appears in neither of the
-# --- other three. Folding it into app_paths would declare the harness part of every consumer's app.
-for f in agents/architect.md CLAUDE.md; do
-  grep -q 'emacs/' "$repo_root/$f" || fail "emacs/: $f must still forbid cerebro's own elisp"
-done
-for f in agents/verifier.md agents/planner.md agents/user-feedback.md; do
+# --- emacs/ is gone (cb-abs.1), so no document forbids editing it any more: a clause naming a
+# --- directory that does not exist is a reader's puzzle, and the two documents that carried it
+# --- are the two this asserts about.
+for f in agents/architect.md agents/verifier.md agents/planner.md agents/user-feedback.md CLAUDE.md; do
   grep -q 'emacs/' "$repo_root/$f" \
-    && fail "emacs/: $f must not newly forbid cerebro's own source"
+    && fail "emacs/: $f still names cerebro's removed elisp"
 done
-pass "emacs/ stays its own clause, in architect.md and CLAUDE.md only"
+pass "no document names emacs/, which no longer exists"
 
 # --- the verbatim workspace map of one consumer is gone ---
 if grep -rn 'core-persistence\|core-wasm\|apps/desktop' "$repo_root/agents" "$repo_root/skills" \

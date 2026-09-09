@@ -418,7 +418,7 @@ fn json_string(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::probe;
-    use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::net::Ipv4Addr;
 
     // --- the shared transition table ------------------------------------------------------------
 
@@ -589,16 +589,6 @@ mod tests {
 
     // --- the lease itself -----------------------------------------------------------------------
 
-    // Between a probe closing and the caller binding, anything on the machine may take the port -
-    // so NOTHING below asserts on a bind that used `probe::free_endpoint` directly. Setting up a
-    // lease goes through `acquire_on_a_free_port`, which retries, and a test that needs a foreign
-    // listener binds it on port 0 and asks it what it got. Two of these cases were written the
-    // obvious way first and failed about one run in ten, which is the kind of test this repository
-    // refuses to ship.
-    fn endpoint(port: u16) -> SocketAddr {
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
-    }
-
     /// A held lease, on whatever loopback port was actually free. A lost race here is setup
     /// noise, never the thing under assertion, so it simply tries the next port.
     fn acquire_on_a_free_port(
@@ -676,126 +666,6 @@ mod tests {
         acquire_once_free(addr, &record, "/repos/x", SupervisorKind::Emacs);
     }
 
-    /// The one test that proves the two implementations share one lease, and that the lease dies
-    /// with its owner rather than with its owner's children (cb-kcs.1).
-    ///
-    /// Not two language-local approximations: a real Emacs binds the listener and writes the
-    /// record, this Rust process is refused and told exactly who holds it, and then the Emacs is
-    /// killed WITHOUT a chance to clean up and the lease is free on the next call. That last step
-    /// is the whole argument for a bound socket over a pid file: nobody had to decide the owner
-    /// had died, and there was no window in which a live owner looked dead.
-    ///
-    /// The child chooses its own port and reports it, so there is no gap between finding a free
-    /// port and holding it - the flake this file already paid for once.
-    ///
-    /// CI installs Emacs in the Rust job for exactly this test; a machine without Emacs cannot
-    /// run it, and the assertion is skipped there rather than failing for the wrong reason.
-    #[test]
-    fn emacs_and_tui_share_one_crash_released_lease() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let record = dir.path().join("supervisor.json");
-        let identity = "/repos/shared-checkout";
-
-        // Bind on port 0, then report the port through a FILE rather than through stdout:
-        // Emacs's batch stdout is buffered, so a `princ` before a `sleep-for` arrives two minutes
-        // late - which is exactly how long the first version of this test took to fail.
-        let port_file = dir.path().join("port");
-        let session_file = dir.path().join("session-pid");
-        // The session is started BY the owner, AFTER it binds - the only arrangement that
-        // exercises the trap. Over a PIPE rather than Emacs's default pty: when the owner is
-        // killed the pty master closes and the child takes a SIGHUP with it, which would end the
-        // session this test needs to outlive its parent. `fork` duplicates every descriptor, so this child holds a copy of
-        // the listener until its own exec; a sibling spawned by THIS process would prove nothing,
-        // because this process never held that listener to begin with.
-        let program = format!(
-            "(let ((p (make-network-process :name \"held\" :family 'ipv4 :host \"127.0.0.1\" \
-             :service 0 :server t :noquery t :reuseaddr nil))) \
-             (with-temp-file {record} \
-               (insert (format \"{{\\\"identity\\\":%S,\\\"owner\\\":\\\"emacs\\\",\\\"pid\\\":%d}}\" {identity} (emacs-pid)))) \
-             (let* ((process-connection-type nil) \
-                    (session (start-process \"session\" nil \"sleep\" \"120\"))) \
-               (set-process-query-on-exit-flag session nil) \
-               (with-temp-file {session_file} (insert (format \"%d\" (process-id session))))) \
-             (with-temp-file {port_file} (insert (format \"%d\" (process-contact p :service)))) \
-             (sleep-for 120))",
-            record = format!("{:?}", record.display().to_string()),
-            identity = format!("{identity:?}"),
-            session_file = format!("{:?}", session_file.display().to_string()),
-            port_file = format!("{:?}", port_file.display().to_string()),
-        );
-
-        let Some(child) = probe::RealEmacs::batch(
-            "the only cross-implementation lock proof",
-            None,
-            &program,
-        ) else {
-            return;
-        };
-
-        // The port file appears only once the listener is bound and the record written.
-        let port = probe::wait_for(std::time::Duration::from_secs(20), || {
-            std::fs::read_to_string(&port_file).ok()?.trim().parse::<u16>().ok()
-        })
-        .expect("the Emacs owner never reported a bound port");
-        let addr = endpoint(port);
-
-        // Refused, and told who holds it - across two languages, one record, one port.
-        let refused = SupervisorLease::try_acquire(addr, &record, identity, SupervisorKind::Tui);
-        let outcome = match refused {
-            Err(AcquireError::OwnedBy(kind)) => Ok(kind),
-            other => Err(format!("{other:?}")),
-        };
-
-        // A LIVE CHILD BEHIND THE OWNER, which is the trap the plan names by hand: `fork`
-        // duplicates every descriptor, so a session the owning view spawns would keep the
-        // listener bound after the supervisor itself is gone - and the replacement would then
-        // find a bound port with a stale record, i.e. a lock error for as long as that session
-        // lives, on a checkout with no supervisor at all. `TcpListener` is opened `O_CLOEXEC`, so
-        // the child drops it at exec and the lease dies with its owner and not with its children.
-        // This assertion is what keeps that true when cb-kcs.2 gives the view real sessions.
-        let session_pid: i32 = std::fs::read_to_string(&session_file)
-            .expect("the owner reported the session it started")
-            .trim()
-            .parse()
-            .expect("a pid");
-
-        // The owner dies without cleaning up. Its session does not: a SIGKILLed Emacs orphans its
-        // children rather than taking them with it. `Drop` kills and reaps.
-        drop(child);
-        assert!(
-            alive(session_pid),
-            "the owner's session must outlive it, or this proves nothing about inherited \
-             descriptors"
-        );
-
-        assert_eq!(outcome, Ok(SupervisorKind::Emacs), "Rust must see the Emacs owner");
-
-        // And the lease is free at once, with the crashed owner's record still on disk.
-        assert!(record.exists(), "the crashed owner left its record behind");
-        // The kernel closes the listener as the process is reaped; on a loaded runner that is
-        // milliseconds after `wait` returns, not before it.
-        let _taken = acquire_once_free(addr, &record, identity, SupervisorKind::Tui);
-        // Still running: the lease came back while a session the dead owner had forked was alive,
-        // which is exactly what close-on-exec buys and what cb-kcs.2 will depend on.
-        assert!(alive(session_pid), "the orphaned session was still supposed to be running");
-        let _ = std::process::Command::new("kill").arg(session_pid.to_string()).status();
-        assert_eq!(
-            read_record(&record).expect("record").owner,
-            Some(SupervisorKind::Tui),
-            "the successful bind overwrote the stale record"
-        );
-    }
-
-    /// Is this pid still running? `kill -0`, which needs no crate and no unsafe block.
-    fn alive(pid: i32) -> bool {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
 
     #[test]
     fn a_record_from_another_checkout_is_a_collision_not_a_takeover() {

@@ -135,7 +135,7 @@ pass "a sync that creates a link outside .claude/ says the directory is tracked"
 #
 # It used to install a `.dir-locals.el' at the consumer ROOT, the one file it could not merge -
 # so a consumer that had its own got no fleet view at all. The fleet view has its own command
-# now (scripts/cerebro), and the consumer root is the project's alone.
+# now (scripts/cerebro-tui), and the consumer root is the project's alone.
 dir_locals="$consumer/.dir-locals.el"
 [[ ! -e "$dir_locals" && ! -L "$dir_locals" ]] \
   || fail "the sync wrote $dir_locals: it must write nothing outside .claude/"

@@ -1,12 +1,13 @@
-# The supervision decision, run by BOTH implementations of the rule:
+# The supervision decision, answered by:
 #
 #   lifecycle::supervise_action     (Rust, fleet-view/)  via fleet-view/src/lifecycle.rs
-#   cerebro--supervise-action       (emacs/cerebro.el)   via emacs/cerebro-test.el
 #
-# WHY IT IS ONE FILE. It is `tests/lib/supervisor.cases`'s reason, one layer in: cb-kcs.5 is a
-# cutover, so for a while both implementations answer about the same checkout, and a row they
-# answer differently is a session ended twice or never. Read that file's header for the
-# conventions this one copies deliberately.
+# The second implementation - the Emacs fleet view's own copy - was removed with that view
+# (cb-abs.1). The rows stay: they ARE the rule, and re-typing them into assertions would
+# lose the one thing a table is good at.
+#
+# WHY IT IS ONE FILE. It is `tests/lib/supervisor.cases`'s reason, one layer in. Read that file's
+# header for the conventions this one copies deliberately.
 #
 # WHAT BOTH READERS MUST BIND. The rows assume `cerebro-end-grace' 30 and
 # `cerebro-answer-timeout' 900, and `cerebro-interactive-answer-timeout' 1800, so a reader binds or

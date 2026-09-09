@@ -1,14 +1,15 @@
-# The supervision transition table, run by BOTH implementations of the ownership rule:
+# The supervision transition table, answered by:
 #
 #   supervisor::reconcile_supervision   (Rust, fleet-view/)  via fleet-view/src/supervisor.rs
-#   cerebro--supervision-decision       (emacs/cerebro.el)   via emacs/cerebro-test.el
 #
-# WHY IT IS ONE FILE. Emacs and Ratatui answer the same question about the same checkout, seconds
-# apart, from two languages: "given what this project declares, whether I hold the lease, and how
-# many sessions I am hosting - what am I, and what do I do next?". If those two answers ever differ
-# the fleet has either two supervisors or none, and both failures are invisible until a session is
-# started twice or never. So the rule is a table rather than prose, and a row added here is a row
-# both sides must answer before the gate is green (cb-kcs.1).
+# The second implementation - the Emacs fleet view's own copy - was removed with that view
+# (cb-abs.1). The rows stay: they ARE the rule, and re-typing them into assertions would
+# lose the one thing a table is good at.
+#
+# WHY IT IS ONE FILE. The rule it encodes - "given what this project declares, whether I hold the
+# lease, and how many sessions I am hosting: what am I, and what do I do next?" - is a table rather
+# than prose because a wrong answer is invisible until a session is started twice or never
+# (cb-kcs.1). Its columns collapse in cb-abs.2, where the declaration itself goes.
 #
 # THE COLUMNS, tab- or space-separated, in order:
 #

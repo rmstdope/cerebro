@@ -80,6 +80,9 @@ in, and `cb-` from this repository's own board, since cb-i3l.1 made it a consume
 
 ## `emacs/README.md`
 
+*The file was removed with the Emacs fleet view (cb-abs.1). The beads below are still the record of
+what was decided while it existed.*
+
 | Rule it established | Bead |
 |---|---|
 | The interactive agents appear in the fleet view like an implementer | ah-2n3.2 |

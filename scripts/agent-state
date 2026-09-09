@@ -2,7 +2,7 @@
 #
 # Writes an agent's state file: .cerebro/state/<name>.state.json. Written by every agent on
 # `scripts/roster` — implementers and interactive roles alike (the interactive ones since
-# ah-2n3.2) - so cerebro.el derives a row the same way for all of them; it exists so the two
+# ah-2n3.2) - so the fleet view derives a row the same way for all of them; it exists so the two
 # timestamps below are handled by code rather than remembered by an agent an hour into a bead.
 #
 #     .claude/cerebro/scripts/agent-state <name> <state> [--bead <id>] [--phase <phase>] --pid <pid>
@@ -18,7 +18,7 @@
 #             any other unknown word.
 #
 # `waiting` takes no wake and the state file records none (cb-3tk). Cadence belongs to the fleet
-# view alone - `cerebro-wake-interval' / `cerebro-wake-intervals' in emacs/cerebro.el, measured
+# view alone - `WAKE_INTERVAL' in fleet-view/src/triggers.rs, measured
 # from an agent's last start - and has never read this file. Ending a pass is
 # `scripts/end-pass <name> --pid <pid>', which calls this script.
 # <phase>, only meaningful with `working` or `asking`, is any lower-case word: letters, digits and
@@ -26,10 +26,19 @@
 # invents a word for it and this script must record it, which is what the old eighteen-way case
 # prevented (ah-qled.5.2).
 #
-# The words THIS fleet uses are listed once, in `cerebro--phases' (emacs/cerebro.el), together with
-# which role each belongs to. That list is a reference rather than a gate: the vocabulary is not
-# checked per role - any word is accepted from any name - so a wrong word in the State column is
-# still not worth a per-role table in bash.
+# The words THIS fleet uses are listed once, here, together with which role each belongs to. That
+# list is a reference rather than a gate: the vocabulary is not checked per role - any word is
+# accepted from any name - so a wrong word in the State column is still not worth a per-role table
+# in bash. It moved here from `cerebro--phases' when the Emacs fleet view was removed (cb-abs.1),
+# because this script's own refusal message is the only place a reader is ever sent to look for it.
+#
+#   implementer     build gate review ci rebase merge
+#   planner         plan
+#   verifier        prepare verify
+#   user-feedback   sweep
+#   orchestrator    sweep release triage bead
+#   architect       daily weekly
+#   reviewer        read check walk report
 # --pid is required and is never defaulted from this script's own parentage: pass the caller's
 # $PPID (the claude process), not $$ (this script's own shell) - a guessed pid shows an agent
 # as dead and starts a second session over it.
@@ -45,8 +54,8 @@
 # survives a state change and a working session reads as one whose turn ended.
 #
 # Writes atomically through `scripts/state-write.sh' - one whole object built elsewhere and renamed
-# over the target - so cerebro.el never reads a torn file. That library, not this script, is where
-# the scratch-name rule for a file two processes write now lives.
+# over the target - so the fleet view never reads a torn file. That library, not this script, is
+# where the scratch-name rule for a file two processes write now lives.
 
 set -euo pipefail
 
@@ -106,11 +115,11 @@ case "$state" in
 esac
 
 if [[ $phase_given -eq 1 ]]; then
-  # A shape, not a closed list (ah-qled.5.2): the words this fleet uses live in `cerebro--phases'
-  # (emacs/cerebro.el), and a consumer's own role is free to invent one. What is still refused is a
+  # A shape, not a closed list (ah-qled.5.2): the words this fleet uses are listed in this script's
+  # own header, and a consumer's own role is free to invent one. What is still refused is a
   # malformed word, which is a typo rather than a vocabulary anyone chose.
   if [[ ! "$phase" =~ ^[a-z][a-z0-9-]*$ || "$phase" == *- ]]; then
-    echo "agent-state: phase '$phase' is not a phase word (lower-case letters, digits and hyphens; see cerebro--phases in emacs/cerebro.el for the ones this fleet uses)" >&2
+    echo "agent-state: phase '$phase' is not a phase word (lower-case letters, digits and hyphens; see the phase vocabulary in this script's header for the ones this fleet uses)" >&2
     exit 2
   fi
   # A phase is only meaningful with a bead in flight - writing one into an idle or waiting file would

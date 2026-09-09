@@ -10,7 +10,7 @@
 # CHILD OF CARGO, and cargo hands its child eighteen variables: CARGO, the CARGO_PKG_* family,
 # CARGO_MANIFEST_DIR and friends - and every key of the `[env]' table in whatever .cargo/config.toml
 # cargo discovered from its cwd, which is the CONSUMER's. The view then spawns sessions with its own
-# environment (fleet-view/src/session.rs, and `cerebro--launch-command' in Emacs), so every agent
+# environment (fleet-view/src/session.rs), so every agent
 # inherits the lot. In atlantis-hud that meant TS_RS_EXPORT_DIR pointing at the navigator's shared
 # checkout - the consumer's `[env]' entry carries no `force = true', and an inherited value beats a
 # non-forced config entry in every worktree - so every agent's `cargo test' wrote its generated

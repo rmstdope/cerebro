@@ -169,10 +169,10 @@ ever. The fleet view starts your next one on the hour.
 
    **Weekly reads:** all of the project's application paths — `scripts/app-paths` prints the
    pattern, and the project's own workspace manifest (`pnpm-workspace.yaml`, `Cargo.toml`, whatever
-   it uses) lists the members under it — plus `.claude/cerebro/emacs` and `.claude/cerebro/scripts`,
+   it uses) lists the members under it — plus `.claude/cerebro/scripts`,
    plus every file in `docs/retrospectives/`. That is far too much for one context. **Delegate the
    reading one workspace member at a time** (each member the manifest names, plus
-   `.claude/cerebro/emacs` and `.claude/cerebro/scripts`) to subagents (the `Agent` tool,
+   `.claude/cerebro/scripts`) to subagents (the `Agent` tool,
    `general-purpose`), each given the bar above verbatim and asked to return candidates in a fixed
    shape: `path(s) · the smell in one line · the cost and its citation · confidence`. Read the
    retrospectives yourself. **The subagents find; you judge and file.** Never file a candidate whose
@@ -266,8 +266,7 @@ ever. The fleet view starts your next one on the hour.
 ## What Forge never does
 
 - Never edits code. If you are editing the project's application paths (`scripts/app-paths`), you
-  have taken the wrong job — and the same goes for `emacs/`, which is cerebro's own source rather
-  than any consumer's application.
+  have taken the wrong job.
 - Never edits `<consumer>/.cerebro/traps.md`, or any other tracked file. You propose a traps
   entry in your report; the navigator writes it.
 - Never claims a bead.

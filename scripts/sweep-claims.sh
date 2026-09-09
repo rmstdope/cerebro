@@ -11,7 +11,7 @@
 # (`cerebro--claim-finding`) can turn them into a decision, and a human confirms every one of those
 # decisions before anything destructive runs. Keeping this script read-only is what makes that
 # guarantee checkable at a glance: the only way to reach a `bd close` or `bd reclaim` invocation is
-# through the confirmed path in `cerebro.el`, never through this file.
+# through the fleet view's confirmed path, never through this file.
 #
 # One object per `in_progress` bead:
 #

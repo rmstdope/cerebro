@@ -12,7 +12,7 @@ timer, and reports counts. That is `touch`, `pgrep` and a handful of `bd` querie
 clothes — and it costs a terminal, a model and the navigator's attention to drive.
 
 This is the recommendation `ah-4ao` was scoped to produce: which of those jobs are now commands on
-the selected agent in the Emacs fleet view (`emacs/cerebro.el`), which still belong to a session
+the selected agent in the fleet view, which still belong to a session
 started on demand, and which are retired outright because the sessionless design makes them
 unnecessary rather than merely automatable. It sorts every job Cerebro's own instructions
 (`agents/orchestrator.md`) describe into exactly one of the three, and it is the bead's whole
@@ -26,7 +26,7 @@ acceptance artifact — read it before changing what runs where.
 | Tell an implementer to finish | `f` | ah-4ao |
 | Kill an agent | `k` | ah-vcf.3 (PR #229) |
 | Claimed / planned / unplanned / merged counts | (the beads panel) | PR #6 |
-| Worktree pruning | (automatic, on `M-x cerebro`) | ah-4ao |
+| Worktree pruning | (automatic, with the fleet view) | ah-4ao |
 | Claims sweep — detection and confirmed close/reclaim | `x` on a finding | ah-4ao |
 | Epics sweep — detection and confirmed close | `x` on a finding | ah-4ao |
 
@@ -70,7 +70,7 @@ before, for exactly these four things.
 ## Retired with the sessionless design
 
 - **The keepalive loop** (`orchestrator.md`, "Staying alive between questions") — a forked
-  subagent blocking on `sleep 300` so sweeps happen without the navigator asking. A timer in Emacs
+  subagent blocking on `sleep 300` so sweeps happen without the navigator asking. A timer in the view
   needs no subagent holding a sleep to get the same cadence; the fleet view's own 30-second bead
   timer and 10-minute sweep timer already are that loop, and they cost nothing to keep running
   because nothing is blocked waiting on them.

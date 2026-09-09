@@ -96,7 +96,7 @@ pub use readers::{
     Commands, Invocation, Programs, ReadError, ReaderPaths, RealCommands,
 };
 pub use supervisor::{
-    reconcile_supervision, AcquireError, ReadOnlyReason, ReconcileAction, SupervisionMode,
+    reconcile_supervision, AcquireError, ReadOnlyReason, SupervisionMode,
     SupervisorLease,
 };
 pub use session::{

@@ -441,11 +441,10 @@ fn supervise(
     now: DateTime<Utc>,
     at: Instant,
 ) {
-    // The whole of the drain behaviour: a draining view finishes the sessions it hosts and
-    // starts nothing, so every armed name is a promise it will not keep. Clearing the set turns
-    // each row grey on the next fleet read, and a view that later re-acquires the lease comes back
-    // with an empty armed set - the roster's declaration is read once at startup - so the
-    // navigator presses `s` for the first session of each name, exactly as `M-x cerebro` behaves.
+    // Somebody else has the checkout, so every armed name is a promise this view will not keep.
+    // Clearing the set turns each row grey on the next fleet read, and a view that later acquires
+    // the lease comes back with an empty armed set - the roster's declaration is read once at
+    // startup - so the navigator presses `s` for the first session of each name.
     //
     // It asks `hands_over` and NOT `may_supervise` (cb-nc8): the modes that mean "I could not find
     // out whose checkout this is" are recoverable on the next five-second poll, and emptying the
@@ -470,6 +469,15 @@ fn supervise(
         );
         app.set_notice(lifecycle::disarm_all_notice(names.len()));
     }
+    // THE gate for everything below, and the only one: no row is looked at, no line is typed and
+    // no decision is recorded unless this view holds the checkout. It sits after the disarm above
+    // because `hands_over` is a different question (cb-nc8) - "somebody else has this checkout"
+    // rather than "may I act now" - and only the first may empty the armed set.
+    //
+    // The stuck, resume and nudge branches below therefore ask it again NOWHERE: while a drain
+    // existed they had to, because a draining view reached them with `may_supervise()` false, and
+    // with the drain gone (cb-abs.2) a second guard would be a dead condition that reads as a live
+    // one - the shape that grows a second, wrong gate the day somebody adds a mode.
     if !app.supervision.may_supervise() {
         return;
     }
@@ -521,7 +529,7 @@ fn supervise(
                 app.stuck_logged.remove(&name);
             }
             Some(stood_stuck) => {
-                if app.supervision.may_supervise() && app.stuck_logged.insert(name.clone()) {
+                if app.stuck_logged.insert(name.clone()) {
                     logger.write(
                         log::Event::Stuck,
                         now,
@@ -572,13 +580,11 @@ fn supervise(
         };
         let Some(action) = lifecycle::supervise_action(agent) else { continue };
         // A resume the view will not carry out is not a decision, and must not be recorded as
-        // one: `decisions.jsonl` keeps months because it holds what was DONE (cb-xhu.2), and a
-        // draining view or a row already told within this stretch would otherwise write a line
-        // every five seconds while nothing at all was typed. Decided before the record for that
-        // reason, where every other suppression sits after it.
-        if action == lifecycle::Supervision::Resume
-            && (!app.supervision.may_supervise() || app.resumed_this_stretch.contains(&name))
-        {
+        // one: `decisions.jsonl` keeps months because it holds what was DONE (cb-xhu.2), and a row
+        // already told within this stretch would otherwise write a line every five seconds while
+        // nothing at all was typed. Decided before the record for that reason, where every other
+        // suppression sits after it.
+        if action == lifecycle::Supervision::Resume && app.resumed_this_stretch.contains(&name) {
             continue;
         }
         // The record of the decision, before it is carried out and whatever it is: the five
@@ -639,15 +645,15 @@ fn supervise(
                 app.set_notice(lifecycle::supervision_notice(action, &name, stuck.is_some()));
             }
             lifecycle::Supervision::Nudge => {
-                if !app.supervision.may_supervise() || app.nudged.contains(&name) {
+                if app.nudged.contains(&name) {
                     continue;
                 }
                 app.nudged.insert(name.clone());
                 host.type_line(&name, lifecycle::nudge_message(kind), at);
                 app.set_notice(lifecycle::supervision_notice(action, &name, false));
             }
-            // Gated on `may_supervise` - a resume is a NEW instruction - which is decided above,
-            // with the once-per-stretch guard, so that neither writes a line saying it happened.
+            // Gated by `supervise`'s own top-level return, together with the once-per-stretch
+            // guard decided above, so that neither writes a line saying it happened.
             //
             // TWO sets, answering two different questions. `resumed_this_stretch` is "have I
             // already told this name within this stretch", and it is what stops a second line;
@@ -690,7 +696,7 @@ fn prune(
         return;
     }
     match pruner::prune_action(pruner.live(), app.supervision.may_supervise()) {
-        // A drain is not a failure, and neither is quitting: nothing is said.
+        // A read-only view is not a failure, and neither is quitting: nothing is said.
         pruner::PruneAction::Stop => pruner.stop(),
         pruner::PruneAction::Leave => {}
         pruner::PruneAction::Start => {
@@ -810,16 +816,15 @@ fn triage_tell(
 /// tick has no session to type into until the next read restates its row.
 ///
 /// Gated on `may_supervise()`, like the triage line: typing a line is session lifecycle, and a
-/// view handing supervision over issues no new instruction.
+/// view that does not hold the checkout issues no instruction.
 ///
 /// It reads no board at all - no `WorkBuckets`, no `panel_age` - so unlike `triage_tell` it has
 /// no "no board, no line" guard.
 ///
-/// A mark FREEZES across a drain rather than advancing, because a view that may not supervise
-/// never reaches this function at all - so a view that regains supervision after a long
-/// read-only spell finds the mark already past and types at once. That is deliberate and both
-/// views do it: nobody swept during the handover, so a sweep is exactly what is owed.
-/// `cerebro--sweep-tell` is gated the same way, by `cerebro--supervision-may-act-p'.
+/// A mark FREEZES across a read-only spell rather than advancing, because a view that may not
+/// supervise never reaches this function at all - so a view that takes the lease after a long
+/// read-only spell finds the mark already past and types at once. That is deliberate: nobody swept
+/// while nobody held the checkout, so a sweep is exactly what is owed.
 fn sweep_tell(
     app: &mut App,
     host: &mut SessionHost,
@@ -5917,7 +5922,7 @@ mod main_tests {
 
         assert_eq!(app.notice, None);
         assert!(log_lines(dir.path(), "decisions").is_empty());
-        assert_eq!(swept.mark("Cerebro"), None, "a draining view holds no clock either");
+        assert_eq!(swept.mark("Cerebro"), None, "a read-only view holds no clock either");
 
         host.kill(&cerebro_tui::readers::ReaderPaths {
             consumer_root: dir.path().into(),

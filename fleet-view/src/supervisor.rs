@@ -92,15 +92,6 @@ pub enum ReconcileAction {
     Keep,
 }
 
-impl ReconcileAction {
-    pub fn word(self) -> &'static str {
-        match self {
-            ReconcileAction::Acquire => "acquire",
-            ReconcileAction::Keep => "keep",
-        }
-    }
-}
-
 /// The whole ownership rule, as a function of one value.
 ///
 /// `holds_lease` is whether this process holds the listener *now*. Holding it is supervision;

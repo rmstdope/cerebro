@@ -4851,6 +4851,12 @@ mod tests {
         // And the wide split layout, which is what a full-screen terminal draws.
         let split = body(&render(&app, 140, 24));
         assert!(line_with(&split, "Beast").contains("→ planned 10/10"), "{split:?}");
+
+        // Between `SPLIT_COLUMNS` and `WIDE_LEFT_COLUMN_SCREEN` the note is cut. Asserted rather
+        // than avoided: this is the deferred gap, and pinning it here is what makes a later
+        // change to the narrow budget show up as a failing test rather than as nothing at all.
+        let narrow = body(&render(&app, 120, 24));
+        assert!(!line_with(&narrow, "Beast").contains("→ planned 10/10"), "{narrow:?}");
     }
 
     #[test]

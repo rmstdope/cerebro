@@ -389,6 +389,24 @@ impl RowState {
 /// Emacs additionally excludes an `external` agent here. There is no counterpart and none is
 /// needed: this only touches `RowState::Dead`, which already means no live process anywhere under
 /// any name, so nothing external can reach it.
+pub fn apply_standby(
+    rows: Vec<FleetRow>,
+    armed: &BTreeSet<String>,
+    failed: &BTreeSet<String>,
+) -> Vec<FleetRow> {
+    rows.into_iter()
+        .map(|mut row| {
+            let standing_by = armed.contains(&row.name) && !failed.contains(&row.name);
+            match row.state {
+                RowState::Dead if standing_by => row.state = RowState::Standby,
+                RowState::Standby if !standing_by => row.state = RowState::Dead,
+                _ => {}
+            }
+            row
+        })
+        .collect()
+}
+
 /// Hold each closing row's last word instead of the `Up` the process scan alone produces.
 ///
 /// While the view is closing a session it has already deleted the state file
@@ -404,7 +422,15 @@ impl RowState {
 ///
 /// The previous row is substituted WHOLE rather than merged field by field: the bead, phase,
 /// `since` and `pid` come with it, so the cell reads `waiting  cb-m0c` and not a third picture
-/// nobody agreed. Called BEFORE `apply_standby` (cb-m0c): a held row is `Waiting`, which that
+/// nobody agreed.
+///
+/// **The hold is only as bounded as the reap is.** `SessionHost::ending` is cleared when the
+/// child is reaped or when that name starts again, and nothing else ages it out - so a child that
+/// ignores its signal keeps its name in `ending_names` and keeps this function re-serving its
+/// last word. That is the deliberate direction to fail in: the alternative is the row this bead
+/// exists to remove, a green `up` holding nothing, and the state file is already gone either way
+/// so there is no fresher word to draw. Anything that escalates a child that will not die belongs
+/// in the host, beside the reap. Called BEFORE `apply_standby` (cb-m0c): a held row is `Waiting`, which that
 /// function leaves alone, where the reverse order would restate a row before deciding whether to
 /// keep it at all.
 pub fn hold_closing_rows(
@@ -421,24 +447,6 @@ pub fn hold_closing_rows(
                 Some(held) if held.state != RowState::Up => held.clone(),
                 _ => row,
             }
-        })
-        .collect()
-}
-
-pub fn apply_standby(
-    rows: Vec<FleetRow>,
-    armed: &BTreeSet<String>,
-    failed: &BTreeSet<String>,
-) -> Vec<FleetRow> {
-    rows.into_iter()
-        .map(|mut row| {
-            let standing_by = armed.contains(&row.name) && !failed.contains(&row.name);
-            match row.state {
-                RowState::Dead if standing_by => row.state = RowState::Standby,
-                RowState::Standby if !standing_by => row.state = RowState::Dead,
-                _ => {}
-            }
-            row
         })
         .collect()
 }

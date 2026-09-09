@@ -135,9 +135,6 @@ struct SupervisorController {
     endpoint: Option<SocketAddr>,
     identity: Option<String>,
     record: Option<PathBuf>,
-    /// This child hosts no agent sessions - `cb-kcs.2` is what gives it PTYs to count. The drain
-    /// rule is written and tested now so that bead adds a number here rather than a rule.
-    hosted_sessions: usize,
     last_request: Option<Instant>,
     /// The last ownership diagnostic worth a navigator's attention, printed to stderr when the
     /// screen exits.
@@ -158,7 +155,6 @@ impl SupervisorController {
             endpoint: readers::read_supervisor_endpoint(paths, commands).ok(),
             identity: readers::read_supervisor_identity(paths, commands).ok(),
             record: readers::read_supervisor_record(paths, commands).ok(),
-            hosted_sessions: 0,
             last_request: None,
             diagnostic: None,
         }
@@ -224,7 +220,6 @@ impl SupervisorController {
             SupervisorKind::Tui,
             configured,
             self.lease.is_some(),
-            self.hosted_sessions,
         );
         let mode = match action {
             ReconcileAction::Keep => mode,
@@ -242,7 +237,7 @@ impl SupervisorController {
 
     /// Is this mode one in which the exit diagnostic is still worth printing?
     ///
-    /// Everything else is healthy - supervising, draining, an honest owner, a declaration that
+    /// Everything else is healthy - supervising, an honest owner, a declaration that
     /// names the other view - and a fault that resolved must not be the parting line of an
     /// hour-long session. Emacs re-arms on exactly the same rule
     /// (`cerebro--report-supervision-error`), and the two sides are meant to say the same thing.
@@ -342,7 +337,7 @@ fn start(paths: ReaderPaths) -> Result<(), Fatal> {
     // reason a TUI that owns the checkout never shows an "Emacs owns supervision" frame first.
     let mut controller = SupervisorController::new(&paths, commands.as_ref());
     let initial = controller.apply(readers::read_configured_supervisor(&paths, commands.as_ref()));
-    let enabled = initial.may_end();
+    let enabled = initial.may_supervise();
     let mut app = App::with_supervision(initial);
     // Created here and enabled from the mode this frame is drawn with: a logger that defaulted to
     // enabled would have one window - construction to that call - in which a read-only view
@@ -450,10 +445,7 @@ struct SupervisedRow {
 /// five seconds ago (`cerebro--tick`'s own order, `emacs/cerebro.el:6343-6353`): a row ended on
 /// this tick must be restated by the next read, not acted on twice.
 ///
-/// Gated on `mode.may_end()`, which is `Supervising` or `Draining`: the sessions a draining view
-/// already hosts must be allowed to finish, since that is what ends the drain. The nudge alone
-/// additionally asks `may_supervise()` - a nudge is a NEW instruction, and a view handing
-/// supervision over issues none (`emacs/cerebro.el:4550`).
+/// Gated on `mode.may_supervise()`: a view that does not own the checkout ends nothing.
 ///
 /// One agent's failure never stops the others: each row's work is fallible and a failure sets the
 /// notice, exactly as an `f` that could not write its flag does.
@@ -496,7 +488,7 @@ fn supervise(
         );
         app.set_notice(lifecycle::disarm_all_notice(names.len()));
     }
-    if !app.supervision.may_end() {
+    if !app.supervision.may_supervise() {
         return;
     }
     let rows: Vec<SupervisedRow> = app
@@ -672,9 +664,8 @@ fn supervise(
                 host.type_line(&name, lifecycle::nudge_message(kind), at);
                 app.set_notice(lifecycle::supervision_notice(action, &name, false));
             }
-            // Gated on `may_supervise` and not merely `may_end` - a resume is a NEW instruction,
-            // and a view handing supervision over issues none - which is decided above, with the
-            // once-per-stretch guard, so that neither writes a line saying it happened.
+            // Gated on `may_supervise` - a resume is a NEW instruction - which is decided above,
+            // with the once-per-stretch guard, so that neither writes a line saying it happened.
             //
             // TWO sets, answering two different questions. `resumed_this_stretch` is "have I
             // already told this name within this stretch", and it is what stops a second line;
@@ -912,8 +903,7 @@ fn sweep_tell(
 /// After `supervise` and not before (`cerebro--tick`'s own order): a session ended on this tick
 /// must not also be started on it, and a row restated by the next read is what makes that true.
 ///
-/// Gated on `mode.may_supervise()`, which is `Supervising` alone - NOT `may_end`. A draining view
-/// finishes what it hosts and starts nothing.
+/// Gated on `mode.may_supervise()`, which is `Supervising` alone.
 ///
 /// One agent's failure never stops the others: each row's work is fallible, and a failure is
 /// reported exactly as an `s` that could not launch is.
@@ -1648,7 +1638,7 @@ where
             let mode = state.controller.apply(answer);
             // Before anything else this tick writes: a view that has just gone read-only must
             // have written nothing further, and one that has just taken the checkout may.
-            state.logger.set_enabled(mode.may_end());
+            state.logger.set_enabled(mode.may_supervise());
             match state.controller.diagnostic() {
                 // Already one-per-fault by construction (`clear_diagnostic`); `Logger::error`'s
                 // own dedupe is what keeps a persisting one to a single line.
@@ -1665,7 +1655,6 @@ where
         // The watcher, on its own five-second clock and outside the fleet poll: it is nothing to
         // do with what any agent wrote in a state file (cb-kcs.5.2).
         prune(app, &mut state.pruner, &mut state.logger, &config.paths, clock(), Instant::now());
-        state.controller.hosted_sessions = state.host.live_count();
         if state.controller.due(Instant::now()) && workers.supervisor.request() {
             state.controller.requested(Instant::now());
         }
@@ -2824,25 +2813,6 @@ mod main_tests {
         assert!(app.quit);
     }
 
-    #[test]
-    fn a_hosted_session_is_counted_for_supervision() {
-        let mut host = SessionHost::default();
-        let mut app = hosting(&mut host);
-        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
-        // Same as above: a hosted session refuses the quit, so the source ends the loop.
-        let mut events =
-            ReplayedEvents::stopping(vec![key(KeyCode::BackTab), key(KeyCode::Char('q'))]);
-        let worker_handle = SupervisorWorker::spawn(nowhere().0, Arc::new(RealCommands));
-        let controller = SupervisorController::new(&nowhere().0, &RealCommands);
-        let workers = Workers { supervisor: worker_handle, ..test_workers() };
-        let mut state = LoopState { controller, host, ..test_state() };
-        let config = test_config();
-        let _ = run(&mut terminal, &mut events, &mut app, &workers, &mut state, &config, Utc::now);
-        assert_eq!(
-            state.controller.hosted_sessions, 1,
-            "the drain branch of `reconcile_supervision` is reachable for the first time"
-        );
-    }
 
     /// A logger pointed at a root that does not exist, and never enabled.
     ///
@@ -3781,37 +3751,6 @@ mod main_tests {
         assert_eq!(app.notice, None);
     }
 
-    #[test]
-    fn a_draining_view_still_ends_but_does_not_nudge() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let mut host = SessionHost::default();
-        hosted(&mut host, &paths, "Cyclops");
-        hosted(&mut host, &paths, "Storm");
-
-        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
-            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
-            live_sessions: 2,
-        };
-        let mut app = lifecycle_app(
-            draining,
-            vec![
-                stood_row("Storm", cerebro_tui::model::AgentKind::Implementer,
-                    cerebro_tui::model::RowState::Asking, 5_000, now),
-                stood_row("Cyclops", cerebro_tui::model::AgentKind::Implementer,
-                    cerebro_tui::model::RowState::Waiting, 31, now),
-            ],
-        );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
-
-        // Ending is what ends the drain, so it still happens.
-        assert!(!host.supervisable("Cyclops"));
-        // A nudge is a NEW instruction, and a view handing supervision over issues none.
-        assert!(app.nudged.is_empty(), "a draining view nudges nobody");
-        assert!(host.supervisable("Storm"));
-        settle_gone(&mut host, "Cyclops");
-    }
 
     #[test]
     fn a_question_nobody_answered_is_nudged_once() {
@@ -4175,45 +4114,6 @@ mod main_tests {
         }
     }
 
-    /// A resume is a NEW instruction, and a view handing supervision over issues none - but a
-    /// draining view must still finish the sessions it hosts.
-    #[test]
-    fn a_draining_view_resumes_nothing() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let since = now - chrono::Duration::seconds(9_000);
-        let mut host = SessionHost::default();
-        hosted(&mut host, &paths, "Psylocke");
-        let at = Instant::now();
-
-        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
-            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
-            live_sessions: 1,
-        };
-        let log_root = dir.path().join("logs");
-        std::fs::create_dir_all(&log_root).unwrap();
-        let mut logger = logging(&log_root);
-        let mut app = lifecycle_app(
-            draining,
-            vec![stuck_row_at("Psylocke", AgentKind::Interactive, Some(1_800), since, since, now)],
-        );
-        tick(&mut app, &mut host, &paths, &mut logger, now, at);
-        assert!(app.resumed.is_empty(), "a draining view types nothing");
-        assert!(host.supervisable("Psylocke"));
-        // And records nothing either: a decision the view will not carry out is not a decision,
-        // and `decisions.jsonl` keeps months because it holds what was done.
-        assert!(
-            !log_lines(&log_root, "decisions").iter().any(|line| line.contains("\"resume\"")),
-            "a suppressed resume writes no line"
-        );
-
-        // A row already stale when the drain began is still ended: ending is what ends the drain.
-        app.resumed.insert("Psylocke".to_string(), (Some(since), Some(since)));
-        tick(&mut app, &mut host, &paths, &mut test_logger(), now, at);
-        assert!(!host.supervisable("Psylocke"));
-        settle_gone(&mut host, "Psylocke");
-    }
 
     /// One `resume` line per occurrence, carrying the five fields every supervision decision does.
     #[test]
@@ -4468,28 +4368,6 @@ mod main_tests {
         }
     }
 
-    #[test]
-    fn a_draining_view_refuses_s_and_allows_k() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let draining = SupervisionMode::Draining { configured_for: None, live_sessions: 1 };
-
-        let mut app = lifecycle_app(
-            draining.clone(),
-            vec![fleet_row("Cyclops", AgentKind::Implementer, RowState::Working)],
-        );
-        let mut host = SessionHost::default();
-        host.insert("Cyclops", forever());
-        drive(&mut app, &mut host, &paths, vec![ch('s')]);
-        assert_eq!(
-            app.notice.as_deref(),
-            Some("Handoff pending: 1 session still hosted; only f and k act now")
-        );
-
-        drive(&mut app, &mut host, &paths, vec![ch('k'), ch('y')]);
-        settle_gone(&mut host, "Cyclops");
-        assert!(!host.is_live("Cyclops"), "ending a hosted session is what ends a drain");
-    }
 
     #[test]
     fn k_refuses_an_agent_this_view_did_not_start() {
@@ -5208,35 +5086,10 @@ mod main_tests {
         assert!(!host.is_live("Xavier"), "no board, no starts");
     }
 
-    #[test]
-    fn a_draining_view_starts_nothing_and_clears_the_armed_set() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let mut host = SessionHost::default();
-        let mut ledger = cerebro_tui::triggers::StartLedger::default();
-        let roster = planner_roster(&["Xavier"]);
-        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
-            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
-            live_sessions: 1,
-        };
-        let mut app = standby_app(
-            draining,
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
-            Some(short_buffer()),
-            now,
-        );
-
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut test_logger(), &paths, now, Instant::now());
-        assert!(app.armed.is_empty(), "a drain keeps no promise it will not keep");
-
-        start_due(&mut app, &mut host, &mut ledger, &mut test_logger(), &paths, &std::collections::BTreeMap::new(), 1, &roster, now);
-        assert!(!host.is_live("Xavier"));
-    }
 
     /// A view that could not READ the declaration keeps every promise it made (cb-nc8).
     ///
-    /// One transient `project-conf` failure used to reach `Draining` for a single tick and empty
+    /// One transient `project-conf` failure used to hand over for a single tick and empty
     /// the armed set for good, so every name became permanently ineligible and only `s` brought
     /// one back. The elisp counterpart is
     /// `cerebro-test/an-unreadable-declaration-leaves-the-armed-set-alone'.
@@ -5265,70 +5118,6 @@ mod main_tests {
         assert!(app.notice.is_none(), "nothing happened, so nothing is said");
     }
 
-    /// A drain records the disarm in `decisions.jsonl`; a read-only handover does not (cb-nc8).
-    ///
-    /// "A read-only view writes neither file, since it decides nothing" is the approved policy,
-    /// enforced by `logger.set_enabled(mode.may_end())` on the same tick - which is why the
-    /// navigator's answer to Q3 put the visibility on the header notice. `cerebro.el` gates its
-    /// own `disarm-all' line the same way.
-    #[test]
-    fn a_draining_handover_records_the_disarm_and_a_read_only_one_does_not() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let mut host = SessionHost::default();
-
-        let log_root = tempfile::tempdir().unwrap();
-        let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
-        let mut logger = Logger::new(log_root.path());
-
-        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
-            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
-            live_sessions: 1,
-        };
-        let handing_over = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-            cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                cerebro_tui::supervisor::SupervisorKind::Emacs,
-            ),
-        );
-        // Both hand over; only one may still act, and the tick sets the logger from exactly this.
-        assert!(draining.hands_over() && handing_over.hands_over());
-        assert!(draining.may_end() && !handing_over.may_end());
-
-        logger.set_enabled(draining.may_end());
-        let mut app = standby_app(
-            cerebro_tui::supervisor::SupervisionMode::Draining {
-                configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
-                live_sessions: 1,
-            },
-            vec![planner_row("Xavier", cerebro_tui::model::RowState::Dead)],
-            None,
-            now,
-        );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut logger, &paths, now, Instant::now());
-        let written = std::fs::read_to_string(&decisions).unwrap_or_default();
-        assert!(written.contains("\"event\":\"disarm-all\""), "a drain decides, so it records: {written}");
-        assert!(written.contains("Xavier"), "the names are in the line: {written}");
-
-        // The read-only half: the same handover with the logger disabled, exactly as the tick
-        // disables it, writes nothing at all - and still disarms and still says so.
-        std::fs::write(&decisions, "").unwrap();
-        logger.set_enabled(handing_over.may_end());
-        let mut app = standby_app(
-            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
-                cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
-                    cerebro_tui::supervisor::SupervisorKind::Emacs,
-                ),
-            ),
-            vec![planner_row("Beast", cerebro_tui::model::RowState::Dead)],
-            None,
-            now,
-        );
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(), &mut logger, &paths, now, Instant::now());
-        assert!(app.armed.is_empty());
-        assert!(app.notice.is_some(), "the notice is what covers a read-only handover");
-        assert_eq!(std::fs::read_to_string(&decisions).unwrap_or_default(), "");
-    }
 
     /// The navigator's typo is not somebody else taking the checkout either (cb-nc8, Q2).
     #[test]
@@ -6318,10 +6107,11 @@ mod main_tests {
             cerebro_tui::supervisor::SupervisionMode::ReadOnly(
                 cerebro_tui::supervisor::ReadOnlyReason::NotOwned,
             ),
-            cerebro_tui::supervisor::SupervisionMode::Draining {
-                configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
-                live_sessions: 1,
-            },
+            cerebro_tui::supervisor::SupervisionMode::ReadOnly(
+                cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
+                    cerebro_tui::supervisor::SupervisorKind::Emacs,
+                ),
+            ),
         ] {
             let dir = tempfile::tempdir().unwrap();
             let paths = scratch(dir.path(), "sleep 5");
@@ -6333,7 +6123,7 @@ mod main_tests {
             prune(&mut app, &mut pruner, &mut logger, &paths, Utc::now(), Instant::now());
 
             assert!(!pruner.live(), "no watcher for {mode:?}");
-            assert_eq!(app.notice, None, "and a drain is not a failure");
+            assert_eq!(app.notice, None, "and a handover is not a failure");
             assert!(log_lines(dir.path(), "errors").is_empty(), "{mode:?}");
         }
     }
@@ -6383,14 +6173,14 @@ mod main_tests {
     fn a_read_only_view_writes_no_log() {
         let dir = tempfile::tempdir().unwrap();
         let paths = scratch(dir.path(), "sleep 5");
-        // The production wiring: `Logger::new` starts disabled, and only `may_end()` enables it.
+        // The production wiring: `Logger::new` starts disabled; `may_supervise()` enables it.
         let mut logger = Logger::new(dir.path());
         let read_only = cerebro_tui::supervisor::SupervisionMode::ReadOnly(
             cerebro_tui::supervisor::ReadOnlyReason::ConfiguredFor(
                 cerebro_tui::supervisor::SupervisorKind::Emacs,
             ),
         );
-        logger.set_enabled(read_only.may_end());
+        logger.set_enabled(read_only.may_supervise());
         let now = Utc::now();
         let mut host = SessionHost::default();
         let mut ledger = cerebro_tui::triggers::StartLedger::default();
@@ -7674,7 +7464,7 @@ mod main_tests {
 
     /// The cutover and the rollback, driven by the file alone.
     ///
-    /// Read-only -> supervising -> draining -> released -> supervising again, with a real
+    /// Read-only -> supervising -> released -> supervising again, with a real
     /// declaration, a real bound listener and a real record. This is the mechanism
     /// `docs/cerebro-supervision.md` describes; nothing else in the crate proves it end to end.
     #[test]
@@ -7702,28 +7492,16 @@ mod main_tests {
             "the record names this view as the owner, not {written}"
         );
 
-        // 3. It moves away again WHILE sessions are hosted: a drain keeps the lease.
-        controller.hosted_sessions = 2;
+        // 3. It moves away again: released at once, and `SupervisorLease`'s Drop takes the
+        //    record with it - a record whose identity is its own.
         write_declaration(dir.path(), "emacs");
-        assert_eq!(
-            controller.apply(readers::read_configured_supervisor(&paths, &RealCommands)),
-            SupervisionMode::Draining {
-                configured_for: Some(SupervisorKind::Emacs),
-                live_sessions: 2,
-            }
-        );
-        assert!(record.exists(), "a drain keeps the lease, and so keeps its record");
-
-        // 4. The last session ends: released, and `SupervisorLease`'s Drop takes the record with
-        //    it - a record whose identity is its own.
-        controller.hosted_sessions = 0;
         assert_eq!(
             controller.apply(readers::read_configured_supervisor(&paths, &RealCommands)),
             SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs))
         );
         assert!(!record.exists(), "releasing the lease removes the record it wrote");
 
-        // 5. A SECOND, independent controller takes it - the endpoint was genuinely released
+        // 4. A SECOND, independent controller takes it - the endpoint was genuinely released
         //    rather than merely reported released.
         write_declaration(dir.path(), "tui");
         let mut successor = SupervisorController::new(&paths, &RealCommands);
@@ -8010,36 +7788,6 @@ mod main_tests {
         assert_eq!(count, 2, "a set never cleared logs a recovered session only once: {written}");
     }
 
-    /// The guard the case below could not reach: `Draining` may END, so `supervise` runs the row
-    /// loop, and `may_supervise()` is false - which is the only shape that proves the `stuck`
-    /// line is gated at all. `ReadOnly` returns at the top of `supervise` and would pass with the
-    /// guard deleted (review finding 2).
-    #[test]
-    fn a_draining_view_logs_no_stuck_line() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = scratch(dir.path(), "sleep 5");
-        let now = Utc::now();
-        let mut host = SessionHost::default();
-
-        let log_root = tempfile::tempdir().unwrap();
-        let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
-        let mut logger = Logger::new(log_root.path());
-        logger.set_enabled(true);
-
-        let draining = cerebro_tui::supervisor::SupervisionMode::Draining {
-            configured_for: Some(cerebro_tui::supervisor::SupervisorKind::Emacs),
-            live_sessions: 1,
-        };
-        assert!(draining.may_end() && !draining.may_supervise());
-
-        let mut app = lifecycle_app(draining, vec![stuck_fleet_row("Storm", 8 * 3600, now)]);
-        supervise(&mut app, &mut host, &mut cerebro_tui::triggers::StartLedger::default(),
-                  &mut logger, &paths, now, Instant::now());
-
-        let written = std::fs::read_to_string(&decisions).unwrap_or_default();
-        assert!(!written.contains("\"event\":\"stuck\""), "a view handing over decides nothing: {written}");
-        assert!(app.stuck_logged.is_empty(), "and remembers nothing it did not write");
-    }
 
     #[test]
     fn a_read_only_view_logs_no_stuck_line() {

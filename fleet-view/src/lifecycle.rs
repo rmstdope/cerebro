@@ -731,7 +731,7 @@ pub fn start_outcome(situation: Situation<'_>) -> StartOutcome {
 /// What `f` decides, in this order.
 pub fn finish_outcome(situation: Situation<'_>) -> FinishOutcome {
     let Some(row) = situation.row else { return FinishOutcome::Ignore };
-    if !situation.mode.may_end() {
+    if !situation.mode.may_supervise() {
         return FinishOutcome::Refuse(refusal_for(situation.mode));
     }
     // Before every liveness test on purpose: clearing a flag somebody left set must work whether
@@ -753,7 +753,7 @@ pub fn finish_outcome(situation: Situation<'_>) -> FinishOutcome {
 /// What `k` decides, in this order.
 pub fn kill_outcome(situation: Situation<'_>) -> KillOutcome {
     let Some(row) = situation.row else { return KillOutcome::Ignore };
-    if !situation.mode.may_end() {
+    if !situation.mode.may_supervise() {
         return KillOutcome::Refuse(refusal_for(situation.mode));
     }
     // Ahead of the two rules that refuse a name that is not running: a standby row hosts no
@@ -818,10 +818,6 @@ const READ_ONLY_REFUSAL: &str = "This view is read-only; it starts and stops not
 /// read-only sentence rather than panicking, because a screen is not the place to abort.
 fn refusal_for(mode: &SupervisionMode) -> String {
     match mode {
-        SupervisionMode::Draining { live_sessions, .. } => format!(
-            "Handoff pending: {live_sessions} session{} still hosted; only f and k act now",
-            if *live_sessions == 1 { "" } else { "s" }
-        ),
         SupervisionMode::ReadOnly(_) | SupervisionMode::Supervising => {
             READ_ONLY_REFUSAL.to_string()
         }
@@ -1631,23 +1627,6 @@ mod tests {
             kill_outcome(situation(&read_only, Some(&dead), true, false)),
             KillOutcome::Refuse(sentence)
         );
-
-        let draining =
-            SupervisionMode::Draining { configured_for: None, live_sessions: 2 };
-        assert_eq!(
-            start_outcome(situation(&draining, Some(&dead), false, false)),
-            StartOutcome::Refuse(
-                "Handoff pending: 2 sessions still hosted; only f and k act now".to_string()
-            )
-        );
-        assert_eq!(
-            finish_outcome(situation(&draining, Some(&dead), true, false)),
-            FinishOutcome::Write
-        );
-        assert_eq!(
-            kill_outcome(situation(&draining, Some(&dead), true, false)),
-            KillOutcome::Confirm { prompt: "Kill Cyclops?  y / n".to_string(), disarm: false }
-        );
     }
 
     #[test]
@@ -1667,14 +1646,6 @@ mod tests {
             );
         }
 
-        assert_eq!(
-            refusal_for(&SupervisionMode::Draining { configured_for: None, live_sessions: 1 }),
-            "Handoff pending: 1 session still hosted; only f and k act now"
-        );
-        assert_eq!(
-            refusal_for(&SupervisionMode::Draining { configured_for: None, live_sessions: 3 }),
-            "Handoff pending: 3 sessions still hosted; only f and k act now"
-        );
         // Unreachable in practice, and a screen is not the place to abort.
         assert_eq!(
             refusal_for(&SupervisionMode::Supervising),

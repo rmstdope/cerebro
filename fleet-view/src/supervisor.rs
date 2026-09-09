@@ -4,9 +4,7 @@
 //! *act* on it. This module is that rule, in two halves that are deliberately kept apart:
 //!
 //! * [`reconcile_supervision`] is pure. It answers "what am I, and what do I do about the lease?"
-//!   from four values and nothing else, and it is held to `tests/lib/supervisor.cases` - the same
-//!   table `cerebro--supervision-decision` answers, because Emacs and Ratatui disagreeing here is
-//!   either two supervisors or none.
+//!   from three values and nothing else, and it is held to `tests/lib/supervisor.cases`.
 //! * [`SupervisorLease`] is the lease itself: a bound loopback [`TcpListener`] that accepts
 //!   nothing. **The bind is the lock.** No pid file, no timestamp, no heartbeat, no lease duration
 //!   and no stale-entry sweep takes part in acquisition, and that is the whole point - the kernel
@@ -87,12 +85,6 @@ pub enum ReadOnlyReason {
 pub enum SupervisionMode {
     ReadOnly(ReadOnlyReason),
     Supervising,
-    /// Holding a lease the declaration has taken away, with sessions still hosted. New starts and
-    /// nudges stop; the sessions stay usable; the lease goes when the last one ends.
-    Draining {
-        configured_for: Option<SupervisorKind>,
-        live_sessions: usize,
-    },
 }
 
 impl SupervisionMode {
@@ -101,7 +93,6 @@ impl SupervisionMode {
         match self {
             SupervisionMode::ReadOnly(_) => "read-only",
             SupervisionMode::Supervising => "supervising",
-            SupervisionMode::Draining { .. } => "draining",
         }
     }
 
@@ -109,20 +100,6 @@ impl SupervisionMode {
     /// caller in either implementation asks through this rather than matching the enum itself.
     pub fn may_supervise(&self) -> bool {
         matches!(self, SupervisionMode::Supervising)
-    }
-
-    /// May this process END something it is already hosting? `Supervising`, and also `Draining` -
-    /// a view that has been told to hand over still has to be able to finish and kill the sessions
-    /// it holds, because ending them is what ends the drain (`emacs/cerebro.el:4635-4641`, the same
-    /// rule).
-    ///
-    /// Starting asks [`SupervisionMode::may_supervise`]; ending asks this. No caller matches the
-    /// enum itself.
-    pub fn may_end(&self) -> bool {
-        matches!(
-            self,
-            SupervisionMode::Supervising | SupervisionMode::Draining { .. }
-        )
     }
 
     /// Does this mode mean somebody ELSE has, or is taking, this checkout?
@@ -135,7 +112,6 @@ impl SupervisionMode {
     /// [`may_supervise`]: SupervisionMode::may_supervise
     pub fn hands_over(&self) -> bool {
         match self {
-            SupervisionMode::Draining { .. } => true,
             SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(_)) => true,
             SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(_)) => true,
             SupervisionMode::ReadOnly(_) | SupervisionMode::Supervising => false,
@@ -179,16 +155,13 @@ impl ReconcileAction {
 ///
 /// `configured` is `Ok(kind)` for a declaration this build understands and `Err(raw)` for one it
 /// does not - the raw word, so the header can name it. `holds_lease` is whether this process holds
-/// the listener *now*; `hosted_sessions` is how many agent sessions it is hosting (always 0 until
-/// cb-kcs.2 adds PTYs, and written for them now so the drain is not retrofitted later).
+/// the listener *now*.
 ///
-/// Every row of `tests/lib/supervisor.cases` runs through this, and through
-/// `cerebro--supervision-decision` in Emacs. The two must agree row for row.
+/// Every row of `tests/lib/supervisor.cases` runs through this.
 pub fn reconcile_supervision(
     local: SupervisorKind,
     configured: Result<SupervisorKind, String>,
     holds_lease: bool,
-    hosted_sessions: usize,
 ) -> (SupervisionMode, ReconcileAction) {
     // Configured for us: supervise if we hold it, otherwise try to take it. A retry after a failed
     // attempt is the same decision as the first attempt, which is what makes `g` a retry key
@@ -205,27 +178,17 @@ pub fn reconcile_supervision(
     }
 
     // Configured for somebody else, or not configured at all. An invalid declaration lands here
-    // deliberately: fail-closed, so a typo neither grants supervision nor drops live sessions.
+    // deliberately: fail-closed, so a typo is never a licence to supervise.
     let reason = match &configured {
         Ok(other) => ReadOnlyReason::ConfiguredFor(*other),
         Err(raw) => ReadOnlyReason::InvalidDeclaration(raw.clone()),
     };
 
-    if !holds_lease {
-        return (SupervisionMode::ReadOnly(reason), ReconcileAction::Keep);
+    if holds_lease {
+        (SupervisionMode::ReadOnly(reason), ReconcileAction::Release)
+    } else {
+        (SupervisionMode::ReadOnly(reason), ReconcileAction::Keep)
     }
-
-    if hosted_sessions == 0 {
-        return (SupervisionMode::ReadOnly(reason), ReconcileAction::Release);
-    }
-
-    (
-        SupervisionMode::Draining {
-            configured_for: configured.ok(),
-            live_sessions: hosted_sessions,
-        },
-        ReconcileAction::Keep,
-    )
 }
 
 /// Why an acquisition did not happen. None of these is ever a reason to take the lease anyway.
@@ -439,10 +402,6 @@ mod tests {
         use ReadOnlyReason::*;
 
         let hands_over = [
-            SupervisionMode::Draining {
-                configured_for: Some(SupervisorKind::Emacs),
-                live_sessions: 2,
-            },
             SupervisionMode::ReadOnly(ConfiguredFor(SupervisorKind::Emacs)),
             SupervisionMode::ReadOnly(OwnedBy(SupervisorKind::Tui)),
         ];
@@ -475,17 +434,8 @@ mod tests {
     }
 
     #[test]
-    fn a_draining_view_may_end_but_not_start() {
-        let supervising = SupervisionMode::Supervising;
-        assert!(supervising.may_supervise());
-        assert!(supervising.may_end());
-
-        let draining = SupervisionMode::Draining {
-            configured_for: Some(SupervisorKind::Emacs),
-            live_sessions: 2,
-        };
-        assert!(!draining.may_supervise());
-        assert!(draining.may_end());
+    fn only_supervising_may_supervise() {
+        assert!(SupervisionMode::Supervising.may_supervise());
 
         for reason in [
             ReadOnlyReason::ConfiguredFor(SupervisorKind::Emacs),
@@ -497,12 +447,11 @@ mod tests {
         ] {
             let mode = SupervisionMode::ReadOnly(reason.clone());
             assert!(!mode.may_supervise(), "may_supervise for {reason:?}");
-            assert!(!mode.may_end(), "may_end for {reason:?}");
         }
     }
 
-    /// Every row of `tests/lib/supervisor.cases`, which `cerebro--supervision-decision` answers
-    /// too. A row either side answers differently is a fleet with two supervisors or none.
+    /// Every row of `tests/lib/supervisor.cases`. The table IS the rule; an answer that disagrees
+    /// with a row is a fleet with two supervisors or none.
     #[test]
     fn both_implementations_follow_the_shared_transition_table() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/lib/supervisor.cases");
@@ -514,7 +463,7 @@ mod tests {
                 continue;
             }
             let fields: Vec<&str> = trimmed.split_whitespace().collect();
-            assert_eq!(fields.len(), 6, "supervisor.cases: malformed row: {line}");
+            assert_eq!(fields.len(), 5, "supervisor.cases: malformed row: {line}");
             let local = kind(fields[0]);
             let configured = match fields[1] {
                 "invalid" => Err("rat".to_string()),
@@ -525,66 +474,30 @@ mod tests {
                 "no" => false,
                 other => panic!("supervisor.cases: expected yes or no, got {other}"),
             };
-            let hosted: usize = fields[3]
-                .parse()
-                .unwrap_or_else(|_| panic!("supervisor.cases: bad hosted count: {line}"));
-
-            let (mode, action) = reconcile_supervision(local, configured, holds, hosted);
-            assert_eq!(mode.word(), fields[4], "mode for row: {line}");
-            assert_eq!(action.word(), fields[5], "action for row: {line}");
+            let (mode, action) = reconcile_supervision(local, configured, holds);
+            assert_eq!(mode.word(), fields[3], "mode for row: {line}");
+            assert_eq!(action.word(), fields[4], "action for row: {line}");
             rows += 1;
         }
-        assert!(rows >= 20, "supervisor.cases: only {rows} rows ran");
+        assert!(rows >= 12, "supervisor.cases: only {rows} rows ran");
     }
 
     #[test]
-    fn a_drain_names_who_it_is_draining_for_and_how_many_are_left() {
-        let (mode, action) = reconcile_supervision(
-            SupervisorKind::Emacs,
-            Ok(SupervisorKind::Tui),
-            true,
-            3,
-        );
-        assert_eq!(action, ReconcileAction::Keep);
+    fn an_invalid_declaration_hands_the_lease_back_and_keeps_its_raw_word() {
+        let (mode, action) = reconcile_supervision(SupervisorKind::Emacs, Err("rat".to_string()), true);
+        assert_eq!(action, ReconcileAction::Release);
         assert_eq!(
             mode,
-            SupervisionMode::Draining {
-                configured_for: Some(SupervisorKind::Tui),
-                live_sessions: 3
-            }
-        );
-        assert!(!mode.may_supervise(), "a draining view must not act");
-    }
-
-    #[test]
-    fn an_invalid_declaration_drains_for_nobody_and_keeps_its_raw_word() {
-        let (mode, action) = reconcile_supervision(
-            SupervisorKind::Emacs,
-            Err("rat".to_string()),
-            true,
-            1,
-        );
-        assert_eq!(action, ReconcileAction::Keep);
-        assert_eq!(
-            mode,
-            SupervisionMode::Draining { configured_for: None, live_sessions: 1 }
+            SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration("rat".to_string()))
         );
 
         let (mode, action) =
-            reconcile_supervision(SupervisorKind::Tui, Err("rat".to_string()), false, 0);
+            reconcile_supervision(SupervisorKind::Tui, Err("rat".to_string()), false);
         assert_eq!(action, ReconcileAction::Keep);
         assert_eq!(
             mode,
             SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration("rat".to_string()))
         );
-    }
-
-    #[test]
-    fn only_supervising_may_act() {
-        assert!(SupervisionMode::Supervising.may_supervise());
-        assert!(!SupervisionMode::ReadOnly(ReadOnlyReason::NotOwned).may_supervise());
-        assert!(!SupervisionMode::Draining { configured_for: None, live_sessions: 1 }
-            .may_supervise());
     }
 
     // --- the lease itself -----------------------------------------------------------------------

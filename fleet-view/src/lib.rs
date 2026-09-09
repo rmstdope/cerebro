@@ -61,7 +61,7 @@
 //! Since cb-kcs.2.3 the navigator can press `s`, `f` and `k` - start the selected
 //! agent, toggle its stop flag, and kill a session this process hosts after a
 //! confirmation - each of them gated on `SupervisionMode` (`may_supervise` to
-//! start, `may_end` to finish or kill) and each refused with a visible line when
+//! start, finish or kill) and each refused with a visible line when
 //! it is not. `lifecycle` is where all three decide and where every write lives;
 //! `main::route_key` is the one path a keystroke takes to reach them.
 //!

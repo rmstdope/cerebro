@@ -148,7 +148,6 @@ const TITLE: &str = "Cerebro — read-only";
 pub fn supervision_title(mode: &SupervisionMode) -> String {
     match mode {
         SupervisionMode::Supervising => "Cerebro — supervising".to_string(),
-        SupervisionMode::Draining { .. } => "Cerebro — handoff pending".to_string(),
         // Configured for the other view, or configured for us and not yet asked for: the
         // uncontested cases, and the screen every consumer sees today.
         SupervisionMode::ReadOnly(ReadOnlyReason::ConfiguredFor(_))
@@ -783,8 +782,6 @@ fn newest_failure(app: &App) -> Option<(DateTime<Utc>, bool)> {
 fn lifecycle_hint(mode: &SupervisionMode) -> Option<&'static str> {
     match mode {
         SupervisionMode::Supervising => Some("s/f/k start·finish·kill"),
-        // `s` is refused while draining, and `f` and `k` are how a drain ends.
-        SupervisionMode::Draining { .. } => Some("f finish | k kill"),
         SupervisionMode::ReadOnly(_) => None,
     }
 }
@@ -1030,16 +1027,6 @@ fn header_state_spans(app: &App) -> Vec<Span<'static>> {
             (format!(" | refresh failed at {}", clock(failed_at)), RED)
         };
         spans.push(Span::styled(text, Style::default().fg(color)));
-    } else if let SupervisionMode::Draining { live_sessions, .. } = &app.supervision {
-        // How far from done the handoff is - the one thing on screen that says so. A notice takes
-        // this slot for one keystroke, which is the cost the navigator accepted (Q6).
-        spans.push(Span::styled(
-            format!(
-                " | {live_sessions} live agent{}",
-                if *live_sessions == 1 { "" } else { "s" }
-            ),
-            Style::default().fg(GOLD),
-        ));
     }
     spans
 }
@@ -2362,16 +2349,6 @@ mod tests {
         app
     }
 
-    /// A view told to hand over, still hosting SESSIONS - where `s` is refused and `f`/`k` are not.
-    fn handing_over(sessions: usize) -> App {
-        let mut app = populated();
-        app.set_supervision(SupervisionMode::Draining {
-            configured_for: Some(SupervisorKind::Emacs),
-            live_sessions: sessions,
-        });
-        app
-    }
-
     /// Both panes populated with enough rows that each needs to scroll on its own - the fixture
     /// the pane-independence and range-cue cases share.
     fn both_populated() -> App {
@@ -3123,10 +3100,6 @@ mod tests {
                 SupervisionMode::ReadOnly(ReadOnlyReason::InvalidDeclaration("rat".into())),
                 "Cerebro — read-only; invalid fleet_supervisor \"rat\"",
             ),
-            (
-                SupervisionMode::Draining { configured_for: Some(SupervisorKind::Tui), live_sessions: 2 },
-                "Cerebro — handoff pending",
-            ),
         ];
         for (mode, expected) in cases {
             let mut app = populated();
@@ -3271,29 +3244,6 @@ mod tests {
         let rendered = lines(&render(&populated(), 200, 20));
         assert!(!rendered[0].contains("s/f/k"), "{:?}", rendered[0]);
         assert!(!rendered[0].contains("finish"), "{:?}", rendered[0]);
-    }
-
-    #[test]
-    fn a_handing_over_header_offers_f_and_k_and_counts_the_agents() {
-        let three = render(&handing_over(3), 200, 20);
-        let rendered = lines(&three);
-        assert!(rendered[0].contains("| 3 live agents"), "{:?}", rendered[0]);
-        assert_eq!(style_where(&three, "3 live agents").fg, Some(GOLD));
-        assert!(rendered[0].contains("f finish | k kill"), "{:?}", rendered[0]);
-        assert!(!rendered[0].contains("s/f/k"), "s is refused while draining: {:?}", rendered[0]);
-
-        let one = lines(&render(&handing_over(1), 200, 20));
-        assert!(one[0].contains("| 1 live agent "), "{:?}", one[0]);
-    }
-
-    /// The cost the navigator accepted explicitly (Q6): a notice takes that slot for one keystroke.
-    #[test]
-    fn a_notice_hides_the_live_count_for_one_keystroke() {
-        let mut app = handing_over(3);
-        app.set_notice("Cyclops will finish after this pass.".to_string());
-        let rendered = lines(&render(&app, 200, 20));
-        assert!(rendered[0].contains("Cyclops will finish after this pass."), "{:?}", rendered[0]);
-        assert!(!rendered[0].contains("3 live agents"), "{:?}", rendered[0]);
     }
 
     #[test]
@@ -5691,7 +5641,6 @@ mod tests {
             ("read-only, another Tui owns supervision", owned, 100, HintRank::Kept),
             ("supervising", supervising(), 100, HintRank::Kept),
             ("supervising, wide", supervising(), 200, HintRank::Movement),
-            ("handing over, 3 live agents", handing_over(3), 100, HintRank::Kept),
             ("work focus, cursor on a bead", pinned_app(), 160, HintRank::Cursor),
             ("stale work", stale, 99, HintRank::Kept),
         ];
@@ -5843,19 +5792,6 @@ mod tests {
                 quit
             ],
             "supervising"
-        );
-        assert_eq!(
-            hint_clauses(&handing_over(3)),
-            vec![
-                pane,
-                scroll,
-                HintClause { text: "f finish | k kill", rank: HintRank::Kept },
-                health,
-                size,
-                refresh,
-                quit
-            ],
-            "handing over"
         );
 
         let mut failed = populated();

@@ -328,9 +328,8 @@ impl Logger {
 
     /// Write when this view may act, and not otherwise.
     ///
-    /// Driven from `SupervisionMode::may_end`, which is true for `Supervising` and `Draining` and
-    /// false for every `ReadOnly`. A **draining** view still ends the sessions it hosts, so it
-    /// still has decisions to record. A read-only one writes nothing at all, not even an error: it
+    /// Driven from `SupervisionMode::may_supervise`, which is true for `Supervising` and false
+    /// for every `ReadOnly`. A read-only view writes nothing at all, not even an error: it
     /// decides nothing, and its reader failures are the same fleet seen through a second window,
     /// which would put two accounts of one fleet in the supervisor's own file.
     pub fn set_enabled(&mut self, enabled: bool) {

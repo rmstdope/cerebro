@@ -1549,6 +1549,7 @@ fn truncate_cells(text: &str, width: usize) -> String {
     kept
 }
 
+#[derive(Debug)]
 struct Columns {
     agent: usize,
     role: usize,
@@ -1598,6 +1599,23 @@ fn columns(
     let fixed = if wide { STATE_FLOOR + natural_role + 4 } else { STATE_FLOOR + 1 };
     let agent = natural_agent.min((width as usize).saturating_sub(fixed + natural_bead).max(AGENT_FLOOR));
     let bead = natural_bead.min((width as usize).saturating_sub(fixed + agent).max(BEAD_FLOOR));
+    if !wide {
+        // The role column is paid for out of slack, never out of content (cb-hjf): whatever
+        // `AGENT_FLOOR` and `STATE_FLOOR` hold above the widest cell they actually draw, plus
+        // whatever the row has left over, is the role column's whole budget. When that will not
+        // buy a legible column, nothing is taken and the row is what it drew before this rule.
+        // WIDTH is the pane's outer width; the row is drawn into its inner rectangle, so the
+        // borders come off before anything is spent. The rule above it deliberately keeps the
+        // outer width it has always used - only the cells this bead gives away are counted here.
+        let (agent, state, bead, role) = narrow_role_budget(
+            rows,
+            (width as usize).saturating_sub(2),
+            agent,
+            STATE_FLOOR,
+            bead,
+        );
+        return Columns { agent, role, state, bead, wide };
+    }
     let role = natural_role.min((width as usize).saturating_sub(STATE_FLOOR + agent + bead + 4).max(ROLE_FLOOR));
     Columns {
         agent,
@@ -1608,10 +1626,56 @@ fn columns(
     }
 }
 
+/// The narrowest ROLE column worth drawing, in cells: two letters, an ellipsis and the gap.
+/// Below it the column is dropped entirely and the row is exactly what it drew before cb-hjf.
+const ROLE_MIN: usize = 4;
+
+/// What the AGENT column actually needs for its content - the glyph, a space, the widest name and
+/// one gap. `AGENT_FLOOR` sits above this on any ordinary roster, and the difference is part of
+/// what pays for the ROLE column in a narrow pane.
+fn narrow_agent_content(rows: &[FleetRow]) -> usize {
+    3 + rows.iter().map(|r| r.name.chars().count()).max().unwrap_or(0)
+}
+
+/// What the STATE column actually needs - the widest word it draws, and one gap. The ` ?` and
+/// ` ×N` qualifications are deliberately not counted: `STATE_FLOOR` is what has always carried
+/// them, and this function is asking how much of that floor is spare.
+fn narrow_state_content(rows: &[FleetRow]) -> usize {
+    1 + rows.iter().map(|r| state_label(r).chars().count()).max().unwrap_or(0)
+}
+
+/// AGENT, STATE, BEAD and ROLE in a narrow pane, given the widths the pre-cb-hjf rule produced.
+///
+/// Pure over its arguments, and the one place the narrow role budget lives. Slack is taken
+/// agent-first, then state, then the row's own spare cells - what the mockup draws, and what
+/// keeps the name and the role adjacent. BEAD is never touched: the work cell is the one the
+/// navigator reads for content rather than for shape.
+fn narrow_role_budget(
+    rows: &[FleetRow],
+    inner_width: usize,
+    agent: usize,
+    state: usize,
+    bead: usize,
+) -> (usize, usize, usize, usize) {
+    // `ROLE_FLOOR` is deliberately not used here: it is thirteen, and a fleet of nothing but `ux`
+    // agents must not be handed thirteen cells of a thirty-eight cell pane.
+    let role_content = 1 + rows.iter().map(|r| r.role.chars().count()).max().unwrap_or(0);
+    let spare = inner_width.saturating_sub(agent + state + bead);
+    let agent_slack = agent.saturating_sub(narrow_agent_content(rows));
+    let state_slack = state.saturating_sub(narrow_state_content(rows));
+    let role = role_content.min(spare + agent_slack + state_slack);
+    if role < ROLE_MIN {
+        return (agent, state, bead, 0);
+    }
+    let from_agent = agent_slack.min(role);
+    let from_state = state_slack.min(role - from_agent);
+    (agent - from_agent, state - from_state, bead, role)
+}
+
 fn heading(columns: &Columns) -> Line<'static> {
     let mut text = String::from("  ");
     text.push_str(&pad("AGENT", columns.agent - 2));
-    if columns.wide {
+    if columns.role > 0 {
         text.push_str(&pad("ROLE", columns.role));
     }
     text.push_str(&pad("STATE", columns.state));
@@ -1845,9 +1909,10 @@ fn row_line(
         pad(&row.name, columns.agent - 2),
         emphasized(name_style, attention),
     ));
-    if columns.wide {
+    if columns.role > 0 {
+        // One cell of the column is always the gap, so a cut `build…` never runs into `standby`.
         spans.push(Span::styled(
-            pad(&row.role, columns.role),
+            pad(&truncate(&row.role, columns.role - 1), columns.role),
             emphasized(Style::default(), attention),
         ));
     }
@@ -2448,14 +2513,15 @@ mod tests {
         assert!(line_with(&rendered, "Fleet 5").contains("Fleet 5"), "the pane counts its rows");
 
         // The screen is split: the fleet lives in a `LEFT_COLUMN`-wide column, so it shows the
-        // narrow three-column table rather than the five-column one. The navigator chose that
+        // narrow four-column table rather than the five-column one. The navigator chose that
         // (a fixed left column, the session taking the rest) over half and half, which would
-        // have kept ROLE and FOR at the cost of the session's width.
+        // have kept FOR at the cost of the session's width. ROLE is paid for out of the AGENT
+        // and STATE floors' slack and is drawn at every width (cb-hjf).
         let heading = line_with(&rendered, "AGENT");
-        for column in ["AGENT", "STATE", "BEAD"] {
+        for column in ["AGENT", "ROLE", "STATE", "BEAD"] {
             assert!(heading.contains(column), "the narrow heading shows {column}: {heading:?}");
         }
-        assert!(!heading.contains("ROLE"), "and not the wide ones: {heading:?}");
+        assert!(!heading.contains("FOR"), "and not the wide one: {heading:?}");
 
         let xavier = line_with(&rendered, "● Xavier");
         assert!(xavier.contains("● Xavier"), "{xavier:?}");
@@ -2728,19 +2794,110 @@ mod tests {
 
         let heading = line_with(&rendered, "AGENT");
         assert!(heading.contains("AGENT") && heading.contains("STATE") && heading.contains("BEAD"));
-        assert!(!heading.contains("ROLE"), "below 64 columns Role is hidden: {heading:?}");
+        assert!(heading.contains("ROLE"), "the role is shown at every width now: {heading:?}");
         assert!(!heading.contains("FOR"), "below 64 columns For is hidden: {heading:?}");
 
         let xavier = line_with(&rendered, "Xavier");
         assert!(xavier.contains("● Xavier"), "{xavier:?}");
         assert!(xavier.contains("plan"), "{xavier:?}");
         assert!(xavier.contains("cb-kcs"), "{xavier:?}");
-        assert!(!xavier.contains("planner"), "the Role column is gone: {xavier:?}");
+        assert!(xavier.contains("planner"), "the Role column is drawn: {xavier:?}");
         assert!(!xavier.contains("18m"), "the For column is gone: {xavier:?}");
 
         // 64 is the boundary itself, and it is wide.
         let wide = lines(&render(&app, 64, 20));
         assert!(line_with(&wide, "AGENT").contains("ROLE"));
+    }
+
+    /// A roster of the shape the navigator actually watches, for the narrow column arithmetic.
+    fn roster_rows() -> Vec<FleetRow> {
+        vec![
+            working("Wolverine", "implementer", "build", "cb-hjf"),
+            row("Cerebro", "orchestrator", RowState::Idle),
+            row("Rogue", "build-design", RowState::Standby),
+            row("Jubilee", "ux", RowState::Idle),
+        ]
+    }
+
+    #[test]
+    fn the_role_column_is_paid_for_out_of_slack() {
+        let rows = roster_rows();
+        let narrow = columns(&rows, 38, &BTreeMap::new(), &BTreeMap::new(), now());
+
+        assert!(!narrow.wide, "38 cells is the narrow layout");
+        assert!(
+            narrow.role >= ROLE_MIN,
+            "the role is drawn in a 38-cell pane: {}",
+            narrow.role
+        );
+        assert_eq!(
+            narrow.bead,
+            BEAD_FLOOR.max(1 + "cb-hjf".len()),
+            "the work cell is never what pays for the role"
+        );
+        assert!(
+            narrow.agent + narrow.role + narrow.state + narrow.bead <= 38,
+            "{narrow:?} overflows a 38-cell pane"
+        );
+        assert!(
+            narrow.agent >= 3 + "Wolverine".chars().count(),
+            "the longest name still fits whole: {}",
+            narrow.agent
+        );
+        assert!(
+            narrow.state >= 1 + "standby".chars().count(),
+            "the longest state word still fits whole: {}",
+            narrow.state
+        );
+    }
+
+    #[test]
+    fn a_narrow_role_is_cut_with_an_ellipsis_and_keeps_its_gap() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(roster_rows()), at(86_400));
+        let rendered = lines(&render(&app, 100, 20));
+
+        assert!(line_with(&rendered, "AGENT").contains("ROLE"));
+        let wolverine = line_with(&rendered, "● Wolverine");
+        assert!(
+            wolverine.contains("implemen… "),
+            "the role is cut with an ellipsis, and one cell of the column is always the gap so it \
+             never runs into the state word: {wolverine:?}"
+        );
+        let jubilee = line_with(&rendered, "◆ Jubilee");
+        assert!(jubilee.contains("ux"), "a short role is whole: {jubilee:?}");
+    }
+
+    #[test]
+    fn a_pane_too_narrow_for_a_role_is_exactly_todays_row() {
+        // Names and state words that leave the two floors no slack at all to give away.
+        let rows = vec![
+            working("Wolverinexxx", "implementer", "rebasing", "cb-hjf"),
+            row("Nightcrawler", "orchestrator", RowState::Standby),
+        ];
+        let narrow = columns(&rows, 30, &BTreeMap::new(), &BTreeMap::new(), now());
+        assert_eq!(narrow.role, 0, "the column is given up whole: {narrow:?}");
+
+        let (agent, state, bead, role) =
+            narrow_role_budget(&rows, 30, narrow.agent, narrow.state, narrow.bead);
+        assert_eq!(role, 0);
+        assert_eq!(
+            (agent, state, bead),
+            (narrow.agent, narrow.state, narrow.bead),
+            "nothing else is shortened to keep the role on screen"
+        );
+    }
+
+    #[test]
+    fn an_unknown_role_word_is_shown_verbatim() {
+        let mut app = App::new();
+        app.finish_refresh(
+            Ok(vec![row("Bishop", "timecop", RowState::Idle)]),
+            at(86_400),
+        );
+        let rendered = lines(&render(&app, 100, 20));
+        let bishop = line_with(&rendered, "◆ Bishop");
+        assert!(bishop.contains("timecop"), "the roster's own word, verbatim: {bishop:?}");
     }
 
     #[test]

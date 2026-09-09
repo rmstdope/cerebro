@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-lz5.3 — what a build-design session looks like</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 78rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .4rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.3rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 1.4rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .6rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+        background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.5; white-space:pre-wrap; }
+  .r{color:#f0776c}.g{color:#7ee787}.y{color:#e3b341}.d{color:#8b949e}.b{color:#79c0ff;font-weight:bold}
+  .you{color:#79c0ff;font-weight:bold}
+  .cols{display:flex;gap:1.4rem;align-items:flex-start}
+  .cols>div{flex:1;min-width:0}
+  table{border-collapse:collapse;font-size:13.5px;margin:.6rem 0;width:100%}
+  td,th{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top}
+</style></head><body>
+
+<h1>cb-lz5.3 — what a build-design session looks like to the developer sitting in it</h1>
+<p class="lede">This agent is the second half of the split. It takes a piece of work whose <b>experience is already agreed</b> — someone else settled that, days ago, with the design agent — and turns it into a plan an implementer can build unattended: architecture, files, increments, tests, verification. Its reader is a <b>software developer</b>, and unlike the design agent it may assume the whole of this repository: beads, worktrees, the gate, the fleet. It talks like a colleague, not like a form.</p>
+<p class="lede">Three things on this page are yours to agree: <b>whether it asks you anything about the architecture</b>, <b>whether you see the plan before it is filed</b>, and (on the second page) <b>how it sends a piece of work back to the design stage</b>.</p>
+<p class="note"><b>Chosen, 9 Sep:</b> <b>A</b> (decides alone), <b>S</b> (files at once) and, on the second page, <b>A</b> (sends back on its own judgement). Round 2 settled the two things those answers left open &mdash; there <i>is</i> an opening message, and the pass ends the moment the plan is filed, so the follow-up exchange drawn in Option S below does not happen. See <code>cb-lz5.3-round2.html</code>.</p>
+<p class="note">Settled already and not re-opened here: it takes the most urgent agreed-but-undesigned bead itself, one per session, and ends the pass — the same rhythm the planner and the design agent already have.</p>
+
+<h2>Question 1 — does it ask you about the architecture?</h2>
+<p class="note">Today the combined planner decides architecture alone: <i>&ldquo;Yours: architecture, file layout, which existing code to reuse, the order of increments, the shape of the tests, what is out of scope.&rdquo;</i> The question is whether splitting the role changes that, now that a developer is sitting there on purpose.</p>
+
+<div class="cols">
+<div>
+<h3>Option A — it decides, and tells you what it decided</h3>
+<p class="note">The planner's rule, unchanged. No questions at all; the session is a monologue that ends in a plan. Anything it judged two-way is written into the plan's <i>Decided by me</i>, where you can overrule it in a sentence.</p>
+<pre><span class="b">Beast</span>
+
+I design the build for work whose look and feel is already agreed.
+Today: <b>cb-9f2 — Row limit settable from the list pane</b>.
+The design was agreed on 4 Sep; I have read it and the drawing.
+
+Reading the code now — three or four minutes.
+
+<span class="d">... reads src/panes/list.rs, the settings store, two suites ...</span>
+
+Done. The plan is filed.
+
+  <b>3 increments</b>, each opening on a named failing test
+  <b>4 files</b> touched, all under src/panes and src/settings
+  <b>Reuses</b> SettingsStore::watch rather than a second subscription
+  <b>Decided by me:</b> the limit is stored per pane, not globally
+                   (the drawing shows two panes at different limits)
+
+  <span class="d">bd show cb-9f2 --json | jq -r .design</span>
+
+<span class="you">&gt;</span></pre>
+<p class="note"><b>The cost:</b> a developer who disagrees with the approach finds out by reading the filed plan, and changing it means another pass. The session is over before you have said anything.</p>
+</div>
+
+<div>
+<h3>Option B — it asks only where the decision is two-way and expensive</h3>
+<p class="note">It designs alone, and stops at the forks where both answers are defensible and the wrong one costs a rewrite. Batched, with the alternatives spelled out and its own recommendation named. Everything else it decides silently, as in A.</p>
+<pre><span class="b">Beast</span>
+
+I design the build for work whose look and feel is already agreed.
+Today: <b>cb-9f2 — Row limit settable from the list pane</b>.
+The design was agreed on 4 Sep; I have read it and the drawing.
+
+Reading the code now — three or four minutes.
+
+<span class="d">... reads src/panes/list.rs, the settings store, two suites ...</span>
+
+One fork I would rather not settle alone.
+
+  <b>Where the limit lives.</b> The drawing shows two panes at
+  different limits, so it is per pane either way — the question is
+  the store.
+
+  <b>1.</b> A field on each pane's own state. Simple, no migration;
+     the limit is lost when a pane is closed and reopened.
+  <b>2.</b> A keyed entry in SettingsStore. Survives a reload, and
+     needs a migration for people who already have settings.
+
+  I would take <b>2</b> — the drawing's own words are &ldquo;the way you
+  left it&rdquo;, which reads like it should survive a reload.
+
+<span class="you">&gt; 2, and don't bother migrating - default the missing key</span>
+
+Taking 2, defaulting the missing key. That is the only fork;
+writing the plan now.
+</pre>
+<p class="note"><b>The cost:</b> the agent has to judge which forks are worth your minute, and it will sometimes get that wrong in both directions — asking about something obvious, or deciding something you cared about. A session where nobody answers has to park the work rather than file a plan.</p>
+</div>
+</div>
+
+<h2>Question 2 — do you see the plan before it is filed?</h2>
+<p class="note">The design agent shows its finished record and waits for a yes — you chose that for the UX stage, because the work is queued the moment it is filed. The same argument applies here, and so does the opposite one: a plan is read by an implementer that will refuse anything underspecified, and a wrong plan is cheap to amend.</p>
+
+<div class="cols">
+<div>
+<h3>Option S — filed at once, summarised after</h3>
+<p class="note">The agent files the plan and reports what it did in a few lines, as in Question 1's mockups. If you want the whole thing you ask for it, or read the bead.</p>
+<pre>Done. The plan is filed and <b>cb-9f2</b> is ready for an implementer.
+
+  3 increments, 4 files, reuses SettingsStore::watch
+  Decided by me: per-pane storage, missing key defaults to 100
+
+<span class="you">&gt; show me the increments</span>
+
+  <b>1.</b> <span class="g">list_limit_defaults_to_100</span> — the reader, no UI
+  <b>2.</b> <span class="g">limit_control_writes_the_store</span> — the control
+  <b>3.</b> <span class="g">limit_survives_a_reload</span> — persistence
+
+<span class="you">&gt;</span></pre>
+<p class="note"><b>The cost:</b> a plan you would have changed is already queued, and an implementer may pick it up within seconds. Changing it then means catching it or re-planning.</p>
+</div>
+
+<div>
+<h3>Option T — shown in full, approved, then filed</h3>
+<p class="note">The agent prints the plan as the implementer will read it, waits, and files only on a yes. A correction is made and re-shown until you say it is right — the design agent's own step, in a developer's language.</p>
+<pre>Here is the plan, as the implementer will read it.
+Have a look before I file it — after that an implementer may
+pick it up within seconds.
+
+  <b>## Context</b>
+  The list pane shows 100 rows and offers no way to change it ...
+
+  <b>## Files to change, and what to reuse</b>
+  src/panes/list.rs — the control, beside the existing filter row
+  src/settings/store.rs — one keyed entry, no migration ...
+
+  <b>## Increments</b>
+  1. <span class="g">list_limit_defaults_to_100</span> ...
+
+  <span class="d">[the whole plan, eight sections]</span>
+
+Is that right?
+
+<span class="you">&gt; increment 2 needs the store test too</span>
+
+Changed — increment 2 now opens on <span class="g">limit_control_writes_the_store</span>
+and asserts the store. Anything else?
+
+<span class="you">&gt; no, file it</span>
+
+Filed. <b>cb-9f2</b> is ready for an implementer.</pre>
+<p class="note"><b>The cost:</b> one more exchange every session, and a long plan is a screenful. A developer who answers &ldquo;fine&rdquo; without reading has approved something unread — and if nobody answers at all, the plan is not filed and the pass ends with nothing queued.</p>
+</div>
+</div>
+
+<h2>What both options share</h2>
+<table>
+<tr><th>Whatever you choose</th><th>Why</th></tr>
+<tr><td>It never re-opens a question the design agent settled — not the wording, not the states, not the shape.</td><td>That conversation happened with a designer, possibly days ago. Re-opening it here is the combined planner under a new name, and it would put two answers on one question.</td></tr>
+<tr><td>It never writes the design record, only the plan.</td><td>Two fields, two owners. The record is the designer's document; the plan is this agent's.</td></tr>
+<tr><td>It handles the board, the worktree and the pull request itself.</td><td>You are a developer, so it may say those words to you — but it does not ask you to run any of them.</td></tr>
+<tr><td>One piece of work per session, then the session ends.</td><td>The rhythm the planner and the design agent already have; a fresh session starts when more work is waiting.</td></tr>
+</table>
+
+</body></html>

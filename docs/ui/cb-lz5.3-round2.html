@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-lz5.3 — round 2: a session nobody has to answer</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 78rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .4rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.3rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 1.4rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .6rem; }
+  pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+        background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.5; white-space:pre-wrap; }
+  .g{color:#7ee787}.y{color:#e3b341}.d{color:#8b949e}.b{color:#79c0ff;font-weight:bold}
+  .you{color:#79c0ff;font-weight:bold}
+  .cols{display:flex;gap:1.4rem;align-items:flex-start}
+  .cols>div{flex:1;min-width:0}
+</style></head><body>
+
+<h1>cb-lz5.3 — round 2: what a session that asks nothing actually looks like</h1>
+<p class="lede">You chose <b>A / S / A</b>: it decides the architecture alone, files the plan at once and summarises after, and sends work back to the design stage on its own judgement. So a developer sitting in this session is never asked anything — which makes two smaller things worth settling, because the first round's drawings quietly assumed an answer to both.</p>
+
+<h2>Question 1 — is there an opening message at all?</h2>
+<p class="note">In the first drawings the agent announced what it was taking, then went quiet for three or four minutes while it read code, then filed. Nobody has to answer that opening — so its only job is telling a watching developer what is happening.</p>
+
+<div class="cols">
+<div>
+<h3>Option A — it says what it is taking, then works</h3>
+<pre><span class="b">Beast</span>
+
+I design the build for work whose look and feel is already
+agreed. Today: <b>cb-9f2 — Row limit settable from the list pane</b>.
+The design was agreed on 4 Sep; I've read it and the drawing.
+
+Reading the code now.
+
+<span class="d">... four minutes ...</span>
+
+Filed. <b>cb-9f2</b> is ready for an implementer.
+  3 increments, 4 files, reuses SettingsStore::watch
+  Decided by me: per-pane storage, missing key defaults to 100</pre>
+<p class="note"><b>The cost:</b> a session in the fleet view shows two messages instead of one, and a developer who glances at it mid-run sees only "reading the code now".</p>
+</div>
+
+<div>
+<h3>Option B — one message, at the end</h3>
+<pre><span class="b">Beast</span>
+
+<span class="d">... four minutes, nothing on screen ...</span>
+
+<b>cb-9f2 — Row limit settable from the list pane</b> is planned
+and ready for an implementer. The design was agreed on 4 Sep;
+I worked from it and the drawing.
+
+  3 increments, 4 files, reuses SettingsStore::watch
+  Decided by me: per-pane storage, missing key defaults to 100</pre>
+<p class="note"><b>The cost:</b> four minutes of a blank session, which is indistinguishable from a session that has hung — the one thing the fleet view exists to make visible.</p>
+</div>
+</div>
+
+<h2>Question 2 — does the session end the moment it has filed?</h2>
+<p class="note">Every other role here ends its pass and stops producing output; the fleet view closes the session about half a minute later. The first round's drawing showed the developer asking a follow-up (&ldquo;show me the increments&rdquo;) after the plan was filed — <b>that cannot happen if the pass ends at once</b>, so it has to be settled rather than assumed.</p>
+
+<div class="cols">
+<div>
+<h3>Option 1 — ends at once, like every other role</h3>
+<pre>Filed. <b>cb-9f2</b> is ready for an implementer.
+  3 increments, 4 files, reuses SettingsStore::watch
+  Decided by me: per-pane storage, missing key defaults to 100
+
+  <span class="d">The whole plan: bd show cb-9f2 --json | jq -r .design</span>
+
+<span class="d">[pass ends; the session closes]</span></pre>
+<p class="note"><b>The cost:</b> a developer who was watching and wanted to ask something finds the session gone. The command to read the plan is on screen, and a change means another pass.</p>
+</div>
+
+<div>
+<h3>Option 2 — stays until you are done with it</h3>
+<pre>Filed. <b>cb-9f2</b> is ready for an implementer.
+  3 increments, 4 files, reuses SettingsStore::watch
+  Decided by me: per-pane storage, missing key defaults to 100
+
+Anything you want to go over before I finish?
+
+<span class="you">&gt; show me the increments</span>
+
+  <b>1.</b> <span class="g">list_limit_defaults_to_100</span> — the reader, no UI
+  <b>2.</b> <span class="g">limit_control_writes_the_store</span> — the control
+  <b>3.</b> <span class="g">limit_survives_a_reload</span> — persistence
+
+<span class="you">&gt; fine</span>
+
+<span class="d">[pass ends]</span></pre>
+<p class="note"><b>The cost:</b> the plan is already filed and an implementer may already have taken it, so a change discussed here may be a change to work in flight. And with nobody in the chair the session sits on that question until the fleet view types a line into it, which is a held session and a delayed next pass.</p>
+</div>
+</div>
+
+</body></html>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>cb-lz5.3 — sending a piece of work back to the design stage</title>
+<style>
+  :root { --ink:#1b1f23; --dim:#6a737d; --line:#e1e4e8; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         color: var(--ink); margin: 0; padding: 2.5rem 2rem 5rem; max-width: 78rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .4rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.3rem 0 .3rem; }
+  p.lede { color: var(--dim); margin: 0 0 1.4rem; }
+  p.note { color: var(--dim); font-size: 13.5px; margin: .3rem 0 .6rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+        background:#0d1117; color:#d6dae1; border-radius:6px; padding:.8rem 1rem; overflow-x:auto;
+        margin:.4rem 0; line-height:1.5; white-space:pre-wrap; }
+  .r{color:#f0776c}.g{color:#7ee787}.y{color:#e3b341}.d{color:#8b949e}.b{color:#79c0ff;font-weight:bold}
+  .you{color:#79c0ff;font-weight:bold}
+  .cols{display:flex;gap:1.4rem;align-items:flex-start}
+  .cols>div{flex:1;min-width:0}
+  table{border-collapse:collapse;font-size:13.5px;margin:.6rem 0;width:100%}
+  td,th{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top}
+  blockquote{margin:.7rem 0;padding:.5rem .9rem;border-left:3px solid var(--line);color:var(--dim);font-size:13.5px}
+</style></head><body>
+
+<h1>cb-lz5.3 — sending a piece of work back to the design stage</h1>
+<p class="lede">Sometimes the agreed experience cannot be built as written: it contradicts itself, it leaves out a state the code must have an answer for, or it asks for something the product cannot do. The board side of this is already settled — the agent takes the &ldquo;design agreed&rdquo; mark off, writes what it found into the notes, and the piece of work goes quietly back into the design agent's queue. <b>Nobody is flagged and nothing is escalated.</b></p>
+<p class="lede">What is open is what happens <i>in the room</i>: does the agent decide that alone, or check with you first? This is the loop between the two agents, and it is the thing a single combined planner never had to have.</p>
+
+<h2>The question — who decides to send it back?</h2>
+
+<div class="cols">
+<div>
+<h3>Option A — it decides, says what it found, and sends it back</h3>
+<p class="note">The agent judges buildability the way it judges everything else about the build, and a send-back is not a question for you. It reports in one message and the pass ends.</p>
+<pre><span class="b">Beast</span>
+
+Today: <b>cb-9f2 — Row limit settable from the list pane</b>.
+
+<span class="y">I can't build a plan from the agreed design, so I've sent it
+back to the design stage.</span>
+
+What is missing: the design says the limit applies to
+&ldquo;the list&rdquo;, and the drawing shows two lists side by side at
+different limits. Those are different features — one setting
+or one per pane — and the plan is a different plan either way.
+
+I've written that on it, as the question the designer has to
+answer. Nothing else about the design is disturbed, and the
+rest of what was agreed still stands.
+
+Nothing else is waiting for a build design right now.
+
+<span class="you">&gt;</span></pre>
+<p class="note"><b>The cost:</b> a developer who could have answered the question in five seconds (&ldquo;per pane, obviously&rdquo;) does not get the chance, and the work waits for a whole design session instead. The agent sending things back too readily is invisible until someone notices the queue bouncing.</p>
+</div>
+
+<div>
+<h3>Option B — it says what it found and asks you first</h3>
+<p class="note">The agent presents the contradiction and one question: send it back, or is this something you can settle here? A developer's answer is recorded as theirs, in the plan, and never written into the designer's record.</p>
+<pre><span class="b">Beast</span>
+
+Today: <b>cb-9f2 — Row limit settable from the list pane</b>.
+
+<span class="y">The agreed design has a hole I can't design around.</span>
+
+The design says the limit applies to &ldquo;the list&rdquo;, and the
+drawing shows two lists side by side at different limits.
+Those are different features — one setting or one per pane —
+and the plan is a different plan either way.
+
+  <b>1.</b> Send it back to the design stage. A designer settles it,
+     and it returns here with the drawing updated.
+  <b>2.</b> Tell me which it is, and I'll design that — recorded as
+     your call, not as something the designer agreed.
+
+<span class="you">&gt; 2 - per pane. the drawing is right, the words are sloppy</span>
+
+Per pane it is. I've noted in the plan that you settled it here
+and that the agreed design still says &ldquo;the list&rdquo;, so whoever
+reads it knows which one is the specification.
+
+Writing the plan now.</pre>
+<p class="note"><b>The cost:</b> a developer can quietly overrule a designer's document without the designer ever seeing it, and the two now disagree — the plan says one thing and the agreed design still says another. If nobody is in the chair, the agent has asked a question nobody answers and has to send it back anyway, a pass later than it could have.</p>
+</div>
+</div>
+
+<h2>What the send-back looks like from the other end</h2>
+<p class="note">Whichever you choose, this is what is written on the piece of work, and what the design agent reads out to a designer next time it comes up. That wording is already agreed (&ldquo;This one came back from the person building it&hellip;&rdquo;). The developer's own words are kept out of the designer's document — they go in the notes, never in the record.</p>
+<pre><span class="d">## Sent back to the UX stage</span>
+
+The agreed design says the row limit applies to "the list". The drawing
+shows two lists side by side at different limits. One setting or one per
+pane are different features and different builds; the plan cannot be
+written until that is settled.
+
+Everything else in the record is buildable as written.</pre>
+<blockquote>Three rules the note follows in either option: it names <b>what is missing</b> rather than what is wrong with the designer; it says <b>what still stands</b>, so the next session amends rather than starts again; and it ends with <b>the question the designer has to answer</b>. Overrule any of those in a sentence.</blockquote>
+
+<h2>When it is not the design that is wrong</h2>
+<p class="note">For contrast, and not a question — this is how the same agent behaves when the design is fine but something else is in the way. A blocker with no plan, or the machinery failing, is not a send-back: nothing goes back to the designer, and the piece of work stays where it is.</p>
+<pre><span class="b">Beast</span>
+
+Today: <b>cb-9f2 — Row limit settable from the list pane</b>.
+
+This one is waiting on <b>cb-8x1</b>, which has no plan yet — its
+build has to exist before this one can name what it builds on.
+I've taken that one instead:
+
+  <b>cb-8x1 — One settings store for every pane</b>
+  ...</pre>
+
+</body></html>

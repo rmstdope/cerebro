@@ -5200,6 +5200,132 @@ mod tests {
         }
     }
 
+    /// What one screen's header costs at one width, and whether it fits.
+    ///
+    /// The measurement is production code (`HintClause::width`, `tier_width`, `hint_floor`); only
+    /// the REPORT lives here, because it is read out of a failing assertion and nowhere else.
+    struct HintBudget {
+        label: &'static str,
+        width: usize,
+        used: usize,
+        clauses: Vec<HintClause>,
+        /// Each floor, and what the join at that floor costs.
+        tiers: Vec<(HintRank, usize)>,
+        /// The floor `fit_hints` settles on.
+        chosen: HintRank,
+        /// `used` plus the chosen tier's cost - the cells actually drawn.
+        drawn: usize,
+    }
+
+    impl HintBudget {
+        fn measure(
+            label: &'static str,
+            clauses: &[HintClause],
+            used: usize,
+            width: usize,
+        ) -> Self {
+            let tiers: Vec<(HintRank, usize)> = [
+                HintRank::Optional,
+                HintRank::Movement,
+                HintRank::Cursor,
+                HintRank::Kept,
+            ]
+            .into_iter()
+            .map(|floor| (floor, tier_width(clauses, floor)))
+            .collect();
+            let chosen = hint_floor(clauses, used, width);
+            let drawn = used + tier_width(clauses, chosen);
+            Self { label, width, used, clauses: clauses.to_vec(), tiers, chosen, drawn }
+        }
+
+        /// Cells to spare; negative means the terminal truncates the line.
+        fn slack(&self) -> isize {
+            self.width as isize - self.drawn as isize
+        }
+
+        /// The whole arithmetic, for an assertion message.
+        fn report(&self, required: HintRank) -> String {
+            let mut out = format!(
+                "{} at {} columns: the {:?} tier must survive.\n  title and state: {} cells\n",
+                self.label, self.width, required, self.used
+            );
+            for (floor, _) in &self.tiers {
+                let at_rank: Vec<String> = self
+                    .clauses
+                    .iter()
+                    .filter(|clause| clause.rank == *floor)
+                    .map(|clause| {
+                        format!("\"{HINT_SEPARATOR}{}\" {}", clause.text, clause.width())
+                    })
+                    .collect();
+                out.push_str(&format!(
+                    "  {:<9} {}\n",
+                    format!("{floor:?}"),
+                    if at_rank.is_empty() { "(none)".to_string() } else { at_rank.join(", ") }
+                ));
+            }
+            for (floor, cost) in &self.tiers {
+                let drawn = self.used + cost;
+                let slack = self.width as isize - drawn as isize;
+                out.push_str(&format!(
+                    "  {floor:?} tier: {drawn} of {} cells, {}\n",
+                    self.width,
+                    if slack < 0 {
+                        format!("{} too many", -slack)
+                    } else {
+                        format!("{slack} to spare")
+                    }
+                ));
+            }
+            out.push_str(&format!(
+                "  fit_hints settles on {:?}, so the clauses below it are not drawn.\n",
+                self.chosen
+            ));
+            out.push_str("Shorten a clause, or give the new one a lower rank (see HintRank).");
+            out
+        }
+    }
+
+    /// The cells APP's header draws before its hints - the test-side twin of `header_line`'s own
+    /// sum, through the same function it uses.
+    fn header_used(app: &App) -> usize {
+        header_state_spans(app).iter().map(|span| span.content.width()).sum()
+    }
+
+    /// An overspent budget says which clause, what it costs, and by how many cells the line is
+    /// over - so the reader does not have to do the subtraction three retrospectives did by hand.
+    #[test]
+    fn an_overflowing_clause_is_named_with_its_cost() {
+        let app = populated();
+        let mut clauses = hint_clauses(&app);
+        // A key this view does not have, so nobody can grep it up as a real hint - the convention
+        // `a_new_clause_is_one_row_and_breaks_no_other_test` already set.
+        let new = HintClause { text: "Ctrl-r reload", rank: HintRank::Movement };
+        let first_kept = clauses
+            .iter()
+            .position(|clause| clause.rank == HintRank::Kept)
+            .expect("the kept clauses are always offered");
+        clauses.insert(first_kept, new);
+
+        let used = header_used(&app);
+        let over = used + tier_width(&clauses, HintRank::Movement) - HINT_BUDGET_COLUMNS;
+        let budget = HintBudget::measure("read-only", &clauses, used, HINT_BUDGET_COLUMNS);
+        let report = budget.report(HintRank::Movement);
+
+        assert!(report.contains("Ctrl-r reload"), "{report}");
+        assert!(
+            report.contains(&format!("{}", new.width())),
+            "the offending clause carries its own width: {report}"
+        );
+        assert!(report.contains(&format!("{over} too many")), "{report}");
+        assert!(report.contains("the Movement tier must survive"), "{report}");
+        assert!(
+            report.contains(&format!("fit_hints settles on {:?}", budget.chosen)),
+            "the report names the tier drawn instead: {report}"
+        );
+        assert!(budget.chosen > HintRank::Movement, "{report}");
+    }
+
     /// `header_line` draws `header_state_spans` and then exactly one span of hints.
     ///
     /// That is what makes `used` the cells actually drawn before the hints (cb-51u), and it is

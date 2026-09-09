@@ -1589,6 +1589,9 @@ pub struct App {
     /// file said, and a renderer's convenience must not make it lie to anything else reading a
     /// row.
     pub exits: BTreeMap<String, LastExit>,
+    /// The names whose session this view is closing, from `SessionHost::ending_names`. Filled
+    /// once per loop iteration beside `exits`, and read by `hold_closing_rows` (cb-m0c).
+    pub closing: BTreeSet<String>,
     /// The BEAD column of each standby row, as of the last frame. Copied in by the event loop
     /// from `triggers::standby_label`, never computed here: `ui::draw` may not reach a
     /// `TriggerFacts` any more than it may reach a child process, and the label depends on facts
@@ -1820,6 +1823,7 @@ impl App {
             notice: None,
             notice_tone: NoticeTone::News,
             exits: BTreeMap::new(),
+            closing: BTreeSet::new(),
             standby_labels: BTreeMap::new(),
             armed: BTreeSet::new(),
             flagged: BTreeSet::new(),
@@ -1938,6 +1942,12 @@ impl App {
     /// Replace the verdicts. One call per loop iteration, beside `set_session_view`.
     pub fn set_exits(&mut self, exits: BTreeMap<String, LastExit>) {
         self.exits = exits;
+    }
+
+    /// The names whose session this view is closing, from `SessionHost::ending_names`. One call
+    /// per loop iteration, beside `set_exits`.
+    pub fn set_closing(&mut self, closing: BTreeSet<String>) {
+        self.closing = closing;
     }
 
     /// Replace the set of stop-flagged names. One call per loop iteration, beside `set_exits`.
@@ -2995,7 +3005,19 @@ impl App {
         // Applied on the way past, on success only, so the rows the pane holds are the rows any
         // reader inspects and a new caller cannot forget the transformation.
         let parked = self.parked_names();
-        let result = result.map(|rows| model::apply_standby(rows, &self.armed, &parked));
+        // Hold first, then standby: a held row is `Waiting`, which `apply_standby` leaves alone,
+        // where the reverse order would restate a row before deciding whether to keep it at all.
+        // The previous rows are the ones the pane still holds - read before `finish` replaces
+        // them (cb-m0c).
+        let closing = self.closing.clone();
+        let previous = self.fleet_rows().to_vec();
+        let result = result.map(|rows| {
+            model::apply_standby(
+                model::hold_closing_rows(rows, &previous, &closing),
+                &self.armed,
+                &parked,
+            )
+        });
         self.fleet.finish(result, at);
         if succeeded {
             self.reconcile_selection(previous_index);

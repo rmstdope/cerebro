@@ -1472,6 +1472,10 @@ where
             app.set_session_view(view);
             state.host.flush_returns(Instant::now());
             app.set_exits(state.host.exits());
+            // After `host.sync` has reaped, so a name whose child is gone has already left the
+            // set. The give-up path's own `set_exits` gets no companion call: nothing is closing
+            // there (cb-m0c).
+            app.set_closing(state.host.ending_names());
             log_exits(&mut state.logger, &mut state.host, now);
             refresh_flagged(app, &config.paths);
         }
@@ -4728,6 +4732,134 @@ mod main_tests {
             app.finish_work_refresh(Ok(work), now);
         }
         app
+    }
+
+    /// A row whose role is one of the two staged planning roles (cb-lz5).
+    fn staged_row(
+        name: &str,
+        role: &str,
+        state: cerebro_tui::model::RowState,
+    ) -> cerebro_tui::model::FleetRow {
+        cerebro_tui::model::FleetRow {
+            role: role.into(),
+            ..fleet_row(name, cerebro_tui::model::AgentKind::Interactive, state)
+        }
+    }
+
+    /// cb-m0c increment 3 — the whole path, from `host.end` to the drawn row.
+    ///
+    /// Between the pass ending and the child being reaped the state file is already gone, so the
+    /// derivation has only a live process and answers `Up` with no bead. The row must still read
+    /// its own last word.
+    #[test]
+    fn a_view_ending_a_pass_never_draws_it_as_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = scratch(dir.path(), "sleep 5");
+        let now = Utc::now();
+        let mut host = SessionHost::default();
+        hosted(&mut host, &paths, "Xavier");
+
+        let mut app = App::with_supervision(supervising());
+        app.armed.insert("Xavier".to_string());
+        app.finish_refresh(
+            Ok(vec![cerebro_tui::model::FleetRow {
+                since: Some(now - chrono::Duration::seconds(31)),
+                bead: Some("cb-m0c".into()),
+                ..staged_row("Xavier", "ux", cerebro_tui::model::RowState::Waiting)
+            }]),
+            now,
+        );
+
+        supervise(
+            &mut app,
+            &mut host,
+            &mut cerebro_tui::triggers::StartLedger::default(),
+            &mut test_logger(),
+            &paths,
+            now,
+            Instant::now(),
+        );
+        app.set_closing(host.ending_names());
+        assert!(
+            app.closing.contains("Xavier"),
+            "the ended session is closing until its child is reaped"
+        );
+
+        // The fleet read taken inside that window: a live process, no state file.
+        app.finish_refresh(
+            Ok(vec![staged_row("Xavier", "ux", cerebro_tui::model::RowState::Up)]),
+            now,
+        );
+        let row = &app.fleet_rows()[0];
+        assert_eq!(
+            row.state,
+            cerebro_tui::model::RowState::Waiting,
+            "a closing row keeps its last word rather than flickering green"
+        );
+        assert_eq!(row.bead.as_deref(), Some("cb-m0c"), "with its bead still beside it");
+
+        settle_gone(&mut host, "Xavier");
+    }
+
+    /// cb-m0c increment 1 — a design agent's row comes back to standby.
+    ///
+    /// Regression cover rather than a fix: `Supervision::End` deliberately does not disarm, so an
+    /// armed name whose pass has ended reads `Standby` again on the next fleet read. The promise
+    /// is what the bead is named after, and nothing pinned it.
+    #[test]
+    fn a_finished_ux_pass_leaves_the_row_on_standby() {
+        for role in ["ux", "build-design"] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = scratch(dir.path(), "sleep 5");
+            let now = Utc::now();
+            let mut host = SessionHost::default();
+            hosted(&mut host, &paths, "Xavier");
+
+            let log_root = tempfile::tempdir().unwrap();
+            let decisions = log_root.path().join(".cerebro/state/decisions.jsonl");
+            let mut logger = Logger::new(log_root.path());
+            logger.set_enabled(true);
+
+            let mut app = App::with_supervision(supervising());
+            app.armed.insert("Xavier".to_string());
+            app.finish_refresh(
+                Ok(vec![cerebro_tui::model::FleetRow {
+                    since: Some(now - chrono::Duration::seconds(31)),
+                    bead: Some("cb-m0c".into()),
+                    ..staged_row("Xavier", role, cerebro_tui::model::RowState::Waiting)
+                }]),
+                now,
+            );
+
+            supervise(
+                &mut app,
+                &mut host,
+                &mut cerebro_tui::triggers::StartLedger::default(),
+                &mut logger,
+                &paths,
+                now,
+                Instant::now(),
+            );
+            assert!(!host.supervisable("Xavier"), "{role}: the finished pass was ended");
+            assert!(app.armed.contains("Xavier"), "{role}: ending a pass never disarms");
+
+            // The next fleet read: no state file, no process.
+            app.finish_refresh(
+                Ok(vec![staged_row("Xavier", role, cerebro_tui::model::RowState::Dead)]),
+                now,
+            );
+            assert_eq!(
+                app.fleet_rows()[0].state,
+                cerebro_tui::model::RowState::Standby,
+                "{role}: an armed name that ended a pass is on standby again"
+            );
+
+            let written = std::fs::read_to_string(&decisions).unwrap_or_default();
+            assert!(written.contains("\"end\""), "{role}: the end is recorded");
+            assert!(!written.contains("\"disarm\""), "{role}: and no disarm beside it");
+
+            settle_gone(&mut host, "Xavier");
+        }
     }
 
     #[test]

@@ -407,6 +407,50 @@ pub fn apply_standby(
         .collect()
 }
 
+/// Hold each closing row's last word instead of the `Up` the process scan alone produces.
+///
+/// While the view is closing a session it has already deleted the state file
+/// (`SessionHost::end`), so the derivation has nothing but a still-live process to go on and
+/// answers `Up` with no bead - the same picture as an agent that is running and has taken
+/// nothing, which is the one thing worth noticing. `SessionHost::supervisable` already documents
+/// that window in prose; this is what makes the row honest across it.
+///
+/// A row is replaced only when ALL of these hold: its name is in CLOSING, its state is exactly
+/// `RowState::Up`, PREVIOUS has a row of that name, and that row's state is not `Up`. Every other
+/// state is the agent's own word and is honest already, and a `Dead` row must fall through so
+/// `apply_standby` can restate it as `Standby`.
+///
+/// The previous row is substituted WHOLE rather than merged field by field: the bead, phase,
+/// `since` and `pid` come with it, so the cell reads `waiting  cb-m0c` and not a third picture
+/// nobody agreed.
+///
+/// **The hold is only as bounded as the reap is.** `SessionHost::ending` is cleared when the
+/// child is reaped or when that name starts again, and nothing else ages it out - so a child that
+/// ignores its signal keeps its name in `ending_names` and keeps this function re-serving its
+/// last word. That is the deliberate direction to fail in: the alternative is the row this bead
+/// exists to remove, a green `up` holding nothing, and the state file is already gone either way
+/// so there is no fresher word to draw. Anything that escalates a child that will not die belongs
+/// in the host, beside the reap. Called BEFORE `apply_standby` (cb-m0c): a held row is `Waiting`, which that
+/// function leaves alone, where the reverse order would restate a row before deciding whether to
+/// keep it at all.
+pub fn hold_closing_rows(
+    rows: Vec<FleetRow>,
+    previous: &[FleetRow],
+    closing: &BTreeSet<String>,
+) -> Vec<FleetRow> {
+    rows.into_iter()
+        .map(|row| {
+            if row.state != RowState::Up || !closing.contains(&row.name) {
+                return row;
+            }
+            match previous.iter().find(|held| held.name == row.name) {
+                Some(held) if held.state != RowState::Up => held.clone(),
+                _ => row,
+            }
+        })
+        .collect()
+}
+
 /// One row of the fleet view.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FleetRow {
@@ -1729,6 +1773,43 @@ mod tests {
             sessions: 0,
             diagnostic: None,
         }
+    }
+
+    /// cb-m0c increment 3 — a closing session shows its last word, not a green `up`.
+    #[test]
+    fn a_closing_session_holds_its_last_word() {
+        let previous = vec![FleetRow {
+            bead: Some("cb-m0c".into()),
+            ..standby_row("Xavier", RowState::Waiting)
+        }];
+        let closing: BTreeSet<String> = ["Xavier"].into_iter().map(String::from).collect();
+
+        // The state file is gone and the child is not yet reaped, so the derivation has nothing
+        // but a live process and answers `Up` with no bead.
+        let incoming = || vec![standby_row("Xavier", RowState::Up)];
+
+        let held = hold_closing_rows(incoming(), &previous, &closing);
+        assert_eq!(held[0].state, RowState::Waiting, "the row keeps its last honest word");
+        assert_eq!(held[0].bead.as_deref(), Some("cb-m0c"), "and the bead beside it");
+
+        // Nothing closing: `up` is the right answer for a session started outside this view,
+        // which has no state file of its own (cb-d59.3).
+        let untouched = hold_closing_rows(incoming(), &previous, &BTreeSet::new());
+        assert_eq!(untouched[0].state, RowState::Up);
+        assert_eq!(untouched[0].bead, None);
+
+        // A closing name whose row is already `Dead` falls through, or `apply_standby` could
+        // never restate it as `Standby`.
+        let dead = hold_closing_rows(
+            vec![standby_row("Xavier", RowState::Dead)],
+            &previous,
+            &closing,
+        );
+        assert_eq!(dead[0].state, RowState::Dead);
+
+        // A closing name this view has no previous row for has nothing to hold.
+        let unknown = hold_closing_rows(incoming(), &[], &closing);
+        assert_eq!(unknown[0].state, RowState::Up);
     }
 
     #[test]

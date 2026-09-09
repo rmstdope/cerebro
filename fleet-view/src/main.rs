@@ -681,9 +681,8 @@ fn supervise(
 /// Its own five-second clock rather than the loop's ~200ms iteration, and outside the fleet poll:
 /// the watcher is nothing to do with what any agent wrote in a state file.
 ///
-/// Gated on `may_supervise()` alone - `cerebro--tick`'s own rule (`emacs/cerebro.el:6446-6450`) -
-/// so a DRAINING view kills its watcher: the pruner is a writer, and a handover means starting
-/// nothing new.
+/// Gated on `may_supervise()` alone, so a view that loses the lease kills its watcher: the pruner
+/// is a writer, and a handover means starting nothing new.
 fn prune(
     app: &mut App,
     pruner: &mut Pruner,

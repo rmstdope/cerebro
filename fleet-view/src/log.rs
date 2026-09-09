@@ -84,9 +84,10 @@ pub enum Event {
     /// `SweepTell`'s reason: two decisions sharing one value makes the log unreadable for the
     /// diagnosis it exists for. A stuck row this view hosts writes two lines per occurrence -
     /// `stuck`, the observation, and `resume`, what was done about it. Written only when the line
-    /// actually went into a session, exactly as `Triage` is: a resume the view suppressed - a
-    /// draining view, or a row already told within this stuck stretch - is not a decision it
-    /// carried out.
+    /// actually went into a session, exactly as `Triage` is: a resume the view suppressed - a row
+    /// already told within this stuck stretch - is not a decision it carried out. That is the
+    /// whole of the suppression since cb-abs.2; a view that does not hold the checkout never
+    /// reaches the row loop at all (`main::supervise`'s own top-level return).
     Resume,
     /// One name leaving the armed set with no other line to say so: `k`, and the standby
     /// disarm beside it. `retire` and `give-up` already say it for the paths they cover, and

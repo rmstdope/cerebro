@@ -4857,6 +4857,10 @@ mod tests {
         // change to the narrow budget show up as a failing test rather than as nothing at all.
         let narrow = body(&render(&app, 120, 24));
         assert!(!line_with(&narrow, "Beast").contains("→ planned 10/10"), "{narrow:?}");
+        // Positively, and not only by absence: a bare negative passes if the label is dropped, if
+        // the note stops being drawn at all, or if the row disappears - none of which is the state
+        // being pinned. This is the exact text the cut produces today.
+        assert!(line_with(&narrow, "Beast").contains("→ planned 10"), "{narrow:?}");
     }
 
     #[test]

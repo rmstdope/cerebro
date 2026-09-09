@@ -660,8 +660,9 @@ row it drew before, with nothing else shortened. `ui::default_left_column` is th
 left column's starting width lives: `LEFT_COLUMN` (40), or `WIDE_LEFT_COLUMN` (52) on a window at
 least `WIDE_LEFT_COLUMN_SCREEN` (134) wide, which is 52 plus two borders plus the eighty columns
 agents print to. It picks the *starting* width alone — a width the navigator dragged or keyed is
-theirs and survives every resize, and `Shift-Home` hands it back to this rule, saying the number
-the reset actually produces. `emacs/cerebro.el` is deliberately given none of it, as cb-bch.1's
+theirs and survives every resize, and `Shift-Home` hands it back to this rule, saying what it has
+always said (`panes back to their default sizes`, with no number); the double-click reset, which
+does name a number, now names the one the reset actually produces. `emacs/cerebro.el` is deliberately given none of it, as cb-bch.1's
 chords and cb-xhu.4.2's health section were: no `tests/lib/` table, no second implementation.
 
 Since cb-ykz.2 its Fleet rows carry the same **stuck** signal `M-x cerebro` does, off the same

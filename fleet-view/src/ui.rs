@@ -812,6 +812,12 @@ const HINT_SEPARATOR: &str = " | ";
 /// Deliberately its own constant and NOT [`SPLIT_COLUMNS`], which is also 100 today: that one is
 /// where the screen splits into a left column and a session pane. The two agreeing is a
 /// coincidence, not a fact either should inherit from the other.
+///
+/// `#[cfg(test)]` because nothing in the drawn path reads it: `fit_hints` is given the terminal's
+/// actual width, and this is the width the GUARDS measure against. It is production's number all
+/// the same - a plan fixing a clause literal reads it here - and not compiling it into the binary
+/// is how that stays true rather than becoming a constant nobody reads.
+#[cfg(test)]
 const HINT_BUDGET_COLUMNS: usize = 100;
 
 impl HintClause {
@@ -5377,15 +5383,19 @@ mod tests {
             .expect("the kept clauses are always offered");
         clauses.insert(first_kept, new);
 
+        // The report quotes each clause; named here so the assertion below reads as one fragment.
+        const ESC: char = '"';
         let used = header_used(&app);
-        let over = used + tier_width(&clauses, HintRank::Movement) - HINT_BUDGET_COLUMNS;
+        let over = (used + tier_width(&clauses, HintRank::Movement))
+            .checked_sub(HINT_BUDGET_COLUMNS)
+            .expect("the fabricated clause must overspend the budget for this test to mean anything");
         let budget = HintBudget::measure("read-only", &clauses, used, HINT_BUDGET_COLUMNS);
         let report = budget.report(HintRank::Movement);
 
         assert!(report.contains("Ctrl-r reload"), "{report}");
         assert!(
-            report.contains(&format!("{}", new.width())),
-            "the offending clause carries its own width: {report}"
+            report.contains(&format!("{ESC}{HINT_SEPARATOR}{}{ESC} {}", new.text, new.width())),
+            "the offending clause carries its OWN width, beside itself: {report}"
         );
         assert!(report.contains(&format!("{over} too many")), "{report}");
         assert!(report.contains("the Movement tier must survive"), "{report}");

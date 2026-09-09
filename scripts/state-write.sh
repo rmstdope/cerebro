@@ -16,10 +16,10 @@
 # The rule lives here, in the shape of the code both writers call, rather than in a comment in one
 # copy of the idiom - which is what let it be applied to one of the two places that needed it.
 #
-# NOT YET THE ONLY SUCH WRITER. `scripts/agent-asking' still replaces its own sidecar through a
-# fixed `<file>.tmp' (ah-coxf); it is a PreToolUse/PostToolUse hook with no suite of its own, so it
-# was left alone deliberately rather than converted unprotected. A third writer of a polled file
-# belongs here, not in a comment of its own.
+# THREE SCRIPTS WRITE POLLED FILES THROUGH THIS FUNCTION: `scripts/agent-state' and
+# `scripts/agent-turn' (the state file itself), and `scripts/agent-asking' (its per-agent
+# prequestion sidecar, converted by cb-yug once that script had a suite). A fourth belongs here,
+# not in a comment of its own.
 #
 # Four properties are load-bearing:
 #

@@ -26,6 +26,10 @@
 # sidecar is missing (a session that restarted mid-question, a `begin' that never ran), `end' still
 # rescues the common case: a file left at `asking' is flipped to `working', keeping bead and phase.
 # It never invents a bead or a phase, and never touches a file that is not at `asking'.
+#
+# The sidecar sits in the directory both fleet views poll, so it is replaced through
+# `scripts/state-write.sh' - the one place bash renames a whole new file over a polled one - rather
+# than through a fixed scratch name of this script's own.
 
 set -euo pipefail
 
@@ -42,6 +46,15 @@ esac
 # Nothing below is worth failing a question over.
 exit_quietly() { exit 0; }
 trap exit_quietly ERR
+
+# Sourced BELOW the ERR trap, which is where this script differs from `scripts/agent-state' and
+# `scripts/agent-turn': there a missing library is a loud failure, and here it may not be, because
+# this script's non-zero exit is a question the navigator never gets asked. And a missing one is
+# advisory rather than fatal: only `begin' needs the library, and `end' is the half that clears a
+# stale `asking'. The refusal therefore lives at the one call site that needs it - a missing
+# function is a 127 from the call, which its own `|| exit 0' already catches, before the row is
+# flipped to `asking' with no sidecar behind it.
+source "$script_dir/state-write.sh" 2>/dev/null || true
 
 name="${CEREBRO_AGENT_NAME:-}"
 [[ -n "$name" ]] || exit 0
@@ -93,9 +106,9 @@ case "$mode" in
       rm -f "$sidecar"
       exit 0
     fi
-    jq -n --arg state "$state" --arg bead "$bead" --arg phase "$phase" \
-      '{state: $state, bead: $bead, phase: $phase}' > "$sidecar.tmp" 2>/dev/null || exit 0
-    mv -f "$sidecar.tmp" "$sidecar" 2>/dev/null || exit 0
+    cerebro_state_write_atomic "$sidecar" \
+      jq -n --arg state "$state" --arg bead "$bead" --arg phase "$phase" \
+      '{state: $state, bead: $bead, phase: $phase}' 2>/dev/null || exit 0
     write_state asking "$bead" "$phase"
     ;;
   end)

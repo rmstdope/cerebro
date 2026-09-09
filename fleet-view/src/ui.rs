@@ -2948,23 +2948,32 @@ mod tests {
     }
 
     #[test]
-    fn the_widest_role_word_is_whole_on_a_tight_wide_pane() {
-        // `user-feedback` is thirteen characters, one more than the widest role the wide layout
-        // can be squeezed to give up, and it is on this project's own roster. It ran whole before
-        // this bead - the wide branch keeps `pad`'s own rule, and takes no gap out of the column.
+    fn the_wide_role_column_never_clamps_below_the_word_it_draws() {
+        // The wide branch keeps `pad`'s own rule and takes no gap out of its column, which is what
+        // it did before this bead. The clipping the cold read asked about turns out to be
+        // unreachable: `role` floors at `ROLE_FLOOR` and `natural_role` is `1 + longest`, and no
+        // width in the wide range clamps it below that. This case says so rather than pretending
+        // to pin a state the code cannot reach.
         let rows = vec![
             working("Wolverine", "user-feedback", "working", "cb-hjf-a-very-long-bead-id"),
             row("Rogue", "ux", RowState::Idle),
         ];
-        let wide = columns(&rows, 64, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
-        assert!(wide.wide);
-        assert!(wide.role >= ROLE_FLOOR, "the wide column keeps its floor: {}", wide.role);
+        let wanted = 1 + "user-feedback".chars().count();
+        for width in WIDE_COLUMNS..=200 {
+            let wide = columns(&rows, width, &BTreeMap::new(), &BTreeMap::new(), &BTreeSet::new(), now());
+            assert!(wide.wide);
+            assert!(
+                wide.role >= wanted,
+                "at {width} the wide column is {} and would cut `user-feedback`",
+                wide.role
+            );
+        }
 
         let mut app = App::new();
         app.finish_refresh(Ok(rows), at(86_400));
         let rendered = lines(&render(&app, 64, 20));
         let line = line_with(&rendered, "● Wolverine");
-        assert!(line.contains("user-feedback"), "the role is whole: {line:?}");
+        assert!(line.contains("user-feedback "), "whole, and clear of the state word: {line:?}");
     }
 
     #[test]

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8">
+<title>cb-abs — one window onto the fleet</title>
+<style>
+ body{background:#14161a;color:#d6dae0;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:36px 40px 90px}
+ h1{font-size:23px;font-weight:600;margin:0 0 6px;color:#eef1f5}
+ .sub{color:#8a929c;margin:0 0 6px;max-width:80ch}
+ .meta{color:#6b7480;font-size:12.5px;margin:0 0 34px}
+ h2{font-size:16px;margin:46px 0 4px;color:#e8ecf1;border-top:1px solid #23282f;padding-top:34px}
+ h2:first-of-type{border-top:0;padding-top:0}
+ h3{font-size:13.5px;margin:26px 0 6px;color:#b8c0c9;font-weight:600}
+ .note{color:#8a929c;margin:0 0 14px;max-width:84ch}
+ .win{background:#0d0f12;border:1px solid #2b313a;border-radius:6px;overflow:hidden;margin:0 0 10px;max-width:100ch}
+ .wt{background:#1b1f26;color:#9aa4b0;font:12px/1 ui-monospace,monospace;padding:8px 12px;border-bottom:1px solid #2b313a}
+ pre{margin:0;padding:14px 16px;font:12.5px/1.62 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c8cdd4;white-space:pre;overflow-x:auto}
+ table{border-collapse:collapse;margin:6px 0 14px;max-width:106ch;width:100%}
+ th{text-align:left;font:11px/1 -apple-system,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#7d8791;padding:0 14px 8px 0;border-bottom:1px solid #2b313a;font-weight:600}
+ td{padding:9px 14px 9px 0;border-bottom:1px solid #1d2127;vertical-align:top;font-size:13px;color:#9aa4b0}
+ td.t{font:12.5px/1.5 ui-monospace,monospace;color:#e8ecf1}
+ td.gone,tr.gone td{color:#5f6873}
+ .g{color:#7bbd6a}.y{color:#d9b44a}.r{color:#d76b6b}.d{color:#6b7480}.w{color:#eef1f5}
+ .cap{color:#7d8791;font-size:12.5px;margin:2px 0 22px;max-width:84ch}
+ .cap b{color:#b8c0c9;font-weight:600}
+ ul{color:#9aa4b0;max-width:84ch;font-size:13.5px}
+ li{margin:0 0 7px}
+ code{font:12.5px ui-monospace,monospace;color:#c8cdd4}
+</style>
+
+<h1>One window onto the fleet</h1>
+<p class="sub">Cerebro showed a navigator their running fleet through two windows: one in a terminal and an older one inside the editor. The editor half is removed completely — the window, both ways of opening it, and the project setting that said which of the two was allowed to drive. Nothing is kept working for anyone who had it.</p>
+<p class="meta">cb-abs · agreed 2026-09-09</p>
+
+<h2>What a navigator can no longer do</h2>
+<ul>
+<li>Open the fleet inside the editor. The command does not exist; the editor answers in its own words and Cerebro says nothing.</li>
+<li>Open the fleet with the shorter terminal command. It is removed too, with nothing left in its place — only the terminal window's own command remains, under the name it already has.</li>
+<li>Tell a project which window may drive its fleet. There is one window, so there is nothing to declare. A project that still has that line written down is not read at all, and nothing is said about it, because nothing is wrong.</li>
+</ul>
+<p class="cap">No signpost, no message, no compatibility. Somebody who had the editor window finds it gone and is told by the release, not by the product.</p>
+
+<h2>What the window says it is allowed to do</h2>
+<p class="note">The title line is the whole of this. It had nine spellings, because there were two kinds of window and a note saying which one drove. Five survive as three.</p>
+
+<table>
+<tr><th style="width:46ch">The line</th><th>When it is shown</th></tr>
+<tr><td class="t">Cerebro — supervising</td><td>This window is driving the fleet. The ordinary case, and almost always what is on screen.</td></tr>
+<tr><td class="t">Cerebro — starting</td><td>The moment before it takes over, while it is still working out whether it may. Replaces the bare <code>read-only</code>, which used to be every project's ordinary state and is now half a second.</td></tr>
+<tr><td class="t">Cerebro — read-only; another window is driving this fleet</td><td>A second window opened on the same fleet. This one shows everything and drives nothing.</td></tr>
+<tr><td class="t">Cerebro — read-only; this window could not take charge of the fleet</td><td>Something went wrong claiming the right to drive, and it is <em>not</em> that another window has it. Reads as a pair with the line above: one says somebody else has it, this says nobody could get it.</td></tr>
+<tr class="gone"><td class="t">Cerebro — handoff pending</td><td>Removed, with the waiting-to-let-go behaviour behind it. It existed because a project could change its mind mid-session about which window drove; with one window and no note, nothing can ever say that.</td></tr>
+<tr class="gone"><td class="t">Cerebro — read-only</td><td>Removed — became <i>starting</i>.</td></tr>
+<tr class="gone"><td class="t">…; Emacs owns supervision</td><td>Removed with the editor window.</td></tr>
+<tr class="gone"><td class="t">…; invalid fleet_supervisor "x"</td><td>Removed with the project's note.</td></tr>
+<tr class="gone"><td class="t">…; fleet_supervisor could not be read</td><td>Removed with the project's note.</td></tr>
+</table>
+
+<h3>The ordinary window</h3>
+<div class="win"><div class="wt">one window, driving</div><pre><span class="w">Cerebro — supervising ─────────────────────────────────────────────────────</span>
+<span class="w">┌─ Fleet ─────────────────────────────┐┌─ Session: Xavier ────────────────┐</span>
+<span class="w">│</span> <span class="g">●</span> Xavier    ux            working  <span class="w">││</span>                                  <span class="w">│</span>
+<span class="w">│</span> <span class="g">●</span> Beast     build-design  idle     <span class="w">││</span>                                  <span class="w">│</span>
+<span class="w">│</span> <span class="d">○</span> Rogue     implementer   <span class="d">standby</span>  <span class="w">││</span>                                  <span class="w">│</span>
+</pre></div>
+
+<h3>A second window on the same fleet</h3>
+<div class="win"><div class="wt">opened while the first one is driving</div><pre><span class="w">Cerebro — read-only; another window is driving this fleet ─────────────────</span>
+<span class="w">┌─ Fleet ─────────────────────────────┐┌─ Session: Xavier ────────────────┐</span>
+<span class="w">│</span> <span class="g">●</span> Xavier    ux            working  <span class="w">││</span>                                  <span class="w">│</span>
+<span class="w">│</span> <span class="g">●</span> Beast     build-design  idle     <span class="w">││</span>                                  <span class="w">│</span>
+</pre></div>
+<p class="cap">Unchanged from today apart from the wording: it shows everything, starts and stops nothing, and keeps the keys that act on the shared list of work, because those work from any machine whether or not this window is driving.</p>
+
+<h3>Nothing could take charge</h3>
+<div class="win"><div class="wt">something went wrong, and no other window has it</div><pre><span class="w">Cerebro — read-only; this window could not take charge of the fleet ───────</span>
+<span class="w">┌─ Fleet ─────────────────────────────┐┌─ Session: Xavier ────────────────┐</span>
+<span class="w">│</span> <span class="g">●</span> Xavier    ux            working  <span class="w">││</span>                                  <span class="w">│</span>
+</pre></div>
+<p class="cap">Agents already running keep running; nothing new is started, stopped or nudged. As today, the detail of what went wrong goes to the terminal when the window exits, never into the title — a long path in a status line is unreadable at any width.</p>
+
+<h3>Starting</h3>
+<div class="win"><div class="wt">the first moment</div><pre><span class="w">Cerebro — starting ────────────────────────────────────────────────────────</span>
+</pre></div>
+<p class="cap">Held only until it knows; then <i>supervising</i>, or one of the two read-only lines. <code>read-only</code> is now spent only where something is genuinely contested or wrong.</p>
+
+<h2>Everything else is untouched</h2>
+<p class="note">The three panes, their borders and focus, the keys, the mouse, the sections of the work queue, the sweeps, the health report and every notice keep exactly the shape they have today. This piece of work removes a second window and the setting that chose between them; it changes nothing about the window that is left, beyond the four lines above.</p>

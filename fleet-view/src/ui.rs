@@ -946,6 +946,26 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
             "{name} has the keyboard | Tab to Fleet, Shift-Tab to Work, F1/F2/F3 to a pane"
         )));
     }
+    let mut spans = header_state_spans(app);
+    // The hints give way before the state does, by rank and whole (`fit_hints`). Ownership made
+    // the title up to twenty-eight cells longer (cb-kcs.1), which pushed `q/Esc/Ctrl-C quit` off a
+    // hundred-column screen entirely - and a hint the terminal has cut in half is worse than a
+    // shorter hint that fits. What is left when it shortens is the two keys a navigator cannot
+    // guess from the screen: refresh and quit.
+    //
+    // `used` is summed AFTER every state span is pushed: the notice, the confirmation prompt and
+    // the live count all cost width.
+    let used: usize = spans.iter().map(|span| span.content.width()).sum();
+    spans.push(Span::styled(fit_hints(&hint_clauses(app), used, width as usize), dim()));
+    Line::from(spans)
+}
+
+/// The header's title and state spans - everything drawn before the hints, and exactly the spans
+/// `header_line` sums `used` from.
+///
+/// Its own function so a test can measure a screen's budget through the code the header actually
+/// uses, rather than through a second sum that would drift from it.
+fn header_state_spans(app: &App) -> Vec<Span<'static>> {
     let mut spans = vec![Span::raw(supervision_title(&app.supervision))];
     // A notice takes the place `refreshing...` or a failure would have had: it is transient, gone
     // on the next keystroke, while a stale pane goes on saying so in its own title anyway. The
@@ -989,17 +1009,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
             Style::default().fg(GOLD),
         ));
     }
-    // The hints give way before the state does, by rank and whole (`fit_hints`). Ownership made
-    // the title up to twenty-eight cells longer (cb-kcs.1), which pushed `q/Esc/Ctrl-C quit` off a
-    // hundred-column screen entirely - and a hint the terminal has cut in half is worse than a
-    // shorter hint that fits. What is left when it shortens is the two keys a navigator cannot
-    // guess from the screen: refresh and quit.
-    //
-    // `used` is summed AFTER every state span is pushed: the notice, the confirmation prompt and
-    // the live count all cost width.
-    let used: usize = spans.iter().map(|span| span.content.width()).sum();
-    spans.push(Span::styled(fit_hints(&hint_clauses(app), used, width as usize), dim()));
-    Line::from(spans)
+    spans
 }
 
 /// A title style for a widget that has no reader behind it: bold blue when focused, dim
@@ -5188,6 +5198,25 @@ mod tests {
         for (label, clauses, used, width, expected) in cases {
             assert_eq!(fit_hints(clauses, used, width), expected, "{label}");
         }
+    }
+
+    /// `header_line` draws `header_state_spans` and then exactly one span of hints.
+    ///
+    /// That is what makes `used` the cells actually drawn before the hints (cb-51u), and it is
+    /// what lets a test measure a screen's budget through the same function the header uses.
+    #[test]
+    fn the_header_draws_exactly_the_state_spans_it_measures() {
+        let mut app = populated();
+        app.notice = Some("pruned two worktrees".to_string());
+        let state = header_state_spans(&app);
+        let line = header_line(&app, 200);
+        assert_eq!(
+            line.spans.len(),
+            state.len() + 1,
+            "the hints are one span appended after the state spans: {:?}",
+            line.spans
+        );
+        assert_eq!(line.spans[..state.len()], state[..]);
     }
 
     /// A clause costs its own text plus the `" | "` that leads it, in CELLS.

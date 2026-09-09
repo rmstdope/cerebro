@@ -122,7 +122,7 @@ build-design agent's own buffer is the `planned` count, so `--count` already ser
 
 ## What is not decided here
 
-The two agents' own words — how each introduces itself, how it interviews the navigator, and how a
-send-back reads to a designer — are cb-lz5.2's and cb-lz5.3's, together with the roster rows that
-switch the trial on. Nothing here creates a role: `scripts/launch-preflight` refuses a launch of a
-role whose `agents/<role>.md` is missing.
+The two agents' own words are theirs: `agents/ux.md` with `skills/agree-experience`, and
+`agents/build-design.md` with `skills/design-the-build`. What is left after them is the roster —
+a project switches the trial on by replacing its `planner` rows with a `ux` row and a
+`build-design` row, and off again by restoring them.

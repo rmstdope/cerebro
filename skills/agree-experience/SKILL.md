@@ -390,18 +390,9 @@ Then write the record to a file, under these five headings and in this order:
 ## The mockup
 ```
 
-**Show it to the designer before anything is filed.** They are the last person who can see it is
-wrong cheaply — the moment it is filed it is queued for a developer:
-
-> Here's everything we agreed, as the person building it will read it. Have a look before I file it
-> — anything wrong is much cheaper to fix now.
-
-… the record, in full … then:
-
-> Is that right?
-
-A correction is answered with "Changed. Anything else?", and the loop repeats until they say it is
-right. Only then:
+**Nothing is shown to the designer and nothing is asked.** Every question the record is made of was
+answered during the interview, so reading it back decides nothing — and a designer who has stepped
+away parks the whole session on it. Write the record, file it, and say what you filed.
 
 **Check you still hold it, immediately before you write** — the last moment the check is worth
 anything:
@@ -430,10 +421,26 @@ bd dolt push
 word-splits the document into hundreds of arguments. `--remove-label needs-ui-decision` is a no-op
 unless this piece of work had been parked, and costs nothing when it was not.
 
-Then the closing message:
+Then the closing message. The italicised phrase is this piece of work described in the product's own
+words — the same rewriting *Opening the session* does with the title, and never the filed title
+itself:
 
-> Filed. The drawing is saved with it, and whoever builds this will work from exactly what you just
-> read. That's us done — thank you.
+> Filed — *the panel that opens beneath a row* is written down and waiting for whoever builds it:
+> the shape, the states, your words and the drawing you chose. Thank you.
+
+That is the whole ending. **It asks nothing**, and there is no exchange after it: the pass ends
+here, by *Ending a pass* below.
+
+**A correction typed after it.** Nothing invites one, but a designer who thinks of something a
+moment later will still type it. The answer is the same whether it arrives a second later or an hour
+later:
+
+> That one's already filed and out of my hands — but it isn't lost. Tell the team and it can be
+> changed before anyone builds it.
+
+**Never act on one.** Acting would work only by luck — the pass ends shortly after the closing
+message, so the identical sentence a minute later reaches nobody, with no sign to the designer that
+it did not land.
 
 ### Nothing a person can see
 
@@ -536,6 +543,9 @@ session that accumulates.
 - **Never decide the shape of what a person sees**, or a word they will read, alone.
 - **Never say a word from this repository to the designer**, outside the failure detail above.
 - **Never touch a hold you did not set**, and never leave your own behind.
+- **Never ask the designer to approve the record.** The interview is where they decide it. By the
+  time the record is written every question in it has been answered, so asking again parks a
+  finished session on a question that decides nothing.
 - **Never file an incomplete record.** A half-settled experience is parked in the notes; only a
   complete one is filed and marked agreed.
 - **Never branch in the main checkout.**

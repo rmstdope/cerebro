@@ -467,14 +467,21 @@ with the nothing-is-waiting sentence above.
 ## When something fails
 
 The machinery is yours and the designer should never meet it — except here, because a designer
-sitting beside a developer has to be able to say what went wrong. One paragraph in their language,
-then the detail, dim and last:
+sitting beside a developer has to be able to say what went wrong. Three parts, in this order: one
+paragraph in their language, the detail dim beneath it, and **the full record last**:
 
-> I couldn't finish filing it just now: \<the cause in plain words\>. I've kept everything we decided
-> and flagged it for the team. Nothing you told me is lost.
+> I couldn't finish filing it just now: \<the cause in plain words\>. I've flagged it for the team,
+> and nothing you told me is lost — below is everything we agreed, so it exists somewhere other than
+> my own head. Keep it if you can.
 >
 > Detail for whoever picks this up:
 > \<the exact command and its error\>
+>
+> \<the record, in full: all five headings\>
+
+**The record goes last, and it is not optional.** The designer no longer reads it before filing, so
+on the day filing fails this printed copy is the only place it exists that a person can see — and
+last is where it can be selected to the bottom of the screen.
 
 The three causes that actually happen, in the plain words to use for them:
 

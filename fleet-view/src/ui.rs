@@ -1913,7 +1913,10 @@ fn row_line(
         // One cell of the column is always the gap, so a cut `build…` never runs into `standby`.
         spans.push(Span::styled(
             pad(&truncate(&row.role, columns.role - 1), columns.role),
-            emphasized(Style::default(), attention),
+            // Faded at every width, the wide five-column screen included: the fade is a property
+            // of the column, so the role reads as something to scan down rather than as news on
+            // the row the navigator is looking at (cb-hjf).
+            emphasized(dim(), attention),
         ));
     }
     spans.extend(state_spans(row, columns, invalid, attention, flagged));
@@ -2885,6 +2888,22 @@ mod tests {
             (agent, state, bead),
             (narrow.agent, narrow.state, narrow.bead),
             "nothing else is shortened to keep the role on screen"
+        );
+    }
+
+    #[test]
+    fn a_role_is_dimmer_than_the_name_beside_it() {
+        let mut app = App::new();
+        app.finish_refresh(Ok(roster_rows()), at(86_400));
+        let buffer = render(&app, 100, 20);
+
+        assert!(
+            style_where(&buffer, "implemen…").add_modifier.contains(Modifier::DIM),
+            "the role reads as a column to scan down, not as news on the row"
+        );
+        assert!(
+            !style_where(&buffer, "Wolverine implemen…").add_modifier.contains(Modifier::DIM),
+            "the name beside it is at full strength"
         );
     }
 

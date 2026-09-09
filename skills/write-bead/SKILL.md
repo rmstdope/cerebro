@@ -1,22 +1,20 @@
 ---
 name: write-bead
-description: "Interview the navigator about a piece of work they want filed, then write the bead — what they want, why, what is wrong today, what done looks like, and whether it touches something a person sees — show it before anything is written, and file it unranked at P4. Use whenever somebody asks for a new bead. Invoked by hand as /write-bead, and loaded by the orchestrator when the navigator asks for one."
+description: "Interview the navigator about a piece of work they want filed, then write the bead"
 ---
 
 # Writing a bead
 
-Somebody has asked for a bead. You interview them until you can **describe** the work, show them the
-bead you mean to file, and write nothing until they approve it.
+Somebody has asked for a bead. You interview them until you can **describe** the work so that a
+UX designer and developer can take on the bead.
 
 ## What this skill is for, and what it is not
 
-The bar here is deliberately lower than the planner's. `skills/plan-bead/SKILL.md` interviews until
-it can **specify** — architecture decided, files named, increments and their tests written out,
-something an agent could build unattended. This skill interviews until it can **describe**: enough
-that a planner picking the bead up cold knows what the navigator wants and why, and does not have to
+This skill interviews until it can **describe**: enough that a ux designer and/or developer
+picking the bead up cold knows what the navigator wants and why, and does not have to
 ask them again for facts they have already given once.
 
-So, in this skill: no design decisions, no file lists, no test plan, no priority. Those are the
+So, in this skill: no design decisions, no file lists, no test plan. Those are the
 planner's and the navigator's, and a skill that made this session decide them would put a second
 planner on the board.
 
@@ -48,35 +46,21 @@ nothing comes back, say nothing about it and go straight to the interview.
 
 ## The interview
 
-Five things, and the bead is not describable until you have them all:
+Three things, and the bead is not describable until you have them all:
 
-1. **What the navigator wants.** The change itself, in their words.
-2. **Why now, and what it is costing today.** This is the argument the ranking is later made from.
-3. **What is wrong or missing today.** The current behaviour, concretely.
-4. **What done looks like from the outside.** Observable, not internal — this becomes the
+1. **What the outcome is.** What improves for the user or the developer?
+2. **What done looks like from the outside.** Observable, not internal — this becomes the
    acceptance line.
-5. **Whether the change touches anything a person sees or presses.**
+3. **Whether the change touches anything a person sees or presses.**
 
-Ask them in rounds, up to four questions per round through the question tool, and choose each round
+Ask question if necessary, up to four questions per round through the question tool, and choose each round
 from what the last one answered — a follow-up that only the first answer would have suggested is the
 whole reason this is a conversation rather than one form. **There is no cap on rounds.** Keep going
 until you can describe the work; a vague request costs more interruptions than a clear one.
 
-The fifth is **not** a design question. A *yes* is the planner's cue that the shape of the
+The third is **not** a design question. A *yes* is the planner's cue that the shape of the
 interaction needs the navigator, and you record that fact in the description. You do not start
 designing it, and you do not ask what it should look like.
-
-## The draft, and the approval
-
-Show the whole bead as it will be filed — type, priority `P4 (unranked)`, title, description, and
-the acceptance line — and **write nothing until the navigator approves it**.
-
-Any clear go-ahead is approval: "yes", "file it", "go". Anything else is a change to make, after
-which you show the draft again.
-
-A navigator who says nothing, cancels the question, or answers with a `[cerebro]` line leaves **no
-bead filed**. Say so in one line and stop. Filing what you had is the un-interviewed bead this whole
-skill exists to end.
 
 ## Filing it
 
@@ -100,9 +84,9 @@ Then report the id and the title back to the navigator.
 
 ## Offering the ranking, once
 
-After filing, ask **once** whether to rank it now. If the navigator takes it, rank it through
+After filing, ask how to rank the bead through
 `agents/orchestrator.md`'s *Ranking the backlog* — that same pass, not a second one of your own. If
-they decline or do not answer, say the bead will come to the next ranking pass, and stop. Outside a
+they decline, say the bead will come to the next ranking pass, and stop. Outside a
 Cerebro session — invoked by hand as `/write-bead` — there is no ranking pass to run: say the bead
 goes to the next one and stop there.
 

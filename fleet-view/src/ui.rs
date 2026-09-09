@@ -775,7 +775,8 @@ fn lifecycle_hint(mode: &SupervisionMode) -> Option<&'static str> {
 enum HintRank {
     /// A clause offered on every screen whatever is on it, and therefore paid for on every
     /// screen. The first thing to go, and it goes ALONE: the ordinary hundred-column screen has
-    /// one cell of slack (cb-xhu.4.2), so an unconditional clause at any higher rank drops a
+    /// very little slack - `the_ordinary_screen_has_one_cell_of_slack_at_a_hundred_columns` is
+    /// where that number is pinned - so an unconditional clause at any higher rank drops a
     /// whole tier of hints the navigator asked by name to keep
     /// (`the_ordinary_screen_keeps_every_hint_at_a_hundred_columns`).
     Optional,
@@ -797,6 +798,61 @@ struct HintClause {
     rank: HintRank,
 }
 
+/// What a clause costs the line beyond its own text.
+///
+/// It LEADS each clause rather than joining pairs, which is how `fit_hints` has always built the
+/// string. That is load-bearing for the arithmetic: because every drawn piece begins with it, the
+/// width of the concatenation is the plain sum of the pieces' widths, with no off-by-one for the
+/// joins. A future change that put a separator BETWEEN clauses instead would silently make
+/// `tier_width` disagree with the string `fit_hints` builds.
+const HINT_SEPARATOR: &str = " | ";
+
+/// The width the hint budget is measured against.
+///
+/// Deliberately its own constant and NOT [`SPLIT_COLUMNS`], which is also 100 today: that one is
+/// where the screen splits into a left column and a session pane. The two agreeing is a
+/// coincidence, not a fact either should inherit from the other.
+///
+/// `#[cfg(test)]` because nothing in the drawn path reads it: `fit_hints` is given the terminal's
+/// actual width, and this is the width the GUARDS measure against. It is production's number all
+/// the same - a plan fixing a clause literal reads it here - and not compiling it into the binary
+/// is how that stays true rather than becoming a constant nobody reads.
+#[cfg(test)]
+const HINT_BUDGET_COLUMNS: usize = 100;
+
+impl HintClause {
+    /// The cells this clause costs when it is drawn, its leading separator included.
+    ///
+    /// Cells and not chars or bytes: `⇧`, `←`, `→` and `·` all appear in clause texts, and what
+    /// the budget is about is what the terminal draws.
+    fn width(&self) -> usize {
+        HINT_SEPARATOR.width() + self.text.width()
+    }
+}
+
+/// The cells the clauses at or above `floor` cost together, separators included.
+fn tier_width(clauses: &[HintClause], floor: HintRank) -> usize {
+    clauses
+        .iter()
+        .filter(|clause| clause.rank >= floor)
+        .map(HintClause::width)
+        .sum()
+}
+
+/// The floor [`fit_hints`] settles on for `clauses` beside `used` cells at `width`.
+///
+/// The lowest of `Optional`, `Movement`, `Cursor` whose join fits, and `Kept` when none of them
+/// does. `fit_hints` is this plus the join, so the fitter and anything that measures the budget
+/// can never disagree about which tier a screen gets.
+fn hint_floor(clauses: &[HintClause], used: usize, width: usize) -> HintRank {
+    for floor in [HintRank::Optional, HintRank::Movement, HintRank::Cursor] {
+        if used + tier_width(clauses, floor) <= width {
+            return floor;
+        }
+    }
+    HintRank::Kept
+}
+
 /// The hint string that fits `width` cells beside the `used` cells already drawn.
 ///
 /// Drops the lowest rank present, whole, and tries again. `HintRank::Kept` is never dropped, so a
@@ -805,28 +861,21 @@ struct HintClause {
 /// The leading `" | "` belongs to each clause: `header_line` pushes this as a span with no
 /// separator of its own.
 fn fit_hints(clauses: &[HintClause], used: usize, width: usize) -> String {
-    let join = |floor: HintRank| -> String {
-        clauses
-            .iter()
-            .filter(|clause| clause.rank >= floor)
-            .map(|clause| format!(" | {}", clause.text))
-            .collect()
-    };
-    for floor in [HintRank::Optional, HintRank::Movement, HintRank::Cursor] {
-        let text = join(floor);
-        // Cells, not chars: `·` and the arrows are one cell each here, but the rule is the measure.
-        if used + text.width() <= width {
-            return text;
-        }
-    }
-    join(HintRank::Kept)
+    let floor = hint_floor(clauses, used, width);
+    clauses
+        .iter()
+        .filter(|clause| clause.rank >= floor)
+        .map(|clause| format!("{HINT_SEPARATOR}{}", clause.text))
+        .collect()
 }
 
 /// Every clause this screen offers, in the order they are drawn.
 ///
 /// The order is the drawn string, and it is the order the literal format strings this replaces
 /// had: the lifecycle clause between the movement hints and `x act`. Adding a hint is one row
-/// here plus a rank, never a width decision (cb-51u).
+/// here plus a rank, never a width decision (cb-51u) - and
+/// `no_screen_loses_a_required_hint_tier_at_its_own_width` is what says whether the row you added
+/// fits, naming the clause and the overspend if it does not.
 fn hint_clauses(app: &App) -> Vec<HintClause> {
     let mut clauses = vec![
         HintClause { text: "Tab/Shift-Tab/F1-F3 pane", rank: HintRank::Movement },
@@ -906,6 +955,26 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
             "{name} has the keyboard | Tab to Fleet, Shift-Tab to Work, F1/F2/F3 to a pane"
         )));
     }
+    let mut spans = header_state_spans(app);
+    // The hints give way before the state does, by rank and whole (`fit_hints`). Ownership made
+    // the title up to twenty-eight cells longer (cb-kcs.1), which pushed `q/Esc/Ctrl-C quit` off a
+    // hundred-column screen entirely - and a hint the terminal has cut in half is worse than a
+    // shorter hint that fits. What is left when it shortens is the two keys a navigator cannot
+    // guess from the screen: refresh and quit.
+    //
+    // `used` is summed AFTER every state span is pushed: the notice, the confirmation prompt and
+    // the live count all cost width.
+    let used: usize = spans.iter().map(|span| span.content.width()).sum();
+    spans.push(Span::styled(fit_hints(&hint_clauses(app), used, width as usize), dim()));
+    Line::from(spans)
+}
+
+/// The header's title and state spans - everything drawn before the hints, and exactly the spans
+/// `header_line` sums `used` from.
+///
+/// Its own function so a test can measure a screen's budget through the code the header actually
+/// uses, rather than through a second sum that would drift from it.
+fn header_state_spans(app: &App) -> Vec<Span<'static>> {
     let mut spans = vec![Span::raw(supervision_title(&app.supervision))];
     // A notice takes the place `refreshing...` or a failure would have had: it is transient, gone
     // on the next keystroke, while a stale pane goes on saying so in its own title anyway. The
@@ -949,17 +1018,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
             Style::default().fg(GOLD),
         ));
     }
-    // The hints give way before the state does, by rank and whole (`fit_hints`). Ownership made
-    // the title up to twenty-eight cells longer (cb-kcs.1), which pushed `q/Esc/Ctrl-C quit` off a
-    // hundred-column screen entirely - and a hint the terminal has cut in half is worse than a
-    // shorter hint that fits. What is left when it shortens is the two keys a navigator cannot
-    // guess from the screen: refresh and quit.
-    //
-    // `used` is summed AFTER every state span is pushed: the notice, the confirmation prompt and
-    // the live count all cost width.
-    let used: usize = spans.iter().map(|span| span.content.width()).sum();
-    spans.push(Span::styled(fit_hints(&hint_clauses(app), used, width as usize), dim()));
-    Line::from(spans)
+    spans
 }
 
 /// A title style for a widget that has no reader behind it: bold blue when focused, dim
@@ -5148,6 +5207,241 @@ mod tests {
         for (label, clauses, used, width, expected) in cases {
             assert_eq!(fit_hints(clauses, used, width), expected, "{label}");
         }
+    }
+
+    /// What one screen's header costs at one width, and whether it fits.
+    ///
+    /// The measurement is production code (`HintClause::width`, `tier_width`, `hint_floor`); only
+    /// the REPORT lives here, because it is read out of a failing assertion and nowhere else.
+    struct HintBudget {
+        label: &'static str,
+        width: usize,
+        used: usize,
+        clauses: Vec<HintClause>,
+        /// Each floor, and what the join at that floor costs.
+        tiers: Vec<(HintRank, usize)>,
+        /// The floor `fit_hints` settles on.
+        chosen: HintRank,
+        /// `used` plus the chosen tier's cost - the cells actually drawn.
+        drawn: usize,
+    }
+
+    impl HintBudget {
+        fn measure(
+            label: &'static str,
+            clauses: &[HintClause],
+            used: usize,
+            width: usize,
+        ) -> Self {
+            let tiers: Vec<(HintRank, usize)> = [
+                HintRank::Optional,
+                HintRank::Movement,
+                HintRank::Cursor,
+                HintRank::Kept,
+            ]
+            .into_iter()
+            .map(|floor| (floor, tier_width(clauses, floor)))
+            .collect();
+            let chosen = hint_floor(clauses, used, width);
+            let drawn = used + tier_width(clauses, chosen);
+            Self { label, width, used, clauses: clauses.to_vec(), tiers, chosen, drawn }
+        }
+
+        /// Cells to spare; negative means the terminal truncates the line.
+        fn slack(&self) -> isize {
+            self.width as isize - self.drawn as isize
+        }
+
+        /// The whole arithmetic, for an assertion message.
+        fn report(&self, required: HintRank) -> String {
+            let mut out = format!(
+                "{} at {} columns: the {:?} tier must survive.\n  title and state: {} cells\n",
+                self.label, self.width, required, self.used
+            );
+            for (floor, _) in &self.tiers {
+                let at_rank: Vec<String> = self
+                    .clauses
+                    .iter()
+                    .filter(|clause| clause.rank == *floor)
+                    .map(|clause| {
+                        format!("\"{HINT_SEPARATOR}{}\" {}", clause.text, clause.width())
+                    })
+                    .collect();
+                out.push_str(&format!(
+                    "  {:<9} {}\n",
+                    format!("{floor:?}"),
+                    if at_rank.is_empty() { "(none)".to_string() } else { at_rank.join(", ") }
+                ));
+            }
+            for (floor, cost) in &self.tiers {
+                let drawn = self.used + cost;
+                let slack = self.width as isize - drawn as isize;
+                out.push_str(&format!(
+                    "  {floor:?} tier: {drawn} of {} cells, {}\n",
+                    self.width,
+                    if slack < 0 {
+                        format!("{} too many", -slack)
+                    } else {
+                        format!("{slack} to spare")
+                    }
+                ));
+            }
+            out.push_str(&format!(
+                "  fit_hints settles on {:?}, so the clauses below it are not drawn.\n",
+                self.chosen
+            ));
+            out.push_str("Shorten a clause, or give the new one a lower rank (see HintRank).");
+            out
+        }
+    }
+
+    /// The cells APP's header draws before its hints - the test-side twin of `header_line`'s own
+    /// sum, through the same function it uses.
+    fn header_used(app: &App) -> usize {
+        header_state_spans(app).iter().map(|span| span.content.width()).sum()
+    }
+
+    /// The guard this bead exists to add: no screen loses a hint tier it has to keep, and no
+    /// screen's line runs past its own terminal.
+    ///
+    /// The rows are the screens the three retrospectives actually broke, at the widths they broke
+    /// at - cb-41r (99), cb-5kk (100, 160) and cb-xhu.4.2 (100) - rather than every fixture in
+    /// this file. A guard nobody can read is one somebody deletes.
+    #[test]
+    fn no_screen_loses_a_required_hint_tier_at_its_own_width() {
+        let mut owned = populated();
+        owned.set_supervision(SupervisionMode::ReadOnly(ReadOnlyReason::OwnedBy(
+            SupervisorKind::Tui,
+        )));
+
+        let mut stale = work_app(WorkBuckets {
+            claimed: vec![bead("cb-123", Some(1), "Preserve session output")],
+            ..WorkBuckets::default()
+        });
+        stale.finish_work_refresh(Err(bd_failure()), at(86_400 + 5));
+
+        // `read-only` requires `Movement` and not `Optional`: the ordinary hundred-column screen
+        // drops the optional tier, which is what
+        // `the_ordinary_screen_keeps_every_hint_at_a_hundred_columns` has always asserted despite
+        // its name.
+        let rows: Vec<(&'static str, App, usize, HintRank)> = vec![
+            ("read-only", populated(), 100, HintRank::Movement),
+            ("read-only, another Tui owns supervision", owned, 100, HintRank::Kept),
+            ("supervising", supervising(), 100, HintRank::Kept),
+            ("supervising, wide", supervising(), 200, HintRank::Movement),
+            ("handing over, 3 live agents", handing_over(3), 100, HintRank::Kept),
+            ("work focus, cursor on a bead", pinned_app(), 160, HintRank::Cursor),
+            ("stale work", stale, 99, HintRank::Kept),
+        ];
+
+        for (label, app, width, required) in rows {
+            let budget =
+                HintBudget::measure(label, &hint_clauses(&app), header_used(&app), width);
+            assert!(
+                budget.chosen <= required,
+                "{}",
+                budget.report(required)
+            );
+            assert!(
+                budget.slack() >= 0,
+                "the terminal would cut this line in half (cb-41r)\n{}",
+                budget.report(required)
+            );
+        }
+    }
+
+    /// The ordinary read-only screen's remaining slack at a hundred columns, as a number.
+    ///
+    /// This PINS A MEASUREMENT, not a policy. All three sightings of the overflow were this
+    /// screen, and the number is what a plan needs before it fixes a clause literal. If it
+    /// changes, the report in the failure message carries the new one - putting it here and in
+    /// the test's name is fine, as long as the change was deliberate.
+    #[test]
+    fn the_ordinary_screen_has_one_cell_of_slack_at_a_hundred_columns() {
+        let app = populated();
+        let budget = HintBudget::measure(
+            "read-only",
+            &hint_clauses(&app),
+            header_used(&app),
+            HINT_BUDGET_COLUMNS,
+        );
+        assert_eq!(budget.slack(), 1, "{}", budget.report(HintRank::Movement));
+    }
+
+    /// An overspent budget says which clause, what it costs, and by how many cells the line is
+    /// over - so the reader does not have to do the subtraction three retrospectives did by hand.
+    #[test]
+    fn an_overflowing_clause_is_named_with_its_cost() {
+        let app = populated();
+        let mut clauses = hint_clauses(&app);
+        // A key this view does not have, so nobody can grep it up as a real hint - the convention
+        // `a_new_clause_is_one_row_and_breaks_no_other_test` already set.
+        let new = HintClause { text: "Ctrl-r reload", rank: HintRank::Movement };
+        let first_kept = clauses
+            .iter()
+            .position(|clause| clause.rank == HintRank::Kept)
+            .expect("the kept clauses are always offered");
+        clauses.insert(first_kept, new);
+
+        // The report quotes each clause; named here so the assertion below reads as one fragment.
+        const QUOTE: char = '"';
+        let used = header_used(&app);
+        let over = (used + tier_width(&clauses, HintRank::Movement))
+            .checked_sub(HINT_BUDGET_COLUMNS)
+            .expect("the fabricated clause must overspend the budget for this test to mean anything");
+        let budget = HintBudget::measure("read-only", &clauses, used, HINT_BUDGET_COLUMNS);
+        let report = budget.report(HintRank::Movement);
+
+        assert!(report.contains("Ctrl-r reload"), "{report}");
+        assert!(
+            report.contains(&format!("{QUOTE}{HINT_SEPARATOR}{}{QUOTE} {}", new.text, new.width())),
+            "the offending clause carries its OWN width, beside itself: {report}"
+        );
+        assert!(report.contains(&format!("{over} too many")), "{report}");
+        assert!(report.contains("the Movement tier must survive"), "{report}");
+        assert!(
+            report.contains(&format!("fit_hints settles on {:?}", budget.chosen)),
+            "the report names the tier drawn instead: {report}"
+        );
+        assert!(budget.chosen > HintRank::Movement, "{report}");
+    }
+
+    /// `header_line` draws `header_state_spans` and then exactly one span of hints.
+    ///
+    /// That is what makes `used` the cells actually drawn before the hints (cb-51u), and it is
+    /// what lets a test measure a screen's budget through the same function the header uses.
+    #[test]
+    fn the_header_draws_exactly_the_state_spans_it_measures() {
+        let mut app = populated();
+        app.notice = Some("pruned two worktrees".to_string());
+        let state = header_state_spans(&app);
+        let line = header_line(&app, 200);
+        assert_eq!(
+            line.spans.len(),
+            state.len() + 1,
+            "the hints are one span appended after the state spans: {:?}",
+            line.spans
+        );
+        assert_eq!(line.spans[..state.len()], state[..]);
+    }
+
+    /// A clause costs its own text plus the `" | "` that leads it, in CELLS.
+    ///
+    /// Cells and not chars: `⇧`, `←` and `→` are multi-byte and the arithmetic the hint budget
+    /// does is about what the terminal draws.
+    #[test]
+    fn a_clause_costs_its_text_and_its_separator() {
+        assert_eq!(
+            HintClause { text: "g refresh", rank: HintRank::Kept }.width(),
+            " | g refresh".width()
+        );
+        let size = HintClause { text: "⇧←→ size", rank: HintRank::Optional };
+        assert_eq!(size.width(), " | ⇧←→ size".width());
+        assert_ne!(
+            size.width(),
+            " | ⇧←→ size".len(),
+            "bytes are not cells, and the budget is cells"
+        );
     }
 
     /// Which clauses each screen offers, in the order they are drawn, with their ranks.
